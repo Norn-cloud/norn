@@ -13,7 +13,7 @@ import ts from "typescript"
  * or the list a `useCellMutation` `invalidates` function returns). Any other `{ route: … }` is a
  * hand-rolled call like any other string.
  *
- * Phase 1a lands the rule as a warning: it reports every hand-rolled call. Phase 1b (after #1643)
+ * Phase 1a lands the rule as a warning: it reports every hand-rolled call. Phase 1b
  * migrates them and makes it an error (`NORN_CELL_ROUTES_LINT=error` does so now). There is no
  * allowlist: the only exempt modules are the door's own.
  */

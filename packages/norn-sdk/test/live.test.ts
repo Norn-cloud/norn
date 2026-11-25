@@ -68,7 +68,7 @@ test("one wire subscription per path; every listener gets the cell's answers, a 
   socket.snapshot("s1", "d1", { items: [] })
   client.subscribe("/v1/decisions?state=pending", (s) => b.push(s))
   expect(socket.sent).toHaveLength(1)
-  expect(b).toEqual([{ status: 200, digest: "d1", body: { items: [] } }])
+  expect(b).toEqual([{ status: 200, digest: "d1", body: { items: [] }, exact: { items: [] } }])
   socket.snapshot("s1", "d2", { items: [1] })
   expect(a.map((s) => s.digest)).toEqual(["d1", "d2"])
   expect(b.map((s) => s.digest)).toEqual(["d1", "d2"])
@@ -282,4 +282,33 @@ test("same-tick subscribers to a locally refused path each receive the refusal o
   expect(refusals).toHaveLength(1)
   stopFirst()
   stopSecond()
+})
+
+test("a snapshot's body is also read exactly, and a failing one carries its refusal only when it is the route's Refusal@2", async () => {
+  const { client, sockets, flush } = harness()
+  const seen: LiveSnapshot[] = []
+  client.subscribe("/v1/objects/demo.Item/i1", (s) => seen.push(s))
+  await flush()
+  const socket = sockets[0]!
+  socket.emit("open")
+  const frame = (status: number, body: string) => socket.emit("message", { data: `{"type":"snapshot","id":"s1","status":${status},"digest":"d${seen.length}","body":${body}}` })
+  // The cell sends the GET's own bytes: 28 significant digits and a decimal's scale survive in `exact`.
+  frame(200, '{"version":2,"values":{"amount":1234567890123456.789012345678,"rate":100.000}}')
+  expect(seen[0]!.exact).toEqual({ version: "2", values: { amount: "1234567890123456.789012345678", rate: "100.000" } })
+  expect(seen[0]!.body).toEqual({ version: 2, values: { amount: 1234567890123456.789012345678, rate: 100 } })
+  expect(seen[0]!.refusal).toBeUndefined()
+  // A failing answer that is the route's Refusal@2 carries it, a disclosed reason's values exact.
+  const refusal = '{"format":"norn/refusal@2","retryable":false,"code":"core.laws.violated","category":"precondition","message":"m","explanation":"e","reason":{"law":"L1","subject":"demo.Item/i1","values":{"total":9007199254740993}}}'
+  frame(422, refusal)
+  expect(seen[1]!.refusal).toMatchObject({ status: 422, code: "core.laws.violated", category: "precondition", reason: { values: { total: "9007199254740993" } } })
+  // Anything less is no refusal, and so is the cell's `route.not_found`: the read's client says the route is not served.
+  for (const [status, body] of [
+    [403, '{"code":"authz.denied"}'],
+    [403, '{"format":"norn/refusal@2","retryable":false,"reason":{},"code":"authz.denied","category":"permission","message":"m","explanation":"e"}'],
+    [404, '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"route.not_found","category":"visibility","message":"m","explanation":"e"}'],
+    [502, "null"],
+  ] as const) {
+    frame(status, body)
+    expect([status, body, seen.at(-1)!.status, seen.at(-1)!.refusal]).toEqual([status, body, status, undefined])
+  }
 })

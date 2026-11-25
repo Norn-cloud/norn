@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test"
 import { MutationObserver, onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query"
-import { parseLiveFrame } from "../../../packages/norn-sdk/src/live.ts"
-import { LiveClient, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-demo-ui/src/live/client.ts"
+import { LiveClient, parseExactJson, readRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-sdk/src/index.ts"
 import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, cellReadState, invalidateCellRoutes, submitCall, type CellDocument, type CellEntry, type CellRefused, type CellSubmission, type LiveSource } from "../src/lib/cell-query.ts"
 import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, setDisplayedScope, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed } from "../src/lib/live-transport.ts"
@@ -12,6 +11,8 @@ const scope = { orgId: "org_1", environmentId: "dev" }
 const other = { orgId: "org_2", environmentId: "dev" }
 // A 28-digit decimal: a double keeps 15 to 17 significant digits.
 const EXACT = "1234567890123456.789012345678"
+/** The record's contract shape, as far as these tests read it. */
+type Item = { readonly version: number; readonly values: { readonly amount: number } }
 const record = (version: number, amount: string) =>
   `{"objectType":"demo.Item","id":"i1","scope":"org_1/dev","version":${version},"values":{"amount":${amount}},"withheld":false,"withheldProperties":[]}`
 
@@ -31,16 +32,16 @@ function liveCell() {
       return () => { subscribed.delete(path); unsubscribed.push(path) }
     },
   }
+  // A snapshot as the SDK's `LiveClient` hands it on (its own tests pin how it reads frames).
   const push = (path: string, status: number, digest: string, body: string) => {
-    const frame = parseLiveFrame(`{"type":"snapshot","id":"s1","status":${status},"digest":"${digest}","body":${body}}`)
-    if (frame === null || !("numbers" in frame)) throw new Error("not a snapshot")
-    subscribed.get(path)?.listener({ status: frame.message.status, digest: frame.message.digest, body: frame.message.body, numbers: frame.numbers })
+    const refusal = status >= 200 && status < 300 ? null : readRefusal(status, body)
+    subscribed.get(path)?.listener({ status, digest, body: JSON.parse(body), exact: parseExactJson(body) ?? null, ...refusal === null ? {} : { refusal } })
   }
   return { live, subscribed, unsubscribed, push }
 }
 
 /** The version of the document an entry holds; a refused entry has none. */
-const versionOf = (entry: CellEntry<{ readonly version?: number | null }> | undefined): number | null | undefined =>
+const versionOf = (entry: CellEntry<{ readonly version?: number | null }> | undefined): string | null | undefined =>
   entry?.kind === "document" ? entry.document.version : undefined
 
 async function readOnce(client: QueryClient, at = scope, answer: () => Response | Promise<Response> = () => new Response(record(1, "10.50"))) {
@@ -55,9 +56,10 @@ test("the key is [route, orgId, environmentId, params] and the read asks the sco
   const { asked, options } = await readOnce(client)
   expect([...options.queryKey]).toEqual([ROUTE, "org_1", "dev", params])
   expect(asked).toEqual(["/api/host/v1/objects/demo.Item/i1?orgId=org_1&environmentId=dev"])
-  const read = client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)
-  expect(read?.document.version).toBe(1)
-  expect(read?.numbers.get("/values/amount")).toBe("10.50")
+  const read = client.getQueryData<CellDocument<Item>>(options.queryKey)
+  expect(read?.document.version).toBe("1")
+  // Every number is the text the cell sent: the scale of 10.50 is kept.
+  expect(read?.document.values.amount).toBe("10.50")
 })
 
 test("a push writes the cell's document into the cache, exact decimals kept, without reading again", async () => {
@@ -72,9 +74,9 @@ test("a push writes the cell's document into the cache, exact decimals kept, wit
   socket.push(path, 200, "d1", record(1, "10.50"))
   expect(client.getQueryData(options.queryKey) === first).toBe(true)
   socket.push(path, 200, "d2", record(2, EXACT))
-  const pushed = client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)
-  expect(pushed?.document.version).toBe(2)
-  expect(pushed?.numbers.get("/values/amount")).toBe(EXACT)
+  const pushed = client.getQueryData<CellDocument<Item>>(options.queryKey)
+  expect(pushed?.document.version).toBe("2")
+  expect(pushed?.document.values.amount).toBe(EXACT)
   expect(pushed?.digest).toBe("d2")
   expect(asked).toHaveLength(1)
   expect(client.getQueryState(options.queryKey)?.isInvalidated).toBe(false)
@@ -102,8 +104,8 @@ test("two scopes never share a read: keys, pushes and invalidation stay in their
   const path = cellPath(ROUTE, scope, params)
   attachLive({ client, live: socket.live, route: ROUTE, queryKey: mine.options.queryKey, path })
   socket.push(path, 200, "d2", record(2, "11"))
-  expect(client.getQueryData<CellDocument<{ version: number }>>(mine.options.queryKey)?.document.version).toBe(2)
-  expect(client.getQueryData<CellDocument<{ version: number }>>(theirs.options.queryKey)?.document.version).toBe(1)
+  expect(client.getQueryData<CellDocument<Item>>(mine.options.queryKey)?.document.version).toBe("2")
+  expect(client.getQueryData<CellDocument<Item>>(theirs.options.queryKey)?.document.version).toBe("1")
   await invalidateCellRoutes(client, scope, actionReads("demo.Item"))
   expect(client.getQueryState(mine.options.queryKey)?.isInvalidated).toBe(true)
   expect(client.getQueryState(theirs.options.queryKey)?.isInvalidated).toBe(false)
@@ -154,8 +156,8 @@ test("a read already in flight when a push lands never overwrites the pushed doc
   while (cell.asked.length === 0) await Bun.sleep(1)
   release(new Response(record(1, "10.50")))
   const settled = await reading
-  expect(versionOf(settled)).toBe(2)
-  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
+  expect(versionOf(settled)).toBe("2")
+  expect(client.getQueryData<CellDocument<Item>>(options.queryKey)?.document.version).toBe("2")
 })
 
 test("a refusal pushed while a read is in flight wins over the older read", async () => {
@@ -228,7 +230,7 @@ test("an unchanged snapshot after a failed read clears the failure: the cell con
   // A refetch fails; TanStack keeps v1 beside the error.
   await client.fetchQuery({ ...cellQueryOptions(client, ROUTE, params, { scope, fetch: async () => { throw new TypeError("network down") } }), staleTime: 0 }).catch(() => undefined)
   expect(client.getQueryState(options.queryKey)?.status).toBe("error")
-  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(1)
+  expect(client.getQueryData<CellDocument<Item>>(options.queryKey)?.document.version).toBe("1")
   const socket = liveCell()
   const path = cellPath(ROUTE, scope, params)
   attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
@@ -236,8 +238,21 @@ test("an unchanged snapshot after a failed read clears the failure: the cell con
   const state = client.getQueryState(options.queryKey)
   expect(state?.status).toBe("success")
   expect(state?.error).toBeNull()
-  expect((state?.data as CellDocument<{ version: number }>).document.version).toBe(1)
+  expect(versionOf(state?.data)).toBe("1")
 })
+
+/** Read the record, then push one failing answer through the SDK's own live client: the entry it leaves. */
+async function pushedThroughClient(client: QueryClient, status: number, body: string): Promise<CellRefused> {
+  const { options } = await readOnce(client)
+  const path = cellPath(ROUTE, scope, params)
+  const { live, opened } = realLive()
+  const stop = attachLive({ client, live, route: ROUTE, queryKey: options.queryKey, path })
+  const socket = await opened()
+  const id = socket.sent.find(({ type }) => type === "subscribe")?.id ?? ""
+  socket.emit("message", { data: `{"type":"snapshot","id":"${id}","status":${status},"digest":"pushed","body":${body}}` })
+  stop()
+  return client.getQueryData<CellEntry<unknown>>(options.queryKey) as CellRefused
+}
 
 test("a pushed refusal is classified as an HTTP answer is: a malformed one is unavailable, never read for its code", async () => {
   const client = new QueryClient()
@@ -255,13 +270,8 @@ test("a pushed refusal is classified as an HTTP answer is: a malformed one is un
     expect(answered, body).toBeInstanceOf(CellUnavailable)
     expect((answered as CellUnavailable).code).toBeUndefined()
     client.clear()
-    // …and pushed.
-    const { options } = await readOnce(client)
-    const socket = liveCell()
-    const path = cellPath(ROUTE, scope, params)
-    attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
-    socket.push(path, 403, "bad", body)
-    const pushed = client.getQueryData<CellEntry<unknown>>(options.queryKey) as CellRefused
+    // …and pushed, as the SDK's live client reads the frame.
+    const pushed = await pushedThroughClient(client, 403, body)
     expect(pushed.kind, body).toBe("refused")
     expect(pushed.refusal, body).toBeInstanceOf(CellUnavailable)
     expect((pushed.refusal as CellUnavailable).code).toBeUndefined()
@@ -270,12 +280,14 @@ test("a pushed refusal is classified as an HTTP answer is: a malformed one is un
   }
   // A valid reason is a refusal on both transports.
   const reasoned = '{"format":"norn/refusal@2","retryable":false,"reason":{"law":"L1","subject":"demo.Item/i1","values":{"amount":"1"},"pin":{"kind":"builtin","id":"norn.unique","version":"1"}},"code":"authz.denied","category":"permission","message":"denied","explanation":"x"}'
-  const { options } = await readOnce(client)
-  const socket = liveCell()
-  const path = cellPath(ROUTE, scope, params)
-  attachLive({ client, live: socket.live, route: ROUTE, queryKey: options.queryKey, path })
-  socket.push(path, 403, "ok", reasoned)
-  expect(((client.getQueryData<CellEntry<unknown>>(options.queryKey) as CellRefused).refusal as CellRefusal).code).toBe("authz.denied")
+  expect(((await pushedThroughClient(client, 403, reasoned)).refusal as CellRefusal).code).toBe("authz.denied")
+  client.clear()
+  // The cell's `route.not_found` says the route is not served, on both transports.
+  const absent = '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"route.not_found","category":"visibility","message":"no route","explanation":"x"}'
+  const read = await readOnce(client, scope, () => new Response(absent, { status: 404 }))
+  expect(client.getQueryState(read.options.queryKey)?.error).toBeInstanceOf(NotServed)
+  client.clear()
+  expect((await pushedThroughClient(client, 404, absent)).refusal).toBeInstanceOf(NotServed)
 })
 
 test("a push wins over a read that fails after it", async () => {
@@ -290,7 +302,7 @@ test("a push wins over a read that fails after it", async () => {
   socket.push(path, 200, "d2", record(2, "12"))
   while (cell.asked.length === 0) await Bun.sleep(1)
   fail(new TypeError("network down"))
-  expect(versionOf(await reading)).toBe(2)
+  expect(versionOf(await reading)).toBe("2")
   expect(client.getQueryState(options.queryKey)?.status).toBe("success")
 })
 
@@ -337,8 +349,8 @@ test("a read in flight when an unchanged push lands is still fenced: an older an
   expect(client.getQueryData(options.queryKey) === held).toBe(true)
   while (slow.asked.length === 0) await Bun.sleep(1)
   release(new Response(record(1, "10.50")))
-  expect(versionOf(await reading)).toBe(2)
-  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
+  expect(versionOf(await reading)).toBe("2")
+  expect(client.getQueryData<CellDocument<Item>>(options.queryKey)?.document.version).toBe("2")
 })
 
 /** A socket the real `LiveClient` drives: the test opens it, sends the cell's frames and drops it. */
@@ -390,12 +402,12 @@ test("a replay of what the socket last held never overwrites a newer read", asyn
   expect(live.snapshot(path)?.digest).toBe("d1")
   // A second observer mounts: the live client replays v1 to it at once.
   const stopSecond = attachLive({ client, live, route: ROUTE, queryKey: options.queryKey, path })
-  const held = client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)
-  expect(held?.document.version).toBe(2)
-  expect(held?.numbers.get("/values/amount")).toBe(EXACT)
+  const held = client.getQueryData<CellDocument<Item>>(options.queryKey)
+  expect(held?.document.version).toBe("2")
+  expect(held?.document.values.amount).toBe(EXACT)
   // A new frame from the cell is still written.
   socket.snapshot(id, "d3", record(3, "13"))
-  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(3)
+  expect(client.getQueryData<CellDocument<Item>>(options.queryKey)?.document.version).toBe("3")
   stopSecond()
   stopFirst()
 })
@@ -416,7 +428,7 @@ test("a live refusal clears once the cell answers the subscription again after a
   expect(second.sent).toContainEqual({ type: "subscribe", id, path })
   second.snapshot(id, "d2", record(2, "12"))
   expect(seen).toEqual(["live.too_many_subscriptions", null])
-  expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
+  expect(client.getQueryData<CellDocument<Item>>(options.queryKey)?.document.version).toBe("2")
   stop()
 })
 
@@ -536,7 +548,8 @@ test("a write is refused before any request once the tab shows another workspace
     expect(stale.posts).toEqual([])
     // The tab still shows this workspace, but the session moved: the Worker refuses with 409.
     setDisplayedScope(scope)
-    const moved = writer(client, page, () => new Response('{"code":"workspace.changed","message":"Your active workspace changed.","error":"Your active workspace changed."}', { status: 409 }))
+    // The Worker's refusal, in the cell's Refusal@2 envelope (worker/actor.ts `verifyWriteScope`).
+    const moved = writer(client, page, () => new Response('{"format":"norn/refusal@2","code":"workspace.changed","category":"conflict","retryable":false,"reason":null,"message":"Your active workspace changed.","explanation":"","error":"Your active workspace changed."}', { status: 409 }))
     const answered = await moved.observer.mutate(submitCall(ACTION, call, scope)).catch((error: unknown) => error)
     expect(answered).toBeInstanceOf(StudioScopeError)
     expect((answered as Error).message).toBe(WORKSPACE_CHANGED_MESSAGE)

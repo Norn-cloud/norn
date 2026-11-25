@@ -1,36 +1,38 @@
 import { hashKey, queryOptions, replaceEqualDeep, useMutation, useQuery, useQueryClient, type MutateOptions, type MutationOptions, type QueryClient, type QueryKey, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, refusalFrom, scopedQuery, type CallOptions, type FetchLike, type GetRoute, type NornClient, type NornDocument, type Operation, type PostRoute, type Success } from "../../../../packages/norn-sdk/src/client.ts"
-import type { LiveRefusal, LiveSnapshot } from "../../../../packages/norn-demo-ui/src/live/client.ts"
-import { CELL_FETCH_TIMEOUT_MS, CellUnavailable, fetchWithTimeout, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, recordCellReachable, sameStudioScope, scopeHeaders, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
+import {
+  createNornClient, NornUnavailable,
+  type ExactDocument, type Fetch, type GetRoute, type LiveRefusal, type LiveSnapshot, type NornClient, type Operation, type PostRoute,
+  type Refusal, type RouteCall, type RouteResult, type Success,
+} from "../../../../packages/norn-sdk/src/index.ts"
+import { CellUnavailable, defaultFetch, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
 import { CellRefusal, NotServed } from "./live-transport.ts"
 
 /**
  * One read primitive for the cell's documents (#1374): `useCellQuery(route, params, { scope })` is
- * a TanStack query over the typed client (`@norn/sdk`) joined to the page's live socket. The cell
- * pushes a changed answer and the pushed document is written into the cache (`setQueryData`):
- * nothing is read again and nothing polls. Studio renders what the cell sends and decides nothing.
+ * a TanStack query over the `@norn/sdk` client joined to the page's live socket. The cell pushes a
+ * changed answer and the pushed document is written into the cache (`setQueryData`): nothing is
+ * read again and nothing polls. Studio renders what the cell sends and decides nothing.
  *
  * - The key is `[route, orgId, environmentId, params]`: reads of two scopes never share an entry.
+ * - Documents are exact (`ExactDocument`): every number is the text the cell sent.
  * - A refusal is the existing refusal state: a {@link CellRefusal}, {@link CellUnavailable} or
- *   {@link NotServed} error, as `cellRead` raises them. A read's refusal is the query's error. A
- *   pushed refusal is the read's data, a {@link CellRefused} entry, so nothing TanStack does to the
- *   query's error state (a retry, a cancelled fetch's revert on unmount) can bring the refused
- *   document back; pages render {@link cellReadState}.
+ *   {@link NotServed} error. A read's refusal is the query's error. A pushed refusal is the read's
+ *   data, a {@link CellRefused} entry, so nothing TanStack does to the query's error state (a
+ *   retry, a cancelled fetch's revert on unmount) can bring the refused document back; pages
+ *   render {@link cellReadState}.
  * - Unmounting unsubscribes; the live client keeps its own limits (frame size, one wire
  *   subscription per path, the cell's `live.too_many_subscriptions`).
  * - Nothing is kept across reloads. Persistence lands with the server's cache-policy flag (#1374),
  *   keyed by reader and scope.
  */
 
-/** A cell document as the cache holds it: Studio's `Read<T>` shape, plus where it came from. */
+/** A cell document as the cache holds it. */
 export interface CellDocument<T> {
   readonly kind: "document"
   readonly status: number
-  readonly document: T
-  readonly numbers: ReadonlyMap<string, string>
-  readonly origin: "live"
+  readonly document: ExactDocument<T>
   /** The live digest of a pushed document; null for a read. */
   readonly digest: string | null
 }
@@ -49,7 +51,7 @@ export interface CellRefused {
 export type CellEntry<T> = CellDocument<T> | CellRefused
 
 /** The parameters of one read: its path parameters and query, without the scope. */
-export type CellParams<P extends GetRoute> = Pick<CallOptions<Operation<P, "get">>, "path" | "query">
+export type CellParams<P extends GetRoute> = Pick<RouteCall<Operation<P, "get">>, "path" | "query">
 export type CellData<P extends GetRoute> = CellEntry<Success<Operation<P, "get">>>
 export type CellQueryKey = readonly [route: string, orgId: string, environmentId: string, params: unknown]
 
@@ -58,75 +60,46 @@ const NO_SCOPE: StudioScope = { orgId: "", environmentId: "" }
 export const cellQueryKey = (route: string, scope: StudioScope, params: unknown): CellQueryKey =>
   [route, scope.orgId, scope.environmentId, params ?? {}]
 
-const browserFetch: FetchLike = (input, init) => fetch(input, init)
-
 /**
- * The typed client through Studio's host proxy, as the signed-in account; reads keep Studio's read
- * deadline. A write carries the expected-scope headers (#1643), so Studio's Worker refuses it
- * (`409 workspace.changed`) if the session's active workspace is no longer `scope`.
+ * The `@norn/sdk` client for `scope` through Studio's host proxy, as the signed-in account
+ * (`scopedHostFetch`): reads keep Studio's read deadline, and a write carries the expected-scope
+ * headers (#1643), so Studio's Worker refuses it (`409 workspace.changed`) if the session's active
+ * workspace is no longer `scope`.
  */
-export function studioCellClient(scope: StudioScope, fetcher: FetchLike = browserFetch): NornClient {
-  return createNornClient({
-    baseUrl: "/api/host",
-    scope,
-    credentials: "same-origin",
-    fetch: async (input, init) => {
-      const method = init?.method?.toUpperCase() ?? "GET"
-      if (method === "GET") return fetchWithTimeout(fetcher, input, init, CELL_FETCH_TIMEOUT_MS, () => recordCellReachable(scope))
-      const headers = new Headers(init?.headers)
-      for (const [name, value] of Object.entries(scopeHeaders(scope))) headers.set(name, value)
-      const response = await fetcher(input, { ...init, headers })
-      if (response.ok) recordCellReachable(scope)
-      return response
-    },
-  })
-}
+export const studioCellClient = (scope: StudioScope, fetcher: Fetch = defaultFetch): NornClient =>
+  createNornClient({ scope, fetch: scopedHostFetch(fetcher, "/api/host", async () => scope) })
 
 /** The scoped path a live subscription names, as the GET asks it. */
-export const cellPath = (route: string, scope: StudioScope, params: { readonly path?: unknown; readonly query?: unknown } = {}): string =>
-  `${fillRoute(route, params.path as Readonly<Record<string, unknown>> | undefined)}?${scopedQuery(params.query as Readonly<Record<string, unknown>> | undefined, scope)}`
+export const cellPath = <P extends GetRoute>(route: P, scope: StudioScope, params: CellParams<P>): string =>
+  (studioCellClient(scope).path as (route: string, call?: object) => string)(route, params)
 
-// The Studio Worker's answer when no cell host is configured (live-transport.ts `NO_HOST`).
-const NO_HOST = "No Norn host is connected to this deployment."
-
-/** The existing refusal state for an answer the cell (or Studio's Worker) gave with `status`. */
-function answerError(status: number, body: unknown, what: string): Error {
-  const record = body !== null && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null
-  const code = typeof record?.["code"] === "string" ? record["code"] : undefined
-  if (status === 404 && (code === undefined || code === "route.not_found")) return new NotServed(what)
-  if (status === 503 && record?.["error"] === NO_HOST) return new NotServed(what)
-  const detail = parseUnavailableDetail(record)
-  const message = typeof record?.["message"] === "string" && record["message"] !== "" ? record["message"] : undefined
-  if (status === 503) return new CellUnavailable(status, message, detail)
-  if (code !== undefined) return new CellRefusal(status, code, message ?? code, detail)
-  return new CellUnavailable(status, message, detail)
+/** A refusal the cell answered a read with, over HTTP or pushed, as the existing refusal state. */
+function refusalState(refusal: Refusal): Error {
+  const detail = parseUnavailableDetail(refusal)
+  if (refusal.status === 503) return new CellUnavailable(503, refusal.message === "" ? undefined : refusal.message, detail)
+  return new CellRefusal(refusal.status, refusal.code, refusal.message === "" ? refusal.code : refusal.message, detail)
 }
 
 /**
- * The typed client's error as the existing refusal state. A typed refusal keeps its code and
- * detail. An answer the SDK did not accept as a refusal is never read for one: it is not served
- * (a 404 naming no route, or Studio's Worker with no host) or the cell is unavailable, with no
- * code and no detail.
+ * The SDK's "no readable answer" (`NornUnavailable`) as the existing state: a route the cell does
+ * not serve (a 404 or 503 that is no refusal, as Studio's Worker answers with no host), or a cell
+ * that did not answer. No code and no detail are read from it. Any other error passes as is.
  */
-export function studioError(error: unknown, what: string): unknown {
-  if (error instanceof NornRefusalError) return answerError(error.status, error.refusal, what)
-  if (error instanceof NornUnavailableError) {
-    if (error.status === 0) return error.cause instanceof CellUnavailable ? error.cause : new CellUnavailable(0, undefined, { retryable: true })
-    let body: unknown = null
-    try { body = error.body === null || error.body.trim() === "" ? null : JSON.parse(error.body) } catch { body = undefined }
-    const record = body !== null && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null
-    if (error.status === 404 && (body === null || (record !== null && (record["code"] === undefined || record["code"] === "route.not_found")))) return new NotServed(what)
-    if (error.status === 503 && record?.["error"] === NO_HOST) return new NotServed(what)
-    return new CellUnavailable(error.status, undefined, {})
-  }
-  return error
+function unansweredState(error: unknown, what: string): unknown {
+  if (!(error instanceof NornUnavailable)) return error
+  if (error.notServed) return new NotServed(what)
+  return new CellUnavailable(error.status, undefined, error.status === 0 ? { retryable: true } : {})
 }
 
-type LooseCall = (route: string, options?: { readonly path?: unknown; readonly query?: unknown; readonly body?: unknown; readonly signal?: AbortSignal }) => Promise<NornDocument<unknown>>
+/**
+ * The refusal state for an answer the cell pushed with a failing status. The SDK's live client
+ * checks the body as a route's HTTP answer is checked (`routeRefusalOf`): a pushed body that is no
+ * Refusal@2 has no `refusal`, so it is unavailable (or not served), never read for a code.
+ */
+export const pushedRefusal = (snapshot: Pick<LiveSnapshot, "status" | "refusal">, what: string): Error =>
+  snapshot.refusal !== undefined ? refusalState(snapshot.refusal) : unansweredState(new NornUnavailable(snapshot.status), what) as Error
 
-const asDocument = <T,>(read: NornDocument<unknown>): CellDocument<T> => ({
-  kind: "document", status: read.status, document: read.document as T, numbers: read.numbers, origin: "live", digest: null,
-})
+type LooseCall = (route: string, call?: object) => Promise<RouteResult<unknown>>
 
 /**
  * The live sequence of each read (per query hash): it advances on every frame the cell sends for
@@ -149,7 +122,7 @@ export interface CellQueryConfig {
   readonly enabled?: boolean
   /** What the page calls this read in a "not served" state. */
   readonly what?: string
-  readonly fetch?: FetchLike
+  readonly fetch?: Fetch
 }
 
 /** The query options of one cell read (what `useCellQuery` runs). */
@@ -164,19 +137,22 @@ export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route:
       if (config.scope === null) throw new StudioScopeError(NO_DATA_CELL)
       const hash = hashKey(queryKey)
       const started = sequenceOf(client, hash)
-      let read: NornDocument<unknown>
       // A frame the cell pushed while this read was in flight (a document or a refusal) is at least
       // as new as the read's answer.
       const pushedSince = (): CellData<P> | undefined =>
         sequenceOf(client, hash) === started ? undefined : client.getQueryData<CellData<P>>(queryKey)
+      let read: RouteResult<unknown>
       try {
-        read = await (studioCellClient(config.scope, config.fetch).get as unknown as LooseCall)(route, { ...params, signal })
+        read = await (studioCellClient(config.scope, config.fetch).get as LooseCall)(route, { ...params, signal })
       } catch (error) {
         const pushed = pushedSince()
         if (pushed !== undefined) return pushed
-        throw studioError(error, what)
+        throw unansweredState(error, what)
       }
-      return pushedSince() ?? asDocument(read)
+      const pushed = pushedSince()
+      if (pushed !== undefined) return pushed
+      if (read.kind === "refused") throw refusalState(read)
+      return { kind: "document", status: read.status, document: read.document as ExactDocument<Success<Operation<P, "get">>>, digest: null }
     },
   })
 }
@@ -184,20 +160,6 @@ export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route:
 /** The slice of the live client a read listens through (`LiveClient` is one). */
 export interface LiveSource {
   subscribe(path: string, listener: (snapshot: LiveSnapshot) => void, options?: { readonly onRefused?: (refusal: LiveRefusal) => void }): () => void
-}
-
-const sameNumbers = (a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>) =>
-  a.size === b.size && [...a].every(([pointer, text]) => b.get(pointer) === text)
-
-/**
- * The refusal state for a refusal the cell pushed, classified exactly as an HTTP answer is: the
- * SDK's one refusal check (`refusalFrom`), then {@link studioError}. A pushed body that is no
- * `norn/refusal@2` document is unavailable, never read for a code.
- */
-export function pushedRefusal(status: number, body: unknown, what: string): Error {
-  const refusal = refusalFrom(body)
-  const error = refusal !== null ? new NornRefusalError(status, refusal) : new NornUnavailableError(status, body === undefined ? null : JSON.stringify(body))
-  return studioError(error, what) as Error
 }
 
 /**
@@ -213,7 +175,6 @@ export function pushedRefusal(status: number, body: unknown, what: string): Erro
  * - An unchanged answer is not written again when the cache already shows that document as a
  *   success. After a failed read (TanStack keeps the old document beside the error) the same
  *   answer is written, so the cell's confirmation clears the error.
- *
  * - The live client hands a new listener what it last received for the path at once. That replay
  *   is not a new answer: every listener of the path writes this same entry, so the cache already
  *   holds it or something newer (a later read). It is ignored.
@@ -241,14 +202,14 @@ export function attachLive(options: {
       const current = state?.data
       // An unchanged answer (the first frame after subscribing is the page's own read) keeps the
       // cached document as it is, but only when the cache shows it as a success; the sequence above
-      // still fences any read in flight.
-      if (state?.status === "success" && current?.kind === "document"
-        && replaceEqualDeep(current.document, snapshot.body) === current.document && sameNumbers(current.numbers, snapshot.numbers)) return
-      const pushed: CellDocument<unknown> = { kind: "document", status: snapshot.status, document: snapshot.body, numbers: snapshot.numbers, origin: "live", digest: snapshot.digest }
+      // still fences any read in flight. The exact body holds every number's text, so equal bodies
+      // are equal to the digit.
+      if (state?.status === "success" && current?.kind === "document" && replaceEqualDeep(current.document, snapshot.exact) === current.document) return
+      const pushed: CellDocument<unknown> = { kind: "document", status: snapshot.status, document: snapshot.exact, digest: snapshot.digest }
       client.setQueryData(queryKey, pushed)
       return
     }
-    const refused: CellRefused = { kind: "refused", refusal: pushedRefusal(snapshot.status, snapshot.body, options.what ?? route), seq: sequenceOf(client, hash) }
+    const refused: CellRefused = { kind: "refused", refusal: pushedRefusal(snapshot, options.what ?? route), seq: sequenceOf(client, hash) }
     client.setQueryData(queryKey, refused)
   }, onLiveRefusal ? { onRefused: onLiveRefusal } : undefined)
   replaying = false
@@ -327,8 +288,11 @@ export function invalidateCellRoutes(client: QueryClient, scope: StudioScope, pr
 }
 
 /** The variables of one call: its path parameters, query and body. */
-export type CellCall<P extends PostRoute> = Pick<CallOptions<Operation<P, "post">>, "path" | "query" | "body">
-export type CellResult<P extends PostRoute> = CellDocument<Success<Operation<P, "post">>>
+export type CellCall<P extends PostRoute> = Pick<RouteCall<Operation<P, "post">>, "path" | "query" | "body">
+/** What the cell answered a call with: its document, or its refusal (an answer, as the SDK reads it, not an error). */
+export type CellResult<P extends PostRoute> = RouteResult<Success<Operation<P, "post">>>
+/** A call the cell answered with its document. */
+export type CellWritten<P extends PostRoute> = Extract<CellResult<P>, { readonly kind: "document" }>
 
 /**
  * One call as it was submitted, fixed then and never changed: the operation (route and method), a
@@ -344,7 +308,7 @@ export interface CellSubmission<P extends PostRoute> {
   readonly scope: StudioScope | null
   /** The body's `idempotencyKey`, when it carries one: the cell commits a retried call once. */
   readonly idempotencyKey: string | null
-  readonly invalidates: ((result: CellResult<P>) => readonly CellRoutePrefix[]) | null
+  readonly invalidates: ((result: CellWritten<P>) => readonly CellRoutePrefix[]) | null
 }
 
 /** Every submission `submitCall` made: a variables object built any other way never runs. */
@@ -364,7 +328,7 @@ function frozen<T>(value: T): T {
  * call is deep-copied and frozen, so changing the caller's object afterwards changes nothing, and
  * each submission is its own call (one variables object submitted in two scopes is two calls).
  */
-export function submitCall<P extends PostRoute>(route: P, call: CellCall<P>, scope: StudioScope | null, invalidates?: (result: CellResult<P>, call: CellCall<P>) => readonly CellRoutePrefix[]): CellSubmission<P> {
+export function submitCall<P extends PostRoute>(route: P, call: CellCall<P>, scope: StudioScope | null, invalidates?: (result: CellWritten<P>, call: CellCall<P>) => readonly CellRoutePrefix[]): CellSubmission<P> {
   const copy = frozen(structuredClone({ path: call.path, query: call.query, body: call.body })) as CellCall<P>
   const key = (copy.body as { readonly idempotencyKey?: unknown } | undefined)?.idempotencyKey
   const submission: CellSubmission<P> = Object.freeze({
@@ -373,16 +337,10 @@ export function submitCall<P extends PostRoute>(route: P, call: CellCall<P>, sco
     call: copy,
     scope: scope === null ? null : Object.freeze({ orgId: scope.orgId, environmentId: scope.environmentId }),
     idempotencyKey: typeof key === "string" ? key : null,
-    invalidates: invalidates === undefined ? null : (result: CellResult<P>) => invalidates(result, copy),
+    invalidates: invalidates === undefined ? null : (result: CellWritten<P>) => invalidates(result, copy),
   })
   submissions.add(submission)
   return submission
-}
-
-/** Whether `error` is Studio's Worker refusing a write whose expected scope is no longer the session's. */
-function workspaceChanged(error: unknown): boolean {
-  if (!(error instanceof NornUnavailableError) || error.status !== 409 || error.body === null) return false
-  try { return (JSON.parse(error.body) as { readonly code?: unknown } | null)?.code === "workspace.changed" } catch { return false }
 }
 
 /**
@@ -393,11 +351,12 @@ function workspaceChanged(error: unknown): boolean {
  * displayed workspace (`getDisplayedScope`, #1643) is no longer the one it was submitted in: a call
  * queued (offline, or behind another) in workspace A never starts in B. A variables object
  * `submitCall` did not make is refused too. The request carries the expected-scope headers, so the
- * Worker refuses it if the session moved in another tab; that refusal is the same error. On
- * success the submission's own invalidation runs in its own scope.
+ * Worker refuses it (`409 workspace.changed`) if the session moved in another tab; that refusal is
+ * the same error. Any other refusal is the call's answer. On a document the submission's own
+ * invalidation runs in its own scope.
  */
 export function cellMutationOptions<P extends PostRoute>(client: QueryClient, current: () => StudioScope | null, config: {
-  readonly fetch?: FetchLike
+  readonly fetch?: Fetch
 } = {}): MutationOptions<CellResult<P>, Error, CellSubmission<P>> {
   return {
     mutationFn: async (submission) => {
@@ -405,15 +364,13 @@ export function cellMutationOptions<P extends PostRoute>(client: QueryClient, cu
       const { scope } = submission
       const displayed = getDisplayedScope()
       if (!sameStudioScope(scope, current()) || (displayed !== undefined && !sameStudioScope(scope, displayed))) throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-      try {
-        return asDocument(await (studioCellClient(scope, config.fetch).post as unknown as LooseCall)(submission.route, submission.call))
-      } catch (error) {
-        throw workspaceChanged(error) ? new StudioScopeError(WORKSPACE_CHANGED_MESSAGE) : error
-      }
+      const result = await (studioCellClient(scope, config.fetch).post as LooseCall)(submission.route, submission.call) as CellResult<P>
+      if (result.kind === "refused" && result.status === 409 && result.code === "workspace.changed") throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+      return result
     },
     onSuccess: async (result, submission) => {
-      if (submissions.has(submission) && submission.scope !== null && submission.invalidates !== null) {
-        await invalidateCellRoutes(client, submission.scope, submission.invalidates(result))
+      if (result.kind === "document" && submissions.has(submission) && submission.scope !== null && submission.invalidates !== null) {
+        await invalidateCellRoutes(client, submission.scope, submission.invalidates(result as CellWritten<P>))
       }
     },
   }
@@ -428,16 +385,17 @@ export type CellMutation<P extends PostRoute> = Omit<UseMutationResult<CellResul
 }
 
 /**
- * Call `route` in `scope`. A refusal is the typed `NornRefusalError` (code, category, checker
- * diagnostics); on success the reads `invalidates` names are read again. Each call is submitted
- * (`submitCall`) when `mutate` is called, with the route, scope and invalidation of that render:
- * a call queued while the page later renders another route or scope still runs as submitted (see
- * {@link cellMutationOptions}).
+ * Call `route` in `scope`. The answer is the cell's document or its typed refusal (code,
+ * category, checker diagnostics at their pointers); a lost answer is the SDK's `NornUnavailable`,
+ * whose `outcome` says whether the call may have been applied. On a document the reads
+ * `invalidates` names are read again. Each call is submitted (`submitCall`) when `mutate` is
+ * called, with the route, scope and invalidation of that render: a call queued while the page
+ * later renders another route or scope still runs as submitted (see {@link cellMutationOptions}).
  */
 export function useCellMutation<P extends PostRoute>(route: P, config: {
   readonly scope: StudioScope | null
-  readonly invalidates?: (result: CellResult<P>, call: CellCall<P>) => readonly CellRoutePrefix[]
-  readonly fetch?: FetchLike
+  readonly invalidates?: (result: CellWritten<P>, call: CellCall<P>) => readonly CellRoutePrefix[]
+  readonly fetch?: Fetch
 }): CellMutation<P> {
   const client = useQueryClient()
   const latest = useRef({ route, scope: config.scope, invalidates: config.invalidates })

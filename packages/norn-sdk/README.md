@@ -33,6 +33,20 @@ per call) pins calls, so a cell that has installed other definitions refuses
 holds the `norn.live.v1` subscription socket. There is no mock mode: `norn dev`
 serves the real routes.
 
+Any other route of the contract is read with `client.get(route, { path, query })`
+and called with `client.post(route, { path, query, body })`, typed by the
+generated `paths`: an unserved route, a missing path parameter or a call-level
+`orgId` is a compile error. Documents are read exactly (`ExactDocument<T>`, every
+number as its source text, as `parseExactJson` reads it). The answer is
+`document | refused`; a 404 Refusal@2 is the route's refusal (a record it does
+not hold), except `route.not_found`, which like any non-refusal 404/503 throws
+`NornUnavailable` with `notServed`. A route that answers with a file (an export)
+is read with `client.download`, as bytes in a media type the route declares
+(`FILE_MEDIA`), never through the JSON reader. `client.path(route, ...)` is the
+scoped path a live subscription names. `LiveClient` frames are the contract's
+`LiveClientMessage` / `LiveServerMessage`; each snapshot carries its body read
+exactly (`exact`) and, for a failing status, the route's checked `refusal`.
+
 `norn codegen --ts <artifacts> [--base <artifacts>] --out FILE` (in
 `tools/norn-ts`) emits one types-only `.d.ts` with the `ActionMap`, `ObjectMap`
 and `DefinitionsDigest` of an admitted definition set; `--check` fails when the

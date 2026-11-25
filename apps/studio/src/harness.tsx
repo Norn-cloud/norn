@@ -2,23 +2,19 @@
  * The read harness (#1374): one record read through `useCellQuery`, outside the Studio shell, so
  * browser rows prove the typed client, the live socket and the cache against a stand-in cell.
  * `?type=<concept>&id=<identity>` names the record. It renders only what the cell sends: the
- * record's values with each number's exact text, its version, and whether pushes arrive.
+ * record's values (every number is its exact text, as the SDK reads documents), its version, and
+ * whether pushes arrive.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { LoadState } from "@/components/load-state"
-import { member } from "./lib/exact.ts"
-import { useCellQuery, type CellDocument } from "./lib/cell-query.ts"
+import { useCellQuery } from "./lib/cell-query.ts"
 import { useStudioScope } from "./lib/definitions.ts"
-import type { Schemas } from "./lib/transport.ts"
 import "./index.css"
 
-type QueriedRecord = Schemas["NornQueriedRecord"]
-
-/** A value as the cell sent it: a number's exact text, anything else as JSON. */
-const shown = (read: CellDocument<QueriedRecord>, property: string, value: unknown): string =>
-  typeof value === "number" ? read.numbers.get(`/values/${member(property)}`) ?? String(value) : typeof value === "string" ? value : JSON.stringify(value)
+/** A value as the cell sent it: text (a number's exact text included) as is, anything else as JSON. */
+const shown = (value: unknown): string => typeof value === "string" ? value : JSON.stringify(value)
 
 function RecordRead({ type, id }: { readonly type: string; readonly id: string }) {
   const scope = useStudioScope()
@@ -35,7 +31,7 @@ function RecordRead({ type, id }: { readonly type: string; readonly id: string }
             {Object.entries(doc.document.values ?? {}).map(([property, value]) => (
               <div key={property} className="contents">
                 <dt className="text-muted-foreground">{property}</dt>
-                <dd data-testid={`record-value-${property}`} className="font-mono">{shown(doc, property, value)}</dd>
+                <dd data-testid={`record-value-${property}`} className="font-mono">{shown(value)}</dd>
               </div>
             ))}
           </dl>

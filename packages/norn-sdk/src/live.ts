@@ -3,14 +3,28 @@
 // sent for each path. It never polls and never computes data: a view shows the cell's answer or
 // says it has none yet. An expired token closes the socket with 4401 and the client reconnects at
 // once (the host mints a fresh token per upgrade); any other loss reconnects with backoff, and
-// after `maxFailures` failed opens the client reports `unavailable` so views can say so.
+// after `maxFailures` failed opens the client reports `unavailable` so views can say so. The frames
+// are the contract's (`LiveClientMessage`, `LiveServerMessage`, generated from
+// `crates/norn-api/src/live.rs`).
+import type { components } from "./generated/norn-api.ts"
+import { routeRefusalOf, type Refusal } from "./client.ts"
+import { parseExactJson, type ExactJson } from "./exact-json.ts"
 
 export const LIVE_PROTOCOL = "norn.live.v1"
+
+/** A frame a client sends: `subscribe` or `unsubscribe`. */
+export type LiveClientMessage = components["schemas"]["LiveClientMessage"]
+/** A frame the cell sends: `snapshot` or `refused`. */
+export type LiveServerMessage = components["schemas"]["LiveServerMessage"]
 
 export interface LiveSnapshot {
   readonly status: number
   readonly digest: string
   readonly body: unknown
+  /** `body` with every number as its JSON source text, as `parseExactJson` reads it. */
+  readonly exact: ExactJson
+  /** When `status` is no success and `body` is the route's Refusal@2: that refusal, checked as a route's HTTP answer is (`routeRefusalOf`). */
+  readonly refusal?: Refusal
 }
 
 export interface LiveRefusal {
@@ -137,13 +151,13 @@ export class LiveClient {
     this.#options.onState?.(state)
   }
 
-  #send(message: unknown) {
+  #send(message: LiveClientMessage) {
     if (this.#socket?.readyState === OPEN) this.#socket.send(JSON.stringify(message))
   }
 
   #sendSubscribe(entry: Entry) {
     if (entry.refused?.code === "live.not_subscribable") return
-    const wire = JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path })
+    const wire = JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path } satisfies LiveClientMessage)
     if (utf8.encode(wire).byteLength > MAX_MESSAGE) {
       // Never send a frame larger than MAX_MESSAGE: the cell closes the shared socket with 1009.
       const refusal: LiveRefusal = { code: "live.not_subscribable", message: "subscription exceeds the live protocol frame limit" }
@@ -215,8 +229,14 @@ export class LiveClient {
       }
       const entry = typeof message.id === "string" ? this.#byId.get(message.id) : undefined
       if (!entry || message.type !== "snapshot" || typeof message.status !== "number" || typeof message.digest !== "string") return
+      // The body exactly: the cell sends the GET's own bytes, so a decimal keeps every digit.
+      const frame = parseExactJson(event.data) as { readonly body?: ExactJson } | undefined
+      if (frame === undefined) return
+      const exact = frame.body ?? null
+      const { status, digest, body } = message
+      const refusal = status >= 200 && status < 300 ? null : routeRefusalOf(status, body, () => exact)
       entry.refused = undefined
-      entry.last = { status: message.status, digest: message.digest, body: message.body }
+      entry.last = { status, digest, body, exact, ...refusal === null ? {} : { refusal } }
       for (const subscriber of entry.subscribers) subscriber.listener(entry.last)
     })
     socket.addEventListener("close", (event) => {
