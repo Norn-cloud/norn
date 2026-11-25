@@ -1,5 +1,5 @@
-import { readDocument, type Read } from "./exact.ts"
-import { readsOf } from "./record-name.ts"
+import { readDocument, type Read } from "../exact.ts"
+import { readsOf } from "../record-name.ts"
 import type {
   Answer,
   Artifact,
@@ -9,38 +9,39 @@ import type {
   LinkPage,
   Metric,
   ObjectPage,
+  ObjectReads,
   ObjectRecord,
   ObjectType,
   Question,
   QuestionAnswer,
   SourceLineage,
   Transport,
-} from "./transport.ts"
+} from "../transport.ts"
 
 // Called, not evaluated at import: only Vite provides import.meta.glob, and tests may import transport without Vite.
 const recordings = () => import.meta.glob<string>(
   [
-    "../../../../fixtures/demo/answers/*.json",
-    "../../../../fixtures/demo/explorer/**/*.json",
-    "../../../../fixtures/demo/guarantees/*.json",
+    "../../../../../fixtures/demo/answers/*.json",
+    "../../../../../fixtures/demo/explorer/**/*.json",
+    "../../../../../fixtures/demo/guarantees/*.json",
   ],
   { query: "?raw", import: "default", eager: true },
 )
 
 const optional = <T,>(name: string): Read<T> | null =>
-  recordings()[`../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)
+  recordings()[`../../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)
 
 /** Recorded object documents are named by the object's id with `/` written as `~`. */
 const objectFile = (objectType: string, id: string, read: string) =>
   `explorer/objects/${objectType}/${id.replaceAll("/", "~")}.${read}.json`
 
 function recorded<T>(name: string): Read<T> {
-  const source = recordings()[`../../../../fixtures/demo/${name}`]
+  const source = recordings()[`../../../../../fixtures/demo/${name}`]
   if (source === undefined) throw new Error(`No recorded document ${name}`)
   return readDocument<T>(source, "recorded")
 }
 
-const DEFINITIONS = () => import.meta.glob<string>("../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
+const DEFINITIONS = () => import.meta.glob<string>("../../../../../registry/core/artifacts/*.json", { query: "?raw", import: "default", eager: true })
 
 /**
  * The one recorded question's document of `kind` (`question.json`, `k1.answer.json`, …), whatever
@@ -48,7 +49,7 @@ const DEFINITIONS = () => import.meta.glob<string>("../../../../registry/core/ar
  * `fixtures/demo/answers` must end in `.<kind>`.
  */
 function recordedAnswer<T>(kind: string): Read<T> {
-  const answers = "../../../../fixtures/demo/answers/"
+  const answers = "../../../../../fixtures/demo/answers/"
   // `<question>.<kind>`, where the question's own name has no dot: `k1.answer.json` never matches `….k1-as-of.answer.json`.
   const names = Object.keys(recordings()).filter((path) => {
     if (!path.startsWith(answers) || !path.endsWith(`.${kind}`)) return false
@@ -78,9 +79,17 @@ export const recordedTransportImpl: Transport = {
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
   objectCounts: async () => ({}),
   guarantees: async () => ["original", "mutant"].map((name) => ({ name, read: recorded<Guarantees>(`guarantees/constitution.${name}.guarantees.json`) })),
-  objectPage: async (objectType, after) =>
+}
+
+/**
+ * The recorded records: one page of a type, and one object with its links and lineage, replayed byte
+ * for byte. Read only through the recorded workspace's reader (`lib/workspace.tsx`), never as a stand-in
+ * for a live cell.
+ */
+export const recordedRecords = {
+  objectPage: (objectType: string, after?: string): Read<ObjectPage> | null =>
     optional<ObjectPage>(`explorer/objects/${objectType}${after === undefined ? "" : `.after.${after.replaceAll("/", "~")}`}.page.json`),
-  object: async (objectType, id) => {
+  object: (objectType: string, id: string): ObjectReads | null => {
     const object = optional<ObjectRecord>(objectFile(objectType, id, "object"))
     const links = optional<LinkPage>(objectFile(objectType, id, "links"))
     const source = optional<SourceLineage>(objectFile(objectType, id, "source"))

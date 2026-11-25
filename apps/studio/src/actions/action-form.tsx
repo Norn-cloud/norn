@@ -12,7 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils"
 import { ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft, type FormField, type Section, type Spec } from "../lib/actions.ts"
 import { createIntentKey, type ActionReceipt, type ActionSummary, type Diagnostic } from "../../../../packages/norn-sdk/src/index.ts"
-import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
+import { parkedOf, unreached, type ParkedCall, type Phase, type Unreached } from "../lib/screen/call.ts"
 import { listRequested, requestedOne, requestedPath, requestedWords, runnable, type RequestedDecision } from "../lib/decisions.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
 import { useCall, type Call } from "../lib/screen/use-call.ts"
@@ -29,8 +29,8 @@ export type EnumLabelLookup = (pointer: string, value: string) => string | undef
 const EnumLabels = createContext<EnumLabelLookup>(() => undefined)
 
 /** The words for a call that never reached a deciding cell. */
-const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
-  phase.reason === "no-cell" ? "This workspace has no data cell yet." : phase.reason === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? "The cell did not answer; nothing was saved."
+const unreachable = (phase: Unreached) =>
+  phase.kind === "not_served" ? "This workspace has no data cell yet." : phase.kind === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? "The cell did not answer; nothing was saved."
 
 /**
  * One governed action as a form built from its admitted input schema. The cell validates and
@@ -97,7 +97,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   // on the parked call's panel, never over a form whose fields that call did not come from.
   const [ranApproved, setRanApproved] = useState<string | null>(null)
   const parkedNow = parkedOf(machine)
-  const committed = phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone"
+  const committed = phase.kind === "committed" || phase.kind === "undoing" || phase.kind === "undo_failed" || phase.kind === "undone"
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
   // When this refusal reached the form: the refusal document carries no time, and the cell keeps no receipt of it.
@@ -120,8 +120,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation || phase.message) ?? refusedGuardWords(phase.message) : null
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
   useEffect(() => {
-    if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
-    if (phase.kind === "pending") onDirty?.(false)
+    if (phase.kind === "committed") { onDirty?.(false); onCommitted?.() }
+    if (phase.kind === "pending_approval") onDirty?.(false)
   }, [phase.kind])
   useEffect(() => { if (parkedNow !== null) onParked?.(parkedNow) }, [parkedNow?.decision.id, parkedNow?.key])
   useEffect(() => {
@@ -143,14 +143,14 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const top = unplaced(diagnostics, fields, draft)
   const refusal = phase.kind === "refused" ? <RefusalPanel phase={phase} action={action} technical={technical} request={request} at={refusedAt ?? new Date()} guard={guard} top={top} atFields={ranApproved === null} onUse={ranApproved !== null ? undefined : (path, text) => edit(`/${path}`, text)} /> : null
 
-  if (phase.kind === "pending" || (ranApproved !== null && (phase.kind === "sending" || phase.kind === "refused" || phase.kind === "failed"))) {
-    return <ParkedCallPanel action={action} decisionId={phase.kind === "pending" ? phase.decision.id : ranApproved!} parkedExpiresAtMs={phase.kind === "pending" ? phase.decision.expiresAtMs : null}
-      phase={phase} technical={technical} runNow={runNow} refusal={refusal} failure={phase.kind === "failed" ? unreachable(phase) : null}
+  if (phase.kind === "pending_approval" || (ranApproved !== null && (phase.kind === "sending" || phase.kind === "refused" || unreached(phase)))) {
+    return <ParkedCallPanel action={action} decisionId={phase.kind === "pending_approval" ? phase.decision.id : ranApproved!} parkedExpiresAtMs={phase.kind === "pending_approval" ? phase.decision.expiresAtMs : null}
+      phase={phase} technical={technical} runNow={runNow} refusal={refusal} failure={unreached(phase) ? unreachable(phase) : null}
       onRetry={() => dispatch({ kind: "retry" })} onRun={(call) => { setRanApproved(call.decisionId); dispatch({ kind: "run-approved", ...call, next: newKey() }) }}
-      onNew={phase.kind === "pending" || phase.kind === "refused" ? () => {
+      onNew={phase.kind === "pending_approval" || phase.kind === "refused" ? () => {
         // A new draft is a new call under a new key; the parked one keeps waiting in the cell.
         onUnparked?.(); setDraft(initial); setStep(0); setReached(0); setRanApproved(null)
-        if (phase.kind === "pending") dispatch({ kind: "again", key: newKey() })
+        if (phase.kind === "pending_approval") dispatch({ kind: "again", key: newKey() })
         else dispatch({ kind: "edit", key: newKey() })
       } : undefined} onClose={onClose} />
   }
@@ -178,7 +178,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
       {refusal}
-      {phase.kind === "failed" && (
+      {unreached(phase) && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <span>{unreachable(phase)}</span><span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={() => dispatch({ kind: "retry" })}>Retry</Button>
@@ -203,7 +203,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         )
       })}
       </fieldset>
-      {phase.kind === "confirm" && (
+      {phase.kind === "confirming" && (
         <div role="alertdialog" aria-labelledby="confirm-title" className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
           <p id="confirm-title" className="flex items-center gap-2 font-medium text-destructive"><AlertTriangle className="size-4" aria-hidden />
             {action.uiEffects.irreversible ? "This can't be undone." : "This removes business data."}</p>
@@ -214,11 +214,11 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       <div className="sticky bottom-0 z-10 -mx-6 flex flex-wrap items-center gap-2 border-t border-node-border bg-card/95 px-6 py-3 backdrop-blur-sm">
         {dirty && phase.kind === "editing" && <span className="text-meta text-muted-foreground">Not sent yet</span>}
         <span className="flex-1" />
-        {phase.kind === "confirm"
+        {phase.kind === "confirming"
           ? <Button type="button" variant="ghost" onClick={() => dispatch({ kind: "back" })}>Back</Button>
           : wizard && step > 0 && <Button type="button" variant="ghost" onClick={() => go(step - 1)}><ChevronLeft /> Back</Button>}
-        <Button type="submit" variant={phase.kind === "confirm" ? "destructive" : "default"} disabled={blocked !== null || phase.kind === "sending"}>
-          {phase.kind === "sending" ? "Sending…" : phase.kind === "confirm" ? `Yes, ${action.title.toLowerCase()}`
+        <Button type="submit" variant={phase.kind === "confirming" ? "destructive" : "default"} disabled={blocked !== null || phase.kind === "sending"}>
+          {phase.kind === "sending" ? "Sending…" : phase.kind === "confirming" ? `Yes, ${action.title.toLowerCase()}`
             : wizard && step < review - 1 ? "Next" : wizard && step === review - 1 ? "Review" : action.title}
         </Button>
       </div>
@@ -586,7 +586,7 @@ function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technic
   // A decider's answer reaches the panel when the cell commits it; nothing polls.
   useLiveRefresh(requestedPath(decisionId), requestedKey(decisionId))
   const item: RequestedDecision | null = read.data?.kind === "ok" ? requestedOne(read.data.value, decisionId) : null
-  const offer = phase.kind === "pending" && item !== null ? runnable(item) : null
+  const offer = phase.kind === "pending_approval" && item !== null ? runnable(item) : null
   const sending = phase.kind === "sending"
   // Opened from the inbox's "Approved, run it": run once, as soon as the cell offers it here.
   const ran = useRef(false)
@@ -599,7 +599,7 @@ function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technic
     <section aria-label={approved ? "Approved call" : "Sent for approval"} className="grid gap-4">
       <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
         <p role="status" className="flex items-start gap-2 text-sm font-medium">
-          {phase.kind === "refused" || phase.kind === "failed"
+          {phase.kind === "refused" || unreached(phase)
             ? <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
             : approved
             ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
@@ -642,7 +642,7 @@ function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technic
   )
 }
 
-type Committed = Extract<Phase, { kind: "done" | "undoing" | "undo-failed" | "undone" }>
+type Committed = Extract<Phase, { kind: "committed" | "undoing" | "undo_failed" | "undone" }>
 
 function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUndo, onRetryUndo, onClose }: {
   readonly action: ActionSummary; readonly objectTitle: string; readonly technical: boolean; readonly phase: Committed
@@ -678,7 +678,7 @@ function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUnd
           <span>Undone · {when(phase.reversal.receipt.recordedAtMs)}{technical && <span className="text-muted-foreground"> · commit {phase.reversal.receipt.commitSeq}</span>}</span>
         </p>
       )}
-      {phase.kind === "undo-failed" && (
+      {phase.kind === "undo_failed" && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <span>{phase.known ? `${phase.message ?? "The cell did not take the undo."} Nothing was undone.` : "Couldn't confirm the undo: the cell's answer was lost, so it may or may not have happened. Retrying sends the same request, so it can't apply twice."}</span><span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={onRetryUndo}>Retry undo</Button>
@@ -686,7 +686,7 @@ function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUnd
       )}
       <div className="flex flex-wrap gap-2">
         {/* Undo only when the cell's receipt names the action's declared compensation; Studio never works one out. */}
-        {(phase.kind === "done" && phase.undo !== null) || phase.kind === "undoing"
+        {(phase.kind === "committed" && phase.undo !== null) || phase.kind === "undoing"
           ? <Button type="button" variant="outline" className="border-node-border" disabled={phase.kind === "undoing"} onClick={onUndo}><Undo2 /> {phase.kind === "undoing" ? "Undoing…" : "Undo"}</Button>
           : null}
         {onAgain && <Button type="button" variant="outline" className="border-node-border" onClick={onAgain}><Plus /> Another</Button>}

@@ -12,7 +12,7 @@ import { history } from "../src/lib/editor.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import { facetsQuery } from "../src/lib/facets.ts"
 import { EMPTY_QUERY, recordsQueryParams, recordsQueryPrefix } from "../src/lib/records-query.ts"
-import { readRecordsAtScope, type RecordsRead } from "../src/lib/records-source.ts"
+import type { RecordsRead } from "../src/lib/records-source.ts"
 import { init, update } from "../src/lib/screen/call.ts"
 import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
 import {
@@ -37,7 +37,9 @@ import { WITHHELD_ROW } from "../src/grid/cells.tsx"
 import { sessionKey } from "../src/actions/kept-drafts.ts"
 import type { ViewsBarNotice } from "../src/grid/views-bar.tsx"
 
-mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
+mock.module("../src/lib/transport.ts", () => ({ transport: {} }))
+const { readRecordsAtScope } = await import("../src/lib/raw/records.ts")
+const { workspaceOf } = await import("../src/lib/workspace.tsx")
 const { invalidateActionReads } = await import("../src/actions/action-sheet.tsx")
 const { RecordsGrid, readWithdrawn, visibleDrawerRow } = await import("../src/grid/records-grid.tsx")
 const { deletedViewNotice, updateGridView } = await import("../src/grid/views-bar.tsx")
@@ -46,6 +48,13 @@ const { deletionReceiptFor, deletionReceipts, receiptSuperseded, reloadConflicti
 const SCOPE_A: StudioScope = { orgId: "org_a", environmentId: "prod" }
 const SCOPE_B: StudioScope = { orgId: "org_b", environmentId: "prod" }
 const SCOPE_A_STAGING: StudioScope = { orgId: "org_a", environmentId: "staging" }
+/** The workspace a live mode decided at `scope`, its reads sent through `fetcher`: the only way to a DecidedScope. */
+function liveAt(scope: StudioScope, fetcher?: Fetch) {
+  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>() } }, fetcher)
+  if (workspace.kind !== "live") throw new Error("expected a live workspace")
+  return workspace
+}
+const DECIDED_A = liveAt(SCOPE_A).scope
 
 const SAMPLE_VIEW: SavedView = {
   title: "Items needing review",
@@ -333,6 +342,7 @@ test("ViewEditor alerts when active scope diverges from the loaded draft scope a
           concepts: [concept],
           stored: { id: "studio.view.canon_item.a", version: 1, scope: SCOPE_A, view: { ...SAMPLE_VIEW, objectType: concept.name, columns: [] } },
           activeScope,
+          decided: liveAt(activeScope).scope,
           cellAvailable: true,
           onSaved: () => {},
         }),
@@ -377,13 +387,14 @@ test("RecordsGrid preserves a saved view's custom column order instead of revert
     total: { count: 1, approximate: false },
   }
   const client = new QueryClient()
-  client.setQueryData(["records", concept.name, recordsQueryParams(EMPTY_QUERY).toString()], page)
+  const { reader } = liveAt(SCOPE_A)
+  client.setQueryData(reader.records(concept.name, EMPTY_QUERY).queryKey, page)
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([createRoute({
       getParentRoute: () => root,
       path: "/",
-      component: () => createElement(RecordsGrid, { concept, initial: { columns: reversed }, read: async () => page }),
+      component: () => createElement(RecordsGrid, { concept, initial: { columns: reversed }, reader }),
     })]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   })
@@ -441,7 +452,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
   const previewKey = viewPreviewQueryKey(SCOPE_A, view)
 
   // 1. Matching scope reads explicitly from SCOPE_A.
-  const ok = await store.preview(concept.name, { filter: null, sort: [], limit: 5 }, SCOPE_A)
+  const ok = await store.preview(concept.name, { filter: null, sort: [], limit: 5 }, DECIDED_A)
   expect(ok.kind).toBe("page")
   expect(hostCalls).toEqual([`org_a/prod:/api/host/v1/objects/${concept.name}`])
 
@@ -451,7 +462,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
   const client = new QueryClient({ defaultOptions: { queries: { refetchOnMount: false, retryOnMount: false } } })
   await expect(client.fetchQuery({
     queryKey: previewKey,
-    queryFn: ({ signal }) => store.preview(concept.name, { filter: null, sort: [], limit: 5 }, SCOPE_A, signal),
+    queryFn: ({ signal }) => store.preview(concept.name, { filter: null, sort: [], limit: 5 }, DECIDED_A, signal),
     retry: false,
   })).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
   expect(hostCalls).toHaveLength(0)
@@ -468,6 +479,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
         concepts: [concept],
         stored: { id: "studio.view.canon_item.a", version: 1, scope: SCOPE_A, view },
         activeScope: SCOPE_A,
+        decided: DECIDED_A,
         cellAvailable: true,
         store,
         onSaved: () => {},
@@ -487,7 +499,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
   const inFlightClient = new QueryClient()
   const pending = inFlightClient.fetchQuery({
     queryKey: previewKey,
-    queryFn: ({ signal }) => store.preview(concept.name, { filter: null, sort: [], limit: 5 }, SCOPE_A, signal),
+    queryFn: ({ signal }) => store.preview(concept.name, { filter: null, sort: [], limit: 5 }, DECIDED_A, signal),
     retry: false,
   })
   await hostReached
@@ -501,7 +513,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
   const scopedGridKey = ["records", concept.name, SCOPE_A.orgId, SCOPE_A.environmentId, recordsQueryParams(EMPTY_QUERY).toString()] as const
   await expect(gridClient.fetchQuery({
     queryKey: scopedGridKey,
-    queryFn: ({ signal }) => store.preview(concept.name, EMPTY_QUERY, SCOPE_A, signal),
+    queryFn: ({ signal }) => store.preview(concept.name, EMPTY_QUERY, DECIDED_A, signal),
     retry: false,
   })).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
   expect(gridClient.getQueryData(scopedGridKey)).toBeUndefined()
@@ -512,8 +524,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
       path: "/",
       component: () => createElement(RecordsGrid, {
         concept,
-        scope: SCOPE_A,
-        read: (t, q, s) => store.preview(t, q, SCOPE_A, s),
+        reader: liveAt(SCOPE_A, fetcher).reader,
       }),
     })]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
@@ -574,6 +585,7 @@ test("conflict-after-delete reports deletion, hides dead Reload/Overwrite button
         concepts: [concept],
         stored: { id: "studio.view.deleted_by_other", version: 1, scope: SCOPE_A, view: { ...SAMPLE_VIEW, objectType: concept.name, columns: [] } },
         activeScope: SCOPE_A,
+        decided: DECIDED_A,
         cellAvailable: true,
         store,
         initialConflict: afterDelete.conflict,
@@ -668,6 +680,7 @@ test("ViewEditor live preview renders withheld records and distinguishes refusal
         concepts: [concept],
         stored: { id: "studio.view.withheld", version: 1, scope: SCOPE_A, view },
         activeScope: SCOPE_A,
+        decided: DECIDED_A,
         cellAvailable: true,
         onSaved: () => {},
       }),
@@ -963,7 +976,7 @@ test("scoped reads thread AbortSignal to network fetches, reject abort during fi
     { code: "cell.unopenable", message: "Cell is temporarily sealed.", retryable: false },
     { status: 503 },
   )
-  const previewErr = await readRecordsAtScope("demo.Record", EMPTY_QUERY, SCOPE_A, unopenableFetch).catch((e: unknown) => e)
+  const previewErr = await readRecordsAtScope("demo.Record", EMPTY_QUERY, DECIDED_A, unopenableFetch).catch((e: unknown) => e)
   expect(previewErr).toBeInstanceOf(CellUnavailable)
   expect((previewErr as CellUnavailable).status).toBe(503)
   expect((previewErr as CellUnavailable).code).toBe("cell.unopenable")

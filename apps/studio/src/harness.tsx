@@ -18,6 +18,7 @@ import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { useCellQuery } from "./lib/cell-query.ts"
+import { matchReadState } from "./lib/state/index.ts"
 import { NO_DATA_CELL, useStudioScope, type StudioScope } from "./lib/definitions.ts"
 import "./index.css"
 
@@ -54,9 +55,22 @@ function RecordRead({ type, ids }: { readonly type: string; readonly ids: readon
 
 function Record({ type, id, scope }: { readonly type: string; readonly id: string; readonly scope: StudioScope }) {
   const { read, state, liveRefusal } = useCellQuery("/v1/objects/{type}/{id}", { path: { type, id } }, { scope, what: "This record" })
+  // Every read state is one of LoadState's: pending, the document, or an error with the cell's words.
+  type Document = Extract<typeof state, { readonly kind: "ok" }>["document"]
+  type Load = { readonly status: "pending" | "success" | "error"; readonly data?: Document; readonly error: Error | null }
+  const load = matchReadState<Document, Error, Load>(state, {
+    pending: () => ({ status: "pending" as const, error: null }),
+    ok: ({ document }) => ({ status: "success" as const, data: document, error: null }),
+    refused: ({ refusal }) => ({ status: "error" as const, error: refusal }),
+    not_served: ({ error }) => ({ status: "error" as const, error }),
+    unavailable: ({ error }) => ({ status: "error" as const, error }),
+    answer_moved: ({ error }) => ({ status: "error" as const, error }),
+    timed_out: ({ error }) => ({ status: "error" as const, error }),
+  })
+  const stale = state.kind === "ok" && state.freshness === "stale"
   return (
     <div data-testid="record" data-record-id={id} data-live-refusal-code={liveRefusal?.code}>
-      <LoadState status={state.status} data={state.data} error={state.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} skeleton="detail">
+      <LoadState {...load} isFetching={read.isFetching} onRetry={() => void read.refetch()} skeleton="detail">
         {(doc) => (
           <dl className="grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1 text-sm">
             <dt className="text-muted-foreground">Version</dt>
@@ -64,8 +78,8 @@ function Record({ type, id, scope }: { readonly type: string; readonly id: strin
             <dt className="text-muted-foreground">Source</dt>
             <dd data-testid="record-source">{doc.digest === null ? "read" : "pushed"}</dd>
             <dt className="text-muted-foreground">Updates</dt>
-            <dd data-testid="record-updates" data-stale={state.stale ? "" : undefined}>
-              {state.stale
+            <dd data-testid="record-updates" data-stale={stale ? "" : undefined}>
+              {stale
                 ? (
                   <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span>Not followed: the last answer read, as of <time dateTime={new Date(read.dataUpdatedAt).toISOString()}><bdi dir="ltr">{new Date(read.dataUpdatedAt).toLocaleTimeString()}</bdi></time></span>

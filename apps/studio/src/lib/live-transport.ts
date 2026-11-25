@@ -5,12 +5,10 @@
  */
 import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readAtScope, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { NO_HOST_ERROR } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
-import { readsOf } from "./record-name.ts"
-import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
-import type { CountedLinkPage, LinkCounts } from "./record-page.ts"
+import type { Artifact, Envelope, Transport } from "./transport.ts"
 import { totalOf, type Total } from "./records-query.ts"
 
 /** A read this cell does not serve. While a cell is connected nothing recorded stands in for it. */
@@ -25,12 +23,6 @@ export function subRead<T>(read: Read<unknown>, prefix: string, document: T): Re
   const numbers = new Map<string, string>()
   for (const [pointer, text] of read.numbers) if (pointer === prefix || pointer.startsWith(`${prefix}/`)) numbers.set(pointer.slice(prefix.length), text)
   return { document, numbers, origin: read.origin }
-}
-
-/** The cell's link page (`next` cursor) in the shape the pages read (`hasMore`), with its counts when it sends them. */
-function linkPage(read: Read<{ readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts | null }>): Read<CountedLinkPage> {
-  const { objectType, id, items, next, counts } = read.document
-  return { ...read, document: { objectType, id, items, hasMore: typeof next === "string", ...counts ? { counts } : {} } }
 }
 
 /** Where Studio's documents come from: the connected cell, or the recording when no cell is connected. */
@@ -195,23 +187,11 @@ async function readDefinitions(fetcher: Fetch, scope: StudioScope, signal?: Abor
   }
 }
 
-/** The live transport over one connected cell's routes. */
-export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch, counts: ObjectCounts = {}, scope?: StudioScope): Transport {
-  const call = scopedHostFetch(fetcher, "/api/host", scope !== undefined ? async () => scope : () => readStudioScope(fetcher))
-  /** One read; `null` when the cell answers 404 (no such object, or none this principal may read). */
-  const read = async <T,>(path: string): Promise<Read<T> | null> => {
-    const response = await call(path, { headers: { accept: "application/json" } })
-    const text = await response.text()
-    if (response.status === 404) return null
-    if (!response.ok) {
-      let parsed: unknown = null
-      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
-      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
-      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
-    }
-    return readDocument<T>(text, "live")
-  }
-  const objectPath = (objectType: string, id: string, leaf?: string) => `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
+/**
+ * The live transport over one connected cell: the catalog and counts its mode read carried. It reads
+ * nothing itself; records are read through the decided workspace's reader (`lib/workspace.tsx`).
+ */
+export function liveTransport(catalog: Read<readonly Artifact[]>, counts: ObjectCounts = {}): Transport {
   return {
     catalog: async () => catalog,
     objectCounts: async () => counts,
@@ -219,61 +199,7 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     questionBoard: async () => { throw new NotServed("Saved questions are") },
     restatement: async () => { throw new NotServed("Restated answers are") },
     guarantees: async () => { throw new NotServed("Model-checked proofs are") },
-    objectPage: async (objectType, after) => read<ObjectPage>(`/v1/objects/${encodeURIComponent(objectType)}${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`),
-    object: async (objectType, id) => {
-      const [object, links, source] = await Promise.all([
-        read<ObjectRecord>(objectPath(objectType, id)),
-        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath(objectType, id, "links")),
-        // 404: no mapping produced this object (or its source is not readable): there is no lineage to show.
-        read<SourceLineage>(objectPath(objectType, id, "lineage")),
-      ])
-      if (object === null || links === null) return null
-      const page = linkPage(links)
-      return readsOf(objectType, id, object.document, page.document) ? { object, links: page, source } : null
-    },
   }
-}
-
-/**
- * Read one live record, its links, and its lineage pinned explicitly to `scope`. Verifies `/api/me`
- * matches `scope` before and after dispatch so a stale drawer cannot read from another workspace.
- */
-export async function readObjectAtScope(
-  objectType: string,
-  id: string,
-  scope: StudioScope,
-  signal?: AbortSignal,
-  fetcher: Fetch = defaultFetch,
-) {
-  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
-  const read = async <T,>(path: string): Promise<Read<T> | null> => {
-    const response = await call(path, { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) })
-    const text = await response.text()
-    if (response.status === 404) return null
-    if (!response.ok) {
-      let parsed: unknown = null
-      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
-      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
-      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
-    }
-    return readDocument<T>(text, "live")
-  }
-  const objectPath = (leaf?: string) => `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
-  return readAtScope(
-    scope,
-    (s) => readStudioScope(fetcher, s),
-    async () => {
-      const [object, links, source] = await Promise.all([
-        read<ObjectRecord>(objectPath()),
-        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath("links")),
-        read<SourceLineage>(objectPath("lineage")),
-      ])
-      if (object === null || links === null) return null
-      const page = linkPage(links)
-      return readsOf(objectType, id, object.document, page.document) ? { object, links: page, source } : null
-    },
-    signal,
-  )
 }
 
 /** Raised when an in-flight mode read settles after a newer scope or `refreshMode()` superseded it. */

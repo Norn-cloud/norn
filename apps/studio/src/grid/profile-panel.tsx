@@ -5,7 +5,7 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
-import { useStudioScope } from "@/lib/definitions"
+import type { DecidedScope } from "@/lib/workspace"
 import { NotServed } from "@/lib/live-transport"
 import { profiled, profileQueryKey, readProfile, type ObjectProfile, type PropertyProfile } from "@/lib/profile"
 import { atScale } from "@/lib/objects"
@@ -60,10 +60,13 @@ function quantile(read: Read<ObjectProfile>, at: string, property: PropertyProfi
  * count, nulls, distinct values, range, quartiles and histogram. Every figure is the cell's; rows
  * whose values it withholds from this reader are counted apart and add nothing to the figures.
  */
-export function ProfilePanel({ objectType, scales = new Map() }: { readonly objectType: string; readonly scales?: ReadonlyMap<string, number> }) {
-  const scope = useStudioScope()
-  const boundScope = scope.data ?? null
-  const profile = useQuery({ queryKey: profileQueryKey(objectType, boundScope), queryFn: () => readProfile(objectType, boundScope), enabled: scope.isSuccess, retry: false })
+export function ProfilePanel({ objectType, scope, scales = new Map() }: {
+  readonly objectType: string
+  /** The workspace the page's mode decided: the profile is read and cached there (#1754). */
+  readonly scope: DecidedScope
+  readonly scales?: ReadonlyMap<string, number>
+}) {
+  const profile = useQuery({ queryKey: profileQueryKey(objectType, scope), queryFn: () => readProfile(objectType, scope), retry: false })
   if (profile.isPending) return <p className="text-sm text-muted-foreground">Profiling the records…</p>
   if (profile.isError) return profile.error instanceof NotServed
     ? <EmptyState icon={BarChart3} title="Not served">{profile.error.message}</EmptyState>

@@ -5,27 +5,31 @@ import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { refreshMode, useMode } from "@/lib/live-transport"
+import { refreshMode } from "@/lib/live-transport"
 import type { Concept } from "../lib/catalog.ts"
-import { studioScopeKey, useStudioScope, type StudioScope } from "../lib/definitions.ts"
+import { studioScopeKey } from "../lib/definitions.ts"
+import { useWorkspace, type ScopedReader } from "../lib/workspace.tsx"
 import { useCatalog } from "../sources.tsx"
 import { LawsPanel } from "../laws.tsx"
 import { ProfilePanel } from "./profile-panel.tsx"
 import { QuarantinePanel } from "./quarantine-panel.tsx"
 import type { StoredView } from "../lib/views.ts"
-import { DecidedRecordsGrid, RecordsGrid, type DisplayedGridQuery, type GridMode } from "./records-grid.tsx"
+import { DecidedRecordsGrid, RecordsGrid, type DisplayedGridQuery } from "./records-grid.tsx"
 import { offersTimeline } from "../lib/timeline.ts"
 import { ViewsBar, openedQuery } from "./views-bar.tsx"
 
-function ScopedRecordsTabs({ concept, scope, mode, scopeKey, initialTab, timeline }: {
+/**
+ * A live type's records, profile, quarantine and rules, all bound to the workspace the page's mode
+ * decided (#1754): never the session's scope, which can still answer after the mode read failed.
+ */
+function ScopedRecordsTabs({ concept, reader, initialTab, timeline }: {
   readonly concept: Concept
-  readonly scope: StudioScope | undefined
-  /** The page's mode read: with no session scope, a live row's drawer shows its state and its Retry. */
-  readonly mode: GridMode
-  readonly scopeKey: string
+  readonly reader: ScopedReader
   readonly initialTab: string
   readonly timeline: boolean
 }) {
+  const { scope } = reader
+  const scopeKey = studioScopeKey(scope)
   // The open saved view (none: every record) and the query the grid shows, for saving.
   // Held above `<Tabs>` so switching Records -> Profile -> Records in the same workspace keeps the
   // selected view, while keying this component by `(concept.name, orgId, environmentId)` resets it
@@ -37,10 +41,10 @@ function ScopedRecordsTabs({ concept, scope, mode, scopeKey, initialTab, timelin
       <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger><TabsTrigger value="rules">Rules</TabsTrigger></TabsList>
       <TabsContent value="records" className="grid gap-3 pt-3">
         <ViewsBar objectType={concept.name} scope={scope} open={view} query={query} onOpen={setView} />
-        <RecordsGrid key={`${concept.name}:${scopeKey}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} scope={scope} mode={mode} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
+        <RecordsGrid key={`${concept.name}:${scopeKey}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} reader={reader} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
       </TabsContent>
-      <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
-      <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>
+      <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scope={scope} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
+      <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} scope={scope} /></TabsContent>
       <TabsContent value="rules" className="pt-3"><LawsPanel concept={concept} label="Rules its records must keep" /></TabsContent>
     </Tabs>
   )
@@ -51,17 +55,13 @@ export function RecordsPage() {
   const { type = "" } = useParams({ strict: false })
   const search = useSearch({ strict: false }) as { population?: string }
   const { read, catalog } = useCatalog()
-  const scopeRead = useStudioScope()
-  const activeScope = scopeRead.data ?? undefined
-  const scopeKey = studioScopeKey(activeScope)
-  // A recorded catalog's grid is still bound to the decided mode's workspace when there is one, and is
-  // shown only once the mode is decided (#1740, #1745).
-  const mode = useMode()
+  // The records are bound to the workspace the page's mode decided, as `/sources/$type`'s are: a live
+  // workspace's tabs read there; a recorded one's grid reads the recording; until the mode is decided
+  // (or after it failed) the Records section shows its skeleton or Workspace unavailable (#1740, #1745, #1754).
+  const workspace = useWorkspace()
   const concept = catalog?.byName.get(type)
   // A `core.TimeInterval` (through any parent) can be read as a timeline too; the catalog says which types are.
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
-  // Use the same read for the catalog and its layout so mode discovery cannot remount an active grid.
-  const live = read.data?.origin === "live"
   const initialTab = search.population === "held_back" ? "quarantine" : "records"
   return (
     <div className="space-y-4">
@@ -82,9 +82,9 @@ export function RecordsPage() {
             {concept?.definition === "object type" && <>
               <PageHeader title={concept.title} lang={concept.titleLang} meta={<span className="font-mono">{concept.name}</span>}
                 actions={<Button asChild variant="ghost" size="sm"><Link to="/sources/$concept" params={{ concept: concept.name }}>Definition</Link></Button>} />
-              {live
-                ? <ScopedRecordsTabs key={`${concept.name}:${scopeKey}:${initialTab}`} concept={concept} scope={activeScope} mode={mode} scopeKey={scopeKey} initialTab={initialTab} timeline={timeline} />
-                : <DecidedRecordsGrid concept={concept} timeline={timeline} mode={mode} />}
+              {workspace.kind === "live"
+                ? <ScopedRecordsTabs key={`${concept.name}:${studioScopeKey(workspace.scope)}:${initialTab}`} concept={concept} reader={workspace.reader} initialTab={initialTab} timeline={timeline} />
+                : <DecidedRecordsGrid concept={concept} timeline={timeline} />}
             </>}
           </>
         )}

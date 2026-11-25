@@ -12,8 +12,7 @@ import { compared, isList, roleOf } from "../lib/law-values.ts"
 import { atScale } from "../lib/objects.ts"
 import { EvidenceList } from "./evidence-crop.tsx"
 import type { Evidence, Finding, RuleRef } from "./review.ts"
-import type { StudioScope } from "../lib/definitions.ts"
-import { findingsQuery } from "../lib/record-read.ts"
+import type { ScopedReader } from "../lib/workspace.tsx"
 
 /** The rule a finding records, by its stable id. */
 function ruleName(rule: RuleRef): string {
@@ -74,13 +73,13 @@ function ComparedValues({ objectType, finding }: { readonly objectType: string; 
  * each finding records, whether the object is held out of authoritative reads,
  * and the evidence of where its values were read.
  */
-export function Findings({ objectType, id, scope, actionFor }: {
+export function Findings({ objectType, id, reader, actionFor }: {
   readonly objectType: string; readonly id: string
-  /** The workspace the record was read at: its findings are read and cached there (#1745). */
-  readonly scope: StudioScope | undefined
+  /** The reader of the workspace the record was read at: its findings are read and cached there (#1745). */
+  readonly reader: ScopedReader
   readonly actionFor?: (evidence: Evidence) => ReactNode
 }) {
-  const read = useQuery(findingsQuery(objectType, id, scope))
+  const read = useQuery({ ...reader.findings(objectType, id), retry: false })
   if (read.isPending) return <Panel icon={ShieldAlert} label="Findings"><Well className="p-3 text-meta text-muted-foreground">Reading the findings…</Well></Panel>
   if (read.isError) {
     const message = read.error instanceof NotServed ? "This cell does not serve findings yet." : read.error instanceof CellRefusal ? read.error.message : "The findings could not be read."

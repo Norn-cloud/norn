@@ -6,8 +6,7 @@
  * is the cell's refusal, shown as it is.
  */
 import { cellRead, NotServed } from "../lib/live-transport.ts"
-import { readAtScope, readStudioScope, type StudioScope } from "../lib/definitions.ts"
-import type { Fetch } from "../lib/cell-read.ts"
+import type { StudioScope } from "../lib/definitions.ts"
 import { member, type Read } from "../lib/exact.ts"
 import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
 
@@ -84,19 +83,6 @@ export interface Evidence {
 
 const objectPath = (objectType: string, id: string, leaf?: string) =>
   `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
-
-/**
- * One record's findings, read at `scope` (the workspace its record was read at) and only while the
- * session is still there, checked before and after the read: the same id in another workspace is
- * another record, whose findings are never this one's.
- */
-export const readFindings = (objectType: string, id: string, scope: StudioScope, signal?: AbortSignal, fetcher?: Fetch): Promise<Read<ObjectFindings>> =>
-  readAtScope(
-    scope,
-    (s) => readStudioScope(fetcher, s),
-    () => cellRead<ObjectFindings>(objectPath(objectType, id, "findings"), "Findings", signal === undefined ? {} : { signal }, fetcher, scope),
-    signal,
-  )
 
 /** Prefix shared with invalidators (`["history", objectType, id]`) for every workspace scope. */
 export const historyQueryPrefix = (objectType: string, id: string) => ["history", objectType, id] as const
