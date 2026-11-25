@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { expect, test, type Page, type Route } from "@playwright/test"
-import { type Machine, type Msg, walks, wasmEvaluate } from "../../../packages/norn-demo-ui/src/machine/index.ts"
+import { type Machine, type Msg, walks, wasmEvaluate } from "../../../packages/norn-react/src/machine/index.ts"
 import { sheetPayloads } from "../../../packages/norn-demo-ui/test/support/sheet-payloads.ts"
 import { decisionCell } from "./decision-cell.ts"
 import { session } from "./object-cell.ts"
@@ -45,6 +45,12 @@ function answer(msg: Extract<Msg, { kind: "outcome" }>): { status: number; body:
       return { status: 202, body: { outcome: "pending", decision: { id: "apv_1", expiresAtMs: Date.UTC(2026, 10, 7) } } }
     case "network_failure":
       return { status: 500, body: "" }
+    // A 404 that is no coded refusal: the runtime classifies it `not_served` (#1762 milestone C).
+    case "not_served":
+      return { status: 404, body: "" }
+    case "stale":
+    case "subscription_refused":
+      return null
     case "timeout":
     case "cancelled":
       return null

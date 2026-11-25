@@ -21,6 +21,7 @@ import { lifecyclesIn } from "./lib/canvas/lifecycle.ts"
 import type { Envelope } from "./lib/transport.ts"
 import { SHEET } from "./sheet-states.ts"
 import { CodedMessage } from "@/components/coded-message"
+import { MASCOT_STATES, MASCOT_VARIANTS, Mascot, type MascotVariant } from "@/components/system/mascot"
 import { catalogOf } from "./lib/catalog.ts"
 import { LocaleProvider, applyLocale, isLocale, type Locale } from "./lib/locale.tsx"
 import type { Artifact } from "./lib/transport.ts"
@@ -74,7 +75,7 @@ const ORDER_LABELS = {
 const SPECIMEN_LOCALE: Locale = (() => { const tag = new URLSearchParams(window.location.search).get("locale"); return isLocale(tag) ? tag : "en" })()
 function OrderFacts() {
   const concept = catalogOf([...DEFINITIONS as unknown as Artifact[], ORDER_LABELS], SPECIMEN_LOCALE).byName.get("commerce.SalesOrder")
-  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang} className="font-medium">{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
+  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang}>{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
 }
 
 // The lifecycle view's specimens: the purchase order's approval lifecycle, its counts as one
@@ -127,7 +128,23 @@ function LifecycleSpecimen({ answers, ...options }: Omit<LifecycleViewOptions, "
   }} />
 }
 
+function MascotRow({ variant, sizes = [56] }: { readonly variant: MascotVariant; readonly sizes?: readonly number[] }) {
+  return (
+    <div className="flex flex-wrap items-end gap-6" data-mascot-variant={variant}>
+      {MASCOT_STATES.map((state) => (
+        <figure key={state} className="flex flex-col items-center gap-1.5" data-mascot-state={state}>
+          <div className="flex items-end gap-2">{sizes.map((size) => <Mascot key={size} variant={variant} state={state} size={size} />)}<Mascot variant={variant} state={state} size={20} tone="ink" className="text-muted-foreground" /></div>
+          <figcaption className="text-meta text-muted-foreground">{state}</figcaption>
+        </figure>
+      ))}
+    </div>
+  )
+}
+
 const SPECIMENS: Record<string, () => ReactNode> = {
+  "mascot/states": () => <MascotRow variant="pebble" sizes={[56, 28]} />,
+  "mascot/candidates": () => <div className="space-y-5">{MASCOT_VARIANTS.map((variant) => <div key={variant} className="space-y-1"><div className="text-meta text-muted-foreground">{variant}{variant === "pebble" ? " (the pick)" : ""}</div><MascotRow variant={variant} /></div>)}</div>,
+  "mascot/rtl": () => <div dir="rtl" lang="ar"><MascotRow variant="pebble" sizes={[56]} /></div>,
   "lifecycle-view/counts": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4, received: 31 })]} />,
   "lifecycle-view/lower-bound": () => <LifecycleSpecimen answers={[facets({ draft: 6200, submitted: 1900, received: 1900 }, { lowerBound: true, scanLimit: 10000, withheldRows: 14, quarantinedRows: 2 })]} />,
   "lifecycle-view/other-rows": () => <LifecycleSpecimen answers={[facets({ draft: 12, submitted: 7, approved: 4 }, {}, { otherRows: 5 })]} />,
@@ -194,10 +211,10 @@ function Sheet() {
   const states = SHEET.filter(({ id }) => only === null || id === only)
   return (
     <main className="space-y-8 bg-background p-6 text-foreground">
-      {only === null && <h1 className="text-title font-semibold tracking-tight">Canvas: every state of every component</h1>}
+      {only === null && <h1 className="text-title font-medium tracking-tight">Canvas: every state of every component</h1>}
       {states.map((state) => (
         <section key={state.id} data-state={state.id} className="space-y-2">
-          {only === null && <header><div className="font-mono text-sm">{state.component} · {state.id}</div><p className="text-meta text-muted-foreground">{state.note}</p></header>}
+          {only === null && <header><div className="font-mono text-body">{state.component} · {state.id}</div><p className="text-meta text-muted-foreground">{state.note}</p></header>}
           <div className="rounded-lg border p-3">{SPECIMENS[state.id]?.() ?? <p className="text-destructive">MISSING specimen</p>}</div>
         </section>
       ))}

@@ -44,6 +44,17 @@ pub fn lifecycle_diagrams(artifacts_json: &str) -> Result<String, JsError> {
 }
 
 #[cfg(feature = "checker")]
+/// `rendererCapabilities(uxJson)`: see [`crate::renderer_capabilities_json`].
+///
+/// # Errors
+///
+/// Throws when `uxJson` is not a decodable `WidgetUx` document.
+#[wasm_bindgen(js_name = rendererCapabilities)]
+pub fn renderer_capabilities(ux_json: &str) -> Result<String, JsError> {
+    crate::renderer_capabilities_json(ux_json).map_err(JsError::from)
+}
+
+#[cfg(feature = "checker")]
 /// `checkExpression(expr, envArtifactsJson, expectedType, selfType?)`: see
 /// [`crate::check_expression_json`].
 ///

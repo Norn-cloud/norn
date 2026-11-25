@@ -3,7 +3,8 @@
  *
  * It declares `ActionMap` (each action id → its `input` as a caller sends it and the `output` it
  * declares), `ObjectMap` (each object type → its stored fields) and `DefinitionsDigest` (the
- * content digest of the definitions it typed). Exact decimals are `string`, never a JS `number`
+ * content digest of the definitions it typed). A set whose widgets declare catalog islands also
+ * gets `WidgetIslands` and `RequiredCatalogRegistry` (`codegen-islands.ts`). Exact decimals are `string`, never a JS `number`
  * (VAL-EXACT-1). The file declares no runtime value; the generic client in `@norn/sdk` takes
  * `ActionMap` as its type parameter.
  *
@@ -21,6 +22,7 @@ import { createHash } from "node:crypto"
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { canonicalJson, type Json } from "./canonical.ts"
+import { islandsBlock, islandWidgets } from "./codegen-islands.ts"
 import { isArtifact, readArtifacts } from "./pack.ts"
 import { mayReadActor } from "./zen-reads.ts"
 
@@ -483,6 +485,7 @@ export function generateTypes(artifacts: readonly unknown[], options: GenerateOp
     ...[...found.objects.values()].filter((o) => !o.base || o.used),
     ...found.extensions.filter((e) => !e.base || e.used),
     ...[...found.catalog.values()].filter((c) => !c.base || c.used),
+    ...islandWidgets(artifacts).map((artifact) => ({ artifact: artifact as unknown as Envelope })),
   ].map((owned) => ({ artifactId: owned.artifact.artifactId, version: String(owned.artifact.version), payload: owned.artifact.payload as Json }))
   const unique = [...new Map(typed.map((t) => [t.artifactId, t])).values()].sort((a, b) => compare(a.artifactId, b.artifactId))
   const digest = createHash("sha256").update(canonicalJson(unique)).digest("hex")
@@ -498,6 +501,7 @@ export function generateTypes(artifacts: readonly unknown[], options: GenerateOp
     "/** Each object type → its stored fields (every field present; nullable ones may be `null`). */",
     `export type ObjectMap = ${block(objectEntries)}`,
     "",
+    ...islandsBlock(artifacts),
     "/** The typed surface of this definition set. */",
     "export interface NornDefinitions {",
     "  readonly actions: ActionMap",

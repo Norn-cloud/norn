@@ -11,9 +11,9 @@
 // machine moved and by which transition, so the view highlights each lifecycle transition the
 // run takes and the state it lands in. Nothing is read from a finding's message.
 
-import { createDriver, type Driver } from "../machine/driver.ts"
-import type { Machine } from "../machine/machine.ts"
-import { classifyResponse } from "../machine/outcome.ts"
+import { createDriver, type Driver } from "../../../norn-react/src/machine/driver.ts"
+import type { Machine } from "../../../norn-react/src/machine/machine.ts"
+import { classifyResponse } from "../../../norn-react/src/machine/outcome.ts"
 import { adoptLifecycleStyles } from "./lifecycle.css.ts"
 
 export interface LifecycleTransitionDoc {
@@ -437,7 +437,7 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
         const readOnce = async () => {
           last = null
           last = await options.read(callOptions.signal)
-          if (isRouteNotServed(last)) return { outcome: "network_failure" as const, payload: {} }
+          if (isRouteNotServed(last)) return { outcome: "not_served" as const, payload: {} }
           const classified = classifyResponse(last.status, last.body)
           if (classified.outcome === "accepted" && !isFacetsAnswer(last.body)) {
             return { outcome: "network_failure" as const, payload: {} }

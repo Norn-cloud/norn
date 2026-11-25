@@ -272,7 +272,7 @@ pub struct WidgetPage {
 /// A view is a semantic, typed UI concept, never a visual one. Its four
 /// contracts are the page's typed data bindings (data), its `machine`
 /// (interaction), the `behaviors` on its nodes (accessibility), and the
-/// capability catalog derived by [`WidgetUx::renderer_capabilities`]
+/// capability catalog `norn-ui-checker` derives from the contract
 /// (what a renderer must implement to draw it). Renderers are compile
 /// targets of this contract; swapping one never touches the page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -336,88 +336,15 @@ pub enum WidgetViewSubject {
     Decisions,
 }
 
-/// Accessibility behaviours a node requires, named as UI SDK's behaviour
-/// primitives (`@ui-sdk/core`). They say what the control must do for
-/// keyboard, focus and assistive technology, never how it looks.
+/// A UI SDK foundation behaviour a node requires, `<area>/<module>` in the
+/// catalog `norn-ui-checker` generates from the pinned `@ui-sdk/core`. It
+/// says what the control must do for keyboard, focus and assistive
+/// technology, never how it looks.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
-#[serde(rename_all = "snake_case")]
-pub enum WidgetBehavior {
-    /// Focus is contained while open and restored on close.
-    FocusScope,
-    /// Arrow keys move focus among items; one tab stop.
-    RovingFocus,
-    /// Typing moves to the first matching item.
-    Typeahead,
-    /// Items can be selected and the selection is announced.
-    Selection,
-    /// Opens anchored to its invoker.
-    Popup,
-    /// Escape and outside press dismiss it.
-    Dismiss,
-    /// Items can be reordered or moved with pointer and keyboard.
-    DragAndDrop,
-    /// Changes are announced politely.
-    LiveRegion,
-}
-
-impl WidgetUx {
-    /// The renderer capability catalog this contract requires (UI-VIEW-1):
-    /// every view kind, component kind, behaviour, effect, event source and
-    /// outcome its pages use, as `<family>:<name>` strings. A renderer that
-    /// lacks one cannot draw the contract and must refuse it.
-    #[must_use]
-    pub fn renderer_capabilities(&self) -> std::collections::BTreeSet<String> {
-        fn name<T: Serialize>(value: &T) -> String {
-            let value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
-            value
-                .as_str()
-                .or_else(|| value.get("kind").and_then(serde_json::Value::as_str))
-                .unwrap_or_default()
-                .to_owned()
-        }
-        fn walk(node: &WidgetNode, out: &mut std::collections::BTreeSet<String>) {
-            out.insert(format!("component:{}", name(&node.component)));
-            for behavior in &node.behaviors {
-                out.insert(format!("behavior:{}", name(behavior)));
-            }
-            for child in &node.children {
-                walk(child, out);
-            }
-        }
-        let mut out = std::collections::BTreeSet::new();
-        for page in &self.pages {
-            walk(&page.root, &mut out);
-            if let Some(view) = &page.view {
-                out.insert(format!("view:{}", name(&view.kind)));
-            }
-            let Some(machine) = &page.machine else {
-                continue;
-            };
-            for event in &machine.events {
-                out.insert(format!("event:{}", name(&event.source)));
-                if let WidgetMachineEventSource::Outcome { outcome, .. } = &event.source {
-                    out.insert(format!("outcome:{}", name(outcome)));
-                }
-            }
-            for transition in &machine.transitions {
-                for effect in &transition.effects {
-                    match effect {
-                        WidgetMachineEffect::Start { call, .. } => {
-                            out.insert(format!("effect:start:{}", name(call)));
-                        }
-                        other @ (WidgetMachineEffect::Cancel
-                        | WidgetMachineEffect::Navigate { .. }) => {
-                            out.insert(format!("effect:{}", name(other)));
-                        }
-                    }
-                }
-            }
-        }
-        out
-    }
-}
+#[serde(transparent)]
+pub struct WidgetBehavior(pub String);
 
 /// A page's interaction statechart (UI-MACHINE-1).
 ///
@@ -563,6 +490,15 @@ pub enum WidgetMachineEventSource {
         )]
         #[schemars(with = "WidgetRefusalCategory")]
         category: Option<WidgetRefusalCategory>,
+        /// For `refused` only: an error code the awaited action declares. It
+        /// refines its category and never covers it.
+        #[serde(
+            default,
+            deserialize_with = "present_non_null",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "String")]
+        code: Option<String>,
     },
     /// A subscribed data binding delivered a new snapshot.
     Subscription { binding_id: String },
@@ -585,9 +521,15 @@ pub enum WidgetCallOutcome {
     /// The read's answer or snapshot moved under it (HTTP 409
     /// `core.projection.answer_moved`, `object.snapshot_moved`).
     AnswerMoved,
-    /// No answer arrived from the server (network failure, 5xx without a
-    /// coded refusal, route not served).
+    /// No answer arrived (a network failure, a 5xx without a coded refusal).
     NetworkFailure,
+    /// The host does not serve the route (a 404, the no-host 503).
+    NotServed,
+    /// A subscribed read answered, but its live feed lapsed: show the
+    /// snapshot as of its time, never as current.
+    Stale,
+    /// A subscribed read answered, but the server refused its subscription.
+    SubscriptionRefused,
     /// The state's declared deadline passed first.
     Timeout,
     /// The page cancelled the call.
@@ -922,6 +864,21 @@ pub struct WidgetCatalogEntry {
     )]
     #[schemars(with = "WidgetValueType")]
     pub renders: Option<WidgetValueType>,
+    /// Values it draws faithfully beyond plain ones (a masked value, an exact decimal).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handles: Vec<WidgetValueHandling>,
+}
+
+/// Values a field renderer declares it draws faithfully.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WidgetValueHandling {
+    /// A marked property's masked or withheld value, shown as such.
+    Masked,
+    /// An exact decimal, never rounded through a binary float.
+    Exact,
 }
 
 /// What a person does with a [`WidgetComponent::Control`].
@@ -1011,10 +968,16 @@ pub enum WidgetComponent {
     /// An instance of a catalog component (UI-CATALOG-1): its props bound by
     /// ZEN expressions over the page machine's `input.fields`, its declared
     /// events raised as the page machine's `user` events that name this node.
+    /// The entry `ui-sdk:<component>` is that UI SDK primitive at the version
+    /// the checker's catalog pins: props are its options, events its callbacks.
     Catalog {
         entry: WidgetCatalogRef,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         props: BTreeMap<String, ZenExpression>,
+        /// Page machine states the layer is open in; one that refuses a
+        /// dismissal there must be waiting, asking or offering Cancel.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        held_in: Vec<String>,
     },
     /// A control whose only effect is to raise the page machine's `user`
     /// events that name this node (UI-MACHINE-1). A `choice` or `text`

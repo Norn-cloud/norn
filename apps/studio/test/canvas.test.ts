@@ -5,6 +5,7 @@ import { introduced, place, type CheckResult, type Finding } from "../src/lib/ca
 import * as g from "../src/lib/canvas/graph.ts"
 import { compile, decompile, lifecycleKinds, lifecyclesIn, stepKey } from "../src/lib/canvas/lifecycle.ts"
 import type { Envelope } from "../src/lib/transport.ts"
+import { placeInView } from "../src/lib/canvas/viewport.ts"
 
 const directory = join(import.meta.dir, "../../../registry/core/artifacts")
 const definitions = readdirSync(directory).map((name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as Envelope)
@@ -145,4 +146,30 @@ test("only a stored value shaped like a graph is restored as a draft", () => {
   expect(g.isGraph({ nodes: [{ ...node, position: undefined }], edges: [] })).toBe(false)
   expect(g.isGraph({ nodes: [{ ...node, config: { n: 1 } }], edges: [] })).toBe(false)
   expect(g.isGraph({ nodes: [node], edges: [{ ...edge, target: 3 }] })).toBe(false)
+})
+
+// A new node lands wholly inside the part of the canvas in view, never half under its bottom edge.
+const pane = { width: 800, height: 600 }
+const insets = { top: 96, side: 24, bottom: 24 }
+const size = { width: 208, height: 94 }
+const onScreen = (view: { x: number; y: number; zoom: number }, at: { x: number; y: number }) => {
+  const left = at.x * view.zoom + view.x, top = at.y * view.zoom + view.y
+  return left >= insets.side && top >= insets.top && left + size.width * view.zoom <= pane.width - insets.side && top + size.height * view.zoom <= pane.height - insets.bottom
+}
+
+test("a new node lands inside the visible canvas, whatever the pan and zoom", () => {
+  for (const view of [{ x: 0, y: 0, zoom: 1 }, { x: -900, y: 400, zoom: 0.85 }, { x: 300, y: -1200, zoom: 0.5 }, { x: -40, y: -40, zoom: 1.6 }]) {
+    expect(onScreen(view, placeInView(view, pane, size, [], insets))).toBe(true)
+  }
+})
+
+test("a new node keeps clear of the nodes in view, and still lands in view when none is clear", () => {
+  const view = { x: 0, y: 0, zoom: 1 }
+  const first = placeInView(view, pane, size, [], insets)
+  const taken = [{ ...first, ...size }]
+  const second = placeInView(view, pane, size, taken, insets)
+  expect(second).not.toEqual(first)
+  expect(onScreen(view, second)).toBe(true)
+  const full = [{ x: -2000, y: -2000, width: 5000, height: 5000 }]
+  expect(onScreen(view, placeInView(view, pane, size, full, insets))).toBe(true)
 })

@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { Link, useNavigate, useRouterState, useSearch } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldAlert, ShieldCheck } from "lucide-react"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { NotServed, useMode } from "@/lib/live-transport"
-import { TableCard } from "@/components/table-card"
+import { TableCard } from "@/components/system/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -33,13 +34,13 @@ function VerdictIcon({ verdict }: { readonly verdict: Guarantees["verdict"] }) {
 /** A verdict as its icon and words. */
 function Verdict({ verdict }: { readonly verdict: Guarantees["verdict"] }) {
   const Icon = iconOf(verdict)
-  return <span className={`inline-flex items-center gap-1.5 font-medium ${tone(verdict)}`}><Icon className="size-4" />{verdictWords(verdict)}</span>
+  return <span className={`inline-flex items-center gap-1.5 ${tone(verdict)}`}><Icon className="size-4" />{verdictWords(verdict)}</span>
 }
 
 function Story({ scenario }: { readonly scenario: NonNullable<Guarantees["goals"][number]["scenario"]> }) {
   return (
-    <div className="space-y-2 px-4 py-3 text-sm">
-      <div className="font-medium">{scenario.kind === "counterexample" ? "The model checker found a case that breaks the rule" : "A case the rule allows, showing it is not vacuous"}</div>
+    <div className="space-y-2 px-4 py-3 text-body">
+      <div>{scenario.kind === "counterexample" ? "The model checker found a case that breaks the rule" : "A case the rule allows, showing it is not vacuous"}</div>
       <ol className="space-y-1">
         {scenario.states.map((state, step) => (
           <li key={step} className="tabular-nums">
@@ -106,9 +107,9 @@ function Document({ name, document }: { readonly name: string; readonly document
       ))}
       <Panel icon={ShieldCheck} label="How strongly it is checked">
         <Well className="divide-y">
-          <div className="px-4 py-3 text-sm"><span className="font-medium">Model checking: </span>{levelWords(document.level)} · {document.tools.map(({ id, version }) => `${id} ${version}`).join(", ")}</div>
-          <div className="px-4 py-3 text-sm"><span className="font-medium">Runtime enforcement: </span>{document.runtimeEnforcement.kind === "available" ? "Recorded" : `Not yet: ${document.runtimeEnforcement.reason}`}</div>
-          <div className="px-4 py-3 text-sm"><span className="font-medium">Parity tests: </span>{document.parity.kind === "available" ? "Recorded" : `Not yet: ${document.parity.reason}`}</div>
+          <div className="px-4 py-3 text-body"><span>Model checking: </span>{levelWords(document.level)} · {document.tools.map(({ id, version }) => `${id} ${version}`).join(", ")}</div>
+          <div className="px-4 py-3 text-body"><span>Runtime enforcement: </span>{document.runtimeEnforcement.kind === "available" ? "Recorded" : `Not yet: ${document.runtimeEnforcement.reason}`}</div>
+          <div className="px-4 py-3 text-body"><span>Parity tests: </span>{document.parity.kind === "available" ? "Recorded" : `Not yet: ${document.parity.reason}`}</div>
           <Bounds json={document.boundsJson} />
         </Well>
       </Panel>
@@ -126,7 +127,7 @@ function BeforeAfter({ scenario }: { readonly scenario: Scenario }) {
     <div className="grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1.4fr)]">
       <div className="flex min-h-24 flex-col justify-center rounded-lg border border-dashed px-4 py-3 text-center">
         <div className="text-meta text-muted-foreground">Before</div>
-        <div className="pt-1 font-medium">{before?.exists ? Object.entries(before.values).map(([name, value]) => `${field(name)} ${scalar(value)}`).join(" · ") : `No ${scenario.identity} yet`}</div>
+        <div className="pt-1">{before?.exists ? Object.entries(before.values).map(([name, value]) => `${field(name)} ${scalar(value)}`).join(" · ") : `No ${scenario.identity} yet`}</div>
       </div>
       <ArrowRight aria-label={`then ${scenario.writerArtifactId} runs`} className="mx-auto size-5 self-center text-muted-foreground max-sm:rotate-90" />
       <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
@@ -135,7 +136,7 @@ function BeforeAfter({ scenario }: { readonly scenario: Scenario }) {
           {Object.entries(after?.values ?? {}).map(([name, value]) => (
             <div key={name} className="flex items-baseline justify-between gap-3 py-1">
               <dt className="text-meta text-muted-foreground">{field(name)}</dt>
-              <dd className="text-xl leading-tight font-light tracking-tight tabular-nums">{scalar(value)}</dd>
+              <dd className="text-heading leading-tight tracking-tight tabular-nums">{scalar(value)}</dd>
             </div>
           ))}
         </dl>
@@ -155,25 +156,25 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
           <div className="space-y-2">
             <div className="flex items-baseline gap-3">
               <CircleCheck aria-hidden className="size-8 shrink-0 self-center text-success" />
-              <span className="text-[3.25rem] leading-none font-light tracking-[-0.03em] tabular-nums">{declared.discharged}<span className="text-muted-foreground"> of {declared.eligible}</span></span>
+              <span className="text-figure leading-none tracking-[-0.03em] tabular-nums">{declared.discharged}<span className="text-muted-foreground"> of {declared.eligible}</span></span>
             </div>
-            <div className="text-lg font-medium">supported checks proven</div>
+            <div className="text-heading font-medium">supported checks proven</div>
           </div>
           <ul className="divide-y rounded-md border">
             {declared.goals.filter(({ verdict }) => verdict.kind !== "unknown").map((goal) => (
-              <li key={goal.index} className="flex items-center gap-2.5 px-3 py-2 text-sm" title={verdictWords(goal.verdict)}>
+              <li key={goal.index} className="flex items-center gap-2.5 px-3 py-2 text-body" title={verdictWords(goal.verdict)}>
                 <VerdictIcon verdict={goal.verdict} />
                 <span className="first-letter:uppercase">{field(goal.goalKind)}</span>
               </li>
             ))}
             {unknown > 0 && (
-              <li className="flex items-center gap-2.5 px-3 py-2 text-sm text-muted-foreground">
+              <li className="flex items-center gap-2.5 px-3 py-2 text-body text-muted-foreground">
                 <CircleHelp aria-hidden className="size-4 shrink-0" />
                 {unknown} of {declared.total} goals unknown: outside what this checker supports
               </li>
             )}
           </ul>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             <Verdict verdict={declared.verdict} />{cases(declared.boundsJson) !== undefined && <> · {cases(declared.boundsJson)} cases checked</>} · rule <code className="text-meta text-foreground">{declared.lawId}</code>
           </p>
         </Well>
@@ -198,7 +199,7 @@ function TypeHeading({ concept, technical }: { readonly concept: Concept; readon
   return (
     <span className="inline-flex flex-wrap items-baseline gap-2">
       <Link to="/objects/$type" params={{ type: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>
-      {technical && <code className="font-mono text-xs font-normal text-muted-foreground">{concept.name}</code>}
+      {technical && <code className="font-mono text-meta font-normal text-muted-foreground">{concept.name}</code>}
     </span>
   )
 }
@@ -217,7 +218,7 @@ function LiveRules() {
   const unknownTypeHeading = (objectType: string) => (
     <span className="inline-flex flex-wrap items-baseline gap-2">
       <Link to="/objects/$type" params={{ type: objectType }} className="underline-offset-4 hover:underline">{conceptTitle(objectType)}</Link>
-      {technical && <code className="font-mono text-xs font-normal text-muted-foreground">{objectType}</code>}
+      {technical && <code className="font-mono text-meta font-normal text-muted-foreground">{objectType}</code>}
     </span>
   )
 
@@ -266,13 +267,13 @@ function LiveRules() {
               </StatStrip>
             )}
             {inbox.isError && !(inbox.error instanceof NotServed) && (
-              <p role="alert" className="text-sm text-destructive">{inbox.error.message}</p>
+              <p role="alert" className="text-body text-destructive">{inbox.error.message}</p>
             )}
             <Tabs value={heldOnly ? "held" : "all"} onValueChange={(next) => setHeldOnly(next === "held")}>
               <TabsList>
                 <TabsTrigger value="all">All rules</TabsTrigger>
                 <TabsTrigger value="held">
-                  Held back{heldBadge !== undefined && <span className="ms-1.5 text-xs text-muted-foreground tabular-nums">{heldBadge}</span>}
+                  Held back{heldBadge !== undefined && <span className="ms-1.5 text-meta text-muted-foreground tabular-nums">{heldBadge}</span>}
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="all" className="space-y-5 pt-3">
@@ -298,7 +299,7 @@ function LiveRules() {
                 })}
                 {system.length > 0 && (
                   <details className="group/system">
-                    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+                    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
                       <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />
                       System rules ({systemRuleCount}): how the platform keeps its own records
                     </summary>
@@ -365,7 +366,7 @@ export function RulesPage() {
   // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
   if (mode.data?.kind !== "recorded") {
     return mode.isError
-      ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />
+      ? <WorkspaceUnavailable error={mode.error} />
       : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>
   }
   return <RecordedRules />
@@ -393,7 +394,7 @@ function RecordedRules() {
       {declared && <Hero declared={declared} broken={document("mutant")} />}
       {read.data && (
         <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/details">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
             <ChevronRight aria-hidden className="size-4 transition-transform group-open/details:rotate-90" />Technical details: each goal, the bounds and the tools
           </summary>
           <div className="space-y-8 pt-6">

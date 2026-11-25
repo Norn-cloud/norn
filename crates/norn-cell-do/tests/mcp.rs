@@ -16,6 +16,9 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
 use serde_json::{Value, json};
 
+#[path = "support/tools_list.rs"]
+mod tools_list;
+
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
@@ -116,6 +119,21 @@ fn keys(value: &Value, out: &mut Vec<String>) {
         }
         Value::Array(items) => items.iter().for_each(|item| keys(item, out)),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+/// The analytics demo's `tools/list` for each demo caller, byte for byte.
+#[test]
+fn the_tools_list_is_byte_for_byte_the_snapshot() {
+    let cell = cell();
+    for (caller, auth) in [("admin", VIEWER), ("guest", GUEST)] {
+        let response = rpc(
+            &cell,
+            auth,
+            &json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {"limit": 100}}),
+        );
+        assert_eq!(response.status, 200, "{}", response.body);
+        tools_list::snapshot(&format!("analytics.{caller}.json"), &response.body);
     }
 }
 

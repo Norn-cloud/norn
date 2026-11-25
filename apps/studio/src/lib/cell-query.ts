@@ -8,6 +8,7 @@ import {
 import { CellUnavailable, defaultFetch, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
 import { CellRefusal, MODE_AUTO_RETRIES, NotServed } from "./live-transport.ts"
+import type { ReadState } from "../../../../packages/norn-react/src/state.ts"
 
 /**
  * One read primitive for the cell's documents (#1374): `useCellQuery(route, params, { scope })` is
@@ -26,7 +27,7 @@ import { CellRefusal, MODE_AUTO_RETRIES, NotServed } from "./live-transport.ts"
  *   a refusal is an answer, and asking again gets the same one.
  * - Unmounting unsubscribes; the live client keeps its own limits (frame size, one wire
  *   subscription per path, the cell's `live.too_many_subscriptions`).
- * - A read the cell's answers no longer reach is stale (`CellReadState.stale`): its subscription
+ * - A read the cell's answers no longer reach is stale (its document's `freshness`): its subscription
  *   was refused, or the live client gave up reconnecting (`LIVE_UNAVAILABLE`). The page shows the
  *   last answer as such, with its time and a way to read again, never as live.
  * - Nothing is kept across reloads. Persistence lands with the server's cache-policy flag (#1374),
@@ -290,37 +291,50 @@ export function attachLive(options: {
   }
 }
 
-/** What a page renders for one read: the document, or the refusal state (the read's error or a pushed refusal). */
-export interface CellReadState<T> {
-  readonly status: "pending" | "error" | "success"
-  readonly data: CellDocument<T> | undefined
-  readonly error: Error | null
-  /**
-   * The cell's answers to this read are no longer followed: the live protocol refused its
-   * subscription, or the live client gave up reconnecting (`LIVE_UNAVAILABLE`). `data` is the last
-   * answer read (as of the query's `dataUpdatedAt`); the page says so and offers to read again
-   * (`refetch`), never shows it as live. It clears when the cell answers the subscription again.
-   */
-  readonly stale: boolean
+/**
+ * What a page renders for one read (`@norn/react`'s {@link ReadState}): the document, or the state its
+ * error or pushed refusal is. Each error keeps the class the read made of the cell's answer (#1686):
+ *
+ * - {@link NotServed} (a 404 that is no refusal, or the deployment's no-host 503, `NO_HOST_ERROR`) is `not_served`;
+ * - {@link CellRefusal} is `refused`: asking again gets the same answer;
+ * - {@link CellUnavailable} past its read deadline is `timed_out`; any other is `unavailable`, with
+ *   `retry` set unless the cell said asking again cannot help (`retryable: false`);
+ * - anything else did not come from the cell, and is `unavailable` with no retry.
+ *
+ * A document is `live` while the cell's answers to it are followed, and `stale` once the live protocol
+ * refused its subscription or the live client gave up reconnecting (`LIVE_UNAVAILABLE`): the document is
+ * the last answer read (as of the query's `dataUpdatedAt`), and the page says so and offers to read
+ * again, never shows it as live.
+ */
+export type CellReadState<T> = ReadState<CellDocument<T>, Error>
+
+/** The read state an error the read (or a push) raised is. */
+export function readStateOf(error: Error): Exclude<CellReadState<never>, { readonly kind: "pending" | "ok" }> {
+  if (error instanceof NotServed) return { kind: "not_served", error }
+  if (error instanceof CellRefusal) return { kind: "refused", refusal: error }
+  if (error instanceof CellUnavailable) return error.timedOut === true ? { kind: "timed_out", error } : { kind: "unavailable", error, retry: error.retryable !== false }
+  return { kind: "unavailable", error, retry: false }
 }
 
 /**
- * The read as a page shows it. A pushed refusal is the error state with no document; a later
- * failed read of it shows that failure. Otherwise the query's own status, document and error.
+ * The read as a page shows it. A pushed refusal is its refusal's state with no document; a later failed
+ * read of it shows that failure. Otherwise the query's own state: pending, its error's state (TanStack
+ * keeps an earlier document beside a failed refetch; it is not shown as current), or the document.
  * `liveRefusal` is the live protocol's refusal of the read's subscription, if any.
  */
 export function cellReadState<T>(read: Pick<UseQueryResult<CellEntry<T>, Error>, "status" | "data" | "error">, liveRefusal: LiveRefusal | null = null): CellReadState<T> {
   const entry = read.data
-  const stale = liveRefusal !== null
-  if (entry?.kind === "refused") return { status: "error", data: undefined, error: read.status === "error" ? read.error : entry.refusal, stale }
-  return { status: read.status, data: entry, error: read.error, stale }
+  if (entry?.kind === "refused") return readStateOf(read.status === "error" && read.error !== null ? read.error : entry.refusal)
+  if (read.status === "error" && read.error !== null) return readStateOf(read.error)
+  if (read.status === "pending" || entry === undefined) return { kind: "pending" }
+  return { kind: "ok", document: entry, freshness: liveRefusal === null ? "live" : "stale" }
 }
 
 export interface CellQuery<T> {
   /** The query itself: its data is the cache entry, a document or a pushed refusal. Render {@link CellQuery.state}. */
   readonly read: UseQueryResult<CellEntry<T>, Error>
   readonly state: CellReadState<T>
-  /** The live protocol's refusal of this read's subscription (`live.too_many_subscriptions`, `live.unavailable`, …): the read stands, without pushes, and `state.stale` is set. */
+  /** The live protocol's refusal of this read's subscription (`live.too_many_subscriptions`, `live.unavailable`, …): the read stands, without pushes, and its document is `stale`. */
   readonly liveRefusal: LiveRefusal | null
 }
 

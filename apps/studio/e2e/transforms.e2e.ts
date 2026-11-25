@@ -91,13 +91,31 @@ test("view: a transform's rows carry their column contracts and exact numbers", 
   await chooseFromAccountMenu(page, "Technical")
   await expect(page.getByRole("columnheader", { name: /^revenue/ })).toContainText("additive")
   await expect(page.getByRole("cell", { name: "2026-10-26" }).first()).toBeVisible()
-  await expect(page.locator("[data-edge=right]")).toBeVisible()
+  await expect(page.locator("[data-edge=end]")).toBeVisible()
   await shoot(page, "rows-technical")
   await page.locator("[data-slot=table-container]").first().evaluate((scroller) => { scroller.scrollLeft = scroller.scrollWidth })
-  await expect(page.locator("[data-edge=right]")).toHaveCount(0)
+  await expect(page.locator("[data-edge=end]")).toHaveCount(0)
   await expect(page.getByRole("cell", { name: "east" }).first()).toBeInViewport()
   await shoot(page, "rows-scrolled")
   await chooseFromAccountMenu(page, "Business")
+})
+
+test("Arabic: the hidden columns fade at the left edge, opaque on the outside, and scrolled to the end the fade clears", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("norn.studio.locale", "ar"))
+  await cell(page)
+  await page.goto("/transforms/shop.revenue_by_region")
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
+  await chooseFromAccountMenu(page, "Technical")
+  const fade = page.locator("[data-edge=end]")
+  await expect(fade).toBeVisible()
+  // The end edge is the left in RTL, and the gradient runs left to right: card at the edge, clear inside.
+  const [edge, frame] = await Promise.all([fade.boundingBox(), fade.locator("xpath=..").boundingBox()])
+  expect(edge!.x - frame!.x).toBeLessThan(2)
+  expect(await fade.evaluate((el) => getComputedStyle(el).backgroundImage)).toMatch(/to right/)
+  // RTL scrollers count scrollLeft down from 0; the far end clears the fade.
+  await page.locator("[data-slot=table-container]").first().evaluate((scroller) => { scroller.scrollLeft = -scroller.scrollWidth })
+  await expect(fade).toHaveCount(0)
+  await shoot(page, "rows-technical-rtl")
 })
 
 test("view: a row's lineage lists the records it derives from, each a link to its record", async ({ page }) => {

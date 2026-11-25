@@ -10,60 +10,78 @@
 
 /*
  * Norn Studio skins (apps/studio/DESIGN.md sections 3-6). Bare `:root` and `.dark` are the default
- * `polar` palette and geometry, so the default holds before any script runs and on any page that
- * loads this sheet without `applyAppearance`:
- * - `polar` (default, `:root` + `.dark`): monochrome ink on neutral surfaces, colour only where
- *   DESIGN.md section 13 allows it.
- * - `open` (`:root[data-skin="open"]`): white canvas, 20/15px double shell, one blue accent. `luma` and
- *   `glass` start from `open`'s text and action rows, then set their own surfaces.
- * - `luma`: soft architectural mist two-surface shell with a knot-violet accent.
+ * `luma` palette, geometry and island material, so the default holds before any script runs and on
+ * any page that loads this sheet without `applyAppearance`:
+ * - `luma` (default, `:root` + `.dark`): shadcn's Luma style (base-luma): its neutral theme and radius scale,
+ *   and opaque monochrome islands on a plain neutral backdrop (DESIGN.md 4.7).
+ * - `polar` (`:root[data-skin="polar"]`): monochrome ink on neutral surfaces, colour only where
+ *   DESIGN.md section 13 allows it; opaque islands.
+ * - `open` (`:root[data-skin="open"]`): white canvas, 20/15px double shell, an ink accent, opaque
+ *   islands. `glass` starts from its text and action rows, then sets its own surfaces.
  * - `glass`: translucent frosted surfaces with backdrop blur over an ambient mesh.
  * Geometry is in px so it does not scale with the 90% root. Every palette passes the contrast gate
- * (`test/contrast.test.ts`, the StudioTheme validator): 4.5:1 for text, 3:1 for rings and indicators.
+ * (`test/contrast.test.ts`, the StudioTheme validator): 4.5:1 for text, 3:1 for rings and indicators,
+ * on each island over its worst-case backdrop.
  */
 :root {
-  /* Concentric double shell: radius-panel = radius-well + panel-inset + 1px border (11 + 4 + 1 = 16). */
-  --radius: 8px;
-  --radius-chip: 5px;
-  --radius-panel: 16px;
+  /*
+   * Luma (shadcn's official style, base-luma; DESIGN.md 3 and 5): its neutral theme and its radius scale
+   * (--radius 0.625rem = 10px; sm..4xl = 0.6, 0.8, 1, 1.4, 1.8, 2.2, 2.6 × that), mapped onto Norn's tokens.
+   * Concentric double shell: radius-panel = radius-well + panel-inset + 1px border (21 + 4 + 1 = 26, Luma's card).
+   */
+  --radius: 12px;
+  --radius-chip: 9999px;
+  --radius-panel: 26px;
   --panel-inset: 4px;
-  --radius-well: 11px;
-  --radius-row: 11px;
-  --radius-sheet: 24px;
-  --radius-search: 18px;
+  --radius-well: 21px;
+  --radius-row: 16px;
+  --radius-sheet: 26px;
+  --radius-search: 14px;
   --radius-dock: 26px;
-  --radius-popup: 16px;
-  --shell: #f6f6f8;
-  --canvas: #f6f6f8;
+  --radius-popup: 22px;
+  /* The chat composer and the Ask bar's field: Luma's input-group textarea (3xl). */
+  --radius-composer: 14px;
+  /* Tailwind's rounded-* steps (the @theme below reads these): Luma's scale in luma; the crisp one elsewhere. */
+  --radius-step-xl: 14px;
+  --radius-step-2xl: 18px;
+  --radius-step-3xl: 22px;
+  --radius-step-4xl: 26px;
+  --shell: #f6f6f6;
+  --canvas: #ffffff;
   --background: #ffffff;
-  --foreground: #18181b;
+  --foreground: #171717;
   --card: #ffffff;
-  --card-foreground: #18181b;
-  --well: #f7f7f9;
-  --well-border: #e8e8ec;
-  --well-hover: #efefef;
+  --card-foreground: #171717;
+  --well: #f6f6f6;
+  --well-border: #e9e9e9;
+  --well-hover: #f0f0f0;
   --popover: #ffffff;
-  --popover-foreground: #18181b;
-  /* Knot violet is reserved for the Norn mark. */
-  --knot: #5b52f0;
+  --popover-foreground: #171717;
+  /* The knot (the Norn mark's accent) is neutral: chrome is monochrome (DESIGN.md 19.6). */
+  --knot: #181818;
+  /* The assistant mascot (DESIGN.md 19.4) keeps its own violet (the knot itself is neutral now, 19.6):
+     white eyes at 5.37:1 light and 3.62:1 dark, a graphic, so 3:1. */
+  --mascot-body: #5b52f0;
+  --mascot-eye: #ffffff;
   /* Fill and text are separate roles (DESIGN.md 4.2): `--primary` fills the CTA, `--action` is accent text. */
-  --action: #18181b;
-  --action-hover: #2c2c32;
+  --action: #181818;
+  --action-hover: #333333;
   --action-foreground: #fafafa;
-  --primary: #18181b;
+  --primary: #181818;
   --primary-foreground: #fafafa;
-  --action-dot: #71717a;
-  --action-soft: rgb(24 24 27 / 0.08);
-  --secondary: #f4f4f6;
-  --secondary-foreground: #18181b;
-  --muted: #f4f4f6;
-  --muted-foreground: #585861;
+  --action-dot: #737373;
+  --action-soft: rgb(0 0 0 / 0.06);
+  --secondary: #f4f4f4;
+  --secondary-foreground: #171717;
+  --muted: #f4f4f4;
+  --muted-foreground: #6d6d6d;
   /* Decorative only (separators, chevrons, info glyphs): never the only carrier of information. */
-  --subtle-foreground: #85858b;
-  --accent: #ededf0;
-  --accent-foreground: #18181b;
-  --surface-subtle: #f5f5f7;
+  --subtle-foreground: #8a8a8a;
+  --accent: #f0f0f0;
+  --accent-foreground: #171717;
+  --surface-subtle: #f6f6f6;
   /* Muted semantic colours, each >= 4.5:1 as text on white, card and well. */
+  /* Luma's red (#e7000b) is 4.01:1 as text on its own 10% wash; Norn keeps its AA red (DESIGN.md 19.1). */
   --destructive: #b83228;
   --destructive-foreground: #ffffff;
   --destructive-text: #b83228;
@@ -75,56 +93,56 @@
   --dot-bad: #e5484d;
   --dot-quiet: color-mix(in oklab, var(--subtle-foreground) 60%, transparent);
   --dot-accent: var(--action-dot);
-  --border: #e5e5ea;
-  --line: #e5e5ea;
-  --input: #dcdce2;
-  --ring: #52525b;
-  --link: #18181b;
+  --border: #e5e5e5;
+  --line: #ebebeb;
+  --input: #e1e1e1;
+  --ring: #737373;
+  --link: #171717;
   /* Detail colour per kind of artefact; each >= 4.5:1 on card and on its tinted fill. */
-  --kind-source: #0f726a;
-  --kind-mapping: #475569;
-  --kind-object: #2d5cd9;
-  --kind-transform: #8f420e;
-  --kind-question: #9a1ca6;
-  --kind-workflow: #4f46e5;
-  --kind-guarantee: #166534;
-  --kind-policy: #b33b0a;
+  --kind-source: #5c5c5c;
+  --kind-mapping: #5c5c5c;
+  --kind-object: #5c5c5c;
+  --kind-transform: #5c5c5c;
+  --kind-question: #5c5c5c;
+  --kind-workflow: #5c5c5c;
+  --kind-guarantee: #5c5c5c;
+  --kind-policy: #5c5c5c;
   /* Chart series: the accent first, then a categorical set separated for 3:1 marks. */
-  --chart-1: #18181b;
+  --chart-1: #3a6df0;
   --chart-2: #0f726a;
   --chart-3: #b45309;
   --chart-4: #9a1ca6;
   --chart-5: #7d8494;
   /* The default sidebar shell (DESIGN.md 4.6 and 9.1). */
-  --sidebar: #f6f6f8;
-  --sidebar-foreground: #18181b;
-  --sidebar-primary: #18181b;
+  --sidebar: #f6f6f6;
+  --sidebar-foreground: #171717;
+  --sidebar-primary: #181818;
   --sidebar-primary-foreground: #fafafa;
-  --sidebar-accent: #ebebef;
-  --sidebar-accent-foreground: #18181b;
-  --sidebar-border: #e5e5ea;
-  --sidebar-ring: #52525b;
-  --panel-border: #e5e5ea;
-  --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.02);
-  --table-border: #e5e5ea;
+  --sidebar-accent: #ebebeb;
+  --sidebar-accent-foreground: #171717;
+  --sidebar-border: #e5e5e5;
+  --sidebar-ring: #737373;
+  --panel-border: #e5e5e5;
+  --panel-shadow: 0 0 0 0 rgb(0 0 0 / 0);
+  --table-border: #e5e5e5;
   /* The opt-in floating dock (DESIGN.md 4.5): dark in every skin and scheme. */
-  --dock-surface: #1d1d20;
+  --dock-surface: #2b2b2b;
   --dock-border: rgb(255 255 255 / 0.08);
-  --dock-well: #34343a;
+  --dock-well: rgb(255 255 255 / 0.1);
   --dock-foreground: #ffffff;
-  --dock-muted: #b4b4bc;
-  --dock-active: #34343a;
-  --dock-ring: #e4e4e7;
-  --dock-indicator: #f4f4f5;
+  --dock-muted: #b4b4b4;
+  --dock-active: rgb(255 255 255 / 0.1);
+  --dock-ring: #d4d4d4;
+  --dock-indicator: #f4f4f4;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.12);
   /* Elevation (DESIGN.md 6): whisper contact plus soft ambient shadow, never a hard blob. */
-  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
-  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
+  --popup-shadow: 0 0 15px rgb(0 0 0 / 0.04), 0 0 2px rgb(0 0 0 / 0.06);
+  --sheet-shadow: 0 0 32px rgb(0 0 0 / 0.08), 0 0 2px rgb(0 0 0 / 0.08);
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
   --elevation-control: 0 1px 2px rgb(0 0 0 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.75);
-  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.14);
-  --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
-  --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.08);
+  --elevation-node: 0 1px 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 28px -10px rgb(0 0 0 / 0.12);
+  --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 4px rgb(0 0 0 / 0.06), 0 18px 40px -12px rgb(0 0 0 / 0.18);
   --elevation-float: 0 16px 40px -12px rgb(0 0 0 / 0.16), 0 2px 6px rgb(0 0 0 / 0.05);
   --node-border: rgb(15 23 42 / 0.08);
   --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
@@ -154,87 +172,118 @@
   --tone-teal: #0b6c6c;
   --tone-pink: #ad2168;
   --tone-orange: #b0440a;
+  /*
+   * The three-island shell (DESIGN.md 4.7 and 9.1): on a neutral backdrop, the applet rail, the submenu
+   * island and the main island. Luma's islands are opaque, like Polar's: a white (dark #111111) surface,
+   * a 1px hairline and at most a shadow-xs (owner, 2026-11-25: monochrome supersedes the glass; the
+   * `glass` skin keeps it as an opt-in). The pools of ambient light are off (transparent).
+   */
+  --backdrop: #f6f6f6;
+  --backdrop-glow-1: rgb(0 0 0 / 0);
+  --backdrop-glow-2: rgb(0 0 0 / 0);
+  --island: #ffffff;
+  --island-border: #e5e5e5;
+  --island-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  --island-blur: none;
+  --radius-island: 16px;
+  /*
+   * Avatar discs (DESIGN.md 4.4): six bg/fg pairs, the index a stable hash of the principal's or
+   * record's id, never its display name. Every pair reads at >= 5:1; the same in every skin.
+   */
+  --avatar-1-bg: #fde4e1;
+  --avatar-1-fg: #9a3b2e;
+  --avatar-2-bg: #e3ecff;
+  --avatar-2-fg: #2d4fa8;
+  --avatar-3-bg: #e2f5ea;
+  --avatar-3-fg: #23744a;
+  --avatar-4-bg: #fdf0d8;
+  --avatar-4-fg: #8a5a12;
+  --avatar-5-bg: #efe6fd;
+  --avatar-5-fg: #6b3fae;
+  --avatar-6-bg: #dff3f6;
+  --avatar-6-fg: #1f6f7a;
+  --dock-icon: rgb(255 255 255 / 0.4);
 }
 
 .dark {
-  --shell: #0a0a0b;
-  --canvas: #0a0a0b;
-  --background: #111113;
-  --foreground: #fafafa;
-  --card: #151517;
-  --card-foreground: #fafafa;
-  --well: #1b1b1e;
-  --well-border: #26262b;
-  --well-hover: #222226;
-  --popover: #1c1c20;
-  --popover-foreground: #fafafa;
-  --knot: #7c74ff;
-  --action: #f4f4f5;
-  --action-hover: #e4e4e7;
-  --action-foreground: #141416;
-  --primary: #f4f4f5;
-  --primary-foreground: #141416;
-  --action-dot: #a1a1aa;
-  --action-soft: rgb(244 244 245 / 0.1);
-  --secondary: #202024;
-  --secondary-foreground: #fafafa;
-  --muted: #202024;
-  --muted-foreground: #9d9da6;
-  --subtle-foreground: #686870;
-  --accent: #26262b;
-  --accent-foreground: #fafafa;
-  --surface-subtle: #1c1c1f;
-  --destructive: #eb7168;
-  --destructive-foreground: #0b0b0e;
-  --destructive-text: #f07b73;
+  --shell: #090909;
+  --canvas: #111111;
+  --background: #111111;
+  --foreground: #ededed;
+  --card: #181818;
+  --card-foreground: #ededed;
+  --well: #1e1e1e;
+  --well-border: #262626;
+  --well-hover: #2a2a2a;
+  --popover: #181818;
+  --popover-foreground: #ededed;
+  --knot: #a1a1a1;
+  --action: #f4f4f4;
+  --action-hover: #d9d9d9;
+  --action-foreground: #181818;
+  --primary: #f4f4f4;
+  --primary-foreground: #181818;
+  --action-dot: #a1a1a1;
+  --action-soft: rgb(255 255 255 / 0.08);
+  --secondary: #212121;
+  --secondary-foreground: #ededed;
+  --muted: #212121;
+  --muted-foreground: #969696;
+  --subtle-foreground: #7a7a7a;
+  --accent: #2e2e2e;
+  --accent-foreground: #ededed;
+  --surface-subtle: #1e1e1e;
+  --destructive: #ff6467;
+  --destructive-foreground: #0a0a0a;
+  --destructive-text: #ff6467;
   --success: #3ccf8e;
   --warning: #f0b04a;
   --dot-live: #3ccf8e;
   --dot-held: #f0b04a;
   --dot-bad: #ff6b6f;
-  --border: #26262b;
-  --line: #26262b;
-  --input: #323238;
-  --ring: #a1a1aa;
-  --link: #e4e4e7;
-  --kind-source: #34d8c4;
-  --kind-mapping: #9caac0;
-  --kind-object: #84aaff;
-  --kind-transform: #fbc236;
-  --kind-question: #f2b2fc;
-  --kind-workflow: #a5b4fc;
-  --kind-guarantee: #52e086;
-  --kind-policy: #fdbd7c;
-  --chart-1: #f4f4f5;
+  --border: #212121;
+  --line: #262626;
+  --input: #2e2e2e;
+  --ring: #a1a1a1;
+  --link: #a1a1a1;
+  --kind-source: #a3a3a3;
+  --kind-mapping: #a3a3a3;
+  --kind-object: #a3a3a3;
+  --kind-transform: #a3a3a3;
+  --kind-question: #a3a3a3;
+  --kind-workflow: #a3a3a3;
+  --kind-guarantee: #a3a3a3;
+  --kind-policy: #a3a3a3;
+  --chart-1: #5b8cff;
   --chart-2: #34d8c4;
   --chart-3: #fbc236;
   --chart-4: #f2b2fc;
   --chart-5: #7b7d8e;
-  --sidebar: #0a0a0b;
-  --sidebar-foreground: #fafafa;
-  --sidebar-primary: #f4f4f5;
-  --sidebar-primary-foreground: #141416;
-  --sidebar-accent: #1d1d21;
-  --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #232328;
-  --sidebar-ring: #a1a1aa;
-  --panel-border: #25252a;
-  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
-  --table-border: #26262b;
-  --dock-surface: #222226;
+  --sidebar: #090909;
+  --sidebar-foreground: #ededed;
+  --sidebar-primary: #f4f4f4;
+  --sidebar-primary-foreground: #181818;
+  --sidebar-accent: #212121;
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: #212121;
+  --sidebar-ring: #a1a1a1;
+  --panel-border: #212121;
+  --panel-shadow: var(--elevation-1);
+  --table-border: #212121;
+  --dock-surface: #2b2b2b;
   --dock-border: rgb(255 255 255 / 0.08);
-  --dock-well: #3a3a41;
+  --dock-well: rgb(255 255 255 / 0.1);
   --dock-foreground: #ffffff;
-  --dock-muted: #b4b4bc;
-  --dock-active: #3a3a41;
-  --dock-ring: #e4e4e7;
-  --dock-indicator: #f4f4f5;
+  --dock-muted: #b4b4b4;
+  --dock-active: rgb(255 255 255 / 0.1);
+  --dock-ring: #d4d4d4;
+  --dock-indicator: #f4f4f4;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.7);
   --popup-shadow: 0 18px 44px -14px rgb(0 0 0 / 0.72);
   --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.8);
   --elevation-1: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 1px 2px rgb(0 0 0 / 0.4);
   --elevation-control: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
-  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45);
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.18);
   --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
   --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 16px 40px -10px rgb(0 0 0 / 0.75);
@@ -263,15 +312,184 @@
   --tone-teal: #4ad6d6;
   --tone-pink: #f797cb;
   --tone-orange: #f7a465;
+  --backdrop: #090909;
+  --backdrop-glow-1: rgb(0 0 0 / 0);
+  --backdrop-glow-2: rgb(0 0 0 / 0);
+  --island: #111111;
+  --island-border: #212121;
+  --island-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  /* Dark discs: the light ink at 30% over the dark card (#151517), with the light fill as ink (>= 12:1). */
+  --avatar-1-bg: #3d201e;
+  --avatar-1-fg: #fde4e1;
+  --avatar-2-bg: #1c2642;
+  --avatar-2-fg: #e3ecff;
+  --avatar-3-bg: #193226;
+  --avatar-3-fg: #e2f5ea;
+  --avatar-4-bg: #382a15;
+  --avatar-4-fg: #fdf0d8;
+  --avatar-5-bg: #2f2244;
+  --avatar-5-fg: #efe6fd;
+  --avatar-6-bg: #183035;
+  --avatar-6-fg: #dff3f6;
+  --mascot-body: #7c74ff;
+  --dock-icon: rgb(255 255 255 / 0.4);
 }
 
 /*
- * Skin: Open (the first-party app's white canvas and blue accent). `luma` and `glass` start from its
- * text and action rows, so they share these blocks and set their own surfaces after them.
+ * Skin: Polar (monochrome ink on neutral surfaces; colour only where DESIGN.md section 13 allows it).
+ */
+:root[data-skin="polar"] {
+  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups, 18px islands. */
+  --radius-island: 18px;
+  --radius: 8px;
+  --radius-chip: 5px;
+  --radius-row: 11px;
+  --radius-sheet: 24px;
+  --radius-search: 18px;
+  --radius-popup: 16px;
+  --radius-composer: 12px;
+  --radius-step-xl: var(--radius-panel);
+  --radius-step-2xl: 12px;
+  --radius-step-3xl: 8px;
+  --radius-step-4xl: 8px;
+  --accent: #ededf0;
+  --accent-foreground: #18181b;
+  --action: #18181b;
+  --action-dot: #71717a;
+  --action-foreground: #fafafa;
+  --action-hover: #2c2c32;
+  --action-soft: rgb(24 24 27 / 0.08);
+  --background: #ffffff;
+  --border: #e5e5ea;
+  --canvas: #f6f6f8;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --chart-1: #18181b;
+  --dock-indicator: #f4f4f5;
+  --dock-ring: #e4e4e7;
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.14);
+  --foreground: #18181b;
+  --input: #dcdce2;
+  --line: #e5e5ea;
+  --link: #18181b;
+  --muted: #f4f4f6;
+  --muted-foreground: #585861;
+  --panel-border: #e5e5ea;
+  --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.02);
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --radius-panel: 16px;
+  --radius-well: 11px;
+  --ring: #52525b;
+  --secondary: #f4f4f6;
+  --secondary-foreground: #18181b;
+  --shell: #f6f6f8;
+  --sidebar: #f6f6f8;
+  --sidebar-accent: #ebebef;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e5e5ea;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #18181b;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-ring: #52525b;
+  --subtle-foreground: #85858b;
+  --surface-subtle: #f5f5f7;
+  --table-border: #e5e5ea;
+  --well: #f7f7f9;
+  --well-border: #e8e8ec;
+  --well-hover: #efefef;
+  /* Polar's islands are opaque: no material, no glow, only the one tonal step to the backdrop. */
+  --backdrop: #ebebee;
+  --backdrop-glow-1: rgb(0 0 0 / 0);
+  --backdrop-glow-2: rgb(0 0 0 / 0);
+  --island: #f6f6f8;
+  --island-border: rgb(24 24 27 / 0.06);
+  --island-shadow: 0 1px 2px rgb(0 0 0 / 0.03);
+  --island-blur: none;
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #b83228;
+  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
+  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
+}
+
+:root.dark[data-skin="polar"] {
+  --accent: #26262b;
+  --accent-foreground: #fafafa;
+  --action: #f4f4f5;
+  --action-dot: #a1a1aa;
+  --action-foreground: #141416;
+  --action-hover: #e4e4e7;
+  --action-soft: rgb(244 244 245 / 0.1);
+  --background: #111113;
+  --border: #26262b;
+  --canvas: #0a0a0b;
+  --card: #151517;
+  --card-foreground: #fafafa;
+  --chart-1: #f4f4f5;
+  --dock-indicator: #f4f4f5;
+  --dock-ring: #e4e4e7;
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45);
+  --foreground: #fafafa;
+  --input: #323238;
+  --line: #26262b;
+  --link: #e4e4e7;
+  --muted: #202024;
+  --muted-foreground: #9d9da6;
+  --panel-border: #25252a;
+  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --popover: #1c1c20;
+  --popover-foreground: #fafafa;
+  --primary: #f4f4f5;
+  --primary-foreground: #141416;
+  --ring: #a1a1aa;
+  --secondary: #202024;
+  --secondary-foreground: #fafafa;
+  --shell: #0a0a0b;
+  --sidebar: #0a0a0b;
+  --sidebar-accent: #1d1d21;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #232328;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #f4f4f5;
+  --sidebar-primary-foreground: #141416;
+  --sidebar-ring: #a1a1aa;
+  --subtle-foreground: #686870;
+  --surface-subtle: #1c1c1f;
+  --table-border: #26262b;
+  --well: #1b1b1e;
+  --well-border: #26262b;
+  --well-hover: #222226;
+  --backdrop: #000000;
+  --island: #0a0a0b;
+  --island-border: rgb(255 255 255 / 0.07);
+  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #eb7168;
+  --destructive-foreground: #0b0b0e;
+  --destructive-text: #f07b73;
+}
+
+/*
+ * Skin: Open (the first-party app's white canvas, now with an ink accent: chrome is monochrome, DESIGN.md 19.6). `glass` starts from its text and
+ * action rows, so it shares these blocks and sets its own surfaces after them.
  */
 :root[data-skin="open"],
-:root[data-skin="luma"],
 :root[data-skin="glass"] {
+  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups, 18px islands. */
+  --radius-island: 18px;
+  --radius: 8px;
+  --radius-chip: 5px;
+  --radius-row: 11px;
+  --radius-sheet: 24px;
+  --radius-search: 18px;
+  --radius-popup: 16px;
+  --radius-composer: 12px;
+  --radius-step-xl: var(--radius-panel);
+  --radius-step-2xl: 12px;
+  --radius-step-3xl: 8px;
+  --radius-step-4xl: 8px;
   --radius-panel: 20px;
   --radius-well: 15px;
   --shell: #f6f6f7;
@@ -286,13 +504,13 @@
   --popover: #ffffff;
   --popover-foreground: #1b1b1d;
   /* Darker than --primary so action-coloured text holds 4.5:1 on its own tint. */
-  --action: #2755d0;
-  --action-hover: #2451c7;
-  --action-foreground: #ffffff;
-  --primary: #2e60e0;
-  --primary-foreground: #ffffff;
-  --action-dot: #7f9ef4;
-  --action-soft: rgb(58 109 240 / 0.1);
+  --action: #18181b;
+  --action-hover: #2c2c32;
+  --action-foreground: #fafafa;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --action-dot: #71717a;
+  --action-soft: rgb(24 24 27 / 0.08);
   --secondary: #f5f5f5;
   --secondary-foreground: #1b1b1d;
   --muted: #f5f5f5;
@@ -303,27 +521,38 @@
   --border: #ebebeb;
   --line: #e8e8e8;
   --input: #e4e4e4;
-  --ring: #2e60e0;
-  --link: #2451c7;
+  --ring: #52525b;
+  --link: #18181b;
   --chart-1: #3a6df0;
   --sidebar: #f6f6f7;
   --sidebar-foreground: #1b1b1d;
-  --sidebar-primary: #3a6df0;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #18181b;
+  --sidebar-primary-foreground: #fafafa;
   --sidebar-accent: #ececef;
   --sidebar-accent-foreground: #1b1b1d;
   --sidebar-border: #ebebeb;
-  --sidebar-ring: #3a6df0;
+  --sidebar-ring: #52525b;
   --panel-border: #ebebeb;
   --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
   --table-border: #ebebeb;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
-  --elevation-action: 0 1px 2px rgb(58 109 240 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.18);
+  --dock-ring: #d4d4d8;
+  --dock-indicator: #f4f4f5;
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.12);
+  --backdrop: #f0f0f2;
+  --backdrop-glow-1: rgb(0 0 0 / 0);
+  --backdrop-glow-2: rgb(0 0 0 / 0);
+  --island: #ffffff;
+  --island-border: rgb(0 0 0 / 0.06);
+  --island-shadow: 0 1px 2px rgb(0 0 0 / 0.03), 0 8px 24px -16px rgb(0 0 0 / 0.1);
+  --island-blur: none;
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #b83228;
+  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
+  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
+  --subtle-foreground: #85858b;
 }
 
 :root.dark[data-skin="open"],
-:root.dark[data-skin="luma"],
 :root.dark[data-skin="glass"] {
   --shell: #09090a;
   --canvas: #0d0d0e;
@@ -336,13 +565,13 @@
   --well-hover: #232327;
   --popover: #19191c;
   --popover-foreground: #ececee;
-  --action: #6b98ff;
-  --action-hover: #2451c7;
-  --action-foreground: #ffffff;
-  --primary: #2e60e0;
-  --primary-foreground: #ffffff;
-  --action-dot: #6f97ff;
-  --action-soft: rgb(91 140 255 / 0.14);
+  --action: #f4f4f5;
+  --action-hover: #e4e4e7;
+  --action-foreground: #141416;
+  --primary: #f4f4f5;
+  --primary-foreground: #141416;
+  --action-dot: #a1a1aa;
+  --action-soft: rgb(244 244 245 / 0.1);
   --secondary: #1c1c1f;
   --secondary-foreground: #ececee;
   --muted: #1c1c1f;
@@ -354,85 +583,31 @@
   --border: #232326;
   --line: #2a2a2e;
   --input: #2c2c30;
-  --ring: #5b8cff;
-  --link: #7da4ff;
+  --ring: #a1a1aa;
+  --link: #e4e4e7;
   --chart-1: #5b8cff;
   --sidebar: #09090a;
   --sidebar-foreground: #ececee;
-  --sidebar-primary: #5b8cff;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #f4f4f5;
+  --sidebar-primary-foreground: #141416;
   --sidebar-accent: #18181b;
   --sidebar-accent-foreground: #ececee;
   --sidebar-border: #202024;
-  --sidebar-ring: #5b8cff;
+  --sidebar-ring: #a1a1aa;
   --panel-border: #232326;
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.02);
   --table-border: #232326;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
+  --dock-ring: #d4d4d8;
+  --dock-indicator: #f4f4f5;
   --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.18);
-}
-
-/*
- * Skin: Luma — soft tinted two-surface shell ground + knot-violet craft with framed panels.
- */
-:root[data-skin="luma"] {
-  --radius-panel: 16px;
-  --radius-well: 11px;
-  --shell: #f3f4f6;
-  --canvas: #f3f4f6;
-  --background: #ffffff;
-  --card: #fafafb;
-  --well: #fafafb;
-  --well-border: #e4e5ea;
-  --well-hover: #f1f2f5;
-  --surface-subtle: #f4f5f7;
-  --muted: #f1f2f5;
-  --accent: #eceef2;
-  --border: #e4e5ea;
-  --action: #4c43e0;
-  --action-hover: #4940dc;
-  --primary: #554ce8;
-  --primary-foreground: #ffffff;
-  --ring: #554ce8;
-  --link: #4f46e5;
-  --sidebar: #f3f4f6;
-  --sidebar-accent: #e8eaf0;
-  --sidebar-border: #e2e4ea;
-  --sidebar-primary: #554ce8;
-  --sidebar-ring: #554ce8;
-  --panel-border: color-mix(in oklab, var(--border) 92%, transparent);
-  --panel-shadow: var(--elevation-1);
-  --table-border: color-mix(in oklab, var(--border) 92%, transparent);
-}
-
-:root.dark[data-skin="luma"] {
-  --shell: #0b0b0e;
-  --canvas: #0b0b0e;
-  --background: #111115;
-  --card: #17171d;
-  --well: #17171d;
-  --well-border: #262730;
-  --well-hover: #1d1d24;
-  --popover: #1f1f27;
-  --surface-subtle: #1c1c23;
-  --muted: #1d1d24;
-  --accent: #23232d;
-  --border: #262730;
-  --action: #847dff;
-  --action-hover: #695ff0;
-  --primary: #6258ec;
-  --primary-foreground: #ffffff;
-  --ring: #7c74ff;
-  --link: #938cff;
-  --sidebar: #0b0b0e;
-  --sidebar-accent: #18181f;
-  --sidebar-border: #1e1e26;
-  --sidebar-primary: #7c74ff;
-  --sidebar-ring: #7c74ff;
-  --panel-border: color-mix(in oklab, var(--border) 95%, transparent);
-  --panel-shadow: var(--elevation-1);
-  --table-border: color-mix(in oklab, var(--border) 95%, transparent);
+  --backdrop: #000000;
+  --island: #0d0d0e;
+  --island-border: rgb(255 255 255 / 0.07);
+  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #eb7168;
+  --destructive-foreground: #0b0b0e;
+  --destructive-text: #f07b73;
 }
 
 /*
@@ -441,91 +616,136 @@
 :root[data-skin="glass"] {
   --radius-panel: 20px;
   --radius-well: 15px;
-  --shell: #eef1f8;
-  --canvas: #eef1f8;
+  --shell: #eff0f2;
+  --canvas: #eff0f2;
   --background: rgb(255 255 255 / 0.74);
   --card: rgb(255 255 255 / 0.62);
-  --well: rgb(244 246 252 / 0.65);
+  --well: rgb(245 245 247 / 0.65);
   --well-border: rgb(255 255 255 / 0.72);
-  --well-hover: rgb(236 240 250 / 0.78);
+  --well-hover: rgb(238 238 241 / 0.78);
   --popover: rgb(255 255 255 / 0.88);
-  --surface-subtle: rgb(241 244 252 / 0.68);
-  --muted: rgb(236 240 250 / 0.72);
-  --accent: rgb(228 233 248 / 0.78);
-  --border: rgb(58 109 240 / 0.14);
-  --input: rgb(58 109 240 / 0.2);
-  --sidebar: rgb(246 248 254 / 0.62);
+  --surface-subtle: rgb(243 243 246 / 0.68);
+  --muted: rgb(238 238 241 / 0.72);
+  --accent: rgb(234 234 238 / 0.78);
+  --border: rgb(0 0 0 / 0.08);
+  --input: rgb(0 0 0 / 0.12);
+  --sidebar: rgb(248 248 250 / 0.62);
   --sidebar-accent: rgb(255 255 255 / 0.72);
-  --sidebar-border: rgb(58 109 240 / 0.14);
+  --sidebar-border: rgb(0 0 0 / 0.08);
   --panel-border: rgb(255 255 255 / 0.72);
-  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(44 52 94 / 0.14);
-  --table-border: rgb(58 109 240 / 0.14);
-  --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 16px 40px -12px rgb(44 52 94 / 0.22);
-  --dock-surface: rgb(24 26 36 / 0.82);
+  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(0 0 0 / 0.1);
+  --table-border: rgb(0 0 0 / 0.08);
+  --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 16px 40px -12px rgb(0 0 0 / 0.16);
+  --dock-surface: rgb(26 26 30 / 0.82);
   --dock-border: rgb(255 255 255 / 0.22);
   --dock-muted: #babac2;
+  --backdrop: #eff0f2;
+  --backdrop-glow-1: rgb(255 255 255 / 0.55);
+  --backdrop-glow-2: rgb(0 0 0 / 0.03);
+  --island: rgb(253 253 254 / 0.6);
+  --island-border: rgb(255 255 255 / 0.72);
+  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(0 0 0 / 0.16);
+  --island-blur: blur(24px);
+  --dock-well: #3a3a3e;
+  --dock-active: #3a3a3e;
 }
 
 :root.dark[data-skin="glass"] {
-  --shell: #0b0d17;
-  --canvas: #0b0d17;
-  --background: rgb(18 21 34 / 0.72);
-  --card: rgb(24 28 44 / 0.58);
-  --well: rgb(30 35 54 / 0.62);
+  --shell: #0c0c0e;
+  --canvas: #0c0c0e;
+  --background: rgb(20 20 23 / 0.72);
+  --card: rgb(28 28 32 / 0.58);
+  --well: rgb(36 36 41 / 0.62);
   --well-border: rgb(255 255 255 / 0.13);
-  --well-hover: rgb(38 44 68 / 0.72);
-  --popover: rgb(26 30 48 / 0.88);
-  --surface-subtle: rgb(30 35 54 / 0.62);
-  --muted: rgb(30 34 54 / 0.68);
-  --accent: rgb(42 48 74 / 0.72);
+  --well-hover: rgb(46 46 52 / 0.72);
+  /* Lifted from open's #6a6a72: the islands' saturate() leaves it at 2.97:1 under both glows (3.15 here). */
+  --subtle-foreground: #6e6e76;
+  --popover: rgb(30 30 34 / 0.88);
+  --surface-subtle: rgb(36 36 41 / 0.62);
+  --muted: rgb(36 36 41 / 0.68);
+  --accent: rgb(52 52 58 / 0.72);
   --border: rgb(255 255 255 / 0.13);
   --input: rgb(255 255 255 / 0.18);
-  --sidebar: rgb(15 18 30 / 0.6);
+  --sidebar: rgb(18 18 20 / 0.6);
   --sidebar-accent: rgb(255 255 255 / 0.09);
   --sidebar-border: rgb(255 255 255 / 0.12);
   --panel-border: rgb(255 255 255 / 0.15);
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 10px 30px -12px rgb(0 0 0 / 0.55);
   --table-border: rgb(255 255 255 / 0.13);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 20px 48px -12px rgb(0 0 0 / 0.78);
-  --dock-surface: rgb(18 20 34 / 0.8);
+  --dock-surface: rgb(22 22 25 / 0.8);
   --dock-border: rgb(255 255 255 / 0.18);
+  --backdrop: #0c0c0e;
+  --backdrop-glow-1: rgb(255 255 255 / 0.05);
+  --backdrop-glow-2: rgb(255 255 255 / 0.03);
+  --island: rgb(20 20 23 / 0.62);
+  --island-border: rgb(255 255 255 / 0.13);
+  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 10px 30px -12px rgb(0 0 0 / 0.55);
+  --dock-well: #3a3a3e;
+  --dock-active: #3a3a3e;
 }
 
-:root[data-skin="glass"] body,
-:root[data-skin="glass"] [data-slot="sidebar-wrapper"] {
-  background-image:
-    radial-gradient(62rem 36rem at 12% -6%, rgb(58 109 240 / 0.16), transparent 62%),
-    radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.15), transparent 60%),
-    radial-gradient(48rem 32rem at 50% 105%, rgb(139 92 246 / 0.12), transparent 60%);
-  background-attachment: fixed;
-}
+/* Layered, so a utility on an island (the phone main island drops its edge and radius) still wins. */
+@layer components {
+  /*
+   * The three-island shell's backdrop (DESIGN.md 4.7): the ground behind every island, with two soft
+   * pools of ambient light. The glows are part of the backdrop, so text on an island is measured over
+   * the backdrop with a glow at its peak (test/contrast.test.ts), never over the flat colour alone.
+   */
+  [data-slot="sidebar-wrapper"] {
+    background-color: var(--backdrop);
+    background-image:
+      radial-gradient(64rem 40rem at 6% -8%, var(--backdrop-glow-1), transparent 64%),
+      radial-gradient(56rem 40rem at 96% 108%, var(--backdrop-glow-2), transparent 62%);
+    background-attachment: fixed;
+  }
 
-:root.dark[data-skin="glass"] body,
-:root.dark[data-skin="glass"] [data-slot="sidebar-wrapper"] {
-  background-image:
-    radial-gradient(62rem 36rem at 12% -6%, rgb(58 109 240 / 0.22), transparent 62%),
-    radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.18), transparent 60%),
-    radial-gradient(48rem 32rem at 50% 105%, rgb(139 92 246 / 0.18), transparent 60%);
-  background-attachment: fixed;
-}
+  /*
+   * The islands' material: the applet rail and the submenu island take `--sidebar`, the main island
+   * `--island`; each takes the skin's backdrop blur (none in luma), a 1px edge and its depth shadow.
+   * Painted here, not by utilities, so every fallback below can make it opaque in one place.
+   */
+  [data-island] {
+    border: 1px solid var(--island-border);
+    border-radius: var(--radius-island);
+    box-shadow: var(--island-shadow);
+    -webkit-backdrop-filter: var(--island-blur);
+    backdrop-filter: var(--island-blur);
+  }
+  [data-island="nav"] { background-color: var(--sidebar); }
+  [data-island="main"] { background-color: var(--island); }
 
-:root[data-skin="glass"] [data-slot="sidebar-inset"],
-:root[data-skin="glass"] [data-slot="sidebar"]:not([data-mobile]),
-:root[data-skin="glass"] [data-slot="panel"],
-:root[data-skin="glass"] [data-slot="stat-strip"],
-:root[data-skin="glass"] [data-slot="table-card"],
-:root[data-skin="glass"] [data-slot="records-table-frame"],
-:root[data-skin="glass"] [data-slot="popover-content"],
-:root[data-skin="glass"] [data-slot="dropdown-menu-content"],
-:root[data-skin="glass"] [data-slot="chrome-dock-tray"] {
-  backdrop-filter: blur(20px) saturate(165%);
-}
+  /* Glass skins frost the surfaces inside the islands too (cards, tables, popovers, the dock tray). */
+  :root[data-skin="glass"] :is([data-slot="panel"], [data-slot="stat-strip"], [data-slot="table-card"], [data-slot="records-table-frame"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="chrome-dock-tray"]) {
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
 
-/* A translucent sidebar material falls back to the opaque shell when the reader asks for less transparency (DESIGN.md 9.1). */
-@media (prefers-reduced-transparency: reduce) {
-  [data-slot="sidebar"] {
-    background-color: var(--shell);
-    backdrop-filter: none;
+  /*
+   * Opaque fallbacks (DESIGN.md 4.7): a reader who asks for less transparency, a browser without
+   * backdrop-filter and forced colours all get the opaque luma surfaces (`--shell` for the nav islands,
+   * `--canvas` for the main island), which the contrast gate measures on their own.
+   */
+  @media (prefers-reduced-transparency: reduce) {
+    /* As specific as the glass frost above, and later, so it wins in every skin. */
+    [data-island], :root[data-skin] :is([data-slot="panel"], [data-slot="stat-strip"], [data-slot="table-card"], [data-slot="records-table-frame"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="chrome-dock-tray"]) {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+    [data-island="nav"] { background-color: var(--shell); }
+    [data-island="main"] { background-color: var(--canvas); }
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    [data-island="nav"] { background-color: var(--shell); }
+    [data-island="main"] { background-color: var(--canvas); }
+  }
+  @media (forced-colors: active) {
+    [data-island] {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      box-shadow: none;
+      border-color: CanvasText;
+    }
   }
 }
 
@@ -565,10 +785,10 @@
 }
 
 @theme inline {
-  --radius-sm: 4px;
-  --radius-md: var(--radius-chip);
+  --radius-sm: 6px;
+  --radius-md: 8px;
   --radius-lg: var(--radius);
-  --radius-xl: var(--radius-panel);
+  --radius-xl: var(--radius-step-xl);
   --color-background: var(--background);
   --color-canvas: var(--canvas);
   --color-surface-subtle: var(--surface-subtle);
@@ -585,6 +805,18 @@
   --color-dot-bad: var(--dot-bad);
   --color-dot-quiet: var(--dot-quiet);
   --color-dot-accent: var(--dot-accent);
+  --color-avatar-1-bg: var(--avatar-1-bg);
+  --color-avatar-1-fg: var(--avatar-1-fg);
+  --color-avatar-2-bg: var(--avatar-2-bg);
+  --color-avatar-2-fg: var(--avatar-2-fg);
+  --color-avatar-3-bg: var(--avatar-3-bg);
+  --color-avatar-3-fg: var(--avatar-3-fg);
+  --color-avatar-4-bg: var(--avatar-4-bg);
+  --color-avatar-4-fg: var(--avatar-4-fg);
+  --color-avatar-5-bg: var(--avatar-5-bg);
+  --color-avatar-5-fg: var(--avatar-5-fg);
+  --color-avatar-6-bg: var(--avatar-6-bg);
+  --color-avatar-6-fg: var(--avatar-6-fg);
   --color-link: var(--link);
   --color-action: var(--action);
   --color-action-hover: var(--action-hover);
@@ -634,7 +866,7 @@
   --text-heading: 1.35rem;
   --text-heading--line-height: 1.25;
   --text-heading--letter-spacing: -0.02em;
-  --text-title: 1.85rem;
+  --text-title: 1.5rem;
   --text-title--line-height: 1.15;
   --text-title--letter-spacing: -0.025em;
   --text-figure: 2rem;
@@ -671,16 +903,17 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-shell: var(--shell);
+  --color-backdrop: var(--backdrop);
+  --color-island: var(--island);
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
-  --radius-2xl: 12px;
-  /* Controls (buttons, inputs, toggles) keep the crisp 8px control radius. */
-  --radius-3xl: var(--radius);
-  --radius-4xl: var(--radius);
-  --shadow-md: var(--elevation-1);
+  /* Luma's pill controls and fully rounded cards in luma; the crisp steps in polar, open and glass. */
+  --radius-2xl: var(--radius-step-2xl);
+  --radius-3xl: var(--radius-step-3xl);
+  --radius-4xl: var(--radius-step-4xl);
 }
 
 @layer base {
@@ -689,6 +922,8 @@
   html { @apply font-sans; font-size: 90%; }
   body { @apply bg-canvas text-foreground antialiased; font-size: var(--text-body); line-height: 1.45; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; }
   h1, h2, h3 { letter-spacing: -0.025em; }
+  /* Calm weights (DESIGN.md 8.2): emphasis is ink and size, never a heavier face, so `<b>`, `<strong>` and `<th>` keep the weight around them. */
+  b, strong, th { font-weight: inherit; }
   /* The browser's own surfaces carry the palette too: selection, scrollbars, the caret. */
   ::selection { background: color-mix(in oklab, var(--ring) 24%, transparent); }
   * { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent; }
@@ -747,3 +982,42 @@
 [dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, label, button, a, dt, dd, figcaption, span):not([dir]) {
   unicode-bidi: plaintext;
 }
+
+/* A running trace title (components/ui/trace.tsx, shadcn's Trace): a lighter band of its own ink passes
+   over the words, monochrome. It holds still under reduced motion, and `shimmer-none` turns it off. */
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@utility shimmer {
+  background-image: linear-gradient(90deg, currentColor 40%, color-mix(in oklab, currentColor 35%, transparent) 50%, currentColor 60%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2s linear infinite;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+@utility shimmer-none {
+  animation: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+}
+
+/* The assistant mascot (components/system/mascot.tsx, DESIGN.md 19.4). Idle blinks now and then; thinking
+   turns its thread and lifts its gaze; asking raises its hand. Every pose holds still under reduced motion. */
+@keyframes mascot-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.12); } }
+@keyframes mascot-sway { 0%, 100% { transform: rotate(-16deg); } 50% { transform: rotate(16deg); } }
+@keyframes mascot-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-0.8px); } }
+@keyframes mascot-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-14deg); } }
+[data-slot="mascot"] [data-part="eyes"] { transform-box: fill-box; transform-origin: center; }
+[data-slot="mascot"] [data-part="thread"] { transform-box: view-box; transform-origin: 16px 6px; }
+[data-slot="mascot"] [data-part="hand"] { transform-box: view-box; transform-origin: 26.4px 16.4px; }
+[data-slot="mascot"][data-state="idle"] [data-part="eyes"] { animation: mascot-blink 6s ease-in-out infinite; }
+[data-slot="mascot"][data-state="thinking"] [data-part="figure"] { animation: mascot-bob 1.6s ease-in-out infinite; }
+[data-slot="mascot"][data-variant="pebble"][data-state="thinking"] [data-part="thread"] { animation: mascot-sway 1.2s ease-in-out infinite; }
+[data-slot="mascot"][data-state="asking"] [data-part="hand"] { animation: mascot-wave 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="mascot"] [data-part] { animation: none !important; }
+}
+

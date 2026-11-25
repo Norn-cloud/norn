@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Cable, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
@@ -50,7 +50,7 @@ function SyncNow({ id }: { readonly id: string }) {
   return (
     <div className="space-y-1">
       <Button type="button" size="sm" variant="outline" disabled={sync.isPending} onClick={() => sync.mutate()}><RefreshCw className={sync.isPending ? "animate-spin" : undefined} />Sync now</Button>
-      {sync.isError && <p role="alert" className="max-w-48 text-xs text-destructive">{sync.error.message}</p>}
+      {sync.isError && <p role="alert" className="max-w-48 text-meta text-destructive">{sync.error.message}</p>}
     </div>
   )
 }
@@ -89,22 +89,22 @@ export function SourceConnections() {
   return (
     <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {installed === false && <Well><EmptyState icon={Cable} title="No connections yet" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>}
-      {(installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
+      {(installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-body text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
-        ? <Well className="flex items-center gap-3 px-4 py-3 text-sm"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block font-medium">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
+        ? <Well className="flex items-center gap-3 px-4 py-3 text-body"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
         : (
           // The type is installed and the read failed (a refusal included): said plainly, quietly, with a way to try again.
           <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p className="min-w-0 text-sm"><span className="font-medium">Couldn't read the connections.</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
+            <p className="min-w-0 text-body"><span>Couldn't read the connections.</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
             <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>
           </div>
         ))}
       {connections.data && (connections.data.document.records.length === 0
         ? <Well><EmptyState icon={Cable} title="No connections" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>
-        : <div className="p-1"><TableCard><Table>
+        : <TableCard><Table>
           <TableHeader><TableRow>
             <TableHead>Connection</TableHead><TableHead>Status</TableHead><TableHead>Last sync</TableHead><TableHead>Up to</TableHead>
-            <TableHead className="text-right">Read</TableHead><TableHead className="text-right">Landed</TableHead><TableHead className="text-right">Quarantined</TableHead><TableHead />
+            <TableHead className="text-end">Read</TableHead><TableHead className="text-end">Landed</TableHead><TableHead className="text-end">Quarantined</TableHead><TableHead />
           </TableRow></TableHeader>
           <TableBody>
             {connections.data.document.records.map(({ id, values }, index) => {
@@ -112,23 +112,23 @@ export function SourceConnections() {
               const read = connections.data
               return (
                 <TableRow key={id}>
-                  <TableCell><div className="font-medium">{values.label ?? id}</div><div className="text-xs text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
+                  <TableCell><div>{values.label ?? id}</div><div className="text-meta text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
-                    {status.note && <div className="max-w-64 pt-1 text-xs whitespace-normal text-muted-foreground">{status.note}</div>}
-                    {status.error && <div className="max-w-64 pt-1 text-xs whitespace-normal text-destructive" title={status.error.message ?? undefined}><span className="font-mono">{status.error.code}</span>{status.error.message ? `: ${status.error.message}` : ""}</div>}
+                    {status.note && <div className="max-w-64 pt-1 text-meta whitespace-normal text-muted-foreground">{status.note}</div>}
+                    {status.error && <div className="max-w-64 pt-1 text-meta whitespace-normal text-destructive" title={status.error.message ?? undefined}><span className="font-mono">{status.error.code}</span>{status.error.message ? `: ${status.error.message}` : ""}</div>}
                   </TableCell>
-                  <TableCell className="text-sm whitespace-nowrap">{values.status === "syncing" ? <>started <Instant iso={values.last_sync_started_at} /></> : <Instant iso={values.last_sync_ended_at} />}</TableCell>
-                  <TableCell className="max-w-48 truncate font-mono text-xs" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{watermarkText(values.watermark)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>
-                  <TableCell className="text-right tabular-nums" title={values.quarantine_reasons ?? undefined}>{count(read, index, "rows_quarantined", values.rows_quarantined)}{values.quarantine_reasons ? <div className="font-mono text-xs text-muted-foreground">{values.quarantine_reasons}</div> : null}</TableCell>
+                  <TableCell className="text-body whitespace-nowrap">{values.status === "syncing" ? <>started <Instant iso={values.last_sync_started_at} /></> : <Instant iso={values.last_sync_ended_at} />}</TableCell>
+                  <TableCell className="max-w-48 truncate font-mono text-meta" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{watermarkText(values.watermark)}</TableCell>
+                  <TableCell className="text-end tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
+                  <TableCell className="text-end tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>
+                  <TableCell className="text-end tabular-nums" title={values.quarantine_reasons ?? undefined}>{count(read, index, "rows_quarantined", values.rows_quarantined)}{values.quarantine_reasons ? <div className="font-mono text-meta text-muted-foreground">{values.quarantine_reasons}</div> : null}</TableCell>
                   <TableCell>{values.system !== "upload" && status.syncable && <SyncNow id={id} />}</TableCell>
                 </TableRow>
               )
             })}
           </TableBody>
-        </Table></TableCard></div>)}
+        </Table></TableCard>)}
     </Panel>
   )
 }

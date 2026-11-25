@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { Scale, ShieldAlert, ShieldCheck } from "lucide-react"
-import { Chip } from "@/components/chip"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { Chip } from "@/components/system/chip"
+import { RowList, TypeDisc } from "@/components/system/list-row"
+import { Panel, Well } from "@/components/system/panel"
+import { SourceTag } from "@/components/system/source-tag"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useMode } from "@/lib/live-transport"
@@ -21,6 +23,9 @@ export const ENFORCED = "The cell checks governing rules on every write regardle
 
 /** How many example held-back records a rule row shows before linking out to review all of them. */
 export const HELD_EXAMPLES = 3
+
+/** A rule's row, shaped like a ListRow (lead disc, step-2 title, quiet facts) but a plain block: it holds its own links. */
+const ROW = "flex min-w-0 gap-3 rounded-(--radius-row) px-3 py-2.5 text-body"
 
 const FORM: Record<string, string> = { always: "must always hold", never: "must never hold", eventually: "must eventually hold", until: "must hold until" }
 
@@ -70,33 +75,34 @@ function HeldRecords({ held }: { readonly held: Group }) {
   const shown = held.records.slice(0, HELD_EXAMPLES)
   const more = held.count > shown.length || held.approximate
   return (
-    <div className="mt-1.5 divide-y divide-border/70 overflow-hidden rounded-md border border-border/70 bg-muted/25">
+    // A ruled section of the rule's row, not a box inside the well: one hairline above, rows with no frame.
+    <ul className="mt-1.5 flex flex-col border-t border-(--well-border) pt-1">
       {shown.map((record) => {
         const others = record.otherFindings ?? []
         return (
-          <div key={`${record.objectType}:${record.id}`} data-held-record={record.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
-            <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{recordName(record)}</RouteLink>
+          <li key={`${record.objectType}:${record.id}`} data-held-record={record.id} className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-body max-sm:min-h-[44px]">
+            <RouteLink to={record.target} className="underline-offset-4 hover:underline">{recordName(record)}</RouteLink>
             {record.finding && <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">{record.finding.words}</span>}
             {record.suggestedFix && (
-              <Button asChild size="xs" variant="secondary" className="ms-auto">
+              <Button asChild size="xs" variant="secondary" className="ms-auto max-sm:min-h-[44px]">
                 <RouteLink to={record.target}>Review fix</RouteLink>
               </Button>
             )}
             {others.length > 0 && (
-              <div className="basis-full space-y-0.5 text-xs text-muted-foreground">
+              <div className="basis-full space-y-0.5 text-meta text-muted-foreground">
                 <Badge variant="outline">Needs review: {others.length + 1} laws disagree</Badge>
                 {others.map((other) => <p key={other.id} className="tabular-nums">{other.words}</p>)}
               </div>
             )}
-          </div>
+          </li>
         )
       })}
-      <div className="flex items-center px-1 py-1">
-        <Button asChild size="xs" variant="ghost">
+      <li className="-ms-2 flex items-center py-1">
+        <Button asChild size="xs" variant="ghost" className="max-sm:min-h-[44px]">
           <RouteLink to={held.target}>{more ? `Review all ${heldCountText(held.count, held.approximate)}` : "Review in records"}</RouteLink>
         </Button>
-      </div>
-    </div>
+      </li>
+    </ul>
   )
 }
 
@@ -109,28 +115,28 @@ function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Gr
   const { view } = useView()
   const headline = lawHeadline(law)
   return (
-    <div className="flex gap-3 px-4 py-3 text-sm" data-law={law.id}>
-      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span>
+    <div className={ROW} data-law={law.id}>
+      <TypeDisc icon={ShieldCheck} />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p lang={law.titleLang} className="font-medium text-pretty">{headline}</p>
+        <p lang={law.titleLang} className="text-pretty">{headline}</p>
         {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
         <div className="flex flex-wrap items-center gap-1.5">
-          <Chip tone={law.severity === "error" ? "red" : "amber"} icon={law.severity === "error" ? ShieldAlert : undefined} dot={law.severity !== "error"}
+          <Chip tone={law.severity === "error" ? "red" : "amber"}
             title="Declared reporting severity; does not change how the cell enforces this rule">
             {law.severity === "error" ? "Error severity" : "Warning severity"}
           </Chip>
-          <Chip tone="gray" title={law.response ? `as a ${law.response}` : undefined}>{FORM[law.modality] ?? law.modality}</Chip>
-          {law.inheritedFrom && <Chip tone="gray" title="Declared on a kind of record this one is">from {conceptTitle(law.inheritedFrom)}</Chip>}
+          <SourceTag mono={false} title={law.response ? `as a ${law.response}` : undefined}>{FORM[law.modality] ?? law.modality}</SourceTag>
+          {law.inheritedFrom && <SourceTag mono={false} title="Declared on a kind of record this one is">from {conceptTitle(law.inheritedFrom)}</SourceTag>}
           {held && <HeldCountChip held={held} scanLimit={scanLimit} />}
           {held && held.records.length === 0 && (
-            <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+            <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">
               Review {heldCountText(held.count, held.approximate)}
             </RouteLink>
           )}
           {view === "technical" && (
             <>
-              <Chip tone="violet" title="The pack or module that owns this rule">{law.owner}</Chip>
-              <code className="font-mono text-xs text-muted-foreground">{law.id}</code>
+              <SourceTag title="The pack or module that owns this rule">{law.owner}</SourceTag>
+              <code className="font-mono text-meta text-muted-foreground">{law.id}</code>
             </>
           )}
         </div>
@@ -146,21 +152,21 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
   const technicalId = heldRuleTechnicalId(held.ruleRef)
   const title = heldRuleTitle(held)
   return (
-    <div className="flex gap-3 px-4 py-3 text-sm" data-rule={heldGroupKey(held)}>
-      <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-amber/12 text-tone-amber dark:bg-tone-amber/15"><ShieldAlert aria-hidden className="size-4" /></span>
+    <div className={ROW} data-rule={heldGroupKey(held)}>
+      <TypeDisc icon={ShieldAlert} />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="font-medium text-pretty">{title}</p>
+        <p className="text-pretty">{title}</p>
         {held.rationale && held.rationale !== title && held.rationale !== technicalId && <p className="text-meta text-pretty text-muted-foreground">{held.rationale}</p>}
         <div className="flex flex-wrap items-center gap-1.5">
-          {held.ruleRef.kind === "builtin" && <Chip tone="gray">Built-in</Chip>}
-          {held.ruleRef.kind === "invariant" && <Chip tone="gray">Invariant</Chip>}
+          {held.ruleRef.kind === "builtin" && <SourceTag mono={false}>Built-in</SourceTag>}
+          {held.ruleRef.kind === "invariant" && <SourceTag mono={false}>Invariant</SourceTag>}
           <HeldCountChip held={held} scanLimit={scanLimit} />
           {held.records.length === 0 && (
-            <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+            <RouteLink to={held.target} className="text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">
               Review {heldCountText(held.count, held.approximate)}
             </RouteLink>
           )}
-          {view === "technical" && <code className="font-mono text-xs text-muted-foreground">{technicalId}</code>}
+          {view === "technical" && <code className="font-mono text-meta text-muted-foreground">{technicalId}</code>}
         </div>
         {held.records.length > 0 && <HeldRecords held={held} />}
       </div>
@@ -179,12 +185,12 @@ function Quarantined({ objectType }: { readonly objectType: string }) {
   const quarantinedText = heldCountText(quarantinedRows, approximate)
   const servedText = heldCountText(rows, approximate)
   return (
-    <div className="flex flex-wrap items-center gap-1.5 bg-surface-subtle px-4 py-2.5 text-meta text-muted-foreground tabular-nums" data-profile-summary={objectType} data-approximate={approximate ? "true" : undefined}>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-(--well-border) px-4 py-2.5 text-meta text-muted-foreground tabular-nums" data-profile-summary={objectType} data-approximate={approximate ? "true" : undefined}>
       <Chip tone={quarantinedRows > 0 ? "amber" : "gray"} dot data-profile-quarantined={quarantinedRows} data-approximate={approximate ? "true" : undefined}
         title={approximate ? `At least ${quarantinedRows} in quarantine: the cell reached its scan bound${bound}` : undefined}>
         {quarantinedText} in quarantine
       </Chip>
-      <Chip tone="teal" dot data-profile-served={rows} data-approximate={approximate ? "true" : undefined}
+      <Chip tone="green" data-profile-served={rows} data-approximate={approximate ? "true" : undefined}
         title={approximate ? `At least ${rows} served: the cell reached its scan bound${bound}` : undefined}>
         {servedText} served
       </Chip>
@@ -221,12 +227,17 @@ export function LawsPanel({ concept, label = "Rules it must keep", enforced = tr
   const empty = shownLaws.length === 0 && invariants.length === 0 && extraHeld.length === 0
   return (
     <Panel icon={Scale} label={label}>
-      <Well className="divide-y">
-        {empty && <EmptyState icon={Scale}>{heldOnly ? "No rule is holding back records of this type." : "No rule is declared on this object type itself."}</EmptyState>}
-        {shownLaws.map(({ law, held }) => <LawRow key={law.id} law={law} held={held} scanLimit={bound} />)}
-        {extraHeld.map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={bound} />)}
-        {invariants.map((rule) => <div key={rule} className="flex gap-3 px-4 py-3 text-sm"><span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span><p className="min-w-0 flex-1 font-medium text-pretty">{rule}</p></div>)}
-        {enforced && !empty && <p className="px-4 py-3 text-meta text-muted-foreground">{ENFORCED}</p>}
+      <Well>
+        {/* Nothing to list is one quiet line, not a tall empty card: the panel's title already says what would be here. */}
+        {empty && <p data-empty="" className="px-4 py-3 text-body text-muted-foreground">{heldOnly ? "No rule is holding back records of this type." : "No rules on this type."}</p>}
+        {!empty && (
+          <RowList>
+            {shownLaws.map(({ law, held }) => <li key={law.id}><LawRow law={law} held={held} scanLimit={bound} /></li>)}
+            {extraHeld.map((group) => <li key={heldGroupKey(group)}><HeldRuleRow held={group} scanLimit={bound} /></li>)}
+            {invariants.map((rule) => <li key={rule} className={ROW}><TypeDisc icon={ShieldCheck} /><p className="min-w-0 flex-1 self-center text-pretty">{rule}</p></li>)}
+          </RowList>
+        )}
+        {enforced && !empty && <p className="border-t border-(--well-border) px-4 py-3 text-meta text-muted-foreground">{ENFORCED}</p>}
         {live && !heldOnly && concept.definition === "object type" && <Quarantined objectType={concept.name} />}
       </Well>
     </Panel>

@@ -14,6 +14,7 @@ mod child_grid;
 mod composition;
 mod effects;
 mod forms;
+mod handling;
 mod indexing;
 mod routes;
 mod tree;
@@ -40,6 +41,8 @@ use norn_checker::{
 
 pub use effects::{GeneratedTransitionEnabledWhenError, generated_transition_enabled_when};
 pub(crate) use types::value_type;
+
+use crate::ui_machine::DeclaredCodes;
 
 const CODE: &str = "widget.validation.invalid_payload";
 
@@ -96,6 +99,7 @@ pub fn check_widget_ux_set(
         );
         checker.check();
         let nullable_inputs = checker.nullable_form_inputs();
+        let codes = checker.declared_error_codes();
         let composed =
             |widget: &norn_ir::WidgetArtifactRef| composed_ux(artifact, &combined, widget);
         diagnostics.extend(crate::ui_interaction::check(
@@ -104,7 +108,12 @@ pub fn check_widget_ux_set(
             &nullable_inputs,
             &composed,
         ));
-        diagnostics.extend(crate::ui_machine::check(artifact, &ux));
+        diagnostics.extend(crate::ui_machine::check_with_codes(
+            artifact,
+            &ux,
+            Some(&codes),
+        ));
+        diagnostics.extend(crate::ui_layer::check(artifact, &ux));
         diagnostics.extend(crate::ui_view::check(artifact, &ux));
         diagnostics.extend(crate::ui_catalog::check(artifact, &ux, &composed));
         let names_lifecycle = ux.pages.iter().any(|page| {
@@ -331,6 +340,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         self.check_navigation_and_app();
         self.check_overrides();
         self.check_effect_laws();
+        self.check_value_handling();
     }
 
     fn resolve_property(
@@ -452,6 +462,12 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         self.diagnostics
             .borrow_mut()
             .push(finding(self.owner, path, message));
+    }
+
+    fn coded(&self, code: &'static str, path: &str, message: impl Into<String>) {
+        let mut diagnostic = finding(self.owner, path, message);
+        diagnostic.code = DiagnosticCode::new(code);
+        self.diagnostics.borrow_mut().push(diagnostic);
     }
 }
 

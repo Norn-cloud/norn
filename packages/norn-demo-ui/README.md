@@ -1,11 +1,11 @@
 # Demo UI
 
-Framework-free UI pieces that Studio (`apps/studio`) imports by path. None of
+Framework-free UI pieces that Studio (`apps/studio`) imports by path. They run
+a page's declared UI machine with `@norn/react`'s runtime
+(`packages/norn-react/src/machine/`). None of
 them fetches on its own, decides permission or computes data: each one renders
 or drives what the server's admitted documents declare.
 
-- `src/machine/` (`@norn/demo-ui/machine`): runs a page's declared UI machine
-  (UI-MACHINE-1). It evaluates guards, walks transitions and reports outcomes.
 - `src/elements/decision-sheet.ts`: `<norn-decision-sheet>`, one decision
   rendered from its admitted page document and driven only by its machine.
 - `src/elements/lifecycle-view.ts`: `<norn-lifecycle-view>` (UI-LIFECYCLE-2),

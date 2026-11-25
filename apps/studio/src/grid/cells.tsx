@@ -35,9 +35,11 @@ export const fieldWithheld = (row: GridRow, field: Field): boolean => isWithheld
  * no value is coloured: a colour picked by position once showed "failed" in green.
  */
 export function EnumChip({ field: _field, value, label = value }: { readonly field: Field; readonly value: string; readonly label?: string }) {
+  // An outline tag level with the plain values beside it. A truncating inline block takes its bottom edge
+  // as its baseline, which lifted the old chip a few pixels; centring it on the line's x-height keeps it level.
   return (
-    <span title={value}
-      className="inline-block max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 text-meta leading-tight text-foreground ring-1 ring-border ring-inset">
+    <span title={value} data-enum=""
+      className="inline-block max-w-full truncate rounded-(--radius-chip) px-1.5 align-middle text-meta leading-[1.5] text-foreground ring-1 ring-line ring-inset">
       {label}
     </span>
   )
@@ -109,7 +111,7 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
 }
 
 /** The properties a record is named by, in the order Studio reads them. */
-const NAME_PROPERTIES = ["label", "display_name"] as const
+export const NAME_PROPERTIES: readonly string[] = ["label", "display_name"]
 
 /**
  * The Record column's name. When the naming property is marked, it is the server's projection as a

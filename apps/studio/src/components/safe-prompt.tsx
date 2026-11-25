@@ -1,8 +1,9 @@
-import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, Phone, ShieldCheck, Sparkles, UserRound, type LucideIcon } from "lucide-react"
+import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, Phone, ShieldCheck, UserRound, type LucideIcon } from "lucide-react"
 import { Fragment, useState, type CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 import { cellCall } from "@/lib/cell-read"
 import { usePinnedScope } from "@/lib/session"
+import { Mascot } from "@/components/system/mascot"
 
 /**
  * PRIVACY-GUARD-1 in Studio: what the model was sent and what came back. The cell tokenized the
@@ -39,7 +40,7 @@ export const TINTED = "bg-[color-mix(in_oklab,var(--tint)_12%,transparent)] text
 export function TokenChip({ token, kind }: { readonly token: string; readonly kind?: string }) {
   const Icon = iconOf(kind)
   return (
-    <span data-token={token} style={tintOf(kind)} className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-px align-baseline font-mono text-[0.78em] font-medium", TINTED)}>
+    <span data-token={token} style={tintOf(kind)} className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md px-1.5 py-px align-baseline font-mono text-meta", TINTED)}>
       <Icon className="size-3 shrink-0" aria-hidden />{token}
     </span>
   )
@@ -69,7 +70,7 @@ export function Segments({ segments }: { readonly segments: readonly RestoredSeg
     const Icon = iconOf(segment.kind)
     return (
       <span key={index} data-restored={segment.state} style={tintOf(segment.kind)} title={segment.state === "restored" ? `${segment.token}, restored for you` : `${segment.token}: the pseudonym you may see`}
-        className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md px-1 align-baseline", TINTED, segment.state === "restored" ? "font-medium" : "font-mono text-[0.85em]")}>
+        className={cn("mx-0.5 inline-flex items-center gap-1 rounded-md px-1 align-baseline", TINTED, segment.state === "restored" ? "" : "font-mono text-meta")}>
         <Icon className="size-3 shrink-0" aria-hidden />{segment.text}
       </span>
     )
@@ -79,13 +80,13 @@ export function Segments({ segments }: { readonly segments: readonly RestoredSeg
 /** The guard's path: you, the cell's privacy guard, the model. */
 function Flow({ model }: { readonly model: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm" aria-label={`You, then the privacy guard, then ${model}`}>
-      <span className="flex size-5 items-center justify-center rounded-full border border-border bg-muted text-[10px] font-semibold">You</span>
+    <div className="flex items-center gap-2 text-body" aria-label={`You, then the privacy guard, then ${model}`}>
+      <span className="flex size-5 items-center justify-center rounded-full border border-border bg-muted text-meta">You</span>
       <span className="sr-only">You</span>
       <span aria-hidden className="h-px flex-1 bg-border" />
-      <span className="inline-flex items-center gap-1.5 font-medium"><ShieldCheck className="size-4" aria-hidden />Privacy guard</span>
+      <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-4" aria-hidden />Privacy guard</span>
       <span aria-hidden className="h-px flex-1 bg-border" />
-      <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Sparkles className="size-4" aria-hidden />{model}</span>
+      <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Mascot tone="ink" size={16} />{model}</span>
     </div>
   )
 }
@@ -110,31 +111,31 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
   return (
     <section data-safe-prompt className="grid gap-4 rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5" aria-label="Safe prompt">
       <header className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-medium text-muted-foreground">{original.kind === "shown" ? "Original prompt" : "Safe prompt"}</h3>
+        <h3 className="text-body text-muted-foreground">{original.kind === "shown" ? "Original prompt" : "Safe prompt"}</h3>
         {revealable && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2 text-body text-muted-foreground">
             {original.kind === "busy" && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
             Show original
             <button type="button" role="switch" aria-checked={original.kind === "shown"} aria-label="Show original" data-show-original="" disabled={original.kind === "busy"}
               onClick={() => void toggle(original.kind !== "shown")}
               className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted transition-colors aria-checked:bg-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
-              <span aria-hidden className={cn("absolute top-0.5 size-3.5 rounded-full bg-background shadow transition-[left]", original.kind === "shown" ? "left-[1.1rem]" : "left-0.5")} />
+              <span aria-hidden className={cn("absolute top-0.5 size-3.5 rounded-full bg-background shadow transition-[left]", original.kind === "shown" ? "start-[1.1rem]" : "start-0.5")} />
             </button>
           </div>
         )}
       </header>
-      <p className="rounded-xl bg-muted/60 px-3.5 py-3 text-sm leading-7 whitespace-pre-wrap" data-prompt>
+      <p className="rounded-xl bg-muted/60 px-3.5 py-3 text-body leading-7 whitespace-pre-wrap" data-prompt>
         <Segments segments={shown} />
       </p>
-      {original.kind === "error" && <p role="alert" className="text-xs text-destructive">{original.message}</p>}
+      {original.kind === "error" && <p role="alert" className="text-meta text-destructive">{original.message}</p>}
       {guard.tokens.length > 0 && (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-x-4 gap-y-2" aria-label="Withheld from the model">
           {legend.map((token) => {
             const Icon = iconOf(token.kind)
             return (
-              <li key={token.token} className="grid gap-0.5 text-sm" style={tintOf(token.kind)}>
-                <span className="inline-flex items-center gap-1.5 font-medium"><Icon className="size-3.5 text-[var(--tint)]" aria-hidden />{token.label}</span>
-                <span className="ps-5 font-mono text-xs text-[var(--tint)]">{token.token}</span>
+              <li key={token.token} className="grid gap-0.5 text-body" style={tintOf(token.kind)}>
+                <span className="inline-flex items-center gap-1.5"><Icon className="size-3.5 text-[var(--tint)]" aria-hidden />{token.label}</span>
+                <span className="ps-5 font-mono text-meta text-[var(--tint)]">{token.token}</span>
               </li>
             )
           })}
@@ -142,13 +143,13 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
       )}
       <Flow model={guard.model} />
       {guard.reply.length > 0 && <>
-        <div className="flex items-center justify-between gap-3 text-sm">
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Sparkles className="size-4" aria-hidden />Reply from {guard.model}</span>
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" data-reply-state>{restored ? <><CircleCheck className="size-3.5" aria-hidden />Restored</> : "Nothing to restore"}</span>
+        <div className="flex items-center justify-between gap-3 text-body">
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Mascot tone="ink" size={16} state="answered" />Reply from {guard.model}</span>
+          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground" data-reply-state>{restored ? <><CircleCheck className="size-3.5" aria-hidden />Restored</> : "Nothing to restore"}</span>
         </div>
-        <p className="rounded-xl bg-muted/60 px-3.5 py-3 text-sm leading-7" data-reply><Segments segments={guard.reply} /></p>
+        <p className="rounded-xl bg-muted/60 px-3.5 py-3 text-body leading-7" data-reply><Segments segments={guard.reply} /></p>
       </>}
-      <footer className="flex items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+      <footer className="flex items-center gap-2 border-t border-border pt-3 text-meta text-muted-foreground">
         <ShieldCheck className="size-3.5" aria-hidden />
         <span>The model saw only the safe prompt. The cell keeps the token map; receipt #{guard.guardId}.</span>
       </footer>

@@ -1,4 +1,4 @@
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { useView } from "@/lib/view"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
@@ -53,9 +53,9 @@ function Correction({ evidence, subject }: { readonly evidence: Evidence; readon
   if (value === undefined || value === null) return null
   const scale = scaleOf(catalog.data?.document ?? [], subject.objectType, property)
   return (
-    <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-foreground">
-      <PencilLine aria-hidden className="size-3.5 self-center text-emerald-700 dark:text-emerald-400" />
-      <span>Read <span className="font-mono">“{evidence.text}”</span> → corrected to <span className="font-mono font-medium">{atScale(String(value), scale)}</span></span>
+    <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-success/10 px-1.5 py-0.5 text-foreground">
+      <PencilLine aria-hidden className="size-3.5 self-center text-success" />
+      <span>Read <span className="font-mono">“{evidence.text}”</span> → corrected to <span className="font-mono">{atScale(String(value), scale)}</span></span>
       <span className="text-muted-foreground">by {correction.writer.actor} ·</span>
       <Link to="/sources/$concept/$" params={{ concept: subject.objectType, _splat: subject.id }} hash="lineage" className="underline underline-offset-4" title="The correction's receipt and lineage">commit {correction.commit}</Link>
     </div>
@@ -106,7 +106,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
         {scan.data && whole && (
           <div className="relative">
             <img src={scan.data.document.getUrl} alt={`Page ${evidence.page} of the scanned document`} className="w-full" />
-            <div aria-hidden className="absolute rounded-sm ring-2 ring-amber-500" style={{ left: percent(x), top: percent(y), width: percent(w), height: percent(h) }} />
+            <div aria-hidden className="absolute rounded-sm ring-2 ring-warning" style={{ left: percent(x), top: percent(y), width: percent(w), height: percent(h) }} />
           </div>
         )}
         {scan.isPending && <div className="flex h-16 items-center justify-center text-meta text-muted-foreground">Reading the scanned page…</div>}
@@ -114,7 +114,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
       <figcaption className="space-y-2 text-meta text-muted-foreground">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="sr-only">Read as</span>
-          <span className="font-mono text-heading font-semibold text-foreground tabular-nums">{evidence.text}</span>
+          <span className="font-mono text-heading font-medium text-foreground tabular-nums">{evidence.text}</span>
           <Chip tone="blue" icon={ScanText}>{evidence.subjectProperty.replaceAll("_", " ")}</Chip>
           {scan.data && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
         </div>
@@ -148,7 +148,7 @@ function EvidenceRow({ evidence, record, actionFor }: { readonly evidence: Evide
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto_auto_2rem] items-center gap-x-3 px-1 py-1.5 text-meta tabular-nums">
       <span className="min-w-0 truncate text-muted-foreground">{fieldOf(evidence, record)}</span>
-      <span className="font-mono text-sm text-foreground" title={`Read as “${evidence.text}”, page ${evidence.page}`}><span className="sr-only">Read as </span>{evidence.text}</span>
+      <span className="font-mono text-body text-foreground" title={`Read as “${evidence.text}”, page ${evidence.page}`}><span className="sr-only">Read as </span>{evidence.text}</span>
       <Chip tone={evidence.confidenceBp === null ? "gray" : evidence.confidenceBp >= 9000 ? "green" : "amber"} title={`The extractor's confidence: ${evidence.extractor} ${evidence.extractorVersion}, page ${evidence.page}`}>{confidence}</Chip>
       <span className="flex justify-end">{actionFor?.(evidence)}</span>
       {subject && <div className="col-span-4 empty:hidden"><Correction evidence={evidence} subject={subject} /></div>}
@@ -174,7 +174,7 @@ export function EvidenceList({ refs, record, filter, actionFor }: { readonly ref
   if (first !== undefined && page.isError) return (
     <div className="space-y-1">
       <ul className="divide-y divide-border/70">{shown.map((item) => <EvidenceRow key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...record ? { record } : {}} {...actionFor ? { actionFor } : {}} />)}</ul>
-      <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"><FileSearch aria-hidden className="size-3.5" />{pageProblem(page.error)}</p>
+      <p className="flex items-center gap-1.5 px-1 text-meta text-muted-foreground"><FileSearch aria-hidden className="size-3.5" />{pageProblem(page.error)}</p>
     </div>
   )
   return <div className="grid gap-3 sm:grid-cols-2">{shown.map((item) => <EvidenceCrop key={`${item.ref.objectType}/${item.ref.id}`} evidence={item} {...record ? { record } : {}} {...actionFor ? { actionFor } : {}} />)}</div>

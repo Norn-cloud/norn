@@ -3,7 +3,7 @@
 // asks for confirmation, one that records), and the refusal codes the guards route on. Option ids
 // match the stand-in cell's refund decision (`approve` starts an action, `reject` records).
 
-import type { Fields, MachineEvent, MachineTransition, Snapshot } from "../../src/machine/machine.ts"
+import type { Fields, MachineEvent, MachineTransition, Snapshot } from "../../../norn-react/src/machine/machine.ts"
 
 const CHOICES: readonly Fields[] = [{ value: "approve", confirm: true }, { value: "reject", confirm: false }]
 
