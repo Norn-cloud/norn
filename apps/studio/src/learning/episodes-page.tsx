@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Filter, GitCompareArrows, Hourglass, RefreshCw, ShieldAlert, X } from "lucide-react"
+import { CheckCircle2, CircleDashed, Clock, Filter, GitCompareArrows, Hourglass, RefreshCw, ShieldAlert, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Chip, type Tone } from "@/components/chip"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
@@ -196,8 +196,8 @@ function EpisodesPageContent() {
                   return (
                     <TableRow key={row.id} data-malformed="true">
                       <TableCell className="font-mono text-meta">{row.id}</TableCell>
-                      <TableCell colSpan={5} className="text-destructive">
-                        <span className="inline-flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />Malformed episode ({row.problem})</span>
+                      <TableCell colSpan={5} className="text-foreground">
+                        <span className="inline-flex items-center gap-1.5"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Malformed episode ({row.problem})</span>
                       </TableCell>
                     </TableRow>
                   )

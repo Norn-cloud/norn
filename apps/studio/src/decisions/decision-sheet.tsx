@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { Clock } from "lucide-react"
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import "@ui-sdk/web/radio"
 import "@ui-sdk/web/textarea"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
@@ -20,13 +20,14 @@ import { usePinnedScope } from "../lib/session.ts"
 import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import sheetDocument from "./decision-sheet.widget.json"
 
-const RISK_TINT: Readonly<Record<Risk, string>> = { low: "--tint-route", medium: "--tint-wait", high: "--tint-law" }
+// Risk reads dot-first (DESIGN.md 13): a status dot and its word in muted text, never a tinted pill.
+const RISK_DOT: Readonly<Record<Risk, string>> = { low: "bg-dot-live", medium: "bg-dot-held", high: "bg-dot-bad" }
 const RISK_LABEL: Readonly<Record<Risk, string>> = { low: "Low risk", medium: "Medium risk", high: "High risk" }
 
 export function RiskChip({ risk }: { readonly risk: Risk }) {
   return (
-    <span style={{ "--tint": `var(${RISK_TINT[risk]})` } as CSSProperties}
-      className="inline-flex items-center rounded-md bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] px-1.5 py-0.5 text-meta text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset">
+    <span data-risk={risk} className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">
+      <span aria-hidden className={`size-[6px] shrink-0 rounded-full ${RISK_DOT[risk]}`} />
       {RISK_LABEL[risk]}
     </span>
   )

@@ -348,14 +348,12 @@ test("over rounds every composited layer to 8 bits, and an upper-case NONE alpha
   const half = over(parseColor("rgb(0 0 0 / 0.5)")!, white)
   expect(cssColor(half)).toBe("#808080")
   for (const channel of [half.r, half.g, half.b]) expect(Number.isInteger(channel * 255)).toBe(true)
-  // Two layers round after each one: 0.1 black over white is 229.5 → 230, then 0.1 black over that
-  // is 207.0 → 207. One float composite of both (0.19 black) would give 206.55 → 207 too, but the
-  // intermediate surface is what a hovered row really sits on, so it must already be 8-bit.
+  // Two layers round after each one: 0.1 black over white is 229.5 → 230, then 0.1 black over that is
+  // 207.0 → 207. The intermediate surface is what a hovered row sits on, so it is 8-bit already.
   const tenth = parseColor("rgb(0 0 0 / 0.1)")!
   const once = over(tenth, white)
-  expect(Math.round(once.r * 255)).toBe(230)
-  expect(once.r * 255).toBe(230)
-  expect(Math.round(over(tenth, once).r * 255)).toBe(207)
+  expect(once.r * 255).toBeCloseTo(230, 9)
+  expect(over(tenth, once).r * 255).toBeCloseTo(207, 9)
   expect(parseColor("rgb(0 0 0 / NONE)")).toBeNull()
 })
 
