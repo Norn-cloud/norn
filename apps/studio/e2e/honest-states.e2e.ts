@@ -237,6 +237,8 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
   await expect(page.getByText("Retrying…")).toHaveCount(0)
   await expect(banner.getByRole("button", { name: "Retry" })).toBeEnabled()
+  // Nothing can be connected to a workspace that can't be opened: the page doesn't offer it (the mode's answer).
+  await expect(page.getByRole("link", { name: "Connect a source" })).toHaveCount(0)
   await page.clock.resume()
   await shoot(page, "cell-unavailable")
   await page.clock.install()
@@ -253,6 +255,7 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await banner.getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Connect a source" })).toBeVisible()
 })
 
 test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded backoff window and settles to Workspace unavailable without falling back to recorded", async ({ page }) => {

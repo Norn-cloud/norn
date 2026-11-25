@@ -97,7 +97,7 @@ export function AssistantPanel({ assistant }: { readonly assistant?: AssistantCo
   if (assistant === undefined) return null
   const header = (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/80 px-4">
-      <h2 className="text-sm font-medium">{assistant.title}</h2>
+      <h2 className="text-body">{assistant.title}</h2>
       <button type="button" aria-label={`Close ${assistant.title}`} onClick={() => setOpen(false)} className="ms-auto flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><X aria-hidden className="size-4" /></button>
     </div>
   )

@@ -82,7 +82,8 @@ export type ModeAnswer =
 /**
  * How long a record's findings stay fresh: the record page's header and its Findings panel share one
  * read, so the panel mounting (or a tab switch) does not read them again (#1754: each read is three
- * requests, `/api/me` before and after). Read again, a correction and Retry read them at once.
+ * requests, `/api/me` before and after). Read again and a correction (the record page's `readAgain`,
+ * which a quarantined record's correction also calls) read them at once.
  */
 export const FINDINGS_STALE_MS = 30_000
 

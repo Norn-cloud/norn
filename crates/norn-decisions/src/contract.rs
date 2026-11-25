@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_ir::rule::{DECIDE_OPTIONAL_INPUT_MEMBERS, DECIDE_PRINCIPAL_MEMBER};
 use norn_ir::{
     DECIDE_INPUT_MEMBERS, DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, RuleRoot,
 };
@@ -91,9 +92,19 @@ fn contract_members(
     Ok(properties.clone())
 }
 
-pub(crate) fn decide_input(rule: &RuleRoot) -> Result<(Schema, Schema), AdmissionError> {
+/// The `slice` and `event` records of a decide input, and its optional
+/// `principal` record (PRINCIPAL-INPUT-1).
+pub(crate) fn decide_input(
+    rule: &RuleRoot,
+) -> Result<(Schema, Schema, Option<Schema>), AdmissionError> {
     let schema = parse_schema(rule, "inputSchema")?;
-    let mut members = contract_members(rule, &schema, "inputSchema", &DECIDE_INPUT_MEMBERS, &[])?;
+    let mut members = contract_members(
+        rule,
+        &schema,
+        "inputSchema",
+        &DECIDE_INPUT_MEMBERS,
+        &DECIDE_OPTIONAL_INPUT_MEMBERS,
+    )?;
     let mut record = |name: &str| {
         members
             .remove(name)
@@ -108,7 +119,7 @@ pub(crate) fn decide_input(rule: &RuleRoot) -> Result<(Schema, Schema), Admissio
     };
     let slice = record("slice")?;
     let event = record("event")?;
-    Ok((slice, event))
+    Ok((slice, event, members.remove(DECIDE_PRINCIPAL_MEMBER)))
 }
 
 pub(crate) fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {

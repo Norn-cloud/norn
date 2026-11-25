@@ -146,3 +146,84 @@ test("a workspace switch forgets a revealed value and closes an open reveal with
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
   expect(cell.reveals).toHaveLength(1)
 })
+
+// UI polish: the sheet a row opens shows the record's projected name as the grid does (the chip, with the
+// same Reveal the server allows), sized to what it holds rather than a tall empty sheet.
+test("the record sheet shows the masked name with the grid's Reveal, and sizes to its content", async ({ page }) => {
+  await session(page)
+  const cell = await partyCell(page, "auditor")
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto("/objects/canon.Party")
+  const grid = page.getByRole("grid")
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  await grid.focus()
+  await page.keyboard.press("Enter")
+  const sheet = page.getByRole("dialog")
+  await expect(sheet).toBeVisible()
+  const name = sheet.locator('[data-name-fact="display_name"]')
+  // Its label reads as the facts under it do (#1763 r1).
+  await expect(name.locator("dt")).toHaveText(/^display name/)
+  await expect(name.locator('[data-masked="pseudonym"]')).toBeVisible()
+  await expect(name.locator("[data-mask-hint]")).toHaveText("pseudonymised: pii.contact")
+  await expect(name.locator("[data-reveal]")).toBeVisible()
+  // Sized to its content: well short of the screen, with its footer directly under the body.
+  const box = await sheet.boundingBox()
+  expect(box!.height).toBeLessThan(900 - 24 - 100)
+  const footer = await sheet.locator('[data-slot="sheet-footer"]').boundingBox()
+  expect(Math.round(footer!.y + footer!.height)).toBeLessThanOrEqual(Math.round(box!.y + box!.height))
+  await shoot(page, "sheet-masked-name")
+  // The sheet's Reveal is the same server call: one receipt, then the value.
+  await name.locator("[data-reveal]").click()
+  await page.getByLabel("Purpose").fill("Sheet check")
+  await page.locator("[data-confirm-reveal]").click()
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  expect(cell.reveals).toHaveLength(1)
+  expect(cell.reveals[0]).toMatchObject({ property: "display_name", purpose: "Sheet check" })
+})
+
+// UI polish: the pseudonym chip is an outline tag in muted ink, with no tinted fill, in light and dark.
+test("the pseudonym chip has no tinted fill and keeps 4.5:1 ink in light and dark", async ({ page }) => {
+  await session(page)
+  await partyCell(page, "viewer")
+  await page.setViewportSize({ width: 1440, height: 900 })
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await page.goto("/objects/canon.Party")
+    const chip = page.locator('[data-masked="pseudonym"]').first()
+    await expect(chip).toBeVisible()
+    const painted = await chip.evaluate((element) => {
+      const style = getComputedStyle(element)
+      const ground = (node: Element | null): string => {
+        for (let at = node; at; at = at.parentElement) {
+          const fill = getComputedStyle(at).backgroundColor
+          if (fill !== "rgba(0, 0, 0, 0)" && fill !== "transparent") return fill
+        }
+        return getComputedStyle(document.body).backgroundColor
+      }
+      // Any CSS colour (oklab, color-mix) as the sRGB the screen shows, read back through a canvas.
+      const canvas = document.createElement("canvas")
+      canvas.width = 1
+      canvas.height = 1
+      const context = canvas.getContext("2d", { willReadFrequently: true })!
+      const srgb = (color: string, under = "#ffffff") => {
+        context.fillStyle = under
+        context.fillRect(0, 0, 1, 1)
+        context.fillStyle = color
+        context.fillRect(0, 0, 1, 1)
+        const [r, g, b] = context.getImageData(0, 0, 1, 1).data
+        return `rgb(${r}, ${g}, ${b})`
+      }
+      const under = srgb(ground(element.parentElement))
+      return { fill: style.backgroundColor, ink: srgb(style.color, under), ground: under }
+    })
+    expect(painted.fill, scheme).toBe("rgba(0, 0, 0, 0)")
+    const rgb = (text: string) => (text.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)
+    const lum = (text: string) => {
+      const [r, g, b] = rgb(text).map((v) => v / 255).map((c) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+    }
+    const [hi, lo] = [lum(painted.ink), lum(painted.ground)].sort((a, b) => b - a)
+    expect((hi! + 0.05) / (lo! + 0.05), `${scheme} chip ink on ${painted.ground}`).toBeGreaterThanOrEqual(4.5)
+  }
+  await page.emulateMedia({ colorScheme: "light" })
+})

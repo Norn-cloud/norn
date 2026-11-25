@@ -7,7 +7,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { catalogOf } from "../src/lib/catalog.ts"
 import type { Fetch } from "../src/lib/cell-read.ts"
-import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, readAtScope, StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
+import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, NO_DATA_CELL, readAtScope, StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
 import { history } from "../src/lib/editor.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import { facetsQuery } from "../src/lib/facets.ts"
@@ -15,6 +15,7 @@ import { EMPTY_QUERY, recordsQueryParams, recordsQueryPrefix } from "../src/lib/
 import type { RecordsRead } from "../src/lib/records-source.ts"
 import { init, update } from "../src/lib/screen/call.ts"
 import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
+import type { Workspace } from "../src/lib/workspace.tsx"
 import {
   cellViews,
   cleanView,
@@ -54,7 +55,8 @@ function liveAt(scope: StudioScope, fetcher?: Fetch) {
   if (workspace.kind !== "live") throw new Error("expected a live workspace")
   return workspace
 }
-const DECIDED_A = liveAt(SCOPE_A).scope
+const LIVE_A = liveAt(SCOPE_A)
+const DECIDED_A = LIVE_A.scope
 
 const SAMPLE_VIEW: SavedView = {
   title: "Items needing review",
@@ -342,7 +344,7 @@ test("ViewEditor alerts when active scope diverges from the loaded draft scope a
           concepts: [concept],
           stored: { id: "studio.view.canon_item.a", version: 1, scope: SCOPE_A, view: { ...SAMPLE_VIEW, objectType: concept.name, columns: [] } },
           activeScope,
-          decided: liveAt(activeScope).scope,
+          workspace: liveAt(activeScope),
           cellAvailable: true,
           onSaved: () => {},
         }),
@@ -479,7 +481,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
         concepts: [concept],
         stored: { id: "studio.view.canon_item.a", version: 1, scope: SCOPE_A, view },
         activeScope: SCOPE_A,
-        decided: DECIDED_A,
+        workspace: LIVE_A,
         cellAvailable: true,
         store,
         onSaved: () => {},
@@ -585,7 +587,7 @@ test("conflict-after-delete reports deletion, hides dead Reload/Overwrite button
         concepts: [concept],
         stored: { id: "studio.view.deleted_by_other", version: 1, scope: SCOPE_A, view: { ...SAMPLE_VIEW, objectType: concept.name, columns: [] } },
         activeScope: SCOPE_A,
-        decided: DECIDED_A,
+        workspace: LIVE_A,
         cellAvailable: true,
         store,
         initialConflict: afterDelete.conflict,
@@ -680,7 +682,7 @@ test("ViewEditor live preview renders withheld records and distinguishes refusal
         concepts: [concept],
         stored: { id: "studio.view.withheld", version: 1, scope: SCOPE_A, view },
         activeScope: SCOPE_A,
-        decided: DECIDED_A,
+        workspace: LIVE_A,
         cellAvailable: true,
         onSaved: () => {},
       }),
@@ -703,6 +705,59 @@ test("ViewEditor live preview renders withheld records and distinguishes refusal
   const refused = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(RouterProvider, { router })))
   expect(refused).toContain("The cell refused this filter.")
   expect(refused).not.toContain("No records currently match this filter.")
+})
+
+// #1763 round 1: the preview's rows were keyed by the draft's workspace, so with no decided workspace (the
+// mode read failed, or no cell is connected) its cached rows still showed, or it waited for good.
+test("ViewEditor live preview shows no cached rows until a live workspace is decided: Workspace unavailable, or no data cell", async () => {
+  const raw = readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")
+  const concept = catalogOf(readDocument<readonly Artifact[]>(raw, "recorded").document).concepts[0]
+  if (concept === undefined) throw new Error("no recorded concept")
+  const view: SavedView = { title: "Undecided preview", objectType: concept.name, columns: [] }
+  const page: RecordsRead = {
+    kind: "page",
+    read: readDocument<ObjectPage>(JSON.stringify({
+      objectType: concept.name,
+      records: [{ objectType: concept.name, id: "CACHED_ROW", scope: "s", version: 1, values: { label: "CACHED_ROW" }, withheld: false }],
+      quarantineCount: 0, scannedThrough: null, query: { sort: [], filter: null }, next: null, total: { count: 1, approximate: false },
+    }), "live"),
+    origin: "live", served: { sort: [], filter: null }, next: undefined, total: { count: 1, approximate: false },
+  }
+  const render = (workspace: Workspace) => {
+    const client = new QueryClient()
+    // Rows a live read of this draft's workspace cached before the workspace stopped being decided.
+    client.setQueryData(viewPreviewQueryKey(SCOPE_A, view), page)
+    const root = createRootRoute()
+    const router = createRouter({
+      routeTree: root.addChildren([createRoute({
+        getParentRoute: () => root,
+        path: "/",
+        component: () => createElement(ViewEditor, {
+          concepts: [concept],
+          stored: { id: "studio.view.undecided", version: 1, scope: SCOPE_A, view },
+          activeScope: SCOPE_A,
+          workspace,
+          cellAvailable: true,
+          onSaved: () => {},
+        }),
+      })]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    })
+    return router.load().then(() => renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(RouterProvider, { router }))))
+  }
+  const live = await render(LIVE_A)
+  expect(live).toContain("CACHED_ROW")
+  const unavailable = await render({ kind: "unavailable", error: new CellUnavailable(503, "The workspace cell could not be opened.") })
+  expect(unavailable).toContain("data-workspace-unavailable")
+  expect(unavailable).toContain(">Retry<")
+  expect(unavailable).not.toContain("CACHED_ROW")
+  expect(unavailable).not.toContain("Checking matching records…")
+  const deciding = await render({ kind: "deciding" })
+  expect(deciding).not.toContain("CACHED_ROW")
+  const recorded = await render(workspaceOf({ status: "success", data: { kind: "recorded" } }))
+  expect(recorded).toContain(NO_DATA_CELL)
+  expect(recorded).not.toContain("CACHED_ROW")
+  expect(recorded).not.toContain("Checking matching records…")
 })
 
 test("ViewDetailPage scopes deleted-view banner to the deleted view's id so navigating to another view renders it normally", async () => {

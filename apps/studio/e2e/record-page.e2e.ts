@@ -249,7 +249,7 @@ const SESSION_DOWN = { status: 503, json: { error: "The workspace host is unavai
 const scopeOf = (url: URL) => `${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`
 
 // #1745: the record page read a record's findings under one key for every workspace and showed its
-// Held back and rules-broken chips whatever its mode, so findings read before the session's workspace
+// Quarantined and rules-broken chips whatever its mode, so findings read before the session's workspace
 // read failed stayed beside Workspace unavailable. They show only under a decided mode, read at its workspace.
 test("findings: a held record's chips leave with the mode when the workspace read fails, and come back read at its workspace", async ({ page }) => {
   await recordCell(page, "admin")
@@ -264,21 +264,21 @@ test("findings: a held record's chips leave with the mode when the workspace rea
   await page.route("**/api/me", (route) => sessionDown ? route.fulfill(SESSION_DOWN) : route.fallback())
   await page.goto(PARTY)
   const chips = page.locator("div:has(> h1)")
-  await expect(chips.getByText("Held back", { exact: true })).toBeVisible()
+  await expect(chips.locator('[data-fact-status="quarantined"]')).toBeVisible()
   await expect(chips.getByText("1 rule broken", { exact: true })).toBeVisible()
   // The session's workspace read fails: the page's mode is undecided, and nothing it read shows as current.
   sessionDown = true
   await refocus(page)
   const unavailable = page.locator("[data-workspace-unavailable]")
   await expect(unavailable).toBeVisible()
-  await expect(chips.getByText("Held back", { exact: true })).toHaveCount(0)
+  await expect(chips.locator('[data-fact-status="quarantined"]')).toHaveCount(0)
   await expect(chips.getByText("1 rule broken", { exact: true })).toHaveCount(0)
   await expect(page.getByText("Held out of authoritative reads")).toHaveCount(0)
   await shoot(page, "party-findings-mode-unavailable")
   // The session recovers; the page's Retry decides the mode, and the chips come back, read at the record's workspace.
   sessionDown = false
   await unavailable.getByRole("button", { name: "Retry" }).click()
-  await expect(chips.getByText("Held back", { exact: true })).toBeVisible()
+  await expect(chips.locator('[data-fact-status="quarantined"]')).toBeVisible()
   await expect(chips.getByText("1 rule broken", { exact: true })).toBeVisible()
   expect(new Set(findingsScopes)).toEqual(new Set(["org_demo/analytics"]))
 })
@@ -414,9 +414,88 @@ test("findings: the record page reads a record's findings once, and showing the 
     await page.getByRole("tab", { name: "Overview" }).click()
     await expect(page.getByText("No findings", { exact: true })).toBeVisible()
   }
-  await page.waitForLoadState("networkidle")
-  test.info().annotations.push({ type: "findings reads", description: `load ${onLoad}, after two Overview remounts ${findingsReads.length}` })
-  expect(findingsReads).toHaveLength(1)
+  const afterRemounts = findingsReads.length
+  // Read again reads the findings again: its read is the signal that the page has sent every read it was
+  // going to, since a remount's read would have gone out before it.
+  await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/findings")),
+    page.getByRole("button", { name: "Read again" }).click(),
+  ])
+  test.info().annotations.push({ type: "findings reads", description: `load ${onLoad}, after two Overview remounts ${afterRemounts}, after Read again ${findingsReads.length}` })
+  expect(findingsReads).toHaveLength(2)
+})
+
+/** The action that corrects the Party the stand-in holds back: the contact its required-value law asks for. */
+const CORRECT_CONTACT = {
+  actionId: VERIFY.actionId,
+  title: VERIFY.title,
+  description: "Record the contact the record is missing.",
+  objectKind: "canon.Party",
+  effect: "fire_transition",
+  objectIdField: "id",
+  toState: null,
+  uiEffects: { irreversible: false, destructive: false, money: [] },
+  inputSchema: {
+    type: "object", additionalProperties: false, required: ["id", "email"],
+    properties: { id: { type: "string", title: "Party id" }, email: { type: "string", title: "Contact email" } },
+  },
+}
+
+// #1763 round 1: a record's findings stay fresh for 30 seconds (FINDINGS_STALE_MS), so the header and the
+// Findings panel share one read. A correction that releases a quarantined record reads them again at once:
+// inside that window the page must not keep showing the record held back, or a finding the cell settled.
+test("findings: correcting a quarantined record reads its findings again, so the header and the Findings panel show it released at once", async ({ page }) => {
+  await recordCell(page, "admin")
+  let corrected = false
+  const findingsReads: string[] = []
+  const id = "demo/party/0001"
+  const held = { objectType: "canon.Party", id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "builtin", id: "core.required", version: "1" }, severity: "error", message: "A required value is missing.", status: "open", firstSeen: "2026-11-18T09:12:00Z", lastSeen: "2026-11-18T09:12:00Z" }] }
+  const released = { objectType: "canon.Party", id, quarantined: false, evidence: [], findings: [] }
+  // While a law holds the record back, the cell serves it to no read: its object read is the opaque 404.
+  await page.route((url) => decodeURIComponent(url.pathname).endsWith(`/v1/objects/canon.Party/${id}`), (route) => corrected
+    ? route.fallback()
+    : route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } }))
+  await page.route((url) => url.pathname.endsWith("/findings"), (route) => {
+    findingsReads.push(route.request().url())
+    return route.fulfill({ json: corrected ? released : held })
+  })
+  // The cell offers the correction on the record, and its commit releases it.
+  await page.route("**/api/host/v1/actions**", (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { definitionsVersion: 1, items: [CORRECT_CONTACT] } })
+    corrected = true
+    return route.fulfill({ json: { outcome: "committed", objectType: "canon.Party", objectId: id, version: 3, receipt: { receiptHash: "c".repeat(64), commitSeq: 413, recordedAtMs: Date.now() } } })
+  })
+  await page.goto(PARTY)
+  const header = page.locator("div:has(> h1)")
+  // One statement of the state: the title's Quarantined status, and the "Not served" sentence in a neutral well.
+  const quarantine = page.locator("[data-quarantine-statement]")
+  await expect(quarantine).toContainText("Not served")
+  await expect(header.locator('[data-fact-status="quarantined"]')).toBeVisible()
+  await expect(header.getByText("1 rule broken", { exact: true })).toBeVisible()
+  await expect.poll(() => findingsReads.length).toBe(1)
+  const read = Date.now()
+  await shoot(page, "party-quarantined")
+
+  // Exact: the History panel names its entries by the action's title too ("Verify contact by …").
+  await page.getByRole("button", { name: CORRECT_CONTACT.title, exact: true }).click()
+  const sheet = page.getByRole("dialog")
+  await sheet.getByLabel("Contact email").fill("contact@example.com")
+  await sheet.getByRole("button", { name: CORRECT_CONTACT.title }).click()
+  await expect(sheet.getByRole("status")).toBeVisible()
+  await sheet.getByRole("button", { name: "Done" }).click()
+
+  // The cell serves the record now: the page shows it, and its findings as the cell answers them after the
+  // correction, in the header and in the Findings panel, without waiting for the earlier read to go stale.
+  await expect(quarantine).toHaveCount(0)
+  await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible()
+  await expect(page.getByText("No findings", { exact: true })).toBeVisible()
+  await expect(header.locator('[data-fact-status="quarantined"]')).toHaveCount(0)
+  await expect(header.getByText("1 rule broken", { exact: true })).toHaveCount(0)
+  expect(findingsReads).toHaveLength(2)
+  // The row proves the fix only inside the window: past it, the panel's mount alone would read them again.
+  expect(Date.now() - read).toBeLessThan(30_000)
+  await shoot(page, "party-corrected")
 })
 
 test("markings: a reveal asked under a projection, answered after it changed and changed back, is never shown", async ({ page }) => {
@@ -508,6 +587,61 @@ test("changes: a member (no Sources, no call records) sees the history list in b
   await expect(page.getByText("No such readable object.")).toHaveCount(0)
   await expect(page.getByText("The history could not be read.")).toHaveCount(0)
   await shoot(page, "party-member-history")
+})
+
+// #1763 r1: History names each writer as the server does (an action by its declared title from the access
+// read, an import by its system), keeps the ids in the version's details, and says its one order when the
+// type names no time property.
+const historyRows = (page: Page) => page.locator("#record-history ol > li")
+const technical = (row: ReturnType<typeof historyRows>) => row.locator('dl[aria-label="Technical"]')
+
+test("history: an action reads by its declared title and actor, an import by its system; their ids are only in the details", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const rows = historyRows(page)
+  await expect(rows).toHaveCount(2)
+  const action = rows.nth(0).getByRole("button").first()
+  const imported = rows.nth(1).getByRole("button").first()
+  await expect(action).toContainText(`${VERIFY.title} by user:sara`)
+  await expect(action).not.toContainText(VERIFY.actionId)
+  await expect(imported).toContainText("Imported from ERPNext")
+  await expect(imported).not.toContainText("SYN-ERPNEXT-customer")
+  await expect(page.locator('#record-history dl[aria-label="Technical"]')).toHaveCount(0)
+  await action.click()
+  await expect(technical(rows.nth(0))).toContainText(VERIFY.actionId)
+  await imported.click()
+  await expect(technical(rows.nth(1))).toContainText("Party/erpnext/demo/Party/SYN-ERPNEXT-customer")
+  await expect(technical(rows.nth(1))).toContainText("erpnext.three.mapping")
+})
+
+test("history: with the access read refused, an action reads 'Ran an action' by its actor, and its id stays in the details", async ({ page }) => {
+  await recordCell(page, "admin", { status: 403, body: { code: "authz.denied", message: "Your role may not read this type's access." } })
+  await page.goto(PARTY)
+  const row = historyRows(page).nth(0)
+  const action = row.getByRole("button").first()
+  await expect(action).toContainText("Ran an action by user:sara")
+  await expect(action).not.toContainText(VERIFY.title)
+  await expect(action).not.toContainText(VERIFY.actionId)
+  await action.click()
+  await expect(technical(row)).toContainText(VERIFY.actionId)
+})
+
+test("history: a type that names no time property reads by knowledge time, said rather than offered; one that names it offers both orders", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const history = page.locator("#record-history")
+  await expect(historyRows(page)).toHaveCount(2)
+  await expect(history.locator('[data-order="known"]')).toHaveText("By knowledge time")
+  await expect(history.locator('[data-slot="segmented"]')).toHaveCount(0)
+  // The cell's metrics name the type's time property: the order becomes a choice, knowledge time first.
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: [
+    { name: "party.count", label: "Parties", kind: "count", objectType: "canon.Party", expression: null, timeProperty: "updated_at", numerator: null, denominator: null },
+  ] } }))
+  await page.reload()
+  await expect(historyRows(page)).toHaveCount(2)
+  await expect(history.locator('[data-slot="segmented"]')).toBeVisible()
+  await expect(history.locator('[data-order="known"]')).toHaveCount(0)
+  await expect(history.getByRole("radio", { name: "Knowledge time" })).toBeChecked()
 })
 
 test("changes: a refused history reads the same plain state in both panels, never the refusal's text", async ({ page }) => {

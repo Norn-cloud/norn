@@ -1,4 +1,5 @@
-//! Resumable, row-budget-bounded packed payload & export-journal readers (S10).
+//! Resumable, row-budget-bounded packed payload & export-journal readers (S10),
+//! residue rows included (EXPORT-RESIDUE-1).
 
 use std::collections::BTreeSet;
 
@@ -10,6 +11,7 @@ use super::{
 use crate::CellError;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::export::{EXPORT_FORMAT, ExportRecord};
+use crate::export_journal_residue::ResidueCursor;
 use crate::read::{to_i64, to_u64};
 use crate::scrub::RowBudget;
 
@@ -69,6 +71,13 @@ struct PackedExportState {
 enum ExportDecodeState {
     Ready(Option<Box<ExportRecord>>),
     Packed(Box<PackedExportState>),
+    /// EXPORT-RESIDUE-1: a residue row, rebuilt from its context, receipt
+    /// and ledger span, every row charged.
+    Residue {
+        commit_seq: u64,
+        stored_hash: String,
+        cursor: Box<ResidueCursor>,
+    },
 }
 
 /// Resumable reader for one `_norn_export_journal` row and all of its packed
@@ -98,6 +107,13 @@ impl ExportDecodeCursor {
             return Ok(None);
         };
         budget.charge(1);
+        if let Some(residue) = serialized.strip_prefix(crate::export_journal_residue::PREFIX) {
+            return Ok(Some(Self(ExportDecodeState::Residue {
+                commit_seq,
+                stored_hash,
+                cursor: Box::new(ResidueCursor::open(residue, commit_seq)?),
+            })));
+        }
         let Some(encoded) = serialized.strip_prefix(PREFIX) else {
             let record: ExportRecord = serde_json::from_str(&serialized)?;
             verify_export_envelope(&record, commit_seq, &stored_hash)?;
@@ -143,6 +159,17 @@ impl ExportDecodeCursor {
         match &mut self.0 {
             ExportDecodeState::Ready(record) => record.take().map(|boxed| Ok(*boxed)).transpose(),
             ExportDecodeState::Packed(state) => step_packed(engine, state, budget),
+            ExportDecodeState::Residue {
+                commit_seq,
+                stored_hash,
+                cursor,
+            } => {
+                let Some(record) = cursor.step(engine, budget)? else {
+                    return Ok(None);
+                };
+                verify_export_envelope(&record, *commit_seq, stored_hash)?;
+                Ok(Some(record))
+            }
         }
     }
 }

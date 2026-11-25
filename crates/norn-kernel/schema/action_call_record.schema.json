@@ -115,6 +115,17 @@
           "type": "null"
         }
       ]
+    },
+    "principalInputs": {
+      "description": "PRINCIPAL-INPUT-1: the principal inputs resolved for the pinned\ndecision. Replay reads them here; they are never resolved again.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionPrincipalInputs"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": false,
@@ -261,6 +272,38 @@
       "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "ActionPrincipalInputs": {
+      "description": "The principal inputs resolved for one committed call, as recorded on its\ncall record. They are the acting principal's own values for the declared\nnames only; replay reads them and never resolves again.",
+      "type": "object",
+      "properties": {
+        "principal": {
+          "description": "The acting principal the values belong to. For an agent acting on\nsomeone's behalf this is the narrower delegated principal.",
+          "type": "string"
+        },
+        "policyVersion": {
+          "description": "The policy version the values were resolved under (the host's role\nmapping, grants and principal attribute catalog).",
+          "type": "string"
+        },
+        "subject": {
+          "description": "The decision's subject.",
+          "$ref": "#/$defs/FactKey"
+        },
+        "values": {
+          "description": "The resolved value of every declared input, by name. Preserve source\ntext and use an exact-number JSON parser for its values.",
+          "type": "object",
+          "additionalProperties": {
+            "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "policyVersion",
+        "subject",
+        "values"
+      ]
     }
   }
 }

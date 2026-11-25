@@ -16,7 +16,7 @@ afterAll(() => { globalThis.localStorage = originalStorage })
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
+const { maskedWords, ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
 const { untilDecided, workspaceOf, WorkspaceProvider } = await import("../src/lib/workspace.tsx")
 type Workspace = import("../src/lib/workspace.tsx").Workspace
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
@@ -423,7 +423,7 @@ test("a record's findings are keyed by and read at its source workspace, and not
   expect(sent).toEqual(["findings org_b/prod"])
 })
 
-test("the record page's Held back and rules-broken chips show only under a decided mode, from findings read at its workspace", async () => {
+test("the record page's Quarantined and rules-broken chips show only under a decided mode, from findings read at its workspace", async () => {
   const concept = "canon.Item"
   const id = "demo/item/gold"
   const scope = { orgId: "org_demo", environmentId: "analytics" }
@@ -440,7 +440,9 @@ test("the record page's Held back and rules-broken chips show only under a decid
     client.setQueryData(liveAt(scope).reader.findings(concept, id).queryKey, held)
   }
   const shown = await page(concept, id, "business", undefined, undefined, decided, null)
-  expect(shown).toContain(">Held back<")
+  // One statement of the state: the dot-first Quarantined status, not a second "Held back" chip beside it.
+  expect(shown).toContain(">Quarantined<")
+  expect(shown).not.toContain(">Held back<")
   expect(shown).toContain("1 rule broken")
   // The mode is read again and the read fails: TanStack keeps its last answer, but nothing read under it
   // shows as current: no chip, no findings panel, no record; the page's Workspace unavailable instead.
@@ -449,14 +451,14 @@ test("the record page's Held back and rules-broken chips show only under a decid
     const read = client.getQueryCache().find({ queryKey: modeKey, exact: true })
     read?.setState({ ...read.state, status: "error", error: new CellUnavailable(503, "The workspace cell could not be opened."), errorUpdatedAt: Date.now() })
   }, null)
-  for (const absent of [">Held back<", "rule broken", "Held out of authoritative reads", "Gold scrap"]) expect(failed).not.toContain(absent)
+  for (const absent of [">Quarantined<", "rule broken", "Held out of authoritative reads", "Gold scrap"]) expect(failed).not.toContain(absent)
   expect(failed).toContain("Workspace unavailable")
   // No mode decided at all: findings cached under the key every workspace once shared show nothing.
   const undecided = await page(concept, id, "business", undefined, undefined, (client) => {
     client.setQueryData(["findings", concept, id], held)
     client.setQueryData(liveAt(scope).reader.findings(concept, id).queryKey, held)
   }, null)
-  for (const absent of [">Held back<", "rule broken"]) expect(undecided).not.toContain(absent)
+  for (const absent of [">Quarantined<", "rule broken"]) expect(undecided).not.toContain(absent)
 })
 
 
@@ -475,4 +477,17 @@ test("a type page's grid waits for a decided mode: its skeleton while the mode i
   expect(failed).toContain(">Retry<")
   expect(failed).toContain('aria-label="Records"')
   expect(failed).not.toContain('role="grid"')
+})
+
+// #1763 r1: the header's one withheld chip counts the values the server projected, by how it projected them.
+test("the withheld chip counts the masked values in words: one, several, none, and mixed modes", () => {
+  expect(maskedWords({ display_name: { mode: "pseudonym" } })).toBe("1 value masked")
+  expect(maskedWords({ display_name: { mode: "redacted" }, email: { mode: "pseudonym" }, phone: { mode: "redacted" } })).toBe("3 values masked")
+  expect(maskedWords({ display_name: { mode: "refuse" }, email: { mode: "refuse" } })).toBe("2 values withheld")
+  expect(maskedWords({ display_name: { mode: "redacted" }, email: { mode: "refuse" } })).toBe("2 values masked or withheld")
+  expect(maskedWords({})).toBe("0 values masked")
+  // The count is in the reader's number format.
+  const many = Object.fromEntries(Array.from({ length: 1200 }, (_, at) => [`p${at}`, { mode: "redacted" }]))
+  expect(maskedWords(many, "en")).toBe("1,200 values masked")
+  expect(maskedWords(many, "de")).toBe("1.200 values masked")
 })

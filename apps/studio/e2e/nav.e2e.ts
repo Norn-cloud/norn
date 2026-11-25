@@ -84,13 +84,14 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   await page.getByRole("group", { name: "Perspective" }).getByRole("button", { name: "Builder" }).click()
   await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("link", { name: "Holding" }).click()
   await expect(page).toHaveURL(/\/sources\/canon\.Holding$/)
-  // On wide desktop, the enclosing @container activates <header>'s own @2xl/@4xl spacing and centered grid.
+  // On wide desktop, the enclosing @container activates <header>'s own @2xl spacing. The row is a flex row,
+  // not a centred three-column grid, so the tick bar, language pill and scheme toggle fit beside the crumbs (restyle 2).
   const headerStyle = () => page.locator('[data-slot="topbar"]').evaluate((el) => {
     const row = getComputedStyle(el.firstElementChild!)
     return { display: row.display, paddingLeft: Number.parseFloat(getComputedStyle(el).paddingLeft), columnGap: Number.parseFloat(row.columnGap) }
   })
   const desktopStyle = await headerStyle()
-  expect(desktopStyle.display).toBe("grid")
+  expect(desktopStyle.display).toBe("flex")
   expect(desktopStyle.paddingLeft).toBeGreaterThanOrEqual(14)
   expect(desktopStyle.columnGap).toBeGreaterThanOrEqual(10)
 

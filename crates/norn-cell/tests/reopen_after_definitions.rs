@@ -127,6 +127,138 @@ fn a_creation_stays_provable_after_an_install_changes_the_model() {
     assert!(proven.iter().all(Option::is_some), "{proven:?}");
 }
 
+/// A row written before an install that adds a nullable member still reads
+/// as the row its version's proof commits to: quality reads of it answer.
+#[test]
+fn a_row_stays_proven_after_an_install_adds_a_nullable_member() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&[json!({
+        "id": "remark", "type": { "kind": "text" }, "constraints": { "nullable": true }
+    })]));
+
+    let mut store = CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+        .expect("first definitions");
+    store.commit(&create("a", 15)).expect("created");
+    store
+        .install_definitions(second, input(&second_set, 20), Some(1), SCOPE)
+        .expect("second definitions");
+
+    let read = store.read();
+    let row = read
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.values.get("remark"), Some(&Value::Null));
+    assert_eq!(
+        read.observation_findings(MAIN_WORLD, "install.Item", "a")
+            .expect("the row is the one its proof commits to"),
+        []
+    );
+    assert!(
+        !read
+            .observation_is_quarantined(MAIN_WORLD, &row)
+            .expect("quarantine")
+    );
+}
+
+/// [`create`], with `note` holding a value.
+fn create_noted(key: &str, at: u64) -> CommitBatch {
+    let mut batch = create(key, at);
+    batch.events = vec![
+        Value::from_json(json!({
+            "op": "created", "key": { "objectType": "install.Item", "key": key },
+            "values": { "code": key, "note": "foo" }
+        }))
+        .expect("event"),
+    ];
+    if let Some(FactWriteRow::Put { values, .. }) = batch.writes.first_mut() {
+        values.insert("note".to_owned(), Value::from("foo"));
+    }
+    batch
+}
+
+/// Edit every stored item row outside the cell: `set` is a SQL assignment.
+fn edit_rows(path: &std::path::Path, set: &str) {
+    use norn_cell::engine::{NativeEngine, SqlEngine as _};
+    let engine = NativeEngine::open(path, StoreOptions::default()).expect("engine");
+    let table: String = engine
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE '%\"p:code\"%'",
+            &[],
+            |row| row.get(0),
+        )
+        .expect("the item table");
+    engine
+        .execute_batch(&format!("UPDATE \"{table}\" SET {set}"))
+        .expect("edited");
+}
+
+/// Counting only held values never proves an edited row. A value the proof
+/// holds and the row lost, a value the row holds where the proof holds none,
+/// and a value in a member the proof never had (one installed later) are all
+/// unproven corrections.
+#[test]
+fn a_row_edited_outside_the_cell_is_an_unproven_correction() {
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&[json!({
+        "id": "remark", "type": { "kind": "text" }, "constraints": { "nullable": true }
+    })]));
+    // Whether the row was created holding a note, the edit, and whether the
+    // install that adds `remark` came first.
+    for (noted, set, grown) in [
+        (true, "\"p:note\" = NULL", false),
+        (false, "\"p:note\" = \"p:code\"", false),
+        (false, "\"p:remark\" = \"p:code\"", true),
+    ] {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("cell.sqlite");
+        let mut store =
+            CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+        store.bind("scope", SCOPE).expect("bind");
+        store
+            .install_definitions(first.clone(), input(&first_set, 10), Some(0), SCOPE)
+            .expect("first definitions");
+        let created = if noted {
+            create_noted("a", 15)
+        } else {
+            create("a", 15)
+        };
+        store.commit(&created).expect("created");
+        let served = if grown {
+            store
+                .install_definitions(second.clone(), input(&second_set, 20), Some(1), SCOPE)
+                .expect("second definitions");
+            second.clone()
+        } else {
+            first.clone()
+        };
+        // Unedited, the row is the one its proof commits to.
+        assert_eq!(
+            store
+                .read()
+                .observation_findings(MAIN_WORLD, "install.Item", "a")
+                .expect("proven"),
+            [],
+            "{set}"
+        );
+        drop(store);
+        edit_rows(&path, set);
+        let reopened = CellStore::open(&path, served, StoreOptions::default()).expect("reopened");
+        let refused = reopened
+            .read()
+            .observation_findings(MAIN_WORLD, "install.Item", "a");
+        assert!(
+            matches!(refused, Err(norn_cell::CellError::UnprovenCorrection)),
+            "{set}: {refused:?}"
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Step {
     /// Create `key`, its payload naming only `code` or every member.
@@ -256,7 +388,15 @@ proptest! {
 /// cut too, never as a fully proven history.
 #[tokio::test]
 async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
-    for damage in ["snapshot", "journal", "receipt", "all-logs"] {
+    for damage in [
+        "snapshot",
+        "journal",
+        "receipt",
+        "altered-receipt",
+        "ledger-tail",
+        "altered-event",
+        "all-logs",
+    ] {
         refused_cell_restores(damage).await;
     }
 }
@@ -281,6 +421,14 @@ async fn refused_cell_restores(damage: &str) {
     // Or: the journal lost its last record, so a restore can rebuild no
     // further than commit 3.
     let raw = rusqlite::Connection::open(&path).expect("operator seam");
+    let residue: String = raw
+        .query_row(
+            "SELECT record FROM _norn_export_journal WHERE commit_seq = 4",
+            [],
+            |row| row.get(0),
+        )
+        .expect("journal row");
+    assert!(residue.starts_with("norn.cell.export-residue/1:"));
     if damage == "snapshot" {
         raw.execute(
             "UPDATE _norn_fact_values SET hash = ?1 WHERE commit_seq = 4",
@@ -294,6 +442,23 @@ async fn refused_cell_restores(damage: &str) {
         // Or the receipts lost their last row.
         raw.execute("DELETE FROM _norn_receipt WHERE commit_seq = 4", [])
             .expect("tamper");
+    } else if damage == "altered-receipt" {
+        // Commit 4's journal row is a residue (EXPORT-RESIDUE-1): each change
+        // to a row it is rebuilt from cuts the provable journal there too.
+        raw.execute(
+            "UPDATE _norn_receipt SET receipt = replace(receipt, '\"logicalTime\":22', '\"logicalTime\":23') WHERE commit_seq = 4",
+            [],
+        )
+        .expect("tamper");
+    } else if damage == "ledger-tail" {
+        raw.execute("DELETE FROM _norn_ledger WHERE commit_seq = 4", [])
+            .expect("tamper");
+    } else if damage == "altered-event" {
+        raw.execute(
+            "UPDATE _norn_ledger SET event = replace(event, '\"c\"', '\"z\"') WHERE commit_seq = 4",
+            [],
+        )
+        .expect("tamper");
     } else {
         // Or all three logs lost commit 4 together; the clock still names it.
         for table in ["_norn_receipt", "_norn_ledger", "_norn_export_journal"] {
@@ -310,7 +475,19 @@ async fn refused_cell_restores(damage: &str) {
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4, "{damage}");
     assert_eq!(diagnosis.proven_through, 3, "{damage}");
-    if damage == "journal" || damage == "all-logs" {
+    // Commit 4's journal row is a residue rebuilt from its receipt and ledger
+    // span (EXPORT-RESIDUE-1), so a lost or changed one ends the journal there.
+    if matches!(damage, "receipt" | "altered-receipt" | "altered-event") {
+        assert_eq!(diagnosis.journal_commits, 3);
+        let unproven = diagnosis
+            .first_unproven
+            .as_ref()
+            .expect("the refused entry");
+        assert_eq!(
+            (unproven.commit_seq, unproven.op.as_deref()),
+            (4, Some("created"))
+        );
+    } else if matches!(damage, "journal" | "ledger-tail" | "all-logs") {
         assert_eq!(diagnosis.journal_commits, 3);
         assert_eq!(diagnosis.first_unproven, None);
     } else {

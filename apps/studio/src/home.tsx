@@ -1,11 +1,13 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ListRow, TypeDisc } from "@/components/system/list-row"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { ArrowRight, ArrowUp, Blend, Database, LayoutDashboard, ShieldCheck, Sigma, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { useAssistant } from "@/assistant-slot"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
-import { PageHeader, Panel, Well } from "@/components/panel"
-import { StatStrip } from "@/components/kpi-tile"
+import { PageHeader } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
+import { StatStrip } from "@/components/system/kpi-tile"
 import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -38,18 +40,11 @@ function EmptyWorkspaceChecklist() {
   return (
     <Panel icon={Sparkles} label="Get started" action="4 steps">
       <Well>
-        <ol className="grid gap-px p-1.5">
-          {CHECKLIST.map(({ step, title, description, to, icon: Icon }) => (
-            <li key={to}>
-              <Link to={to} className="group flex min-h-12 items-center gap-3 rounded-(--radius-row) px-3 py-2.5 transition-colors hover:bg-(--well-hover)">
-                <span className="flex size-[28px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-muted-foreground tabular-nums ring-1 ring-line">{step}</span>
-                <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-body text-foreground">{title}</span>
-                  <span className="block text-meta text-muted-foreground">{description}</span>
-                </span>
-                <ArrowRight aria-hidden className="size-4 shrink-0 text-subtle-foreground transition-transform group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5 motion-reduce:transition-none" />
-              </Link>
+        <ol data-slot="row-list" className="flex flex-col p-1.5">
+          {CHECKLIST.map(({ step, title, description, to, icon }) => (
+            <li key={to} data-step={step}>
+              <ListRow render={<Link to={to} />} className="group" lead={<TypeDisc icon={icon} />} title={title} description={description}
+                end={<ArrowRight aria-hidden className="size-4 text-subtle-foreground transition-transform group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5 motion-reduce:transition-none" />} />
             </li>
           ))}
         </ol>
@@ -65,7 +60,7 @@ export function HomePage() {
   const retry = () => { void retryMode(queryClient) }
   const empty = mode.data?.kind === "live" && Array.isArray(mode.data.catalog?.document) && isEmptyWorkspace(mode.data.catalog.document)
   return (
-    <section className="max-w-5xl space-y-8">
+    <section data-home="" className="mx-auto w-full max-w-5xl space-y-8">
       <PageHeader title="Home" description={empty ? "Your workspace is ready. Follow these steps to bring data in and build your first dashboard." : "What needs you, and the numbers that matter. Every item opens where you act on it."} />
       <AskBar />
       {mode.isError
