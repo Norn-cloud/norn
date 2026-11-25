@@ -1,5 +1,4 @@
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
-import { useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Database, Plus, Search, Shapes } from "lucide-react"
 import { useState, type ReactNode } from "react"
@@ -10,7 +9,7 @@ import { cn } from "@/lib/utils"
 import { LoadState } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
-import { refreshMode, retryMode } from "./lib/live-transport.ts"
+import { refreshMode } from "./lib/live-transport.ts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -308,7 +307,6 @@ export { useCatalog }
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
   const workspace = useWorkspace()
-  const queries = useQueryClient()
   const [search, setSearch] = useState("")
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -324,10 +322,9 @@ export function SourcesPage() {
         data={catalog}
         error={read.error}
         isFetching={read.isFetching}
-        // The shell's one-line status steps aside while this page shows Workspace unavailable, so this
-        // Retry is the only one: it decides the mode again as the shell's would (the record page's
-        // pattern), else the catalog recovers while the mode stays unavailable and Connect a source stays hidden.
-        onRetry={() => { void retryMode(queries); void read.refetch() }}
+        // A refusal's Retry reads the catalog again; Workspace unavailable owns its own Retry, which
+        // decides the mode again as the shell's would (`WorkspaceUnavailable`).
+        onRetry={() => void read.refetch()}
         bone="sources-overview"
         skeleton="table"
         loadingLabel="Reading sources and types"

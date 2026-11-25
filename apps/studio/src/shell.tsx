@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
-import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
+import { isRetryableModeError, retryWorkspace, useMode } from "@/lib/live-transport"
 import { CopyId } from "@/components/copy-id"
 import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
@@ -537,15 +537,7 @@ function ConnectionBanner() {
   const { view } = useView()
   const unavailable = mode.data === undefined && (mode.isError || (mode.failureCount > 0 && !isRetryableModeError(mode.failureReason)))
   const pageShows = usePageShowsUnavailable(unavailable)
-  const retry = () => {
-    void retryMode(queryClient)
-    void queryClient.invalidateQueries({
-      predicate: (query) => {
-        const head = query.queryKey[0]
-        return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
-      },
-    })
-  }
+  const retry = () => { void retryWorkspace(queryClient) }
   const line = "flex min-h-[44px] flex-nowrap items-center gap-2 px-4 py-1.5 text-body md:px-8"
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {

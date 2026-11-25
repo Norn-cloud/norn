@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
-import { retryMode, useMode } from "./lib/live-transport.ts"
+import { retryWorkspace, useMode } from "./lib/live-transport.ts"
 import { untilDecided, useWorkspace } from "./lib/workspace.tsx"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
@@ -91,12 +91,13 @@ export function ObjectPage() {
     void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) })
     if (workspace.kind === "live") void queries.invalidateQueries({ queryKey: workspace.reader.findings(name, id).queryKey, exact: true })
   }
-  // Retry decides the mode again (the shell's own retry); the record is read once it is decided,
-  // at that mode's scope. An errored read under a decided mode is read again here.
+  // Retry decides the mode again (the shell's own retry), and only then reads the type and the record
+  // again, at that mode's scope (`retryWorkspace`); a read the retry already restarted is joined.
   const retry = () => {
-    void retryMode(queries)
-    void catalogRead.refetch()
-    if (decided !== undefined) void reads.refetch()
+    void retryWorkspace(queries).then(() => {
+      void catalogRead.refetch({ cancelRefetch: false })
+      if (decided !== undefined) void reads.refetch({ cancelRefetch: false })
+    })
   }
   const live = workspace.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.

@@ -366,7 +366,7 @@ export function RulesPage() {
   // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
   if (mode.data?.kind !== "recorded") {
     return mode.isError
-      ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />
+      ? <WorkspaceUnavailable error={mode.error} />
       : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>
   }
   return <RecordedRules />

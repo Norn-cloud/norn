@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
 import { CellUnavailable, studioScopeQuery } from "../src/lib/definitions.ts"
-import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, scopeAnswered, syncStudioScopeChange } from "../src/lib/live-transport.ts"
+import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, retryWorkspace, scopeAnswered, syncStudioScopeChange } from "../src/lib/live-transport.ts"
 import { EMPTY_QUERY } from "../src/lib/records-query.ts"
 import { workspaceOf } from "../src/lib/workspace.tsx"
 
@@ -121,6 +121,61 @@ test("Retry after a scope outage does not refetch the stale outage mode query or
     expect<unknown>(client.getQueryData(["studio-scope"])).toEqual({ orgId: "org_b", environmentId: "prod" })
   } finally {
     unsubOutage?.()
+    unsubScope?.()
+    client.clear()
+    refreshMode()
+    fetch.mockRestore()
+  }
+})
+
+test("the workspace Retry reads an errored page again only after the mode settles: one /api/me, no page read before it", async () => {
+  const client = new QueryClient()
+  const scopeObs = new QueryObserver(client, studioScopeQuery())
+  const events: string[] = []
+  let failMe = true
+  let meCalls = 0
+  const page = new QueryObserver(client, {
+    queryKey: ["page-read"],
+    retry: false,
+    queryFn: async () => {
+      const scope = client.getQueryState(["studio-scope"])?.status
+      events.push(`page:${scope}`)
+      if (scope !== "success") throw new CellUnavailable(503, "unavailable")
+      return "read"
+    },
+  })
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    if (input === "/api/me") {
+      meCalls += 1
+      events.push("me")
+      if (failMe) return new Response("unavailable", { status: 503 })
+      return Response.json(ME)
+    }
+    return new Response("not found", { status: 404 })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }),
+  )
+  refreshMode()
+  let unsubScope: (() => void) | undefined
+  let unsubPage: (() => void) | undefined
+  try {
+    unsubScope = scopeObs.subscribe(() => {})
+    unsubPage = page.subscribe(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(client.getQueryState(["studio-scope"])?.status).toBe("error")
+    expect(client.getQueryState(["page-read"])?.status).toBe("error")
+
+    failMe = false
+    meCalls = 0
+    events.length = 0
+    await retryWorkspace(client)
+
+    expect(meCalls).toBe(1)
+    expect(events).toEqual(["me", "page:success"])
+    expect(client.getQueryState(["page-read"])?.status).toBe("success")
+  } finally {
+    unsubPage?.()
     unsubScope?.()
     client.clear()
     refreshMode()

@@ -42,7 +42,7 @@ function RecordRead({ type, ids }: { readonly type: string; readonly ids: readon
       {!open
         ? null
         : scope.isError
-          ? <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />
+          ? <WorkspaceUnavailable error={scope.error} />
           : scope.isSuccess && scope.data === null
             ? <EmptyState icon={Database} title="No data cell">{NO_DATA_CELL}</EmptyState>
             : scope.isSuccess

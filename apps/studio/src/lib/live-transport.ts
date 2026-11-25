@@ -591,6 +591,24 @@ export async function retryMode(client: QueryClient): Promise<void> {
   await client.refetchQueries(modeFilter, { cancelRefetch: false })
 }
 
+/**
+ * The one user Retry for the workspace (the shell's one-line status, a page's own Workspace unavailable
+ * state, a skeleton's Retry while the mode is read): decide the mode again (`retryMode`), and only once
+ * it has settled read again every errored read on screen. Sequenced, so a page's read never runs while
+ * the mode is still undecided (that read would discover the scope a second time); a read that is
+ * already running again is joined, not restarted. Resolves when both are done, so a Retry button can
+ * stay disabled until then.
+ */
+export async function retryWorkspace(client: QueryClient): Promise<void> {
+  await retryMode(client)
+  await client.invalidateQueries({
+    predicate: (query) => {
+      const head = query.queryKey[0]
+      return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+    },
+  }, { cancelRefetch: false })
+}
+
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */
 export function refreshMode(): void {
   modeGeneration += 1
