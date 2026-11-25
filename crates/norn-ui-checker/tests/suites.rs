@@ -61,3 +61,6 @@ mod widget_snapshots;
 
 #[path = "widget_ux.rs"]
 mod widget_ux;
+
+#[path = "theme.rs"]
+mod theme;

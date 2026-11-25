@@ -53,6 +53,11 @@ pub const IDENTIFIER_TOO_LONG: &str = "identifier.validation.too_long";
 /// checked by Ring-0 `norn-checker` alone without Ring-1 `norn-ui-checker`.
 pub const WIDGET_RING1_REQUIRED: &str = "widget.validation.ring1_required";
 
+/// Stable Ring-0 fail-closed diagnostic emitted when a `Theme` artifact is
+/// checked by Ring-0 `norn-checker` alone: theme admission (tokens, colours,
+/// contrast, monochrome chrome) lives in Ring-1 `norn-ui-checker`.
+pub const THEME_RING1_REQUIRED: &str = "theme.validation.ring1_required";
+
 /// Method-call sugar for [`validate_artifact`], so `artifact.validate()` keeps
 /// working for callers after the validator moved out of `norn-ir`.
 pub trait ArtifactValidation {
@@ -265,7 +270,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
         | ArtifactPayload::Labels(_)
-        | ArtifactPayload::Model(_) => {}
+        | ArtifactPayload::Model(_)
+        | ArtifactPayload::Theme(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -294,6 +300,14 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         diagnostics.push(invalid_diagnostic(
             WIDGET_RING1_REQUIRED,
             "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
+            "payload",
+            artifact_id,
+        ));
+    }
+    if matches!(artifact.payload, ArtifactPayload::Theme(_)) {
+        diagnostics.push(invalid_diagnostic(
+            THEME_RING1_REQUIRED,
+            "theme artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
             "payload",
             artifact_id,
         ));
@@ -356,6 +370,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
         ArtifactKind::Labels => "labels.validation.invalid_payload",
         ArtifactKind::Model => "model.validation.invalid_payload",
+        ArtifactKind::Theme => "theme.validation.schema",
     }
 }
 fn validate_scope_ref(

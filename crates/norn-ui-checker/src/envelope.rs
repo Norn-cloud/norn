@@ -172,6 +172,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
         ArtifactKind::Model => "model",
+        ArtifactKind::Theme => "theme",
     }
 }
 fn widget_dependency_diagnostic(

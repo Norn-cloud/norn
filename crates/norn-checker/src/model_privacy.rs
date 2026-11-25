@@ -181,7 +181,8 @@ impl Lineage {
                 | ArtifactKind::Law
                 | ArtifactKind::DefinedConcept
                 | ArtifactKind::Labels
-                | ArtifactKind::Model => {}
+                | ArtifactKind::Model
+                | ArtifactKind::Theme => {}
             }
         }
         lineage

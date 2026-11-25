@@ -153,7 +153,7 @@ pub struct ResolvedArtifactSet<'a> {
 pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
     use ArtifactKind::{
         Action, BusinessPack, Connector, Customization, DefinedConcept, Derived, Entity, Labels,
-        Law, Mapping, Model, Policy, Relation, Rule, Setting, SourceSchema, Widget,
+        Law, Mapping, Model, Policy, Relation, Rule, Setting, SourceSchema, Theme, Widget,
     };
     match from {
         // A model reads object types; nothing references a model yet.
@@ -186,7 +186,8 @@ pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
         ),
         Customization => !matches!(to, BusinessPack),
         BusinessPack => true,
-        SourceSchema => false,
+        // A theme only recolours Studio; neither references anything.
+        SourceSchema | Theme => false,
         Mapping => matches!(to, Entity | SourceSchema | BusinessPack),
         Law => matches!(
             to,
@@ -842,7 +843,7 @@ fn check_pack_instances(
 }
 
 /// The wire name of a kind (`business_pack`).
-const fn kind_name(kind: &ArtifactKind) -> &'static str {
+pub(crate) const fn kind_name(kind: &ArtifactKind) -> &'static str {
     match kind {
         ArtifactKind::Entity => "entity",
         ArtifactKind::Relation => "relation",
@@ -861,6 +862,7 @@ const fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
         ArtifactKind::Model => "model",
+        ArtifactKind::Theme => "theme",
     }
 }
 

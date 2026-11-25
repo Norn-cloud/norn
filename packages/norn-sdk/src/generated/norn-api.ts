@@ -2107,7 +2107,7 @@ export interface components {
          * NornArtifactEnvelope
          * @description A canonical Norn IR artifact. Each branch pairs the envelope kind with its matching closed payload schema.
          */
-        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"] | components["schemas"]["NornArtifactEnvelopeModel"];
+        NornArtifactEnvelope: components["schemas"]["NornArtifactEnvelopeEntity"] | components["schemas"]["NornArtifactEnvelopeRelation"] | components["schemas"]["NornArtifactEnvelopeAction"] | components["schemas"]["NornArtifactEnvelopeRule"] | components["schemas"]["NornArtifactEnvelopeConnector"] | components["schemas"]["NornArtifactEnvelopeWidget"] | components["schemas"]["NornArtifactEnvelopeCustomization"] | components["schemas"]["NornArtifactEnvelopeSetting"] | components["schemas"]["NornArtifactEnvelopeBusinessPack"] | components["schemas"]["NornArtifactEnvelopePolicy"] | components["schemas"]["NornArtifactEnvelopeDerived"] | components["schemas"]["NornArtifactEnvelopeSourceSchema"] | components["schemas"]["NornArtifactEnvelopeMapping"] | components["schemas"]["NornArtifactEnvelopeLaw"] | components["schemas"]["NornArtifactEnvelopeDefinedConcept"] | components["schemas"]["NornArtifactEnvelopeLabels"] | components["schemas"]["NornArtifactEnvelopeModel"] | components["schemas"]["NornArtifactEnvelopeTheme"];
         /** NornArtifactEnvelopeAction */
         NornArtifactEnvelopeAction: components["schemas"]["NornArtifactEnvelopeCommon"] & {
             /** @enum {string} */
@@ -2321,6 +2321,18 @@ export interface components {
              * @enum {string}
              */
             kind: "source_schema";
+        };
+        /** NornArtifactEnvelopeTheme */
+        NornArtifactEnvelopeTheme: components["schemas"]["NornArtifactEnvelopeCommon"] & {
+            /** @enum {string} */
+            kind: "theme";
+            payload: components["schemas"]["NornIrThemePayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "theme";
         };
         /** NornArtifactEnvelopeWidget */
         NornArtifactEnvelopeWidget: components["schemas"]["NornArtifactEnvelopeCommon"] & {
@@ -3787,7 +3799,7 @@ export interface components {
             artifactId: string;
             version: string;
         };
-        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels" | "model";
+        NornIrArtifactKind: ("entity" | "relation" | "action" | "rule" | "connector" | "widget" | "customization" | "setting" | "business_pack" | "policy" | "theme") | "derived" | "source_schema" | "mapping" | "law" | "defined_concept" | "labels" | "model";
         /** @enum {string} */
         NornIrArtifactLifecycle: "draft" | "proposed" | "approved" | "active" | "deprecated" | "superseded" | "rejected";
         NornIrArtifactProvenance: {
@@ -7719,7 +7731,7 @@ export interface components {
              */
             type: components["schemas"]["NornIrPropertyType"];
         };
-        /** @description A typed predictive model with opaque internals ([`model`]). */
+        /** @description The payload root of a `model` artifact: [`ModelRoot`] on the wire. */
         NornIrModelPayload: {
             /** @description Checks every output must meet before it is written. Omitted when empty. */
             contracts?: components["schemas"]["NornIrModelContract"][];
@@ -10359,6 +10371,42 @@ export interface components {
          * @enum {string}
          */
         NornIrTextFormat: "email" | "uri" | "uuid";
+        /**
+         * @description The colour scheme a theme is limited to; absent means it applies to both.
+         * @enum {string}
+         */
+        NornIrThemeAppearance: "light" | "dark";
+        /** @description The payload root of a `theme` artifact: [`Theme`] on the wire. */
+        NornIrThemePayload: {
+            /** @description Shorthand for the action, primary, ring and link tokens, with a contrasting ink. */
+            accent?: string | null;
+            appearance?: components["schemas"]["NornIrThemeAppearance"] | null;
+            /** @description The built-in Studio skin the theme recolours (`luma` when absent). */
+            baseSkin?: string | null;
+            /** @description Shorthand for the canvas and shell tokens. */
+            canvas?: string | null;
+            colors?: components["schemas"]["NornIrThemePayloadPropertyColors"] | null;
+            /** @description Display name, 1 to 64 characters after trimming. */
+            name: string;
+            variants?: components["schemas"]["NornIrThemeVariants"] | null;
+            version: components["schemas"]["NornIrThemeVersion1"];
+        };
+        NornIrThemePayloadPropertyColors: {
+            [key: string]: string;
+        };
+        /** @description Per-scheme token overrides, applied over [`Theme::colors`]. */
+        NornIrThemeVariants: {
+            dark?: components["schemas"]["NornIrThemeVariantsPropertyDark"] | null;
+            light?: components["schemas"]["NornIrThemeVariantsPropertyLight"] | null;
+        };
+        NornIrThemeVariantsPropertyDark: {
+            [key: string]: string;
+        };
+        NornIrThemeVariantsPropertyLight: {
+            [key: string]: string;
+        };
+        /** @enum {unknown} */
+        NornIrThemeVersion1: 1;
         /**
          * @description Calendar bucket grain.
          * @enum {string}

@@ -2582,6 +2582,38 @@
       "message": "مجموعة البيانات {$dataset} ليس فيها الحقل {$field}",
       "review": "needs_review"
     },
+    "theme.validation.contrast": {
+      "message": "تباين {$ink} (على {$surface}) في الوضع {$scheme} هو {$ratio}:1 (يتطلب WCAG AA ما لا يقل عن {$floor}:1)",
+      "review": "needs_review"
+    },
+    "theme.validation.invalid_color": {
+      "message": "قيمة لون غير صالحة لـ {$token}؛ استخدم لون CSS مثل #rrggbb أو rgb(…) أو hsl(…) أو oklch(…)",
+      "review": "needs_review"
+    },
+    "theme.validation.monochrome": {
+      "message": "قيمة {$token} في الوضع {$scheme} هي {$value} (تشبع OKLCH يساوي {$chroma})؛ يجب أن تبقى ألوان هيكل الواجهة محايدة (تشبع أقل من 0.02)",
+      "review": "needs_review"
+    },
+    "theme.validation.multiple": {
+      "message": "لمساحة العمل سمة واحدة فقط، لكن {$first} و{$other} كلتاهما سمة",
+      "review": "needs_review"
+    },
+    "theme.validation.ring1_required": {
+      "message": "تتطلب أدوات السمة التحقق عبر norn-ui-checker في Ring-1 ولا يمكن قبولها بواسطة norn-checker في Ring-0 وحده",
+      "review": "needs_review"
+    },
+    "theme.validation.schema": {
+      "message": "حمولة السمة ليست StudioTheme صالحة: {$reason}",
+      "review": "needs_review"
+    },
+    "theme.validation.unknown_skin": {
+      "message": "يجب أن تكون baseSkin إحدى الأشكال المدمجة: {$skins}",
+      "review": "needs_review"
+    },
+    "theme.validation.unknown_token": {
+      "message": "رمز سمة غير معروف أو غير مسموح به: {$token}",
+      "review": "needs_review"
+    },
     "widget.authority.action_outside_binding": {
       "message": "صفحة تصل إلى إجراء Norn خارج ربط الإجراء الخاص به: {$detail}",
       "review": "needs_review"

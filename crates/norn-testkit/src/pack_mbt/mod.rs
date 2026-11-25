@@ -220,7 +220,8 @@ impl AdmittedPack {
                 | ArtifactPayload::SourceSchema(_)
                 | ArtifactPayload::DefinedConcept(_)
                 | ArtifactPayload::Labels(_)
-                | ArtifactPayload::Model(_) => {}
+                | ArtifactPayload::Model(_)
+                | ArtifactPayload::Theme(_) => {}
             }
         }
         for (entity, properties) in mapped {

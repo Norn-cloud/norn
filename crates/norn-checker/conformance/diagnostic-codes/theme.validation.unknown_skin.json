@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.unknown_skin",
+  "message": "baseSkin must be one of the built-in skins: {skins}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

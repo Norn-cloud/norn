@@ -724,32 +724,10 @@ fn same_definition(left: &ArtifactEnvelope, right: &ArtifactEnvelope) -> bool {
         && left.payload == right.payload
 }
 
-fn kind_name(kind: &ArtifactKind) -> &'static str {
-    match kind {
-        ArtifactKind::Entity => "entity",
-        ArtifactKind::Relation => "relation",
-        ArtifactKind::Action => "action",
-        ArtifactKind::Rule => "rule",
-        ArtifactKind::Connector => "connector",
-        ArtifactKind::Widget => "widget",
-        ArtifactKind::Customization => "customization",
-        ArtifactKind::Setting => "setting",
-        ArtifactKind::BusinessPack => "business_pack",
-        ArtifactKind::Policy => "policy",
-        ArtifactKind::Derived => "derived",
-        ArtifactKind::SourceSchema => "source_schema",
-        ArtifactKind::Mapping => "mapping",
-        ArtifactKind::Law => "law",
-        ArtifactKind::DefinedConcept => "defined_concept",
-        ArtifactKind::Labels => "labels",
-        ArtifactKind::Model => "model",
-    }
-}
-
 fn definition_id(artifact: &ArtifactEnvelope) -> DefinitionId {
     DefinitionId {
         artifact_id: artifact.artifact_id.clone(),
-        kind: kind_name(&artifact.kind()).to_owned(),
+        kind: crate::artifact_set::kind_name(&artifact.kind()).to_owned(),
     }
 }
 
@@ -773,7 +751,7 @@ fn push_narrowing(
 }
 
 fn artifact_removal(artifact: &ArtifactEnvelope, out: &mut Vec<Narrowing>) {
-    let kind = kind_name(&artifact.kind());
+    let kind = crate::artifact_set::kind_name(&artifact.kind());
     push_narrowing(
         out,
         "artifact_removed",
@@ -844,7 +822,8 @@ fn artifact_removal(artifact: &ArtifactEnvelope, out: &mut Vec<Narrowing>) {
         | ArtifactKind::Law
         | ArtifactKind::DefinedConcept
         | ArtifactKind::Labels
-        | ArtifactKind::Model => {}
+        | ArtifactKind::Model
+        | ArtifactKind::Theme => {}
     }
 }
 
