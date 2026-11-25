@@ -438,9 +438,10 @@ mod tests {
         ];
         let components: Vec<WidgetComponent> = components
             .into_iter()
-            .chain(wire.into_iter().map(|component| {
-                serde_json::from_value(component).expect("component")
-            }))
+            .chain(
+                wire.into_iter()
+                    .map(|component| serde_json::from_value(component).expect("component")),
+            )
             .collect();
         for component in &components {
             let behaviors = native_behaviors(component);

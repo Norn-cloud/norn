@@ -428,7 +428,10 @@ fn l3_notifications_never_hold_the_page() {
         &toast(&json!({ "priority": "\"assertive\"" }), &json!([])),
         NOTIFICATION,
     );
-    assert_admits(&toast(&json!({ "type": "\"error\"" }), &json!([])), NOTIFICATION);
+    assert_admits(
+        &toast(&json!({ "type": "\"error\"" }), &json!([])),
+        NOTIFICATION,
+    );
     assert_refuses(
         &toast(
             &json!({ "type": "\"loading\"", "dismissible": "false" }),
