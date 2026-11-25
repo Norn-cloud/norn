@@ -236,6 +236,8 @@ test("verify: every state × light/dark × desktop/390 × LTR/RTL, plus axe", as
         return (await axe.run(document, { resultTypes: ["violations"] })).violations.map((violation) => ({ id: violation.id, impact: violation.impact, nodes: violation.nodes.length }))
       })
       cells.push({ state, variant: name, reached, overflow, hitMisses: misses, axe: violations })
+      // SHOTS=<dir>: keep each cell's screenshot for review (the lane's browser proof), never in the repo.
+      if (process.env.SHOTS) await page.screenshot({ path: join(process.env.SHOTS, `${state}-${variant.theme}-${variant.width}-${variant.dir}.png`), fullPage: true })
       expect.soft(reached, `${state} ${name}: reached`).toBe(true)
       expect.soft(overflow, `${state} ${name}: horizontal overflow`).toBeLessThanOrEqual(1)
       expect.soft(misses, `${state} ${name}: pointer hit-testing`).toEqual([])
