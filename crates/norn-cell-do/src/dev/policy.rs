@@ -21,6 +21,16 @@
 //! An action that names no policy stays callable by the local principals
 //! only (a hosted cell would not serve it at all); the `ready` event lists
 //! them.
+//!
+//! DEV-PRINCIPALS-1: a project may name more local principals
+//! (`dev.principals` in `norn.json`), each holding exactly the roles it
+//! declares and no role of the hosted table, so a pack whose access policy
+//! names its own roles can be acted on, and refused, by role on `norn dev`
+//! as on a cell that grants those roles. Each has its own session token
+//! (`.norn/dev.principal.<n>.token`, listed in `.norn/dev.json`). Like the
+//! developer and the reviewer it reads everything on this loopback cell;
+//! only what it may *do* is narrowed.
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use crate::actions::ActionPolicy;
@@ -132,11 +142,17 @@ fn store(slot: &DevActions, compiled: Result<Compiled, String>) -> Result<Vec<St
     answer
 }
 
+/// The project's named local principals (DEV-PRINCIPALS-1): each actor and
+/// exactly the roles it holds.
+pub(crate) type NamedPrincipals = Arc<BTreeMap<String, Vec<String>>>;
+
 /// Every grant to exactly the local actors; default deny for everyone else.
 /// Governed actions are decided by the active revision's policy
 /// (DEV-ACCESS-1).
 pub(crate) struct LocalDeveloper {
     pub(crate) actors: Vec<String>,
+    /// The named principals and their roles (DEV-PRINCIPALS-1).
+    named: NamedPrincipals,
     actions: DevActions,
 }
 
@@ -146,24 +162,45 @@ impl LocalDeveloper {
     pub(crate) fn for_actor(actor: &str, actions: DevActions) -> Self {
         Self {
             actors: vec![actor.to_owned(), reviewer(actor)],
+            named: NamedPrincipals::default(),
             actions,
         }
+    }
+
+    /// These local principals and the project's `named` ones, each holding
+    /// only its declared roles (DEV-PRINCIPALS-1).
+    pub(crate) fn with_named(mut self, named: NamedPrincipals) -> Self {
+        self.actors.extend(named.keys().cloned());
+        self.named = named;
+        self
     }
 
     fn is(&self, actor: &str) -> bool {
         self.actors.iter().any(|local| local == actor)
     }
+
+    fn caller(&self, actor: &str) -> Caller {
+        local_caller(actor, &self.named)
+    }
 }
 
-/// A local principal as the PDP sees it: every role of the hosted table.
-fn local_caller(actor: &str) -> Caller {
-    Caller {
-        subject_id: actor.to_owned(),
-        roles: DEMO_GRANTS
+/// The roles a local principal holds: a named principal's declared roles
+/// (DEV-PRINCIPALS-1), otherwise every role of the hosted table.
+fn local_roles(actor: &str, named: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    named.get(actor).cloned().unwrap_or_else(|| {
+        DEMO_GRANTS
             .entries
             .iter()
             .map(|(role, _)| (*role).to_owned())
-            .collect(),
+            .collect()
+    })
+}
+
+/// A local principal as the PDP sees it.
+fn local_caller(actor: &str, named: &BTreeMap<String, Vec<String>>) -> Caller {
+    Caller {
+        subject_id: actor.to_owned(),
+        roles: local_roles(actor, named),
         actor_kind: "user",
         role_table: DEMO_GRANTS.version,
         accountable_person: Some(actor.to_owned()),
@@ -195,7 +232,7 @@ impl Authorizer for LocalDeveloper {
             .ok()
             .and_then(|slot| slot.as_ref().ok().cloned().flatten())
             .ok_or_else(denied)?;
-        policy.decide(&local_caller(request.actor), request)
+        policy.decide(&self.caller(request.actor), request)
     }
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
         if self.is(request.actor) {
@@ -215,16 +252,12 @@ impl Authorizer for LocalDeveloper {
         }
     }
     fn verified_principal(&self, actor: &str) -> Option<RunStarter> {
-        // A local actor holds every role of the hosted table (APPROVAL-1:
-        // the requester a gated call parks for and commits as).
+        // A local actor holds its roles (APPROVAL-1: the requester a gated
+        // call parks for and commits as).
         self.is(actor).then(|| RunStarter {
             subject: actor.to_owned(),
             actor_kind: "user".to_owned(),
-            roles: DEMO_GRANTS
-                .entries
-                .iter()
-                .map(|(role, _)| (*role).to_owned())
-                .collect(),
+            roles: local_roles(actor, &self.named),
             role_table: DEMO_GRANTS.version.to_owned(),
             accountable_person: Some(actor.to_owned()),
         })
@@ -251,7 +284,7 @@ impl Authorizer for LocalDeveloper {
             .and_then(|slot| slot.as_ref().ok().cloned().flatten())
             .and_then(|policy| {
                 policy.authorize_automation_grant(
-                    &local_caller(request.actor),
+                    &self.caller(request.actor),
                     &request.action.action_id,
                     request.matched_types,
                 )
@@ -275,6 +308,8 @@ impl Authorizer for LocalDeveloper {
 pub(crate) struct DevPrincipals {
     /// `(bearer, actor)` pairs.
     sessions: Vec<(String, String)>,
+    /// The named principals' roles (DEV-PRINCIPALS-1).
+    named: NamedPrincipals,
     slot: CallerSlot,
 }
 
@@ -283,8 +318,15 @@ impl DevPrincipals {
     pub(crate) fn new(sessions: Vec<(String, String)>) -> Self {
         Self {
             sessions,
+            named: NamedPrincipals::default(),
             slot: CallerSlot::default(),
         }
+    }
+
+    /// The same resolver, recording a named principal with its own roles.
+    pub(crate) fn with_named(mut self, named: NamedPrincipals) -> Self {
+        self.named = named;
+        self
     }
 }
 
@@ -308,7 +350,8 @@ impl PrincipalResolver for DevPrincipals {
             }
         }
         // Every request records first, possibly nobody.
-        self.slot.record(found.as_deref().map(local_caller));
+        self.slot
+            .record(found.as_deref().map(|actor| local_caller(actor, &self.named)));
         found
     }
     fn end_request(&self) {

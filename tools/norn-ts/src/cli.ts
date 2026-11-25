@@ -40,6 +40,16 @@ if (process.argv[2] === "dev") {
     process.exit(error.exitCode)
   }
 }
+if (process.argv[2] === "seed") {
+  const { seedCli } = await import("./seed.ts")
+  const { ProjectError } = await import("./project.ts")
+  try { process.exit(await seedCli(process.argv.slice(3))) }
+  catch (error) {
+    if (!(error instanceof ProjectError)) throw error
+    process.stdout.write(`${JSON.stringify(error.diagnostic)}\n`)
+    process.exit(error.exitCode)
+  }
+}
 if (process.argv[2] === "plan" || process.argv[2] === "apply") {
   const { main } = await import("./apply.ts")
   process.exit(await main(process.argv[2], process.argv.slice(3)))
@@ -67,7 +77,7 @@ function option(name: string): string | undefined {
 }
 const hasFlag = (name: string): boolean => flags.includes(name)
 if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question" && command !== "dashboard")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--forbid-unsafe-zen] [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn codegen --ts <artifacts.json|dir|pack-dir> [--base SET]... [--out FILE.d.ts] [--check]\n       norn setup [--version TAG] [--base-url URL]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--forbid-unsafe-zen] [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn codegen --ts <artifacts.json|dir|pack-dir> [--base SET]... [--out FILE.d.ts] [--check]\n       norn setup [--version TAG] [--base-url URL]\n       norn init <dir> | norn dev [--port N] [--json] | norn seed [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
   process.exit(2)
 }
 if (command === "profile") {

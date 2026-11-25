@@ -27,6 +27,14 @@ test("--as reviewer is the descriptor's reviewer, with its own token; a descript
   expect(() => readSession(project({ ...DESCRIPTOR, reviewer: { actor: "x", tokenFile: "../../t" } }), "reviewer")).toThrow("outside the project")
 })
 
+test("--as <actor> is one of the descriptor's named principals, with its token and declared roles (DEV-PRINCIPALS-1)", () => {
+  const root = project({ ...DESCRIPTOR, principals: [{ actor: "clerk:a", roles: ["clerk"], tokenFile: ".norn/dev.principal.1.token" }] })
+  writeFileSync(join(root, ".norn/dev.principal.1.token"), "clerk-token\n")
+  expect(readSession(root, "clerk:a")).toEqual({ url: "http://127.0.0.1:4174", token: "clerk-token", actor: "clerk:a", as: "principal", roles: ["clerk"], orgId: "local", environmentId: "dev", project: "shop" })
+  expect(() => readSession(root, "planner:b")).toThrow("names no principal planner:b")
+  expect(() => readSession(project({ ...DESCRIPTOR, principals: [{ actor: "x", roles: ["r"], tokenFile: "../../t" }] }), "x")).toThrow("outside the project")
+})
+
 test("the session is the descriptor's: loopback url, project token, scope, actor and project name", () => {
   expect(readSession(project(DESCRIPTOR))).toEqual({ url: "http://127.0.0.1:4174", token: "dev-token-1", actor: "user:dev", orgId: "local", environmentId: "dev", project: "shop" })
   expect(() => readSession(join(temp, "nowhere"))).toThrow(LocalCellError)

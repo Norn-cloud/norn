@@ -21,6 +21,9 @@
  * `--as reviewer` serves the session's second local principal (the reviewer
  * `norn dev` names in its descriptor) instead, so an approval one Studio asks
  * for can be decided in another: the requester never decides their own call.
+ * `--as <actor>` serves one of the project's named principals
+ * (DEV-PRINCIPALS-1), who holds only the roles `norn.json` declares for it, so
+ * Studio shows what that role may do and the cell's refusal of what it may not.
  *
  * Live reads (UI-LIVE-1, `norn.live.v1`): the Studio pages hold one socket on
  * `/api/host/v1/subscribe`. The dev host has no socket, so this server keeps
@@ -38,7 +41,9 @@ export interface DevSession {
   readonly token: string
   readonly actor: string
   /** Which of the session's local principals this is. */
-  readonly as?: "developer" | "reviewer"
+  readonly as?: "developer" | "reviewer" | "principal"
+  /** A named principal's declared roles (DEV-PRINCIPALS-1). */
+  readonly roles?: readonly string[]
   readonly orgId: string
   readonly environmentId: string
   readonly project: string
@@ -48,17 +53,28 @@ export class LocalCellError extends Error {}
 
 const LOOPBACK_URL = /^http:\/\/(127\.0\.0\.1|\[::1\]):\d{1,5}$/
 
-/** The running `norn dev` session of `project`, as its descriptor (`norn-dev/1`) names it. */
-export function readSession(project: string, as: "developer" | "reviewer" = "developer"): DevSession {
+/**
+ * The running `norn dev` session of `project`, as its descriptor (`norn-dev/1`)
+ * names it: the developer, the reviewer, or the named principal whose actor
+ * `as` is (DEV-PRINCIPALS-1).
+ */
+export function readSession(project: string, as: string = "developer"): DevSession {
   const descriptorPath = join(project, ".norn/dev.json")
   if (!existsSync(descriptorPath)) throw new LocalCellError(`No running norn dev in ${project}: start it there first (${descriptorPath} is missing).`)
   const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8")) as Record<string, unknown>
   const scope = descriptor["scope"] as Record<string, unknown> | undefined
   const reviewer = descriptor["reviewer"] as Record<string, unknown> | undefined
+  const named = as === "developer" || as === "reviewer"
+    ? undefined
+    : (Array.isArray(descriptor["principals"]) ? descriptor["principals"] as Record<string, unknown>[] : []).find((principal) => principal["actor"] === as)
   const { url } = descriptor
-  const tokenFile = as === "reviewer" ? reviewer?.["tokenFile"] : descriptor["tokenFile"]
-  const actor = as === "reviewer" ? reviewer?.["actor"] : descriptor["actor"]
+  const chosen = as === "developer" ? descriptor : as === "reviewer" ? reviewer : named
+  const tokenFile = chosen?.["tokenFile"]
+  const actor = chosen?.["actor"]
   if (as === "reviewer" && reviewer === undefined) throw new LocalCellError(`${descriptorPath} names no reviewer: restart norn dev with this checkout's host.`)
+  if (as !== "developer" && as !== "reviewer" && named === undefined) throw new LocalCellError(`${descriptorPath} names no principal ${as}: declare it in norn.json dev.principals and restart norn dev.`)
+  const roles = named?.["roles"]
+  if (named !== undefined && (!Array.isArray(roles) || !roles.every((role) => typeof role === "string"))) throw new LocalCellError(`${descriptorPath} names ${as} without its roles.`)
   if (descriptor["format"] !== "norn-dev/1" || typeof url !== "string" || typeof tokenFile !== "string" || typeof actor !== "string"
     || typeof scope?.["orgId"] !== "string" || typeof scope["environmentId"] !== "string") {
     throw new LocalCellError(`${descriptorPath} is not a norn-dev/1 descriptor.`)
@@ -72,7 +88,8 @@ export function readSession(project: string, as: "developer" | "reviewer" = "dev
     try { const manifest = JSON.parse(readFileSync(join(project, "norn.json"), "utf8")) as { name?: unknown }; return typeof manifest.name === "string" ? manifest.name : undefined }
     catch { return undefined }
   })()
-  return { url, token: readFileSync(tokenPath, "utf8").trim(), actor, ...(as === "reviewer" ? { as } : {}), orgId: scope["orgId"], environmentId: scope["environmentId"], project: name ?? scope["orgId"] }
+  const which = as === "reviewer" ? { as } : named !== undefined ? { as: "principal" as const, roles: roles as string[] } : {}
+  return { url, token: readFileSync(tokenPath, "utf8").trim(), actor, ...which, orgId: scope["orgId"], environmentId: scope["environmentId"], project: name ?? scope["orgId"] }
 }
 
 export interface LocalStudio {
@@ -112,7 +129,7 @@ export async function localStudio(request: Request, studio: LocalStudio): Promis
       return Response.json({
         // Exactly what the dev token names: its one actor and the manifest's scope.
         user: { id: session.actor, name: session.actor, email: "" },
-        organization: { id: session.orgId, name: session.project, role: session.as === "reviewer" ? "local reviewer" : "local developer" },
+        organization: { id: session.orgId, name: session.project, role: session.as === "reviewer" ? "local reviewer" : session.as === "principal" ? (session.roles ?? []).join(", ") : "local developer" },
         environmentId: session.environmentId,
       }, { headers: { "cache-control": "no-store" } })
     }
@@ -293,8 +310,8 @@ if (import.meta.main) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new LocalCellError(`--port ${option(args, "--port")} is not a port.`)
   const dist = resolve(import.meta.dir, "../dist")
   if (!existsSync(join(dist, "index.html"))) throw new LocalCellError(`No built app at ${dist}: run \`bun run build\` first.`)
+  // developer, reviewer, or a named principal's actor; readSession refuses any other.
   const as = option(args, "--as") ?? "developer"
-  if (as !== "developer" && as !== "reviewer") throw new LocalCellError(`--as ${as} refused: use developer or reviewer.`)
   const first = readSession(project, as)
   serveLocal({ hostname: host, dist, port, session: () => readSession(project, as) })
   console.log(`Studio on http://127.0.0.1:${port} over norn dev at ${first.url} (${first.orgId}/${first.environmentId}, as ${first.actor}), live reads on`)

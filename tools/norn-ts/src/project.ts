@@ -7,8 +7,19 @@ export interface Project {
   readonly name: string
   readonly sources: readonly string[]
   readonly scope: { readonly orgId: string; readonly environmentId: string }
-  readonly dev: { readonly port: number; readonly actor: string }
+  readonly dev: { readonly port: number; readonly actor: string; readonly principals?: readonly DevPrincipal[] }
   readonly cell: string
+}
+
+/**
+ * A named local principal of `norn dev` (DEV-PRINCIPALS-1): it holds exactly
+ * these roles, so a pack whose access policy names its own roles can be acted
+ * on, and refused, by role on the loopback cell. The dev host decides; this
+ * only names who exists.
+ */
+export interface DevPrincipal {
+  readonly actor: string
+  readonly roles: readonly string[]
 }
 
 export class ProjectError extends Error {
@@ -24,6 +35,19 @@ function object(value: unknown, keys: readonly string[]): value is Record<string
     && Object.keys(value).length === keys.length && keys.every(key => key in value)
 }
 function text(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0 }
+/** Exact names: non-empty, no surrounding space. */
+function name(value: unknown): value is string { return text(value) && value.trim() === value }
+/** `dev.principals`: at most 16, each a distinct actor other than the developer and reviewer, with distinct roles. */
+function principals(value: unknown, actor: string): value is DevPrincipal[] {
+  if (!Array.isArray(value) || value.length > 16) return false
+  const actors = new Set<string>([actor, `${actor}+reviewer`])
+  return value.every((principal) => {
+    if (!object(principal, ["actor", "roles"]) || !name(principal.actor) || actors.has(principal.actor)) return false
+    actors.add(principal.actor)
+    const roles = principal.roles
+    return Array.isArray(roles) && roles.length > 0 && roles.every(name) && new Set(roles).size === roles.length
+  })
+}
 /** A relative path that stays inside the project: not absolute, no `..` segment. */
 function inside(value: unknown): value is string {
   return text(value) && !isAbsolute(value) && !/^[a-zA-Z]:/.test(value) && !value.split(/[\\/]/).includes("..")
@@ -35,11 +59,14 @@ export function parseProject(value: unknown): Project {
     && Array.isArray(value.sources) && value.sources.length > 0 && value.sources.every(inside)
     && new Set(value.sources).size === value.sources.length
     && object(value.scope, ["orgId", "environmentId"]) && text(value.scope.orgId) && text(value.scope.environmentId)
-    && object(value.dev, ["port", "actor"]) && typeof value.dev.port === "number" && Number.isInteger(value.dev.port)
+    && (object(value.dev, ["port", "actor"]) || (object(value.dev, ["port", "actor", "principals"]) && principals(value.dev.principals, String(value.dev.actor))))
+    && typeof value.dev.port === "number" && Number.isInteger(value.dev.port)
     && value.dev.port >= 0 && value.dev.port <= 65535 && text(value.dev.actor) && inside(value.cell)) {
+    const named = value.dev.principals as DevPrincipal[] | undefined
     return { format: value.format, name: value.name, sources: value.sources,
       scope: { orgId: value.scope.orgId, environmentId: value.scope.environmentId },
-      dev: { port: value.dev.port, actor: value.dev.actor }, cell: value.cell }
+      dev: { port: value.dev.port, actor: value.dev.actor, ...(named === undefined ? {} : { principals: named.map(({ actor, roles }) => ({ actor, roles: [...roles] })) }) },
+      cell: value.cell }
   }
   throw new ProjectError("cli.project.invalid_manifest", "Invalid norn.json; use norn-project/1 with explicit sources, scope, dev and cell, and remove unknown keys.")
 }
