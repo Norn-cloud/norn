@@ -17,7 +17,7 @@ export { parseExactJson } from "./exact-json.ts"
 export type { ExactJson } from "./exact-json.ts"
 
 /** The live-read client (`norn.live.v1`). */
-export { LIVE_PROTOCOL, LiveClient } from "./live.ts"
+export { LIVE_PROTOCOL, LIVE_UNAVAILABLE, LiveClient } from "./live.ts"
 export type {
   LiveClientMessage, LiveClientRefusal, LiveListener, LiveOptions, LiveRefusal, LiveServerMessage, LiveSnapshot, LiveState,
   LiveSubscribeOptions, SocketLike,

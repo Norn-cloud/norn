@@ -24,6 +24,9 @@ import { CellRefusal, NotServed } from "./live-transport.ts"
  *   render {@link cellReadState}.
  * - Unmounting unsubscribes; the live client keeps its own limits (frame size, one wire
  *   subscription per path, the cell's `live.too_many_subscriptions`).
+ * - A read the cell's answers no longer reach is stale (`CellReadState.stale`): its subscription
+ *   was refused, or the live client gave up reconnecting (`LIVE_UNAVAILABLE`). The page shows the
+ *   last answer as such, with its time and a way to read again, never as live.
  * - Nothing is kept across reloads. Persistence lands with the server's cache-policy flag (#1374),
  *   keyed by reader and scope.
  */
@@ -221,23 +224,32 @@ export interface CellReadState<T> {
   readonly status: "pending" | "error" | "success"
   readonly data: CellDocument<T> | undefined
   readonly error: Error | null
+  /**
+   * The cell's answers to this read are no longer followed: the live protocol refused its
+   * subscription, or the live client gave up reconnecting (`LIVE_UNAVAILABLE`). `data` is the last
+   * answer read (as of the query's `dataUpdatedAt`); the page says so and offers to read again
+   * (`refetch`), never shows it as live. It clears when the cell answers the subscription again.
+   */
+  readonly stale: boolean
 }
 
 /**
  * The read as a page shows it. A pushed refusal is the error state with no document; a later
  * failed read of it shows that failure. Otherwise the query's own status, document and error.
+ * `liveRefusal` is the live protocol's refusal of the read's subscription, if any.
  */
-export function cellReadState<T>(read: Pick<UseQueryResult<CellEntry<T>, Error>, "status" | "data" | "error">): CellReadState<T> {
+export function cellReadState<T>(read: Pick<UseQueryResult<CellEntry<T>, Error>, "status" | "data" | "error">, liveRefusal: LiveRefusal | null = null): CellReadState<T> {
   const entry = read.data
-  if (entry?.kind === "refused") return { status: "error", data: undefined, error: read.status === "error" ? read.error : entry.refusal }
-  return { status: read.status, data: entry, error: read.error }
+  const stale = liveRefusal !== null
+  if (entry?.kind === "refused") return { status: "error", data: undefined, error: read.status === "error" ? read.error : entry.refusal, stale }
+  return { status: read.status, data: entry, error: read.error, stale }
 }
 
 export interface CellQuery<T> {
   /** The query itself: its data is the cache entry, a document or a pushed refusal. Render {@link CellQuery.state}. */
   readonly read: UseQueryResult<CellEntry<T>, Error>
   readonly state: CellReadState<T>
-  /** The live protocol's refusal of this read's subscription (`live.too_many_subscriptions`, …): the read stands, without pushes. */
+  /** The live protocol's refusal of this read's subscription (`live.too_many_subscriptions`, `live.unavailable`, …): the read stands, without pushes, and `state.stale` is set. */
   readonly liveRefusal: LiveRefusal | null
 }
 
@@ -260,7 +272,7 @@ export function useCellQuery<P extends GetRoute>(route: P, params: CellParams<P>
     })
     // The key's value, not its identity, decides the subscription.
   }, [client, key, enabled])
-  return { read, state: cellReadState(read), liveRefusal }
+  return { read, state: cellReadState(read, liveRefusal), liveRefusal }
 }
 
 /** Reads to invalidate after a write: queries whose route starts with `route` and whose path parameters include `path`. */

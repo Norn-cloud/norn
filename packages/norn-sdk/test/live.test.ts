@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 // @ts-expect-error: the host module is plain JavaScript without declarations.
 import * as hostLive from "../../../apps/norn-cell-do/subscribe.mjs"
-import { LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live.ts"
+import { LIVE_UNAVAILABLE, LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live.ts"
 
 type Listener = (event: { code?: number; data?: unknown }) => void
 
@@ -311,4 +311,59 @@ test("a snapshot's body is also read exactly, and a failing one carries its refu
     frame(status, body)
     expect([status, body, seen.at(-1)!.status, seen.at(-1)!.refusal]).toEqual([status, body, status, undefined])
   }
+})
+
+// #1700 S9 (the `LIVE_UNAVAILABLE` contract, as #1720 adds it): once the client stops reconnecting,
+// every subscriber is told, and so is any that subscribes after.
+test("losing the live connection for good tells each subscriber, so a view can offer to read again", async () => {
+  const { client, sockets, timers, flush } = harness()
+  const told: LiveRefusal[] = []
+  const stop = client.subscribe("/v1/objects/a:facets", () => {}, { onRefused: (refusal) => told.push(refusal) })
+  await flush()
+  sockets[0]!.emit("open")
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    sockets.at(-1)!.emit("close", { code: 1006 })
+    timers.shift()?.()
+    await flush()
+  }
+  expect(client.state).toBe("unavailable")
+  expect(told).toEqual([LIVE_UNAVAILABLE])
+  const later: LiveRefusal[] = []
+  const stopLater = client.subscribe("/v1/objects/b:facets", () => {}, { onRefused: (refusal) => later.push(refusal) })
+  await flush()
+  expect(later).toEqual([LIVE_UNAVAILABLE])
+  stopLater()
+  stop()
+})
+
+test("the cell's live host sends the GET's own bytes, so a pushed decimal reaches `exact` with every digit", async () => {
+  const body = '{"version":2,"values":{"amount":1234567890123456.789012345678,"rate":100.000}}'
+  let attachment: unknown = { scope: ["org_demo", "analytics"], authorization: "Bearer reader", subs: {}, role: "member" }
+  const clientListeners = new Map<string, Listener[]>()
+  const frames: string[] = []
+  const serverWs = {
+    serializeAttachment: (v: unknown) => { attachment = structuredClone(v) },
+    deserializeAttachment: () => structuredClone(attachment),
+    send: (data: string) => {
+      frames.push(data)
+      for (const listener of clientListeners.get("message") ?? []) listener({ data })
+    },
+    close: () => {},
+  }
+  const bridgeSocket: SocketLike = {
+    readyState: 0,
+    send: (data: string) => { void hostLive.message(serverWs, data, () => ({ status: 200, body })) },
+    close: () => {},
+    addEventListener: (type, listener) => { clientListeners.set(type, [...(clientListeners.get(type) ?? []), listener]) },
+  }
+  const seen: LiveSnapshot[] = []
+  const client = new LiveClient({ url: () => "wss://studio/api/host/v1/subscribe", connect: () => bridgeSocket })
+  const stop = client.subscribe("/v1/objects/demo.Item/i1?orgId=org_demo&environmentId=analytics", (s) => seen.push(s))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  ;(bridgeSocket as { readyState: number }).readyState = 1
+  for (const listener of clientListeners.get("open") ?? []) listener({})
+  for (let tick = 0; tick < 20 && seen.length === 0; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1))
+  expect(frames[0]).toContain(`"body":${body}`)
+  expect(seen[0]!.exact).toEqual({ version: "2", values: { amount: "1234567890123456.789012345678", rate: "100.000" } })
+  stop()
 })

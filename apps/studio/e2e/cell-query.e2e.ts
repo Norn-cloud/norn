@@ -1,4 +1,4 @@
-import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
+import { expect, test, type Page, type Route, type WebSocketRoute } from "@playwright/test"
 
 // #1374 phase 1a: one record read through `useCellQuery` (harness.html), against a stand-in cell
 // that speaks `norn.live.v1` as `crates/norn-api/src/live.rs` types it. A push writes the cell's
@@ -16,9 +16,13 @@ interface StandIn {
   readonly subscribed: Promise<{ readonly socket: WebSocketRoute; readonly id: string; readonly path: string }>
 }
 
-async function standIn(page: Page): Promise<StandIn> {
+const ME = { user: { id: "u_e2e", name: "Reader", email: "reader@example.com" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" }
+
+/** The stand-in cell; `me` answers the n-th scope discovery (`/api/me`). */
+async function standIn(page: Page, me: (route: Route, count: number) => Promise<void> = (route) => route.fulfill({ json: ME })): Promise<StandIn> {
   const reads: string[] = []
-  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "Reader", email: "reader@example.com" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" } }))
+  let asked = 0
+  await page.route("**/api/me", (route) => me(route, ++asked))
   await page.route("**/api/host/v1/objects/**", (route) => {
     const url = new URL(route.request().url())
     reads.push(`${url.pathname.replace(/^\/api\/host/, "")}${url.search}`)
@@ -72,4 +76,38 @@ test("cell query: a pushed refusal shows the refusal state in place of the recor
   await expect(view.getByTestId("record-version")).toHaveCount(0)
   expect(cell.reads).toHaveLength(1)
   await page.screenshot({ path: "test-results/cell-query/refused-light.png" })
+})
+
+test("cell query: a read whose subscription the cell refuses says it is not followed, and reads again on request", async ({ page }) => {
+  const cell = await standIn(page)
+  await page.goto("/harness.html?type=demo.Item&id=i1")
+  const view = page.getByTestId("record-read")
+  await expect(view.getByTestId("record-updates")).toHaveText("live")
+  const { socket, id } = await cell.subscribed
+  socket.send(`{"type":"refused","id":"${id}","code":"live.too_many_subscriptions","message":"at most 8 subscriptions per socket"}`)
+  const updates = view.getByTestId("record-updates")
+  await expect(updates).toHaveAttribute("data-stale", "")
+  await expect(updates).toContainText("Not followed: the last answer read, as of")
+  // The record stays on screen as the last answer, never as live.
+  await expect(view.getByTestId("record-value-amount")).toHaveText(FIRST)
+  await updates.getByRole("button", { name: "Read again" }).click()
+  await expect.poll(() => cell.reads.length).toBe(2)
+  await page.screenshot({ path: "test-results/cell-query/stale-light.png" })
+})
+
+test("cell query: a workspace with no data cell says so, and a failed scope discovery is Workspace unavailable with Retry", async ({ page }) => {
+  await standIn(page, (route) => route.fulfill({ json: { ...ME, organization: null, environmentId: null } }))
+  await page.goto("/harness.html?type=demo.Item&id=i1")
+  await expect(page.getByTestId("record-read").getByText("No data cell")).toBeVisible()
+
+  const second = await page.context().newPage()
+  const cell = await standIn(second, (route, count) => count === 1 ? route.fulfill({ status: 503, json: { message: "the host is restarting" } }) : route.fulfill({ json: ME }))
+  await second.goto("/harness.html?type=demo.Item&id=i1")
+  const view = second.getByTestId("record-read")
+  const unavailable = view.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  expect(cell.reads).toHaveLength(0)
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  await expect(view.getByTestId("record-version")).toHaveText("1")
+  await second.screenshot({ path: "test-results/cell-query/scope-retried-light.png" })
 })

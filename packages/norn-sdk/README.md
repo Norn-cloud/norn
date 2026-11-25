@@ -46,6 +46,8 @@ is read with `client.download`, as bytes in a media type the route declares
 scoped path a live subscription names. `LiveClient` frames are the contract's
 `LiveClientMessage` / `LiveServerMessage`; each snapshot carries its body read
 exactly (`exact`) and, for a failing status, the route's checked `refusal`.
+Once the client stops reconnecting, every subscriber (and any later one) is
+told `LIVE_UNAVAILABLE` through `onRefused`: its answers are no longer followed.
 
 `norn codegen --ts <artifacts> [--base <artifacts>] --out FILE` (in
 `tools/norn-ts`) emits one types-only `.d.ts` with the `ActionMap`, `ObjectMap`

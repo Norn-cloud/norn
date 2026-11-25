@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { MutationObserver, onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query"
-import { LiveClient, parseExactJson, readRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-sdk/src/index.ts"
+import { LIVE_UNAVAILABLE, LiveClient, parseExactJson, readRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-sdk/src/index.ts"
 import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, cellReadState, invalidateCellRoutes, submitCall, type CellDocument, type CellEntry, type CellRefused, type CellSubmission, type LiveSource } from "../src/lib/cell-query.ts"
 import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, setDisplayedScope, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed } from "../src/lib/live-transport.ts"
@@ -316,6 +316,10 @@ test("a live refusal leaves the read standing and is reported to the page", asyn
   socket.subscribed.get(path)?.onRefused?.({ code: "live.too_many_subscriptions", message: "at most 8 subscriptions per socket" })
   expect(refusals.map(({ code }) => code)).toEqual(["live.too_many_subscriptions"])
   expect(client.getQueryState(options.queryKey)?.status).toBe("success")
+  // The read stands, but nothing follows it: the page shows it as stale, never as live.
+  const shown = cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!, refusals[0] ?? null)
+  expect([shown.status, shown.stale]).toEqual(["success", true])
+  expect(cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!).stale).toBe(false)
 })
 
 test("a malformed refusal is never trusted for its code: the read is unavailable", async () => {
@@ -557,4 +561,34 @@ test("a write is refused before any request once the tab shows another workspace
   } finally {
     setDisplayedScope(undefined)
   }
+})
+
+test("once the live client gives up reconnecting, the read is stale: the last answer, read again on request, never shown as live", async () => {
+  const client = new QueryClient()
+  const { options } = await readOnce(client)
+  const path = cellPath(ROUTE, scope, params)
+  const sockets: CellSocket[] = []
+  const live = new LiveClient({
+    url: () => "wss://studio/api/host/v1/subscribe",
+    connect: () => { const socket = new CellSocket(); sockets.push(socket); return socket },
+    schedule: (callback) => queueMicrotask(callback),
+    delay: () => 0,
+    maxFailures: 2,
+  })
+  const seen: (LiveRefusal | null)[] = []
+  const stop = attachLive({ client, live, route: ROUTE, queryKey: options.queryKey, path, onLiveRefusal: (refusal) => seen.push(refusal) })
+  // Every connection is lost before it opens, until the client stops reconnecting.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let tick = 0; sockets.length <= attempt && tick < 200; tick += 1) await Bun.sleep(1)
+    sockets[attempt]!.emit("close", { code: 1006 })
+  }
+  for (let tick = 0; live.state !== "unavailable" && tick < 200; tick += 1) await Bun.sleep(1)
+  expect(live.state).toBe("unavailable")
+  expect(seen).toEqual([LIVE_UNAVAILABLE])
+  const state = () => cellReadState(client.getQueryState<CellEntry<{ readonly version?: number | null }>, Error>(options.queryKey)!, seen.at(-1) ?? null)
+  expect([state().status, state().stale, versionOf(state().data)]).toEqual(["success", true, "1"])
+  // Reading again reads the cell's answer; it stays marked stale, since nothing follows it.
+  await client.fetchQuery({ ...cellQueryOptions(client, ROUTE, params, { scope, fetch: httpCell(() => new Response(record(2, "12"))).fetch }), staleTime: 0 })
+  expect([state().status, state().stale, versionOf(state().data)]).toEqual(["success", true, "2"])
+  stop()
 })
