@@ -1,8 +1,9 @@
-import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, Phone, ShieldCheck, Sparkles, UserRound, type LucideIcon } from "lucide-react"
+import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, Phone, ShieldCheck, UserRound, type LucideIcon } from "lucide-react"
 import { Fragment, useState, type CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 import { cellCall } from "@/lib/cell-read"
 import { usePinnedScope } from "@/lib/session"
+import { Mascot } from "@/components/system/mascot"
 
 /**
  * PRIVACY-GUARD-1 in Studio: what the model was sent and what came back. The cell tokenized the
@@ -85,7 +86,7 @@ function Flow({ model }: { readonly model: string }) {
       <span aria-hidden className="h-px flex-1 bg-border" />
       <span className="inline-flex items-center gap-1.5"><ShieldCheck className="size-4" aria-hidden />Privacy guard</span>
       <span aria-hidden className="h-px flex-1 bg-border" />
-      <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Sparkles className="size-4" aria-hidden />{model}</span>
+      <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Mascot tone="ink" size={16} />{model}</span>
     </div>
   )
 }
@@ -143,7 +144,7 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
       <Flow model={guard.model} />
       {guard.reply.length > 0 && <>
         <div className="flex items-center justify-between gap-3 text-body">
-          <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Sparkles className="size-4" aria-hidden />Reply from {guard.model}</span>
+          <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Mascot tone="ink" size={16} state="answered" />Reply from {guard.model}</span>
           <span className="inline-flex items-center gap-1 text-meta text-muted-foreground" data-reply-state>{restored ? <><CircleCheck className="size-3.5" aria-hidden />Restored</> : "Nothing to restore"}</span>
         </div>
         <p className="rounded-xl bg-muted/60 px-3.5 py-3 text-body leading-7" data-reply><Segments segments={guard.reply} /></p>

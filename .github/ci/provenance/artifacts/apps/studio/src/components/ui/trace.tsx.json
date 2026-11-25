@@ -1,0 +1,35 @@
+{
+  "sha256": "d771829dfcf747e9fa76776d4443168601df40cc82ce8148d14676ad463d0d04",
+  "origin": "derived",
+  "category": "software",
+  "license": "MIT",
+  "sources": [
+    {
+      "id": "software.shadcn-ui",
+      "revision": "055aa6b7837b1808456a24beb4c97a677864aa82",
+      "evidence": {
+        "path": "apps/studio/src/components/ui/provenance.json",
+        "sha256": "6be4b5be0d99b5bc0501353f427015987f939d4e278a03859f80ebb8fc047cd8"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "apps/studio/src/components/ui/provenance.json",
+      "sha256": "6be4b5be0d99b5bc0501353f427015987f939d4e278a03859f80ebb8fc047cd8"
+    },
+    {
+      "path": "apps/studio/src/components/ui/LICENSE",
+      "sha256": "cbe191a94b1484349d68d02b943bdeae08f3a9a34cc19cbaa7746bee50dd69ac"
+    }
+  ],
+  "notices": [
+    {
+      "path": "apps/studio/src/components/ui/LICENSE",
+      "sha256": "cbe191a94b1484349d68d02b943bdeae08f3a9a34cc19cbaa7746bee50dd69ac"
+    }
+  ],
+  "connector": null
+}

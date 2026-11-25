@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ArrowUp, Check, CircleCheck, CircleX, CornerDownRight, Sparkles, X } from "lucide-react"
+import { ArrowUp, Check, CircleCheck, CircleX, CornerDownRight, X } from "lucide-react"
 import { useState } from "react"
 import { ValidationPanel } from "@/components/editor"
 import { Well } from "@/components/system/panel"
@@ -14,6 +14,7 @@ import { useView } from "@/lib/view"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 import { conceptTitle } from "../lib/catalog.ts"
+import { Mascot } from "@/components/system/mascot"
 
 /**
  * The dashboard assistant in Studio. The person says what they want; the
@@ -156,7 +157,7 @@ export function ProposalCard({ proposal, catalog, preview }: { readonly proposal
   return (
     <article className="space-y-3 rounded-xl border bg-card p-4 shadow-elevation" data-proposal={proposal.id} data-state={proposal.state}>
       <header className="flex flex-wrap items-start gap-2">
-        <Sparkles aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <Mascot size={20} state={proposal.state === "refused" ? "unavailable" : proposal.state === "pending" ? "asking" : "answered"} className="mt-0.5" />
         <div className="min-w-0 flex-1 space-y-1">
           <h3>{proposal.definition.title}</h3>
           <p className="text-meta text-muted-foreground">You asked: “{proposal.request}”</p>
@@ -209,7 +210,7 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
         <form className="group/prompt rounded-xl border bg-background transition-shadow focus-within:border-foreground/25 focus-within:shadow-sm"
           onSubmit={(event) => { event.preventDefault(); if (request.trim() !== "" && !capped) ask.mutate(request.trim()) }}>
           <p aria-hidden className="flex items-center gap-2 px-3 pt-2.5 text-body">
-            <Sparkles className="size-4 text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}
+            <Mascot tone="ink" size={16} className="text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}
           </p>
           <Textarea value={request} maxLength={2000} rows={2} aria-label={dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"} placeholder={dashboardId ? "e.g. Show the trend as bars and add a total" : "Describe what you want to see"} onChange={(event) => setRequest(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && request.trim() !== "") ask.mutate(request.trim()) }}
@@ -217,7 +218,7 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
           <div className="flex items-center gap-2 px-3 pb-2.5">
             <p className="text-meta text-muted-foreground">The server proposes; its checker decides; nothing is saved until you accept.</p>
             <span className="ms-auto hidden text-meta text-muted-foreground sm:inline">⌘↵</span>
-            <Button type="submit" size="sm" className="rounded-full" disabled={ask.isPending || request.trim() === "" || capped}>{ask.isPending ? <Sparkles className="animate-pulse" /> : <ArrowUp />}{ask.isPending ? "Proposing…" : "Propose"}</Button>
+            <Button type="submit" size="sm" className="rounded-full" disabled={ask.isPending || request.trim() === "" || capped}>{ask.isPending ? <Mascot tone="ink" size={16} state="thinking" /> : <ArrowUp />}{ask.isPending ? "Proposing…" : "Propose"}</Button>
           </div>
         </form>
         {!dashboardId && examples(catalog).length > 0 && (

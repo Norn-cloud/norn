@@ -1,15 +1,14 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ListRow, TypeDisc } from "@/components/system/list-row"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ArrowRight, ArrowUp, Blend, Database, LayoutDashboard, ShieldCheck, Sigma, Sparkles } from "lucide-react"
-import { useState } from "react"
+import { ArrowRight, Blend, Database, LayoutDashboard, ListChecks, ShieldCheck, Sigma } from "lucide-react"
 import { useAssistant } from "@/assistant-slot"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { Panel, Well } from "@/components/system/panel"
 import { StatStrip } from "@/components/system/kpi-tile"
 import { Button } from "@/components/ui/button"
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
+import { ChatComposer } from "@/components/chat-composer"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
@@ -20,6 +19,7 @@ import { retryWorkspace, useMode } from "./lib/live-transport.ts"
 import { metricHeading, readMetrics, recentWindow, type MetricSummary } from "./lib/metrics.ts"
 import { useView } from "./lib/view.tsx"
 import { Inbox as InboxPanel } from "./inbox.tsx"
+import { Mascot } from "@/components/system/mascot"
 
 /** How many key numbers Home asks for: the cell answers each live, one request apiece. */
 const KEY_NUMBERS = 4
@@ -38,7 +38,7 @@ const CHECKLIST = [
 /** Guided checklist shown on Home for a freshly provisioned cell with no tenant definitions yet. */
 function EmptyWorkspaceChecklist() {
   return (
-    <Panel icon={Sparkles} label="Get started" action="4 steps">
+    <Panel icon={ListChecks} label="Get started" action="4 steps">
       <Well>
         <ol data-slot="row-list" className="flex flex-col p-1.5">
           {CHECKLIST.map(({ step, title, description, to, icon }) => (
@@ -77,28 +77,23 @@ export function HomePage() {
   )
 }
 
-/** One field for a question or an instruction: the assistant takes it where the server serves one, else Metrics. */
+/**
+ * Ask Norn: one field for a question or an instruction (the chat composer, DESIGN.md 19.3), led by the
+ * mascot. The assistant takes it where the server serves one, else Metrics.
+ */
 function AskBar() {
-  const [text, setText] = useState("")
   const assistant = useAssistant()
   const navigate = useNavigate()
-  const submit = () => {
-    const request = text.trim()
-    if (request === "") return
+  const submit = (request: string) => {
     if (assistant.available) assistant.ask(request)
     else void navigate({ to: "/metrics" })
-    setText("")
   }
   return (
-    <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-12 rounded-(--radius-search) max-sm:h-[52px] border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
-        <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
-        <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
-        <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
-        </InputGroupAddon>
-      </InputGroup>
-    </form>
+    <div data-slot="ask-norn">
+      <ChatComposer label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" rows={1} onSubmit={submit} submitLabel="Ask" submitText="Ask"
+        lead={<Mascot tone="ink" size={22} className="text-muted-foreground" />}
+        groupClassName="min-h-12 rounded-(--radius-search) border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) max-sm:min-h-[52px] dark:bg-card" />
+    </div>
   )
 }
 

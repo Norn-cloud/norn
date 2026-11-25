@@ -8,7 +8,7 @@ import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, Code2, Keyboard, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, Code2, Keyboard, Loader2, LogOut, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -34,6 +34,7 @@ import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
+import { Mascot } from "@/components/system/mascot"
 
 const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
 
@@ -642,28 +643,17 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
  * A dock destination (DESIGN.md 9.2): a 40px round icon button from 640px up; below 640px a tile of
  * at least 44 × 44px that shows its label under the icon, so a phone reader never guesses.
  */
-const DOCK_BUTTON = "relative grid size-[40px] shrink-0 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground) max-sm:h-auto max-sm:min-h-[44px] max-sm:w-auto max-sm:min-w-[52px] max-sm:content-center max-sm:gap-0.5 max-sm:rounded-[18px] max-sm:px-1.5 max-sm:py-1 [&_svg]:size-[18px]"
+const DOCK_BUTTON = "relative grid size-[40px] shrink-0 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors [&_svg]:text-(--dock-icon) hover:text-(--dock-foreground) hover:[&_svg]:text-(--dock-foreground) data-[active=true]:[&_svg]:text-(--dock-foreground) data-open:[&_svg]:text-(--dock-foreground) aria-pressed:[&_svg]:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground) max-sm:h-auto max-sm:min-h-[44px] max-sm:w-auto max-sm:min-w-[52px] max-sm:content-center max-sm:gap-0.5 max-sm:rounded-[18px] max-sm:px-1.5 max-sm:py-1 [&_svg]:size-[18px]"
 
 /** The label a dock tile shows under its icon below 640px (its accessible name carries it at every width). */
 function DockLabel({ children }: { readonly children: ReactNode }) {
   return <span aria-hidden className="hidden max-w-[5.5rem] truncate text-meta leading-none max-sm:block">{children}</span>
 }
 
-/** Speech-bubble "AI" glyph from v6/shell.tsx, in the ink of the control it sits in (the dock is dark in every skin). */
-function AiGlyph({ className }: { readonly className?: string }) {
-  return (
-    <span aria-hidden className={cn("relative grid size-[18px] place-items-center", className)}>
-      <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
-      {/* The letters are part of the icon (they scale with it), so they are drawn, not set in the type scale. */}
-      <svg viewBox="0 0 24 24" className="absolute inset-0 size-full"><text x="12" y="14.6" textAnchor="middle" fontSize="7.5" fill="currentColor" fontFamily="var(--font-sans)">AI</text></svg>
-    </span>
-  )
-}
-
 /**
  * Centered icon-only floating dark pill dock rendered in `dock` shell mode (`data-shell="dock"`),
  * following norn-mockups v6/shell.tsx craft: rounded-[26px] dark pill, size-10 circular buttons,
- * soft #34343a active well, hover tooltips, AI glyph, appearance tray, and overflow destinations.
+ * soft #34343a active well, hover tooltips, the assistant mascot, appearance tray, and overflow destinations.
  */
 function FloatingDock({ sections, navigation, current, assistant }: {
   readonly sections: readonly Section[]
@@ -747,7 +737,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
               onClick={toggle}
               className={dockBtn}
             >
-              <AiGlyph />
+              <Mascot tone="ink" size={20} state={open ? "answered" : "idle"} />
               <DockLabel>{assistant.title}</DockLabel>
             </ToolbarButton>
           </Hint>

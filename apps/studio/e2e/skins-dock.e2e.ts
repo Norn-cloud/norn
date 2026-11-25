@@ -63,7 +63,7 @@ test("skins and floating dock: switch luma, open, polar, glass skins via ChromeD
   await expect(tray).toBeVisible()
   await expect(tray.locator('[data-skin-option="luma"]')).toHaveAttribute("data-state", "selected")
 
-  // 3. Verify Luma: the main island is the translucent mist glass with a real backdrop blur, and the CTA is knot violet.
+  // 3. Verify Luma: the main island is opaque white (no glass), and the CTA is near-black (chrome is monochrome, DESIGN.md 19.6).
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     pageBg: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backgroundColor,
@@ -71,9 +71,9 @@ test("skins and floating dock: switch luma, open, polar, glass skins via ChromeD
     primaryBg: getComputedStyle(document.querySelector('[data-slot="button"][data-variant="default"]')!).backgroundColor,
   }))).toEqual({
     skin: "luma",
-    pageBg: "rgba(247, 248, 249, 0.8)",
-    backdrop: expect.stringContaining("blur("),
-    primaryBg: "rgb(85, 76, 232)",
+    pageBg: "rgb(255, 255, 255)",
+    backdrop: "none",
+    primaryBg: "rgb(24, 24, 24)",
   })
 
   // Switch to Open skin and verify persistence across reload.

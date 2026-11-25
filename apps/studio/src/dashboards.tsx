@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
-import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2, Undo2 } from "lucide-react"
+import { Copy, Eye, LayoutDashboard, Pencil, Plus, Trash2, Undo2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
@@ -15,6 +15,7 @@ import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defau
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
 import { DashboardAssistant } from "./dashboards/assistant.tsx"
+import { Mascot } from "@/components/system/mascot"
 
 const EMPTY: Dashboard = { title: "", tiles: [] }
 const questionTitle = (tile: Tile) => tile.title || "Untitled question"
@@ -378,7 +379,7 @@ export function DashboardBoardPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-title font-medium tracking-tight">{board?.dashboard.title || "Dashboard"}</h1>
         {board && <Badge variant="outline">Version {board.version}</Badge>}
-        {board?.dashboard.origin?.by === "assistant" && <Badge variant="secondary" title={board.dashboard.origin.request ? `Asked: ${board.dashboard.origin.request}` : undefined}><Sparkles />Proposed by the assistant</Badge>}
+        {board?.dashboard.origin?.by === "assistant" && <Badge variant="secondary" title={board.dashboard.origin.request ? `Asked: ${board.dashboard.origin.request}` : undefined}><Mascot tone="ink" size={14} />Proposed by the assistant</Badge>}
         {board && (
           <div className="ms-auto flex items-center gap-1">
             <Button asChild size="sm"><Link to="/dashboards/$id/edit" params={{ id }}><Pencil />Edit</Link></Button>

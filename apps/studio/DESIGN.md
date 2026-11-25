@@ -29,6 +29,17 @@ app's language still applies everywhere: the concentric double-shell `ShellCard`
 of 400 and 500 only, a dot plus its word for status, the floating inset `DetailSheet` with one
 primary action, and the five-step type scale.
 
+**Owner decision (2026-11-25, third): the real shadcn Luma, no sparkle, a premade composer, a
+mascot.** In the owner's words: "This still isn't really luma, theme, AND, look, i want the sparkly
+'ai' icon, banned, its so cliche now, and get a premade ai composer and shit like that, ideally
+official shadcn one, dont reinvent the wheel [...] see if u can get a grokbot/bevel ai, looking
+mascot". So the `luma` skin is shadcn's own Luma style (`base-luma`: its radius scale, pill
+controls and fully rounded cards, section 19.1) in the monochrome the owner set the same day, measured
+from Polar's dashboard and the getopen.so demo (pure greys, opaque islands, no glass in the default;
+section 19.6); the sparkle "AI" glyph is banned by lint (section 19.2); Sidekick and the Ask Norn bar
+use shadcn's own chat primitives over the AI SDK's `useChat` (section 19.3); and Norn's assistant is
+an original mascot (section 19.4).
+
 Status words used below: **CURRENT** means shipped in `apps/studio` today (and, where a gate is
 named, enforced by it); **TARGET** means required for new work but not yet built, and tracked as a
 gap in section 18. A section marked CURRENT may contain TARGET items; those are marked inline. A
@@ -44,11 +55,12 @@ TARGET rule is never described as shipped.
 2. **Calm, then clear.** Hierarchy comes from size, spacing and one tonal step between surfaces,
    not from weight, borders or colour. A screen reads in one breath: page title, a band of key
    figures, then lists that open into a sheet. The frame stays quiet as well: by default it is three
-   calm glass islands on a mist backdrop (section 9.1), so the content carries the colour.
+   calm opaque islands on a neutral backdrop (section 9.1), so the content carries the colour.
 3. **One way to nest.** The concentric double shell (`ShellCard` around a well) is the only nesting
    pattern. Anything else that frames a frame is a bug.
-4. **Colour means something.** Surfaces are neutral. Saturated colour is reserved for status dots,
-   data marks, avatar discs, the focus ring and the single primary action on a view.
+4. **Colour means something.** Chrome is monochrome in every skin: black, white and greys, like
+   Polar's dashboard (section 19.6). Colour is reserved for charts and visualisations, status dots
+   beside their word, avatar discs, the Norn mark and its mascot, and data highlights.
 5. **Honest by construction.** Every state a screen can be in (loading, empty, unavailable,
    refused, withheld, committed) has a designed, truthful rendering. Nothing is inferred as
    "verified" or "zero" from silence.
@@ -75,6 +87,8 @@ TARGET rule is never described as shipped.
 | Icons | `lucide-react` | 1.6–1.7 stroke; size from the type step they sit beside. |
 | Fonts | Geist Variable, Geist Mono Variable (CURRENT); Cairo Variable for Arabic (**TARGET, not yet installed**) | Self-hosted via `@fontsource-variable/*`. |
 | Skeletons | `boneyard-js` (`boneyard-js/react`, MIT) | Through `BoneSkeleton` and `LoadState bone="…"` only. |
+| shadcn style | `base-luma` in `components.json` (shadcn CLI 4.23.0, `rtl: true`) | `components/ui/*` are derived from its output (section 19.1). |
+| AI chat | shadcn's chat primitives (`message`, `bubble`, `trace` from the base-luma registry, MIT, derived) and Norn's composer on shadcn's `input-group`, over the AI SDK's `useChat` (`ai` 7.0.169, `@ai-sdk/react` 4.0.173, Apache-2.0 npm packages, pinned exactly) | Sidekick and the Ask Norn bar only (section 19.3). The AI SDK loads with the Sidekick chunk, never with the shell. |
 
 **Banned:** `radix-ui`, `@radix-ui/*`, `cmdk`, `--radix-*` anywhere in first-party code, its
 `package.json` or `bun.lock` (`apps/studio/test/ui-primitives-guard.test.ts`, CURRENT). Delete
@@ -92,7 +106,7 @@ on skin, shell or scheme.
 
 | Attribute | Values | Owns |
 | --- | --- | --- |
-| `data-skin` | `luma` (default; bare `:root` and `.dark`), `polar`, `open`, `glass` | Palette, radii, shadows and the island material (section 4.7). |
+| `data-skin` | `luma` (default; bare `:root` and `.dark`: shadcn's Luma, section 19.1), `polar`, `open`, `glass` | Palette, radii (including Tailwind's `rounded-xl…4xl` steps, through `--radius-step-*`), shadows and the island material (section 4.7). |
 | `.dark` | present or absent | Light or dark scheme (OS preference unless the user or a theme forces one). |
 | `data-shell` | `sidebar` (default: the three-island shell), `dock` (opt-in) | Frame chrome and navigation geometry only (section 9). A user preference, persisted per browser. The value keeps its old name so stored choices survive; the appearance menu calls it "Islands". |
 | *(no attribute)* `minimal` | route-level, not a `data-shell` value | Chromeless routes (login, OAuth, embeds) render outside the shell (section 9.3). A stored preference can never select it. |
@@ -101,8 +115,10 @@ on skin, shell or scheme.
 
 **Default skin is `luma`** (CURRENT: bare `:root` and `.dark` in `src/index.css`, so the default
 holds before any script runs; `storedSkin` in `src/lib/appearance.tsx`; owner decision,
-2026-11-25). It is a two-surface architectural mist with a knot-violet accent, and its islands are
-liquid glass (section 4.7). `polar` (monochrome ink on neutral surfaces, colour only where section 13
+2026-11-25). It is shadcn's Luma style: the neutral theme and Luma's radius scale, pill controls and
+fully rounded cards (section 19.1), and its islands are opaque, like Polar's (section 4.7; the glass
+material is the opt-in `glass` skin). Knot violet now
+paints only the Norn mark and the mascot. `polar` (monochrome ink on neutral surfaces, colour only where section 13
 allows it) moved behind its own `:root[data-skin="polar"]` blocks and stays one choice away, with
 `open` (the first-party app's white canvas with a blue accent) and `glass`. Every skin follows the
 same geometry rules and passes the same gates; `polar` and `open` paint opaque islands. Section 17.1
@@ -337,28 +353,31 @@ Gated by `test/contrast.test.ts` ("nav islands' ground…") and by the StudioThe
 - **The phone sheet is opaque.** It uses `--shell` in every skin (the material and the backdrop do
   not reach inside a modal), measured on that ground by the same test.
 
-### 4.7 The backdrop and the glass material (default shell)
+### 4.7 The backdrop and the island material (default shell)
 
-The three islands float on a **backdrop**: `--backdrop`, painted on the shell wrapper with two soft
+The three islands float on a **backdrop**: `--backdrop`, painted on the shell wrapper with two
 radial pools of ambient light, `--backdrop-glow-1` and `--backdrop-glow-2` (decorative, part of the
-backdrop). The main island's material is `--island`; the nav islands' is `--sidebar` (section 4.6).
-Each island takes the backdrop blur and saturate `--island-blur`, a 1px specular edge
-`--island-border`, and a depth shadow `--island-shadow` with a 1px inner highlight on its top edge,
-at `--radius-island` (18px). It is CSS only, in the spirit of the shadcn liquid-glass registries
+backdrop; transparent in `luma`, `polar` and `open`). The main island's material is `--island`; the
+nav islands' is `--sidebar` (section 4.6). In `luma` (the default) an island is opaque: a white
+(dark #111111) surface, a 1px hairline `--island-border` and a contact shadow `--island-shadow`, with
+no blur (`--island-blur: none`), at `--radius-island` (16px; monochrome supersedes the glass, owner
+2026-11-25). The opt-in `glass` skin keeps the liquid glass: the backdrop blur
+`--island-blur` (`blur(24px)`), a 1px specular edge, and a depth shadow with a 1px inner highlight on its top edge,
+at 18px. It is CSS only, in the spirit of the shadcn liquid-glass registries
 (glasscn, Glass UI) and Panelo: **no WebGL, no SVG displacement and no refraction library**
 (`test/contrast.test.ts` refuses one in the shell).
 
 | Token | luma L | luma D | polar L | polar D | open L | open D | glass L | glass D |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `--backdrop` | #e7e8ed | #050507 | #ebebee | #000000 | #f0f0f2 | #000000 | #eef1f8 | #0b0d17 |
-| `--backdrop-glow-1` | rgb(85 76 232 / .07) | rgb(124 116 255 / .10) | none | none | none | none | rgb(58 109 240 / .16) | rgb(58 109 240 / .22) |
-| `--backdrop-glow-2` | rgb(56 189 248 / .06) | rgb(56 189 248 / .05) | none | none | none | none | rgb(139 92 246 / .12) | rgb(139 92 246 / .18) |
-| `--island` | rgb(247 248 249 / .80) | rgb(13 13 16 / .80) | #f6f6f8 | #0a0a0b | #ffffff | #0d0d0e | rgb(252 253 255 / .60) | rgb(18 21 34 / .62) |
-| `--island-border` | rgb(20 22 48 / .07) | rgb(255 255 255 / .07) | rgb(24 24 27 / .06) | rgb(255 255 255 / .07) | rgb(0 0 0 / .06) | rgb(255 255 255 / .07) | rgb(255 255 255 / .72) | rgb(255 255 255 / .13) |
-| `--island-blur` | blur(24px) saturate(160%) | same | none | none | none | none | blur(24px) saturate(165%) | same |
+| `--backdrop` | #f6f6f6 | #090909 | #ebebee | #000000 | #f0f0f2 | #000000 | #eff0f2 | #0c0c0e |
+| `--backdrop-glow-1` | none | none | none | none | none | none | rgb(255 255 255 / .55) | rgb(255 255 255 / .05) |
+| `--backdrop-glow-2` | none | none | none | none | none | none | rgb(0 0 0 / .03) | rgb(255 255 255 / .03) |
+| `--island` | #ffffff | #111111 | #f6f6f8 | #0a0a0b | #ffffff | #0d0d0e | rgb(253 253 254 / .60) | rgb(20 20 23 / .62) |
+| `--island-border` | #e5e5e5 | #212121 | rgb(24 24 27 / .06) | rgb(255 255 255 / .07) | rgb(0 0 0 / .06) | rgb(255 255 255 / .07) | rgb(255 255 255 / .72) | rgb(255 255 255 / .13) |
+| `--island-blur` | none | none | none | none | none | none | blur(24px) | same |
 
-`--canvas` is the main island's opaque equivalent (luma #f3f4f6 / #0b0b0e, the composite of the
-island over the flat backdrop), and `--shell` the nav islands'. Content measured "on canvas" is
+`--canvas` is the main island's opaque equivalent (luma #ffffff / #111111, the island itself, which is
+opaque; glass #eff0f2 / #0c0c0e, its composite over the flat backdrop), and `--shell` the nav islands'. Content measured "on canvas" is
 therefore measured on the main island's fallback, and the island itself over the backdrop:
 
 - **Worst-case backdrop.** A glow is brightest at its centre, so an island over a glow at its peak is
@@ -398,24 +417,26 @@ Radii are **pixel** values, not rem: geometry must not change with the 90% root 
 
 | Token | open | polar | luma | glass | Used by |
 | --- | --- | --- | --- | --- | --- |
-| `--radius-panel` | 20px | 16px | 16px | 20px | ShellCard, StatWell outer rim. |
+| `--radius-panel` | 20px | 16px | 26px (Luma's card, `rounded-4xl`) | 20px | ShellCard, StatWell outer rim. |
 | `--panel-inset` | 4px | 4px | 4px | 4px | Padding between rim and well. |
-| `--radius-well` | 15px | 11px | 11px | 15px | Inner well. |
-| `--radius-row` | 11px | 11px | 11px | 11px | ListRow and menu rows (one value). |
-| `--radius-sheet` | 24px | 24px | 24px | 24px | DetailSheet. |
-| `--radius-search` | 18px | 18px | 18px | 18px | Page search field. |
+| `--radius-well` | 15px | 11px | 21px | 15px | Inner well. |
+| `--radius-row` | 11px | 11px | 16px | 11px | ListRow and menu rows (one value). |
+| `--radius-sheet` | 24px | 24px | 26px (Luma's dialog) | 24px | DetailSheet, dialogs. |
+| `--radius-search` | 18px | 18px | 14px (Open's input) | 18px | Page search field, the Ask Norn bar. |
+| `--radius-composer` | 12px | 12px | 14px | 12px | Sidekick's composer, a multi-line field group. |
 | `--radius-dock` | 26px | 26px | 26px | 26px | Floating dock. |
-| `--radius-island` | 18px | 18px | 18px | 18px | The three islands of the default shell (section 9.1); the phone main island has none. |
-| `--radius-popup` | 16px | 16px | 16px | 16px | Menus, popovers. |
-| `--radius` | 8px | 8px | 8px | 8px | Form inputs, code blocks. |
-| `--radius-chip` | 5px | 5px | 5px | 5px | SourceTag. |
-| pills | full | full | full | full | Top-bar controls, every button, segmented controls. |
+| `--radius-island` | 18px | 18px | 16px (Polar's island) | 18px | The three islands of the default shell (section 9.1); the phone main island has none. |
+| `--radius-popup` | 16px | 16px | 22px (Luma's `rounded-3xl`) | 16px | Menus, popovers. |
+| `--radius` | 8px | 8px | 12px | 8px | Form inputs (white, 1px `--input` hairline), code blocks; Tailwind's `rounded-lg`. Inputs stay 8–14px (section 19.6), never pills. |
+| `--radius-chip` | 5px | 5px | full (Luma's pill badge) | 5px | SourceTag, Badge. |
+| `--radius-step-xl/2xl/3xl/4xl` | panel/12/8/8px | panel/12/8/8px | 14/18/22/26px | panel/12/8/8px | Tailwind's `rounded-xl…4xl`, so shadcn's Luma classes (pill inputs and toggles, 4xl cards) draw Luma's geometry in luma and the crisp one elsewhere. |
+| pills | full | full | full | full | Top-bar controls, every button, segmented controls, tabs (luma). |
 
 Radii, geometry tokens and the px values in sections 5, 9 and 11 are CURRENT in `index.css` since
 the Studio restyle (#1753), in every skin.
 
 **Concentric rule:** `radius-panel = radius-well + panel-inset + 1px border`. 15 + 4 + 1 = 20;
-11 + 4 + 1 = 16. A skin that changes one changes the other. Every skin keeps the double shell; no
+11 + 4 + 1 = 16; 21 + 4 + 1 = 26 (luma). A skin that changes one changes the other. Every skin keeps the double shell; no
 skin flattens it (Studio's `polar` used to drop the inset; that is now a gap).
 
 ---
@@ -430,8 +451,13 @@ skin flattens it (Studio's `polar` used to drop the inset; that is now a gap).
 | `--dock-shadow` | `0 10px 30px -8px rgb(0 0 0/.35), 0 2px 6px rgb(0 0 0/.12)` | `0 10px 30px -8px rgb(0 0 0/.7)` |
 | `--elevation-node`, `-node-hover`, `-float` | Studio's canvas values (CURRENT) | same |
 
-Five levels only: flat (wells, the backdrop), island (`--island-shadow`: a top inner highlight,
-whisper contact and a soft ambient drop, section 4.7), card (`panel-shadow`), popup, and sheet/dock
+In `luma` the card, popup and sheet levels are Luma's own Tailwind shadows: `shadow-md`
+(`0 4px 6px -1px rgb(0 0 0/.1), 0 2px 4px -2px rgb(0 0 0/.1)`), `shadow-lg` and `shadow-xl`, with a
+`--foreground` 6% edge (10% dark) in place of a border, as Luma's `ring-foreground/5` does. Dark keeps
+the inner highlight above.
+
+Five levels only: flat (wells, the backdrop), island (`--island-shadow`: in `luma` a whisper of
+contact; in `glass` a top inner highlight, whisper contact and a soft ambient drop; section 4.7), card (`panel-shadow`), popup, and sheet/dock
 (the phone Navigation sheet takes `--sheet-shadow`). Shadows are
 whisper contact plus soft ambient; never a hard blob. Dark mode lifts with a 1px inner highlight
 rather than a darker shadow.
@@ -470,7 +496,7 @@ Fonts: `--font-sans: "Geist Variable", "Cairo Variable", ui-sans-serif, system-u
 | 1 | `--text-meta` | 0.84rem | 12.1 | 1.4 | 0 | 400 | Secondary runs, counts, timestamps, mono codes, table headers, SourceTag, footnotes, sidebar group headers, dock labels. |
 | 2 | `--text-body` | 1rem | 14.4 | 1.45 | -0.003em | 400 | List titles, card titles, Props, buttons, menu rows, inputs, prose. |
 | 3 | `--text-heading` | 1.35rem | 19.4 | 1.25 | -0.02em | 500 | Sheet titles, dialog titles. |
-| 4 | `--text-title` | 1.85rem | 26.6 | 1.15 | -0.025em | 500 | Page `h1`. |
+| 4 | `--text-title` | 1.5rem | 21.6 | 1.15 | -0.025em | 500 | Page `h1` (between Open's 20px and Polar's 24px, section 19.6). |
 | 5 | `--text-figure` | 2rem | 28.8 | 1 | -0.025em | 400 | StatWell values, hero numbers. The unit beside a figure is step 2 (`--text-body`), muted, `tracking-normal`. |
 
 **No other sizes.** No `text-[0.88rem]`, `text-[11px]`, `text-xs`/`text-sm` drift in first-party
@@ -507,15 +533,15 @@ marked TARGET.
 
 - On the start side (the right in RTL), in order: the **applet rail** (64px, `--rail-width`), the
   **submenu island** (256px, `--sidebar-width`), then the **main island**, which fills the rest. Each
-  is 8px from the window edge and 8px from the next, at `--radius-island` (18px), in the glass
-  material of section 4.7 on the backdrop. Widths are px, so they do not scale with the 90% root.
+  is 8px from the window edge and 8px from the next, at `--radius-island` (16px in `luma`, 18px in
+  `glass`), in the island material of section 4.7 on the backdrop. Widths are px, so they do not scale with the 90% root.
 - The rail and the submenu island are `sticky` and as tall as the window less 16px; the page scrolls
   as a document, inside the main island, which is at least that tall. The main island holds the top
   bar, the connection line, the page, and the inspector and assistant docked on its end side.
 - **No card in a card.** The main island is the ground the ShellCards sit on, not a card around
-  them: its material is the luma mist (`--island`, whose opaque equivalent is `--canvas`), its edge a
-  1px specular hairline and its shadow a soft ambient drop, so the double-shell cards inside keep
-  their one tonal step (#fafafb cards on the #f3f4f6 island in luma light). The old flat,
+  them: its material is `--island` (opaque white in `luma` light, #111111 dark), its edge a 1px
+  hairline and its shadow a contact whisper, so the double-shell cards inside keep their one tonal
+  step (white cards on the #f6f6f6 shell in `luma` light). The old flat,
   unframed content column of #1753 is superseded by the owner decision.
 
 **The applet model.** Applets come from the app's navigation model (`SECTIONS` in `main.tsx`), never
@@ -877,8 +903,10 @@ the principal may take it.
 
 ## 13. Status and colour discipline
 
-- Saturated colour appears only in: status dots, data bars and chart marks, avatar discs, the focus
-  ring, the sidebar's and the dock's attention dots, and the single primary CTA.
+- Saturated colour appears only in: status dots beside their word (success, warning, error, in muted
+  tones), data bars and chart marks, avatar discs, the Norn mark and its mascot, and data highlights
+  (search matches, diff marks). The primary CTA, the focus ring, links, tabs, inputs, chips, borders,
+  icons and the navigation attention dots are neutral (section 19.6, gated by `test/monochrome.test.ts`).
 - Coloured **text** appears only for: a PageHead live line, signed money or Before → After values,
   and inline links. Always the AA text tokens (`--success`, `--warning`, `--destructive-text`,
   `--link`), never the dot tokens.
@@ -1228,3 +1256,162 @@ whenever it is on.
   Closed in restyle 2 (Part of #1705): `ListRow`, `Input`, `Toggle`/`ToggleGroup` segments, the top-bar pills, the dock and the builder screens' rows, segments and icon buttons are 44px below 640px.
 - [x] No lint for arbitrary type sizes, banned weights or physical spacing.
   Closed in restyle 2 (Part of #1705): `test/type-lock.test.ts` (gate 6).
+
+---
+
+## 19. The AI surface (CURRENT since `ui/ai-surface`)
+
+Owner decision, 2026-11-25 (third, quoted at the top). Everything here is CURRENT unless marked.
+
+### 19.1 Luma is shadcn's Luma, in Polar's monochrome
+
+- **Selected, not imitated.** `components.json` names `base-luma` (Base UI, since first-party code has
+  no Radix; `rtl: true`, so the CLI writes logical classes). `components/ui/*` are derived from the
+  shadcn CLI 4.23.0 output for `base-luma` (`npx shadcn@4.23.0 add <name> --dry-run --view …`), with
+  Norn's deltas recorded in `components/ui/provenance.json`: `cn` from `@/lib/utils` (it knows the type
+  steps), the type steps and weights of section 8, the focus outline of section 16.2, 44px targets
+  below 640px, and the Base UI / UI SDK backing. New this round: `alert`, `scroll-area`, `spinner`,
+  `message`, `bubble`, `trace`.
+- **Geometry is Luma's** (section 5): pill buttons, toggles and tabs, `rounded-3xl` popovers and
+  menus, `rounded-4xl` cards and dialogs, through `--radius-step-*`. Two places follow the measured
+  references instead (section 19.6): inputs are white 1px-hairline fields at 12–14px, not Luma's filled
+  pills, and the islands are opaque.
+- **Colour is Polar's and Open's monochrome** (section 19.6): pure R = G = B greys. Luma's own
+  `neutral` theme is already grey; the measured references set the exact steps.
+- **The HR non-negotiables hold.** Double-shell cards (Luma has single cards: the rim takes Luma's 4xl
+  radius, the well sits 4px inside, as in Open's KPI cards), weights 400/500 (Luma sets `font-medium`
+  on buttons, badges and menu rows: Norn keeps 400 except where section 8.2 allows 500), dot + word for
+  status, the floating sheet with one primary action, and the five-step type scale (Luma's
+  `text-sm`/`text-xs` become `text-body`/`text-meta`; the title step moved to 21.6px).
+- **Focus** stays the 2px `--ring` outline (Luma's `ring-3 ring-ring/30` misses 3:1; gate 5).
+- `polar`, `open` and `glass` keep their crisp geometry (8px controls, 11px rows, 5px chips, 18px
+  islands) through their own `--radius-*` and `--radius-step-*`.
+
+### 19.2 No sparkle
+
+The sparkle "AI" glyph is banned everywhere in `src/`: no lucide `Sparkle`, `Sparkles`,
+`WandSparkles` (any `Wand`) or `Stars` icon, named, aliased or deep-imported, no ✨, and no drawn "AI"
+lettering (the old dock's `AiGlyph`). `test/type-lock.test.ts` fails on any of them, with no
+allowlist. The assistant is the mascot (section 19.4) or its name in words ("Sidekick", "Suggested:",
+"Proposed by the assistant"); a non-AI place that used a sparkle takes a plain icon (the Get started
+checklist: `ListChecks`; theme presets: `Palette`).
+
+### 19.3 The composer: shadcn's chat primitives over `useChat`
+
+- **Premade and official.** Sidekick is drawn with shadcn's own chat primitives, installed with the
+  shadcn CLI from the `base-luma` registry: `Message` (with `MessageAvatar` for the mascot), `Bubble`
+  (the person's words, `muted`) and `Trace` (each tool call, collapsible, its state a dot and a word).
+  The assistant's words render with Streamdown. The composer (`components/chat-composer.tsx`) is
+  shadcn's `input-group` with a textarea, the shadcn docs' chat-composer pattern; the Ask Norn bar is
+  the same composer on one line.
+- **Why not AI Elements.** AI Elements (Vercel) was the first pick, but it is Apache-2.0, and the
+  provenance gate admits only MIT for vendored software (`crates/norn-skeleton-guard/src/ci/provenance.rs`,
+  "invalid MIT software provenance"). Widening that list is a gate change for the owner, not a lane;
+  shadcn's own MIT primitives are the "official shadcn" choice the owner preferred anyway. The AI SDK
+  packages are npm dependencies, not vendored files.
+- **Chat state: the AI SDK's `useChat`** (decided by a spike, 2026-11-25). Both candidates need an ACP
+  adapter, because Sidekick's bridge speaks ACP over a WebSocket, not HTTP streaming:
+  - AI SDK (`ai` 7.0.169): a custom `ChatTransport` (`sidekick/transport.ts`) maps each ACP update to a
+    UI message chunk (`sidekick/transcript.ts`). Approvals map one to one: the bridge's
+    `session/request_permission` is pending inside the running turn, and the UI stream takes
+    `tool-approval-request` and `tool-approval-response` chunks mid-turn with no new request
+    (`ai/dist/index.js`), so the transport answers the pending question in place and records the
+    person's answer in the same stream, in order with what the bridge sends next.
+  - TanStack AI (`@tanstack/ai-react` 1.0.2, `@tanstack/ai-client` 1.1.0): approvals resume through
+    interrupts, which call the connection again with the resolutions (`chat-client.js`,
+    `resumeInterruptsUnsafeForGeneration`), a second request ACP has no place for.
+- **No half-features.** Send (Enter; Shift+Enter is a new line; IME composition is the input
+  method's), Stop (cancels the turn at the bridge and every open question), Retry (after an error,
+  `regenerate` asks again), New chat, suggestions while empty, the scroll-to-latest button, and
+  keyboard and screen-reader names on every control. No attachments: the server takes none.
+- **The server decides.** Tool calls are still Norn MCP calls the cell authorizes as the person.
+
+### 19.4 The mascot
+
+`components/system/mascot.tsx`: an original character, a soft pebble with two eyes and a looped
+thread standing on its head (the knot of the Norn mark). It is in the genre of friendly character
+mascots the owner named, and copies none of them.
+
+- **States:** `idle` (blinks now and then), `thinking` (the thread sways, the gaze lifts, a 0.8px
+  bob), `answered` (happy arcs and a small smile), `unavailable` (eyes closed to lines: refused, no
+  bridge, or an error), `asking` (round eyes and a raised hand: waiting on the person's approval).
+  Motion is CSS in `index.css`; under `prefers-reduced-motion` every pose holds still.
+- **Tones:** `brand` (body `--mascot-body`, its own violet #5b52f0 / #7c74ff, the one colour on the
+  AI surface; eyes `--mascot-eye` #ffffff: 5.37:1 light, 3.62:1 dark, a graphic so 3:1) for avatars and
+  empty states; `ink` (`currentColor`, eyes cut out by
+  a mask) for monochrome chrome: the rail and dock button, the Ask bar's lead, badges.
+- **Direction:** it mirrors in RTL (`rtl:-scale-x-100`), so the hand and the gaze point to the
+  reading end.
+- **Where:** Sidekick's avatar (its pose follows the turn), Sidekick's empty state, the Ask Norn bar,
+  the rail and dock assistant button, the dashboard assistant, and the decision tree's agent pick.
+- **Candidates:** `pebble` (the pick), `loom` (a yarn ball with a wound thread) and `drop` (a drop
+  standing point-up, its tip curling into a thread), all on the contact sheet (`mascot/candidates`).
+  Pebble wins because its silhouette and two eyes still read at 16–20px in the rail, and its thread
+  loop carries the knot and the thinking motion. The owner can swap it with `variant`.
+
+### 19.5 Approvals stay on the server
+
+The bridge (`apps/sidekick-bridge/relay.ts`) pre-allows only the Norn tools the cell's own
+`tools/list` marks `readOnlyHint: true`. For any other Norn tool the agent must ask; the bridge
+forwards that `session/request_permission` to the page with only "allow once" and "reject", takes
+back only an option it offered (anything else is the reject), and answers `cancelled` for every open
+question when the person stops the turn. If `tools/list` fails, nothing is pre-allowed. The page
+draws the question as the tool's Confirmation and relays the person's pick; it holds no rule of its
+own. The cell still decides every call, so an allowed call can still be refused (section 12.3), and
+an action that needs another person's sign-off still parks as a decision (section 12.4).
+
+### 19.6 Monochrome chrome (owner, 2026-11-25)
+
+In the owner's words: "again, i said monochrome, black/white/greys like polar … in the main islands,
+etc. colours only for highlights, visualisations, etc." Values are measured from Polar's dashboard (its
+Apache-2.0 source) and the getopen.so demo (`getComputedStyle` and pixel samples); the reference spec
+and screenshots are internal.
+
+- **Pure greys in the default skin.** Every chrome colour `luma` declares has R = G = B, shadows, dock,
+  islands and kind icons included: no cool or warm cast.
+
+  | Role | Light | Dark | Reference |
+  | --- | --- | --- | --- |
+  | Backdrop, nav ground | `#f6f6f6` | `#090909` | Open's well, Polar's canvas |
+  | Main island / card, popover | `#ffffff` | `#111111` / `#181818` | Polar's island |
+  | Island and card hairline | `#e5e5e5` | `#212121` | Polar's `#e5e7eb`, without its cast |
+  | Well (inside a card) / hovered | `#f6f6f6` / `#f0f0f0` | `#1e1e1e` / `#2a2a2a` | Open's well |
+  | Selected nav pill | `#ebebeb` | `#212121` | Polar's and Open's selected row |
+  | Text / muted / decorative | `#171717` / `#6d6d6d` / `#8a8a8a` | `#ededed` / `#969696` / `#7a7a7a` | Open |
+  | Primary (CTA) and its ink | `#181818` / `#fafafa` | `#f4f4f4` / `#181818` | Polar's black and white pills |
+  | Link, focus ring | `#171717`, `#737373` | `#a1a1a1`, `#a1a1a1` | neutral; the ring holds 3:1 |
+  | Kind icons (`--kind-*`) | `#5c5c5c` | `#a3a3a3` | neither reference colour-codes types |
+  | Dock (opt-in) | `#2b2b2b`, active `rgba(255,255,255,.1)`, inactive icons 40% white | same | Open's dock |
+
+  The spec named `#18181b` / `#f4f4f5` for the CTA (polar's zinc row); the default takes `#181818` /
+  `#f4f4f4` so that the R = G = B rule holds without an exception (a 3/255 step in blue).
+- **No glass, no tinted shadow in the default.** The islands are opaque with a 1px hairline and a
+  shadow-xs (`0 1px 2px rgb(0 0 0/.05)`); the ambient pools are off; cards have no shadow; popovers and
+  sheets take Polar's soft, neutral `shadow-md`; `--elevation-action` is neutral. This superseded the
+  earlier liquid-glass islands (section 4.7 now describes the opaque default); the `glass` skin keeps
+  a plain blur, without `saturate()`, as an opt-in.
+- **Type:** page titles are 21.6px at 500 (the title step, between Open's 20px and Polar's 24px); no
+  step was added.
+- **Colour is allowed only in named tokens:** `--chart-1…5` and the canvas's own tints, edges and
+  nodes (visualisations), `--dot-live`, `--dot-held`, `--dot-bad`, `--success`, `--warning`,
+  `--destructive`, `--destructive-text` (status, beside a word), `--avatar-n-*`, `--mascot-body` (the
+  mascot), and `--tone-*` inside the data they mark (a masked entity, a diff mark). `--knot` is
+  neutral; the mascot has its own colour token.
+- **Category marks are neutral.** A `Chip` or `StatusDot` in a kind tone (a source system, a version,
+  a role) draws the neutral mark; its word tells it apart.
+- **The gate:** `test/monochrome.test.ts` fails when a chrome colour in `luma` (light and dark) is not
+  R = G = B, when a chrome token in `polar`, `open` or `glass` has OKLCH chroma of 0.02 or more (those
+  skins keep a zinc cast, about C 0.005, but no hue), when the CTA, accent text or link is not near
+  black on light and near white or grey on dark, or when a category dot takes a hue. No allowlist
+  beyond the named data, status, avatar and mascot tokens.
+- **Measured** (section 4.2's formula; light: island `#ffffff`, well `#f6f6f6`, hovered well `#f0f0f0`;
+  dark: `#111111`, `#181818`, `#1e1e1e`, `#2a2a2a`; h marks the hovered well, the minimum):
+
+  | Scheme | figure | muted | `--action` | `--link` | `--ring` | subtle | CTA ink on fill / hover | nav: muted on hover wash / pill ink / ring on pill |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | luma L | 15.73 h | 4.54 h | 15.58 h | 15.73 h | 4.16 h | 3.03 h | 17.01 / 12.10 | 4.58 / 15.04 / 3.98 |
+  | luma D | 12.26 h | 4.85 h | 13.05 h | 5.56 h | 5.56 h | 3.34 h | 16.14 / 12.58 | 6.17 / 13.75 / 6.23 |
+
+  These supersede the luma rows of sections 4.2, 4.6 and 4.7; `open` and `glass` take polar's ink row
+  for the CTA, ring and link. `test/contrast.test.ts` and the StudioTheme validator gate every skin and
+  scheme.
