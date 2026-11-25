@@ -1306,7 +1306,17 @@ fn a_flow_step_calling_for_its_starter_resolves_no_principal_input() {
         &json!({ "flow": "ops.approve_melt", "runId": "run-1" }).to_string(),
     );
     assert_eq!(started.status, 201, "{}", started.body);
-    let pending = cell.call("GET", "/v1/decisions", Some(&owner), "");
+    let pending = cell.tenant.handle(
+        &cell.tokens,
+        &Request {
+            method: "GET",
+            path: "/v1/decisions",
+            query: &format!("{QUERY}&state=pending"),
+            authorization: Some(&owner),
+            now: NOW,
+            body: "",
+        },
+    );
     assert_eq!(pending.status, 200, "{}", pending.body);
     let id = json_of(&pending)["items"][0]["id"]
         .as_str()
@@ -1324,10 +1334,12 @@ fn a_flow_step_calling_for_its_starter_resolves_no_principal_input() {
         (&json!("convert"), &json!("failed")),
         "{run}"
     );
-    assert!(
-        run.to_string()
-            .contains("decision.principal_input_unavailable"),
-        "{run}"
+    // The run keeps why its step failed: the kernel's refusal, by code.
+    let failure = cell.stored("ops.ApproveMeltRun", "run-1")["values"]["slots"]["failure"].clone();
+    assert_eq!(
+        failure,
+        json!({ "_tag": "Refused", "code": "decision.principal_input_unavailable" }),
+        "{decided}"
     );
     let document = cell.stored(DOCUMENT, "r1");
     assert_eq!(document["values"]["status"], "draft", "{document}");
