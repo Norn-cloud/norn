@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test"
-import type { ActionSummary } from "../src/lib/actions.ts"
+import type { ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import type { Clause, Predicate } from "../src/lib/records-query.ts"
 
 /**
@@ -462,7 +462,7 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
         const allowed = rec ? drawerActionsForRecord(rec) : []
         items = items.filter((a) => allowed.includes(a.actionId))
       }
-      return route.fulfill({ json: { items } })
+      return route.fulfill({ json: { definitionsVersion: 1, items } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = route.request().postDataJSON() as { input: Record<string, unknown>; idempotencyKey: string }
@@ -473,7 +473,7 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     actionCalls.push({ actionId, idempotencyKey: body.idempotencyKey, input: body.input, orgId, expectedOrg, workspaceChanged })
     if (workspaceChanged) return route.fulfill({ status: 409, json: { code: "workspace.changed", message: "This workspace changed; reload to edit this view.", error: "This workspace changed; reload to edit this view." } })
     const res = runActionOnRecord(actionId, body.input, body.idempotencyKey)
-    if (!res.ok) return route.fulfill({ status: res.status, json: { code: res.code, category: "law", message: res.message, explanation: res.message } })
+    if (!res.ok) return route.fulfill({ status: res.status, json: { format: "norn/refusal@2", code: res.code, category: res.status === 403 ? "permission" : res.status === 409 ? "conflict" : "precondition", retryable: false, reason: null, message: res.message, explanation: res.message } })
     return route.fulfill({ json: res.receipt })
   })
 
