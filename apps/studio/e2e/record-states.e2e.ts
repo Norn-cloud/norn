@@ -81,6 +81,11 @@ test("ok: the record shows with its facts; Read again keeps it on screen while t
   await expect(pageOf(page)).toHaveAttribute("data-state", "showing")
   await expect(page.locator('[data-fact="resource_code"]')).toBeVisible()
   await expect(page.getByRole("region", { name: "Record", exact: true })).toBeVisible()
+  // The page's catalog islands are content, not shell islands: no island edge or depth around them.
+  for (const entry of ["record-header", "record-body"]) {
+    await expect(page.locator(`[data-island="${entry}"]`)).toHaveCSS("border-top-width", "0px")
+    await expect(page.locator(`[data-island="${entry}"]`)).toHaveCSS("box-shadow", "none")
+  }
   await shoot(page, "showing")
   state.answer = "hold"
   await page.getByRole("button", { name: "Read again" }).click()
