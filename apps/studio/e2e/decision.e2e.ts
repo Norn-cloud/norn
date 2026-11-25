@@ -6,7 +6,7 @@ test("ask a person: create, view, edit, validate, undo/redo, save draft, reopen;
   await open(page, "Automation")
   await page.getByRole("button", { name: "Ask a person", exact: true }).click()
   await expect(node(page, "decide")).toContainText("2 options")
-  await expect(page.locator('[data-code="canvas.decision.no_question"]').first()).toBeVisible()
+  await expect(page.getByTestId("problem").locator('[data-code="canvas.decision.no_question"]').first()).toBeVisible()
   const tree = page.getByTestId("decision-tree")
   await expect(tree).toContainText("No question yet")
   await page.getByLabel("Question", { exact: true }).fill("Refund the order?")

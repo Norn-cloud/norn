@@ -70,7 +70,7 @@ test("step: create, view, edit, delete, reconnect, undo/redo, validate, reopen",
   // edit the step's rule: a guard that does not parse is a typed finding on the step; clearing it clears the finding.
   await page.getByLabel("Guards").fill("self.total >")
   await page.getByLabel("Guards").blur()
-  await expect(page.locator('[data-code="lifecycle.validation.invalid_guard"]').first()).toBeVisible()
+  await expect(page.getByTestId("problem").locator('[data-code="lifecycle.validation.invalid_guard"]').first()).toBeVisible()
   await page.getByLabel("Guards").fill("")
   await page.getByLabel("Guards").blur()
   await expect(page.getByText("Checker: no new findings")).toBeVisible()
@@ -92,7 +92,7 @@ test("state flags (port config): edit, undo/redo, validate, reopen", async ({ pa
   await (await shown(page, "draft")).click()
   await page.getByLabel("Initial").uncheck()
   await expect(page.getByText(/Checker: \d+ new finding/)).toBeVisible()
-  await expect(page.locator('[data-code="lifecycle.validation.empty_initial"]').first()).toBeVisible()
+  await expect(page.getByTestId("problem").locator('[data-code="lifecycle.validation.empty_initial"]').first()).toBeVisible()
   await press(page, "z")
   await expect(page.getByLabel("Initial")).toBeChecked()
   await press(page, "Shift+z")

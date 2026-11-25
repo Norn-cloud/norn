@@ -59,6 +59,8 @@ test("view: only a core.TimeInterval type offers Timeline; its week shows the re
   await expect(bars(page, "Equipment booking").filter({ hasText: "Inspection" })).toHaveClass(/rounded-s-none/)
   // A record that names its zone reads its own times there.
   await expect(bars(page, "Equipment booking").filter({ hasText: "Warehouse move" })).toHaveAttribute("aria-label", /Warehouse move, Tue 24 Nov, 06:00 to Tue 24 Nov, 15:00 \(Asia\/Tokyo\)/)
+  // The views bar read the cell's (empty) list of saved views: only "All records", no read error beside it.
+  await expect(page.getByRole("tablist", { name: "Views" })).toHaveText("All records")
   await shoot(page, "timeline-week")
 })
 
