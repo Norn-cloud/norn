@@ -25,6 +25,7 @@
 use schemars::{Schema, schema_for};
 
 pub mod concept_role;
+mod concept_role_wire;
 pub mod extension;
 pub mod interface;
 pub mod invariant;

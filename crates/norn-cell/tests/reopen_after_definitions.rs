@@ -259,6 +259,143 @@ fn a_row_edited_outside_the_cell_is_an_unproven_correction() {
     }
 }
 
+/// The members #1750 installs on live rows: each declares a default, which
+/// the install materializes on the rows that were already there.
+fn defaulted(grade: &str) -> [serde_json::Value; 2] {
+    [
+        json!({ "id": "grade", "type": { "kind": "text" }, "default": grade }),
+        json!({ "id": "weight", "type": { "kind": "integer" }, "default": "3" }),
+    ]
+}
+
+/// #1750: a row written before an install that adds members with declared
+/// defaults holds those defaults, which its version's proof never named. It
+/// is still the row that proof commits to, so quality reads of it answer,
+/// also after a later install changes one default and keeps the
+/// materialized value.
+#[test]
+fn a_row_stays_proven_after_an_install_adds_defaulted_members() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&defaulted("standard")));
+    let (third, third_set) = definitions(&item(&defaulted("premium")));
+
+    let mut store = CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+        .expect("first definitions");
+    store.commit(&create("a", 15)).expect("created");
+    let proven = |store: &CellStore, grade: &str| {
+        let read = store.read();
+        let row = read
+            .object(MAIN_WORLD, "install.Item", "a")
+            .expect("read")
+            .expect("row");
+        assert_eq!(row.values.get("grade"), Some(&Value::from(grade)));
+        let weight = serde_json::to_value(row.values.get("weight")).expect("json");
+        assert_eq!(weight.to_string().trim_matches('"'), "3");
+        assert_eq!(
+            read.observation_findings(MAIN_WORLD, "install.Item", "a")
+                .expect("the row is the one its proof commits to"),
+            []
+        );
+        assert!(
+            !read
+                .observation_is_quarantined(MAIN_WORLD, &row)
+                .expect("quarantine")
+        );
+        assert!(
+            read.authoritative_object(MAIN_WORLD, "install.Item", "a")
+                .expect("authoritative read")
+                .is_some()
+        );
+    };
+    store
+        .install_definitions(second, input(&second_set, 20), Some(1), SCOPE)
+        .expect("second definitions");
+    proven(&store, "standard");
+    // A row created under the second model names both members in its proof.
+    store.commit(&create("b", 25)).expect("created");
+    assert_eq!(
+        store
+            .read()
+            .observation_findings(MAIN_WORLD, "install.Item", "b")
+            .expect("proven"),
+        []
+    );
+    store
+        .install_definitions(third.clone(), input(&third_set, 30), Some(2), SCOPE)
+        .expect("third definitions");
+    proven(&store, "standard");
+    drop(store);
+    let reopened = CellStore::open(&path, third, StoreOptions::default()).expect("reopened");
+    proven(&reopened, "standard");
+}
+
+/// #1750: accepting an installed default proves nothing else. A member the
+/// proof never named that holds any other value, and any value of a member
+/// the row's version committed to that was changed or erased, are unproven
+/// corrections, before and after a later install changes the default.
+#[test]
+fn an_installed_default_does_not_prove_an_edited_row() {
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&defaulted("standard")));
+    let (third, third_set) = definitions(&item(&defaulted("premium")));
+    for (set, changed_default) in [
+        // The installed member holds a value that is not its default.
+        ("\"p:grade\" = 'forged'", false),
+        ("\"p:weight\" = 4", false),
+        // Neither the introducing default nor the active one.
+        ("\"p:grade\" = 'forged'", true),
+        // A member the row's version committed to is changed or erased.
+        ("\"p:code\" = 'forged'", false),
+        ("\"p:tier\" = 'forged'", true),
+        ("\"p:note\" = NULL", false),
+        ("\"p:note\" = 'forged'", true),
+    ] {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("cell.sqlite");
+        let mut store =
+            CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+        store.bind("scope", SCOPE).expect("bind");
+        store
+            .install_definitions(first.clone(), input(&first_set, 10), Some(0), SCOPE)
+            .expect("first definitions");
+        store.commit(&create_noted("a", 15)).expect("created");
+        store
+            .install_definitions(second.clone(), input(&second_set, 20), Some(1), SCOPE)
+            .expect("second definitions");
+        let served = if changed_default {
+            store
+                .install_definitions(third.clone(), input(&third_set, 30), Some(2), SCOPE)
+                .expect("third definitions");
+            third.clone()
+        } else {
+            second.clone()
+        };
+        assert_eq!(
+            store
+                .read()
+                .observation_findings(MAIN_WORLD, "install.Item", "a")
+                .expect("proven"),
+            [],
+            "{set}"
+        );
+        drop(store);
+        edit_rows(&path, set);
+        let reopened = CellStore::open(&path, served, StoreOptions::default()).expect("reopened");
+        let refused = reopened
+            .read()
+            .observation_findings(MAIN_WORLD, "install.Item", "a");
+        assert!(
+            matches!(refused, Err(norn_cell::CellError::UnprovenCorrection)),
+            "{set} (changed default: {changed_default}): {refused:?}"
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Step {
     /// Create `key`, its payload naming only `code` or every member.

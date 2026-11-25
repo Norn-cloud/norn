@@ -1,17 +1,23 @@
-//! GRAPH-STATE-1 lifecycle initialization at the shared commit boundary.
+//! GRAPH-STATE-1 lifecycle legality at the shared commit boundary.
 //!
 //! Every host admits a commit through [`crate::check_commit`], whose
-//! compare-and-swap stage calls [`check_first_writes`]: each object a commit
-//! writes for the first time begins every effective lifecycle in an admitted
-//! initial state, and whatever the commit records about it replays from that
-//! initialization under the decision path's own rules
-//! ([`check_first_write_lifecycles`]). Direct `Put`s and decision commits
-//! share this one rule.
+//! compare-and-swap stage calls [`check_lifecycle_writes`] for every `Put`:
+//!
+//! - an object written for the first time begins every effective lifecycle
+//!   in an admitted initial state, and whatever the commit records about it
+//!   replays from that initialization ([`check_first_write_lifecycles`]);
+//! - an object that already exists keeps every lifecycle state the commit's
+//!   recorded transitions do not move, replayed from its stored row, and is
+//!   not otherwise changed in an immutable state
+//!   ([`check_update_lifecycles`]).
+//!
+//! Both replay the decision path's own rules ([`LifecycleReplay`]), so
+//! direct `Put`s and decision commits share one rule.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 
-use norn_ir::{Lifecycle, PropertyId, TransitionId};
+use norn_ir::{Lifecycle, ObjectTypeName, PropertyId, TransitionId};
 
 use crate::cell_host::{
     CellCommit, CommitError, CommitModel, CommitView, FactKey, FactMutation, JsonObject, JsonValue,
@@ -23,10 +29,11 @@ use crate::decision_commit::{
 };
 use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 
-/// Why the shared commit admission refused a first write's lifecycle
-/// initialization (GRAPH-STATE-1). The same rule as a decision `create`
-/// followed by its `transition`s, so both paths refuse the same states. Every
-/// variant carries the commit code `lifecycle.validation.undeclared_write`.
+/// Why the shared commit admission refused a write's lifecycle states
+/// (GRAPH-STATE-1): a first write's initialization, or an existing object's
+/// update. The same rule as a decision `create` followed by its `set`s and
+/// `transition`s, so both paths refuse the same states. Every variant carries
+/// the commit code `lifecycle.validation.undeclared_write`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LifecycleInitRefusal {
     /// A lifecycle is declared over the property, but it does not resolve to
@@ -65,6 +72,28 @@ pub enum LifecycleInitRefusal {
         /// What the replay could not reconstruct.
         reason: String,
     },
+    /// An existing object's written lifecycle state is not the state its
+    /// recorded transitions reach from its stored one.
+    #[error("{lifecycle} is written as {written}, but its recorded transitions leave it {reached}", written = written.as_deref().unwrap_or("unset"), reached = reached.as_deref().unwrap_or("unset"))]
+    UnrecordedTransition {
+        /// The lifecycle property.
+        lifecycle: String,
+        /// The state the recorded transitions reach from the stored row.
+        reached: Option<String>,
+        /// The state the commit writes.
+        written: Option<String>,
+    },
+    /// An existing object is changed, beyond what the commit records, while
+    /// it holds an immutable lifecycle state.
+    #[error("{property} is changed in immutable {lifecycle} state {state}")]
+    ImmutableState {
+        /// The lifecycle property holding the immutable state.
+        lifecycle: String,
+        /// The immutable state.
+        state: String,
+        /// The first property changed without a recorded change.
+        property: String,
+    },
 }
 
 impl<X> DecisionRefusal<X> {
@@ -85,26 +114,37 @@ impl<X> DecisionRefusal<X> {
                 Self::UnresolvedLifecycle { key, lifecycle }
             }
             refusal @ (LifecycleInitRefusal::IllegalTransition { .. }
-            | LifecycleInitRefusal::UnrecordedChange { .. }) => Self::InvalidOutput {
+            | LifecycleInitRefusal::UnrecordedChange { .. }
+            | LifecycleInitRefusal::UnrecordedTransition { .. }
+            | LifecycleInitRefusal::ImmutableState { .. }) => Self::InvalidOutput {
                 reason: format!("{key}: {refusal}"),
             },
         }
     }
 }
 
-/// GRAPH-STATE-1: every object a non-observed commit writes for the first
-/// time — absent from the transaction's pre-state — begins each effective
+/// GRAPH-STATE-1 for every `Put` of a commit, at every admission of every
+/// host.
+///
+/// An object absent from the transaction's pre-state begins each effective
 /// lifecycle in an admitted initial state, or reaches its written state only
 /// through the transitions the commit records for it, replayed in order from
-/// initialization ([`check_first_write_lifecycles`],
-/// the decision `create` and `transition` rules). This holds for every
-/// admission of every host, so a direct `Put` cannot place a new object in a
-/// state its lifecycle never reached. There is no caller-selectable flag: only
-/// the exact writes a sealed observation's opaque, kernel-prepared
-/// authorization covers reconcile lifecycles under their own evidence
-/// contract instead ([`crate::snapshot_observe`]); every other write in the
-/// same commit is checked here.
-pub(crate) fn check_first_writes<E: 'static, C, T, V: CommitView + ?Sized>(
+/// initialization ([`check_first_write_lifecycles`], the decision `create`
+/// and `transition` rules). An object that exists changes a lifecycle state
+/// only through the transitions the commit records for it, replayed in order
+/// from its stored row, and is not otherwise changed in an immutable state
+/// ([`check_update_lifecycles`]). So a direct `Put` can neither place a new
+/// object in a state its lifecycle never reached nor move an existing one
+/// there. A host that cannot prove an existing lifecycle-bearing object's
+/// stored row refuses its update.
+///
+/// There is no caller-selectable flag: only the exact writes a sealed
+/// observation's opaque, kernel-prepared authorization covers reconcile
+/// lifecycles under their own evidence contract instead
+/// ([`crate::snapshot_observe`]); every other write in the same commit is
+/// checked here. History restore and pinned migration do not pass through
+/// commit admission at all.
+pub(crate) fn check_lifecycle_writes<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
@@ -125,27 +165,52 @@ pub(crate) fn check_first_writes<E: 'static, C, T, V: CommitView + ?Sized>(
         {
             continue;
         }
+        let refused = |refusal: LifecycleInitRefusal| -> CommitError<V::Error> {
+            CommitError::LifecycleInitialization {
+                key: write.key.clone(),
+                refusal: Box::new(refusal),
+            }
+        };
         let canonical = model.canonical(&write.key);
-        if view
+        let exists = view
             .concrete(&canonical)
             .map_err(CommitError::Host)?
-            .is_some()
-        {
+            .is_some();
+        if exists && !bears_lifecycle(model.catalog, &write.key.object_type) {
             continue;
         }
+        let stored = if exists {
+            let stored = view.object_values(&canonical).map_err(CommitError::Host)?;
+            Some(stored.ok_or_else(|| {
+                refused(unrecorded("the host cannot prove the object's stored row"))
+            })?)
+        } else {
+            None
+        };
         let recorded = recorded.get_or_insert_with(|| recorded_fact_events(commit, model));
         let (events, observed) = recorded
             .get(&canonical)
             .map_or((&[][..], None), |recorded| {
                 (recorded.facts.as_slice(), recorded.observed)
             });
-        check_first_write_lifecycles(model.catalog, &write.key, values, events, trust, observed)
-            .map_err(|refusal| CommitError::LifecycleInitialization {
-                key: write.key.clone(),
-                refusal: Box::new(refusal),
-            })?;
+        let catalog = model.catalog;
+        match stored {
+            None => {
+                check_first_write_lifecycles(catalog, &write.key, values, events, trust, observed)
+            }
+            Some(stored) => {
+                check_update_lifecycles(catalog, &write.key, &stored, values, events, trust)
+            }
+        }
+        .map_err(refused)?;
     }
     Ok(())
+}
+
+/// Whether `object_type` declares or inherits any lifecycle, resolved or not.
+fn bears_lifecycle(catalog: &TypeCatalog<'_>, object_type: &ObjectTypeName) -> bool {
+    !catalog.lifecycle_properties(object_type).is_empty()
+        || !catalog.lifecycles(object_type).is_empty()
 }
 
 /// What one commit records about one canonical identity.
@@ -255,9 +320,7 @@ pub(crate) fn check_first_write_lifecycles(
     trust: KernelTrust<'_>,
     observed: Option<&str>,
 ) -> Result<(), LifecycleInitRefusal> {
-    let lifecycle_properties = catalog.lifecycle_properties(&key.object_type);
-    let lifecycles = catalog.lifecycles(&key.object_type);
-    if lifecycle_properties.is_empty() && lifecycles.is_empty() {
+    if !bears_lifecycle(catalog, &key.object_type) {
         return Ok(());
     }
     if let Some(reason) = observed {
@@ -268,27 +331,9 @@ pub(crate) fn check_first_write_lifecycles(
             .map(drop)
             .map_err(lifecycle_init_refusal);
     }
-    let replay = FirstWriteReplay {
-        catalog,
-        key,
-        lifecycle_properties,
-        lifecycles,
-        kernel_origin: trust.owned_rows(),
-        stamp: trust.stamp(),
-    };
-    let mut current: Option<JsonObject> = None;
-    for event in events {
-        replay.apply(&mut current, event)?;
-    }
-    let Some(replayed) = current else {
-        return Err(unrecorded("the recorded changes leave the object absent"));
-    };
-    let effective = |values: &JsonObject| {
-        catalog
-            .effective_object_values(&key.object_type, values)
-            .map_err(|error| unrecorded(&format!("the effective values are refused: {error}")))
-    };
-    if effective(&replayed)? != effective(values)? {
+    let replay = LifecycleReplay::new(catalog, key, trust, None);
+    let replayed = replay.replay(events)?;
+    if replay.effective(&replayed)? != replay.effective(values)? {
         return Err(unrecorded(
             "the written values differ from the values its recorded changes produce",
         ));
@@ -296,15 +341,93 @@ pub(crate) fn check_first_write_lifecycles(
     Ok(())
 }
 
-fn unrecorded(reason: &str) -> LifecycleInitRefusal {
-    LifecycleInitRefusal::UnrecordedChange {
-        reason: reason.to_owned(),
+/// GRAPH-STATE-1 at the shared commit boundary for an object that exists:
+/// the `Put` of `key` with final `values` over its `stored` row, given the
+/// fact events the same commit records for its canonical identity, in
+/// ledger order.
+///
+/// The recorded events replay from the stored row under the decision path's
+/// own rules ([`LifecycleReplay`]): a transition fires from the state the
+/// replay holds with its guards evaluated there, a set never touches a
+/// lifecycle property and never lands in an immutable state. Then:
+///
+/// - every lifecycle property, inherited ones included, is written in exactly
+///   the state that replay reaches. With no recorded transition that is the
+///   stored state, so a `Put` alone never moves a lifecycle, a terminal state
+///   is never left, and a skipped or forged transition is refused
+///   ([`LifecycleInitRefusal::UnrecordedTransition`]);
+/// - any other property the commit changes without recording it is a write
+///   after the recorded ones, so it is refused when the replayed row holds an
+///   immutable state ([`LifecycleInitRefusal::ImmutableState`]), as a
+///   decision `set` there is.
+///
+/// A row whose update changes nothing a lifecycle governs is admitted as
+/// before: properties outside lifecycles remain freely writable in a mutable
+/// state. An observed transition or deletion naming an unsealed write is no
+/// evidence for it and moves nothing.
+pub(crate) fn check_update_lifecycles(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    stored: &JsonObject,
+    values: &JsonObject,
+    events: &[&FactEvent],
+    trust: KernelTrust<'_>,
+) -> Result<(), LifecycleInitRefusal> {
+    if !bears_lifecycle(catalog, &key.object_type) {
+        return Ok(());
+    }
+    let replay = LifecycleReplay::new(catalog, key, trust, Some(stored));
+    // Compared as the host stores both rows, so a stored row that predates a
+    // declared default is not a change.
+    let reached = replay.effective(&replay.replay(events)?)?;
+    let written = replay.effective(values)?;
+    let state = |values: &JsonObject, lifecycle: &PropertyId| match values.get(lifecycle.as_str()) {
+        Some(JsonValue::String(state)) => Some(state.clone()),
+        _ => None,
+    };
+    let governed: BTreeSet<&PropertyId> = replay
+        .lifecycle_properties
+        .iter()
+        .chain(replay.lifecycles.keys())
+        .collect();
+    for lifecycle in governed {
+        let (reached, written) = (state(&reached, lifecycle), state(&written, lifecycle));
+        if reached != written {
+            return Err(LifecycleInitRefusal::UnrecordedTransition {
+                lifecycle: lifecycle.as_str().to_owned(),
+                reached,
+                written,
+            });
+        }
+    }
+    let Some((lifecycle, state)) = catalog.immutable_state(&key.object_type, &reached) else {
+        return Ok(());
+    };
+    let present = |values: &JsonObject, property: &str| {
+        values
+            .get(property)
+            .filter(|value| !matches!(value, JsonValue::Null))
+            .cloned()
+    };
+    let changed = reached
+        .keys()
+        .chain(written.keys())
+        .find(|property| present(&reached, property) != present(&written, property));
+    match changed {
+        Some(property) => Err(LifecycleInitRefusal::ImmutableState {
+            lifecycle: lifecycle.as_str().to_owned(),
+            state,
+            property: property.clone(),
+        }),
+        None => Ok(()),
     }
 }
 
-/// The decision path's rules for one first-written object, replayed over
-/// the fact events its commit records ([`check_first_write_lifecycles`]).
-struct FirstWriteReplay<'r, 'a> {
+/// The decision path's rules for one written object, replayed over the fact
+/// events its commit records: from absence for a first write
+/// ([`check_first_write_lifecycles`]), from the stored row for an object
+/// that exists ([`check_update_lifecycles`]).
+struct LifecycleReplay<'r, 'a> {
     catalog: &'r TypeCatalog<'a>,
     /// The written object: its exact concrete type and key.
     key: &'r FactKey,
@@ -314,9 +437,44 @@ struct FirstWriteReplay<'r, 'a> {
     kernel_origin: bool,
     /// The creator stamp of a kernel-prepared governed create (ACTOR-STAMP-1).
     stamp: Option<&'r CreatorStamp>,
+    /// The object's stored row before the commit; `None` for a first write.
+    stored: Option<&'r JsonObject>,
 }
 
-impl FirstWriteReplay<'_, '_> {
+impl<'r, 'a> LifecycleReplay<'r, 'a> {
+    fn new(
+        catalog: &'r TypeCatalog<'a>,
+        key: &'r FactKey,
+        trust: KernelTrust<'r>,
+        stored: Option<&'r JsonObject>,
+    ) -> Self {
+        Self {
+            catalog,
+            key,
+            lifecycle_properties: catalog.lifecycle_properties(&key.object_type),
+            lifecycles: catalog.lifecycles(&key.object_type),
+            kernel_origin: trust.owned_rows(),
+            stamp: trust.stamp(),
+            stored,
+        }
+    }
+
+    /// The object after `events`, applied in order to its pre-state.
+    fn replay(&self, events: &[&FactEvent]) -> Result<JsonObject, LifecycleInitRefusal> {
+        let mut current = self.stored.cloned();
+        for event in events {
+            self.apply(&mut current, event)?;
+        }
+        current.ok_or_else(|| unrecorded("the recorded changes leave the object absent"))
+    }
+
+    /// `values` as the host stores them.
+    fn effective(&self, values: &JsonObject) -> Result<JsonObject, LifecycleInitRefusal> {
+        self.catalog
+            .effective_object_values(&self.key.object_type, values)
+            .map_err(|error| unrecorded(&format!("the effective values are refused: {error}")))
+    }
+
     /// Whether only rules may write `property` (FA-PROTECT-1). A type with no
     /// effective view cannot prove otherwise, so it fails closed.
     fn rules_only(&self, property: &str) -> bool {
@@ -349,7 +507,9 @@ impl FirstWriteReplay<'_, '_> {
         created: &JsonObject,
     ) -> Result<(), LifecycleInitRefusal> {
         if current.is_some() {
-            return Err(unrecorded("the commit records its creation twice"));
+            return Err(unrecorded(
+                "the commit records the creation of an object that exists",
+            ));
         }
         let materialized = self.materialize(created)?;
         if !self.kernel_origin {
@@ -439,11 +599,15 @@ impl FirstWriteReplay<'_, '_> {
             } => self.transition(current, lifecycle, transition, from, to)?,
             FactEvent::Deleted { .. } => self.delete(current)?,
             // An aggregate restates an object that existed before the
-            // commit; it cannot describe one the commit creates.
+            // commit: it cannot describe one the commit creates, and for one
+            // that exists it restates the granular events beside it, so it
+            // neither moves nor justifies anything.
             FactEvent::Modified { .. } => {
-                return Err(unrecorded(
-                    "a modification aggregate names an object the commit creates",
-                ));
+                if self.stored.is_none() {
+                    return Err(unrecorded(
+                        "a modification aggregate names an object the commit creates",
+                    ));
+                }
             }
             // No object state of this subject.
             FactEvent::CommandEnqueued { .. }
@@ -559,5 +723,153 @@ fn lifecycle_init_refusal(refusal: DecisionRefusal<Infallible>) -> LifecycleInit
     }
     LifecycleInitRefusal::UnrecordedChange {
         reason: refusal.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod stamped_replay_tests {
+    //! ACTOR-STAMP-1 in the first-write replay itself, with no
+    //! [`crate::creator_stamp::check_protected`] in front of it: the replay
+    //! alone admits a protected creation value only as the kernel's stamp.
+
+    use std::collections::BTreeSet;
+
+    use norn_ir::ObjectTypeDef;
+
+    use super::{
+        CreatorStamp, FactEvent, FactKey, JsonObject, KernelTrust, LifecycleInitRefusal,
+        TypeCatalog, check_first_write_lifecycles,
+    };
+
+    const PRINCIPAL: &str = "person:author";
+
+    #[allow(clippy::expect_used, reason = "test fixture")]
+    fn definition() -> ObjectTypeDef {
+        serde_json::from_value(serde_json::json!({
+            "name": "test.Note",
+            "properties": [
+                { "id": "state", "default": "open", "type": { "kind": "enum", "values": [
+                    { "value": "open" }, { "value": "closed" }
+                ] } },
+                { "id": "written_by", "protected": true, "type": { "kind": "text" },
+                  "constraints": { "nullable": true } },
+                { "id": "checked_by", "protected": true, "type": { "kind": "text" },
+                  "constraints": { "nullable": true } }
+            ],
+            "lifecycles": [{
+                "property": "state",
+                "initial": ["open"],
+                "terminal": ["closed"],
+                "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
+            }]
+        }))
+        .expect("definition decodes")
+    }
+
+    fn note(key: &str) -> FactKey {
+        FactKey::new("test.Note", key)
+    }
+
+    #[allow(clippy::expect_used, reason = "test fixture")]
+    fn values(value: serde_json::Value) -> JsonObject {
+        serde_json::from_value(value).expect("values")
+    }
+
+    /// The kernel's stamp of `written_by` on `N-1`.
+    fn stamp() -> CreatorStamp {
+        CreatorStamp {
+            key: note("N-1"),
+            properties: BTreeSet::from(["written_by".to_owned()]),
+            principal: PRINCIPAL.to_owned(),
+        }
+    }
+
+    /// Replay a first write of `key` whose one recorded creation holds
+    /// exactly the written `row`, under `trust`.
+    fn replay(
+        key: &FactKey,
+        row: serde_json::Value,
+        trust: KernelTrust<'_>,
+    ) -> Result<(), LifecycleInitRefusal> {
+        let definition = definition();
+        let catalog = TypeCatalog::new([&definition]);
+        let created = FactEvent::Created {
+            key: key.clone(),
+            values: values(row.clone()),
+        };
+        let mut written = values(row);
+        written
+            .entry("state".to_owned())
+            .or_insert_with(|| "open".into());
+        check_first_write_lifecycles(&catalog, key, &written, &[&created], trust, None)
+    }
+
+    fn rules_only(result: Result<(), LifecycleInitRefusal>, property: &str) -> bool {
+        matches!(
+            result,
+            Err(LifecycleInitRefusal::UnrecordedChange { reason })
+                if reason == format!("{property} is writable only by rules")
+        )
+    }
+
+    #[test]
+    fn the_stamp_admits_exactly_the_stamped_value_on_the_stamped_object() {
+        let stamp = stamp();
+        assert_eq!(
+            replay(
+                &note("N-1"),
+                serde_json::json!({ "written_by": PRINCIPAL }),
+                KernelTrust::Stamped(&stamp),
+            ),
+            Ok(())
+        );
+        // The same row with no stamp is a caller writing a rules-only value.
+        assert!(rules_only(
+            replay(
+                &note("N-1"),
+                serde_json::json!({ "written_by": PRINCIPAL }),
+                KernelTrust::Plain,
+            ),
+            "written_by"
+        ));
+    }
+
+    #[test]
+    fn another_principal_than_the_stamped_one_is_refused() {
+        let stamp = stamp();
+        assert!(rules_only(
+            replay(
+                &note("N-1"),
+                serde_json::json!({ "written_by": "person:other" }),
+                KernelTrust::Stamped(&stamp),
+            ),
+            "written_by"
+        ));
+    }
+
+    #[test]
+    fn a_protected_property_the_stamp_does_not_name_is_refused() {
+        let stamp = stamp();
+        assert!(rules_only(
+            replay(
+                &note("N-1"),
+                serde_json::json!({ "written_by": PRINCIPAL, "checked_by": PRINCIPAL }),
+                KernelTrust::Stamped(&stamp),
+            ),
+            "checked_by"
+        ));
+    }
+
+    #[test]
+    fn a_second_object_cannot_ride_the_stamp_of_the_first() {
+        let stamp = stamp();
+        assert!(rules_only(
+            replay(
+                &note("N-2"),
+                serde_json::json!({ "written_by": PRINCIPAL }),
+                KernelTrust::Stamped(&stamp),
+            ),
+            "written_by"
+        ));
     }
 }

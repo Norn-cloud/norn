@@ -44,7 +44,7 @@ const MAX_LINK_READ_BYTES: usize = 262_144;
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
 use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
-use crate::lifecycle_init::check_first_writes;
+use crate::lifecycle_init::check_lifecycle_writes;
 use crate::snapshot_observe::ObservationAuthorization;
 
 mod laws;
@@ -387,7 +387,9 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
-///    a first write's lifecycles begin initialized (GRAPH-STATE-1);
+///    a first write's lifecycles begin initialized, and an existing
+///    object's lifecycle states move only through its recorded transitions
+///    (GRAPH-STATE-1);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link
 ///    exist as their named types, and every live link of a deleted object
@@ -552,7 +554,9 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),
             CommitStage::Versions => check_versions(commit, model, view, authorization)
-                .and_then(|()| check_first_writes(commit, model, view, authorization, self.trust)),
+                .and_then(|()| {
+                    check_lifecycle_writes(commit, model, view, authorization, self.trust)
+                }),
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
                 self.links = live_links_after(commit, model, view)?;

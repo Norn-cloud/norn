@@ -313,6 +313,13 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     record.parameter_pins.clone_from(&slice.parameter_pins);
+    // PRINCIPAL-INPUT-1: resolved once, after the replay check, and recorded,
+    // exactly as a transition's are. The subject is the object the call
+    // writes, which a create only now brings into being.
+    if let Some(rule) = rule {
+        record.principal_inputs =
+            crate::principal_inputs::resolve::<H::Error>(rule, call, authorizer, &target)?;
+    }
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
     let mut business_input =
@@ -398,10 +405,7 @@ where
                 &mut slice,
                 &target,
                 WriterTarget::Created,
-                // PRINCIPAL-INPUT-1: only a transition's writer is given
-                // principal inputs; a create's writer that declares any
-                // refuses `decision.principal_input_unavailable`.
-                None,
+                record.principal_inputs.as_ref(),
                 limits,
             )?;
             fold_into_create::<H::Error>(catalog, &target, &mut changes, facts)?;

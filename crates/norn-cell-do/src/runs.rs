@@ -338,10 +338,10 @@ impl<E: SqlEngine> Steps<'_, E> {
             .map(principal_of)
     }
 
-    /// Run one call as a recorded principal (a run's starter, an approved
-    /// call's requester): it is the slot's verified caller for exactly that
-    /// call, and the request's own caller is restored on every path. `None`
-    /// when this cell cannot act as it, or has no slot.
+    /// Run one flow step as its run's recorded starter: it is the slot's
+    /// verified caller for exactly that call, and the request's own caller
+    /// is restored on every path. `None` when this cell cannot act as it, or
+    /// has no slot.
     fn as_principal(
         &self,
         principal: &RunStarter,

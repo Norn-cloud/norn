@@ -320,6 +320,85 @@ fn only_the_exact_kernel_record_types_ride_beside_a_definition_set() -> TestResu
     Ok(())
 }
 
+/// The recording kernel record types with `edit` applied to the call record.
+fn recording_with(
+    edit: impl Fn(&mut ObjectTypeDef) -> TestResult,
+) -> Result<Vec<ObjectTypeDef>, Box<dyn std::error::Error>> {
+    let mut tampered = norn_cell::kernel_record_types_recording_principal_inputs();
+    let call = tampered
+        .iter_mut()
+        .find(|def| def.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+        .ok_or("action call record")?;
+    edit(call)?;
+    Ok(tampered)
+}
+
+/// Replace the call record's `principalInputs` declaration with `property`.
+fn replace_principal_inputs(call: &mut ObjectTypeDef, property: Value) -> TestResult {
+    let recorded = call
+        .properties
+        .iter_mut()
+        .find(|property| property.id.as_str() == norn_cell::PRINCIPAL_INPUTS_PROPERTY)
+        .ok_or("the recording form keeps principalInputs")?;
+    *recorded = serde_json::from_value(property)?;
+    Ok(())
+}
+
+/// #1760: the call record that keeps principal inputs is one exact form too.
+/// A record beside it with one more member, or whose `principalInputs` is
+/// another type or not nullable, is not a kernel record and refuses.
+#[test]
+fn only_the_exact_principal_inputs_recording_form_rides_beside_a_definition_set() -> TestResult {
+    let item: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Item",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    let recording = norn_cell::kernel_record_types_recording_principal_inputs();
+    let extra_member = recording_with(|call| {
+        call.properties.push(serde_json::from_value(json!({
+            "id": "exfiltrated", "type": { "kind": "json-ext" },
+            "constraints": { "nullable": true }
+        }))?);
+        Ok(())
+    })?;
+    let wrong_type = recording_with(|call| {
+        replace_principal_inputs(
+            call,
+            json!({ "id": "principalInputs", "type": { "kind": "text" },
+                    "constraints": { "nullable": true } }),
+        )
+    })?;
+    let not_nullable = recording_with(|call| {
+        replace_principal_inputs(
+            call,
+            json!({ "id": "principalInputs", "type": { "kind": "json-ext" } }),
+        )
+    })?;
+    for (form, records, admitted) in [
+        ("an extra member", extra_member, false),
+        ("principalInputs of another type", wrong_type, false),
+        ("a non-nullable principalInputs", not_nullable, false),
+        ("the exact recording form", recording.clone(), true),
+    ] {
+        let mut types = vec![item.clone()];
+        types.extend(records);
+        let model = Model::from_definitions(&types, &[])?;
+        let mut store = CellStore::open_in_memory(model.clone())?;
+        let installed =
+            store.install_definitions(model, input_for(&[org_item()?])?, Some(0), "org_demo/dev");
+        if admitted {
+            assert!(installed.is_ok(), "{form}: {:?}", installed.err());
+        } else {
+            assert!(
+                matches!(&installed, Err(CellError::DefinitionReceiptInvalid(_))),
+                "{form}: {installed:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn a_definition_set_with_an_extension_is_refused_at_the_cell() -> TestResult {
     let extension: ArtifactEnvelope = serde_json::from_value(json!({

@@ -1,32 +1,42 @@
 //! OBS-EVIDENCE-1: durable finding identity and explicit authoritative population filtering.
 use crate::{
-    CellError, CommitBatch, ObjectRecord, StoreReader,
+    CellError, CommitBatch, Model, ObjectRecord, StoreReader,
     engine::{SqlEngine, SqlValue, params},
     read::to_i64,
     system::LEDGER,
 };
-use norn_ir::{DataQualityFinding, DataQualityFindingStatus, RuntimeValue};
+use norn_ir::{
+    DataQualityFinding, DataQualityFindingStatus, ObjectTypeName, RuntimeObject, RuntimeValue,
+};
 use norn_kernel::{FactKey, TypeCatalog};
 use std::collections::BTreeSet;
 
-/// Whether `proof`, the stored snapshot of a row's version, is the row
-/// `current` as read today. A member installed after that version reads as
-/// null on the row and is absent from its proof: both say the row holds no
-/// value for it, so only held values are compared.
-fn proves(proof: Option<&ObjectRecord>, current: &ObjectRecord) -> bool {
-    fn held(record: &ObjectRecord) -> impl Iterator<Item = (&String, &RuntimeValue)> {
-        record.values.iter().filter(|(_, value)| !value.is_null())
-    }
-    proof.is_some_and(|proof| {
-        (&proof.object_type, &proof.id, &proof.scope, proof.version)
-            == (
-                &current.object_type,
-                &current.id,
-                &current.scope,
-                current.version,
-            )
-            && held(proof).eq(held(current))
-    })
+/// A value a record holds: null is the absence of one.
+fn held(value: &RuntimeValue) -> Option<&RuntimeValue> {
+    (!value.is_null()).then_some(value)
+}
+
+/// Whether `value` is exactly the default `model` declares for `member` of
+/// `object_type`, both as the cell stores them: typed equality through the
+/// scalar codec the writer and the install's materialization share, so one
+/// instant or one exact decimal is never two values.
+fn is_declared_default(
+    model: &Model,
+    object_type: &str,
+    member: &str,
+    value: &RuntimeValue,
+) -> bool {
+    let catalog = model.type_catalog();
+    let object_type = ObjectTypeName(object_type.into());
+    let stored = |submitted: RuntimeObject| {
+        catalog
+            .effective_object_values(&object_type, &submitted)
+            .ok()
+            .and_then(|mut values| values.remove(member))
+            .filter(|value| !value.is_null())
+    };
+    let declared = stored(RuntimeObject::new());
+    declared.is_some() && declared == stored(RuntimeObject::from([(member.to_owned(), value.clone())]))
 }
 
 /// One authoritative page with explicit excluded-row accounting.
@@ -198,6 +208,86 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(findings)
     }
 
+    /// Whether the stored snapshot of `current`'s version is the row
+    /// `current` as read today.
+    ///
+    /// Every member the snapshot names holds on the row exactly the value
+    /// the snapshot holds, null or not: a changed, added or erased value of
+    /// a member the row's version committed to is never proven.
+    ///
+    /// A member the snapshot does not name was installed after that version,
+    /// so the row never wrote it. It reads as null, or as the default its
+    /// install materialized on the rows that were already there
+    /// ([`Self::is_installed_default`]); any other value is not proven.
+    fn proves(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        current: &ObjectRecord,
+    ) -> Result<bool, CellError> {
+        let Some(proof) = self.object_at_version(world, object_type, key, current.version)? else {
+            return Ok(false);
+        };
+        let committed = (&proof.object_type, &proof.id, &proof.scope, proof.version)
+            == (
+                &current.object_type,
+                &current.id,
+                &current.scope,
+                current.version,
+            )
+            && proof
+                .values
+                .iter()
+                .all(|(member, value)| held(value) == current.values.get(member).and_then(held));
+        if !committed {
+            return Ok(false);
+        }
+        for (member, value) in &current.values {
+            if !proof.values.contains_key(member)
+                && !value.is_null()
+                && !self.is_installed_default(&current.object_type, member, value)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether `value` is what a definitions install materialized for
+    /// `member` on the rows of `object_type` that predate it: exactly the
+    /// default the active model declares or, when a later install changed
+    /// that default (which keeps the materialized values), the default of the
+    /// install that introduced the member.
+    fn is_installed_default(
+        &self,
+        object_type: &str,
+        member: &str,
+        value: &RuntimeValue,
+    ) -> Result<bool, CellError> {
+        if is_declared_default(self.model(), object_type, member, value) {
+            return Ok(true);
+        }
+        let declares = |model: &Model| {
+            model
+                .declaration(object_type, member)
+                .is_ok_and(|declaration| declaration.is_some())
+        };
+        // The first of the unbroken run of installed sets, ending at the
+        // active one, that declare the member: the install that added it.
+        let mut introduced = None;
+        let mut version = self.active_definitions_version()?.unwrap_or(0);
+        while version > 1 {
+            version = version.saturating_sub(1);
+            let previous = self.retained_definition_model(version)?;
+            if !declares(&previous) {
+                break;
+            }
+            introduced = Some(previous);
+        }
+        Ok(introduced.is_some_and(|model| is_declared_default(&model, object_type, member, value)))
+    }
+
     fn review_findings(
         &self,
         world: &str,
@@ -207,11 +297,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.check_history("observation quality findings")?;
         let current = self.object(world, object_type, key)?;
         if let Some(record) = current.as_ref()
-            && !proves(
-                self.object_at_version(world, object_type, key, record.version)?
-                    .as_ref(),
-                record,
-            )
+            && !self.proves(world, object_type, key, record)?
         {
             return Err(CellError::UnprovenCorrection);
         }
@@ -242,11 +328,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 break;
             }
             if let Some(record) = current
-                && !proves(
-                    self.object_at_version(world, object_type, key, record.version)?
-                        .as_ref(),
-                    record,
-                )
+                && !self.proves(world, object_type, key, record)?
             {
                 return Err(CellError::UnprovenCorrection);
             }
