@@ -1,12 +1,12 @@
 //! MANIFEST-LAND-1 / LAW-02 on the adapter, B1: a landing staged on disk. The
 //! source is read in bounded chunks; each chunk is typed, its rules checked,
-//! and its typed rows, typing refusals and findings appended to the attempt's
-//! own Parquet files. In memory a landing keeps only its counts and its
-//! residue (bounded by the residue page contract). The data file (typed rows
-//! no rule holds back, by row) and the held-set file (by row, rule nulls
-//! first, reason) are then produced by streaming plans (an anti-join and a
-//! sort that spill under the engine's memory pool), never by a buffer of the
-//! whole file.
+//! and its typed rows, typing refusals and findings appended, each already in
+//! key order, to the attempt's own Parquet parts. In memory a landing keeps
+//! only its counts and its residue (bounded by the residue page contract).
+//! The data file (typed rows no rule holds back, by row) and the held-set
+//! file (by row, rule nulls first, reason) are then written by streaming the
+//! pre-ordered parts ([`super::merge`]): one ordered pass and a k-way merge in
+//! byte-bounded batches, never a buffer of the whole file, a sort or a join.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -337,8 +337,9 @@ pub(super) fn finish(
     let schema = data_schema(table);
     let mut sink = Sink::create(data, &schema)?;
     let mut ranges = Ranges::default();
+    let meter = files::Meter::new(Caps::of(engine.memory));
     let back = super::merge::held_back(&staged.findings, engine.memory)?;
-    super::merge::trusted(&staged.typed, &back, &mut sink, &mut |batch| {
+    super::merge::trusted(&staged.typed, &back, &meter, &mut sink, &mut |batch| {
         for (index, column) in table.columns.iter().enumerate() {
             if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
                 ranges.absorb(index, &columnar::column_cells(batch, column)?);
@@ -350,7 +351,7 @@ pub(super) fn finish(
     let mut sink = Sink::create(held, &held_schema(table))?;
     let mut parts = vec![staged.typing.clone()];
     parts.extend(staged.findings.iter().cloned());
-    super::merge::merge_held(table, &parts, &mut sink)?;
+    super::merge::merge_held(table, &parts, &meter, &mut sink)?;
     let held_rows = sink.finish()?;
     let valid_time = table
         .columns

@@ -205,7 +205,7 @@ fn read_csv(
         reader.consume(3);
     }
     let text = |bytes: Vec<u8>| String::from_utf8(bytes).map_err(unreadable);
-    let headers = next_record(&mut reader, meter)?
+    let headers = next_record(&mut reader, meter, MAX_FIELDS)?
         .map_or_else(Vec::new, |record| record.fields)
         .into_iter()
         .map(text)
@@ -226,7 +226,7 @@ fn read_csv(
         each,
     };
     let mut number = 0_u64;
-    while let Some(record) = next_record(&mut reader, meter)? {
+    while let Some(record) = next_record(&mut reader, meter, headers.len())? {
         if record.fields.len() != headers.len() {
             return Err(engine_error("a CSV row has another number of fields"));
         }
@@ -381,24 +381,78 @@ fn read_parquet(
         .into_iter()
         .collect();
     let mask = ProjectionMask::roots(metadata.parquet_schema(), roots.iter().copied());
-    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(source, metadata)
-        .with_projection(mask)
-        .with_batch_size(CHUNK_ROWS)
-        .build()
-        .map_err(unreadable)?;
     let mut chunker = Chunker {
         rows: Vec::new(),
         bytes: 0,
         each,
     };
     let mut number = 0_u64;
+    for group in 0..metadata.metadata().num_row_groups() {
+        // B3: decode each row group in batches its projected columns' own
+        // sizes allow, so no batch decodes past half a chunk.
+        let rows = group_rows(&metadata, group, &roots, meter.caps)?;
+        let file = source.try_clone().map_err(unreadable)?;
+        let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata.clone())
+            .with_row_groups(vec![group])
+            .with_projection(mask.clone())
+            .with_batch_size(rows)
+            .build()
+            .map_err(unreadable)?;
+        number = decode_group(reader, &plan, &roots, meter, &mut chunker, number)?;
+    }
+    chunker.flush()
+}
+
+/// The rows per batch of row group `group`: half a chunk over its projected
+/// columns' average uncompressed row size, at most [`CHUNK_ROWS`]; a row
+/// larger than a chunk refuses before anything is decoded.
+fn group_rows(
+    metadata: &ArrowReaderMetadata,
+    group: usize,
+    roots: &[usize],
+    caps: Caps,
+) -> Outcome<usize> {
+    let row_group = metadata.metadata().row_group(group);
+    let schema = metadata.parquet_schema();
+    let bytes = (0..row_group.num_columns())
+        .filter(|leaf| {
+            roots
+                .binary_search(&schema.get_column_root_idx(*leaf))
+                .is_ok()
+        })
+        .map(|leaf| row_group.column(leaf).uncompressed_size())
+        .fold(0_i64, i64::saturating_add);
+    let rows = row_group.num_rows().max(1);
+    let row_bytes = usize::try_from(bytes.div_euclid(rows).max(1)).unwrap_or(usize::MAX);
+    if row_bytes > caps.chunk {
+        return Err(refusal(
+            EXHAUSTED,
+            "a Parquet row is larger than the load's bound",
+        ));
+    }
+    Ok(caps
+        .chunk
+        .div_euclid(2)
+        .div_euclid(row_bytes)
+        .clamp(1, CHUNK_ROWS))
+}
+
+/// Decode one row group's batches into `chunker`; the last row number.
+fn decode_group(
+    reader: parquet::arrow::arrow_reader::ParquetRecordBatchReader,
+    plan: &[(usize, Encoding, ColumnKind)],
+    roots: &[usize],
+    meter: &mut Meter,
+    chunker: &mut Chunker<'_>,
+    mut number: u64,
+) -> Outcome<u64> {
     for batch in reader {
         let batch = batch.map_err(unreadable)?;
         meter.batch(batch.get_array_memory_size())?;
         for row in 0..batch.num_rows() {
             number = number.saturating_add(1);
             let mut texts = Vec::with_capacity(plan.len());
-            for (index, encoding, kind) in &plan {
+            for (index, encoding, kind) in plan {
                 let at = roots
                     .binary_search(index)
                     .map_err(|_absent| engine_error("a Parquet column"))?;
@@ -415,5 +469,5 @@ fn read_parquet(
             chunker.push(SourceRow { row: number, texts }, meter)?;
         }
     }
-    chunker.flush()
+    Ok(number)
 }

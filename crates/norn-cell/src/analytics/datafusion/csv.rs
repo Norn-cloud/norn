@@ -42,6 +42,9 @@ struct Parse<'m> {
     state: State,
     width: usize,
     content: bool,
+    /// The most fields the record may have (B1): past it the record refuses
+    /// before another field is allocated.
+    max_fields: usize,
 }
 
 impl Parse<'_> {
@@ -53,9 +56,13 @@ impl Parse<'_> {
         Ok(())
     }
 
-    fn end_field(&mut self) {
+    fn end_field(&mut self) -> Outcome<()> {
+        if self.fields.len() >= self.max_fields {
+            return Err(engine_error("a CSV row has more fields than its header"));
+        }
         self.fields.push(std::mem::take(&mut self.field));
         self.state = State::Start;
+        Ok(())
     }
 
     /// Take one byte; `true` when it ends the record's line.
@@ -74,7 +81,7 @@ impl Parse<'_> {
                 self.push(b'"')?;
                 self.state = State::Quoted;
             }
-            (State::Quote, b',') => self.end_field(),
+            (State::Quote, b',') => self.end_field()?,
             (State::Quote | State::Closed, b'\n') => return Ok(true),
             (State::Quote | State::Closed, b'\r') => self.state = State::Closed,
             (State::Quote | State::Closed, _) => {
@@ -86,7 +93,7 @@ impl Parse<'_> {
             }
             (State::Start | State::Unquoted, b',') => {
                 self.content = true;
-                self.end_field();
+                self.end_field()?;
             }
             (State::Start | State::Unquoted, b'\n') => {
                 if self.field.last() == Some(&b'\r') {
@@ -103,18 +110,24 @@ impl Parse<'_> {
         Ok(false)
     }
 
-    fn finish(mut self) -> Record {
-        self.fields.push(std::mem::take(&mut self.field));
-        Record {
+    fn finish(mut self) -> Outcome<Record> {
+        self.end_field()?;
+        Ok(Record {
             fields: self.fields,
-        }
+        })
     }
 }
 
-/// The next record, or `None` at the end of the file.
-pub(super) fn next_record(reader: &mut impl BufRead, meter: &Meter) -> Outcome<Option<Record>> {
+/// The next record of at most `max_fields` fields, or `None` at the end of
+/// the file.
+pub(super) fn next_record(
+    reader: &mut impl BufRead,
+    meter: &Meter,
+    max_fields: usize,
+) -> Outcome<Option<Record>> {
     let mut parse = Parse {
         meter,
+        max_fields,
         fields: Vec::new(),
         field: Vec::new(),
         state: State::Start,
@@ -132,7 +145,7 @@ pub(super) fn next_record(reader: &mut impl BufRead, meter: &Meter) -> Outcome<O
                 State::Start | State::Unquoted | State::Quote | State::Closed
                     if parse.content || !parse.field.is_empty() || !parse.fields.is_empty() =>
                 {
-                    Ok(Some(parse.finish()))
+                    parse.finish().map(Some)
                 }
                 State::Start | State::Unquoted | State::Quote | State::Closed => Ok(None),
             };
@@ -149,7 +162,7 @@ pub(super) fn next_record(reader: &mut impl BufRead, meter: &Meter) -> Outcome<O
         reader.consume(used);
         if ended {
             if parse.content {
-                return Ok(Some(parse.finish()));
+                return parse.finish().map(Some);
             }
             // A blank line: skipped.
             parse.fields.clear();
@@ -199,7 +212,7 @@ mod tests {
         let meter = Meter::new(caps(1 << 20));
         let mut reader = BufReader::new(text);
         let mut out = Vec::new();
-        while let Some(record) = next_record(&mut reader, &meter).expect("a record") {
+        while let Some(record) = next_record(&mut reader, &meter, 4096).expect("a record") {
             out.push(record.fields);
         }
         out
@@ -223,7 +236,7 @@ mod tests {
         let meter = Meter::new(caps(1 << 20));
         let mut after = BufReader::new(&b"\"a\"b\n"[..]);
         assert!(
-            next_record(&mut after, &meter).is_err(),
+            next_record(&mut after, &meter, 4096).is_err(),
             "text after a closing quote"
         );
     }
@@ -237,11 +250,27 @@ mod tests {
         };
         let mut reader = BufReader::with_capacity(8192, endless);
         let meter = Meter::new(caps(1 << 20));
-        let refused = next_record(&mut reader, &meter)
+        let refused = next_record(&mut reader, &meter, 4096)
             .map(|_| ())
             .expect_err("an endless line");
         assert_eq!(refused.code, super::EXHAUSTED);
         assert!(read.load(Ordering::SeqCst) <= (1 << 20) + 8192);
+    }
+
+    #[test]
+    fn a_line_of_commas_refuses_at_its_field_bound() {
+        let read = Rc::new(AtomicU64::new(0));
+        let commas = Counting {
+            inner: std::io::repeat(b','),
+            read: Rc::clone(&read),
+        };
+        let mut reader = BufReader::with_capacity(8192, commas);
+        let meter = Meter::new(caps(1 << 30));
+        let refused = next_record(&mut reader, &meter, 4096)
+            .map(|_| ())
+            .expect_err("an endless line of commas");
+        assert_eq!(refused.code, "analytics.engine");
+        assert!(read.load(Ordering::SeqCst) <= 4096 + 8192);
     }
 
     #[test]
@@ -252,13 +281,13 @@ mod tests {
         let started = std::time::Instant::now();
         let mut reader = BufReader::new(text.as_slice());
         assert!(
-            next_record(&mut reader, &meter).is_err(),
+            next_record(&mut reader, &meter, 4096).is_err(),
             "ends inside a quote"
         );
         assert!(started.elapsed() < Duration::from_secs(5));
         let endless = std::io::repeat(b'\n');
         let mut reader = BufReader::new(Read::chain(&b"\""[..], endless));
-        let refused = next_record(&mut reader, &meter)
+        let refused = next_record(&mut reader, &meter, 4096)
             .map(|_| ())
             .expect_err("an endless quoted field");
         assert_eq!(refused.code, super::EXHAUSTED);
@@ -266,7 +295,7 @@ mod tests {
         late.deadline = Duration::ZERO;
         let meter = Meter::new(late);
         let mut reader = BufReader::new(&b"a\n"[..]);
-        let refused = next_record(&mut reader, &meter)
+        let refused = next_record(&mut reader, &meter, 4096)
             .map(|_| ())
             .expect_err("past the deadline");
         assert_eq!(refused.code, super::EXHAUSTED);

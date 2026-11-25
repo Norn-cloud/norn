@@ -177,3 +177,96 @@ fn a_parquet_source_decodes_only_declared_columns_as_dictionary_views() {
     let loaded = engine.load(&request, &path).expect("a bounded load");
     assert_eq!((loaded.rows, loaded.rejected), (1024, 0));
 }
+
+/// R3 (B2, B3): wide plain-encoded Parquet rows (200 KiB each, 60 MiB in all)
+/// load under a 16 MiB chunk bound: each row group is decoded, staged and
+/// merged in batches its own rows' size allows.
+#[test]
+fn wide_parquet_rows_load_in_batches_their_size_allows() {
+    use std::sync::Arc;
+
+    use datafusion::arrow::array::{ArrayRef, StringArray};
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::arrow::record_batch::RecordBatch;
+    use parquet::file::properties::WriterProperties;
+
+    let (_dir, engine) = engine("64MB");
+    let rows: Vec<String> = (0..300_u32)
+        .map(|i| format!("{i:08}{}", "p".repeat(200 << 10)))
+        .collect();
+    let schema = Arc::new(Schema::new(vec![Field::new("text", DataType::Utf8, true)]));
+    let column: ArrayRef = Arc::new(StringArray::from_iter_values(rows.iter()));
+    let batch = RecordBatch::try_new(Arc::clone(&schema), vec![column]).expect("batch");
+    let properties = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        .build();
+    let mut bytes = Vec::new();
+    let mut writer =
+        parquet::arrow::ArrowWriter::try_new(&mut bytes, schema, Some(properties)).expect("writer");
+    writer.write(&batch).expect("write");
+    writer.close().expect("close");
+    let (path, request) = source(&engine, &bytes, FileFormat::Parquet);
+    let loaded = engine
+        .load(&request, &path)
+        .expect("a wide load in small batches");
+    assert_eq!((loaded.rows, loaded.rejected), (300, 0));
+}
+
+/// R3 (N5): three held parts, each in key order and with tied keys across
+/// parts, merge into one file in key order with every row kept.
+#[test]
+fn held_parts_merge_in_key_order_with_ties() {
+    use super::columnar::Sink;
+    use super::files::{Caps, Meter};
+    use super::laws::HeldRow;
+    use super::staging::{held_schema, write_held};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let table = table();
+    let held = |row: u64, rule: Option<&str>, reason: &str| HeldRow {
+        row,
+        reason: reason.to_owned(),
+        rule: rule.map(str::to_owned),
+        holds: true,
+        values: vec![Some(format!("{row}-{reason}"))],
+    };
+    let parts = [
+        vec![held(1, None, "bulk.required"), held(3, Some("r1"), "l")],
+        vec![held(1, Some("r1"), "l"), held(2, None, "bulk.not_date")],
+        vec![held(1, Some("r1"), "l"), held(3, Some("r0"), "a")],
+    ];
+    let mut paths = Vec::new();
+    for (at, rows) in parts.iter().enumerate() {
+        let path = dir.path().join(format!("part-{at}.parquet"));
+        let mut sink = Sink::create(&path, &held_schema(&table)).expect("part");
+        write_held(&mut sink, &table, rows).expect("rows");
+        sink.finish().expect("finish");
+        paths.push(path);
+    }
+    let out = dir.path().join("held.parquet");
+    let mut sink = Sink::create(&out, &held_schema(&table)).expect("out");
+    let meter = Meter::new(Caps::of(1 << 20));
+    super::merge::merge_held(&table, &paths, &meter, &mut sink).expect("merge");
+    assert_eq!(sink.finish().expect("finish"), 6);
+    let file = std::fs::File::open(&out).expect("open");
+    let reader = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file)
+        .expect("reader")
+        .build()
+        .expect("build");
+    let mut keys = Vec::new();
+    for batch in reader {
+        let batch = batch.expect("batch");
+        let rows = super::columnar::system(&batch, ":row", super::columnar::u64_at).expect("rows");
+        let rules =
+            super::columnar::system(&batch, ":rule", super::columnar::text_at).expect("rules");
+        let reasons =
+            super::columnar::system(&batch, ":reason", super::columnar::text_at).expect("reasons");
+        for ((row, rule), reason) in rows.into_iter().zip(rules).zip(reasons) {
+            keys.push((row, rule, reason));
+        }
+    }
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(keys, sorted);
+    assert_eq!(keys.len(), 6);
+}

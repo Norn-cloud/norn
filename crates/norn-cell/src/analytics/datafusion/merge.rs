@@ -15,12 +15,15 @@ use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchR
 
 use super::super::TableSchema;
 use super::columnar::{self, Sink};
+use super::files::Meter;
 use super::laws::HeldRow;
 use super::staging;
 use super::{EXHAUSTED, Outcome, engine_error, refusal};
 
-/// Rows read from a staged part at a time.
+/// The most rows read from a staged part at a time.
 const MERGE_ROWS: usize = 64;
+/// The most string bytes one batch may hold: far under `Utf8`'s `i32` offsets.
+const MAX_BATCH_BYTES: usize = 1 << 30;
 
 /// A held row's order in the held-set file.
 fn key(row: &HeldRow) -> (u64, Option<&[u8]>, &[u8]) {
@@ -36,11 +39,28 @@ pub(super) fn sort_held(rows: &mut [HeldRow]) {
     rows.sort_by(|a, b| key(a).cmp(&key(b)));
 }
 
-fn reader(path: &Path) -> Outcome<ParquetRecordBatchReader> {
+/// A staged part's reader, its batches sized (B2) so that a batch of its
+/// widest row group's average row stays within `budget` bytes.
+fn reader(path: &Path, budget: usize) -> Outcome<ParquetRecordBatchReader> {
+    let failed = |error: parquet::errors::ParquetError| engine_error(error.to_string());
     let file = std::fs::File::open(path).map_err(|error| engine_error(error.to_string()))?;
-    ParquetRecordBatchReaderBuilder::try_new(file)
-        .and_then(|builder| builder.with_batch_size(MERGE_ROWS).build())
-        .map_err(|error| engine_error(error.to_string()))
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(failed)?;
+    let row_bytes = builder
+        .metadata()
+        .row_groups()
+        .iter()
+        .map(|group| {
+            let rows = group.num_rows().max(1);
+            usize::try_from(group.total_byte_size().div_euclid(rows)).unwrap_or(usize::MAX)
+        })
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let rows = budget
+        .min(MAX_BATCH_BYTES)
+        .div_euclid(row_bytes)
+        .clamp(1, MERGE_ROWS);
+    builder.with_batch_size(rows).build().map_err(failed)
 }
 
 fn next(reader: &mut ParquetRecordBatchReader) -> Outcome<Option<RecordBatch>> {
@@ -85,7 +105,7 @@ fn held_rows(batch: &RecordBatch, table: &TableSchema) -> Outcome<Vec<HeldRow>> 
 pub(super) fn held_back(findings: &[PathBuf], memory: usize) -> Outcome<Vec<u64>> {
     let mut rows = Vec::new();
     for part in findings {
-        let mut part = reader(part)?;
+        let mut part = reader(part, memory.div_euclid(8).max(1))?;
         while let Some(batch) = next(&mut part)? {
             let numbers = columnar::system(&batch, ":row", columnar::u64_at)?;
             let rules = columnar::system(&batch, ":rule", columnar::text_at)?;
@@ -109,20 +129,25 @@ pub(super) fn held_back(findings: &[PathBuf], memory: usize) -> Outcome<Vec<u64>
 }
 
 /// Stream the typed rows not in `back` (sorted) into `sink`, in row order,
-/// handing each written batch to `seen`.
+/// handing each written batch to `seen`; batches stay within half a chunk.
 pub(super) fn trusted(
     typed: &Path,
     back: &[u64],
+    meter: &Meter,
     sink: &mut Sink,
     seen: &mut dyn FnMut(&RecordBatch) -> Outcome<()>,
 ) -> Outcome<()> {
-    let mut part = reader(typed)?;
+    let mut part = reader(typed, meter.caps.chunk.div_euclid(2))?;
     while let Some(batch) = next(&mut part)? {
+        meter.deadline()?;
         let numbers = columnar::system(&batch, ":row", columnar::u64_at)?;
-        let keep: BooleanArray = numbers
+        let keep = numbers
             .iter()
-            .map(|row| Some(row.is_some_and(|row| back.binary_search(&row).is_err())))
-            .collect();
+            .map(|row| {
+                row.map(|row| Some(back.binary_search(&row).is_err()))
+                    .ok_or_else(|| engine_error("a typed row without its number"))
+            })
+            .collect::<Outcome<BooleanArray>>()?;
         let kept = filter_record_batch(&batch, &keep).map_err(|e| engine_error(e.to_string()))?;
         if kept.num_rows() > 0 {
             seen(&kept)?;
@@ -132,9 +157,6 @@ pub(super) fn trusted(
     Ok(())
 }
 
-/// A held row's order, owned.
-type OwnedKey = (u64, Option<Vec<u8>>, Vec<u8>);
-
 /// One held part's rows, read ahead a batch at a time.
 struct Cursor {
     reader: ParquetRecordBatchReader,
@@ -142,48 +164,71 @@ struct Cursor {
 }
 
 impl Cursor {
-    fn front(&mut self, table: &TableSchema) -> Outcome<Option<&HeldRow>> {
+    /// Read the next batch when nothing is ahead.
+    fn fill(&mut self, table: &TableSchema) -> Outcome<()> {
         if self.ahead.is_empty()
             && let Some(batch) = next(&mut self.reader)?
         {
             self.ahead.extend(held_rows(&batch, table)?);
         }
-        Ok(self.ahead.front())
+        Ok(())
     }
 }
 
-/// Merge the held parts (each in key order) into `sink` in key order.
-pub(super) fn merge_held(table: &TableSchema, parts: &[PathBuf], sink: &mut Sink) -> Outcome<()> {
+/// A held row's text bytes.
+fn held_bytes(row: &HeldRow) -> usize {
+    row.values
+        .iter()
+        .flatten()
+        .fold(row.reason.len(), |total, text| {
+            total.saturating_add(text.len())
+        })
+}
+
+/// Merge the held parts (each in key order) into `sink` in key order, each
+/// part read within its share of half a chunk, the output flushed by rows or
+/// bytes, whichever comes first.
+pub(super) fn merge_held(
+    table: &TableSchema,
+    parts: &[PathBuf],
+    meter: &Meter,
+    sink: &mut Sink,
+) -> Outcome<()> {
+    let budget = meter.caps.chunk.div_euclid(2).min(MAX_BATCH_BYTES);
+    let share = budget.div_euclid(parts.len().max(1)).max(1);
     let mut cursors = parts
         .iter()
         .map(|part| {
-            reader(part).map(|reader| Cursor {
+            reader(part, share).map(|reader| Cursor {
                 reader,
                 ahead: VecDeque::new(),
             })
         })
         .collect::<Outcome<Vec<_>>>()?;
     let mut out = Vec::with_capacity(MERGE_ROWS);
+    let mut bytes = 0_usize;
     loop {
-        let mut least: Option<(usize, OwnedKey)> = None;
-        for (at, cursor) in cursors.iter_mut().enumerate() {
-            if let Some(row) = cursor.front(table)? {
-                let (number, rule, reason) = key(row);
-                let owned = (number, rule.map(<[u8]>::to_vec), reason.to_vec());
-                if least.as_ref().is_none_or(|(_, best)| owned < *best) {
-                    least = Some((at, owned));
-                }
-            }
+        meter.deadline()?;
+        for cursor in &mut cursors {
+            cursor.fill(table)?;
         }
-        let Some((at, _)) = least else { break };
+        let least = cursors
+            .iter()
+            .enumerate()
+            .filter_map(|(at, cursor)| cursor.ahead.front().map(|row| (at, row)))
+            .min_by(|(_, a), (_, b)| key(a).cmp(&key(b)))
+            .map(|(at, _)| at);
+        let Some(at) = least else { break };
         if let Some(row) = cursors
             .get_mut(at)
             .and_then(|cursor| cursor.ahead.pop_front())
         {
+            bytes = bytes.saturating_add(held_bytes(&row));
             out.push(row);
         }
-        if out.len() >= MERGE_ROWS {
+        if out.len() >= MERGE_ROWS || bytes >= budget {
             staging::write_held(sink, table, &std::mem::take(&mut out))?;
+            bytes = 0;
         }
     }
     if !out.is_empty() {
