@@ -9,11 +9,9 @@
 )]
 use norn_cell::catalog::CatalogSnapshot;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model};
-use norn_checker::{
-    EntityArtifactSetContext,
-    receipt::{ReceiptSources, check_artifact_set_with_receipt},
-};
+use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ui_checker::check_artifact_set_with_receipt;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 

@@ -89,6 +89,8 @@ sha2 = "0.10.9"
 jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 # Test support only (T6-PSM-1 / T4-CELL-1): the host-agnostic CellHost laws.
 norn-testkit = { path = "../norn-testkit" }
+# The retained three-systems set admits through both rings, as a cell admits it: it carries a widget (#1762 C2).
+norn-ui-checker = { path = "../norn-ui-checker" }
 # This crate's own tests use the fault-injecting engine.
 norn-cell = { path = ".", features = ["fault-injection", "counters"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
