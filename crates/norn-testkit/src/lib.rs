@@ -52,6 +52,7 @@ mod coverage;
 pub mod laws;
 mod machine;
 mod model;
+pub mod pack_mbt;
 mod runner;
 pub mod strategy;
 
