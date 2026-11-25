@@ -1550,22 +1550,32 @@ pub fn install_definition<E: SqlEngine>(
         && request.signoff.is_none()
     {
         return Err(if kinds.restater.is_some() {
-            if request.kind == "automation" {
-                crate::automation_definitions::signoff_required()
-            } else {
-                Refusal::new(
+            match request.kind.as_str() {
+                "automation" => crate::automation_definitions::signoff_required(),
+                "approval" => Refusal::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    codes::SIGNOFF_REQUIRED,
+                    "an approval is installed by signing the server's words for it",
+                    "admit the approval, read its restatement, and install it with signoff.restatementSha256",
+                ),
+                _ => Refusal::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     codes::SIGNOFF_REQUIRED,
                     "a flow is installed by signing the server's words for it",
                     "admit the flow, read its restatement, and install it with signoff.restatementSha256",
-                )
+                ),
             }
         } else {
+            let noun = match request.kind.as_str() {
+                "automation" => "an automation",
+                "approval" => "an approval",
+                _ => "a flow",
+            };
             Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 codes::SIGNOFF_UNAVAILABLE,
                 "the sign-off cannot be verified",
-                "this cell has no restatement generator, so it cannot install a flow",
+                format!("this cell has no restatement generator, so it cannot install {noun}"),
             )
         });
     }

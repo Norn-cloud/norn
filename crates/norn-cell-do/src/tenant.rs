@@ -781,7 +781,7 @@ impl<E: SqlEngine> Tenant<E> {
         {
             return Served::Cell(response);
         }
-        Served::Cell(self.handle_admitted(principals, request, member))
+        Served::Cell(self.handle_admitted(principals, request, member, true))
     }
 
     /// Serve one request; every outcome is a status and a JSON document.
@@ -792,8 +792,10 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Response {
         let admitted = self.outside(false).admit::<E>(principals, request);
         match admitted {
-            Ok(Admitted::Member(caller)) => self.handle_admitted(principals, request, Some(caller)),
-            Ok(Admitted::Provisioner) => self.handle_admitted(principals, request, None),
+            Ok(Admitted::Member(caller)) => {
+                self.handle_admitted(principals, request, Some(caller), false)
+            }
+            Ok(Admitted::Provisioner) => self.handle_admitted(principals, request, None, false),
             Err(response) => response,
         }
     }
@@ -805,6 +807,7 @@ impl<E: SqlEngine> Tenant<E> {
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
         member: Option<crate::policy::Caller>,
+        analytics_checked: bool,
     ) -> Response {
         if request.path == PROVISION_PATH {
             return server::respond_at(self.provision(principals, request), request.now);
@@ -844,7 +847,8 @@ impl<E: SqlEngine> Tenant<E> {
                 )
             }
             State::Serving(serving) => {
-                if let Some(engine) = &self.engine
+                if !analytics_checked
+                    && let Some(engine) = &self.engine
                     && let Some(response) =
                         server::analytics(&serving.host, principals, engine, None, request)
                 {

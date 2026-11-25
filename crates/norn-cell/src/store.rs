@@ -698,10 +698,21 @@ fn verify_receipt_profile(
     Ok(())
 }
 
-fn validate_readmission_transition(
+struct ReadmissionCandidate<'a> {
+    canonical_set: &'a str,
+    layout: Option<&'a str>,
+    registry: &'a [String],
+    model_hash: &'a str,
+    ddl_hash: &'a str,
+    receipt_sha256: &'a str,
+    admission_receipt: Option<&'a str>,
+}
+
+fn validate_readmission_common(
     previous: &InstalledDefinitionSet,
-    installed: &InstalledDefinitionSet,
+    candidate: &ReadmissionCandidate<'_>,
     readmission: &DefinitionReadmission,
+    mismatch_message: &str,
 ) -> Result<(), CellError> {
     if readmission.previous_checker_version.is_empty()
         || readmission.previous_expr_profile.is_empty()
@@ -710,26 +721,26 @@ fn validate_readmission_transition(
         || previous.receipt_sha256 != readmission.previous_receipt_sha256
         || !readmission_canonical_set_matches(
             &previous.canonical_set,
-            &installed.canonical_set,
+            candidate.canonical_set,
             previous.layout.as_deref(),
-            installed.layout.as_deref(),
+            candidate.layout,
             previous.layout_revision,
             readmission.layout_migration,
         )?
-        || previous.registry != installed.registry
-        || previous.model_hash != installed.model_hash
-        || previous.ddl_hash != installed.ddl_hash
+        || previous.registry != candidate.registry
+        || previous.model_hash != candidate.model_hash
+        || previous.ddl_hash != candidate.ddl_hash
     {
         return Err(CellError::DefinitionReceiptInvalid(
-            "readmission must preserve the active definition set and model and name its previous receipt".to_owned(),
+            mismatch_message.to_owned(),
         ));
     }
-    let Some(receipt) = &installed.admission_receipt else {
+    let Some(receipt) = candidate.admission_receipt else {
         return Err(CellError::DefinitionReceiptInvalid(
             "readmission must retain the new canonical admission receipt".to_owned(),
         ));
     };
-    verify_admission_receipt(receipt, &installed.receipt_sha256)?;
+    verify_admission_receipt(receipt, candidate.receipt_sha256)?;
     verify_receipt_profile(
         receipt,
         &readmission.checker_version,
@@ -744,6 +755,27 @@ fn validate_readmission_transition(
         )?;
     }
     Ok(())
+}
+
+fn validate_readmission_transition(
+    previous: &InstalledDefinitionSet,
+    installed: &InstalledDefinitionSet,
+    readmission: &DefinitionReadmission,
+) -> Result<(), CellError> {
+    validate_readmission_common(
+        previous,
+        &ReadmissionCandidate {
+            canonical_set: &installed.canonical_set,
+            layout: installed.layout.as_deref(),
+            registry: &installed.registry,
+            model_hash: &installed.model_hash,
+            ddl_hash: &installed.ddl_hash,
+            receipt_sha256: &installed.receipt_sha256,
+            admission_receipt: installed.admission_receipt.as_deref(),
+        },
+        readmission,
+        "readmission must preserve the active definition set and model and name its previous receipt",
+    )
 }
 
 fn readmission_canonical_set_matches(
@@ -1151,49 +1183,24 @@ fn validate_readmission(
         }
         return Ok(());
     };
-
-    if expected_version != Some(previous.version)
-        || previous.receipt_sha256 != readmission.previous_receipt_sha256
-        || !readmission_canonical_set_matches(
-            &previous.canonical_set,
-            &input.canonical_set,
-            previous.layout.as_deref(),
-            input.layout.as_deref().or(previous.layout.as_deref()),
-            previous.layout_revision,
-            readmission.layout_migration,
-        )?
-        || previous.registry != input.registry
-        || previous.model_hash != candidate_model.model_hash()
-        || previous.ddl_hash != candidate_model.ddl_hash()
-        || readmission.previous_checker_version.is_empty()
-        || readmission.previous_expr_profile.is_empty()
-        || readmission.checker_version.is_empty()
-        || readmission.expr_profile.is_empty()
-    {
-        return Err(CellError::DefinitionReceiptInvalid(
-            "readmission must preserve the active definition set and model and name its prior and current checker profiles".to_owned(),
-        ));
+    let mismatch = "readmission must preserve the active definition set and model and name its prior and current checker profiles";
+    if expected_version != Some(previous.version) {
+        return Err(CellError::DefinitionReceiptInvalid(mismatch.to_owned()));
     }
-    let Some(receipt) = &input.admission_receipt else {
-        return Err(CellError::DefinitionReceiptInvalid(
-            "readmission must retain the new canonical admission receipt".to_owned(),
-        ));
-    };
-    verify_admission_receipt(receipt, &input.receipt_sha256)?;
-    verify_receipt_profile(
-        receipt,
-        &readmission.checker_version,
-        &readmission.expr_profile,
-    )?;
-    if let Some(previous_receipt) = &previous.admission_receipt {
-        verify_admission_receipt(previous_receipt, &previous.receipt_sha256)?;
-        verify_receipt_profile(
-            previous_receipt,
-            &readmission.previous_checker_version,
-            &readmission.previous_expr_profile,
-        )?;
-    }
-    Ok(())
+    validate_readmission_common(
+        previous,
+        &ReadmissionCandidate {
+            canonical_set: &input.canonical_set,
+            layout: input.layout.as_deref().or(previous.layout.as_deref()),
+            registry: &input.registry,
+            model_hash: candidate_model.model_hash(),
+            ddl_hash: candidate_model.ddl_hash(),
+            receipt_sha256: &input.receipt_sha256,
+            admission_receipt: input.admission_receipt.as_deref(),
+        },
+        readmission,
+        mismatch,
+    )
 }
 
 /// A whole-object write: the `CellHost` commit's fact write, after the

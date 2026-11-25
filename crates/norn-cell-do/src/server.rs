@@ -412,11 +412,7 @@ fn compile<E: SqlEngine>(
             "transforms are compiled with POST",
         ));
     }
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     let request: CompileTransformRequest = serde_json::from_str(body)
         .map_err(|_invalid| Refusal::invalid("the body is not a transform compile request"))?;
     document_json(&compile_transform(host, &scope, actor, &request)?)
@@ -469,11 +465,7 @@ fn refresh<E: SqlEngine>(
     let transform = percent_encoding::percent_decode_str(transform)
         .decode_utf8()
         .map_err(|_invalid| Refusal::invalid("a transform path segment is not UTF-8"))?;
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     document_json(&refresh_transform(
         host,
         &scope,
@@ -773,25 +765,21 @@ fn route<E: SqlEngine>(
         // that depends on the caller (D84).
         let published = questions.filter(|runtime| runtime.publishes_questions());
         match (question, published) {
-            (None, _) if object.is_some() => object.map_or_else(
-                || Err(norn_api::authz::read_denied()),
-                |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
-            ),
-            (None, _) if transform_path(path).is_some() => transform_path(path).map_or_else(
-                || Err(norn_api::authz::read_denied()),
-                |target| transforms(cell(host)?, actor, target, (query, now)),
-            ),
-            (None, _) => definitions_query(query)
-                .and_then(|query| get_defs_counted(cell(host)?, &query, actor, &CellObjectAccess))
-                .and_then(|document| document_json(&document)),
-            (Some((name, "answer")), Some(runtime)) => parse(query, &["orgId", "environmentId"])
-                .and_then(|fields| {
-                    let scope = ScopeQuery {
-                        org_id: fields.get("orgId").cloned(),
-                        environment_id: fields.get("environmentId").cloned(),
-                    };
-                    get_answer(cell(host)?, &scope, actor, name, named(runtime))
-                })
+            (None, _) => {
+                if let Some((kind, id, leaf)) = object {
+                    objects(host, actor, (kind, id, leaf), query)
+                } else if let Some(target) = transform_path(path) {
+                    transforms(cell(host)?, actor, target, (query, now))
+                } else {
+                    definitions_query(query)
+                        .and_then(|query| {
+                            get_defs_counted(cell(host)?, &query, actor, &CellObjectAccess)
+                        })
+                        .and_then(|document| document_json(&document))
+                }
+            }
+            (Some((name, "answer")), Some(runtime)) => scope_of(query)
+                .and_then(|scope| get_answer(cell(host)?, &scope, actor, name, named(runtime)))
                 .and_then(|document| document_json(&document)),
             (Some((name, _)), Some(runtime)) => trace_query(query)
                 .and_then(|query| {
@@ -832,11 +820,7 @@ fn provisioned<E: SqlEngine>(
             "a cell is provisioned with POST",
         ));
     }
-    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.remove("orgId"),
-        environment_id: fields.remove("environmentId"),
-    };
+    let scope = scope_of(request.query)?;
     definition_routes::authorize(cell(host)?, &scope, actor, Operation::ProvisionCell)?;
     Err(norn_api::provision::already_provisioned())
 }
@@ -858,11 +842,7 @@ fn cell_definitions<E: SqlEngine>(
             "a definitions change is planned and applied with POST",
         ));
     }
-    let mut fields = parse(request.query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.remove("orgId"),
-        environment_id: fields.remove("environmentId"),
-    };
+    let scope = scope_of(request.query)?;
     let host = cell(host)?;
     definition_routes::authorize(host, &scope, actor, Operation::WriteDefinitions)?;
     if route == Route::DefinitionsPlan {
@@ -941,11 +921,7 @@ fn ad_hoc_question<E: SqlEngine>(
             "ad-hoc questions are submitted with POST; their metrics are listed with GET",
         ));
     }
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     // No runtime, no actor: one denial, before the body is read.
     let (Some(runtime), Some(_)) = (questions, actor) else {
         return Err(norn_api::authz::read_denied());
@@ -986,11 +962,7 @@ fn ad_hoc_catalog<E: SqlEngine>(
             "the question catalog is read with GET",
         ));
     }
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     let Some(runtime) = questions else {
         return Err(norn_api::authz::read_denied());
     };
@@ -1235,11 +1207,7 @@ fn revealed<E: SqlEngine>(
             .map(std::borrow::Cow::into_owned)
             .map_err(|_invalid| Refusal::invalid("an object path segment is not UTF-8"))
     };
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     let request: norn_api::privacy::NornRevealRequest = serde_json::from_str(body)
         .map_err(|error| Refusal::invalid(format!("the request body is not a reveal: {error}")))?;
     document_json(&norn_api::privacy::reveal(
@@ -1259,11 +1227,7 @@ fn profiled<E: SqlEngine>(
     object_type: &str,
     query: &str,
 ) -> Result<String, Refusal> {
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     document_json(&get_object_profile(
         host,
         &scope,
@@ -1306,11 +1270,7 @@ fn quarantined<E: SqlEngine>(
     object_type: &str,
     query: &str,
 ) -> Result<String, Refusal> {
-    let fields = parse(query, &["orgId", "environmentId"])?;
-    let scope = ScopeQuery {
-        org_id: fields.get("orgId").cloned(),
-        environment_id: fields.get("environmentId").cloned(),
-    };
+    let scope = scope_of(query)?;
     document_json(&get_quarantined_objects(
         cell(host)?,
         &scope,

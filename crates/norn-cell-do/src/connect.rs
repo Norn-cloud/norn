@@ -722,7 +722,10 @@ impl Connect {
     /// host fixture (`fixtures/`).
     fn read(&self, scope_key: &str, body: &str, now_ms: u64) -> Response {
         let not_found = || refused(404, "upload.not_found", "no such upload");
-        let request: Value = serde_json::from_str(body).unwrap_or_default();
+        let request: Value = match serde_json::from_str(body) {
+            Ok(request) => request,
+            Err(e) => return refused(400, "upload.invalid_request", &e.to_string()),
+        };
         let found = if let Some(id) = request.get("uploadId").and_then(Value::as_str) {
             self.resolve(id, scope_key)
                 .and_then(|u| Some((self.store(u.store)?, u.key)))

@@ -65,11 +65,3 @@ mod wasm;
 pub const fn fixtures_enabled() -> bool {
     cfg!(feature = "fixtures")
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn fixtures_enabled_reports_the_feature() {
-        assert_eq!(super::fixtures_enabled(), cfg!(feature = "fixtures"));
-    }
-}
