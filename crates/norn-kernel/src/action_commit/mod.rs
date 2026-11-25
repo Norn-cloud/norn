@@ -55,7 +55,7 @@ use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
 };
 use crate::decision_commit::{
-    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_links_validated, widen_effect,
+    DecisionRefusal, FactEvent, TypeCatalog, prepare_action_decision, widen_effect,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
@@ -207,6 +207,18 @@ where
         && matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
+        )
+    {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: action.action_id.clone(),
+        });
+    }
+    // ACTOR-INDEPENDENT-1: only a transition reads a recorded prior actor; a
+    // declared check never silently drops on another effect.
+    if !action.independent_of.is_empty()
+        && !matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::FireTransition { .. })
         )
     {
         return Err(ActionRefusal::UnsupportedEffect {
@@ -425,6 +437,7 @@ where
         series_candidate,
         decision_links,
         receipt,
+        creator_stamp,
     } = pending;
     let generated_key = series_candidate.is_some();
     let additional_events = usize::from(generated_key);
@@ -451,8 +464,14 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared =
-        prepare_decision_with_links_validated(catalog, &slice, &call.turn, &output, limits)?;
+    let mut prepared = prepare_action_decision(
+        catalog,
+        &slice,
+        &call.turn,
+        &output,
+        limits,
+        creator_stamp.as_ref(),
+    )?;
     for write in &mut prepared.writes {
         let key = write.key.clone();
         authorize_proposed_target(
@@ -547,7 +566,15 @@ where
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
-    let result = if let Some((request, key)) = quantity {
+    // ACTOR-STAMP-1: the proof binds this exact transaction; only it admits the stamp.
+    let stamp =
+        creator_stamp.map(|stamp| crate::CreatorStampProof::new(stamp, &commit, limits.max_events));
+    let result = if let Some(proof) = stamp {
+        let quantity = quantity
+            .as_ref()
+            .map(|(request, key)| (request, key.as_str()));
+        host.commit_stamped(commit, proof, quantity)
+    } else if let Some((request, key)) = quantity {
         if let Some(proof) = reference_reads {
             host.commit_action_references(commit, proof, Some((&request, &key)))
         } else {

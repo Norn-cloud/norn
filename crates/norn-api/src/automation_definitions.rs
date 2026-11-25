@@ -514,7 +514,8 @@ pub(crate) fn bind_authority<E: SqlEngine>(
     let catalog = model_ref
         .type_catalog()
         .with_governing_laws(model_ref.law_artifacts())
-        .with_action_rules(&admitted.rules);
+        .with_action_rules(&admitted.rules)
+        .with_transition_guards(&admitted.guards);
     let action_digest =
         crate::action_admission::effective_digest(&admitted, action, model_ref, &catalog)?;
     let scope_key = host.scope().key();

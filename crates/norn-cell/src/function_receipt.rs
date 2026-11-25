@@ -223,8 +223,15 @@ where
             consumes: Some(consumed),
             ..CellCommit::empty()
         };
-        let args: crate::host::AdmissionArgs<'_> =
-            (&[], &[], &[], &[], None, ReceiptCommitMode::ResultRefusal);
+        let args: crate::host::AdmissionArgs<'_> = (
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            ReceiptCommitMode::ResultRefusal,
+            None,
+        );
         self.commit_admitted(commit, None, None, None, args)
     }
 }

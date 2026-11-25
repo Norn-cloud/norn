@@ -43,6 +43,8 @@ fn reference_action(
     if !authorizer.supports_action_reference_lineage(action)
         || !matches!(write_mode, UpsertWriteMode::CreateOnly | UpsertWriteMode::Upsert)
         || !action.commands.is_empty()
+        // CREATE-WRITER-1: a writer reads complete slice values.
+        || action.synchronous_rule.is_some()
         || (!patch && !action.derive.is_empty())
         || action.slice.is_empty()
         // A patch reads the full target to preserve its other values. Only

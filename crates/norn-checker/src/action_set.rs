@@ -93,6 +93,10 @@ use crate::property_types::error;
 use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
+mod actor_binding;
+
+use actor_binding::{actor_binding_findings, transition_guard_findings, writer_protected_findings};
+
 /// Stable `artifact_set.action.*` and `artifact_set.entity.*` codes.
 pub mod codes {
     /// A quantity effect or its typed input bindings cannot be admitted.
@@ -132,6 +136,10 @@ pub mod codes {
     /// the action can bypass allocation for an existing series key.
     pub const NAMING_SERIES_TARGET_MISMATCH: &str =
         "artifact_set.action.naming_series_target_mismatch";
+    /// ACTOR-INDEPENDENT-1: an independent-actor check names a property that
+    /// is not a protected text property of an existing transition target, so
+    /// a caller-controlled value could satisfy it.
+    pub const INDEPENDENT_ACTOR: &str = "artifact_set.action.independent_actor";
     /// D66: a string-enum input writes no enum property.
     pub const INPUT_ENUM_UNBOUND: &str = "action.validation.input_enum_unbound";
     /// D66: a string-enum input admits a value its target property does not declare.
@@ -230,6 +238,9 @@ pub fn check_action_set(
         let model = views.of(artifact).model();
         findings.extend(check_action(artifact, root, model, artifacts, base));
     }
+    findings.extend(transition_guard_findings(
+        &actions, artifacts, base, &mut views,
+    ));
     findings
 }
 
@@ -322,11 +333,19 @@ fn synchronous_rule_findings(
                     && candidate.kind() == ArtifactKind::Rule
             })
             .collect();
+        // CREATE-WRITER-1 (#1101): a writer composes with a transition of an
+        // existing target or with a create of a new one.
         let valid = !pin.artifact_id.trim().is_empty()
             && !pin.version.trim().is_empty()
             && matches!(
                 root.effect_program.as_ref(),
-                Some(ActionEffectProgram::FireTransition { .. })
+                Some(
+                    ActionEffectProgram::FireTransition { .. }
+                        | ActionEffectProgram::UpsertInputObject {
+                            write_mode: UpsertWriteMode::CreateOnly,
+                            ..
+                        }
+                )
             )
             && matched.len() == 1
             && artifact.dependencies.iter().any(|dependency| {
@@ -356,7 +375,7 @@ fn synchronous_rule_findings(
             }
         } else {
             findings.push(finding("action.validation.invalid_payload",
-                "synchronousRule requires a transition action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
+                "synchronousRule requires a transition or create-only action, one exact decide artifact and a required dependency at that version, with scope covered by the action".to_owned(),
                 artifact, "/payload/synchronousRule"));
         }
     }
@@ -417,6 +436,7 @@ fn check_action(
     findings.extend(synchronous_rule_findings(artifact, root, artifacts, base));
     findings.extend(quantity_effect_findings(artifact, root, model));
     findings.extend(create_link_findings(artifact, root, model));
+    findings.extend(actor_binding_findings(artifact, root, model));
     let writer = synchronous_writer_payload(root, artifacts, base);
     let mut targets: BTreeSet<(&str, WriteChange)> = BTreeSet::new();
     if let Some(writer) = &writer {
@@ -428,6 +448,7 @@ fn check_action(
         findings.extend(crate::decision_links::synchronous_writer_link_findings(
             artifact, root, writer, model,
         ));
+        findings.extend(writer_protected_findings(artifact, writer, model));
     }
     if let Some(program) = &root.effect_program {
         let kind = program.target().object_kind;
@@ -1886,9 +1907,10 @@ fn owned_rows_effect_findings(
             let child_effective = declared.get(id).and_then(|collection| {
                 model.effective_object_type_named(collection.child_type.as_str())
             });
+            // ACTOR-STAMP-1 parity with runtime owned rows: never a protected property.
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| property.computed);
+                .is_none_or(|property| property.computed || property.protected());
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
@@ -1912,7 +1934,7 @@ fn owned_rows_effect_findings(
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,
                     format!(
-                        "row derivation for {id:?} may not write reserved, generated naming-series, computed, or unknown property {:?}",
+                        "row derivation for {id:?} may not write reserved, generated naming-series, computed, protected, or unknown property {:?}",
                         property.as_str()
                     ),
                     artifact,
@@ -1957,11 +1979,11 @@ fn owned_rows_effect_findings(
         {
             continue;
         }
-        if property.computed {
+        if property.computed || property.protected() {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(
-                    "parent values may not write computed property {:?}",
+                    "parent values may not write computed or protected property {:?}",
                     property.id.as_str()
                 ),
                 artifact,

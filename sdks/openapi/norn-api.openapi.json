@@ -10776,6 +10776,12 @@
           "idempotent": {
             "type": "boolean"
           },
+          "independentOf": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            }
+          },
           "inputSchema": {
             "$ref": "#/components/schemas/NornIrActionPayloadPropertyInputSchema"
           },

@@ -3535,6 +3535,7 @@ export interface components {
             effectProgram?: components["schemas"]["NornIrActionEffectProgram"];
             extensions?: components["schemas"]["NornIrActionPayloadPropertyExtensions"];
             idempotent: boolean;
+            independentOf?: components["schemas"]["NornIrPropertyId"][];
             inputSchema: components["schemas"]["NornIrActionPayloadPropertyInputSchema"];
             ledgerCategory?: string;
             ledgered: boolean;

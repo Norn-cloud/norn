@@ -378,7 +378,7 @@ impl EffectiveProperty {
         self.write_authority = WriteAuthority::RulesOnly;
     }
 
-    /// Whether only declared rule outputs may write this property.
+    /// FA-PROTECT-1: only rule outputs or the ACTOR-STAMP-1 create stamp write it.
     #[must_use]
     pub const fn protected(&self) -> bool {
         matches!(self.write_authority, WriteAuthority::RulesOnly)
