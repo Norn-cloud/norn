@@ -571,6 +571,15 @@ where
                 target_version,
             })
         }
+        // RECEIPT-CONSUME-1: the host refused the result inside the commit
+        // (revoked command authority or a passed deadline); nothing applied.
+        Err(CommitError::ReceiptNotAccepted { consumed })
+            if receipt_delivery.as_ref() == Some(&consumed) =>
+        {
+            Err(ActionRefusal::ReceiptRefused {
+                reason: crate::receipt_binding::ReceiptRefusal::NotAccepted,
+            })
+        }
         Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),
         )),
@@ -788,6 +797,7 @@ fn precondition_read_refusal<X>(
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
+        | CommitError::ReceiptNotAccepted { .. }
         | CommitError::DuplicateLink { .. }
         | CommitError::IdentifierTooLong { .. }
         | CommitError::LinkConflict { .. }
@@ -829,6 +839,7 @@ fn precondition_read_refusal<X>(
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
+        | CommitError::ReceiptNotAccepted { .. }
         | CommitError::Conflict { .. }
         | CommitError::DuplicateLink { .. }
         | CommitError::IdentifierTooLong { .. }

@@ -20,7 +20,7 @@ const CURATE_CASE = {
   title: "Curate case",
   description: "Pin a measured episode as a ledger-referenced curated case.",
   objectKind: "learning.CuratedCase",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "caseId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {
@@ -75,7 +75,7 @@ const CREATE_EVAL_SET = {
   title: "New eval set",
   description: "Create an unsealed eval set under a split key.",
   objectKind: "learning.EvalSet",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "evalSetId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {
@@ -288,17 +288,17 @@ async function mountCell(page: Page, options: MountOptions = {}) {
       const kind = url.searchParams.get("objectKind")
       const objectId = url.searchParams.get("objectId")
       if (kind === "learning.CuratedCase") {
-        return route.fulfill({ json: { items: objectId ? [SET_PROTECTED, UNCURATE_CASE] : [CURATE_CASE] } })
+        return route.fulfill({ json: { definitionsVersion: 1, items: objectId ? [SET_PROTECTED, UNCURATE_CASE] : [CURATE_CASE] } })
       }
       if (kind === "learning.EvalSet") {
-        if (!objectId) return route.fulfill({ json: { items: [CREATE_EVAL_SET] } })
+        if (!objectId) return route.fulfill({ json: { definitionsVersion: 1, items: [CREATE_EVAL_SET] } })
         const found = evalSets.find((s) => s.id === objectId)
         const items = found?.values?.["status"] === "sealed"
           ? [NEW_VERSION]
           : [RENAME_EVAL_SET, ADD_CASE, REMOVE_CASE, SEAL_EVAL_SET, DELETE_EVAL_SET]
-        return route.fulfill({ json: { items } })
+        return route.fulfill({ json: { definitionsVersion: 1, items } })
       }
-      return route.fulfill({ json: { items: [] } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: [] } })
     }
 
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
@@ -311,9 +311,14 @@ async function mountCell(page: Page, options: MountOptions = {}) {
         return route.fulfill({
           status: 422,
           json: {
+            format: "norn/refusal@2",
             code: "action.precondition_failed",
+            category: "precondition",
+            retryable: false,
+            reason: null,
             message: "Only episodes with a recorded outcome can be curated.",
-            diagnostics: [{ code: "learning.episode_unmeasured", message: "Episode outcome is not recorded yet.", span: { pointer: "/episodeId" } }],
+            explanation: "",
+            diagnostics: [{ code: "learning.episode_unmeasured", severity: "error", message: "Episode outcome is not recorded yet.", span: { pointer: "/episodeId" } }],
           },
         })
       }
