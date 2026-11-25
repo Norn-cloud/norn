@@ -3283,9 +3283,13 @@ impl<E: SqlEngine> CellStore<E> {
             if prior_receipt.is_none() && effective_batch.idempotency_key.is_some() {
                 self.scrub.borrow().refuse_unproven_miss()?;
             }
-            crate::quantity::clock_floor(&self.conn)?;
+            let floor = crate::quantity::clock_floor(&self.conn)?;
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
+            // RECEIPT-CONSUME-1: a host commit consuming a Function result follows the floor.
+            if matches!(origin, CommitOrigin::Host) && prior_receipt.is_none() && crate::function_receipt::follows_floor(&self.conn, &reconciled)? {
+                reconciled.logical_time = reconciled.logical_time.max(floor);
+            }
             if let Some(prior) = &prior_receipt
                 && prior.body.quantity.is_some() != reconciled.quantity.is_some()
             {

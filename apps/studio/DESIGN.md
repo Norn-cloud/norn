@@ -53,7 +53,7 @@ TARGET rule is never described as shipped.
 | Layer | Choice | Rule |
 | --- | --- | --- |
 | Runtime | React 19 | React DOM is the renderer. Alternatives need measured Boat proof (LCP, INP, portals). |
-| Behaviour | Vercel UI SDK (`@ui-sdk/core`, `@ui-sdk/react`, Apache-2.0) | Menu, Popover, Toolbar, Tooltip, SegmentedControl, ChromeDock; agent control (`createAgent`, TARGET). |
+| Behaviour | Vercel UI SDK (`@ui-sdk/core`, `@ui-sdk/react`, `@ui-sdk/web`, Apache-2.0; pinned exactly at `0.1.0-beta.17` in `apps/studio/package.json`) | Menu, Popover, Toolbar, Tooltip, SegmentedControl, ChromeDock; agent control (`createAgent`, TARGET). |
 | Headless primitives | Base UI (`@base-ui/react`, MIT) | Dialog (sheets, modals), Popover, Tabs, Toggle, DirectionProvider. |
 | Styling | Tailwind v4 + CSS custom properties | `@layer ui-sdk;` first, then Tailwind; tokens via `@theme inline`. No CSS-in-JS, no Panda. |
 | Icons | `lucide-react` | 1.6–1.7 stroke; size from the type step they sit beside. |

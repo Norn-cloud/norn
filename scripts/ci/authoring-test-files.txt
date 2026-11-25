@@ -7,6 +7,7 @@ test/builder-browser.test.ts
 test/builtins.test.ts
 test/cli-code-registry.test.ts
 test/cli-setup.test.ts
+test/codegen.test.ts
 test/compiler.test.ts
 test/connector.test.ts
 test/constitution.test.ts

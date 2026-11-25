@@ -171,6 +171,9 @@ impl<X> CommitError<X> {
     pub const fn category(&self) -> RefusalCategory {
         match self {
             Self::Law { reason, .. } => law_category(reason),
+            Self::ReceiptNotAccepted { .. } => {
+                crate::receipt_binding::ReceiptRefusal::NotAccepted.category()
+            }
             Self::AtomicBoundary { .. }
             | Self::AtomicDeliveryBoundary { .. }
             | Self::DuplicateKey { .. }
