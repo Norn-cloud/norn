@@ -17,14 +17,31 @@
 //! expired, minted for another operation or body, another tenant, a body
 //! naming no tenant, any method but `POST`, an unknown path) gets the same
 //! `401`, and no tenant database is opened, so a caller learns nothing about
-//! whether another tenant exists; a `400` or `404` is reachable only with a
-//! credential the cell minted for that exact request. Residual timing: every
-//! request pays the body digest and the keyring read, but only a
-//! well-formed credential naming a key id the keyring holds pays the
+//! whether another tenant exists. A `400` about the request's own parse or a
+//! `404` is reachable only with a credential the cell minted for that exact
+//! request; the transport's own refusals come earlier and say nothing about
+//! any tenant: a malformed head is a `400` before any credential is read,
+//! and a body over the bound (`413`) or shorter than its declared length
+//! (`400`) is answered to any well-formed, live credential naming a key id
+//! the keyring holds, before its signature is checked. Residual timing: every
+//! request pays the keyring read; only a well-formed, live credential naming
+//! a key id the keyring holds gets its body read and digested and pays the
 //! signature check (and, when it verifies, the scope check), so response
 //! time can tell such a credential from garbage. Key ids are not secret, and
 //! nothing about any tenant (whether it exists, what it holds) changes the
 //! time of a refusal.
+//!
+//! #1710: every connection's reads and writes run against absolute
+//! deadlines (`transport`), so how long one peer holds a worker is bounded.
+//! The head must arrive within `HEAD_DEADLINE` and within `MAX_HEAD_BYTES`,
+//! read no further than that budget; a credential that cannot verify (none,
+//! malformed, an unknown key, expired) is refused before any body is read
+//! or allocated; a body earns its time by the bytes that arrived, not the
+//! length it declares; and an answer has a deadline sized to its length.
+//! This bounds each connection, not the pool: peers opening connections
+//! faster than the deadlines free them can still keep every worker busy
+//! before any credential is verified; the pool itself is not yet admitted
+//! per caller.
 //!
 //! The cell still authorizes every request before it sends it and checks
 //! every answer. The daemon holds no storage credentials; a load reads a
@@ -38,7 +55,7 @@
 //! one a later landing made.
 
 use std::ffi::OsString;
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,10 +75,13 @@ use norn_kernel::LogicalTime;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// Longest accepted request head, in bytes.
-const MAX_HEAD_BYTES: usize = 16 * 1024;
-/// Longest accepted body (a sync batch), in bytes.
-const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+mod transport;
+
+use transport::{
+    Deadlined, HEAD_DEADLINE, Head, MAX_BODY_BYTES, Request, drain, read_body, read_head,
+    write_budget,
+};
+
 /// Largest dataset file a load downloads, in bytes.
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Connections served at once; more are answered 503.
@@ -359,8 +379,25 @@ impl Named {
 }
 
 impl Gate {
+    /// #1710: refuse, before any body is read, a request whose credential
+    /// no body could make verify: none, malformed, naming a key the keyring
+    /// does not hold, or expired. Passing admits nothing; [`Gate::admit`]
+    /// still decides the call once its body is read.
+    fn screen(&self, head: &Head) -> Result<(), Denied> {
+        let credential = head
+            .authorization
+            .as_deref()
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .ok_or(Denied::Malformed)?;
+        let keyring = read_keyring(&self.keys_file).map_err(|error| {
+            let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
+            Denied::UnknownKey
+        })?;
+        keyring.screen(credential, self.clock.now().as_millis())
+    }
+
     /// OLAP-04: the tenant `request` may touch, decided before it is routed
-    /// or parsed. Every request pays the body digest and the keyring read;
+    /// or parsed. Every screened request pays the body digest and the keyring read;
     /// the credential must verify for the operation the path names and this
     /// exact body (OLAP-03), and the body must name the credential's tenant.
     fn admit(&self, request: &Request) -> Result<TenantId, Denied> {
@@ -432,16 +469,9 @@ impl Scoped for SettleRequest {
     }
 }
 
-struct Request {
-    method: String,
-    path: String,
-    authorization: Option<String>,
-    body: Vec<u8>,
-}
-
 /// DEV-ONE-WRITE-1 (#1533): head and body go out in one write with
 /// `TCP_NODELAY`, so an answer never waits for the client's delayed ACK.
-fn respond(mut stream: &TcpStream, status: u16, kind: &str, body: &[u8]) -> std::io::Result<()> {
+fn respond(stream: &TcpStream, status: u16, kind: &str, body: &[u8]) -> std::io::Result<()> {
     let head = format!(
         "HTTP/1.1 {status} {}\r\ncontent-type: {kind}\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         reason(status),
@@ -451,8 +481,9 @@ fn respond(mut stream: &TcpStream, status: u16, kind: &str, body: &[u8]) -> std:
     bytes.extend_from_slice(head.as_bytes());
     bytes.extend_from_slice(body);
     stream.set_nodelay(true)?;
-    stream.write_all(&bytes)?;
-    stream.flush()
+    let mut out = Deadlined::new(stream, write_budget(bytes.len()))?;
+    out.write_all(&bytes)?;
+    out.flush()
 }
 
 const fn reason(status: u16) -> &'static str {
@@ -474,14 +505,37 @@ fn connection(
     engine: &dyn AnalyticalEngine,
     gate: &Gate,
 ) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    let request = match read_request(stream) {
+    let mut reader = BufReader::new(Deadlined::new(stream, HEAD_DEADLINE)?);
+    let head = match read_head(&mut reader) {
+        Ok(head) => head,
+        Err((status, refused)) => {
+            let sent = refuse(stream, status, &refused);
+            drain(&mut reader);
+            return sent;
+        }
+    };
+    if head.method == "GET" && head.path == "/healthz" {
+        return respond(stream, 200, "application/json", b"{\"ok\":true}");
+    }
+    // #1710: refuse a caller with no plausible credential, and a body over
+    // the bound, before any body is read or allocated.
+    let early = match gate.screen(&head) {
+        Err(denied) => Some(unauthorized(stream, denied)),
+        Ok(()) if head.length > MAX_BODY_BYTES => Some(refuse(
+            stream,
+            413,
+            &refusal("analytics.too_large", "the request body exceeds the bound"),
+        )),
+        Ok(()) => None,
+    };
+    if let Some(sent) = early {
+        drain(&mut reader);
+        return sent;
+    }
+    let request = match read_body(&mut reader, head) {
         Ok(request) => request,
         Err((status, refused)) => return refuse(stream, status, &refused),
     };
-    if request.method == "GET" && request.path == "/healthz" {
-        return respond(stream, 200, "application/json", b"{\"ok\":true}");
-    }
     let tenant = match gate.admit(&request) {
         Ok(tenant) => tenant,
         Err(denied) => return unauthorized(stream, denied),
@@ -493,12 +547,20 @@ fn connection(
             &refusal("analytics.unknown", "no such operation"),
         );
     }
-    let call = Call {
-        stream,
-        request: &request,
-        tenant: &tenant,
-    };
-    match request.path.as_str() {
+    route(
+        &Call {
+            stream,
+            request: &request,
+            tenant: &tenant,
+        },
+        engine,
+        gate,
+    )
+}
+
+/// An admitted call, routed by its path.
+fn route(call: &Call<'_>, engine: &dyn AnalyticalEngine, gate: &Gate) -> std::io::Result<()> {
+    match call.request.path.as_str() {
         "/v1/frontier" => call.answer(|r: FrontierRequest| engine.mirror_frontier(&r)),
         "/v1/sync" => call.answer(|r: SyncRequest| engine.mirror_sync(&r)),
         "/v1/evaluate" => call.answer(|r: EvaluateRequest| dispatch_evaluate(engine, &r)),
@@ -510,12 +572,12 @@ fn connection(
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreBody| {
             let stored = store(engine, &r);
-            gate.seam.stored(&tenant, stored.is_ok());
+            gate.seam.stored(call.tenant, stored.is_ok());
             stored
         }),
-        "/v1/export" => export(&call, engine),
+        "/v1/export" => export(call, engine),
         _ => refuse(
-            stream,
+            call.stream,
             404,
             &refusal("analytics.unknown", "no such operation"),
         ),
@@ -785,7 +847,8 @@ fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()>
     let sent = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::open(&path)?;
         let length = file.metadata()?.len();
-        let mut out = stream;
+        // #1710: the whole answer is sent within its own deadline.
+        let mut out = Deadlined::new(stream, write_budget(length))?;
         write!(
             out,
             "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncache-control: no-store\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
@@ -795,70 +858,4 @@ fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()>
     })();
     let _removed = std::fs::remove_file(&path);
     sent
-}
-
-fn read_request(stream: &TcpStream) -> Result<Request, (u16, EngineRefusal)> {
-    let invalid = |detail: String| (400, refusal("analytics.invalid", &detail));
-    let mut reader = BufReader::new(
-        stream
-            .take(u64::try_from(MAX_HEAD_BYTES.saturating_add(MAX_BODY_BYTES)).unwrap_or(u64::MAX)),
-    );
-    let mut line = String::new();
-    let mut head = 0_usize;
-    let mut next = |reader: &mut BufReader<_>, line: &mut String| {
-        line.clear();
-        let read = reader
-            .read_line(line)
-            .map_err(|e| invalid(format!("unreadable request: {e}")))?;
-        head = head.saturating_add(read);
-        if read == 0 || head > MAX_HEAD_BYTES {
-            return Err(invalid(
-                "the request head is missing or too long".to_owned(),
-            ));
-        }
-        Ok(())
-    };
-    next(&mut reader, &mut line)?;
-    let mut parts = line.split_whitespace();
-    let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
-        return Err(invalid("the request line is malformed".to_owned()));
-    };
-    let (method, path) = (
-        method.to_owned(),
-        target.split('?').next().unwrap_or_default().to_owned(),
-    );
-    let (mut length, mut authorization) = (0_usize, None);
-    loop {
-        next(&mut reader, &mut line)?;
-        let header = line.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        if let Some((name, value)) = header.split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                length = value
-                    .trim()
-                    .parse()
-                    .map_err(|e| invalid(format!("content-length: {e}")))?;
-            } else if name.eq_ignore_ascii_case("authorization") {
-                authorization = Some(value.trim().to_owned());
-            }
-        }
-    }
-    if length > MAX_BODY_BYTES {
-        return Err((
-            413,
-            refusal("analytics.too_large", "the request body exceeds the bound"),
-        ));
-    }
-    let mut body = vec![0_u8; length];
-    reader
-        .read_exact(&mut body)
-        .map_err(|e| invalid(format!("the body is shorter than content-length: {e}")))?;
-    Ok(Request {
-        method,
-        path,
-        authorization,
-        body,
-    })
 }

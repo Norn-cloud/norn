@@ -202,7 +202,7 @@ pub struct CellActor {
     /// its update: the three never interleave.
     deadline: Mutex<()>,
     live: crate::live::Sockets,
-    http: reqwest::Client,
+    http: crate::egress::Outbound,
     /// The wake's conformance seams.
     #[cfg(feature = "conformance")]
     pub(crate) seam: crate::conformance::WakeSeam,
@@ -220,17 +220,6 @@ impl std::fmt::Debug for CellActor {
     }
 }
 
-/// An outbound client that never follows a redirect.
-///
-/// # Errors
-/// The TLS backend failed to initialize.
-pub fn outbound_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context("build the outbound HTTP client")
-}
-
 #[async_trait]
 impl Actor for CellActor {
     type Input = ();
@@ -245,6 +234,7 @@ impl Actor for CellActor {
 
     async fn create(ctx: &Ctx<Self>) -> Result<Self> {
         let config = crate::config::get();
+        let http = crate::egress::Outbound::new(&config.connect_vars)?;
         let cell = CellThread::spawn(
             ctx.actor_id(),
             ctx.sql().clone(),
@@ -259,7 +249,7 @@ impl Actor for CellActor {
             writing: AtomicU32::new(0),
             deadline: Mutex::new(()),
             live: crate::live::Sockets::default(),
-            http: outbound_client()?,
+            http,
             #[cfg(feature = "conformance")]
             seam: crate::conformance::WakeSeam::default(),
             instance: uuid::Uuid::new_v4().to_string(),
@@ -521,7 +511,7 @@ impl CellActor {
             .jwks_url
             .clone()
             .context("NORN_HOST_JWKS_URL is not set")?;
-        crate::jwks::fetch_jwks(&self.http, url, reuse).await
+        crate::jwks::fetch_jwks(&self.http.any, url, reuse).await
     }
 
     async fn refresh_jwks(&self) -> bool {
@@ -861,7 +851,7 @@ impl CellActor {
             reply = self.cell_fetch(call.clone()).await?;
         }
         while let Some((token, planned)) = reply.then.take() {
-            let (status, bytes) = self.perform(&planned).await;
+            let (status, bytes) = Self::perform(&self.http.any, &planned).await;
             let now = now_ms();
             reply = self
                 .cell
@@ -958,6 +948,7 @@ impl CellActor {
             .to_owned();
         let sent = self
             .http
+            .any
             .post(format!("{url}/v1/{op}"))
             // OLAP-CRED-1: the credential the cell minted for this call.
             .bearer_auth(
@@ -1011,9 +1002,9 @@ impl CellActor {
         }
     }
 
-    /// Perform exactly the request the cell planned; the status and bytes go
-    /// back to the cell, unread here. A network failure is status 0.
-    async fn perform(&self, planned: &str) -> (u16, Vec<u8>) {
+    /// Perform exactly the request the cell planned, on `http`; the status and
+    /// bytes go back to the cell, unread here. A network failure is status 0.
+    async fn perform(http: &reqwest::Client, planned: &str) -> (u16, Vec<u8>) {
         let Ok(planned) = serde_json::from_str::<Value>(planned) else {
             return (0, Vec::new());
         };
@@ -1025,7 +1016,7 @@ impl CellActor {
             .and_then(Value::as_str)
             .and_then(|method| reqwest::Method::from_bytes(method.as_bytes()).ok())
             .unwrap_or(reqwest::Method::GET);
-        let mut request = self.http.request(method, url).timeout(SOURCE_FETCH_TIMEOUT);
+        let mut request = http.request(method, url).timeout(SOURCE_FETCH_TIMEOUT);
         if let Some(headers) = planned.get("headers").and_then(Value::as_object) {
             for (name, value) in headers {
                 if let Some(value) = value.as_str() {
@@ -1132,7 +1123,7 @@ impl CellActor {
             }
             if let Some(planned) = step.get("request") {
                 fetches = fetches.saturating_add(1);
-                response = Some(self.perform(&planned.to_string()).await);
+                response = Some(Self::perform(&self.http.sources, &planned.to_string()).await);
                 continue;
             }
             if step.get("continue").is_some() {

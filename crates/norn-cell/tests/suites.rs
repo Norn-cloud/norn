@@ -40,6 +40,8 @@ mod dataset_laws;
 #[cfg(all(feature = "datafusion", feature = "duckdb"))]
 #[path = "dataset_laws_datafusion.rs"]
 mod dataset_laws_datafusion;
+#[path = "definition_scope.rs"]
+mod definition_scope;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
 #[path = "jewelry_pricing.rs"]

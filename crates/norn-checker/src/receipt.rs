@@ -16,12 +16,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_canonical::{CanonicalJsonError, HashProfile, JsonValue};
-use norn_expr::{EntityDefinitions, EnvOptions, TypeEnvRef, ZenTypeEnv};
+use norn_expr::{TypeEnvRef, ZenTypeEnv};
 use norn_ir::identifier_limits::HISTORICAL_IDENTIFIER_PROFILE;
 pub use norn_ir::identifier_limits::IDENTIFIER_ADMISSION_PROFILE;
 use norn_ir::{
     ArtifactEnvelope, DiagnosticRemediation, DiagnosticSeverity, FlowSourceMap, LimitProfileRef,
-    PropertyTypeDef, PropertyTypeName, ResourceLimitProfile, RuntimeValue,
+    PropertyTypeName, ResourceLimitProfile, RuntimeValue,
 };
 
 use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
@@ -556,9 +556,9 @@ fn check_artifact_set_with_profile(
     }
     let mut type_env = None;
     if !has_errors(&diagnostics) {
-        match derive_type_env(artifacts, context.base, limits) {
-            Ok(env) => type_env = Some(env.reference()?),
-            Err(errors) => diagnostics.extend(errors.iter().map(|error| Diagnostic { witness: None,
+        match crate::entity_scopes::receipt_type_env(artifacts, context.base, limits) {
+            Ok(env_ref) => type_env = Some(env_ref),
+            Err(Ok(errors)) => diagnostics.extend(errors.iter().map(|error| Diagnostic { witness: None,
                 code: DiagnosticCode::new(codes::ENVIRONMENT_UNDERIVABLE),
                 severity: DiagnosticSeverity::Error,
                 message: format!(
@@ -568,6 +568,7 @@ fn check_artifact_set_with_profile(
                 artifact_id: None,
                 remediation: Some(DiagnosticRemediation::FixDefinition),
             })),
+            Err(Err(error)) => return Err(error.into()),
         }
     }
     let receipt = CheckReceipt {
@@ -728,22 +729,15 @@ fn verify_receipt(
         ));
     }
 
-    let derived_env = derive_type_env(artifacts, base, limits).map_err(|errors| {
-        invalid_receipt(format!(
-            "cannot derive the receipt's definition environment: {}",
-            errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; ")
-        ))
-    })?;
-    let version = parsed
-        .type_env
-        .as_ref()
-        .and_then(|reference| norn_expr::env::TypeEnvVersion::from_number(reference.version))
-        .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
-    let expected_env = derived_env.reference_at_version(version)?;
+    let expected_env = expected_type_env(
+        parsed
+            .type_env
+            .as_ref()
+            .map(|pinned| (pinned.id.as_str(), pinned.version)),
+        artifacts,
+        base,
+        limits,
+    )?;
     if !parsed.type_env.as_ref().is_some_and(|reference| {
         profile_ref_matches(
             reference,
@@ -948,65 +942,62 @@ pub fn recover_legacy_admission_receipt(
     })
 }
 
-/// The ZEN Expression type environment of the `EntityIR` v2 definitions in
-/// `base` and `artifacts` together, with the link depth of `limits`.
-///
-/// # Errors
-///
-/// Every [`norn_expr::EnvError`] of the derivation.
-pub fn derive_type_env(
+/// The whole-set ZEN Expression type environment of the `EntityIR` v2
+/// definitions in `base` and `artifacts` together, with the link depth of
+/// `limits`: what receipts pinned before scoped admission attest.
+pub(crate) fn derive_type_env(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
+    let pool: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
     let mut layer = Layer::default();
-    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
+    for (index, artifact) in pool.iter().enumerate() {
         if let Decoded::Root(root) = decode_v2(artifact) {
             layer.push(index, *root);
         }
     }
-    let catalog: Vec<PropertyTypeDef> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
-    let definitions = EntityDefinitions {
-        property_types: &catalog,
-        interfaces: &layer.interfaces,
-        object_types: &layer.object_types,
-        extensions: &layer.extensions,
+    crate::entity_scopes::definitions_env(&layer, &pool, limits)
+}
+
+/// The environment reference a stored receipt must match: the current
+/// [`crate::entity_scopes::SCOPED_TYPE_ENV_ID`] commitment, or, for a receipt
+/// pinned before scoped admission, the whole-set environment at its version
+/// once the set still passes the current cross-scope reference checks.
+fn expected_type_env(
+    pinned: Option<(&str, u32)>,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<TypeEnvRef, ReceiptError> {
+    let underivable = |errors: Vec<norn_expr::EnvError>| {
+        invalid_receipt(format!(
+            "cannot derive the receipt's definition environment: {}",
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ))
     };
-    let mut env =
-        ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
-    for artifact in base.iter().chain(artifacts) {
-        if matches!(
-            &artifact.payload,
-            norn_ir::ArtifactPayload::Rule(_) | norn_ir::ArtifactPayload::Action(_)
-        ) {
-            let payload_value = artifact.payload.to_json_value();
-            let Some(payload) = payload_value.as_object() else {
-                continue;
-            };
-            for member in ["inputSchema", "outputSchema"] {
-                if let Some(schema) = payload.get(member) {
-                    let name = format!(
-                        "exact.{}.{}.{}",
-                        artifact.artifact_id, artifact.version, member
-                    );
-                    let bound = if matches!(&artifact.payload, norn_ir::ArtifactPayload::Action(_))
-                        && member == "inputSchema"
-                    {
-                        env.bind_exact_action_schema(&name, schema)
-                    } else {
-                        env.bind_exact_schema(&name, schema)
-                    };
-                    env = bound.map_err(|reason| {
-                        vec![norn_expr::EnvError::Unresolved {
-                            site: name,
-                            name: reason,
-                        }]
-                    })?;
-                }
-            }
-        }
+    let (id, version) =
+        pinned.ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
+    if id == crate::entity_scopes::SCOPED_TYPE_ENV_ID {
+        return crate::entity_scopes::receipt_type_env(artifacts, base, limits)
+            .map_err(|error| error.map_or_else(ReceiptError::from, underivable));
     }
-    Ok(env)
+    let version = norn_expr::env::TypeEnvVersion::from_number(version)
+        .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
+    if let Some(finding) =
+        crate::entity_scopes::check_entity_reference_scopes(artifacts, base).first()
+    {
+        return Err(invalid_receipt(format!(
+            "the receipt predates scoped admission and its set fails it: {}",
+            finding.message
+        )));
+    }
+    let env = derive_type_env(artifacts, base, limits).map_err(underivable)?;
+    Ok(env.reference_at_version(version)?)
 }
 
 fn has_errors(diagnostics: &[Diagnostic]) -> bool {

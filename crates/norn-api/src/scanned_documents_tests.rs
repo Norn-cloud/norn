@@ -45,6 +45,7 @@ use norn_cell::engine::NativeEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::{CellStore, MAIN_WORLD, ObjectRecord, SqliteCell};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{DataQualityFindingStatus, DataQualityRuleRef, FactRef, RuntimeObject, RuntimeValue};
 use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey};
@@ -1338,8 +1339,7 @@ fn a_scanned_document_takes_its_issue_date_as_its_valid_time() {
         .map(|value| serde_json::from_value(value).expect("envelope"))
         .collect();
     let space = norn_checker::metric::derive::derive_metric_space(
-        &artifacts,
-        &std::collections::BTreeSet::new(),
+        &ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()),
         &norn_ir::LawRoot::Cell("org_demo/dev".to_owned()),
     )
     .expect("derived metric space");

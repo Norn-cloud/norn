@@ -21,9 +21,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use norn_checker::{
-    EffectiveCatalog, EntityArtifactSetContext, check_action_firing, check_artifact_set,
-};
+use norn_checker::entity_scopes::ScopedView;
+use norn_checker::{EntityArtifactSetContext, check_action_firing, check_artifact_set};
 use norn_ir::{ActionRoot, ArtifactEnvelope, JsonObject, PropertyTypeName};
 use serde_json::Value;
 
@@ -89,7 +88,7 @@ fn run(name: &str, case: &Value) -> Vec<Vec<String>> {
             .clone(),
     )
     .expect("action payload decodes");
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let object_type = catalog
         .object_type(
             case["object"]["entityArtifactId"]

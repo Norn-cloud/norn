@@ -8,6 +8,7 @@
 
 //! Correspondence to verification/definition-catalog-v1/SPEC.md.
 use norn_checker::definition_catalog::project;
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::{EntityArtifactSetContext, check_artifact_set, resolve_artifact_set};
 use norn_ir::definition_catalog::{
     ArtifactKey, DefinitionCatalog, DependencyVia, DependsOnRow, LawBinding, MapRule, Member,
@@ -843,7 +844,7 @@ fn two_installed_versions_of_one_type_bind_only_what_admission_binds() {
     let mut newer_child = serde_json::to_value(&child).expect("envelope encodes");
     newer_child["version"] = json!("2.0.0");
     let base = [envelope(newer_child), child, parent];
-    let effective = norn_checker::EffectiveCatalog::from_artifacts(&base);
+    let effective = ScopedView::uniform(&base, &BTreeSet::new()).into_catalog();
     assert!(matches!(
         effective.object_type("shop.RushRequest.entity"),
         Some(Err(_))

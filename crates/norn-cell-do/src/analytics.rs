@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 
 use crate::policy::{READ_ACTION, capability_name, scope_key};
 use crate::seed::SeedError;
+use norn_checker::entity_scopes::ScopedView;
 
 /// The conversion type the cell is opened with.
 pub const TYPE: &str = norn_cell::provision::K1_TYPE;
@@ -168,7 +169,13 @@ fn plan(
     }
     let artifact: ArtifactEnvelope =
         serde_json::from_value(artifact).map_err(|e| fail("entity", e))?;
-    let catalog = EffectiveCatalog::from_artifacts(&[artifact]);
+    let catalog = ScopedView::of(
+        &artifact,
+        std::slice::from_ref(&artifact),
+        &[],
+        &std::collections::BTreeSet::new(),
+    )
+    .into_catalog();
     let mut recovered: MetricDefinition = serde_json::from_str(include_str!(
         "../../../fixtures/ir/metrics/net-sales.definition.json"
     ))
@@ -246,7 +253,7 @@ impl DemoQuestions {
             scope,
             handle_key: Vec::new(),
             definitions: Vec::new(),
-            catalog: EffectiveCatalog::from_artifacts(&[]),
+            catalog: EffectiveCatalog::default(),
         }
     }
 

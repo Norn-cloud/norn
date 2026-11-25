@@ -13,6 +13,7 @@
 mod quantity_support;
 
 use norn_cell::{Model, SqliteCell, StoreOptions};
+use norn_checker::entity_scopes::ScopedView;
 use norn_ir::{
     ActionQuantityEffect, ActionQuantityOperation, ActionRoot, ArtifactEnvelope, ArtifactPayload,
     DiagnosticSeverity, ObjectTypeDef, RuleRoot,
@@ -832,19 +833,26 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
             .all(|d| d.severity != DiagnosticSeverity::Error),
         "{findings:?}"
     );
-    let env = norn_checker::derive_type_env(
-        &artifacts,
-        &[],
-        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-    )
-    .unwrap();
+    let environment = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .receipt_env(&norn_ir::ResourceLimitProfile::norn_limits_v1())
+        .map_err(|errors| format!("{errors:?}"))
+        .and_then(|env| env.reference().map_err(|error| error.to_string()));
+    assert!(
+        environment.is_ok(),
+        "type environment: {:?}",
+        environment.as_ref().err()
+    );
+    let environment_hash: String = environment
+        .into_iter()
+        .map(|reference| reference.sha256)
+        .collect();
     let rule = SynchronousRule::admit(
         action.synchronous_rule.clone().unwrap(),
         &writer,
         &BTreeMap::new(),
         norn_kernel::DecisionBinding {
             profile_id: "norn-zen/7".into(),
-            environment_hash: env.reference().unwrap().sha256,
+            environment_hash,
         },
     )
     .unwrap();

@@ -347,3 +347,64 @@ fn a_page_names_a_lifecycle_its_object_type_declares() {
         "{found:#?}"
     );
 }
+
+/// A host page composing the retained submit widget's `main` page.
+fn host() -> Value {
+    let node = |id: &str, component: &Value, children: &Value| json!({ "nodeId": id, "semanticId": id, "component": component, "children": children });
+    let compose = json!({ "kind": "composition", "widget": { "id": WIDGET_ID, "version": "0.1.0" }, "pageId": "main" });
+    let mut value = artifact(
+        "widget",
+        "commerce.host.widget",
+        &json!({
+            "widgetVersion": "0.1", "widgetId": "commerce.host.widget",
+            "dataDependencies": [], "viewStates": [{ "stateId": "ready", "kind": "ready" }],
+            "actionBindings": [], "permissions": [],
+            "ux": {
+                "uxVersion": "0.1", "pages": [{
+                    "pageId": "home", "name": "Host", "contextParams": [],
+                    "root": node("host-root", &json!({ "kind": "section", "section": {
+                        "sectionId": "host", "kind": "section", "label": { "en": "Host" },
+                        "fields": [], "order": 1
+                    }}), &json!([node("host-compose", &compose, &json!([]))]))
+                }],
+                "dataBindings": [], "fields": [], "forms": [], "navigationItems": [], "overrides": [],
+                "actionBindings": [], "actionPlacements": []
+            }
+        }),
+    );
+    value.set(
+        "dependencies",
+        json!([{ "artifactId": WIDGET_ID, "kind": "widget", "version": "0.1.0", "required": true }]),
+    );
+    value
+}
+
+#[test]
+fn a_composed_retained_page_is_held_to_its_lifecycle_composition() {
+    let mut unfired = submit_sync();
+    unfired["syncs"] = json!([{ "transitionId": "on-accepted", "lifecycleTransition": "reject" }]);
+    for (lifecycle, refused) in [(submit_sync(), false), (unfired, true)] {
+        let base: Vec<ArtifactEnvelope> = [
+            entity(|_| {}),
+            read_json("rule-ir-v2/valid/purchase-order-approval.rule.json"),
+            action(),
+            widget(&lifecycle),
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_value(value).req("artifact decodes"))
+        .collect();
+        let host: ArtifactEnvelope = serde_json::from_value(host()).req("host decodes");
+        let found = check_artifact_set(
+            &[host],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+        );
+        let host_refused = found.iter().any(|finding| {
+            finding.is_error() && finding.artifact_id.as_deref() == Some("commerce.host.widget")
+        });
+        assert_eq!(host_refused, refused, "{found:#?}");
+    }
+}

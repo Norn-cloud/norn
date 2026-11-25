@@ -519,6 +519,7 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
                 ("weekday", RuntimeValue::String("monday".to_owned())),
                 ("start_local", RuntimeValue::String("09:00".to_owned())),
                 ("end_local", RuntimeValue::String("17:00".to_owned())),
+                ("end_day_offset", RuntimeValue::Number(Decimal::from(0_i64))),
             ]),
             expected: Verdict::Holds,
         },
@@ -530,15 +531,28 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
                 ("weekday", RuntimeValue::String("monday".to_owned())),
                 ("start_local", RuntimeValue::String("17:00".to_owned())),
                 ("end_local", RuntimeValue::String("09:00".to_owned())),
+                ("end_day_offset", RuntimeValue::Number(Decimal::from(0_i64))),
             ]),
             expected: Verdict::Violated,
+        },
+        LawExampleCase {
+            name: "overnight working window 22:00..06:00 (+1 day) holds".to_owned(),
+            law_id: "time.WorkingWindow.valid_local_window".to_owned(),
+            subject: runtime_obj(&[
+                ("id", RuntimeValue::String("ww-night".to_owned())),
+                ("weekday", RuntimeValue::String("sunday".to_owned())),
+                ("start_local", RuntimeValue::String("22:00".to_owned())),
+                ("end_local", RuntimeValue::String("06:00".to_owned())),
+                ("end_day_offset", RuntimeValue::Number(Decimal::from(1_i64))),
+            ]),
+            expected: Verdict::Holds,
         },
     ]);
     let time_rec = Arc::new(DomainCoverageRecorder::new());
     let time_report = run_pack_mbt(&time_pack, |_| {
         SqlitePackHost::open(&time_pack, Arc::clone(&time_rec))
     })?;
-    assert_eq!(time_report.law_examples_checked, 2);
+    assert_eq!(time_report.law_examples_checked, 3);
     assert!(
         time_rec
             .snapshot()
