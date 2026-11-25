@@ -247,6 +247,7 @@ impl Actor for CellActor {
 
     async fn create(ctx: &Ctx<Self>) -> Result<Self> {
         let config = crate::config::get();
+        let http = crate::egress::Outbound::new(&config.connect_vars)?;
         let cell = CellThread::spawn(
             ctx.actor_id(),
             ctx.sql().clone(),
@@ -261,7 +262,7 @@ impl Actor for CellActor {
             writing: AtomicU32::new(0),
             deadline: Mutex::new(()),
             live: crate::live::Sockets::default(),
-            http: crate::egress::Outbound::new(&config.connect_vars)?,
+            http,
             #[cfg(feature = "conformance")]
             seam: crate::conformance::WakeSeam::default(),
             instance: uuid::Uuid::new_v4().to_string(),

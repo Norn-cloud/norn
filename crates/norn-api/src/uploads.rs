@@ -1064,7 +1064,7 @@ mod tests {
         let put = |length| s3.presign_put("k.csv", length, 1_794_484_800_000, URL_SECONDS);
         let sized = put(5);
         assert!(
-            sized.contains("X-Amz-SignedHeaders=content-length%3Bhost&"),
+            sized.ends_with("&X-Amz-SignedHeaders=content-length%3Bhost"),
             "{sized}"
         );
         assert!(sized.contains(
@@ -1072,7 +1072,7 @@ mod tests {
         ));
         assert_ne!(sized, put(6));
         let unsized_put = s3.presign("PUT", "k.csv", 1_794_484_800_000, URL_SECONDS);
-        assert!(unsized_put.contains("X-Amz-SignedHeaders=host&"));
+        assert!(unsized_put.ends_with("&X-Amz-SignedHeaders=host"));
         assert!(unsized_put.contains(
             "X-Amz-Signature=095d91f63acd9d9761cb14e0ec49dd38d7ceac935e0cadbf0e8bda82c82858f2"
         ));

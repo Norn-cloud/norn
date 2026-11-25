@@ -7,7 +7,7 @@
 //! an answer gets [`write_budget`] for its length. A body's buffer grows
 //! only as its bytes arrive and never past its declared length.
 
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
@@ -291,7 +291,9 @@ fn read_body_within(
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
     use std::net::TcpListener;
+    use std::sync::mpsc;
 
     use super::*;
 
@@ -301,6 +303,22 @@ mod tests {
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (server, _) = listener.accept().unwrap();
         (client, server)
+    }
+
+    /// Send `client` one byte every 20 ms, each well inside the per-read
+    /// wait, until told to stop (or the peer is gone).
+    fn trickle(mut client: TcpStream) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        let (stop, stopped) = mpsc::channel();
+        let trickling = std::thread::spawn(move || {
+            while let Err(mpsc::RecvTimeoutError::Timeout) =
+                stopped.recv_timeout(Duration::from_millis(20))
+            {
+                if client.write_all(b"x").is_err() {
+                    break;
+                }
+            }
+        });
+        (stop, trickling)
     }
 
     fn detail(refused: Result<impl Sized, (u16, EngineRefusal)>) -> String {
@@ -315,14 +333,7 @@ mod tests {
     #[test]
     fn a_trickling_head_is_cut_off_at_its_deadline() {
         let (mut client, server) = pair();
-        let trickle = std::thread::spawn(move || {
-            for _ in 0..200 {
-                if client.write_all(b"x").is_err() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        });
+        let (stop, trickling) = trickle(client);
         let started = Instant::now();
         let mut reader =
             BufReader::new(Deadlined::new(&server, Duration::from_millis(300)).unwrap());
@@ -330,7 +341,8 @@ mod tests {
         assert!(refused.starts_with("400 unreadable request"), "{refused}");
         assert!(started.elapsed() < Duration::from_secs(2), "{refused}");
         drop(server);
-        trickle.join().unwrap();
+        let _stopped = stop.send(());
+        trickling.join().unwrap();
     }
 
     /// A head line longer than the head budget is refused once the budget
@@ -407,7 +419,7 @@ mod tests {
         );
         assert_eq!(
             write_budget(u64::MAX),
-            TRANSFER_GRACE.saturating_add(Duration::from_millis(u64::MAX))
+            TRANSFER_GRACE.saturating_add(Duration::from_millis(140_737_488_355_327_999))
         );
         // A body: what arrived, at 1 MiB/s.
         assert_eq!(
@@ -428,14 +440,7 @@ mod tests {
         let declared =
             format!("POST /v1/sync HTTP/1.1\r\ncontent-length: {MAX_BODY_BYTES}\r\n\r\n");
         client.write_all(declared.as_bytes()).unwrap();
-        let trickle = std::thread::spawn(move || {
-            for _ in 0..200 {
-                if client.write_all(b"x").is_err() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        });
+        let (stop, trickling) = trickle(client);
         let mut reader = BufReader::new(Deadlined::new(&server, Duration::from_secs(5)).unwrap());
         let head = read_head(&mut reader).unwrap();
         let started = Instant::now();
@@ -447,7 +452,8 @@ mod tests {
         assert!(refused.starts_with("400 the body is shorter"), "{refused}");
         assert!(started.elapsed() < Duration::from_secs(2), "{refused}");
         drop(server);
-        trickle.join().unwrap();
+        let _stopped = stop.send(());
+        trickling.join().unwrap();
     }
 
     /// A body sent at speed is read whole, and its buffer is never more
