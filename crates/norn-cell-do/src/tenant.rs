@@ -19,6 +19,7 @@
 //!   receipt handles are keyed by the stage's lineage key; without one it
 //!   serves no action.
 
+use norn_cell::analytics::AnalyticalEngineId as Engine;
 use std::sync::Arc;
 
 use http::StatusCode;
@@ -233,7 +234,7 @@ impl<E: SqlEngine> Serving<E> {
             // here.
             // Not marked compiled on failure: the next request tries again,
             // so `/v1/access` never keeps the previous version's collections.
-            let served = norn_api::action_admission::prepare_action_model(&model)
+            let served = norn_api::action_admission::prepare_action_model_for(&model, &artifacts)
                 .map_err(|refusal| refusal.explanation)?;
             self.object_types = collections(served.object_types());
             let reveal = RevealPolicy::compile(&model, &artifacts, self.host.scope())
@@ -678,9 +679,9 @@ impl<E: SqlEngine> Tenant<E> {
     /// engine the host reaches; without it the cell has no analytics.
     /// OLAP-CRED-1: `issuer` is the host's signing key; every call carries a
     /// credential it mints for this cell's own tenant.
-    pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer) {
+    pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer, engine: Engine) {
         let tenant = norn_cell::analytics::TenantId::of_scope(&self.scope.key());
-        let capabilities = norn_cell::analytics::EngineCapabilities::DUCKDB;
+        let capabilities = norn_cell::analytics::EngineCapabilities::of(engine);
         self.engine
             .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant, capabilities));
     }
@@ -1195,7 +1196,7 @@ fn reopen<E: SqlEngine>(
             .map_err(|e| format!("active definitions: {e}"))?;
         // The serving model every install path checks against (DEFS-REOPEN-1):
         // the kernel's action types are part of it, as provisioned.
-        let model = norn_api::kernel_set::serving_model(&artifacts)
+        let model = norn_api::kernel_set::serving_model_installed(&artifacts, &active.model_hash)
             .map_err(|e| format!("active definitions: {e}"))?;
         CellStore::from_engine(engine, model).map_err(|e| format!("open: {e}"))
     })();

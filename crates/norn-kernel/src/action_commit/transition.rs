@@ -121,6 +121,11 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     record.parameter_pins.clone_from(&slice.parameter_pins);
+    // PRINCIPAL-INPUT-1: resolved once, after the replay check, and recorded.
+    if let Some(rule) = rule {
+        record.principal_inputs =
+            crate::principal_inputs::resolve::<H::Error>(rule, call, authorizer, &target)?;
+    }
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let (mut changes, decision_links) = match rule {
         Some(rule) => writer_output(
@@ -133,6 +138,7 @@ where
             &mut slice,
             &target,
             WriterTarget::Existing,
+            record.principal_inputs.as_ref(),
             limits,
         )?,
         None => (Vec::new(), Vec::new()),
@@ -197,7 +203,9 @@ pub(super) enum WriterTarget {
 }
 
 /// TXN-CLOSED-1 / CREATE-WRITER-1 (#1101): evaluate the pinned writer over the
-/// captured slice and the trusted actor, admitting only its declared
+/// captured slice, the trusted actor and the host-resolved `principal` inputs
+/// (PRINCIPAL-INPUT-1; `None` binds none, so a writer that declares principal
+/// inputs then refuses), admitting only its declared
 /// footprint and authorizing every object it touches before any commit.
 #[allow(
     clippy::too_many_arguments,
@@ -213,6 +221,7 @@ pub(super) fn writer_output<H>(
     slice: &mut LoadedActionSlice,
     target: &FactKey,
     mode: WriterTarget,
+    principal: Option<&crate::principal_inputs::ActionPrincipalInputs>,
     limits: &EnvelopeLimits,
 ) -> Result<WriterChanges, ActionRefusal<H::Error>>
 where
@@ -223,6 +232,7 @@ where
         call,
         &preparation.effective_input,
         &slice.values,
+        principal,
         &mut preparation.remaining_fuel,
     )?;
     check_action_envelope::<H::Error>(

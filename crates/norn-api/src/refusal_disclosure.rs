@@ -52,6 +52,12 @@ where
     ) -> Result<(), norn_kernel::ActionDenial> {
         self.inner.action_read_type(request)
     }
+    fn principal_inputs(
+        &self,
+        request: &norn_kernel::PrincipalInputsRequest<'_>,
+    ) -> Result<norn_kernel::ActionPrincipalInputs, norn_kernel::UnresolvedPrincipalInput> {
+        self.inner.principal_inputs(request)
+    }
     // Every other callback is the inner policy's: wrapping it adds the
     // diagnostic decision and nothing else.
     fn model_changed(&self, object_types: &[norn_ir::ObjectTypeDef]) {

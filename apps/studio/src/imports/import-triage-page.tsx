@@ -935,8 +935,9 @@ export function ImportTriagePage() {
 
       {read.isError && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-(--radius-panel) border border-(--panel-border) bg-card px-3.5 py-2.5 text-body text-foreground shadow-(--panel-shadow)">
-          <Dot tone="bad" />
-          <span className="min-w-0 flex-1">{read.error instanceof Error ? read.error.message : "The import triage batch could not be read."}</span>
+          <Dot tone="bad">
+            <span className="min-w-0 flex-1">{read.error instanceof Error ? read.error.message : "The import triage batch could not be read."}</span>
+          </Dot>
           <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
         </div>
       )}
@@ -959,8 +960,9 @@ export function ImportTriagePage() {
 
       {!read.isPending && !read.isError && read.data?.kind === "refused" && (
         <p role="alert" className="flex items-center gap-3 rounded-(--radius-panel) border border-(--panel-border) bg-card px-3.5 py-2.5 text-body text-foreground shadow-(--panel-shadow)">
-          <Dot tone="bad" />
-          <span className="min-w-0 flex-1">{read.data.refusal.message}</span>
+          <Dot tone="bad">
+            <span className="min-w-0 flex-1">{read.data.refusal.message}</span>
+          </Dot>
         </p>
       )}
 

@@ -42,7 +42,7 @@ export function Automations() {
             {items.map((item) => (
               <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="">{item.flow?.title ?? item.title ?? item.id}</div>
+                  <div>{item.flow?.title ?? item.title ?? item.id}</div>
                   <div className="font-mono text-meta text-muted-foreground">{item.id}{item.flow?.version ? ` · ${item.flow.version}` : ""}</div>
                 </div>
                 {item.canStart === false

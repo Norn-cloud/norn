@@ -52,7 +52,7 @@ export function RestatementCard() {
       <CardContent className="space-y-8">
         {restated(published, after, then).map((change) => (
           <div key={change.key} className="space-y-4">
-            <h3 className="">{change.label}</h3>
+            <h3>{change.label}</h3>
             <div className="grid gap-4 md:grid-cols-3">
               <Reading title="Published" when={read(answer.document)} bucket={change.published} />
               <Reading title="Corrected" when={read(corrected.document)} bucket={change.corrected} />

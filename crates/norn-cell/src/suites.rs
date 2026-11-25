@@ -8,8 +8,14 @@
 //! through the kernel path (`tests/support/governed.rs`).
 
 #[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "../tests/backends/duckdb.rs"]
+mod analytics_backend;
+#[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "../tests/analytics_engine.rs"]
 mod analytics_engine;
+#[cfg(all(feature = "datafusion", not(target_arch = "wasm32")))]
+#[path = "../tests/analytics_engine_datafusion.rs"]
+mod analytics_engine_datafusion;
 #[path = "../tests/answer_documents.rs"]
 mod answer_documents;
 #[path = "../tests/bench_latency.rs"]
@@ -37,6 +43,8 @@ mod exact_question;
 mod exact_values;
 #[path = "../tests/export_journal.rs"]
 mod export_journal;
+#[path = "../tests/export_residue.rs"]
+mod export_residue;
 #[path = "../tests/flow_keys.rs"]
 mod flow_keys;
 #[path = "../tests/flow_run.rs"]

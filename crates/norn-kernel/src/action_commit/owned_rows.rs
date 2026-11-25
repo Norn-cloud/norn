@@ -1087,6 +1087,7 @@ where
             &row_states,
         )?,
         trace: call.trace.clone(),
+        principal_inputs: None,
     };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if !parent_state.exists() && recorded.exists() {

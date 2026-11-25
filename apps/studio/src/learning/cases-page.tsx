@@ -476,7 +476,7 @@ function CasesPageContent() {
                             <TableBody>
                               {liveSetRow.item.caseRefs.map((ref) => (
                                 <TableRow key={ref.caseId}>
-                                  <TableCell className="">
+                                  <TableCell>
                                     <div>{ref.label ?? ref.caseId}</div>
                                     {technical && <code className="font-mono text-meta text-muted-foreground">{ref.caseId}</code>}
                                   </TableCell>
@@ -560,7 +560,7 @@ function CasesPageContent() {
                       </Link>
                     </dd>
                     <dt className="text-muted-foreground">Expected choice</dt>
-                    <dd className="">{liveCaseRow.item.expectedChoice}</dd>
+                    <dd>{liveCaseRow.item.expectedChoice}</dd>
                     <dt className="text-muted-foreground">Decision receipt</dt>
                     <dd><CopyId value={liveCaseRow.item.decisionReceipt.receiptHash} short={14} /> <span className="text-meta text-muted-foreground">commit {liveCaseRow.item.decisionReceipt.commitSeq}</span></dd>
                     <dt className="text-muted-foreground">Outcome receipt</dt>

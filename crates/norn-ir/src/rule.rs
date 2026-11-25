@@ -54,6 +54,11 @@ pub const DECIDE_INPUT_MEMBERS: [&str; 2] = ["slice", "event"];
 pub const DECIDE_OUTPUT_MEMBERS: [&str; 3] = ["facts", "commands", "timers"];
 /// Optional members a decide graph's `outputSchema` may additionally declare.
 pub const DECIDE_OPTIONAL_OUTPUT_MEMBERS: [&str; 1] = ["links"];
+/// The reserved decide input member that carries the host-resolved
+/// [`PrincipalInputDeclaration`]s (#1091). Never read from a request.
+pub const DECIDE_PRINCIPAL_MEMBER: &str = "principal";
+/// Optional members a decide graph's `inputSchema` may additionally declare.
+pub const DECIDE_OPTIONAL_INPUT_MEMBERS: [&str; 1] = [DECIDE_PRINCIPAL_MEMBER];
 
 /// Maximum causal depth admitted for rule-to-rule cascades.
 pub const MAX_RULE_CAUSAL_DEPTH: u8 = 8;
@@ -101,6 +106,13 @@ pub struct RuleRoot {
     /// `commands`; other command records cannot acquire this authority.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_commands: Vec<RuleSourceCommand>,
+    /// RuleIR v2 `decide`: the acting principal's attributes this decision
+    /// reads (PRINCIPAL-INPUT-1, #1091). The host resolves each from the
+    /// verified principal and the PDP and supplies it as the typed member
+    /// `principal.<name>` of the decide input; nothing else about the
+    /// principal is visible to the graph. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub principal_inputs: Vec<PrincipalInputDeclaration>,
     /// RuleIR v2 output defaults: values for declared output fields that the
     /// graph leaves unset (for example when no decision-table row matched).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +172,89 @@ pub struct RuleSourceCommand {
     /// Owner-scoped child-table desired sets derived from the decide input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub child_merges: Vec<ActionCommandChildMerge>,
+}
+
+/// One declared principal input of a `decide` rule (PRINCIPAL-INPUT-1,
+/// #1091): the typed column `principal.<name>` and where its value comes
+/// from. The value is resolved by the host; a request never supplies it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrincipalInputDeclaration {
+    /// The column name under the reserved `principal.` namespace.
+    pub name: String,
+    /// What the host resolves the column from.
+    pub kind: PrincipalInputKind,
+}
+
+/// What a [`PrincipalInputDeclaration`] reads. Externally tagged and closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PrincipalInputKind {
+    /// Whether the PDP finds the principal holding a role at a scope: a
+    /// boolean. The decision never sees role lists or scope keys.
+    HoldsRole(HoldsRoleInput),
+    /// The roles of a declared role profile the principal holds: a set of
+    /// strings.
+    RoleProfile(RoleProfileInput),
+    /// A declared scoped attribute, with the catalog's type.
+    Attribute(AttributeInput),
+}
+
+/// `holdsRole { role, at }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HoldsRoleInput {
+    /// A role the principal attribute catalog declares.
+    pub role: String,
+    /// The scope the PDP evaluates membership at.
+    pub at: HoldsRoleAt,
+}
+
+/// Where a [`HoldsRoleInput`] is evaluated: `"resource"`, or a list of scope
+/// dimensions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum HoldsRoleAt {
+    /// The scope of the decision's subject (the object the call targets).
+    Subject(SubjectScope),
+    /// The request scope, which must carry exactly these dimensions.
+    Scope(Vec<crate::access::ScopeDimension>),
+}
+
+/// The literal `"resource"` of [`HoldsRoleAt::Subject`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SubjectScope {
+    /// The decision subject's scope.
+    Resource,
+}
+
+/// `roleProfile { profile }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoleProfileInput {
+    /// A role profile the principal attribute catalog declares.
+    pub profile: String,
+}
+
+/// `attribute { name }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttributeInput {
+    /// A scoped attribute the principal attribute catalog declares.
+    pub name: String,
+}
+
+impl PrincipalInputKind {
+    /// The catalog entry this input reads.
+    #[must_use]
+    pub fn catalog_name(&self) -> &str {
+        match self {
+            Self::HoldsRole(input) => &input.role,
+            Self::RoleProfile(input) => &input.profile,
+            Self::Attribute(input) => &input.name,
+        }
+    }
 }
 
 /// The contract a RuleIR v2 graph implements. See the module docs.

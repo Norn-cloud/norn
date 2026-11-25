@@ -4,9 +4,9 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { sentence } from "@/components/lifecycle-view"
 import { useLocale } from "./lib/locale.tsx"
-import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
+import { Clock, GitCommitHorizontal, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/system/chip"
-import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
+import { FACT_STATUS_META, FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,7 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
+import { formatLocale } from "./lib/timeline.ts"
 import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
@@ -81,9 +82,15 @@ export function ObjectPage() {
   const reads = useQuery(untilDecided(decided?.reader.object(name, id), ["object", name, id]))
   const modeError = workspace.kind === "unavailable" ? workspace.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
-  // read again reads both, so neither is left from an earlier read.
+  // read again reads both, so neither is left from an earlier read. It reads the findings again too,
+  // under the reader's own key: a correction can release a held record or settle a finding, and the
+  // header and the Findings panel would otherwise keep the earlier answer while it is fresh (FINDINGS_STALE_MS).
   const queries = useQueryClient()
-  const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
+  const readAgain = () => {
+    void reads.refetch()
+    void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) })
+    if (workspace.kind === "live") void queries.invalidateQueries({ queryKey: workspace.reader.findings(name, id).queryKey, exact: true })
+  }
   // Retry decides the mode again (the shell's own retry); the record is read once it is decided,
   // at that mode's scope. An errored read under a decided mode is read again here.
   const retry = () => {
@@ -135,8 +142,11 @@ export function ObjectPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
-            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
-            {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
+            {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
+                the record: the title says exactly how many, and each value says how it was projected. */}
+            {recordStatus === "withheld" && maskedRecord !== undefined
+              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord, formatLocale(locale))}</Chip>
+              : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
@@ -153,7 +163,7 @@ export function ObjectPage() {
             <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>
-            <RecordActions objectType={name} id={id} onDone={() => { readAgain(); void review.refetch() }} />
+            <RecordActions objectType={name} id={id} onDone={readAgain} />
           </div>
         )}
       </header>
@@ -193,7 +203,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {workspace.kind === "live" && <Findings objectType={name} id={id} reader={workspace.reader} actionFor={corrections.actionFor} />}
+                {workspace.kind === "live" && <Findings objectType={name} id={id} reader={workspace.reader} actionFor={corrections.actionFor} quarantineStated={heldBack} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}
@@ -248,13 +258,26 @@ export function ObjectPage() {
           </TabsContent>
         </Tabs>
       )}
-      {corrections.sheet(() => { readAgain(); void review.refetch() })}
+      {corrections.sheet(readAgain)}
     </section>
     </RevealScope.Provider>
   )
 }
 
 const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const
+
+/**
+ * How many of the record's values the server projected for this reader, in words: "1 value masked",
+ * "2 values withheld", "3 values masked or withheld" when the modes differ. The count is in `numbers`,
+ * the reader's number format (`formatLocale`).
+ */
+export function maskedWords(masked: Readonly<Record<string, unknown>>, numbers = "en"): string {
+  const modes = Object.values(masked).map((entry) => (entry as { mode?: unknown } | null)?.mode)
+  const count = modes.length
+  const refused = modes.filter((mode) => mode === "refuse").length
+  const verb = refused === 0 ? "masked" : refused === count ? "withheld" : "masked or withheld"
+  return `${count.toLocaleString(numbers)} ${count === 1 ? "value" : "values"} ${verb}`
+}
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the

@@ -95,7 +95,7 @@ export function SourceConnections() {
         : (
           // The type is installed and the read failed (a refusal included): said plainly, quietly, with a way to try again.
           <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p className="min-w-0 text-body"><span className="">Couldn't read the connections.</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
+            <p className="min-w-0 text-body"><span>Couldn't read the connections.</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
             <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>
           </div>
         ))}
@@ -112,7 +112,7 @@ export function SourceConnections() {
               const read = connections.data
               return (
                 <TableRow key={id}>
-                  <TableCell><div className="">{values.label ?? id}</div><div className="text-meta text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
+                  <TableCell><div>{values.label ?? id}</div><div className="text-meta text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
                     {status.note && <div className="max-w-64 pt-1 text-meta whitespace-normal text-muted-foreground">{status.note}</div>}

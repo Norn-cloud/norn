@@ -1,7 +1,7 @@
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import type { ReactNode } from "react"
 import { KitPopoverContent, Popover } from "./kit"
-import { DOT, StatusDot, type DotTone } from "./status-dot"
+import { DOT, StatusDot, type DotTone, type Word } from "./status-dot"
 import { cn } from "@/lib/utils"
 
 /** How many hairline ticks the bar draws, whatever the total (DESIGN.md 12.4). */
@@ -23,7 +23,7 @@ export interface TickBarItem {
   readonly title: ReactNode
   readonly lang?: string
   /** The item's state, dot first; an item without one makes no claim. */
-  readonly state?: { readonly tone: DotTone; readonly word: ReactNode }
+  readonly state?: { readonly tone: DotTone; readonly word: Word }
 }
 
 /**

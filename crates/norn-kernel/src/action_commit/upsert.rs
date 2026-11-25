@@ -267,6 +267,7 @@ where
         to: String::new(),
         row_operations: Vec::new(),
         trace: call.trace.clone(),
+        principal_inputs: None,
     };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if !state.exists() && recorded.exists() {
@@ -397,6 +398,10 @@ where
                 &mut slice,
                 &target,
                 WriterTarget::Created,
+                // PRINCIPAL-INPUT-1: only a transition's writer is given
+                // principal inputs; a create's writer that declares any
+                // refuses `decision.principal_input_unavailable`.
+                None,
                 limits,
             )?;
             fold_into_create::<H::Error>(catalog, &target, &mut changes, facts)?;

@@ -9,6 +9,9 @@
 //! `NORN_RECORD_ENGINE_FIXTURE=$PWD/crates/norn-cell/tests/fixtures/engine-storage-v7.json \
 //!   cargo test -p norn-cell --lib suites::engine_fixture_record::record_engine_storage_v7_fixture -- --exact --ignored`
 //!
+//! v8 uses the same marked recorder on the last v8 engine, writing
+//! `fixtures/engine-storage-v8.json` instead.
+//!
 //! For v6, apply this recorder and the test-only checkpoint options in
 //! `support/engine_fixture.rs` to the named v6 checkout before recording.
 //!
@@ -19,9 +22,10 @@
 //! at e09c0f2e25, the last storage-version-4 engine, and
 //! `engine-storage-v5.json` on `main` at 919482b548, the last
 //! storage-version-5 engine, `engine-storage-v6.json` on `main` at
-//! 3a8dea5338, the OPEN-CHECKPOINT-1 storage-version-6 engine, and
+//! 3a8dea5338, the OPEN-CHECKPOINT-1 storage-version-6 engine,
 //! `engine-storage-v7.json` on `main` at 39e0c3e6ce, the last
-//! storage-version-7 engine.
+//! storage-version-7 engine, and `engine-storage-v8.json` on `main` at
+//! 0dad85e323, the last storage-version-8 engine.
 #![cfg(feature = "native")]
 #![allow(clippy::expect_used, missing_docs, reason = "fixture recorder")]
 

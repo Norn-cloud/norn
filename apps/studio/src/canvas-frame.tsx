@@ -343,16 +343,7 @@ function Frame(props: CanvasFrameProps) {
         {issues.length === 0 && <p className="px-3.5 py-3 text-meta text-muted-foreground">No problems in this definition.</p>}
         {issues.length > 0 && (
           <RowList>
-            {issues.map((issue, index) => (
-              <li key={index}>
-                {/* A finding is dot first: the code and its words in neutral text, where it is on the line under them. */}
-                <ListRow data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
-                  className="items-start disabled:cursor-default disabled:hover:bg-transparent" lead={<Dot tone="bad" className="mt-[8px]" />}
-                  title={<Iso className="font-mono text-meta tracking-[-0.01em]">{issue.code}</Iso>}
-                  description={<><span className="block text-foreground"><CodedMessage code={issue.code} message={issue.message} block /></span>
-                    <span className="block">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span></>} />
-              </li>
-            ))}
+            {issues.map((issue, index) => <li key={index}><ProblemRow issue={issue} onJump={() => jump(issue)} /></li>)}
           </RowList>
         )}
       </Well>
@@ -361,7 +352,7 @@ function Frame(props: CanvasFrameProps) {
   return (
     <div className={cn("grid gap-3", wide && "grid-cols-[minmax(0,1fr)_20rem]")}>
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
-        {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "flex items-start gap-1.5 px-3.5 pb-2 text-meta text-foreground" : "px-3.5 pb-2 text-meta text-muted-foreground"}>{notice.tone === "refusal" && <Dot tone="bad" className="mt-[6px]" />}{notice.text}</p>}
+        {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "flex items-start gap-1.5 px-3.5 pb-2 text-meta text-foreground" : "px-3.5 pb-2 text-meta text-muted-foreground"}>{notice.tone === "refusal" ? <Dot tone="bad" className="mt-[6px]">{notice.text}</Dot> : notice.text}</p>}
         <Well>
           {/* Clipped, not hidden: a clip is no scroll container, so focusing a node never scrolls the canvas or the page. */}
           <div ref={surface} data-canvas-surface data-canvas-id={canvasId} className="relative h-[38rem] w-full overflow-clip">
@@ -496,13 +487,36 @@ const SEVERITY: Readonly<Record<string, { readonly tone: DotTone; readonly word:
   info: { tone: "quiet", word: "Note" },
 }
 
+/** A finding's severity: its dot's tone and the word beside it. */
+const severityOf = (issue: Issue) => SEVERITY[issue.severity ?? ""] ?? { tone: "bad" as const, word: "Problem" }
+
+/**
+ * A row of the Problems panel, read as IssueCard reads: the severity word beside its dot, then the
+ * message in plain words and where it is. The code behind it is shown only in the Technical view, so
+ * the row's name is never a checker code.
+ */
+function ProblemRow({ issue, onJump }: { readonly issue: Issue; readonly onJump: () => void }) {
+  const { view } = useView()
+  const severity = severityOf(issue)
+  return (
+    <ListRow data-testid="problem" onClick={onJump} disabled={!issue.node && !issue.edge}
+      className="disabled:cursor-default disabled:hover:bg-transparent"
+      title={<Dot tone={severity.tone} className="me-1.5 align-middle">{severity.word}</Dot>}
+      description={<>
+        <span className="block text-foreground"><CodedMessage code={issue.code} message={issue.message} block /></span>
+        <span className="block">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
+        {view === "technical" && <Iso className="block font-mono tracking-[-0.01em]">{issue.code}</Iso>}
+      </>} />
+  )
+}
+
 /**
  * A finding in a side panel, on the panel's own neutral well (no frame, no tint): its severity dot first with the
  * word beside it, then the message in plain words; the code behind it is shown only in the Technical view.
  */
 export function IssueCard({ issue }: { readonly issue: Issue }) {
   const { view } = useView()
-  const severity = SEVERITY[issue.severity ?? ""] ?? { tone: "bad" as const, word: "Problem" }
+  const severity = severityOf(issue)
   return (
     <div data-issue={issue.code} className="space-y-0.5 text-meta">
       <StatusDot tone={severity.tone}>{severity.word}</StatusDot>

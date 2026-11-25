@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import { Scale, ShieldAlert, ShieldCheck } from "lucide-react"
 import { Chip } from "@/components/system/chip"
 import { RowList, TypeDisc } from "@/components/system/list-row"
-import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { Panel, Well } from "@/components/system/panel"
 import { SourceTag } from "@/components/system/source-tag"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -228,7 +228,8 @@ export function LawsPanel({ concept, label = "Rules it must keep", enforced = tr
   return (
     <Panel icon={Scale} label={label}>
       <Well>
-        {empty && <EmptyState icon={Scale}>{heldOnly ? "No rule is holding back records of this type." : "No rule is declared on this object type itself."}</EmptyState>}
+        {/* Nothing to list is one quiet line, not a tall empty card: the panel's title already says what would be here. */}
+        {empty && <p data-empty="" className="px-4 py-3 text-body text-muted-foreground">{heldOnly ? "No rule is holding back records of this type." : "No rules on this type."}</p>}
         {!empty && (
           <RowList>
             {shownLaws.map(({ law, held }) => <li key={law.id}><LawRow law={law} held={held} scanLimit={bound} /></li>)}

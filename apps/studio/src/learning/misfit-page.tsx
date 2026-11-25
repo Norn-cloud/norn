@@ -64,7 +64,7 @@ function RateCell({ figure }: { readonly figure: RateFigure | null }) {
   if (figure.percent === null) return <span className="text-muted-foreground">—</span>
   return (
     <span className="inline-flex items-baseline justify-end gap-2 tabular-nums">
-      <span className="">{figure.percent}</span>
+      <span>{figure.percent}</span>
       {figure.numerator !== null && figure.denominator !== null && (
         <span className="text-meta text-muted-foreground">({groupDigits(figure.numerator)}/{groupDigits(figure.denominator)})</span>
       )}
@@ -251,7 +251,7 @@ function MisfitPageContent() {
                   {misfit.rows.map((row) => (
                     <TableRow key={row.lawId} data-misfit-law={row.lawId}>
                       <TableCell className="whitespace-normal">
-                        <div className="">{lawTitle(row.lawId)}</div>
+                        <div>{lawTitle(row.lawId)}</div>
                         {technical && <code className="font-mono text-meta text-muted-foreground">{row.lawId}</code>}
                       </TableCell>
                       <TableCell className="text-end"><RateCell figure={row.override} /></TableCell>
@@ -341,7 +341,7 @@ function MisfitPageContent() {
                 <TableBody>
                   {triage.weeks.map((w) => (
                     <TableRow key={w.weekStart} data-triage-week={w.weekStart}>
-                      <TableCell className="">{w.label}</TableCell>
+                      <TableCell>{w.label}</TableCell>
                       {VERDICTS.map((v) => {
                         const cell = w.counts[v]
                         return (

@@ -40,7 +40,7 @@ function Verdict({ verdict }: { readonly verdict: Guarantees["verdict"] }) {
 function Story({ scenario }: { readonly scenario: NonNullable<Guarantees["goals"][number]["scenario"]> }) {
   return (
     <div className="space-y-2 px-4 py-3 text-body">
-      <div className="">{scenario.kind === "counterexample" ? "The model checker found a case that breaks the rule" : "A case the rule allows, showing it is not vacuous"}</div>
+      <div>{scenario.kind === "counterexample" ? "The model checker found a case that breaks the rule" : "A case the rule allows, showing it is not vacuous"}</div>
       <ol className="space-y-1">
         {scenario.states.map((state, step) => (
           <li key={step} className="tabular-nums">
@@ -107,9 +107,9 @@ function Document({ name, document }: { readonly name: string; readonly document
       ))}
       <Panel icon={ShieldCheck} label="How strongly it is checked">
         <Well className="divide-y">
-          <div className="px-4 py-3 text-body"><span className="">Model checking: </span>{levelWords(document.level)} · {document.tools.map(({ id, version }) => `${id} ${version}`).join(", ")}</div>
-          <div className="px-4 py-3 text-body"><span className="">Runtime enforcement: </span>{document.runtimeEnforcement.kind === "available" ? "Recorded" : `Not yet: ${document.runtimeEnforcement.reason}`}</div>
-          <div className="px-4 py-3 text-body"><span className="">Parity tests: </span>{document.parity.kind === "available" ? "Recorded" : `Not yet: ${document.parity.reason}`}</div>
+          <div className="px-4 py-3 text-body"><span>Model checking: </span>{levelWords(document.level)} · {document.tools.map(({ id, version }) => `${id} ${version}`).join(", ")}</div>
+          <div className="px-4 py-3 text-body"><span>Runtime enforcement: </span>{document.runtimeEnforcement.kind === "available" ? "Recorded" : `Not yet: ${document.runtimeEnforcement.reason}`}</div>
+          <div className="px-4 py-3 text-body"><span>Parity tests: </span>{document.parity.kind === "available" ? "Recorded" : `Not yet: ${document.parity.reason}`}</div>
           <Bounds json={document.boundsJson} />
         </Well>
       </Panel>

@@ -563,8 +563,9 @@ function ConnectionBanner() {
   if (!unavailable) {
     return (
       <div role="status" data-connection="retrying" className={cn(line, "text-foreground")}>
-        <Dot tone="held" />
-        <span className="min-w-0 truncate">Couldn't reach the cell.</span>
+        <Dot tone="held">
+          <span className="min-w-0 truncate">Couldn't reach the cell.</span>
+        </Dot>
         <span className="hidden text-muted-foreground sm:inline">Reconnecting…</span>
         <Button type="button" variant="outline" size="sm" className="ms-auto shrink-0" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
       </div>
@@ -574,8 +575,9 @@ function ConnectionBanner() {
   const info = explainError(mode.error ?? mode.failureReason, locale, view)
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"} className={line}>
-      <Dot tone="bad" />
-      <span className="shrink-0 text-foreground">Workspace unavailable</span>
+      <Dot tone="bad">
+        <span className="shrink-0 text-foreground">Workspace unavailable</span>
+      </Dot>
       <span className="hidden min-w-0 truncate text-muted-foreground sm:inline" title={info.headline}>{info.headline}</span>
       {info.incidentId && <span className="hidden shrink-0 items-center gap-1 text-meta text-muted-foreground sm:inline-flex">Incident <CopyId value={info.incidentId} /></span>}
       <Popover>

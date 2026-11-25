@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { avatarIndex, Initials, initialsOf, ListRow, RowList, TypeDisc } from "../src/components/system/list-row"
 import { Panel, Well } from "../src/components/system/panel"
 import { SourceTag } from "../src/components/system/source-tag"
-import { StatusDot } from "../src/components/system/status-dot"
+import { Dot, StatusDot } from "../src/components/system/status-dot"
 import { TableCard } from "../src/components/system/table-card"
 import { filledTicks, TICKS } from "../src/components/system/tick-bar"
 import { contrastOn, parseColor } from "../src/lib/color.ts"
@@ -69,6 +69,25 @@ test("a StatusDot is a dot and its word in muted text, never a filled pill; a So
   expect(tag).toContain("font-mono")
   expect(tag).toContain("<bdi")
   expect(tag).not.toMatch(/\bbg-/)
+})
+
+test("a dot always has its word: beside it as its next sibling, or as its name when it stands alone (DESIGN.md 4.3)", () => {
+  // The word is rendered right after the dot with no wrapper, so the caller's flex and gap still apply.
+  const beside = renderToStaticMarkup(<p className="flex gap-2"><Dot tone="bad">Not saved.</Dot></p>)
+  expect(beside).toMatch(/^<p class="flex gap-2"><span aria-hidden="true" data-slot="dot" data-tone="bad"[^>]*>.*<\/span>Not saved\.<\/p>$/)
+  const named = renderToStaticMarkup(<Dot tone="held" aria-label="Inbox, new activity" />)
+  expect(named).toContain('role="img"')
+  expect(named).toContain('aria-label="Inbox, new activity"')
+  expect(named).not.toContain("aria-hidden")
+  const missing: string | undefined = undefined
+  // @ts-expect-error a dot with no word does not compile
+  void (<Dot tone="bad" />)
+  // @ts-expect-error nor does one whose word may be missing
+  void (<Dot tone="bad">{missing}</Dot>)
+  // @ts-expect-error nor does one whose word is conditional
+  void (<Dot tone="bad">{missing !== undefined && "Not saved."}</Dot>)
+  // @ts-expect-error a StatusDot's word may not be missing either
+  void (<StatusDot tone="bad">{missing}</StatusDot>)
 })
 
 test("a TableCard is always a Panel's well: it brings a Panel only when it is not in one", () => {

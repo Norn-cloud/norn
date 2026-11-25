@@ -14,6 +14,9 @@
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "analytics_backend.rs"]
+mod analytics_backend;
 #[path = "bench_clauses.rs"]
 mod bench_clauses;
 #[path = "bench_import.rs"]
@@ -34,6 +37,9 @@ mod commit_path;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "dataset_laws.rs"]
 mod dataset_laws;
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "dataset_laws_datafusion.rs"]
+mod dataset_laws_datafusion;
 #[path = "definition_scope.rs"]
 mod definition_scope;
 #[path = "explorer_documents.rs"]
@@ -54,6 +60,8 @@ mod model_interfaces;
 mod ontology_lending;
 #[path = "parent_rows.rs"]
 mod parent_rows;
+#[path = "principal_inputs.rs"]
+mod principal_inputs;
 #[path = "query_envelope.rs"]
 mod query_envelope;
 #[path = "query_lineage_sources.rs"]

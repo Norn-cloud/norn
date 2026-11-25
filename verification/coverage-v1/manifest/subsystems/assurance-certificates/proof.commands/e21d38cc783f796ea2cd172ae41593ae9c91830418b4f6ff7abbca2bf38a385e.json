@@ -1,0 +1,4 @@
+{
+  "order": 6,
+  "value": "lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean"
+}

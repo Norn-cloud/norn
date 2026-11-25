@@ -159,7 +159,7 @@ export function ProposalCard({ proposal, catalog, preview }: { readonly proposal
       <header className="flex flex-wrap items-start gap-2">
         <Mascot size={20} state={proposal.state === "refused" ? "unavailable" : proposal.state === "pending" ? "asking" : "answered"} className="mt-0.5" />
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="">{proposal.definition.title}</h3>
+          <h3>{proposal.definition.title}</h3>
           <p className="text-meta text-muted-foreground">You asked: “{proposal.request}”</p>
         </div>
         <Badge variant={state.variant}>{state.label}</Badge>

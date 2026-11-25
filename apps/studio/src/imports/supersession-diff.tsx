@@ -240,14 +240,15 @@ function SupersessionDiffCard({
             {resolved !== null ? (
               <div role="status" data-supersession-resolved={resolved.choice} className="space-y-1.5 text-meta">
                 <div className="flex flex-wrap items-center gap-2 text-body text-foreground">
-                  <Dot tone="live" />
-                  <span>
-                    {resolved.choice === "accept_newer"
-                      ? "Accepted newer artifact as superseding correction"
-                      : resolved.choice === "keep_earlier"
-                        ? "Kept earlier artifact as authoritative"
-                        : "Kept both artifacts quarantined as disputed"}
-                  </span>
+                  <Dot tone="live">
+                    <span>
+                      {resolved.choice === "accept_newer"
+                        ? "Accepted newer artifact as superseding correction"
+                        : resolved.choice === "keep_earlier"
+                          ? "Kept earlier artifact as authoritative"
+                          : "Kept both artifacts quarantined as disputed"}
+                    </span>
+                  </Dot>
                 </div>
                 <p className="text-muted-foreground">
                   Historical evidence preserved: immutable artifact <code className="font-mono text-foreground"><bdi>{resolved.preservedHistoricalArtifactId}</bdi></code> remains linked and readable.
@@ -317,8 +318,9 @@ function SupersessionDiffCard({
                     data-supersession-notice={draft.notice.kind}
                     className="flex flex-wrap items-center gap-2 text-meta text-foreground"
                   >
-                    <Dot tone={draft.notice.kind === "pending" ? "held" : "bad"} />
-                    <span className="min-w-0 flex-1">{draft.notice.message}</span>
+                    <Dot tone={draft.notice.kind === "pending" ? "held" : "bad"}>
+                      <span className="min-w-0 flex-1">{draft.notice.message}</span>
+                    </Dot>
                     {draft.notice.kind === "error" && (
                       <Button type="button" size="sm" variant="outline" disabled={draft.pending} onClick={() => void onCommit()}>
                         Retry

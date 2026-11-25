@@ -135,7 +135,7 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
                   autoComplete={activeMode === "sign-up" ? "new-password" : "current-password"} />
               )}
               {activeMode === "sign-up" && <p className="text-meta text-muted-foreground">At least 12 characters. You start with your own workspace.</p>}
-              {message && <p role={message.tone === "error" ? "alert" : "status"} className={cn("flex items-center gap-2 text-meta", message.tone === "error" ? "text-foreground" : "text-muted-foreground")}>{message.tone === "error" && <Dot tone="bad" />}{message.text}</p>}
+              {message && <p role={message.tone === "error" ? "alert" : "status"} className={cn("flex items-center gap-2 text-meta", message.tone === "error" ? "text-foreground" : "text-muted-foreground")}>{message.tone === "error" ? <Dot tone="bad">{message.text}</Dot> : message.text}</p>}
               <Button type="submit" disabled={pending}>{pending ? "Working…" : activeMode === "email-link" ? "Send link" : heading}</Button>
               </fieldset>
             </form>

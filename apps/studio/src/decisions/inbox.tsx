@@ -113,15 +113,18 @@ export function DecisionsPage() {
           <li key={d.id}>
             <button type="button" onClick={() => choose(d.id)} aria-current={selected?.id === d.id ? "true" : undefined}
               className="grid min-h-12 w-full gap-1 rounded-(--radius-row) px-3 py-2.5 text-start transition-colors outline-none hover:bg-(--well-hover) focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring aria-current:bg-card aria-current:ring-1 aria-current:ring-panel-border motion-reduce:transition-none">
+              {/* On a phone the deadline moves to the meta line, so the question has the row's full width to wrap in. */}
               <span className="flex items-baseline gap-3">
-                <span className="line-clamp-2 min-w-0 flex-1 text-body">{d.question}</span>
-                <span className="shrink-0 text-meta"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>
+                <span data-question="" className="line-clamp-3 min-w-0 flex-1 text-body text-pretty sm:line-clamp-2">{d.question}</span>
+                <span className="shrink-0 text-meta max-sm:hidden"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>
               </span>
-              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
+              {/* Items are spaced by the gap alone: a wrapped line never starts or ends on a stray separator. */}
+              <span data-meta="" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
+                <span className="shrink-0 sm:hidden"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>
                 <RiskChip risk={d.risk} />
                 <span>{flowTitle(d)} · {stepTitle(d)}</span>
-                <span aria-hidden>·</span><span>{d.options.length} options</span>
-                {d.agentPick !== null && <><span aria-hidden>·</span><span className="inline-flex items-center gap-1">Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span></>}
+                <span className="whitespace-nowrap">{d.options.length} options</span>
+                {d.agentPick !== null && <span className="inline-flex items-center gap-1">Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span>}
               </span>
             </button>
           </li>
@@ -182,15 +185,16 @@ function RequestedCalls() {
         {items.map((item) => (
           <li key={item.id} className="flex min-h-12 flex-wrap items-center gap-3 rounded-(--radius-row) px-3 py-2.5">
             {/* Dot-first (DESIGN.md 4.3, 12): one dot per outcome; the words below say which. */}
-            <Dot tone={requestDot(item)} data-status={item.status} />
-            <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
-              <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-                <span>{requestedAction(actions, item).title}</span>
-                {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
-              </span>
-              <span className="line-clamp-2 text-body">{item.question}</span>
-              <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
-            </button>
+            <Dot tone={requestDot(item)} data-status={item.status}>
+              <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
+                <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+                  <span>{requestedAction(actions, item).title}</span>
+                  {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
+                </span>
+                <span className="line-clamp-2 text-body">{item.question}</span>
+                <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
+              </button>
+            </Dot>
             <RiskChip risk={item.risk} />
             {item.canRun && <Button type="button" size="sm" onClick={() => run(item)}><Play /> Approved, run it</Button>}
           </li>

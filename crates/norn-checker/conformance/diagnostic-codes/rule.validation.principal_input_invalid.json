@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.principal_input_invalid",
+  "message": "{detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

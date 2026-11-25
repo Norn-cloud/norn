@@ -82,7 +82,7 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale,
   if (data === undefined || data.kind === "unavailable") return <p className="text-body text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
   if (data.kind === "refused" && MOVED.has(data.refusal.code)) return (
     <div role="status" className="space-y-2 rounded-md border p-3 text-body">
-      <p><span className="">The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
+      <p><span>The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
       {onStale ? <button type="button" className="underline underline-offset-4" onClick={onStale}>Ask again for the current number</button> : <p className="text-muted-foreground">Run the question again to trace the current number.</p>}
     </div>
   )
@@ -115,7 +115,7 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale,
             <TableCell className="text-end tabular-nums">{amounts(read, index)}</TableCell>
             <TableCell>{contribution.source.status === "resolved"
               ? contribution.source.provenance?.sourceRecordRef
-                ? <><div className="">{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-meta text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
+                ? <><div>{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-meta text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
                 : <span className="text-muted-foreground">Resolved</span>
               : <span className="text-muted-foreground" title={contribution.source.status === "restricted" ? "Your role may not see where this record came from." : "The cell retains no source record for it."}>{contribution.source.status === "restricted" ? "Withheld" : "None retained"}</span>}</TableCell>
             <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-meta text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
@@ -156,7 +156,7 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
       : undefined)
   return (
     <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-body">
-      <p><span className="">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
+      <p><span>{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
       {/* The law or rule that refused, as the server states it: the reason stays in view, not only under Technical. */}
       {serverReason && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]" dir="auto">{serverReason}</p>}
       <details open={view === "technical"} className="text-meta text-muted-foreground">
@@ -276,7 +276,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
     <section className="space-y-5">
       <div className="space-y-2 px-1">
         {heading === "none" ? null : heading === "h1" ? <h1 className="text-title font-normal tracking-[-0.025em]">{named}</h1>
-          : heading === "h3" ? <h3 className="">{named}</h3>
+          : heading === "h3" ? <h3>{named}</h3>
           : <h2 className="text-heading font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
         <p className="text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
@@ -462,7 +462,7 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3", t
     return <LoadState status="error" error={run.error ?? new Error("The cell did not answer.")} isFetching={run.isFetching} onRetry={() => void run.refetch()}>{() => null}</LoadState>
   }
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
-  if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="">{message}</span> <span className="font-mono text-meta text-muted-foreground">{code}</span></div>)}</div>
+  if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span>{message}</span> <span className="font-mono text-meta text-muted-foreground">{code}</span></div>)}</div>
   if (result.kind !== "answer") return <p role="status" className="text-body text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
   const read: QuestionAnswer = { ...declared, question: readDocument<Question>(JSON.stringify(question), "live"), answer: result.read }
   return <AnswerView read={read} title={title} unit={unit} heading={heading} total={total} originScope={boundScope} onStale={() => void run.refetch()}

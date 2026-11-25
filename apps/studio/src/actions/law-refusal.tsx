@@ -96,7 +96,7 @@ function RefusalSteps({ variant, request, check, why, at: answered, decidedAt }:
     <div role="alert" data-refusal={variant} className="overflow-hidden rounded-xl border border-border bg-card text-body">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
         <Chip tone="red" icon={ShieldX}>Refused</Chip>
-        <span className="">{variant === "redacted" ? "Refused by a law. Nothing was written." : "This change breaks a rule, so nothing was saved"}</span>
+        <span>{variant === "redacted" ? "Refused by a law. Nothing was written." : "This change breaks a rule, so nothing was saved"}</span>
       </div>
       <ol className="px-3 pt-3">
         {request && (

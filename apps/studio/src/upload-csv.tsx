@@ -94,7 +94,7 @@ export function UploadCsv() {
           <div className="space-y-4">
             <p className="text-body text-muted-foreground tabular-nums">{completed.rows} rows, {completed.columns.length} columns, {completed.size} bytes · sha256 <code className="font-mono text-meta">{completed.sha256.slice(0, 16)}…</code></p>
             <label className="block space-y-1 text-body">
-              <span className="">Type name</span>
+              <span>Type name</span>
               <Input value={typeName} placeholder="e.g. Sale" onChange={(event) => setTypeName(event.target.value)} />
               <span className="block text-meta text-muted-foreground">One word starting with a capital letter; the cell refuses any other.</span>
             </label>
@@ -142,7 +142,7 @@ export function UploadCsv() {
           <div className="space-y-4">
             {outcome.kind === "dataset" && (
               <div role="status" className="space-y-2 rounded-lg border p-4 text-body">
-                <p className="">{outcome.loaded.rows} rows loaded into <code className="font-mono">{outcome.objectType}</code> in {outcome.loaded.millis} ms.</p>
+                <p>{outcome.loaded.rows} rows loaded into <code className="font-mono">{outcome.objectType}</code> in {outcome.loaded.millis} ms.</p>
                 {outcome.loaded.rejected > 0
                   ? <p className="text-muted-foreground">{outcome.loaded.rejected} set aside: {Object.entries(outcome.loaded.reasons).map(([reason, count]) => `${count} ${reason}`).join(", ")}.</p>
                   : <p className="text-muted-foreground">No row was set aside.</p>}
