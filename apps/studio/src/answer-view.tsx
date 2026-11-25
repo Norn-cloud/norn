@@ -56,10 +56,16 @@ function amounts(read: Read<Trace>, index: number) {
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
 /**
- * Which engine computed the answer, as the cell reports it: DuckDB when the cell could lower the
- * plan to it, the cell's maintained totals, or its own exact engine. The figures are exact either way.
+ * Which engine computed the answer, as the cell reports it: DataFusion or DuckDB when the cell
+ * could lower the plan to it, the cell's maintained totals, or its own exact engine. The figures
+ * are exact either way.
  */
-const ENGINES: Readonly<Record<string, string>> = { duckdb: "Computed by DuckDB", cell: "Computed by the cell's exact engine", ivm: "Read from the cell's maintained totals" }
+const ENGINES: Readonly<Record<string, string>> = {
+  datafusion: "Computed by DataFusion",
+  duckdb: "Computed by DuckDB",
+  cell: "Computed by the cell's exact engine",
+  ivm: "Read from the cell's maintained totals",
+}
 export const engineOf = (answer: unknown): string | undefined => {
   const engine = (answer as { engine?: unknown } | null)?.engine
   return typeof engine === "string" ? ENGINES[engine] ?? `Computed by ${engine}` : undefined
