@@ -147,9 +147,8 @@ impl Gate {
             );
             return Admission::Deny;
         };
-        let keys = match cold_keys(tokens).await {
-            Ok(keys) => keys,
-            Err(()) => return Admission::Unavailable,
+        let Ok(keys) = cold_keys(tokens).await else {
+            return Admission::Unavailable;
         };
         let now = now_ms() / 1000;
         if keys.refresh_due(now) {
