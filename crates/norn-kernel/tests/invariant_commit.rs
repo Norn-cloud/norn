@@ -4415,7 +4415,7 @@ fn deleting_and_unlinking_a_law_governed_subject_rechecks_only_its_survivors() -
             links: vec![add_link(&task, "owner", &owner)],
             ..CellCommit::empty()
         })?;
-        let link = LinkKey::new(task.clone(), "owner", owner.clone());
+        let link = LinkKey::new(task.clone(), "owner", owner);
         let task_version = cell.load(&task)?.version;
         let link_version = cell.load_link(&link)?.version;
         let result = cell.commit(CellCommit {
@@ -4571,17 +4571,13 @@ fn observed_line_finding_binds_to_the_documents_existing_alias_pin() -> Checked 
     assert_eq!(document_reads, [&pin]);
     let receipt = cell.commit_observed(commit, authorization);
     assert_eq!(refusal(&receipt), None);
-    let findings = cell
-        .ledger()
-        .last()
-        .map(|entry| {
-            entry
-                .events
-                .iter()
-                .filter(|event| matches!(event, ObservationEvent::DataQualityFinding { .. }))
-                .count()
-        })
-        .unwrap_or_default();
+    let findings = cell.ledger().last().map_or(0, |entry| {
+        entry
+            .events
+            .iter()
+            .filter(|event| matches!(event, ObservationEvent::DataQualityFinding { .. }))
+            .count()
+    });
     assert_ne!(findings, 0);
     assert_eq!(cell.load(&line)?.values, Some(observed));
     Ok(())
