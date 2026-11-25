@@ -8,13 +8,14 @@
  * the page is in (each island is held in its own), and a person's Retry or Read again is the
  * island's declared event, which the machine takes.
  */
-import { createContext, use, useRef, type ReactNode } from "react"
+import { createContext, use, useEffect, useRef, type ReactNode } from "react"
 import { LoadState, ReadErrorState, WorkspaceUnavailable } from "@/components/load-state"
 import type { IslandStates } from "../../../../packages/norn-react/src/islands.ts"
 import { matchReadState } from "../../../../packages/norn-react/src/state.ts"
 import type { BindingReadState } from "../../../../packages/norn-react/src/reads.ts"
 import type { ObjectReads } from "../lib/transport.ts"
 import { unavailableWorkspaceOf } from "../lib/definitions.ts"
+import { useMode } from "../lib/live-transport.ts"
 import { useMessage } from "../lib/translations.ts"
 import type { RequiredCatalogRegistry, WidgetIslands } from "./record-islands.d.ts"
 import { RecordAbsent, RecordBody, RecordHeader, useReadAgain, type RecordRoute } from "./record-view.tsx"
@@ -50,7 +51,7 @@ function Reading() {
 function Failed({ read, retry }: { readonly read: BindingReadState | undefined; readonly retry: () => void }) {
   const say = useMessage()
   const workspace = read?.kind === "unavailable" ? unavailableWorkspaceOf(read.error.cause) : undefined
-  if (workspace !== undefined) return <div data-record-read="workspace"><WorkspaceUnavailable error={workspace} onRetried={retry} /></div>
+  if (workspace !== undefined) return <WorkspaceFailed error={workspace} retry={retry} />
   const error = read === undefined ? new Error("The record was not read.") : matchReadState(read, {
     pending: (): Error => new Error("The record is being read."),
     ok: () => new Error("The record was read."),
@@ -64,6 +65,21 @@ function Failed({ read, retry }: { readonly read: BindingReadState | undefined; 
     timed_out: ({ error }) => error,
   })
   return <div data-record-read={read?.kind ?? "none"}><ReadErrorState error={error} title={say("The record could not be read")} onRetry={retry} /></div>
+}
+
+/**
+ * The workspace, not the cell, did not answer the record read: the shell's Workspace unavailable,
+ * whose own Retry decides the workspace again. Once the workspace is decided again (its mode read
+ * answers anew), the record is read again; while it is not, the page's workspace is unavailable and
+ * the shell shows that instead of the page.
+ */
+function WorkspaceFailed({ error, retry }: { readonly error: unknown; readonly retry: () => void }) {
+  const mode = useMode()
+  const failedAt = useRef(mode.dataUpdatedAt)
+  useEffect(() => {
+    if (mode.dataUpdatedAt > failedAt.current) retry()
+  }, [mode.dataUpdatedAt])
+  return <div data-record-read="workspace"><WorkspaceUnavailable error={error} /></div>
 }
 
 function Header({ read, emit }: { readonly read: BindingReadState | undefined; readonly emit: () => void }) {

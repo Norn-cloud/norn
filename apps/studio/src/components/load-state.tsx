@@ -106,20 +106,15 @@ export function SkeletonBlock({ kind = "list", label = "Loading" }: { readonly k
  * (`retryWorkspace`: decide the mode again, then read every errored read again). It stays disabled
  * until both have settled. A page that passed its own read here instead left the mode unavailable.
  */
-export function WorkspaceUnavailable({ error, compact = false, onRetried }: {
+export function WorkspaceUnavailable({ error, compact = false }: {
   readonly error: unknown
   readonly compact?: boolean
-  /** What reads again once the workspace is decided again: a page machine's own read, which no query holds. */
-  readonly onRetried?: () => void
 }) {
   const queries = useQueryClient()
   const [retrying, setRetrying] = useState(false)
   const retry = () => {
     setRetrying(true)
-    void retryWorkspace(queries).finally(() => {
-      setRetrying(false)
-      onRetried?.()
-    })
+    void retryWorkspace(queries).finally(() => setRetrying(false))
   }
   const scope = useCachedStudioScope()
   const { locale } = useLocale()
