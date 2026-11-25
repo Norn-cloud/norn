@@ -26,6 +26,8 @@
 //! atomic (ruling 2026-09-25 §5, "commit … in the same transaction as
 //! enqueueing the resulting commands and timers").
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 
@@ -367,6 +369,296 @@ pub(crate) fn ensure_marking_subject<E: SqlEngine>(
         .ok_or_else(|| CellError::Engine("marking subject was not retained".to_owned()))
 }
 
+/// Key for one sparse marking slot in `_norn_marking_current` or
+/// `_norn_marking_version`.
+pub(crate) struct MarkingSlot<'a> {
+    pub(crate) world: &'a str,
+    pub(crate) object_type: &'a str,
+    pub(crate) subject: i64,
+    pub(crate) property: &'a str,
+    pub(crate) version: i64,
+}
+
+/// Whether `_norn_marking_snapshot` holds the completeness marker for this
+/// exact fact version (current when `current == true`, immutable history when
+/// `current == false`).
+pub(crate) fn has_marking_snapshot<E: SqlEngine>(
+    engine: &E,
+    world: &str,
+    object_type: &str,
+    id: &str,
+    version: i64,
+    current: bool,
+) -> Result<bool, CellError> {
+    let found: Option<i64> = engine.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4 AND \"is_current\" = ?5"
+        ),
+        params![world, object_type, id, version, i64::from(current)],
+        |row| row.get(0),
+    )?;
+    Ok(found.is_some())
+}
+
+/// Read the raw JSON markings payload for one slot, if stored. Under sparse
+/// markings (#1533), an absent row alongside a `_norn_marking_snapshot` marker
+/// represents the empty set `∅`.
+pub(crate) fn query_marking_slot<E: SqlEngine>(
+    engine: &E,
+    current: bool,
+    slot: &MarkingSlot<'_>,
+) -> Result<Option<String>, CellError> {
+    let table = if current {
+        MARKING_CURRENT
+    } else {
+        MARKING_VERSION
+    };
+    engine.query_optional(
+        &format!(
+            "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
+        ),
+        params![
+            slot.world,
+            slot.object_type,
+            slot.subject,
+            slot.property,
+            slot.version
+        ],
+        |row| row.get(0),
+    )
+}
+
+/// Upsert one non-empty marking slot into `_norn_marking_current` or
+/// `_norn_marking_version`. Callers never persist empty `'[]'` slots.
+fn upsert_marking_slot<E: SqlEngine>(
+    engine: &E,
+    current: bool,
+    slot: &MarkingSlot<'_>,
+    encoded: &str,
+) -> Result<(), CellError> {
+    let sql = if current {
+        format!(
+            "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
+        )
+    } else {
+        format!(
+            "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
+        )
+    };
+    engine.execute(
+        &sql,
+        params![
+            slot.world,
+            slot.object_type,
+            slot.subject,
+            slot.property,
+            slot.version,
+            encoded
+        ],
+    )
+}
+
+/// Delete one current property marking slot when its effective markings become
+/// empty (declassification or clearing a legacy `'[]'` row).
+fn delete_marking_current_slot<E: SqlEngine>(
+    engine: &E,
+    world: &str,
+    object_type: &str,
+    subject: i64,
+    property: &str,
+) -> Result<(), CellError> {
+    engine.execute(
+        &format!(
+            "DELETE FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4"
+        ),
+        params![world, object_type, subject, property],
+    )
+}
+
+/// Fact version identity for sparse marking storage operations.
+pub(crate) struct MarkingTarget<'a> {
+    pub(crate) world: &'a str,
+    pub(crate) object_type: &'a str,
+    pub(crate) key: &'a str,
+    pub(crate) version: i64,
+}
+
+/// Adjust `_norn_marking_snapshot.nonempty_slots` by `delta` (`+1` when a
+/// slot transitions from absent/empty to non-empty; `-1` when declassification
+/// clears a current slot to empty).
+fn adjust_snapshot_nonempty_slots<E: SqlEngine>(
+    engine: &E,
+    target: &MarkingTarget<'_>,
+    current: bool,
+    delta: i64,
+) -> Result<(), CellError> {
+    engine.execute(
+        &format!(
+            "UPDATE \"{MARKING_SNAPSHOT}\" SET \"nonempty_slots\" = \"nonempty_slots\" + ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"id\" = ?4 AND \"version\" = ?5 AND \"is_current\" = ?6"
+        ),
+        params![
+            delta,
+            target.world,
+            target.object_type,
+            target.key,
+            target.version,
+            i64::from(current),
+        ],
+    )
+}
+
+/// Upsert one guaranteed non-empty marking slot and increment
+/// `_norn_marking_snapshot.nonempty_slots` when the slot transitions from
+/// absent or legacy `'[]'` to non-empty.
+pub(crate) fn write_nonempty_marking_slot<E: SqlEngine>(
+    engine: &E,
+    current: bool,
+    target: &MarkingTarget<'_>,
+    subject: i64,
+    property: &str,
+    encoded: &str,
+) -> Result<(), CellError> {
+    let slot = MarkingSlot {
+        world: target.world,
+        object_type: target.object_type,
+        subject,
+        property,
+        version: target.version,
+    };
+    let was_nonempty = query_marking_slot(engine, current, &slot)?.is_some_and(|raw| raw != "[]");
+    upsert_marking_slot(engine, current, &slot, encoded)?;
+    if !was_nonempty {
+        adjust_snapshot_nonempty_slots(engine, target, current, 1)?;
+    }
+    Ok(())
+}
+
+/// Persist sparse non-empty marking rows for `target`, remove any stale or
+/// legacy empty rows from `_norn_marking_current`, and update the
+/// `_norn_marking_snapshot` completeness markers and `nonempty_slots` counts
+/// for both current and immutable history.
+pub(crate) fn persist_sparse_marking_rows<E: SqlEngine>(
+    engine: &E,
+    target: &MarkingTarget<'_>,
+    existing_subject: Option<i64>,
+    existing_current: &BTreeSet<String>,
+    markings: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), CellError> {
+    if let Some(subject) = existing_subject {
+        for property in existing_current {
+            if !markings.contains_key(property) {
+                delete_marking_current_slot(
+                    engine,
+                    target.world,
+                    target.object_type,
+                    subject,
+                    property,
+                )?;
+            }
+        }
+    }
+    if !markings.is_empty() {
+        let subject = match existing_subject {
+            Some(subject) => subject,
+            None => ensure_marking_subject(engine, target.world, target.object_type, target.key)?,
+        };
+        for (property, labels) in markings {
+            let encoded = serde_json::to_string(labels).map_err(CellError::Json)?;
+            let slot = MarkingSlot {
+                world: target.world,
+                object_type: target.object_type,
+                subject,
+                property,
+                version: target.version,
+            };
+            upsert_marking_slot(engine, true, &slot, &encoded)?;
+            upsert_marking_slot(engine, false, &slot, &encoded)?;
+        }
+    }
+    let nonempty_slots = i64::try_from(markings.len())
+        .map_err(|_err| CellError::OutOfRange("marking slot count"))?;
+    engine.execute(
+        &format!(
+            "DELETE FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"
+        ),
+        params![target.world, target.object_type, target.key],
+    )?;
+    for is_current in [1_i64, 0_i64] {
+        engine.execute(
+            &format!(
+                "INSERT INTO \"{MARKING_SNAPSHOT}\" (\"world\", \"object_type\", \"id\", \"version\", \"is_current\", \"nonempty_slots\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            ),
+            params![
+                target.world,
+                target.object_type,
+                target.key,
+                target.version,
+                is_current,
+                nonempty_slots
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// Remove `remove` markings from the current sparse slot of `(target, property)`.
+/// Deletes the `_norn_marking_current` row and decrements
+/// `_norn_marking_snapshot.nonempty_slots` when the resulting label set is empty,
+/// leaving `_norn_marking_version` immutable for historical `as_of` queries.
+pub(crate) fn apply_sparse_declassification<E: SqlEngine>(
+    engine: &E,
+    target: &MarkingTarget<'_>,
+    property: &str,
+    remove: &[String],
+) -> Result<(), CellError> {
+    let subject = marking_subject(engine, target.world, target.object_type, target.key)?;
+    let mut labels: BTreeSet<String> = match subject {
+        Some(subject) => {
+            let slot = MarkingSlot {
+                world: target.world,
+                object_type: target.object_type,
+                subject,
+                property,
+                version: target.version,
+            };
+            query_marking_slot(engine, true, &slot)?
+                .map(|encoded| serde_json::from_str(&encoded).map_err(CellError::Json))
+                .transpose()?
+                .unwrap_or_default()
+        }
+        None => BTreeSet::new(),
+    };
+    let distinct: BTreeSet<_> = remove.iter().collect();
+    if distinct.len() != remove.len() || remove.iter().any(|marking| !labels.contains(marking)) {
+        return Err(CellError::MarkingDeclassificationInvalid(
+            "a requested marking is duplicated or is not effective on the property".to_owned(),
+        ));
+    }
+    let Some(subject) = subject else {
+        return Err(CellError::MarkingDeclassificationInvalid(
+            "a requested marking is duplicated or is not effective on the property".to_owned(),
+        ));
+    };
+    for marking in remove {
+        labels.remove(marking);
+    }
+    if labels.is_empty() {
+        delete_marking_current_slot(engine, target.world, target.object_type, subject, property)?;
+        adjust_snapshot_nonempty_slots(engine, target, true, -1)?;
+    } else {
+        let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
+        let slot = MarkingSlot {
+            world: target.world,
+            object_type: target.object_type,
+            subject,
+            property,
+            version: target.version,
+        };
+        upsert_marking_slot(engine, true, &slot, &encoded)?;
+    }
+    Ok(())
+}
+
 /// Convert the former per-property text identities atomically during store
 /// initialization. Markers, slots (including empty sets), and versions remain
 /// exact; the ledger and export format do not depend on physical locators.
@@ -570,8 +862,11 @@ pub const SYSTEM_DDL: &[&str] = &[
   "version" INTEGER NOT NULL,
   PRIMARY KEY ("world", "link_table", "source", "target")
 )"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_link_version/source" ON "_norn_link_version" ("world", "source")"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_link_version/target" ON "_norn_link_version" ("world", "target")"#,
+    // #1533 Part 1: `_norn_link_version/source` (`world, source`) and
+    // `_norn_link_version/target` (`world, target`) were exact strict prefixes
+    // of `source_order` and `target_order` below and are dropped in storage
+    // version 8. The four covering ordered indexes are pinned via `INDEXED BY`
+    // in `read::links` and `link_guard`.
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_version/source_order" ON "_norn_link_version" ("world", "source", "link_table", "target", "link", "source_type", "target_type")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_version/target_order" ON "_norn_link_version" ("world", "target", "link_table", "source", "link", "source_type", "target_type")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_link_version/source_link_order" ON "_norn_link_version" ("world", "source", "link", "link_table", "target", "source_type", "target_type")"#,
@@ -641,6 +936,7 @@ pub const SYSTEM_DDL: &[&str] = &[
   "id" TEXT NOT NULL,
   "version" INTEGER NOT NULL,
   "is_current" INTEGER NOT NULL,
+  "nonempty_slots" INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY ("world", "object_type", "id", "version", "is_current")
 )"#,
     MARKING_NONEMPTY_DDL,

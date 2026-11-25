@@ -60,15 +60,27 @@ pub struct ObjectRecord {
 }
 
 /// Count the objects of one concrete type in `root_table` whose current version
-/// has a current marking row for property `?3`. Each object resolves its marking
-/// subject through the unique `(world, object_type, id)` index, then seeks that
-/// subject's current row by the full primary key: no per-row correlated scan.
-pub(super) fn marking_property_rows_sql(root_table: &str) -> String {
+/// has a verified `_norn_marking_snapshot` marker whose `nonempty_slots` pin
+/// matches the exact count of non-empty current rows at that version (and zero
+/// stale-version rows for that subject). Streams in PK order: no correlated
+/// subquery and no temp B-tree.
+pub(super) fn marking_snapshot_rows_sql(root_table: &str) -> String {
     format!(
-        "SELECT COUNT(*) FROM {root} AS o \
-         JOIN \"{MARKING_SUBJECT}\" AS ms ON ms.\"world\" = o.{world} AND ms.\"object_type\" = o.{ty} AND ms.\"id\" = o.{id} \
-         JOIN \"{MARKING_CURRENT}\" AS m ON m.\"world\" = o.{world} AND m.\"object_type\" = o.{ty} AND m.\"subject\" = ms.\"subject\" AND m.\"property\" = ?3 AND m.\"version\" = o.{version} \
-         WHERE o.{world} = ?1 AND o.{ty} = ?2",
+        "SELECT COUNT(*) FROM ( \
+           SELECT o.{id} FROM {root} AS o \
+           JOIN \"{MARKING_SNAPSHOT}\" AS s \
+             ON s.\"world\" = o.{world} AND s.\"object_type\" = o.{ty} AND s.\"id\" = o.{id} \
+            AND s.\"version\" = o.{version} AND s.\"is_current\" = 1 \
+           LEFT JOIN \"{MARKING_SUBJECT}\" AS ms \
+             ON ms.\"world\" = s.\"world\" AND ms.\"object_type\" = s.\"object_type\" AND ms.\"id\" = s.\"id\" \
+           LEFT JOIN \"{MARKING_CURRENT}\" AS m \
+             ON m.\"world\" = s.\"world\" AND m.\"object_type\" = s.\"object_type\" AND m.\"subject\" = ms.\"subject\" \
+           WHERE o.{world} = ?1 AND o.{ty} = ?2 \
+           GROUP BY o.{id}, s.\"version\", s.\"nonempty_slots\" \
+           HAVING typeof(s.\"nonempty_slots\") = 'integer' AND s.\"nonempty_slots\" >= 0 \
+              AND SUM(CASE WHEN m.\"property\" IS NOT NULL AND m.\"version\" != s.\"version\" THEN 1 ELSE 0 END) = 0 \
+              AND SUM(CASE WHEN m.\"property\" IS NOT NULL AND m.\"version\" = s.\"version\" AND m.\"markings\" != '[]' THEN 1 ELSE 0 END) = s.\"nonempty_slots\" \
+         )",
         root = quote_identifier(root_table),
         world = quote_identifier(WORLD_COLUMN),
         ty = quote_identifier(TYPE_COLUMN),
@@ -426,68 +438,80 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         if version == 0 {
             return Ok(None);
         }
-        let marked_version: Option<i64> = if current {
+        let version_sql = to_i64(version, "marking snapshot version")?;
+        let marked_snapshot: Option<(i64, i64)> = if current {
             self.conn.query_optional(
                 &format!(
-                    "SELECT \"version\" FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"
+                    "SELECT \"version\", \"nonempty_slots\" FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"
                 ),
                 params![world, object_type, id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?
         } else {
             self.conn.query_optional(
                 &format!(
-                    "SELECT \"version\" FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4 AND \"is_current\" = 0"
+                    "SELECT \"version\", \"nonempty_slots\" FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"version\" = ?4 AND \"is_current\" = 0"
                 ),
-                params![world, object_type, id, to_i64(version, "marking snapshot version")?],
-                |row| row.get(0),
+                params![world, object_type, id, version_sql],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?
         };
-        if marked_version != Some(to_i64(version, "marking snapshot version")?) {
+        let Some((marked_version, expected_slots)) = marked_snapshot else {
+            return Ok(None);
+        };
+        let Ok(expected_slots) = usize::try_from(expected_slots) else {
+            return Ok(None);
+        };
+        if marked_version != version_sql {
             return Ok(None);
         }
-        let table = if current {
-            MARKING_CURRENT
-        } else {
-            MARKING_VERSION
-        };
-        let subject = marking_subject(self.conn, world, object_type, id)?;
-        let sql = format!(
-            "SELECT \"property\", \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
-        );
-        let rows = self.conn.query(
-            &sql,
-            params![
-                world,
-                object_type,
-                subject,
-                to_i64(version, "marking snapshot version")?
-            ],
-        )?;
-        let mut result = BTreeMap::new();
-        for row in rows {
-            let row = SqlRow(row);
-            let property: String = row.get(0)?;
-            let encoded: String = row.get(1)?;
-            let markings: Vec<String> = serde_json::from_str(&encoded).map_err(CellError::Json)?;
-            if property != MARKING_OCCURRENCE {
-                result.insert(property, markings);
+        // Under sparse markings (#1533), `_norn_marking_snapshot` pins the exact
+        // count of non-empty slots; any omitted slot is `∅` once the pin matches.
+        let mut result: BTreeMap<String, Vec<String>> = self
+            .model
+            .effective_property_markings(object_type)?
+            .into_keys()
+            .map(|property| (property, Vec::new()))
+            .collect();
+        let mut nonempty_observed = 0_usize;
+        if let Some(subject) = marking_subject(self.conn, world, object_type, id)? {
+            let rows = if current {
+                let sql = format!(
+                    "SELECT \"property\", \"version\", \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 ORDER BY \"property\""
+                );
+                self.conn
+                    .query(&sql, params![world, object_type, subject])?
+            } else {
+                let sql = format!(
+                    "SELECT \"property\", \"version\", \"markings\" FROM \"{MARKING_VERSION}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
+                );
+                self.conn
+                    .query(&sql, params![world, object_type, subject, version_sql])?
+            };
+            for row in rows {
+                let row = SqlRow(row);
+                let property: String = row.get(0)?;
+                if row.get::<i64>(1)? != version_sql {
+                    return Ok(None);
+                }
+                let encoded: String = row.get(2)?;
+                let markings: Vec<String> =
+                    serde_json::from_str(&encoded).map_err(CellError::Json)?;
+                if !markings.is_empty() {
+                    nonempty_observed = nonempty_observed.saturating_add(1);
+                }
+                if property != MARKING_OCCURRENCE {
+                    result.insert(property, markings);
+                }
             }
         }
-        let expected = self.model.effective_property_markings(object_type)?;
-        if expected
-            .keys()
-            .any(|property| !result.contains_key(property))
-        {
-            return Ok(None);
-        }
-        Ok(Some(result))
+        Ok((nonempty_observed == expected_slots).then_some(result))
     }
 
     /// Durable classifications of the occurrence/version of one fact,
-    /// independent of its unchanged property values. Missing property or
-    /// occurrence slots return `None` and must fail closed; a public
-    /// occurrence has an explicitly persisted empty set.
+    /// independent of its unchanged property values. Missing snapshot markers
+    /// return `None` and must fail closed; under sparse markings (#1533), a
+    /// verified snapshot with no stored occurrence row represents the empty set.
     ///
     /// # Errors
     /// Unknown type, malformed marking JSON, or a SQL-engine error.
@@ -513,7 +537,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             Some(version) => version,
             None => self.version(world, object_type, id)?,
         };
-        let subject = marking_subject(self.conn, world, object_type, id)?;
+        let Some(subject) = marking_subject(self.conn, world, object_type, id)? else {
+            return Ok(Some(BTreeSet::new()));
+        };
         let encoded: Option<String> = self.conn.query_optional(
             &format!(
                 "SELECT \"markings\" FROM \"{table}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
@@ -521,9 +547,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             params![world, object_type, subject, MARKING_OCCURRENCE, to_i64(version, "marking snapshot version")?],
             |row| row.get(0),
         )?;
-        encoded
-            .map(|encoded| serde_json::from_str(&encoded).map_err(CellError::Json))
-            .transpose()
+        match encoded {
+            Some(encoded) => Ok(Some(
+                serde_json::from_str(&encoded).map_err(CellError::Json)?,
+            )),
+            None => Ok(Some(BTreeSet::new())),
+        }
     }
 
     /// Union markings over every live row of one property in an object
@@ -567,31 +596,23 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 .ok_or_else(|| {
                     CellError::Engine("object count query returned no row".to_owned())
                 })?;
-            let snapshots: i64 = self.conn.query_optional(
-                &format!(
-                    "SELECT COUNT(*) FROM {} AS o JOIN \"{MARKING_SNAPSHOT}\" AS s ON s.\"world\" = o.{} AND s.\"object_type\" = o.{} AND s.\"id\" = o.{} AND s.\"version\" = o.{} AND s.\"is_current\" = 1 WHERE o.{} = ?1 AND o.{} = ?2",
-                    quote_identifier(&root.table),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                    quote_identifier(ID_COLUMN),
-                    quote_identifier(VERSION_COLUMN),
-                    quote_identifier(WORLD_COLUMN),
-                    quote_identifier(TYPE_COLUMN),
-                ),
-                params![world, concrete_type],
-                |row| row.get(0),
-            )?.ok_or_else(|| CellError::Engine("marking snapshot count query returned no row".to_owned()))?;
-            let property_rows: i64 = self
+            let snapshots: i64 = self
                 .conn
                 .query_optional(
-                    &marking_property_rows_sql(&root.table),
-                    params![world, concrete_type, property],
+                    &marking_snapshot_rows_sql(&root.table),
+                    params![world, concrete_type],
                     |row| row.get(0),
                 )?
                 .ok_or_else(|| {
-                    CellError::Engine("current marking count query returned no row".to_owned())
+                    CellError::Engine("marking snapshot count query returned no row".to_owned())
                 })?;
-            if actual != snapshots || actual != property_rows {
+            if actual != snapshots
+                || (actual > 0
+                    && !self
+                        .model
+                        .effective_property_markings(&concrete_type)?
+                        .contains_key(property))
+            {
                 return Ok(None);
             }
             let variants = self.conn.query(
@@ -810,27 +831,39 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         );
         let sql = format!(
             "SELECT 1 FROM \"{fv}\" AS fv \
+             LEFT JOIN \"{snap}\" AS s \
+               ON s.\"world\" = fv.\"world\" AND s.\"object_type\" = fv.\"object_type\" \
+              AND s.\"id\" = fv.\"id\" AND s.\"version\" = fv.\"version\" AND s.\"is_current\" = 0 \
+             LEFT JOIN \"{subj}\" AS ms \
+               ON ms.\"world\" = s.\"world\" AND ms.\"object_type\" = s.\"object_type\" AND ms.\"id\" = s.\"id\" \
+             LEFT JOIN ( \
+               SELECT mv.\"subject\" AS \"subject\", mv.\"version\" AS \"version\", COUNT(*) AS \"cnt\" \
+               FROM \"{ver}\" AS mv INDEXED BY \"{ver_idx}\" \
+               WHERE mv.\"world\" = ?1 AND mv.\"object_type\" = ?3 AND mv.\"markings\" != '[]' \
+               GROUP BY mv.\"subject\", mv.\"version\" \
+             ) AS c \
+               ON c.\"subject\" = ms.\"subject\" AND c.\"version\" = s.\"version\" \
              WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
                AND json_type(fv.\"snapshot\", '$.values') = 'object' \
                AND ( \
-                 NOT EXISTS ( \
-                   SELECT 1 FROM \"{snap}\" AS s \
-                   WHERE s.\"world\" = fv.\"world\" AND s.\"object_type\" = fv.\"object_type\" \
-                     AND s.\"id\" = fv.\"id\" AND s.\"version\" = fv.\"version\" AND s.\"is_current\" = 0 \
-                 ) \
-                 OR NOT EXISTS ( \
-                   SELECT 1 FROM \"{subj}\" AS ms \
-                   JOIN \"{ver}\" AS mv \
-                     ON mv.\"world\" = ms.\"world\" AND mv.\"object_type\" = ms.\"object_type\" \
-                     AND mv.\"subject\" = ms.\"subject\" AND mv.\"property\" = ?4 AND mv.\"version\" = fv.\"version\" \
-                   WHERE ms.\"world\" = fv.\"world\" AND ms.\"object_type\" = fv.\"object_type\" AND ms.\"id\" = fv.\"id\" \
-                 ) \
+                 s.\"nonempty_slots\" IS NULL \
+                 OR typeof(s.\"nonempty_slots\") != 'integer' \
+                 OR s.\"nonempty_slots\" < 0 \
+                 OR COALESCE(c.\"cnt\", 0) != s.\"nonempty_slots\" \
                ) \
              LIMIT 1",
             fv = crate::system::FACT_VALUES,
             snap = MARKING_SNAPSHOT,
             subj = MARKING_SUBJECT,
             ver = MARKING_VERSION,
+            ver_idx = crate::system::MARKING_VERSION_NONEMPTY,
+        );
+        let any_history_sql = format!(
+            "SELECT 1 FROM \"{fv}\" AS fv \
+             WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
+               AND json_type(fv.\"snapshot\", '$.values') = 'object' \
+             LIMIT 1",
+            fv = crate::system::FACT_VALUES,
         );
         let mut checked_roots = BTreeSet::new();
         for definition in self.model.object_types() {
@@ -856,11 +889,18 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     return Ok(true);
                 }
             }
-            let missing: Option<i64> = self.conn.query_optional(
-                &sql,
-                params![world, root, concrete_type, property],
-                |row| row.get(0),
-            )?;
+            let query = if self
+                .model
+                .effective_property_markings(concrete_type)?
+                .contains_key(property)
+            {
+                &sql
+            } else {
+                &any_history_sql
+            };
+            let missing: Option<i64> =
+                self.conn
+                    .query_optional(query, params![world, root, concrete_type], |row| row.get(0))?;
             if missing.is_some() {
                 return Ok(true);
             }

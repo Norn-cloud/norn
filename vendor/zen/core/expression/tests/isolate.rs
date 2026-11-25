@@ -519,10 +519,6 @@ fn isolate_standard_test() {
                     result: json!(5),
                 },
                 TestCase {
-                    expr: r#"rand(10) <= 10"#,
-                    result: json!(true),
-                },
-                TestCase {
                     expr: r#"10 % 4"#,
                     result: json!(2),
                 },
@@ -1187,4 +1183,43 @@ fn speculative_parses_reuse_nested_bracket_results() {
         chained = format!("a = 1; b[{chained}]");
     }
     let _ = isolate.run_standard(&chained);
+}
+
+/// Norn (#1711): the deterministic VM has no RNG; `rand` is not a built-in, so every
+/// call is refused by the parser (as `UnknownBuiltIn`, or as `Incomplete` when the
+/// parser cannot recover a complete expression).
+#[test]
+fn rand_is_not_a_built_in() {
+    let mut isolate = Isolate::new();
+    for expr in ["rand(1)", "rand(100) >= 0"] {
+        let err = isolate.run_standard(expr).err();
+        assert!(
+            matches!(err, Some(zen_expression::IsolateError::ParserError { .. })),
+            "{expr}: expected a parser refusal, got {err:?}"
+        );
+    }
+    let unary = isolate.run_unary("rand(1)").err();
+    assert!(
+        matches!(
+            unary,
+            Some(zen_expression::IsolateError::ParserError { .. })
+        ),
+        "{unary:?}"
+    );
+}
+
+/// Norn (#1711): a dotted assignment to an assigned record copies on write, so the
+/// record it was assigned from is never mutated.
+#[test]
+fn dotted_assignment_copies_on_write() {
+    let mut isolate = Isolate::new();
+    isolate.set_environment(json!({ "orig": { "status": "old" } }).into());
+    let result = isolate
+        .run_standard("copy = orig; copy.status = 'new'; [orig.status, copy.status]")
+        .map(|value| value.to_value());
+    assert_eq!(result.ok(), Some(json!(["old", "new"])));
+    let orig = isolate
+        .run_standard("orig.status")
+        .map(|value| value.to_value());
+    assert_eq!(orig.ok(), Some(json!("old")));
 }

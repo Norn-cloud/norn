@@ -128,37 +128,34 @@ describe("closures, sum and day helpers", () => {
   const lines = X.list(X.record({ amount: self("debit"), sku: self("debit_sku") }), X.record({ amount: self("credit"), sku: self("credit_sku") }))
   const LINES = "[{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}]"
   const cases: ReadonlyArray<readonly [string, X.Expr, string]> = [
-    ["balanced", X.eq(X.sum(X.map(lines, "l", (l) => X.ref("l", "amount"))), X.lit(0)), `sum(map(${LINES} as l, l.amount)) == 0`],
-    ["no_zero_lines", X.all(lines, "l", (l) => X.ne(X.ref("l", "amount"), X.lit(0))), `all(${LINES} as l, l.amount != 0)`],
-    ["has_sku", X.some(lines, "l", (l) => X.call("startsWith", X.ref("l", "sku"), X.lit("SKU-"))), `some(${LINES} as l, startsWith(l.sku, 'SKU-'))`],
-    ["none_negative", X.none(lines, "l", X.lt(X.ref("l", "amount"), X.lit(0))), `none(${LINES} as l, l.amount < 0)`],
-    ["one_big", X.one(lines, "l", X.gt(X.ref("l", "amount"), X.lit(1000))), `one(${LINES} as l, l.amount > 1000)`],
-    ["few_lines", X.le(X.count(lines, "l", X.gt(X.ref("l", "amount"), X.lit(0))), X.lit(50)), `count(${LINES} as l, l.amount > 0) <= 50`],
-    ["filtered", X.ge(X.call("len", X.filter(lines, "l", X.gt(X.ref("l", "amount"), X.lit(0)))), X.lit(1)), `len(filter(${LINES} as l, l.amount > 0)) >= 1`],
+    ["balanced", X.eq(X.sum(X.map(lines, (l) => X.field(l, "amount"))), X.lit(0)), `sum(map(${LINES} as b0, b0.amount)) == 0`],
+    ["no_zero_lines", X.all(lines, (l) => X.ne(X.field(l, "amount"), X.lit(0))), `all(${LINES} as b0, b0.amount != 0)`],
+    ["has_sku", X.some(lines, (l) => X.call("startsWith", X.field(l, "sku"), X.lit("SKU-"))), `some(${LINES} as b0, startsWith(b0.sku, 'SKU-'))`],
+    ["none_negative", X.none(lines, (l) => X.lt(X.field(l, "amount"), X.lit(0))), `none(${LINES} as b0, b0.amount < 0)`],
+    ["one_big", X.one(lines, (l) => X.gt(X.field(l, "amount"), X.lit(1000))), `one(${LINES} as b0, b0.amount > 1000)`],
+    ["few_lines", X.le(X.count(lines, (l) => X.gt(X.field(l, "amount"), X.lit(0))), X.lit(50)), `count(${LINES} as b0, b0.amount > 0) <= 50`],
+    ["filtered", X.ge(X.call("len", X.filter(lines, (l) => X.gt(X.field(l, "amount"), X.lit(0)))), X.lit(1)), `len(filter(${LINES} as b0, b0.amount > 0)) >= 1`],
     // Nested closures bind distinct aliases. A string read through a built list is costed at its largest single
     // value (`norn-expr` cost.rs), so the inner body compares amounts; a nested string test would exceed the budget.
-    ["nested", X.all(lines, "a", (a) => X.some(X.list(X.lit(0), X.lit(1)), "p", (p) => X.gt(X.ref("a", "amount"), p))), `all(${LINES} as a, some([0, 1] as p, a.amount > p))`],
+    ["nested", X.all(lines, (a) => X.some(X.list(X.lit(0), X.lit(1)), (p) => X.gt(X.field(a, "amount"), p))), `all(${LINES} as b0, some([0, 1] as b1, b0.amount > b1))`],
     ["terms", X.le(X.daysBetween(self("issue_date"), self("due_date")), X.lit(30)), "days_between(date(self.issue_date), date(self.due_date)) <= 30"],
     ["due_by", X.ge(X.addDays(self("issue_date"), X.lit(30)), X.call("date", self("due_date"))), "add_days(date(self.issue_date), 30) >= date(self.due_date)"],
-    ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(lines, "l", (l) => X.ref("l", "amount"))), X.lit(0))), `(self.status != 'posted') or (sum(map(${LINES} as l, l.amount)) == 0)`],
+    ["posted_balanced", X.or(X.ne(self("status"), X.lit("posted")), X.eq(X.sum(X.map(lines, (l) => X.field(l, "amount"))), X.lit(0))), `(self.status != 'posted') or (sum(map(${LINES} as b0, b0.amount)) == 0)`],
   ]
 
   test("render the norn-zen/6 closure, sum and day forms", () => {
     for (const [, expression, zen] of cases) expect(L.zenPredicate(expression, entry)).toBe(zen)
-    expect(X.typeOf(X.map(self("lines"), "l", (l) => X.ref("l", "sku")), new Map([["self", { zen: "self", schema: entry }]]))).toEqual(S.array(S.text()))
+    expect(X.typeOf(X.map(self("lines"), (l) => X.field(l, "sku")), new Map([["self", { zen: "self", schema: entry }]]))).toEqual(S.array(S.text()))
     // A parsed date is not wrapped twice.
     expect(L.zenPredicate(X.le(X.daysBetween(X.call("date", self("issue_date")), X.addDays(self("due_date"), X.lit(-1))), X.lit(0)), entry)).toBe("days_between(date(self.issue_date), add_days(date(self.due_date), -1)) <= 0")
   })
 
   test("refuse what norn-zen/6 refuses, before the checker sees it", () => {
     const refuse = (expression: () => X.Expr, message: RegExp) => expect(() => L.zenPredicate(expression(), entry)).toThrow(message)
-    refuse(() => X.some(self("status"), "l", X.lit(true)), /iterates a list/)
-    refuse(() => X.some(self("lines"), "l", X.ref("l", "amount")), /body must be Boolean/)
-    refuse(() => X.eq(X.call("len", X.map(self("lines"), "l", X.lit(null))), X.lit(0)), /map body must not be null/)
-    refuse(() => X.some(self("lines"), "self", X.lit(true)), /plain identifier/)
-    refuse(() => X.some(self("lines"), "not-an-ident", X.lit(true)), /plain identifier/)
-    refuse(() => X.some(self("lines"), "l", (l) => X.some(self("lines"), "l", X.eq(X.ref("l", "sku"), X.ref("l", "sku")))), /shadows a binding/)
-    refuse(() => X.eq(X.sum(X.map(self("lines"), "l", (l) => X.ref("l", "sku"))), X.lit(0)), /sum expects a list of numbers/)
+    refuse(() => X.some(self("status"), (l) => X.lit(true)), /iterates a list/)
+    refuse(() => X.some(self("lines"), (l) => X.field(l, "amount")), /body must be Boolean/)
+    refuse(() => X.eq(X.call("len", X.map(self("lines"), (l) => X.lit(null))), X.lit(0)), /map body must not be null/)
+    refuse(() => X.eq(X.sum(X.map(self("lines"), (l) => X.field(l, "sku"))), X.lit(0)), /sum expects a list of numbers/)
     refuse(() => X.le(X.call("days_between", self("issue_date"), self("due_date")), X.lit(1)), /parsed dates/)
     refuse(() => X.ge(X.addDays(self("issue_date"), X.lit("x")), X.call("date", self("due_date"))), /whole number of days/)
     refuse(() => X.ge(X.addDays(self("issue_date"), X.lit(1.5)), X.call("date", self("due_date"))), /whole number of days, not number/)
@@ -185,9 +182,9 @@ test("typed lambdas in laws and guards compile to norn-zen/6 and are admitted", 
   const byId = new Map(compiled.artifacts.map((a) => [(a as { artifactId: string }).artifactId, a as { payload: Record<string, any> }]))
   const law = byId.get("books.JournalEntry.balanced.law")!.payload
   expect(law.condition).toBe("self.status == 'posted'")
-  expect(law.response.expression).toBe("(((sum(map([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount)) == 0) and all([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, l.amount != 0)) and (not some([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as l, startsWith(l.sku, 'VOID-') and some([1, 2] as p, l.amount == p)))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
+  expect(law.response.expression).toBe("(((sum(map([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as b0, b0.amount)) == 0) and all([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as b0, b0.amount != 0)) and (not some([{amount: self.debit, sku: self.debit_sku}, {amount: self.credit, sku: self.credit_sku}] as b0, startsWith(b0.sku, 'VOID-') and some([1, 2] as b1, b0.amount == b1)))) and (add_days(date(self.issue_date), 30) >= date(self.due_date))")
   const guard = byId.get("books.JournalEntry.entity")!.payload.objectType.lifecycles[0].transitions[0].guards[0]
-  expect(guard).toBe("(count(self.lines as l, l.amount != 0) >= 2) and (days_between(date(self.issue_date), date(self.due_date)) <= 90)")
+  expect(guard).toBe("(count(self.lines as b0, b0.amount != 0) >= 2) and (days_between(date(self.issue_date), date(self.due_date)) <= 90)")
   // Each lambda maps back to its source line.
   expect(compiled.sourceMap.some((s) => s.artifactId === "books.JournalEntry.balanced.law" && s.pointer === "/payload/response/expression" && s.at.line === 48)).toBe(true)
   if (checker) {
@@ -215,7 +212,7 @@ describe("law v2", () => {
       subject: "books.Invoice",
       condition: "self.status != 'draft'",
       modality: { kind: "always" },
-      response: { kind: "predicate", expression: "(sum(map([{amount: self.net}, {amount: self.tax}] as l, l.amount)) == self.total) and all([{amount: self.net}, {amount: self.tax}] as l, l.amount > 0)" },
+      response: { kind: "predicate", expression: "(sum(map([{amount: self.net}, {amount: self.tax}] as b0, b0.amount)) == self.total) and all([{amount: self.net}, {amount: self.tax}] as b0, b0.amount > 0)" },
     })
     expect(law.dependencies).toEqual([{ artifactId: "books.Invoice.entity", kind: "entity", version: "0.1.0", required: true }])
     expect(law.name).toBe("An issued invoice totals its net and tax.")
