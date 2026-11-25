@@ -1,16 +1,12 @@
 //! GRAPH-ROLE-1: roles are declared or inherited; they are never inferred.
-#![allow(
-    unexpected_cfgs,
-    reason = "also compiled directly by the standalone Kani harness"
-)]
+//!
+//! This file has no dependencies: the standalone Kani harness
+//! (`verification/kernel-l1/concept_role_kani.rs`) compiles it directly, and
+//! it compiles unchanged in every configuration of this crate. The wire
+//! encoding lives in the sibling `concept_role_wire` module.
 
 /// Semantic role of an ordinary concept, independent of lifecycle presence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(
-    not(kani),
-    derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)
-)]
-#[cfg_attr(not(kani), serde(rename_all = "snake_case"))]
 pub enum ConceptRole {
     /// A persistent thing.
     Thing,

@@ -380,7 +380,7 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
-///    a first write's lifecycles begin initialized (GRAPH-STATE-1);
+///    first-write and update lifecycles stay legal (GRAPH-STATE-1);
 ///    all written versions have a representable successor ([`CommitError::Overflow`]);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link

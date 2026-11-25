@@ -12,9 +12,11 @@
 //! cell lives in the cell's scope, so that is the scope of a decision's
 //! subject. The one scoped attribute this host verifies is `id`, the
 //! caller's subject id; any other declared attribute is unavailable.
-//! A recorded principal acting for a flow run or an approved call
+//! A run's recorded starter acting at a flow step
 //! ([`crate::caller::CallerSlot::is_acting`]) carries the roles of an earlier
-//! request, so nothing resolves for it.
+//! request, so nothing resolves for it and the step fails closed. An approved
+//! call is not such a stand-in: it is released only on its requester's own
+//! live request, so its inputs resolve from that request's verified caller.
 
 use std::collections::{BTreeMap, BTreeSet};
 
