@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { conceptTitle } from "./lib/catalog.ts"
 import { heldRuleTitle } from "./lib/guarantees.ts"
+import { useLocale } from "./lib/locale.tsx"
 import { cellRead, useMode } from "./lib/live-transport.ts"
 import { recordName } from "./lib/record-name.ts"
+import { formatLocale } from "./lib/timeline.ts"
 import type { Schemas } from "./lib/transport.ts"
 
 export type Inbox = Schemas["NornInbox"]
@@ -161,7 +163,8 @@ export function ComparisonWords({ words }: { readonly words: string }) {
  * its finding in words (one column for every record, so findings start at one x), then its fix.
  */
 function HeldBack({ group }: { readonly group: Group }) {
-  const held = `${group.count.toLocaleString("en-US")}${group.approximate ? "+" : ""}`
+  const { locale } = useLocale()
+  const held = `${group.count.toLocaleString(formatLocale(locale))}${group.approximate ? "+" : ""}`
   return (
     <Collapsible defaultOpen={group.records.length <= 3}>
       <GroupHead icon={ShieldAlert}

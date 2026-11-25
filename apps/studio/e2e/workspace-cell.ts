@@ -269,18 +269,48 @@ function freeText(property: string, rows: readonly DemoRecord[]): boolean {
   return rows.length >= 3 && present.length >= 3 && new Set(present.map(String)).size === present.length
 }
 
-/** `facet` in object_facets.rs: each value's count, most rows first (ties in value order), the tail and the empties counted together. */
+/**
+ * The key object_facets.rs groups and breaks ties by: the value's Rust `Debug` text (`RuntimeValue` derives
+ * it), so `String("north")`, `Bool(true)`, `Number(3)`, with Debug's escapes for quotes, backslashes and
+ * control characters (the stand-in's values hold no other character Debug escapes).
+ */
+function debugKey(value: string | number | boolean): string {
+  if (typeof value === "boolean") return `Bool(${value})`
+  if (typeof value === "number") return `Number(${value})`
+  const escaped = [...value].map((char) => {
+    const code = char.codePointAt(0)!
+    if (char === "\\" || char === '"') return `\\${char}`
+    if (char === "\n") return "\\n"
+    if (char === "\r") return "\\r"
+    if (char === "\t") return "\\t"
+    if (char === "\0") return "\\0"
+    return code < 0x20 || code === 0x7f ? `\\u{${code.toString(16)}}` : char
+  }).join("")
+  return `String("${escaped}")`
+}
+
+/** Rust's `String` order: byte by byte over the UTF-8 text (JavaScript's `<` compares UTF-16 units). */
+const UTF8 = new TextEncoder()
+function byteOrder(left: string, right: string): number {
+  const a = UTF8.encode(left)
+  const b = UTF8.encode(right)
+  for (let at = 0; at < Math.min(a.length, b.length); at += 1) if (a[at] !== b[at]) return a[at]! - b[at]!
+  return a.length - b.length
+}
+
+/** `facet` in object_facets.rs: each value's count, most rows first (ties by `debugKey`), the tail and the empties counted together. */
 function facetOf(property: string, rows: readonly DemoRecord[]) {
   const held = new Map<string, { value: string | number | boolean; count: number }>()
   let nulls = 0
   for (const row of rows) {
     const value = row.values[property]
     if (value === undefined || value === null) { nulls += 1; continue }
-    const entry = held.get(String(value)) ?? { value, count: 0 }
+    const key = debugKey(value)
+    const entry = held.get(key) ?? { value, count: 0 }
     entry.count += 1
-    held.set(String(value), entry)
+    held.set(key, entry)
   }
-  const ordered = [...held.values()].sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)))
+  const ordered = [...held.entries()].sort(([left, a], [right, b]) => b.count - a.count || byteOrder(left, right)).map(([, entry]) => entry)
   return {
     property,
     values: ordered.slice(0, MAX_FACET_VALUES),
@@ -442,7 +472,16 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
       const rawFilter = url.searchParams.get("filter")
       const filter = rawFilter ? JSON.parse(rawFilter) as Predicate : null
       const rows = records.filter((r) => r.objectType === objectType && (filter?.all ?? []).every((c) => matchClause(r, c)))
-      const named = url.searchParams.get("properties")?.split(",").map((name) => name.trim()).filter(Boolean)
+      // Named properties are taken as named (object_facets.rs trims, never drops), and each must be text, choice or yes/no.
+      const named = url.searchParams.get("properties")?.split(",").map((name) => name.trim())
+      const notCategorical = (named ?? []).filter((name) => !categorical(objectType).includes(name))
+      if (notCategorical.length > 0) {
+        return route.fulfill({ status: 400, json: {
+          code: "query.invalid", category: "invalid", retryable: false, message: "the object query is not valid",
+          explanation: "each diagnostic names the rule and where in the request it applies",
+          diagnostics: notCategorical.map((name) => ({ code: "query.property_unknown", severity: "error", message: `${name} is not a text, choice or yes/no property of ${objectType}`, span: { pointer: "/properties" } })),
+        } })
+      }
       const asked = named ?? categorical(objectType).filter((property) => !freeText(property, rows))
       return route.fulfill({ json: { objectType, rows: rows.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: asked.map((property) => facetOf(property, rows)) } })
     }

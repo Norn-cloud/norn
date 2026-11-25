@@ -25,7 +25,7 @@ import { ACTIONS_UNAVAILABLE, writesWhole } from "../lib/actions.ts"
 import { type ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import { ActionSheet, useActions, type ActionScopeBinding, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
-import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
+import { alignRight, isWithheld, NAME_PROPERTIES, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { maskedOf } from "../lib/privacy.ts"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
@@ -38,9 +38,10 @@ import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Z
 const ROW = 32
 const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
-const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
-/** The properties a record is named by (the grid's Record column). */
-const NAME_FIELDS = new Set(["label", "display_name"])
+/** The id and the naming properties: the grid shows them as its Record column, not as columns of their own. */
+const HIDDEN_FIELDS = new Set(["id", ...NAME_PROPERTIES])
+/** A fact's label in the record sheet, the same for its name rows and the rows under them. */
+const factLabel = (field: Field): string => field.id.replaceAll("_", " ")
 const RECORDED = "Replayed documents the engine produced. The cell doesn't serve live records here yet."
 const RECORDED_ACTIONS = "Recorded records take no actions."
 
@@ -550,7 +551,7 @@ function RecordDrawer({ concept, fields, row, reader, actions, actionsOff, onClo
   // The naming properties the grid shows as the Record column; the sheet lists one only when the server
   // projected it for this reader, since an unmasked name is already the sheet's title.
   const namedBy = row === null || isWithheld(row) ? [] : concept.fields.flatMap((field) => {
-    const masked = NAME_FIELDS.has(field.id) ? maskedOf(row.record, field.id) : null
+    const masked = NAME_PROPERTIES.includes(field.id) ? maskedOf(row.record, field.id) : null
     return masked === null ? [] : [{ field, masked }]
   })
   return (
@@ -570,8 +571,8 @@ function RecordDrawer({ concept, fields, row, reader, actions, actionsOff, onClo
                 : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] text-body">
                   {/* The record's own name when the server projected it (masked or pseudonymised): the same chip,
                       with the same Reveal the server allows, as the grid's Record column shows. */}
-                  {namedBy.map(({ field, masked }) => <div key={field.id} data-name-fact={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{field.label ?? field.id}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><MaskedValue objectType={record.objectType} id={record.id} version={record.version} property={field.id} masked={masked} projected={record.values?.[field.id]} /></dd></div>)}
-                  {fields.map((field) => <div key={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><TracedCell field={field} row={row} live={live} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
+                  {namedBy.map(({ field, masked }) => <div key={field.id} data-name-fact={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><MaskedValue objectType={record.objectType} id={record.id} version={record.version} property={field.id} masked={masked} projected={record.values?.[field.id]} /></dd></div>)}
+                  {fields.map((field) => <div key={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><TracedCell field={field} row={row} live={live} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                   <dt className="flex min-h-10 items-center px-2.5 py-2.5 text-muted-foreground">version</dt><dd className="flex min-h-10 items-center px-2.5 py-2.5 tabular-nums">{record.version}</dd>
                 </dl>}
             </SheetSection>

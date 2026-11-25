@@ -161,6 +161,8 @@ test("the record sheet shows the masked name with the grid's Reveal, and sizes t
   const sheet = page.getByRole("dialog")
   await expect(sheet).toBeVisible()
   const name = sheet.locator('[data-name-fact="display_name"]')
+  // Its label reads as the facts under it do (#1763 r1).
+  await expect(name.locator("dt")).toHaveText(/^display name/)
   await expect(name.locator('[data-masked="pseudonym"]')).toBeVisible()
   await expect(name.locator("[data-mask-hint]")).toHaveText("pseudonymised: pii.contact")
   await expect(name.locator("[data-reveal]")).toBeVisible()

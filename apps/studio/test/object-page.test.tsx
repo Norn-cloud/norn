@@ -16,7 +16,7 @@ afterAll(() => { globalThis.localStorage = originalStorage })
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
+const { maskedWords, ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
 const { untilDecided, workspaceOf, WorkspaceProvider } = await import("../src/lib/workspace.tsx")
 type Workspace = import("../src/lib/workspace.tsx").Workspace
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
@@ -477,4 +477,17 @@ test("a type page's grid waits for a decided mode: its skeleton while the mode i
   expect(failed).toContain(">Retry<")
   expect(failed).toContain('aria-label="Records"')
   expect(failed).not.toContain('role="grid"')
+})
+
+// #1763 r1: the header's one withheld chip counts the values the server projected, by how it projected them.
+test("the withheld chip counts the masked values in words: one, several, none, and mixed modes", () => {
+  expect(maskedWords({ display_name: { mode: "pseudonym" } })).toBe("1 value masked")
+  expect(maskedWords({ display_name: { mode: "redacted" }, email: { mode: "pseudonym" }, phone: { mode: "redacted" } })).toBe("3 values masked")
+  expect(maskedWords({ display_name: { mode: "refuse" }, email: { mode: "refuse" } })).toBe("2 values withheld")
+  expect(maskedWords({ display_name: { mode: "redacted" }, email: { mode: "refuse" } })).toBe("2 values masked or withheld")
+  expect(maskedWords({})).toBe("0 values masked")
+  // The count is in the reader's number format.
+  const many = Object.fromEntries(Array.from({ length: 1200 }, (_, at) => [`p${at}`, { mode: "redacted" }]))
+  expect(maskedWords(many, "en")).toBe("1,200 values masked")
+  expect(maskedWords(many, "de")).toBe("1.200 values masked")
 })

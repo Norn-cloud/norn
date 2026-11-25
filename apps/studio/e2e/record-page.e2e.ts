@@ -510,6 +510,61 @@ test("changes: a member (no Sources, no call records) sees the history list in b
   await shoot(page, "party-member-history")
 })
 
+// #1763 r1: History names each writer as the server does (an action by its declared title from the access
+// read, an import by its system), keeps the ids in the version's details, and says its one order when the
+// type names no time property.
+const historyRows = (page: Page) => page.locator("#record-history ol > li")
+const technical = (row: ReturnType<typeof historyRows>) => row.locator('dl[aria-label="Technical"]')
+
+test("history: an action reads by its declared title and actor, an import by its system; their ids are only in the details", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const rows = historyRows(page)
+  await expect(rows).toHaveCount(2)
+  const action = rows.nth(0).getByRole("button").first()
+  const imported = rows.nth(1).getByRole("button").first()
+  await expect(action).toContainText(`${VERIFY.title} by user:sara`)
+  await expect(action).not.toContainText(VERIFY.actionId)
+  await expect(imported).toContainText("Imported from ERPNext")
+  await expect(imported).not.toContainText("SYN-ERPNEXT-customer")
+  await expect(page.locator('#record-history dl[aria-label="Technical"]')).toHaveCount(0)
+  await action.click()
+  await expect(technical(rows.nth(0))).toContainText(VERIFY.actionId)
+  await imported.click()
+  await expect(technical(rows.nth(1))).toContainText("Party/erpnext/demo/Party/SYN-ERPNEXT-customer")
+  await expect(technical(rows.nth(1))).toContainText("erpnext.three.mapping")
+})
+
+test("history: with the access read refused, an action reads 'Ran an action' by its actor, and its id stays in the details", async ({ page }) => {
+  await recordCell(page, "admin", { status: 403, body: { code: "authz.denied", message: "Your role may not read this type's access." } })
+  await page.goto(PARTY)
+  const row = historyRows(page).nth(0)
+  const action = row.getByRole("button").first()
+  await expect(action).toContainText("Ran an action by user:sara")
+  await expect(action).not.toContainText(VERIFY.title)
+  await expect(action).not.toContainText(VERIFY.actionId)
+  await action.click()
+  await expect(technical(row)).toContainText(VERIFY.actionId)
+})
+
+test("history: a type that names no time property reads by knowledge time, said rather than offered; one that names it offers both orders", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const history = page.locator("#record-history")
+  await expect(historyRows(page)).toHaveCount(2)
+  await expect(history.locator('[data-order="known"]')).toHaveText("By knowledge time")
+  await expect(history.locator('[data-slot="segmented"]')).toHaveCount(0)
+  // The cell's metrics name the type's time property: the order becomes a choice, knowledge time first.
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: [
+    { name: "party.count", label: "Parties", kind: "count", objectType: "canon.Party", expression: null, timeProperty: "updated_at", numerator: null, denominator: null },
+  ] } }))
+  await page.reload()
+  await expect(historyRows(page)).toHaveCount(2)
+  await expect(history.locator('[data-slot="segmented"]')).toBeVisible()
+  await expect(history.locator('[data-order="known"]')).toHaveCount(0)
+  await expect(history.getByRole("radio", { name: "Knowledge time" })).toBeChecked()
+})
+
 test("changes: a refused history reads the same plain state in both panels, never the refusal's text", async ({ page }) => {
   const cell = await recordCell(page, "member")
   cell.refuseHistory()

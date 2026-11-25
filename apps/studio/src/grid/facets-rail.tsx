@@ -4,8 +4,8 @@ import { ReadErrorState } from "@/components/load-state"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
-import { CellUnavailable, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
-import { FacetsTimedOut, chosen, countText, facetsQuery, toggled, without, type Facet } from "../lib/facets.ts"
+import { StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { FacetsTimedOut, chosen, countText, countsRetryable, facetsQuery, toggled, without, type Facet } from "../lib/facets.ts"
 import { displayOf } from "../lib/objects.ts"
 import type { Clause, Predicate } from "../lib/records-query.ts"
 import { WORKSPACE_CHANGED_MESSAGE } from "../lib/views.ts"
@@ -50,11 +50,9 @@ export function FacetsRail({ objectType, fields, filter, scope, onFilter }: {
         <div><Button type="button" variant="outline" size="xs" className="max-sm:min-h-[44px]" disabled={base.isFetching} onClick={() => void base.refetch()}>Count again</Button></div>
       </div>
     )
-    // Anything else is the cell's answer: the shared refused state, in this well, in its own words. It
-    // offers Retry only for an outage the server says may pass, never for a refusal.
-    const passing = error instanceof CellUnavailable && error.retryable !== false
+    // Anything else is the cell's answer: the shared refused state, in this well, in its own words.
     return (
-      <ReadErrorState inset title="Counts aren't available" error={error} isFetching={base.isFetching} onRetry={passing ? () => void base.refetch() : undefined}>
+      <ReadErrorState inset title="Counts aren't available" error={error} isFetching={base.isFetching} onRetry={countsRetryable(error) ? () => void base.refetch() : undefined}>
         <p className="text-meta text-muted-foreground">The records are still listed.</p>
       </ReadErrorState>
     )

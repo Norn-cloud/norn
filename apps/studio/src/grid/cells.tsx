@@ -111,7 +111,7 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
 }
 
 /** The properties a record is named by, in the order Studio reads them. */
-const NAME_PROPERTIES = ["label", "display_name"] as const
+export const NAME_PROPERTIES: readonly string[] = ["label", "display_name"]
 
 /**
  * The Record column's name. When the naming property is marked, it is the server's projection as a

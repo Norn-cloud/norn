@@ -4,7 +4,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { sentence } from "@/components/lifecycle-view"
 import { useLocale } from "./lib/locale.tsx"
-import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
+import { Clock, GitCommitHorizontal, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { FACT_STATUS_META, FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
@@ -36,6 +36,7 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
+import { formatLocale } from "./lib/timeline.ts"
 import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
@@ -138,9 +139,8 @@ export function ObjectPage() {
             {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
                 the record: the title says exactly how many, and each value says how it was projected. */}
             {recordStatus === "withheld" && maskedRecord !== undefined
-              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord)}</Chip>
+              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord, formatLocale(locale))}</Chip>
               : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
-            {heldBack && recordStatus === null && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
@@ -260,13 +260,17 @@ export function ObjectPage() {
 
 const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const
 
-/** How many of the record's values the server projected for this reader, in words: "1 value masked", "2 values withheld". */
-export function maskedWords(masked: Readonly<Record<string, unknown>>): string {
+/**
+ * How many of the record's values the server projected for this reader, in words: "1 value masked",
+ * "2 values withheld", "3 values masked or withheld" when the modes differ. The count is in `numbers`,
+ * the reader's number format (`formatLocale`).
+ */
+export function maskedWords(masked: Readonly<Record<string, unknown>>, numbers = "en"): string {
   const modes = Object.values(masked).map((entry) => (entry as { mode?: unknown } | null)?.mode)
   const count = modes.length
   const refused = modes.filter((mode) => mode === "refuse").length
   const verb = refused === 0 ? "masked" : refused === count ? "withheld" : "masked or withheld"
-  return `${count.toLocaleString("en-US")} ${count === 1 ? "value" : "values"} ${verb}`
+  return `${count.toLocaleString(numbers)} ${count === 1 ? "value" : "values"} ${verb}`
 }
 
 /**
