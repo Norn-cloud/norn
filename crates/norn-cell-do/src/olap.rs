@@ -7,8 +7,10 @@ use std::sync::{Mutex, PoisonError};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
 use norn_api::olap_credential::{Issuer, body_digest};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-use norn_cell::analytics::EngineRefusal;
-use norn_cell::analytics::TenantId;
+use norn_cell::analytics::{
+    AnalyticalEngine, EngineOutcome, EngineRefusal, dispatch_evaluate, dispatch_members,
+};
+use norn_cell::analytics::{EngineCapabilities, TenantId};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use serde::Serialize;
 
@@ -19,17 +21,20 @@ use serde::Serialize;
 pub struct Exchange {
     issuer: Issuer,
     tenant: TenantId,
+    capabilities: EngineCapabilities,
     answer: Mutex<Option<EngineAnswer>>,
     pending: Mutex<Option<EngineCall>>,
 }
 
 impl Exchange {
-    /// The link of the cell whose engine database is `tenant`, minting with `issuer`.
+    /// The link of the cell whose engine database is `tenant`, minting with
+    /// `issuer`, to an engine with `capabilities`.
     #[must_use]
-    pub const fn new(issuer: Issuer, tenant: TenantId) -> Self {
+    pub const fn new(issuer: Issuer, tenant: TenantId, capabilities: EngineCapabilities) -> Self {
         Self {
             issuer,
             tenant,
+            capabilities,
             answer: Mutex::new(None),
             pending: Mutex::new(None),
         }
@@ -64,6 +69,9 @@ impl Exchange {
 }
 
 impl Transport for Exchange {
+    fn capabilities(&self) -> EngineCapabilities {
+        self.capabilities
+    }
     fn resumed(&self) -> Option<EngineAnswer> {
         self.answer
             .lock()
@@ -78,13 +86,13 @@ impl Transport for Exchange {
 
 /// The engine linked into a native host: each call runs in place.
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-pub struct InProcess(pub norn_cell::analytics::engine::Engine);
+pub struct InProcess<A: AnalyticalEngine = norn_cell::analytics::engine::Engine>(pub A);
 
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-impl InProcess {
+impl<A: AnalyticalEngine> InProcess<A> {
     fn run<T: serde::de::DeserializeOwned, R: Serialize>(
         body: &str,
-        operation: impl FnOnce(&T) -> norn_cell::analytics::engine::Outcome<R>,
+        operation: impl FnOnce(&T) -> EngineOutcome<R>,
     ) -> (u16, String) {
         let outcome = serde_json::from_str::<T>(body)
             .map_err(|e| EngineRefusal {
@@ -103,20 +111,23 @@ impl InProcess {
 }
 
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-impl Transport for InProcess {
+impl<A: AnalyticalEngine> Transport for InProcess<A> {
+    fn capabilities(&self) -> EngineCapabilities {
+        self.0.capabilities()
+    }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
     }
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-        let engine = &self.0;
+        let engine: &dyn AnalyticalEngine = &self.0;
         let (status, body) = match call.op.as_str() {
-            "frontier" => Self::run(&call.body, |r| engine.frontier(r)),
-            "sync" => Self::run(&call.body, |r| engine.sync(r)),
-            "evaluate" => Self::run(&call.body, |r| engine.evaluate(r)),
-            "members" => Self::run(&call.body, |r| engine.members(r)),
-            "profile" => Self::run(&call.body, |r| engine.profile(r)),
-            "page" => Self::run(&call.body, |r| engine.page(r)),
-            "lineage" => Self::run(&call.body, |r| engine.lineage(r)),
+            "frontier" => Self::run(&call.body, |r| engine.mirror_frontier(r)),
+            "sync" => Self::run(&call.body, |r| engine.mirror_sync(r)),
+            "evaluate" => Self::run(&call.body, |r| dispatch_evaluate(engine, r)),
+            "members" => Self::run(&call.body, |r| dispatch_members(engine, r)),
+            "profile" => Self::run(&call.body, |r| engine.profile_objects(r)),
+            "page" => Self::run(&call.body, |r| engine.query_page(r)),
+            "lineage" => Self::run(&call.body, |r| engine.query_lineage(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {
