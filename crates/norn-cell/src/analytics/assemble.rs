@@ -62,16 +62,25 @@ fn key_of(value: &RuntimeValue) -> Result<String, CellError> {
 /// A question prepared at the cell's verified head for the engine.
 #[derive(Debug, Clone)]
 pub struct Prepared {
-    /// What to send the engine.
-    pub request: EvaluateRequest,
+    request: EvaluateRequest,
     plan: QuestionPlan,
     context: QueryContext,
     exclusions: BTreeMap<String, String>,
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
+    /// The mirror table's schema (none for a loaded dataset).
+    schema_pin: Option<String>,
     /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
     known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
+}
+
+impl Prepared {
+    /// What to send the engine.
+    #[must_use]
+    pub const fn request(&self) -> &EvaluateRequest {
+        &self.request
+    }
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -203,12 +212,17 @@ impl<E: SqlEngine> CellStore<E> {
                     exclusions,
                 )
             };
+        let schema_pin = match &source {
+            Source::Mirror { table, .. } => Some(self.analytics_table(table)?.pin),
+            Source::Dataset { .. } => None,
+        };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
             source,
             query,
             inline_members: u64::try_from(bound).unwrap_or(u64::MAX),
+            model_pin: self.model().model_hash().to_owned(),
         };
         Ok(Prepared {
             request,
@@ -218,6 +232,7 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
+            schema_pin,
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
         })
     }
@@ -330,27 +345,75 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// QUERY-ENGINE-1: verify the engine's answer to `prepared` into the
-    /// exact envelope. The answer must be for the prepared frontier; totals,
-    /// ratios and lineage are recomputed here with the exact arithmetic.
+    /// exact envelope. The answer must be for the snapshot prepared
+    /// (QUERY-FRESH-1); totals, ratios and lineage are recomputed here with
+    /// the exact arithmetic.
     ///
     /// # Errors
-    /// A moved head (`core.compute.stale_input`), a malformed or inconsistent
-    /// response, or a sum outside the bounded profile.
+    /// A moved head, model or load, or an answer over another snapshot
+    /// (`core.compute.stale_input`), a malformed or inconsistent response, or
+    /// a sum outside the bounded profile.
     pub fn analytics_answer(
         &self,
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<QueryResult, CellError> {
+        self.check_prepared(&prepared)?;
+        let request = &prepared.request;
+        response.provenance.verify(
+            &request.tenant,
+            &request.source,
+            &request.model_pin,
+            prepared.schema_pin.as_deref(),
+        )?;
+        Self::assemble(prepared, Some(response))
+    }
+
+    /// The answer to a caller the population gate denies: the cell's own
+    /// empty answer, with no engine call and so no engine named.
+    ///
+    /// # Errors
+    /// A moved head, model or load (`core.compute.stale_input`).
+    pub fn analytics_empty_authorized_answer(
+        &self,
+        prepared: Prepared,
+    ) -> Result<QueryResult, CellError> {
+        self.check_prepared(&prepared)?;
+        Self::assemble(prepared, None)
+    }
+
+    /// A current answer is exact only at the head, model and dataset load it
+    /// was prepared at; a cutoff's history is immutable.
+    fn check_prepared(&self, prepared: &Prepared) -> Result<(), CellError> {
         if prepared.known_at.is_some() || prepared.plan.as_of() {
             self.read().check_history("historical analytics")?;
         } else {
             self.read().check_live()?;
         }
-        // A cutoff's history is immutable; a current answer is exact only at
-        // the head it was prepared at.
-        if prepared.known_at.is_none() && self.verified_head()? != prepared.revision {
-            return Err(refused("core.compute.stale_input"));
+        let stale = || refused("core.compute.stale_input");
+        if self.model().model_hash() != prepared.request.model_pin {
+            return Err(stale());
         }
+        if prepared.known_at.is_some() {
+            return Ok(());
+        }
+        if self.verified_head()? != prepared.revision {
+            return Err(stale());
+        }
+        if let Source::Dataset { table, load } = &prepared.request.source
+            && self
+                .dataset_manifest(crate::MAIN_WORLD, table)?
+                .is_none_or(|current| current.manifest.load != *load)
+        {
+            return Err(stale());
+        }
+        Ok(())
+    }
+
+    fn assemble(
+        prepared: Prepared,
+        response: Option<EvaluateResponse>,
+    ) -> Result<QueryResult, CellError> {
         let Prepared {
             request,
             plan,
@@ -361,12 +424,22 @@ impl<E: SqlEngine> CellStore<E> {
             definition_pin,
             ..
         } = prepared;
-        let present: BTreeSet<&String> = response.excluded.iter().collect();
+        let (excluded, buckets, population, unlinked, engine) = match response {
+            Some(answer) => (
+                answer.excluded,
+                answer.buckets,
+                answer.population,
+                answer.unlinked,
+                answer.provenance.engine.into(),
+            ),
+            None => (Vec::new(), Vec::new(), 0, 0, Engine::Cell),
+        };
+        let present: BTreeSet<&String> = excluded.iter().collect();
         exclusions.retain(|id, _| present.contains(id));
-        let inline = response.population <= request.inline_members;
+        let inline = population <= request.inline_members;
         let arity = plan.sums().len();
         let mut rows = BTreeMap::new();
-        for bucket in response.buckets {
+        for bucket in buckets {
             let value = bucket_value(&bucket.group)?;
             let key = key_of(&value)?;
             let row = assemble_row(&bucket, value, arity, inline)?;
@@ -383,8 +456,8 @@ impl<E: SqlEngine> CellStore<E> {
             &BTreeMap::new(),
         )?;
         result.rows = rows;
-        result.unlinked = response.unlinked;
-        result.engine = Engine::Duckdb;
+        result.unlinked = unlinked;
+        result.engine = engine;
         let evidence = crate::compute::FindingEvidence {
             context: &result.context,
             exclusions: &result.exclusions,
@@ -397,9 +470,7 @@ impl<E: SqlEngine> CellStore<E> {
         ))?;
         Ok(result)
     }
-}
 
-impl<E: SqlEngine> CellStore<E> {
     /// ASOF-KNOWLEDGE-1 on the engine: verify the engine's answer to a
     /// prepared cutoff into the exact engine's historical envelope.
     ///
@@ -410,11 +481,34 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        Self::known_at(prepared, |prepared| {
+            self.analytics_answer(prepared, response)
+        })
+    }
+
+    /// ASOF-KNOWLEDGE-1: [`Self::analytics_empty_authorized_answer`] at a cutoff.
+    ///
+    /// # Errors
+    /// As [`Self::analytics_empty_authorized_answer`], or a preparation
+    /// without a cutoff.
+    pub fn analytics_empty_authorized_answer_known_at(
+        &self,
+        prepared: Prepared,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        Self::known_at(prepared, |prepared| {
+            self.analytics_empty_authorized_answer(prepared)
+        })
+    }
+
+    fn known_at(
+        prepared: Prepared,
+        answer: impl FnOnce(Prepared) -> Result<QueryResult, CellError>,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
         let (cutoff, receipt) = prepared
             .known_at
             .clone()
             .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
-        let result = self.analytics_answer(prepared, response)?;
+        let result = answer(prepared)?;
         Ok(crate::compute::HistoricalQuestionResult {
             world: norn_kernel::World::Historical {
                 commit: norn_kernel::CommitId(
