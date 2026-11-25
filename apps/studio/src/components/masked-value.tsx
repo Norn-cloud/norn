@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { CopyId } from "./copy-id.tsx"
-import { TINTED, tintOf } from "./safe-prompt.tsx"
 import { studioScopeKey, type StudioScope } from "../lib/definitions.ts"
 import { maskHint, revealContext, revealKeys, revealProperty, shownReveal, type Masked, type Revealed } from "../lib/privacy.ts"
 import { usePinnedScope, useReaderKey } from "../lib/session.ts"
@@ -16,6 +15,13 @@ import { usePinnedScope, useReaderKey } from "../lib/session.ts"
  */
 export const RevealScope = createContext<StudioScope | undefined>(undefined)
 
+
+/**
+ * The projected value's chip: an outline tag on whatever surface it sits on (a grid row, a well, a
+ * sheet), in muted ink with no tint or fill, so it reads the same in every skin and scheme. The ink and
+ * its hosts are measured in `test/contrast.test.ts`.
+ */
+const MASK_CHIP = "inline-flex min-w-0 max-w-full items-center gap-x-1.5 gap-y-0.5 rounded-(--radius-chip) px-1.5 py-0.5 text-meta text-muted-foreground ring-1 ring-line ring-inset"
 
 /** The projection as text: what the server sent in the value's place. */
 const projection = (masked: Masked, projected: unknown): string =>
@@ -83,16 +89,12 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
 
   const Icon = masked.mode === "pseudonym" ? Fingerprint : masked.mode === "refuse" ? EyeOff : ShieldCheck
   const chip = (
-    <span title={maskHint(masked)} data-masked={masked.mode} style={tintOf(masked.mode === "pseudonym" ? "CUSTOMER" : undefined)}
-      className={cn(
-        "inline-flex min-w-0 max-w-full items-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-0.5 text-meta",
-        compact ? "overflow-hidden" : "flex-wrap",
-        TINTED,
-      )}>
-      <Icon className="size-3 shrink-0" aria-hidden />
+    <span title={maskHint(masked)} data-masked={masked.mode}
+      className={cn(MASK_CHIP, compact ? "overflow-hidden" : "flex-wrap")}>
+      <Icon className="size-3 shrink-0" aria-hidden strokeWidth={1.6} />
       <span className={cn("min-w-0 font-mono", compact ? "truncate" : "[overflow-wrap:anywhere]", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{projection(masked, projected)}</span>
       {masked.revealable && <span className="sr-only">Masked; you may reveal it</span>}
-      <span data-mask-hint="" className={cn("text-meta font-normal opacity-75", compact ? "min-w-0 shrink-[4] truncate" : "whitespace-normal [overflow-wrap:anywhere]")}>{maskWord(masked)}</span>
+      <span data-mask-hint="" className={cn("text-meta", compact ? "min-w-0 shrink-[4] truncate" : "whitespace-normal [overflow-wrap:anywhere]")}>{maskWord(masked)}</span>
     </span>
   )
   if (!masked.revealable) return <span className={cn("inline-flex min-w-0 max-w-full", className)}>{chip}</span>
@@ -117,7 +119,7 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
           <Button variant="outline" size="xs" data-reveal="">Reveal</Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-72 space-y-2 text-body">
-          <p>Reveal {property.replaceAll("_", " ")}</p>
+          <p className="text-foreground">Reveal {property.replaceAll("_", " ")}</p>
           <p className="text-meta text-muted-foreground">The cell records who revealed it, when and why, before it shows the value.</p>
           <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Purpose (optional)" maxLength={500} aria-label="Purpose" />
           {state.kind === "error" && <p role="alert" className="text-meta text-destructive">{state.message}</p>}

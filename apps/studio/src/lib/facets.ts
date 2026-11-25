@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query"
 import { defaultFetch, type Fetch } from "./cell-read.ts"
 import { CellUnavailable, readAtScope, readStudioScope, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
-import { cellRead } from "./live-transport.ts"
+import { CellRefusal, cellRead, isRetryableModeError } from "./live-transport.ts"
 import type { Read } from "./exact.ts"
 import type { Clause, Predicate } from "./records-query.ts"
 
@@ -79,6 +79,15 @@ async function readFacets(
   // An answer that is not a facets document is not counted from: it reads as not served.
   if (!isFacets(read.document)) throw new Error("The cell's answer is not a facets document, so nothing is counted here.")
   return read
+}
+
+/**
+ * Whether asking for the counts again can help, as the server says: a coded refusal only when it marks
+ * itself `retryable` (a `409 object.snapshot_moved` when the cell committed mid-count), an uncoded answer
+ * only when it is an outage that may pass (not a 401/403 or another client error).
+ */
+export function countsRetryable(error: unknown): boolean {
+  return error instanceof CellRefusal ? error.retryable === true : isRetryableModeError(error)
 }
 
 export function facetsQuery({ objectType, filter, scope, property }: {

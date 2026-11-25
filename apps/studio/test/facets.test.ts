@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { QueryClient } from "@tanstack/react-query"
-import { StudioScopeError } from "../src/lib/definitions.ts"
-import { chosen, facetsQuery, isFacets, toggled, without } from "../src/lib/facets.ts"
+import { CellUnavailable, StudioScopeError } from "../src/lib/definitions.ts"
+import { chosen, countsRetryable, facetsQuery, isFacets, toggled, without } from "../src/lib/facets.ts"
+import { CellRefusal } from "../src/lib/live-transport.ts"
 import { newViewId, sortKeys, sortText, viewPrefix, WORKSPACE_CHANGED_MESSAGE } from "../src/lib/views.ts"
 
 const filter = { all: [{ property: "location", op: "contains" as const, value: "north" }] }
@@ -121,4 +122,23 @@ test("facet caches separate matching types and filters by scope for both query k
     expect(client.getQueryData(b.queryKey)?.document.facets[0]?.values[0]?.value).toBe("B")
     expect(client.getQueryData(ordinary.queryKey)?.document.facets[0]?.values[0]?.value).toBe("B")
   }
+})
+
+// #1763 r1: the rail offers Retry exactly when the server says asking again can help.
+test("a refusal the cell marks retryable offers Retry: the cell moved while it counted (409 object.snapshot_moved)", () => {
+  expect(countsRetryable(new CellRefusal(409, "object.snapshot_moved", "the cell changed while the page was read", { retryable: true }))).toBe(true)
+})
+
+test("a refusal the cell does not mark retryable offers no Retry, whether it says false or nothing", () => {
+  expect(countsRetryable(new CellRefusal(403, "authz.denied", "Your role may not count this type.", { retryable: false }))).toBe(false)
+  expect(countsRetryable(new CellRefusal(400, "query.invalid", "the object query is not valid"))).toBe(false)
+})
+
+test("an uncoded 401 or 403 offers no Retry; an outage that may pass does, unless the cell says it will not", () => {
+  expect(countsRetryable(new CellUnavailable(401))).toBe(false)
+  expect(countsRetryable(new CellUnavailable(403))).toBe(false)
+  expect(countsRetryable(new CellUnavailable(503))).toBe(true)
+  expect(countsRetryable(new CellUnavailable(0, undefined, { retryable: true }))).toBe(true)
+  expect(countsRetryable(new CellUnavailable(503, "The cell can't be opened.", { retryable: false, code: "cell.unopenable" }))).toBe(false)
+  expect(countsRetryable(new Error("The cell's answer is not a facets document, so nothing is counted here."))).toBe(false)
 })

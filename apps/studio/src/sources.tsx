@@ -4,6 +4,8 @@ import { Database, Plus, Search, Shapes } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
 import { Initials, ListRow, RowList } from "@/components/system/list-row"
+import { ScrollX } from "@/components/scroll-x"
+import { cn } from "@/lib/utils"
 import { LoadState } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
@@ -20,17 +22,19 @@ import { ModelGraph } from "./model-graph.tsx"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DecidedRecordsGrid } from "./grid/records-grid.tsx"
 import { useCatalog } from "./lib/use-catalog.ts"
+import { useWorkspace } from "./lib/workspace.tsx"
 import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
 
 /**
  * The "dense, crisp" tier for data tables: one hairline frame, step-1 tabular figures, a quiet header,
  * no zebra. Inside a well it is a ruled section of it, never a box in the well: no side frame or radius,
- * and no frame at all when it fills the well.
+ * and no frame at all when it fills the well, directly or as the content of a ScrollX that does.
+ * `className` sizes it (a ScrollX's content is as wide as its columns); the frame is never set by a caller.
  */
-export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+export function DenseTable({ head, children, className }: { readonly head: ReactNode; readonly children: ReactNode; readonly className?: string }) {
   return (
-    <div data-slot="dense-table" className="overflow-hidden rounded-lg border [[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]>&]:border-y-0">
+    <div data-slot="dense-table" className={cn("overflow-hidden rounded-lg border [[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]>&]:border-y-0 [[data-slot=well]>[data-slot=scroll-x]_&]:border-y-0", className)}>
       <Table className="text-meta tabular-nums">
         <TableHeader>{head}</TableHeader>
         <TableBody>{children}</TableBody>
@@ -135,11 +139,14 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
     gaps.set(key, gap)
   }
   return (
-    <div className="space-y-3 pb-3">
-      <DenseTable head={
+    <Well className="p-1.5">
+      {/* Wider than a phone: the matrix scrolls sideways inside its well and says so, instead of being cut off. */}
+      <ScrollX label="Where its records come from, by system">
+      {/* As wide as its columns need (never squeezed), on the well itself: DenseTable drops its frame here. */}
+      <DenseTable className="w-max min-w-full" head={
         <TableRow>
           <TableHead>Fact</TableHead>
-          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`} className="whitespace-nowrap"><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
         </TableRow>
       }>
         {[...concept.fields.map(({ id }) => ({ id, label: id.replaceAll("_", " ") })),
@@ -150,16 +157,24 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
           </TableRow>
         ))}
       </DenseTable>
-      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="px-4 text-body text-muted-foreground"><span className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</span> {note}</p>)}
-      {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
-        <div className="space-y-1 px-4">
-          <h3 className="text-meta text-muted-foreground">Left out of the mapping, on purpose</h3>
-          {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
-            <p key={`${system}/${dataset}/${field}`} className="text-body text-muted-foreground"><span className="text-foreground">{system} {dataset}, <code className="font-mono text-meta">{field}</code>:</span> {reason}</p>
-          )))}
-        </div>
+      </ScrollX>
+      {/* The notes are part of the matrix, so they sit in its well: step 1, the source named in foreground ink at 400. */}
+      {gaps.size > 0 && (
+        <ul className="grid gap-1 border-t border-line px-2.5 pt-2.5 pb-1.5 text-meta text-muted-foreground" aria-label="Gaps in the mapping">
+          {[...gaps].map(([key, { system, reason, note, facts }]) => <li key={key} className="text-pretty"><span className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</span> {note}</li>)}
+        </ul>
       )}
-    </div>
+      {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
+        <section data-left-out="" className="grid gap-1 border-t border-line px-2.5 pt-2.5 pb-1.5">
+          <h3 className="text-meta text-muted-foreground">Left out of the mapping, on purpose</h3>
+          <ul className="grid gap-1 text-meta text-muted-foreground">
+            {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
+              <li key={`${system}/${dataset}/${field}`} className="text-pretty"><span className="text-foreground">{system} {dataset}, <code className="font-mono">{field}</code>:</span> {reason}</li>
+            )))}
+          </ul>
+        </section>
+      )}
+    </Well>
   )
 }
 
@@ -241,7 +256,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
       )}
       <LawsPanel concept={concept} />
       <Panel icon={Database} label="Where its records come from">
-        <Well>{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-4 py-3 text-body text-muted-foreground">No connected system maps records into it directly.</p>}</Well>
+        {concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <Well><p className="px-4 py-3 text-body text-muted-foreground">No connected system maps records into it directly.</p></Well>}
       </Panel>
     </article>
   )
@@ -291,6 +306,7 @@ export { useCatalog }
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
+  const workspace = useWorkspace()
   const [search, setSearch] = useState("")
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -298,7 +314,9 @@ export function SourcesPage() {
     <section className="space-y-8">
       <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         description="The systems that feed this workspace, and the one model every system's records are mapped into."
-        primary={<Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
+        // While the workspace can't be opened (the server's mode answer), nothing can be connected to it:
+        // the page's Workspace unavailable state says why, so the action is not offered beside it.
+        primary={workspace.kind === "unavailable" ? undefined : <Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
       <LoadState
         status={read.status}
         data={catalog}

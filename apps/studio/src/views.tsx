@@ -1,15 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Dot } from "@/components/system/status-dot"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
-import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
+import { ArrowDown, ArrowUp, Bookmark, Copy, Ellipsis, Eye, Pencil, PencilLine, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
+import { MenuTrigger } from "@ui-sdk/react/menu"
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { KitMenuContent, KitMenuItem, Menu } from "@/components/kit"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./grid/cells.tsx"
 import { FilterEditor, fromPredicate, toPredicate, type DraftClause } from "./grid/filter-editor.tsx"
 import { RecordsGrid } from "./grid/records-grid.tsx"
@@ -268,11 +271,13 @@ function UndoDeleteView({ removed, pending, error, onUndo }: {
   )
 }
 
-function RenamePopover({ current, onRename }: {
+/** Rename a saved view: the name, and the cell's reason when it refuses (a conflict or a finding). */
+function RenameDialog({ open, onOpenChange, current, onRename }: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
   readonly current: string
   readonly onRename: (title: string) => Promise<string | null>
 }) {
-  const [open, setOpen] = useState(false)
   const [title, setTitle] = useState(current)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -282,25 +287,57 @@ function RenamePopover({ current, onRename }: {
     setBusy(true)
     const err = await onRename(title.trim())
     setBusy(false)
-    if (err === null) setOpen(false)
+    if (err === null) onOpenChange(false)
     else setProblem(err)
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="sm"><Pencil />Rename</Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">
-        <form onSubmit={(e) => void submit(e)} className="grid gap-2">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>Rename view</DialogTitle></DialogHeader>
+        <form onSubmit={(e) => void submit(e)} className="grid gap-3">
           <label className="grid gap-1 text-body">
             View name
             <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
           </label>
           {problem && <p role="alert" className="text-meta text-destructive">{problem}</p>}
-          <Button type="submit" size="sm" disabled={busy || title.trim() === ""}>Rename</Button>
+          <DialogFooter><Button type="submit" disabled={busy || title.trim() === ""}>Rename</Button></DialogFooter>
         </form>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * A saved view's other actions behind one "More" menu, so a card or a header shows one primary action
+ * and never wraps a lone verb onto its own line: Edit (where it is not the primary), Rename, Duplicate
+ * and Delete. Rename opens a small dialog; Delete keeps its receipt and Undo on the page.
+ */
+function ViewMenu({ title, editId, onRename, onDuplicate, onDelete, duplicating, deleting }: {
+  readonly title: string
+  /** The view to edit when Edit belongs in the menu (on a list card); omitted where Edit is the page's primary. */
+  readonly editId?: string
+  readonly onRename: (title: string) => Promise<string | null>
+  readonly onDuplicate: () => void
+  readonly onDelete: () => void
+  readonly duplicating: boolean
+  readonly deleting: boolean
+}) {
+  const [renaming, setRenaming] = useState(false)
+  return (
+    <>
+      <Menu>
+        <MenuTrigger aria-label={`More actions for ${title}`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "data-open:bg-accent")}>
+          <Ellipsis aria-hidden />More
+        </MenuTrigger>
+        <KitMenuContent align="end">
+          {editId !== undefined && <KitMenuItem value="edit" label="Edit" render={<Link to="/views/$id/edit" params={{ id: editId }} />}><Pencil aria-hidden />Edit</KitMenuItem>}
+          <KitMenuItem value="rename" label="Rename" onSelect={() => setRenaming(true)}><PencilLine aria-hidden />Rename</KitMenuItem>
+          <KitMenuItem value="duplicate" label="Duplicate" disabled={duplicating} onSelect={onDuplicate}><Copy aria-hidden />Duplicate</KitMenuItem>
+          <KitMenuItem value="delete" label="Delete" disabled={deleting} onSelect={onDelete}><Trash2 aria-hidden />Delete</KitMenuItem>
+        </KitMenuContent>
+      </Menu>
+      <RenameDialog open={renaming} onOpenChange={setRenaming} current={title} onRename={onRename} />
+    </>
   )
 }
 
@@ -370,7 +407,7 @@ export function ViewsPage() {
     <section className="space-y-6">
       <PageHeader
         title="Views"
-        description="Declarative projections over admitted record types, pinned into Spaces."
+        description="Saved lists of records, filtered and sorted the way you need them, grouped by Space."
         primary={<Button disabled={!cellAvailable} onClick={() => void navigate({ to: "/views/new" })}><Plus />New view</Button>}
       />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
@@ -402,21 +439,21 @@ export function ViewsPage() {
                   icon={Bookmark}
                   label={stored.view.title || "Untitled view"}
                   action={
-                    <div className="flex flex-wrap items-center gap-1">
-                      <Button asChild variant="ghost" size="sm"><Link to="/views/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
-                      <Button asChild variant="ghost" size="sm"><Link to="/views/$id/edit" params={{ id: stored.id }}><Pencil />Edit</Link></Button>
-                      <RenamePopover current={stored.view.title} onRename={(title) => rename(stored, title)} />
-                      <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(stored)}><Copy />Duplicate</Button>
-                      <Button variant="ghost" size="sm" onClick={() => remove.mutate({ stored, started: deletion.start() })}><Trash2 />Delete</Button>
+                    <div className="flex items-center gap-1">
+                      <Button asChild variant="outline" size="sm"><Link to="/views/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
+                      <ViewMenu title={stored.view.title || "Untitled view"} editId={stored.id} onRename={(title) => rename(stored, title)}
+                        onDuplicate={() => duplicate.mutate(stored)} onDelete={() => remove.mutate({ stored, started: deletion.start() })}
+                        duplicating={duplicate.isPending} deleting={false} />
                     </div>
                   }
                 >
                   <Well className="px-3.5 py-3">
-                    <div className="flex flex-wrap items-center gap-2 text-body text-muted-foreground">
+                    {/* Spaced by the gap alone, so a wrapped line never starts on a stray separator. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-body text-muted-foreground">
                       <Badge variant="secondary">{concept?.title ?? stored.view.objectType}</Badge>
                       {stored.view.space && <Badge variant="outline">Space: {stored.view.space}</Badge>}
                       <span>{filterCount === 0 ? "All records" : `${filterCount} filter${filterCount === 1 ? "" : "s"}`}</span>
-                      <span><span aria-hidden className="text-subtle-foreground">·</span> Version {stored.version}</span>
+                      <span>Version {stored.version}</span>
                     </div>
                     {stored.view.description && <p className="mt-1.5 text-body text-muted-foreground">{stored.view.description}</p>}
                   </Well>
@@ -523,8 +560,9 @@ function ScopedViewDetail({ id, store = views }: {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="min-w-0 flex-1 space-y-1">
+      {/* The title keeps at least 18rem: on a phone the actions move under it instead of squeezing it. */}
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1 basis-72 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-title tracking-tight">{active?.view.title || "View"}</h1>
             {active?.view.space && <Badge variant="outline">Space: {active.view.space}</Badge>}
@@ -534,11 +572,11 @@ function ScopedViewDetail({ id, store = views }: {
           {active?.view.description && <p className="text-body text-muted-foreground">{active.view.description}</p>}
         </div>
         {active && (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Button asChild size="sm"><Link to="/views/$id/edit" params={{ id: active.id }}><Pencil />Edit</Link></Button>
-            <RenamePopover current={active.view.title} onRename={(title) => rename(active, title)} />
-            <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(active)}><Copy />Duplicate</Button>
-            <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate({ from: active, started: deletion.start() })}><Trash2 />Delete</Button>
+            <ViewMenu title={active.view.title || "Untitled view"} onRename={(title) => rename(active, title)}
+              onDuplicate={() => duplicate.mutate(active)} onDelete={() => remove.mutate({ from: active, started: deletion.start() })}
+              duplicating={duplicate.isPending} deleting={remove.isPending} />
           </div>
         )}
       </div>
