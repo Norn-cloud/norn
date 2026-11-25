@@ -7,9 +7,9 @@
  * becomes the machine's declared `user` event; nothing here calls the server or decides permission.
  * Values carry the agent marks the server's projection implies (`agent.ts`, L6).
  */
-import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@ui-sdk/react/alert-dialog"
+import { AlertDialog, AlertDialogBackdrop, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@ui-sdk/react/alert-dialog"
 import { Button } from "@ui-sdk/react/button"
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
+import { Dialog, DialogBackdrop, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
 import { Input } from "@ui-sdk/react/input"
 import { useRef, type ReactNode } from "react"
 import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
@@ -226,10 +226,14 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
     onOpenChange: (next: boolean, details: { readonly reason?: string }) => raise(scope, node, { value: next, reason: details.reason ?? "" }, "onOpenChange"),
     onDismissAttempt: (details: { readonly reason?: string }) => raise(scope, node, { reason: details.reason ?? "" }, "onDismissAttempt"),
   }
-  const children = node.children.map((child) => <Node key={child.nodeId} scope={scope} node={child} />)
-  const panel = "m-auto w-[min(28rem,calc(100vw-2rem))] rounded-[var(--radius-popup)] border border-border bg-popover p-5 text-popover-foreground shadow-lg backdrop:bg-black/40"
+  // The section that names the layer is its title: its own children draw in the body, its label once.
+  const children = node.children.flatMap((child) => (child === title ? child.children : [child])).map((child) => <Node key={child.nodeId} scope={scope} node={child} />)
+  const panel = "fixed start-1/2 top-1/2 z-50 grid w-[min(28rem,calc(100vw-2rem))] -translate-y-1/2 gap-3 rounded-[var(--radius-popup)] border border-border bg-popover p-5 text-popover-foreground shadow-lg ltr:-translate-x-1/2 rtl:translate-x-1/2"
+  // No exit animation runs, so the backdrop never outlives the layer to swallow a press.
+  const backdrop = "fixed inset-0 z-40 bg-black/40"
   return primitive === "alert-dialog" ? (
     <AlertDialog {...options}>
+      <AlertDialogBackdrop className={backdrop} />
       <AlertDialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <AlertDialogTitle className="text-heading font-medium">{titled}</AlertDialogTitle>
         {message !== undefined && <AlertDialogDescription className={MUTED}>{text(message, scope.locale)}</AlertDialogDescription>}
@@ -238,6 +242,7 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
     </AlertDialog>
   ) : (
     <Dialog {...options}>
+      <DialogBackdrop className={backdrop} />
       <DialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <DialogTitle className="text-heading font-medium">{titled}</DialogTitle>
         {message !== undefined && <DialogDescription className={MUTED}>{text(message, scope.locale)}</DialogDescription>}
