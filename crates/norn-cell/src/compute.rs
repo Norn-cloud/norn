@@ -1,6 +1,9 @@
 //! Result/frontier contracts; producing evaluators must qualify their snapshot pins.
 use std::collections::{BTreeMap, BTreeSet};
 
+/// VIEW-ENGINE-1: admitted transforms lowered to `DataFusion` (#1765).
+#[cfg(feature = "datafusion")]
+mod df_transform;
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;

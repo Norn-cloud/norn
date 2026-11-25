@@ -11,7 +11,11 @@
 //! Segments are compacted ([`super::compact`]): once a table has more than a
 //! few, they are replaced by one segment of resolved versions (each with its
 //! interval written down), so a read decodes the versions it needs, pruned
-//! by the frontier, not every batch ever synced.
+//! by the frontier, not every batch ever synced. Every segment is written in
+//! identity order (by id, then version, then batch order), so compaction
+//! merges them as streams. #1765: no object outlives its records: a refused
+//! publish removes the objects it installed, and a reset removes every
+//! object no catalog record names, after the reset is committed.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -55,8 +59,6 @@ pub(super) enum Need {
     Current(u64),
     /// Every version known at the frontier, superseded ones included.
     History(u64),
-    /// Every version (compaction).
-    All,
 }
 
 fn schema_text(table: &TableSchema) -> Outcome<String> {
@@ -100,6 +102,10 @@ pub(super) fn frontier(
             catalog::set(tx, "links", &links)?;
             catalog::set(tx, "model_pin", &request.model_pin)
         })?;
+        // #1765: the reset is committed; now no record names the old
+        // segments, nor anything a crash or a refused publish left behind.
+        let objects = tenant.objects();
+        tenant.catalog.read(|tx| catalog::sweep(tx, &objects))?;
     }
     let frontier = tenant
         .catalog
@@ -137,15 +143,46 @@ pub(super) struct SegmentRow {
     pub version: Version,
 }
 
-/// Write `rows` as a finished, synced segment file `name` in staging.
+/// A segment file's schema for `table`.
+pub(super) fn segment_schema(table: &TableSchema) -> datafusion::arrow::datatypes::SchemaRef {
+    columnar::storage_schema(system_fields(), table)
+}
+
+/// The order of segment rows within a segment file: by identity (its
+/// bytes), then version, then batch order.
+pub(super) fn identity_order(a: &SegmentRow, b: &SegmentRow) -> std::cmp::Ordering {
+    (a.version.id.as_bytes(), a.version.v, a.ord).cmp(&(
+        b.version.id.as_bytes(),
+        b.version.v,
+        b.ord,
+    ))
+}
+
+/// Write `rows` (in any order) as a finished, synced segment file `name`
+/// in staging, in identity order.
 pub(super) fn write_segment(
     tenant: &Tenant,
     table: &TableSchema,
     seq: u64,
-    rows: &[SegmentRow],
+    mut rows: Vec<SegmentRow>,
     name: &str,
 ) -> Outcome<std::path::PathBuf> {
-    let schema = columnar::storage_schema(system_fields(), table);
+    rows.sort_by(identity_order);
+    let schema = segment_schema(table);
+    let batch = segment_batch(&schema, table, seq, &rows)?;
+    let staged = tenant.staging().join(name);
+    let _stale = std::fs::remove_file(&staged);
+    columnar::write_parquet(&staged, &schema, &[batch])?;
+    Ok(staged)
+}
+
+/// `rows` as one batch of the segment `schema` of `table`, numbered `seq`.
+pub(super) fn segment_batch(
+    schema: &datafusion::arrow::datatypes::SchemaRef,
+    table: &TableSchema,
+    seq: u64,
+    rows: &[SegmentRow],
+) -> Outcome<datafusion::arrow::record_batch::RecordBatch> {
     let count = rows.len();
     let texts = |f: fn(&SegmentRow) -> &str| -> ArrayRef {
         Arc::new(StringArray::from_iter_values(rows.iter().map(f)))
@@ -183,11 +220,7 @@ pub(super) fn write_segment(
             .collect();
         arrays.extend(columnar::column_arrays(column, &cells)?);
     }
-    let batch = columnar::batch(&schema, arrays)?;
-    let staged = tenant.staging().join(name);
-    let _stale = std::fs::remove_file(&staged);
-    columnar::write_parquet(&staged, &schema, &[batch])?;
-    Ok(staged)
+    columnar::batch(schema, arrays)
 }
 
 /// A sync batch's rows of one table as segment rows; a number its column
@@ -294,18 +327,12 @@ pub(super) fn sync(
             .segments(name, &request.world)?
             .last()
             .map_or(1, |segment| segment.seq.saturating_add(1));
-        let staged = write_segment(
-            tenant,
-            &table,
-            seq,
-            &rows,
-            &format!("segment-{seq}.parquet"),
-        )?;
+        let staged = write_segment(tenant, &table, seq, rows, &format!("segment-{seq}.parquet"))?;
         let (path, sha256, _bytes) = catalog::install(&staged, &tenant.objects())?;
         installed.push(((*name).to_owned(), Segment { seq, path, sha256 }));
     }
     let key = format!("frontier:{}", request.world);
-    tenant.catalog.write(|tx| {
+    let published = tenant.catalog.write(|tx| {
         // Nothing may have moved the mirror since the batch was checked.
         check_batch(tx, request)?;
         for (table, segment) in &installed {
@@ -324,7 +351,14 @@ pub(super) fn sync(
             catalog::put_edge(tx, &edge.table, &request.world, &state)?;
         }
         catalog::set(tx, &key, &request.through.to_string())
-    })?;
+    });
+    if let Err(refused) = published {
+        // #1765: nothing names what this batch installed; remove it.
+        for (_, segment) in &installed {
+            remove_unnamed(tenant, &segment.path)?;
+        }
+        return Err(refused);
+    }
     for name in by_table.keys() {
         // Best effort: a compaction that cannot run leaves the mirror exact,
         // and the next sync tries again.
@@ -338,16 +372,13 @@ pub(super) fn sync(
 }
 
 /// The scan filter of `need`: a resolved version outside it is never decoded.
-fn pruned(need: Need) -> Option<Expr> {
+fn pruned(need: Need) -> Expr {
     let unresolved = col(":resolved").eq(lit(false));
     match need {
-        Need::All => None,
-        Need::History(frontier) => Some(unresolved.or(col(":from").lt_eq(lit(frontier)))),
-        Need::Current(frontier) => Some(
-            unresolved.or(col(":from")
-                .lt_eq(lit(frontier))
-                .and(col(":to").is_null().or(col(":to").gt(lit(frontier))))),
-        ),
+        Need::History(frontier) => unresolved.or(col(":from").lt_eq(lit(frontier))),
+        Need::Current(frontier) => unresolved.or(col(":from")
+            .lt_eq(lit(frontier))
+            .and(col(":to").is_null().or(col(":to").gt(lit(frontier))))),
     }
 }
 
@@ -368,12 +399,11 @@ pub(super) fn versions(
         .map(|segment| segment.path.clone())
         .collect();
     let mut staged = Vec::new();
-    for batch in engine.scan(tenant, &files, pruned(need))? {
+    for batch in engine.scan(tenant, &files, Some(pruned(need)))? {
         staged.extend(read_rows(&batch, table)?);
     }
     let versions = intervals(staged);
     Ok(match need {
-        Need::All => versions,
         Need::History(frontier) => versions
             .into_iter()
             .filter(|v| v.from <= frontier)
@@ -386,7 +416,7 @@ pub(super) fn versions(
 }
 
 /// The segment rows of one scanned batch, with their segment number.
-fn read_rows(
+pub(super) fn read_rows(
     batch: &datafusion::arrow::record_batch::RecordBatch,
     table: &TableSchema,
 ) -> Outcome<Vec<(u64, SegmentRow)>> {
@@ -438,8 +468,10 @@ fn read_rows(
 /// The `DuckDB` engine's interval rules over segment rows in any order: a
 /// resolved row keeps the interval written down; a staged row is closed by
 /// the next staged version of its identity in its batch, or by the earliest
-/// commit of the identity's next batch.
-fn intervals(mut staged: Vec<(u64, SegmentRow)>) -> Vec<Version> {
+/// commit of the identity's next batch. Rows of one identity close only
+/// versions of that identity, so the rules hold over any one identity's
+/// rows alone (compaction merges identity by identity).
+pub(super) fn intervals(mut staged: Vec<(u64, SegmentRow)>) -> Vec<Version> {
     staged.sort_by(|(a_seg, a), (b_seg, b)| {
         (a_seg, a.version.id.as_bytes(), a.version.v, a.ord).cmp(&(
             b_seg,
@@ -482,6 +514,15 @@ fn intervals(mut staged: Vec<(u64, SegmentRow)>) -> Vec<Version> {
         start = end;
     }
     kept
+}
+
+/// #1765: remove the object at `path` unless a catalog record names it (an
+/// object is content-addressed, so another record may name the same bytes).
+pub(super) fn remove_unnamed(tenant: &mut Tenant, path: &std::path::Path) -> Outcome<()> {
+    if !tenant.catalog.read(|tx| catalog::named(tx, path))? {
+        let _absent = std::fs::remove_file(path);
+    }
+    Ok(())
 }
 
 /// The edges of `link` in `world` the catalog holds now.

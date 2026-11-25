@@ -24,6 +24,7 @@ mod laws;
 mod merge;
 mod mirror;
 mod page;
+mod pages;
 mod parquet_text;
 mod profile;
 mod query;
@@ -448,3 +449,9 @@ impl super::AnalyticalEngine for Engine {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tests_bounds.rs"]
+mod tests_bounds;
+#[cfg(test)]
+#[path = "tests_compact.rs"]
+mod tests_compact;

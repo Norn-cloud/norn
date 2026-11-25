@@ -31,6 +31,9 @@ mod definitions_install;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "../tests/duckdb_transform.rs"]
 mod duckdb_transform;
+#[cfg(all(feature = "datafusion", not(target_arch = "wasm32")))]
+#[path = "../tests/duckdb_transform_datafusion.rs"]
+mod duckdb_transform_datafusion;
 #[path = "../tests/engine_fixture_record.rs"]
 mod engine_fixture_record;
 #[path = "../tests/engine_upgrade.rs"]
@@ -111,6 +114,9 @@ mod temporal_source_world;
 mod trace_at_frontier;
 #[path = "../tests/transform.rs"]
 mod transform;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "../tests/backends/duckdb_transform.rs"]
+mod transform_backend;
 #[path = "../tests/transparency.rs"]
 mod transparency;
 #[path = "../tests/value_commitments.rs"]

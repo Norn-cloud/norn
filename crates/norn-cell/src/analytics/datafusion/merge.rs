@@ -14,7 +14,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 
 use super::super::TableSchema;
-use super::columnar::{self, Sink};
+use super::columnar::{self, MAX_BATCH_BYTES, Sink};
 use super::files::Meter;
 use super::laws::HeldRow;
 use super::staging;
@@ -22,8 +22,6 @@ use super::{EXHAUSTED, Outcome, engine_error, refusal};
 
 /// The most rows read from a staged part at a time.
 const MERGE_ROWS: usize = 64;
-/// The most string bytes one batch may hold: far under `Utf8`'s `i32` offsets.
-const MAX_BATCH_BYTES: usize = 1 << 30;
 
 /// A held row's order in the held-set file.
 fn key(row: &HeldRow) -> (u64, Option<&[u8]>, &[u8]) {
@@ -40,8 +38,14 @@ pub(super) fn sort_held(rows: &mut [HeldRow]) {
 }
 
 /// A staged part's reader, its batches sized (B2) so that a batch of its
-/// widest row group's average row stays within `budget` bytes.
-fn reader(path: &Path, budget: usize) -> Outcome<ParquetRecordBatchReader> {
+/// widest row group's average row stays within `budget` bytes. NB6: this is
+/// an average, not a hard bound: a batch holding the part's widest rows can
+/// decode up to [`MERGE_ROWS`] of them. A staged part is the engine's own
+/// file, written without dictionaries (NB2) from rows each already within
+/// the load's cell and [`MAX_BATCH_BYTES`] bounds, so its averages are
+/// honest; an untrusted source file is bounded by its pages instead
+/// ([`super::pages`]).
+pub(super) fn reader(path: &Path, budget: usize) -> Outcome<ParquetRecordBatchReader> {
     let failed = |error: parquet::errors::ParquetError| engine_error(error.to_string());
     let file = std::fs::File::open(path).map_err(|error| engine_error(error.to_string()))?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(failed)?;
@@ -129,7 +133,9 @@ pub(super) fn held_back(findings: &[PathBuf], memory: usize) -> Outcome<Vec<u64>
 }
 
 /// Stream the typed rows not in `back` (sorted) into `sink`, in row order,
-/// handing each written batch to `seen`; batches stay within half a chunk.
+/// handing each written batch to `seen`; batches are sized to half a chunk
+/// of the part's average row (an average bound, see [`reader`]). A typed
+/// row without its `:row` number refuses.
 pub(super) fn trusted(
     typed: &Path,
     back: &[u64],
@@ -175,16 +181,6 @@ impl Cursor {
     }
 }
 
-/// A held row's text bytes.
-fn held_bytes(row: &HeldRow) -> usize {
-    row.values
-        .iter()
-        .flatten()
-        .fold(row.reason.len(), |total, text| {
-            total.saturating_add(text.len())
-        })
-}
-
 /// Merge the held parts (each in key order) into `sink` in key order, each
 /// part read within its share of half a chunk, the output flushed by rows or
 /// bytes, whichever comes first.
@@ -223,7 +219,7 @@ pub(super) fn merge_held(
             .get_mut(at)
             .and_then(|cursor| cursor.ahead.pop_front())
         {
-            bytes = bytes.saturating_add(held_bytes(&row));
+            bytes = bytes.saturating_add(staging::held_bytes(&row));
             out.push(row);
         }
         if out.len() >= MERGE_ROWS || bytes >= budget {
