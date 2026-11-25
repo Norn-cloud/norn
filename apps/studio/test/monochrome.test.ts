@@ -260,8 +260,8 @@ function utility(token: string): string {
 function colouredClass(token: string): string | null {
   const name = utility(token)
   if (PALETTE.test(name)) return "a Tailwind palette colour"
-  // An arbitrary value `bg-[…]`, a variable shorthand `bg-(--x,…)` (its fallback paints), or an arbitrary property `[color:…]`.
-  const shorthand = /^-?[a-z][a-z0-9-]*-\((--.+)\)(?:\/\S+)?!?$/.exec(name)?.[1]
+  // An arbitrary value `bg-[…]`, a variable shorthand `bg-(--x,…)` or typed `bg-(color:--x,…)` (its fallback paints), or an arbitrary property `[color:…]`.
+  const shorthand = /^-?[a-z][a-z0-9-]*-\((?:[a-z-]+:)?(--.+)\)(?:\/\S+)?!?$/.exec(name)?.[1]
   const value = /^-?[a-z][a-z0-9-]*-\[(.+)\](?:\/\S+)?!?$/.exec(name)?.[1]
     ?? (shorthand === undefined ? undefined : `var(${shorthand})`)
     ?? /^\[(?:--)?[a-zA-Z][\w-]*:(.+)\]!?$/.exec(name)?.[1]
@@ -310,10 +310,10 @@ test("the source scan reads classes in strings inside templates, arbitrary prope
     expect(colouredClass(token)).not.toBeNull()
   }
   // A coloured fallback in var(), in an arbitrary value or the variable shorthand; and the important prefix.
-  for (const token of ["bg-[var(--x,#2563eb)]", "text-[var(--x,_var(--y,_crimson))]", "bg-(--x,#2563eb)", "!bg-blue-500", "hover:!text-[#2563eb]"]) {
+  for (const token of ["bg-[var(--x,#2563eb)]", "text-[var(--x,_var(--y,_crimson))]", "bg-(--x,#2563eb)", "bg-(color:--x,#2563eb)", "text-(color:--x,crimson)/50", "!bg-blue-500", "hover:!text-[#2563eb]"]) {
     expect(colouredClass(token)).not.toBeNull()
   }
-  for (const token of ["[color:var(--foreground)]", "hover:[background:var(--muted)]", "[mask-image:linear-gradient(black,transparent)]", "bg-[var(--x,white)]", "bg-(--muted)", "[grid-area:main]", "[&>svg]:size-4"]) {
+  for (const token of ["[color:var(--foreground)]", "hover:[background:var(--muted)]", "[mask-image:linear-gradient(black,transparent)]", "bg-[var(--x,white)]", "bg-(--muted)", "bg-(color:--muted)", "[grid-area:main]", "[&>svg]:size-4"]) {
     expect(colouredClass(token)).toBeNull()
   }
   expect(colouredClasses("const a = `p-2 ${on ? \"bg-muted\" : \"text-foreground\"} ${`gap-1`}`\nconst b = 'it\\'s'")).toEqual([])

@@ -320,6 +320,37 @@ test("stop: a follow-up stopped while it waits for the stopped turn to settle en
   expect(bridge.state.opened).toBe(1)
 })
 
+test("stop: a follow-up stopped while it waits keeps the line: the next prompt still waits for the first stopped turn and never shares its session", async () => {
+  const bridge = scriptedSession()
+  const transport = new SidekickTransport({ open: bridge.open, settleMs: 40 })
+  const first = new AbortController()
+  await transport.sendMessages(send([user("one")], first.signal))
+  await bridge.prompted(1)
+  first.abort()
+  // Turn two is stopped while it waits for turn one, whose prompt never settles.
+  const second = new AbortController()
+  const two = transport.sendMessages(send([user("two")], second.signal))
+  await Bun.sleep(5)
+  second.abort()
+  await drain(await two)
+  const three = (await transport.sendMessages(send([user("three")]))).getReader()
+  await bridge.prompted(2)
+  // Turn three went out on a fresh session, never beside turn one's live prompt.
+  expect(bridge.state.prompts).toEqual(["one", "three"])
+  expect(bridge.state.opened).toBe(2)
+  const [old, current] = [bridge.turns[0]!, bridge.turns[1]!]
+  expect(current.events).not.toBe(old.events)
+  // Turn one's late question and words reach no later turn.
+  const asked = await Promise.race([old.events.permission(PERMISSION as never), Bun.sleep(500).then(() => "held open" as const)])
+  expect(asked).toEqual({ outcome: { outcome: "cancelled" } })
+  old.events.update(update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "late from turn one" } }))
+  current.settle("end_turn")
+  const seen: SidekickChunk[] = []
+  await readUntil(three, seen, "finish")
+  expect(seen.some((chunk) => chunk.type === "tool-approval-request")).toBe(false)
+  expect(JSON.stringify(seen)).not.toContain("late from turn one")
+})
+
 test("a question names its tool by the bridge's own identity and redraws the part when that differs from the name the call opened with", () => {
   const chunks: SidekickChunk[] = []
   const turn = new Turn((chunk) => chunks.push(chunk))

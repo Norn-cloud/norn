@@ -78,7 +78,9 @@ export class SidekickSession {
     const grant = await getGrant()
     // Once this session has ended, nothing the socket still delivers reaches the chat, and a question is `cancelled`.
     let session: SidekickSession | null = null
-    const ended = () => session?.closed === true
+    // An open that failed never hands out a session: what its socket still delivers is dropped too.
+    let failed = false
+    const ended = () => failed || session?.closed === true
     const app = client()
       .onNotification("session/update", ({ params }) => { if (!ended()) events.update(params) })
       .onNotification("_norn/tool_result", (value: unknown) => value as ViewDelivery, ({ params }) => { if (!ended()) events.view(params) })
@@ -93,6 +95,7 @@ export class SidekickSession {
       void connection.closed.then(() => opened.ended("The Sidekick connection closed."))
       return opened
     } catch (error) {
+      failed = true
       connection.close()
       throw error
     }

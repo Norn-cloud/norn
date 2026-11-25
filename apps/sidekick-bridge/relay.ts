@@ -302,7 +302,12 @@ export function exactNumbers(text: string): boolean {
     if (char !== "-" && (char < "0" || char > "9")) continue
     NUMBER.lastIndex = at
     const literal = NUMBER.exec(text)?.[0]
-    if (literal === undefined || exactDecimal(literal) !== exactDecimal(String(Number(literal)))) return false
+    if (literal === undefined) return false
+    // Past a double's range the literal parses to ±Infinity or 0: decided here, before exactDecimal reads
+    // a possibly enormous exponent as a big integer. A literal that parses to 0 is exact only as a written zero.
+    const value = Number(literal)
+    if (!Number.isFinite(value)) return false
+    if (value === 0 ? /[1-9]/.test(literal.split(/[eE]/)[0] as string) : exactDecimal(literal) !== exactDecimal(String(value))) return false
     at += literal.length - 1
   }
   return true

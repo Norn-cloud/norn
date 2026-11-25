@@ -205,6 +205,17 @@ test("a number passes the proxy only when a double keeps it exactly, so Studio r
   for (const text of ['{"a":9007199254740993}', '{"a":1e-400}', '{"a":1e400}', '{"a":0.1000000000000000000001}', '{"s":"\\"","a":12345678901234567890}']) expect(exactNumbers(text)).toBe(false)
 })
 
+test("a number with an enormous exponent is decided at once, without reading the exponent as a big integer", () => {
+  const huge = "9".repeat(200_000)
+  const started = performance.now()
+  expect(exactNumbers(`{"a":1e${huge}}`)).toBe(false)
+  expect(exactNumbers(`{"a":1e-${huge}}`)).toBe(false)
+  expect(exactNumbers(`{"a":-1E+${huge}}`)).toBe(false)
+  expect(exactNumbers(`{"a":0e${huge},"b":-0.0e-${huge}}`)).toBe(true)
+  expect(exactNumbers(`{"a":15e${"0".repeat(200_000)}1}`)).toBe(true)
+  expect(performance.now() - started).toBeLessThan(100)
+})
+
 /**
  * A stand-in adapter (newline JSON-RPC on stdio): it answers `session/new` with the mode it is given
  * and echoes the params it saw; a prompt asks for two `norn_call_action` calls and ends on cancel.

@@ -98,7 +98,8 @@ const SPARKLE_SLUG = /^(?:[a-z0-9-]+-)?sparkles?(?:-[a-z0-9-]+)?$|^(?:[a-z0-9-]+
  * icon by a computed name, so each is a hit in itself.
  */
 function sparkleHits(text: string): string[] {
-  const lucide = String.raw`["'](lucide-react(?:\/[^"']*)?)["']`
+  // Quoted any way a module specifier can be: "…", '…' or a template literal `…`.
+  const lucide = String.raw`["'\x60](lucide-react(?:\/[^"'\x60]*)?)["'\x60]`
   const hits: string[] = []
   // import { Sparkles as Shine } / export { Sparkles } / export { Sparkles as default } from "lucide-react…"
   for (const match of text.matchAll(new RegExp(String.raw`(?:import|export)\s+(?:type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*${lucide}`, "g"))) {
@@ -143,6 +144,8 @@ test("the sparkle ban sees every way in, and not a plain star", () => {
     `const Icons = await import("lucide-react")`,
     `const { Sparkles } = await import( 'lucide-react/dist/esm/icons/star.js' )`,
     `const Icons = require("lucide-react")`,
+    "const Icons = await import(`lucide-react`)",
+    "const Shine = require(`lucide-react/dist/esm/icons/sparkles.js`)",
     `import { LucideStars } from "lucide-react"`,
     `import { LucideSparklesIcon as Glow } from "lucide-react"`,
     `import { StarsIcon } from "lucide-react"`,

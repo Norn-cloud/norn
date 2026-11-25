@@ -120,18 +120,18 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     }
   }
 
-  /** Wait for the previous prompt to settle; false when it did not in time. Stopping the turn ends the wait at once. */
-  private async settled(previous: Promise<void>, abortSignal: AbortSignal | undefined): Promise<boolean> {
+  /** Wait for the previous prompt to settle: "late" when it did not in time; stopping the turn ends the wait at once ("stopped"). */
+  private async settled(previous: Promise<void>, abortSignal: AbortSignal | undefined): Promise<"settled" | "late" | "stopped"> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let stopped: (() => void) | undefined
-    const late = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), this.options.settleMs ?? SETTLE_MS) })
-    const aborted = new Promise<true>((resolve) => {
-      stopped = () => resolve(true)
+    const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), this.options.settleMs ?? SETTLE_MS) })
+    const aborted = new Promise<"stopped">((resolve) => {
+      stopped = () => resolve("stopped")
       if (abortSignal?.aborted) stopped()
       else abortSignal?.addEventListener("abort", stopped, { once: true })
     })
     try {
-      return await Promise.race([previous.then(() => true as const), late, aborted])
+      return await Promise.race([previous.then(() => "settled" as const), late, aborted])
     } finally {
       clearTimeout(timer)
       if (stopped !== undefined) abortSignal?.removeEventListener("abort", stopped)
@@ -143,7 +143,10 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     const text = last === undefined ? "" : promptText(last).trim()
     let closed = false
     // This turn's place in line: the next prompt waits for it, the way this one waits for the last.
+    // The place is handed on only once the previous prompt has settled or its session was retired:
+    // a turn that ends before then (stopped, empty, or failing to connect) keeps the line on `previous`.
     const previous = this.inflight
+    let released = false
     let done: () => void = () => undefined
     this.inflight = new Promise<void>((resolve) => { done = resolve })
     return new ReadableStream<SidekickChunk>({
@@ -163,12 +166,16 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
         try {
           if (text === "") throw new Error("Type a question first.")
           let session = await this.connect()
-          if (!(await this.settled(previous, abortSignal))) {
+          const waited = await this.settled(previous, abortSignal)
+          if (waited === "stopped") return
+          if (waited === "late" && this.session === session) {
             // The stopped turn never settled: start over on a fresh session rather than share its traffic.
             // The old session is retired first, so nothing it sends later reaches the new turn.
-            if (this.session === session) { this.retire(); this.session = null; session.close() }
-            session = await this.connect()
+            this.retire(); this.session = null; session.close()
           }
+          released = true
+          // Prompt only the chat's current, open session: one closed or replaced while this turn waited is not it.
+          if (this.session !== session || session.closed) session = await this.connect()
           if (abortSignal?.aborted) return
           this.turn = turn
           prompted = session
@@ -180,7 +187,8 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
           abortSignal?.removeEventListener("abort", stop)
           if (this.turn === turn) this.turn = null
           this.cancelApprovals(turn)
-          done()
+          if (released) done()
+          else void previous.then(done, done)
           if (!closed) { closed = true; controller.close() }
         }
       },
