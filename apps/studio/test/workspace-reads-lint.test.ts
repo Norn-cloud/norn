@@ -12,6 +12,8 @@ import ts from "typescript"
  *   import is no read and is let through.
  * - A `DecidedScope` is made in one place, `src/lib/workspace.tsx`: no other module asserts one
  *   (`as DecidedScope`, `<DecidedScope>`), so every one is the mode's answer.
+ * - The closed state unions (`src/lib/state/`) import no app code and no package: they stay ready to
+ *   move into their own package as they are.
  *
  * Both rules are errors. There is no allowlist: the boundary is the `src/lib/` directory itself.
  */
@@ -20,6 +22,7 @@ const SOURCE = join(ROOT, "src")
 const LIB = join(SOURCE, "lib")
 const RAW = join(LIB, "raw")
 const WORKSPACE = join(LIB, "workspace.tsx")
+const STATE = join(LIB, "state")
 const GENERATED = new Set(["checker", "engine"].map((dir) => join(SOURCE, dir)))
 
 interface Violation { readonly file: string; readonly line: number; readonly text: string }
@@ -32,14 +35,23 @@ function target(from: string, specifier: string): string | undefined {
 }
 
 const insideRaw = (path: string | undefined): boolean => path !== undefined && (path === RAW || path.startsWith(`${RAW}/`))
+const insideState = (path: string | undefined): boolean => path !== undefined && (path === STATE || path.startsWith(`${STATE}/`))
 
-/** Every way `source` reaches `src/lib/raw/` (outside `src/lib/`) or asserts a `DecidedScope` (outside `workspace.tsx`). */
+/**
+ * Every way `source` reaches `src/lib/raw/` (outside `src/lib/`), asserts a `DecidedScope` (outside
+ * `workspace.tsx`), or, in `src/lib/state/`, imports anything from outside it.
+ */
 export function violations(file: string, source: string): readonly Violation[] {
   const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
   const found: Violation[] = []
   const at = (node: ts.Node, text: string) => found.push({ file, line: parsed.getLineAndCharacterOfPosition(node.getStart(parsed)).line + 1, text })
   const outsideLib = !(file === LIB || file.startsWith(`${LIB}/`))
+  const stateModule = insideState(file)
   const visit = (node: ts.Node) => {
+    if (stateModule && (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined && ts.isStringLiteral(node.moduleSpecifier)
+      && !insideState(target(file, node.moduleSpecifier.text))) {
+      at(node, `state imports ${node.moduleSpecifier.text}`)
+    }
     if (outsideLib) {
       if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && insideRaw(target(file, node.moduleSpecifier.text))) {
         const typeOnly = node.importClause?.isTypeOnly === true
@@ -100,6 +112,9 @@ test("the rule finds a page reaching the raw reads or minting a DecidedScope, an
   // Inside lib the raw reads are imported freely; only workspace.tsx makes a DecidedScope.
   expect(violations(join(LIB, "views.ts"), sample).map(({ line }) => line)).toEqual([8, 9])
   expect(violations(WORKSPACE, sample)).toEqual([])
+  // The state unions import only each other.
+  const state = ['import type { Read } from "../exact.ts"', 'import { useQuery } from "@tanstack/react-query"', 'export type { ReadState } from "./read.ts"', 'import { x } from "@/lib/state/other"'].join("\n")
+  expect(violations(join(STATE, "index.ts"), state).map(({ line, text }) => [line, text])).toEqual([[1, "state imports ../exact.ts"], [2, "state imports @tanstack/react-query"]])
 })
 
 test("pages read records only through a decided workspace's reader (#1762)", () => {
@@ -107,6 +122,7 @@ test("pages read records only through a decided workspace's reader (#1762)", () 
   expect(files.length).toBeGreaterThan(100)
   expect(files).toContain(WORKSPACE)
   expect(files.some((file) => file.startsWith(`${RAW}/`))).toBe(true)
+  expect(files.some((file) => insideState(file))).toBe(true)
   const found = files.flatMap((file) => violations(file, readFileSync(file, "utf8")))
   const report = found.map(({ file, line, text }) => `  ${relative(ROOT, file)}:${line} ${text}`).join("\n")
   expect(found, `raw reads reached outside src/lib/, or a DecidedScope made outside src/lib/workspace.tsx:\n${report}`).toEqual([])

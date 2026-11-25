@@ -25,6 +25,7 @@ import { recordsQueryParams, recordsQueryPrefix, type RecordsQuery } from "./rec
 import type { PageRead, RecordsRead } from "./records-source.ts"
 import type { ObjectReads } from "./transport.ts"
 import type { ObjectFindings } from "../evidence/review.ts"
+import type { WorkspaceState } from "./state/index.ts"
 
 declare const decided: unique symbol
 
@@ -66,12 +67,8 @@ export interface RecordedReader {
   readonly object: (objectType: string, id: string) => ReaderQuery<ObjectReads | null>
 }
 
-/** The workspace a page reads in, as the server's mode answer decided it. */
-export type Workspace =
-  | { readonly kind: "deciding" }
-  | { readonly kind: "unavailable"; readonly error: Error }
-  | { readonly kind: "live"; readonly scope: DecidedScope; readonly reader: ScopedReader }
-  | { readonly kind: "recorded"; readonly reader: RecordedReader }
+/** The workspace a page reads in, as the server's mode answer decided it (`lib/state`'s {@link WorkspaceState}). */
+export type Workspace = WorkspaceState<DecidedScope, ScopedReader, RecordedReader>
 
 /** A decided workspace: one a page may read in. */
 export type DecidedWorkspace = Extract<Workspace, { readonly kind: "live" | "recorded" }>

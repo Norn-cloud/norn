@@ -48,7 +48,7 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
       (): Msg => ({ kind: "again", key: `k${keys++}` }),
       (): Msg => ({ kind: "undo", key: `k${keys++}` }),
       // The cell serves the parked call back exactly as it was sent (APPROVAL-REQUESTED-1).
-      (): Msg => ({ kind: "run-approved", decisionId: state.phase.kind === "pending" ? state.phase.decision.id : "elsewhere", actionId: "learning.triage_episode", input: state.sent?.input ?? "{}", key: state.sent?.key ?? "kx", next: `k${keys++}` }),
+      (): Msg => ({ kind: "run-approved", decisionId: state.phase.kind === "pending_approval" ? state.phase.decision.id : "elsewhere", actionId: "learning.triage_episode", input: state.sent?.input ?? "{}", key: state.sent?.key ?? "kx", next: `k${keys++}` }),
     ])()
     const [after, cmds] = update(state, msg)
     steps.push({ before: state, msg, after, cmds })
@@ -74,7 +74,7 @@ test("one call at a time: no call starts while another is on its way", () => {
 test("a risky action never calls straight from editing: a confirm comes first", () => {
   for (const seed of SEEDS) {
     const { risky, steps } = session(seed)
-    for (const { before, msg, cmds } of steps) if (risky && msg.kind === "submit" && calls(cmds).length > 0) expect(before.phase.kind).toBe("confirm")
+    for (const { before, msg, cmds } of steps) if (risky && msg.kind === "submit" && calls(cmds).length > 0) expect(before.phase.kind).toBe("confirming")
   }
 })
 
@@ -83,7 +83,7 @@ test("keys: one key never carries two bodies, a retry re-sends exactly the last 
     const bodies = new Map<string, string>()
     let last: Extract<Cmd, { kind: "call" }> | null = null
     for (const { before, msg, after, cmds } of session(seed).steps) {
-      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "done" && before.phase.kind !== "pending" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
+      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "committed" && before.phase.kind !== "pending_approval" && before.phase.kind !== "undo_failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
       if (msg.kind === "edit" && inFlight(before)) expect(after).toBe(before)
       for (const c of calls(cmds)) {
         if (c.actionId !== "learning.triage_episode") continue
@@ -100,7 +100,7 @@ test("undo calls only the compensation the receipt named, with its input, and no
   for (const seed of SEEDS) for (const { before, cmds } of session(seed).steps) {
     for (const c of calls(cmds)) {
       if (c.actionId === "learning.triage_episode") continue
-      const offered = before.phase.kind === "done" ? before.phase.undo : before.phase.kind === "undo-failed" ? before.phase.undo : null
+      const offered = before.phase.kind === "committed" ? before.phase.undo : before.phase.kind === "undo_failed" ? before.phase.undo : null
       expect(offered).not.toBeNull()
       expect({ actionId: c.actionId, input: c.input }).toEqual(offered!)
     }
@@ -118,7 +118,7 @@ test("the documents are read again exactly when the cell commits something, and 
 
 test("an undo that did not come back says whether it is known not to have happened: only the cell's own answer makes it known", () => {
   for (const seed of SEEDS) for (const { before, msg, after } of session(seed).steps) {
-    if (before.phase.kind !== "undoing" || after.phase.kind !== "undo-failed") continue
+    if (before.phase.kind !== "undoing" || after.phase.kind !== "undo_failed") continue
     expect(after.phase.known).toBe(msg.kind === "answered")
   }
 })
@@ -148,7 +148,7 @@ test("an approval-gated call commits nothing: it waits for a decider, reads noth
   const sending = update(init({ actionId: "ops.refund", risky: false }, "k0"), { kind: "submit", input: "{}" })[0]
   expect(sending.phase.kind).toBe("sending")
   const [pending, cmds] = update(sending, { kind: "answered", result: { kind: "pending", decision: { id: "d1", expiresAtMs: 5 } } })
-  expect(pending.phase).toEqual({ kind: "pending", decision: { id: "d1", expiresAtMs: 5 } })
+  expect(pending.phase).toEqual({ kind: "pending_approval", decision: { id: "d1", expiresAtMs: 5 } })
   expect(cmds).toEqual([])
   // The sent call stays the only one under its key: nothing is sent again from here but a new draft.
   expect(update(pending, { kind: "submit", input: '{"other":1}' })).toEqual([pending, []])
@@ -207,7 +207,7 @@ test("a parked call keeps its exact input and key: the sheet reopens on it as it
   const [pending] = update(sending, { kind: "answered", result: { kind: "pending", decision: PARKED.decision } })
   expect(parkedOf(pending)).toEqual(PARKED)
   const resumed = resume(TARGET, PARKED)
-  expect(resumed.phase).toEqual({ kind: "pending", decision: PARKED.decision })
+  expect(resumed.phase).toEqual({ kind: "pending_approval", decision: PARKED.decision })
   expect(parkedOf(resumed)).toEqual(PARKED)
   // Nothing but a parked phase is a parked call.
   expect(parkedOf(init(TARGET, "k0"))).toBeNull()
@@ -224,7 +224,7 @@ test("run-approved sends exactly the served call, under its key, once; a retry a
   const [failed] = update(running, { kind: "threw", message: "offline" })
   expect(update(failed, { kind: "retry" })[1]).toEqual(cmds)
   const [done, after] = update(running, { kind: "answered", result: { kind: "receipt", receipt: receipt(4) } })
-  expect(done.phase.kind).toBe("done")
+  expect(done.phase.kind).toBe("committed")
   expect(after).toEqual([{ kind: "refetch" }])
 })
 
