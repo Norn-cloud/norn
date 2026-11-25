@@ -187,12 +187,12 @@ export function RecordsTimeline({ concept, scope, rows, window, zoom, loaded, pe
           <Button variant="ghost" size="sm" className="h-8 rounded-lg px-2.5" onClick={onToday}>Today</Button>
           <Button variant="ghost" size="icon" className="size-8" aria-label={`Next ${zoom}`} onClick={() => onStep(1)}><ChevronRight /></Button>
         </div>
-        <h3 className="text-sm font-medium" aria-live="polite">{windowTitle(zoom, window, intlLocale)}</h3>
+        <h3 className="text-body" aria-live="polite">{windowTitle(zoom, window, intlLocale)}</h3>
         <span className="flex-1" />
         {links.length > 0 && (
           <label className="flex items-center gap-1.5 text-meta text-muted-foreground">
             Lanes
-            <select className="h-8 rounded-lg border border-node-border bg-background px-2 text-sm text-foreground" value={lane ?? ""} onChange={(event) => setLane(event.target.value === "" ? null : event.target.value)}>
+            <select className="h-8 rounded-lg border border-node-border bg-background px-2 text-body text-foreground" value={lane ?? ""} onChange={(event) => setLane(event.target.value === "" ? null : event.target.value)}>
               <option value="">None</option>
               {links.map((link) => <option key={link.id} value={link.id}>By {link.id.replaceAll("_", " ")}</option>)}
             </select>
@@ -208,7 +208,7 @@ export function RecordsTimeline({ concept, scope, rows, window, zoom, loaded, pe
       <div className={cn("overflow-x-auto rounded-xl border border-node-border bg-card", fetching && !pending && "opacity-70")} aria-busy={pending || fetching}>
         <div className="min-w-[48rem]">
           <div className="grid grid-cols-[12rem_minmax(0,1fr)] border-b border-node-border bg-muted text-meta">
-            <div className="px-3 py-2 font-medium">{laneLink === undefined ? "" : laneLink.id.replaceAll("_", " ")}</div>
+            <div className="px-3 py-2">{laneLink === undefined ? "" : laneLink.id.replaceAll("_", " ")}</div>
             <div className="relative h-8" aria-hidden>
               {ticks.map((tick, index) => {
                 const left = ((tick.at - window.start) / (window.end - window.start)) * 100
@@ -247,8 +247,8 @@ export function RecordsTimeline({ concept, scope, rows, window, zoom, loaded, pe
               onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) focusInBars.current = false }}>
               {lanes.map((l) => (
                 <div key={l.key} role="group" aria-label={l.label} className="grid grid-cols-[12rem_minmax(0,1fr)] border-b border-node-border/70 last:border-b-0">
-                  <div className="flex min-w-0 flex-col justify-center gap-0.5 px-3 py-2 text-sm">
-                    <span className="truncate font-medium" title={l.label}>{l.label}</span>
+                  <div className="flex min-w-0 flex-col justify-center gap-0.5 px-3 py-2 text-body">
+                    <span className="truncate" title={l.label}>{l.label}</span>
                     {l.overlapping > 0 && <span className="text-meta text-muted-foreground">{l.overlapping} overlapping</span>}
                   </div>
                   <div className="relative" style={{ height: l.rows * (BAR + GAP) + GAP * 2 }}>
@@ -265,13 +265,13 @@ export function RecordsTimeline({ concept, scope, rows, window, zoom, loaded, pe
                         <button key={row.record.id} type="button" ref={(el) => { if (el) barRefs.current.set(row.record.id, el); else barRefs.current.delete(row.record.id) }}
                           tabIndex={index === activeIndex ? 0 : -1} aria-label={words} title={words} data-overlaps={bar.overlaps || undefined}
                           onFocus={() => { setFocused(index); focusedId.current = row.record.id; focusInBars.current = true }} onClick={() => onOpen(row)}
-                          className={cn("absolute flex min-w-1.5 items-center gap-1 overflow-hidden rounded-md border px-1.5 text-left text-xs shadow-node outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                          className={cn("absolute flex min-w-1.5 items-center gap-1 overflow-hidden rounded-md border px-1.5 text-start text-meta shadow-node outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
                             "border-primary/40 bg-[color-mix(in_oklab,var(--primary)_14%,var(--card))] text-foreground hover:bg-[color-mix(in_oklab,var(--primary)_22%,var(--card))]",
                             bar.overlaps && "border-dashed border-[var(--tint-wait)]",
-                            at.clippedStart && "rounded-l-none border-l-0", at.clippedEnd && "rounded-r-none border-r-0")}
+                            at.clippedStart && "rounded-s-none border-s-0", at.clippedEnd && "rounded-e-none border-e-0")}
                           style={{ left: `${at.left}%`, width: `${at.width}%`, top: GAP + bar.row * (BAR + GAP), height: BAR }}>
                           {at.clippedStart && <ChevronLeft className="size-3 shrink-0 text-muted-foreground" aria-hidden />}
-                          <span className="truncate font-medium">{title}</span>
+                          <span className="truncate">{title}</span>
                           <span className="truncate text-muted-foreground tabular-nums">{clockText(bar.start, zone, intlLocale)}–{clockText(bar.end, zone, intlLocale)}{zone !== null && ` ${zone}`}</span>
                           {at.clippedEnd && <ChevronRight className="ms-auto size-3 shrink-0 text-muted-foreground" aria-hidden />}
                         </button>

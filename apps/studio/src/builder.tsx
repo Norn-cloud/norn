@@ -142,10 +142,10 @@ async function checkQuestion(question: unknown, boundScope?: StudioScope | null)
   return verdict
 }
 
-const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive"
+const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-body outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive"
 
 function Field({ label, field, invalid, children }: { readonly label: string; readonly field?: string; readonly invalid?: boolean; readonly children: ReactNode }) {
-  return <label className="grid gap-1.5 text-sm" data-field={field} data-invalid={invalid || undefined}><span className={invalid ? "text-destructive" : "text-muted-foreground"}>{label}</span>{children}</label>
+  return <label className="grid gap-1.5 text-body" data-field={field} data-invalid={invalid || undefined}><span className={invalid ? "text-destructive" : "text-muted-foreground"}>{label}</span>{children}</label>
 }
 
 function Choice({ label, field, invalid, value, onChange, options }: { readonly label: string; readonly field?: string; readonly invalid?: boolean; readonly value: string; readonly onChange: (value: string) => void; readonly options: readonly (readonly [string, string])[] }) {
@@ -265,12 +265,12 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
       {guard?.(editor.dirty)}
       <Panel icon={ChartLine} label="Question" action={<EditorToolbar editor={editor} />}>
         <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
-          {served === false && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{CHECKER_UNSERVED}</p>}
+          {served === false && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{CHECKER_UNSERVED}</p>}
           <fieldset disabled={served === false} className="contents">
           <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
-            <span className={invalid("measures") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Measures</span>
-            {draft.measures.length === 0 && <p className="text-sm text-muted-foreground">No measure yet.</p>}
+            <span className={invalid("measures") ? "text-body text-destructive" : "text-body text-muted-foreground"}>Measures</span>
+            {draft.measures.length === 0 && <p className="text-body text-muted-foreground">No measure yet.</p>}
             {draft.measures.map((metric, index) => (
               <div key={index} className="grid grid-cols-[1fr_auto] items-end gap-2">
                 <Choice label={`Measure ${index + 1}`} field={`measure.${index}`} invalid={invalid(`measure.${index}`)} value={metric} onChange={(next) => patch({ measures: draft.measures.map((m, at) => at === index ? next : m) })} options={metricOptions} />
@@ -284,8 +284,8 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
             {property?.kind === "timestamp" && <Choice label="Every" field="grain" invalid={invalid("by")} value={draft.grain} onChange={(grain) => patch({ grain })} options={catalog.grains.map((grain) => [grain, grain[0]?.toUpperCase() + grain.slice(1)] as const)} />}
           </div>
           <div className="grid gap-2" data-field="filters">
-            <span className={invalid("filters") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Only where</span>
-            {draft.filters.length === 0 && <p className="text-sm text-muted-foreground">No conditions: every {record} counts.</p>}
+            <span className={invalid("filters") ? "text-body text-destructive" : "text-body text-muted-foreground"}>Only where</span>
+            {draft.filters.length === 0 && <p className="text-body text-muted-foreground">No conditions: every {record} counts.</p>}
             {draft.filters.map((filter, index) => (
               <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2" data-field={`filter.${index}`}>
                 <Choice label={`Field ${index + 1}`} invalid={invalid(`filter.${index}`)} value={filter.property} onChange={(next) => setFilter(index, { property: next })} options={propertyOptions} />
@@ -305,7 +305,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         </form>
       </Panel>
       <div className="space-y-3">
-        {unsupported && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{unsupported}</p>}
+        {unsupported && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{unsupported}</p>}
         {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine} title="Pick a measure, then Run">The server checks the question, then answers it. Every number opens to the records behind it.</EmptyState>}
         {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
         {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
@@ -314,7 +314,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         {/* The question exactly as the checker admitted it, answered at once, while the form still shows it. */}
         {checked.data?.admitted && check.variables && <BuiltAnswer key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} title={titleOf(check.variables)} scope={pinnedScope} />}
         {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
-        {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since it ran: Run again to use it.</p>}
+        {onUse && check.data?.admitted && !checked.data && <p className="text-body text-muted-foreground">Changed since it ran: Run again to use it.</p>}
       </div>
     </div>
   )
@@ -357,7 +357,7 @@ export function QuestionBuilderPage() {
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Explore a metric</h1>
+        <h1 className="text-title font-medium tracking-tight">Explore a metric</h1>
         <p className="max-w-2xl text-muted-foreground">Pick what to measure, how to group it, which records count and over which dates, then Run. The server checks the question before it answers.</p>
       </div>
       <LoadState

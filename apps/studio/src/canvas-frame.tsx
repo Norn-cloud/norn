@@ -295,7 +295,7 @@ function Frame(props: CanvasFrameProps) {
         {issues.map((issue, index) => (
           <button key={index} type="button" data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
             className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-start text-meta enabled:hover:bg-muted">
-            <span className="flex items-center gap-1 font-mono text-xs text-destructive"><CircleAlert className="size-3" /><Iso>{issue.code}</Iso></span>
+            <span className="flex items-center gap-1 font-mono text-meta text-destructive"><CircleAlert className="size-3" /><Iso>{issue.code}</Iso></span>
             <CodedMessage code={issue.code} message={issue.message} block />
             <span className="block text-muted-foreground">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
           </button>
@@ -310,7 +310,7 @@ function Frame(props: CanvasFrameProps) {
         <Well>
           <div ref={surface} data-canvas-surface data-canvas-id={canvasId} className="relative h-[38rem] w-full">
             <style ref={focusSheet} />
-            {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">{props.empty}</div>}
+            {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-body text-muted-foreground">{props.empty}</div>}
             {opening && <ReactFlow defaultViewport={opening}
               nodes={graph.nodes.map((node) => {
                 // The card's known size as React Flow's initial size: the minimap draws only nodes with a size, and these are rebuilt each render.
@@ -370,7 +370,7 @@ function Frame(props: CanvasFrameProps) {
         </Well>
         {props.below && <div className="px-1.5 pt-3">{props.below(editing)}</div>}
       </Panel>
-      {wide ? <div className="space-y-3"><Panel label="Inspector"><Well className="space-y-4 p-4 text-sm">{inspector}</Well></Panel>{problems}</div> : problems}
+      {wide ? <div className="space-y-3"><Panel label="Inspector"><Well className="space-y-4 p-4 text-body">{inspector}</Well></Panel>{problems}</div> : problems}
       {!wide && <InspectorDrawer open={drawer} onClose={closeDrawer}>{inspector}</InspectorDrawer>}
     </div>
   )
@@ -410,10 +410,10 @@ function InspectorDrawer({ open, onClose, children }: { readonly open: boolean; 
       className={cn("fixed inset-y-3 end-3 z-40 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col rounded-node border border-node-border bg-card shadow-float transition-transform duration-200 ease-out motion-reduce:transition-none",
         open ? "translate-x-0" : "translate-x-[calc(100%+1.5rem)]")}>
       <header className="flex items-center justify-between border-b border-node-border px-4 py-3">
-        <h2 className="text-sm font-semibold">Inspector</h2>
+        <h2 className="text-body">Inspector</h2>
         <Button size="icon" variant="ghost" aria-label="Close inspector" title="Close (Esc)" onClick={onClose}><X /></Button>
       </header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-sm">{children}</div>
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-body">{children}</div>
     </aside>
   )
 }
@@ -430,7 +430,7 @@ export function Unavailable({ reason, children, className }: { readonly reason: 
 export function IssueCard({ issue }: { readonly issue: Issue }) {
   return (
     <div className="space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-meta">
-      <div className="font-mono text-xs text-destructive"><Iso>{issue.code}</Iso></div>
+      <div className="font-mono text-meta text-destructive"><Iso>{issue.code}</Iso></div>
       <CodedMessage code={issue.code} message={issue.message} block />
     </div>
   )

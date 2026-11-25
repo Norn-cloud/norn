@@ -22,13 +22,13 @@ function Step({ kind, icon, title, children }: { readonly kind?: Kind; readonly 
   return (
     <li className="flex gap-3">
       <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", kind ? cn(KINDS[kind].fill, KINDS[kind].text) : "bg-muted text-muted-foreground")}><Icon aria-hidden className="size-4" /></span>
-      <div className="min-w-0 flex-1 space-y-0.5 text-sm"><div className="font-medium [overflow-wrap:anywhere]">{title}</div>{children}</div>
+      <div className="min-w-0 flex-1 space-y-0.5 text-body"><div className="[overflow-wrap:anywhere]">{title}</div>{children}</div>
     </li>
   )
 }
 
 const Arrow = () => <li aria-hidden className="ms-2 text-muted-foreground"><ArrowDown className="size-3" /></li>
-const Line = ({ children }: { readonly children: ReactNode }) => <div className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{children}</div>
+const Line = ({ children }: { readonly children: ReactNode }) => <div className="text-meta text-muted-foreground [overflow-wrap:anywhere]">{children}</div>
 
 /** The chain for one value: source, transform, receipt and times, each step only when the server sent it. */
 export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProvenance }) {
@@ -46,7 +46,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   } else if (sources.length > 0) {
     steps.push(
       <Step key="source" kind="source" title={sources.length === 1 ? "Source" : `Sources · ${sources.length}`}>
-        {sources.map((source) => <Line key={source.system}><span className="font-medium text-foreground">{systemName(source.system)}</span>{source.complete === undefined ? "" : source.complete ? " · complete" : " · incomplete"}</Line>)}
+        {sources.map((source) => <Line key={source.system}><span className="text-foreground">{systemName(source.system)}</span>{source.complete === undefined ? "" : source.complete ? " · complete" : " · incomplete"}</Line>)}
       </Step>,
     )
   }
@@ -58,12 +58,12 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
     </Step>,
   )
   else if (transform?.kind === "action") steps.push(
-    <Step key="transform" icon={PencilLine} title={<>Action · <span className="font-mono text-xs">{transform.actionId}</span></>}>
-      <Line>Committed by <span className="font-medium text-foreground">{transform.actor}</span></Line>
+    <Step key="transform" icon={PencilLine} title={<>Action · <span className="font-mono text-meta">{transform.actionId}</span></>}>
+      <Line>Committed by <span className="text-foreground">{transform.actor}</span></Line>
     </Step>,
   )
   else if (transform?.kind === "question") steps.push(
-    <Step key="transform" kind="question" title={view === "technical" ? <span className="font-mono text-xs">{transform.metrics.join(", ")}</span> : transform.metrics.map(words).join(", ")}>
+    <Step key="transform" kind="question" title={view === "technical" ? <span className="font-mono text-meta">{transform.metrics.join(", ")}</span> : transform.metrics.map(words).join(", ")}>
       <Line>{transform.records} {transform.records === 1 ? "record" : "records"} added up exactly</Line>
       {transform.engine !== null && <Line>{transform.engine}</Line>}
     </Step>,
@@ -77,12 +77,12 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
   )
   if (asOf.length > 0) steps.push(
     <Step key="as-of" icon={Clock} title="As of">
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-xs">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 text-meta">
         {asOf.map(({ label, value }) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className={cn("min-w-0 tabular-nums [overflow-wrap:anywhere]", view === "technical" && "font-mono")} title={value}>{view === "technical" ? value : readableTime(value)}</dd></div>)}
       </dl>
     </Step>,
   )
-  if (steps.length === 0) return <p className="text-sm text-muted-foreground">The server recorded no source for this value.</p>
+  if (steps.length === 0) return <p className="text-body text-muted-foreground">The server recorded no source for this value.</p>
   return <ol className="space-y-2">{steps.flatMap((step, index) => index === 0 ? [step] : [<Arrow key={`arrow-${index}`} />, step])}</ol>
 }
 
@@ -99,13 +99,13 @@ export function ProvenanceCard({ label, value, notice, trace, children }: {
   return (
     <div className="space-y-3" data-slot="provenance-card">
       <div className="space-y-0.5">
-        <div className="text-xs text-muted-foreground">Where this value came from</div>
+        <div className="text-meta text-muted-foreground">Where this value came from</div>
         <div className="flex min-w-0 items-baseline justify-between gap-3">
-          <span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{label}</span>
-          {value !== undefined && <span className="shrink-0 text-end font-mono text-sm tabular-nums [overflow-wrap:anywhere]">{value}</span>}
+          <span className="min-w-0 text-body [overflow-wrap:anywhere]">{label}</span>
+          {value !== undefined && <span className="shrink-0 text-end font-mono text-body tabular-nums [overflow-wrap:anywhere]">{value}</span>}
         </div>
       </div>
-      {notice && <p role="status" className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{notice}</p>}
+      {notice && <p role="status" className="rounded-md bg-muted px-2 py-1.5 text-meta text-muted-foreground">{notice}</p>}
       {children}
       {trace && <div className="border-t border-border/70 pt-2">{trace}</div>}
     </div>
@@ -180,7 +180,7 @@ export function ProvenancePopover({ children, variant = "inline", className, lab
 
 /** Where a value of a recorded snapshot came from, from the record's lineage alone (no history is recorded). */
 export function ProvenanceChain({ lineage, fact }: { readonly lineage: SourceLineage; readonly fact: string }) {
-  if (lineage.fieldProvenance[fact] === undefined) return <p className="text-sm text-muted-foreground">The server recorded no source for this value.</p>
+  if (lineage.fieldProvenance[fact] === undefined) return <p className="text-body text-muted-foreground">The server recorded no source for this value.</p>
   return <ProvenanceSteps provenance={factProvenance(fact, null, lineage)} />
 }
 
@@ -189,18 +189,18 @@ function LiveFact({ objectType, id, version, fact, lineage }: { readonly objectT
   const scope = useStudioScope()
   const boundScope = scope.data ?? null
   const history = useQuery({ queryKey: historyQueryKey(objectType, id, boundScope), queryFn: () => readHistory(objectType, id, boundScope), enabled: scope.isSuccess, retry: false })
-  if (history.isPending) return <p className="text-sm text-muted-foreground">Reading where it came from…</p>
+  if (history.isPending) return <p className="text-body text-muted-foreground">Reading where it came from…</p>
   if (history.isError) {
     const reason = history.error instanceof NotServed ? "This cell does not serve record history yet."
       : history.error instanceof CellRefusal && history.error.status === 404 ? "The cell shows no history of this record to your account."
       : history.error instanceof CellRefusal ? history.error.message : "Where this value came from could not be read."
-    return <p className="text-sm text-muted-foreground">{reason}</p>
+    return <p className="text-body text-muted-foreground">{reason}</p>
   }
   const { entry, newer } = versionShown(history.data.document.versions, version)
   const notice = entry === null ? `The cell's history does not list version ${version}${history.data.document.truncated ? "; it lists only the newest versions" : ""}.`
     : newer !== null ? `Version ${newer} has been written since; this is version ${version}.` : undefined
   return <>
-    {notice && <p role="status" className="mb-3 rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{notice}</p>}
+    {notice && <p role="status" className="mb-3 rounded-md bg-muted px-2 py-1.5 text-meta text-muted-foreground">{notice}</p>}
     <ProvenanceSteps provenance={factProvenance(fact, entry, entry === null ? lineage : null)} />
   </>
 }
@@ -246,7 +246,7 @@ export function AnswerProvenance({ label, value, provenance, onTrace, records, v
   readonly children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const trace = onTrace && <button type="button" onClick={() => { setOpen(false); onTrace() }} className="text-sm font-medium underline-offset-4 hover:underline">See the {records} {records === 1 ? "record" : "records"} and their receipts</button>
+  const trace = onTrace && <button type="button" onClick={() => { setOpen(false); onTrace() }} className="text-body underline-offset-4 hover:underline">See the {records} {records === 1 ? "record" : "records"} and their receipts</button>
   return (
     <ProvenancePopover variant={variant} className={className} label={label} open={open} onOpenChange={setOpen} card={<ProvenanceCard label={label} value={value} trace={trace}><ProvenanceSteps provenance={provenance} /></ProvenanceCard>}>
       {children}

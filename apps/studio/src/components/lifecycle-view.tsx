@@ -120,7 +120,7 @@ export function LifecycleView({ concept, lifecycle, filter = null, scope: boundS
       action={(filtered || mode === "technical") && (
         <span className="flex items-center gap-2">
           {filtered && <Badge variant="outline">{locale === "ar" ? "مُصفّاة" : "Filtered"}</Badge>}
-          {mode === "technical" && <span className="font-mono text-xs">{concept.name}.{lifecycle.property}</span>}
+          {mode === "technical" && <span className="font-mono text-meta">{concept.name}.{lifecycle.property}</span>}
         </span>
       )}>
       <Well className="p-4">

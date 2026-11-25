@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
+import { StatusDot, type DotTone } from "@/components/status-dot"
 import { useQuery } from "@tanstack/react-query"
 import { Clock } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -21,15 +22,12 @@ import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import sheetDocument from "./decision-sheet.widget.json"
 
 // Risk reads dot-first (DESIGN.md 13): a status dot and its word in muted text, never a tinted pill.
-const RISK_DOT: Readonly<Record<Risk, string>> = { low: "bg-dot-live", medium: "bg-dot-held", high: "bg-dot-bad" }
+const RISK_DOT: Readonly<Record<Risk, DotTone>> = { low: "live", medium: "held", high: "bad" }
 const RISK_LABEL: Readonly<Record<Risk, string>> = { low: "Low risk", medium: "Medium risk", high: "High risk" }
 
 export function RiskChip({ risk }: { readonly risk: Risk }) {
   return (
-    <span data-risk={risk} className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">
-      <span aria-hidden className={`size-[6px] shrink-0 rounded-full ${RISK_DOT[risk]}`} />
-      {RISK_LABEL[risk]}
-    </span>
+    <StatusDot tone={RISK_DOT[risk]} data-risk={risk}>{RISK_LABEL[risk]}</StatusDot>
   )
 }
 

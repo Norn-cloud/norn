@@ -154,6 +154,22 @@
   --tone-teal: #0b6c6c;
   --tone-pink: #ad2168;
   --tone-orange: #b0440a;
+  /*
+   * Avatar discs (DESIGN.md 4.4): six bg/fg pairs, the index a stable hash of the principal's or
+   * record's id, never its display name. Every pair reads at >= 5:1; the same in every skin.
+   */
+  --avatar-1-bg: #fde4e1;
+  --avatar-1-fg: #9a3b2e;
+  --avatar-2-bg: #e3ecff;
+  --avatar-2-fg: #2d4fa8;
+  --avatar-3-bg: #e2f5ea;
+  --avatar-3-fg: #23744a;
+  --avatar-4-bg: #fdf0d8;
+  --avatar-4-fg: #8a5a12;
+  --avatar-5-bg: #efe6fd;
+  --avatar-5-fg: #6b3fae;
+  --avatar-6-bg: #dff3f6;
+  --avatar-6-fg: #1f6f7a;
 }
 
 .dark {
@@ -263,6 +279,19 @@
   --tone-teal: #4ad6d6;
   --tone-pink: #f797cb;
   --tone-orange: #f7a465;
+  /* Dark discs: the light ink at 30% over the dark card (#151517), with the light fill as ink (>= 12:1). */
+  --avatar-1-bg: #3d201e;
+  --avatar-1-fg: #fde4e1;
+  --avatar-2-bg: #1c2642;
+  --avatar-2-fg: #e3ecff;
+  --avatar-3-bg: #193226;
+  --avatar-3-fg: #e2f5ea;
+  --avatar-4-bg: #382a15;
+  --avatar-4-fg: #fdf0d8;
+  --avatar-5-bg: #2f2244;
+  --avatar-5-fg: #efe6fd;
+  --avatar-6-bg: #183035;
+  --avatar-6-fg: #dff3f6;
 }
 
 /*
@@ -585,6 +614,18 @@
   --color-dot-bad: var(--dot-bad);
   --color-dot-quiet: var(--dot-quiet);
   --color-dot-accent: var(--dot-accent);
+  --color-avatar-1-bg: var(--avatar-1-bg);
+  --color-avatar-1-fg: var(--avatar-1-fg);
+  --color-avatar-2-bg: var(--avatar-2-bg);
+  --color-avatar-2-fg: var(--avatar-2-fg);
+  --color-avatar-3-bg: var(--avatar-3-bg);
+  --color-avatar-3-fg: var(--avatar-3-fg);
+  --color-avatar-4-bg: var(--avatar-4-bg);
+  --color-avatar-4-fg: var(--avatar-4-fg);
+  --color-avatar-5-bg: var(--avatar-5-bg);
+  --color-avatar-5-fg: var(--avatar-5-fg);
+  --color-avatar-6-bg: var(--avatar-6-bg);
+  --color-avatar-6-fg: var(--avatar-6-fg);
   --color-link: var(--link);
   --color-action: var(--action);
   --color-action-hover: var(--action-hover);
@@ -689,6 +730,8 @@
   html { @apply font-sans; font-size: 90%; }
   body { @apply bg-canvas text-foreground antialiased; font-size: var(--text-body); line-height: 1.45; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; }
   h1, h2, h3 { letter-spacing: -0.025em; }
+  /* Calm weights (DESIGN.md 8.2): emphasis is ink and size, never a heavier face, so `<b>`, `<strong>` and `<th>` keep the weight around them. */
+  b, strong, th { font-weight: inherit; }
   /* The browser's own surfaces carry the palette too: selection, scrollbars, the caret. */
   ::selection { background: color-mix(in oklab, var(--ring) 24%, transparent); }
   * { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent; }

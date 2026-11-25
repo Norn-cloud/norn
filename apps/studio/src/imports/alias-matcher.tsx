@@ -95,7 +95,7 @@ function SearchableRecordPicker({
           aria-controls={open ? listboxId : undefined}
           aria-label={ariaLabel}
           disabled={disabled}
-          className="h-8 w-full justify-between rounded-md border-border bg-background px-2.5 text-xs font-normal shadow-none"
+          className="h-8 w-full justify-between rounded-md border-border bg-background px-2.5 text-meta font-normal shadow-none"
         >
           <span className={cn("truncate", !selected && "text-muted-foreground")}>
             {selected ? <><bdi>{selected.label}</bdi> (<bdi>{selected.id}</bdi>)</> : "Search existing records…"}
@@ -118,7 +118,7 @@ function SearchableRecordPicker({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
-            className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+            className="w-full bg-transparent text-meta outline-none placeholder:text-muted-foreground"
             autoFocus
           />
           {query !== "" && (
@@ -129,7 +129,7 @@ function SearchableRecordPicker({
         </div>
         <ul id={listboxId} role="listbox" aria-label={ariaLabel} className="max-h-56 overflow-y-auto p-1">
           {filtered.length === 0 && (
-            <li className="px-2.5 py-4 text-center text-xs text-muted-foreground">No matching records.</li>
+            <li className="px-2.5 py-4 text-center text-meta text-muted-foreground">No matching records.</li>
           )}
           {filtered.map((entity, index) => {
             const isSelected = entity.id === value
@@ -149,20 +149,20 @@ function SearchableRecordPicker({
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => pick(entity.id)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-xs outline-none hover:bg-muted",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-meta outline-none hover:bg-muted",
                     (isHighlighted || isSelected) && "bg-muted",
-                    isSelected && "font-medium",
+                    isSelected && "",
                   )}
                 >
                   <Check aria-hidden className={cn("size-3.5 shrink-0", isSelected ? "opacity-100 text-tone-green" : "opacity-0")} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-foreground"><bdi>{entity.label}</bdi></span>
-                    <span className="block truncate font-mono text-[0.6875rem] text-muted-foreground">
+                    <span className="block truncate font-mono text-meta text-muted-foreground">
                       <bdi>{entity.id}</bdi>{entity.subtitle ? <> · <bdi>{entity.subtitle}</bdi></> : null}
                     </span>
                   </span>
                   {isSuggested && (
-                    <Chip tone="amber" className="text-[0.6875rem]">Suggested</Chip>
+                    <Chip tone="amber" className="text-meta">Suggested</Chip>
                   )}
                 </button>
               </li>
@@ -229,10 +229,10 @@ export function AliasMatcher({
             placeholder="Filter handles, channels, excerpts…"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            className="h-8 bg-background ps-8 text-xs shadow-none"
+            className="h-8 bg-background ps-8 text-meta shadow-none"
           />
         </div>
-        <div role="group" aria-label="Alias status filter" className="inline-flex rounded-md border border-border bg-background p-0.5 text-xs">
+        <div role="group" aria-label="Alias status filter" className="inline-flex rounded-md border border-border bg-background p-0.5 text-meta">
           {([
             ["all", `All (${aliases.length})`],
             ["unresolved", `Unresolved (${unresolvedCount})`],
@@ -244,7 +244,7 @@ export function AliasMatcher({
               aria-pressed={statusFilter === key}
               onClick={() => setStatusFilter(key)}
               className={cn(
-                "rounded px-2.5 py-1 font-medium transition-colors",
+                "rounded px-2.5 py-1 transition-colors",
                 statusFilter === key ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -252,14 +252,14 @@ export function AliasMatcher({
             </button>
           ))}
         </div>
-        <span className="ms-auto text-xs text-muted-foreground">
+        <span className="ms-auto text-meta text-muted-foreground">
           Suggestions never auto-link — every alias binding commits as a governed action.
         </span>
       </div>
 
       {/* Alias rows */}
       {visible.length === 0 ? (
-        <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+        <div className="px-4 py-10 text-center text-body text-muted-foreground">
           No external handles match this filter.
         </div>
       ) : (
@@ -276,7 +276,7 @@ export function AliasMatcher({
                 {/* Left: raw handle, source context, advisory suggestion */}
                 <div className="min-w-0 space-y-1.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <code className="rounded border border-border bg-surface-subtle px-1.5 py-0.5 font-mono text-xs font-medium text-foreground">
+                    <code className="rounded border border-border bg-surface-subtle px-1.5 py-0.5 font-mono text-meta text-foreground">
                       <bdi>{alias.externalHandle}</bdi>
                     </code>
                     {resolved === null ? (
@@ -289,11 +289,11 @@ export function AliasMatcher({
                       <FactStatusBadge status="verified_fact" />
                     )}
                     <Chip tone="gray"><bdi>{alias.sourceChannel}</bdi></Chip>
-                    <span className="text-xs text-muted-foreground tabular-nums">
+                    <span className="text-meta text-muted-foreground tabular-nums">
                       {alias.occurrences} {alias.occurrences === 1 ? "occurrence" : "occurrences"} · first seen {readableTime(alias.firstObservedAt)}
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-meta text-muted-foreground">
                     Context: <span dir="auto" className="text-foreground">“<bdi>{alias.sampleExcerpt}</bdi>”</span>
                   </p>
                   {resolved === null && alias.suggestedTargetId !== null && (
@@ -306,10 +306,10 @@ export function AliasMatcher({
                       >
                         Suggested — you decide
                       </Chip>
-                      <span className="text-xs text-muted-foreground">
-                        Candidate: <span className="font-medium text-foreground"><bdi>{alias.suggestedTargetLabel ?? alias.suggestedTargetId}</bdi></span>
+                      <span className="text-meta text-muted-foreground">
+                        Candidate: <span className="text-foreground"><bdi>{alias.suggestedTargetLabel ?? alias.suggestedTargetId}</bdi></span>
                         {" "}
-                        <span className="font-mono text-[0.6875rem]">(<bdi>{alias.suggestedTargetId}</bdi>)</span>
+                        <span className="font-mono text-meta">(<bdi>{alias.suggestedTargetId}</bdi>)</span>
                         {alias.suggestionConfidenceBps !== null && (
                           <span className="ms-1 tabular-nums text-tone-amber">· {formatConfidence(alias.suggestionConfidenceBps)}</span>
                         )}
@@ -318,7 +318,7 @@ export function AliasMatcher({
                         <button
                           type="button"
                           onClick={() => patch(alias, { selectedTargetId: alias.suggestedTargetId ?? "", notice: null })}
-                          className="text-xs font-medium underline decoration-border underline-offset-4 hover:decoration-foreground"
+                          className="text-meta underline decoration-border underline-offset-4 hover:decoration-foreground"
                         >
                           Select suggestion
                         </button>
@@ -334,25 +334,25 @@ export function AliasMatcher({
                       role="status"
                       data-alias-resolved={resolved.kind}
                       className={cn(
-                        "space-y-1.5 rounded-md border px-3 py-2 text-xs",
+                        "space-y-1.5 rounded-md border px-3 py-2 text-meta",
                         resolved.kind === "ignored"
                           ? "border-border bg-surface-subtle"
                           : "border-tone-green/30 bg-tone-green/5",
                       )}
                     >
-                      <div className="flex flex-wrap items-center gap-2 font-medium text-foreground">
+                      <div className="flex flex-wrap items-center gap-2 text-foreground">
                         {resolved.kind === "bound" && (
                           <>
                             <Link2 aria-hidden className="size-3.5 text-tone-green" />
                             <span>Bound to <bdi>{resolved.targetLabel}</bdi></span>
-                            <code className="font-mono text-[0.6875rem] text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
+                            <code className="font-mono text-meta text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
                           </>
                         )}
                         {resolved.kind === "created" && (
                           <>
                             <Plus aria-hidden className="size-3.5 text-tone-green" />
                             <span>Created &amp; bound <bdi>{resolved.targetLabel}</bdi></span>
-                            <code className="font-mono text-[0.6875rem] text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
+                            <code className="font-mono text-meta text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
                           </>
                         )}
                         {resolved.kind === "ignored" && (
@@ -363,7 +363,7 @@ export function AliasMatcher({
                           </>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground tabular-nums">
+                      <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground tabular-nums">
                         <span>commit {resolved.receipt.receipt.commitSeq}</span>
                         <span>·</span>
                         <span>receipt</span>
@@ -389,7 +389,7 @@ export function AliasMatcher({
                               patch(alias, { mode, notice: null })
                             }}
                             className={cn(
-                              "inline-flex h-7 items-center gap-1 rounded border px-2 text-xs font-medium transition-colors",
+                              "inline-flex h-7 items-center gap-1 rounded border px-2 text-meta transition-colors",
                               state.mode === mode
                                 ? "border-foreground/25 bg-background text-foreground"
                                 : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
@@ -418,7 +418,7 @@ export function AliasMatcher({
                             size="sm"
                             disabled={state.pending || state.selectedTargetId === ""}
                             onClick={() => void onCommitAlias(batchId, alias)}
-                            className="h-8 shrink-0 px-3 text-xs"
+                            className="h-8 shrink-0 px-3 text-meta"
                           >
                             {state.pending ? "Binding…" : "Bind alias"}
                           </Button>
@@ -435,7 +435,7 @@ export function AliasMatcher({
                               value={state.createLabel}
                               disabled={state.pending}
                               onChange={(event) => patch(alias, { createLabel: event.target.value, notice: null })}
-                              className="h-8 bg-background text-xs shadow-none"
+                              className="h-8 bg-background text-meta shadow-none"
                             />
                             <Input
                               dir="auto"
@@ -444,7 +444,7 @@ export function AliasMatcher({
                               value={state.createExternalKey}
                               disabled={state.pending}
                               onChange={(event) => patch(alias, { createExternalKey: event.target.value, notice: null })}
-                              className="h-8 bg-background font-mono text-xs shadow-none"
+                              className="h-8 bg-background font-mono text-meta shadow-none"
                             />
                           </div>
                           <div className="flex justify-end">
@@ -453,7 +453,7 @@ export function AliasMatcher({
                               size="sm"
                               disabled={state.pending || state.createLabel.trim() === ""}
                               onClick={() => void onCommitAlias(batchId, alias)}
-                              className="h-8 px-3 text-xs"
+                              className="h-8 px-3 text-meta"
                             >
                               {state.pending ? "Creating…" : "Create & bind"}
                             </Button>
@@ -470,7 +470,7 @@ export function AliasMatcher({
                             value={state.ignoreNote}
                             disabled={state.pending}
                             onChange={(event) => patch(alias, { ignoreNote: event.target.value, notice: null })}
-                            className="h-8 flex-1 bg-background text-xs shadow-none"
+                            className="h-8 flex-1 bg-background text-meta shadow-none"
                           />
                           <Button
                             type="button"
@@ -478,7 +478,7 @@ export function AliasMatcher({
                             variant="outline"
                             disabled={state.pending}
                             onClick={() => void onCommitAlias(batchId, alias)}
-                            className="h-8 shrink-0 px-3 text-xs"
+                            className="h-8 shrink-0 px-3 text-meta"
                           >
                             {state.pending ? "Saving…" : "Confirm ignore"}
                           </Button>
@@ -490,7 +490,7 @@ export function AliasMatcher({
                           role={state.notice.kind === "pending" ? "status" : "alert"}
                           data-alias-notice={state.notice.kind}
                           className={cn(
-                            "flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-xs",
+                            "flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-meta",
                             state.notice.kind === "pending"
                               ? "border-tone-amber/40 bg-tone-amber/8 text-tone-amber"
                               : "border-destructive/30 bg-destructive/5 text-destructive",
@@ -504,7 +504,7 @@ export function AliasMatcher({
                               variant="outline"
                               disabled={state.pending}
                               onClick={() => void onCommitAlias(batchId, alias)}
-                              className="h-6 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
+                              className="h-6 shrink-0 border-border bg-background px-2 text-meta text-foreground shadow-none"
                             >
                               Retry
                             </Button>

@@ -95,13 +95,13 @@ function Figure({ bucket, traced }: { readonly bucket: Bucket; readonly traced: 
 function Rows({ rows, traced }: { readonly rows: readonly Bucket[]; readonly traced?: Traced }) {
   return (
     <TableCard><Table>
-      <TableHeader><TableRow><TableHead>Bucket</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right max-sm:hidden">Records</TableHead></TableRow></TableHeader>
+      <TableHeader><TableRow><TableHead>Bucket</TableHead><TableHead className="text-end">Answer</TableHead><TableHead className="text-end max-sm:hidden">Records</TableHead></TableRow></TableHeader>
       <TableBody>
         {rows.map((bucket) => (
           <TableRow key={bucket.key}>
             <TableCell>{bucket.label}</TableCell>
-            <TableCell className="text-right font-medium tabular-nums"><Figure bucket={bucket} traced={traced} /></TableCell>
-            <TableCell className="text-right tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
+            <TableCell className="text-end tabular-nums"><Figure bucket={bucket} traced={traced} /></TableCell>
+            <TableCell className="text-end tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -134,7 +134,7 @@ export function DrawnAnswer({ view, rows, name, traced }: { readonly view: View;
       if (!((percent ?? 0) >= 0.06)) return null
       const angle = (-(midAngle ?? 0) * Math.PI) / 180
       const radius = (outerRadius ?? 0) + 14
-      return <text x={(cx ?? 0) + radius * Math.cos(angle)} y={(cy ?? 0) + radius * Math.sin(angle)} textAnchor={Math.cos(angle) >= 0 ? "start" : "end"} dominantBaseline="central" className="fill-muted-foreground text-[11px] tabular-nums">{slices[Number(props.index)]?.share}</text>
+      return <text x={(cx ?? 0) + radius * Math.cos(angle)} y={(cy ?? 0) + radius * Math.sin(angle)} textAnchor={Math.cos(angle) >= 0 ? "start" : "end"} dominantBaseline="central" className="fill-muted-foreground text-meta tabular-nums">{slices[Number(props.index)]?.share}</text>
     }
     return (
       <div className="grid items-center gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" data-view="pie">

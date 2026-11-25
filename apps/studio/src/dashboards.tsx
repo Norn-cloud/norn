@@ -52,7 +52,7 @@ interface Removed {
 
 function UndoDelete({ removed, pending, error, onUndo }: { readonly removed: Removed; readonly pending: boolean; readonly error?: string; readonly onUndo: () => void }) {
   return (
-    <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 text-sm shadow-elevation">
+    <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 text-body shadow-elevation">
       <span>Deleted “{removed.dashboard.title || "Untitled dashboard"}”. Its history stays in the cell.</span>
       <Button type="button" size="sm" variant="outline" className="ms-auto" disabled={pending} onClick={onUndo}><Undo2 />{pending ? "Restoring…" : "Undo"}</Button>
       {error && <p role="alert" className="basis-full text-destructive">Not restored. {error}</p>}
@@ -143,7 +143,7 @@ export function DashboardsPage() {
                     <Button variant="ghost" size="sm" onClick={() => { if (globalThis.confirm(`Delete "${stored.title}"? Its history stays in the cell.`)) remove.mutate(stored) }}><Trash2 />Delete</Button>
                   </div>
                 }>
-                  <p className="text-sm text-muted-foreground">Version {stored.version}{stored.updatedAtMs > 0 ? ` · saved ${new Date(stored.updatedAtMs).toLocaleString()}` : ""}</p>
+                  <p className="text-body text-muted-foreground">Version {stored.version}{stored.updatedAtMs > 0 ? ` · saved ${new Date(stored.updatedAtMs).toLocaleString()}` : ""}</p>
                 </Panel>
               ))}
               {dashboards.hasNextPage && <Button variant="outline" size="sm" disabled={dashboards.isFetchingNextPage} onClick={() => void dashboards.fetchNextPage()}>{dashboards.isFetchingNextPage ? "Reading…" : "Show more"}</Button>}
@@ -162,10 +162,10 @@ function TileCard({ tile, index, count, invalid, catalog, scope, onChange, onEdi
   return (
     <div data-field={`tile.${index}`} data-invalid={invalid || undefined} className={`space-y-3 rounded-xl border bg-card p-3 ${tile.layout.w === 2 ? "lg:col-span-2" : ""} ${invalid ? "border-destructive" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 font-medium"><ViewIcon view={tile.view} />{questionTitle(tile)}</div>
+        <div className="flex items-center gap-2"><ViewIcon view={tile.view} />{questionTitle(tile)}</div>
         <RowActions index={index} count={count} label={`tile ${index + 1}`} onDuplicate={onDuplicate} onMove={onMove} onRemove={onRemove} />
       </div>
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-body">
         <select aria-label={`Tile ${index + 1} view`} className="h-8 rounded-3xl bg-input/50 px-3" value={viewKey(tile.view)} onChange={(event) => onChange({ ...tile, view: viewOf(event.target.value) })}>
           {VIEWS.map(([key, text]) => <option key={key} value={key}>{text}</option>)}
         </select>
@@ -244,14 +244,14 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       </EditorToolbar>
       {save.isError && <p role="alert" className="text-destructive">{failure(save.error).startsWith("Not saved") ? failure(save.error) : `Not saved. ${failure(save.error)}`}</p>}
       {conflict && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-body">
           <span>Someone saved a newer version of this dashboard since you opened it.</span>
           <Button type="button" size="sm" variant="outline" onClick={() => onReload?.()}>Reload theirs</Button>
           <Button type="button" size="sm" variant="destructive" disabled={!cellAvailable} onClick={() => requestSave(dashboard, true)}>Overwrite with mine</Button>
         </div>
       )}
       <ValidationPanel issues={issues} title="The cell refused this dashboard" />
-      <label className="grid max-w-xl gap-1.5 text-sm" data-field="title"><span className={invalid("title") ? "text-destructive" : "text-muted-foreground"}>Title</span>
+      <label className="grid max-w-xl gap-1.5 text-body" data-field="title"><span className={invalid("title") ? "text-destructive" : "text-muted-foreground"}>Title</span>
         <Input value={dashboard.title} aria-invalid={invalid("title") || undefined} placeholder="e.g. Refinery weekly" onChange={(event) => set((current) => ({ ...current, title: event.target.value }))} />
       </label>
       <div data-field="tiles" className="grid items-start gap-4 lg:grid-cols-2">
@@ -298,7 +298,7 @@ export function DashboardEditorPage() {
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-title font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-title font-medium tracking-tight">{title}</h1>
         {id !== undefined && <Button asChild variant="outline" size="sm" className="ms-auto"><Link to="/dashboards/$id" params={{ id }}><Eye />View</Link></Button>}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
@@ -375,7 +375,7 @@ export function DashboardBoardPage() {
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-title font-semibold tracking-tight">{board?.dashboard.title || "Dashboard"}</h1>
+        <h1 className="text-title font-medium tracking-tight">{board?.dashboard.title || "Dashboard"}</h1>
         {board && <Badge variant="outline">Version {board.version}</Badge>}
         {board?.dashboard.origin?.by === "assistant" && <Badge variant="secondary" title={board.dashboard.origin.request ? `Asked: ${board.dashboard.origin.request}` : undefined}><Sparkles />Proposed by the assistant</Badge>}
         {board && (
@@ -401,7 +401,7 @@ export function DashboardBoardPage() {
       {board && catalog.data && <DashboardBoard dashboard={board.dashboard} catalog={catalog.data} id={board.id} scope={scope.data} />}
       {board && catalog.data && (
         <details className="group rounded-xl border bg-card p-3">
-          <summary className="cursor-pointer text-sm font-medium">Change it with the assistant</summary>
+          <summary className="cursor-pointer text-body">Change it with the assistant</summary>
           <div className="mt-3"><DashboardAssistant catalog={catalog.data} dashboardId={board.id} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} scope={scope.data} />} /></div>
         </details>
       )}

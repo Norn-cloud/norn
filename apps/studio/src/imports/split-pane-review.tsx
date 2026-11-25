@@ -312,14 +312,14 @@ export function SplitPaneReview({
                 aria-label="Source artifact"
                 value={activeArtifact?.id ?? ""}
                 onChange={(event) => { setSelectedArtifactId(event.target.value); resetZoom() }}
-                className="h-7 max-w-52 rounded border border-border bg-background px-2 text-xs font-medium text-foreground"
+                className="h-7 max-w-52 rounded border border-border bg-background px-2 text-meta text-foreground"
               >
                 {artifacts.map((artifact) => (
                   <option key={artifact.id} value={artifact.id}>{artifact.label}</option>
                 ))}
               </select>
             ) : (
-              <span className="truncate text-xs font-medium text-foreground"><bdi>{activeArtifact?.label ?? "Source artifact"}</bdi></span>
+              <span className="truncate text-meta text-foreground"><bdi>{activeArtifact?.label ?? "Source artifact"}</bdi></span>
             )}
             {activeArtifact && <Chip tone="gray"><bdi>{activeArtifact.sourceChannel}</bdi></Chip>}
           </div>
@@ -335,7 +335,7 @@ export function SplitPaneReview({
             >
               <ZoomOut className="size-3.5" />
             </Button>
-            <span data-zoom-level="" className="w-11 text-center font-mono text-xs tabular-nums text-muted-foreground">
+            <span data-zoom-level="" className="w-11 text-center font-mono text-meta tabular-nums text-muted-foreground">
               {zoom}%
             </span>
             <Button
@@ -363,7 +363,7 @@ export function SplitPaneReview({
               size="sm"
               aria-label="Reset zoom"
               onClick={resetZoom}
-              className="h-7 rounded border-border bg-background px-2 text-xs shadow-none"
+              className="h-7 rounded border-border bg-background px-2 text-meta shadow-none"
             >
               <RotateCcw className="size-3" />
               Fit
@@ -375,7 +375,7 @@ export function SplitPaneReview({
               aria-pressed={showBoxes}
               aria-label={showBoxes ? "Hide extraction boxes" : "Show extraction boxes"}
               onClick={() => setShowBoxes((current) => !current)}
-              className="h-7 rounded border-border bg-background px-2 text-xs shadow-none"
+              className="h-7 rounded border-border bg-background px-2 text-meta shadow-none"
             >
               {showBoxes ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
               Boxes
@@ -385,7 +385,7 @@ export function SplitPaneReview({
 
         {/* Immutable artifact provenance strip */}
         {activeArtifact && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-background px-3 py-2 text-[0.6875rem] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-background px-3 py-2 text-meta text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               <span>Blob</span>
               <CopyId value={activeArtifact.blobDigest} short={12} />
@@ -423,21 +423,21 @@ export function SplitPaneReview({
           )}
         >
           {mediaSource?.kind === "rejected" && (
-            <div role="alert" data-media-rejected="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-muted-foreground">
+            <div role="alert" data-media-rejected="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-meta text-muted-foreground">
               <LockKeyhole aria-hidden className="size-5 text-tone-amber" />
-              <span className="font-medium text-foreground">Artifact media blocked</span>
+              <span className="text-foreground">Artifact media blocked</span>
               <span>{mediaSource.reason}</span>
             </div>
           )}
           {mediaSource?.kind !== "rejected" && scan.isPending && (
-            <div className="flex h-64 items-center justify-center text-xs text-muted-foreground">
+            <div className="flex h-64 items-center justify-center text-meta text-muted-foreground">
               Loading source artifact…
             </div>
           )}
           {mediaSource?.kind !== "rejected" && (scan.isError || imgError) && (
-            <div role="alert" data-media-error="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-muted-foreground">
+            <div role="alert" data-media-error="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-meta text-muted-foreground">
               <FileSearch aria-hidden className="size-5" />
-              <span className="font-medium text-foreground">Source artifact image could not be loaded</span>
+              <span className="text-foreground">Source artifact image could not be loaded</span>
               <span>Bounding-box overlays are hidden until the artifact image loads cleanly.</span>
             </div>
           )}
@@ -493,11 +493,11 @@ export function SplitPaneReview({
         {/* Surrounding message / source context */}
         <div className="flex flex-col bg-background">
           <div className="flex items-center justify-between border-b border-border bg-surface-subtle px-3 py-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <span className="inline-flex items-center gap-1.5 text-meta text-foreground">
               <MessageSquare aria-hidden className="size-3.5 text-muted-foreground" />
               Surrounding source context
             </span>
-            <span className="text-[0.6875rem] text-muted-foreground tabular-nums">
+            <span className="text-meta text-muted-foreground tabular-nums">
               {activeArtifact?.contextMessages.length ?? 0} entries
             </span>
           </div>
@@ -511,10 +511,10 @@ export function SplitPaneReview({
                 <li
                   key={message.id}
                   data-anchor={message.isAnchor ? "true" : undefined}
-                  className={cn("space-y-1 px-3 py-2 text-xs", message.isAnchor && "bg-surface-subtle")}
+                  className={cn("space-y-1 px-3 py-2 text-meta", message.isAnchor && "bg-surface-subtle")}
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-mono font-medium text-foreground"><bdi>{message.senderHandle}</bdi></span>
+                    <span className="font-mono text-foreground"><bdi>{message.senderHandle}</bdi></span>
                     {resolvedName !== null && (
                       <Chip tone="green"><bdi>{resolvedName}</bdi></Chip>
                     )}
@@ -525,7 +525,7 @@ export function SplitPaneReview({
                       <Chip tone="amber">Unresolved alias</Chip>
                     )}
                     {message.isAnchor && <Chip tone="gray">Artifact attachment</Chip>}
-                    <span className="ms-auto font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
+                    <span className="ms-auto font-mono text-meta text-muted-foreground tabular-nums">
                       {formatTemporal(message.observedAt)}
                     </span>
                   </div>
@@ -541,7 +541,7 @@ export function SplitPaneReview({
       <div className="flex min-w-0 flex-col divide-y divide-border" data-pane="rows">
         {/* Filter bar */}
         <div className="flex flex-wrap items-center gap-2 bg-surface-subtle px-3 py-2">
-          <div role="group" aria-label="Candidate row filter" className="inline-flex flex-wrap rounded-md border border-border bg-background p-0.5 text-xs">
+          <div role="group" aria-label="Candidate row filter" className="inline-flex flex-wrap rounded-md border border-border bg-background p-0.5 text-meta">
             {([
               ["all", `All (${artifactRows.length})`],
               ["clean", `Clean (${partition.eligible.length})`],
@@ -555,7 +555,7 @@ export function SplitPaneReview({
                 aria-pressed={filter === key}
                 onClick={() => setFilter(key)}
                 className={cn(
-                  "rounded px-2 py-1 font-medium transition-colors",
+                  "rounded px-2 py-1 transition-colors",
                   filter === key ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -563,7 +563,7 @@ export function SplitPaneReview({
               </button>
             ))}
           </div>
-          <span className="ms-auto text-[0.6875rem] text-muted-foreground tabular-nums">
+          <span className="ms-auto text-meta text-muted-foreground tabular-nums">
             Threshold &lt; {formatConfidence(lowConfidenceThresholdBps)} = amber
           </span>
         </div>
@@ -571,7 +571,7 @@ export function SplitPaneReview({
         {/* Candidate rows */}
         <div className="min-h-80 flex-1 divide-y divide-border overflow-y-auto">
           {filteredRows.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+            <div className="px-4 py-12 text-center text-body text-muted-foreground">
               No candidate rows match this filter.
             </div>
           ) : (
@@ -611,15 +611,15 @@ export function SplitPaneReview({
                 >
                   {/* Row header */}
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-foreground"><bdi>{entity.label}</bdi></span>
+                    <span className="text-foreground"><bdi>{entity.label}</bdi></span>
                     {entity.kind === "resolved" && (
-                      <code className="font-mono text-[0.6875rem] text-muted-foreground"><bdi>{entity.targetId}</bdi></code>
+                      <code className="font-mono text-meta text-muted-foreground"><bdi>{entity.targetId}</bdi></code>
                     )}
                     {entity.kind === "unresolved" && (
                       <button
                         type="button"
                         onClick={(event) => { event.stopPropagation(); onJumpToAliases() }}
-                        className="inline-flex items-center gap-1 rounded border border-tone-amber/40 bg-tone-amber/10 px-1.5 py-0.5 text-[0.6875rem] font-medium text-tone-amber hover:bg-tone-amber/20"
+                        className="inline-flex items-center gap-1 rounded border border-tone-amber/40 bg-tone-amber/10 px-1.5 py-0.5 text-meta text-tone-amber hover:bg-tone-amber/20"
                       >
                         Unresolved alias — match in Step 1
                       </button>
@@ -629,7 +629,7 @@ export function SplitPaneReview({
                     )}
                     <FactStatusBadge status={rowStatus} />
                     {queued && !busy && <Chip tone="gray">Queued for promotion…</Chip>}
-                    <span className="ms-auto font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
+                    <span className="ms-auto font-mono text-meta text-muted-foreground tabular-nums">
                       effective <bdi>{formatTemporal(row.effectiveAt)}</bdi>
                     </span>
                   </div>
@@ -653,14 +653,14 @@ export function SplitPaneReview({
                               isFieldFocused && "ring-2 ring-ring/50",
                             )}
                           >
-                            <div className="flex items-center justify-between gap-1.5 text-[0.6875rem]">
-                              <span className="font-medium text-muted-foreground">{field.label}</span>
+                            <div className="flex items-center justify-between gap-1.5 text-meta">
+                              <span className="text-muted-foreground">{field.label}</span>
                               <span className="inline-flex items-center gap-1 font-mono text-muted-foreground">
                                 <LockKeyhole aria-hidden className="size-3" />
                                 Withheld ({field.masking})
                               </span>
                             </div>
-                            <div className="flex h-7 items-center gap-1.5 rounded border border-dashed border-border bg-background/60 px-2 font-mono text-xs text-muted-foreground">
+                            <div className="flex h-7 items-center gap-1.5 rounded border border-dashed border-border bg-background/60 px-2 font-mono text-meta text-muted-foreground">
                               <bdi>{field.displayMask ?? "Redacted from your role"}</bdi>
                             </div>
                             {field.markings && field.markings.length > 0 && (
@@ -698,13 +698,13 @@ export function SplitPaneReview({
                             isFieldFocused && "ring-2 ring-ring/50",
                           )}
                         >
-                          <div className="flex items-center justify-between gap-1.5 text-[0.6875rem]">
-                            <label htmlFor={`${row.id}-${field.id}`} className="font-medium text-muted-foreground">
+                          <div className="flex items-center justify-between gap-1.5 text-meta">
+                            <label htmlFor={`${row.id}-${field.id}`} className="text-muted-foreground">
                               {field.label}
                             </label>
                             <div className="flex items-center gap-1">
                               {hasRed && (
-                                <span className="inline-flex items-center gap-0.5 font-mono font-semibold text-tone-red">
+                                <span className="inline-flex items-center gap-0.5 font-mono text-tone-red">
                                   <ShieldAlert aria-hidden className="size-3" />
                                   {fieldFinding.code}
                                 </span>
@@ -712,7 +712,7 @@ export function SplitPaneReview({
                               {hasAmber && (
                                 <span
                                   data-low-confidence=""
-                                  className="inline-flex items-center gap-0.5 font-mono font-medium text-tone-amber tabular-nums"
+                                  className="inline-flex items-center gap-0.5 font-mono text-tone-amber tabular-nums"
                                   title="Low extraction confidence — review against the artifact before promotion"
                                 >
                                   <AlertTriangle aria-hidden className="size-3" />
@@ -739,7 +739,7 @@ export function SplitPaneReview({
                               onChange={(event) => onSetFieldValue(batchId, row.id, basisKey, field.name, field.value, current, event.target.value)}
                               aria-invalid={hasRed || undefined}
                               className={cn(
-                                "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-meta text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
                                 hasRed ? "border-tone-red/50" : hasAmber ? "border-tone-amber/50" : "border-border",
                                 (verified || locked || outcomeLocked) && "cursor-default bg-muted/40 text-foreground/85",
                               )}
@@ -758,7 +758,7 @@ export function SplitPaneReview({
                             )}
                           </div>
                           {differsFromExtracted && (
-                            <div className="text-[0.6875rem] text-muted-foreground">
+                            <div className="text-meta text-muted-foreground">
                               Extracted: <span className="font-mono"><bdi>{field.extractedValue}</bdi></span> (preserved in lineage)
                             </div>
                           )}
@@ -769,18 +769,18 @@ export function SplitPaneReview({
 
                   {/* Cell-reported open law/contract violations */}
                   {openFindings.length > 0 && (
-                    <div role="alert" data-cell-findings="" className="space-y-1 rounded-md border border-tone-red/40 bg-tone-red/5 px-2.5 py-2 text-xs">
+                    <div role="alert" data-cell-findings="" className="space-y-1 rounded-md border border-tone-red/40 bg-tone-red/5 px-2.5 py-2 text-meta">
                       {openFindings.map((finding) => (
                         <div key={finding.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                          <span className="inline-flex items-center gap-1 font-mono font-semibold text-tone-red">
+                          <span className="inline-flex items-center gap-1 font-mono text-tone-red">
                             <ShieldAlert aria-hidden className="size-3.5 shrink-0 self-center" />
                             {finding.code}
                           </span>
-                          <span className="font-mono text-[0.6875rem] text-muted-foreground">{finding.ruleId}</span>
+                          <span className="font-mono text-meta text-muted-foreground">{finding.ruleId}</span>
                           <span dir="auto" className="text-foreground"><bdi>{finding.message}</bdi></span>
                         </div>
                       ))}
-                      <p className="text-[0.6875rem] text-muted-foreground">
+                      <p className="text-meta text-muted-foreground">
                         Laws are never bypassed on import — this row stays quarantined with immutable evidence lineage.
                       </p>
                     </div>
@@ -792,7 +792,7 @@ export function SplitPaneReview({
                       role={outcome.kind === "committed" || outcome.kind === "pending" || outcome.kind === "stale" ? "status" : "alert"}
                       data-row-outcome={outcome.kind}
                       className={cn(
-                        "flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-xs",
+                        "flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-meta",
                         outcome.kind === "committed"
                           ? "border-tone-green/40 bg-tone-green/5 text-foreground"
                           : outcome.kind === "pending" || outcome.kind === "stale"
@@ -827,7 +827,7 @@ export function SplitPaneReview({
                         <>
                           <ShieldAlert aria-hidden className="size-3.5 shrink-0" />
                           <span>
-                            <strong className="font-mono font-semibold">{outcome.code}</strong>: {outcome.message}
+                            <strong className="font-mono">{outcome.code}</strong>: {outcome.message}
                           </span>
                         </>
                       )}
@@ -841,7 +841,7 @@ export function SplitPaneReview({
                             variant="outline"
                             disabled={!canPromote}
                             onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
-                            className="h-7 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
+                            className="h-7 shrink-0 border-border bg-background px-2 text-meta text-foreground shadow-none"
                           >
                             Retry
                           </Button>
@@ -851,7 +851,7 @@ export function SplitPaneReview({
                   )}
 
                   {/* Row footer: receipt or single-row governed promote */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[0.6875rem] text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-meta text-muted-foreground">
                     <span className="tabular-nums">
                       observed {formatTemporal(row.observedAt)}
                       {row.recordedAt ? ` · recorded ${formatTemporal(row.recordedAt)}` : ""}
@@ -863,9 +863,9 @@ export function SplitPaneReview({
                         <CopyId value={row.receipt.receipt.receiptHash} short={10} />
                       </span>
                     ) : violating ? (
-                      <span className="font-medium text-tone-red">Held in quarantine</span>
+                      <span className="text-tone-red">Held in quarantine</span>
                     ) : withheldRow ? (
-                      <span className="font-medium text-muted-foreground">Withheld fields cannot be promoted by this role</span>
+                      <span className="text-muted-foreground">Withheld fields cannot be promoted by this role</span>
                     ) : (
                       <Button
                         type="button"
@@ -873,7 +873,7 @@ export function SplitPaneReview({
                         variant="outline"
                         disabled={!canPromote}
                         onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
-                        className="h-7 rounded border-border bg-background px-2.5 text-xs shadow-none"
+                        className="h-7 rounded border-border bg-background px-2.5 text-meta shadow-none"
                       >
                         {busy
                           ? "Promoting…"
@@ -896,21 +896,21 @@ export function SplitPaneReview({
         {/* Sticky batch governed promotion bar */}
         <div className="space-y-2 bg-surface-subtle px-4 py-3">
           {batchReport !== null && (
-            <div role="status" className="flex flex-wrap items-center gap-2 rounded border border-border bg-background px-2.5 py-1.5 text-xs">
+            <div role="status" className="flex flex-wrap items-center gap-2 rounded border border-border bg-background px-2.5 py-1.5 text-meta">
               <CheckCircle2 aria-hidden className="size-3.5 text-tone-green" />
               <span>
-                Batch run complete: <strong className="font-medium text-tone-green">{batchReport.promoted} promoted</strong>
-                {batchReport.pendingApproval > 0 && <>, <strong className="font-medium text-tone-amber">{batchReport.pendingApproval} pending approval</strong></>}
-                {batchReport.skippedStale > 0 && <>, <strong className="font-medium text-tone-amber">{batchReport.skippedStale} skipped (basis changed)</strong></>}
-                {batchReport.refused > 0 && <>, <strong className="font-medium text-tone-red">{batchReport.refused} refused by action</strong></>}
-                {batchReport.failed > 0 && <>, <strong className="font-medium text-tone-red">{batchReport.failed} failed to send</strong></>}
+                Batch run complete: <strong className="text-tone-green">{batchReport.promoted} promoted</strong>
+                {batchReport.pendingApproval > 0 && <>, <strong className="text-tone-amber">{batchReport.pendingApproval} pending approval</strong></>}
+                {batchReport.skippedStale > 0 && <>, <strong className="text-tone-amber">{batchReport.skippedStale} skipped (basis changed)</strong></>}
+                {batchReport.refused > 0 && <>, <strong className="text-tone-red">{batchReport.refused} refused by action</strong></>}
+                {batchReport.failed > 0 && <>, <strong className="text-tone-red">{batchReport.failed} failed to send</strong></>}
                 , <span className="text-muted-foreground">{batchReport.keptQuarantined} held in quarantine.</span>
               </span>
             </div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-0.5 text-xs">
-              <div className="font-medium text-foreground tabular-nums">
+            <div className="space-y-0.5 text-meta">
+              <div className="text-foreground tabular-nums">
                 {partition.eligible.length} clean {partition.eligible.length === 1 ? "row" : "rows"} ready for governed promotion
                 {partition.quarantined.length > 0 && (
                   <span className="font-normal text-tone-red">
@@ -928,7 +928,7 @@ export function SplitPaneReview({
                   </span>
                 )}
               </div>
-              <p className="text-[0.6875rem] text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 Extraction confidence is advisory — batch promotion runs every row through cell laws and preserves conflicts in quarantine.
               </p>
             </div>
@@ -940,7 +940,7 @@ export function SplitPaneReview({
                 const queue = snapshotPromotionQueue(partition.eligible, artifacts, resolvedAliases, edits, lockedRowIds)
                 void onPromoteCleanBatch(batchId, queue, partition.quarantined.length)
               }}
-              className="h-8 shrink-0 gap-1.5 px-3 text-xs"
+              className="h-8 shrink-0 gap-1.5 px-3 text-meta"
             >
               <CheckCheck aria-hidden className="size-3.5" />
               {batchRunning

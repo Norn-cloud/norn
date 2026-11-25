@@ -64,7 +64,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
         <div className="flex items-start gap-2">
           {dot(data.start, data.terminal)}
           <div className="min-w-0">
-            <div className={cn("font-medium leading-snug", data.start ? "text-body" : "text-sm")}>{data.label}</div>
+            <div className={cn("leading-snug", data.start ? "text-body" : "text-body")}>{data.label}</div>
           </div>
         </div>
       </button>
@@ -86,11 +86,11 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
 
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
-    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "block px-3.5 py-2.5 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
+    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "block px-3.5 py-2.5 text-start text-body outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
       <Handle type="target" position={Position.Top} className={hidden} />
       <Handle type="source" position={Position.Bottom} className={hidden} />
-      <div className="flex items-start gap-2 font-medium leading-snug">
-        <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-[0.6875rem] tabular-nums" style={{ background: "color-mix(in oklab, var(--tint-route) 14%, transparent)", color: "var(--tint-route)" }}>{data.order}</span>
+      <div className="flex items-start gap-2 leading-snug">
+        <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-meta tabular-nums" style={{ background: "color-mix(in oklab, var(--tint-route) 14%, transparent)", color: "var(--tint-route)" }}>{data.order}</span>
         <span className="line-clamp-2">{data.label}</span>
       </div>
       <div className="line-clamp-2 ps-7 pt-0.5 text-meta text-muted-foreground">{data.sub}</div>
@@ -227,7 +227,7 @@ function Condition({ transition }: { readonly transition: Workflow["steps"][numb
       <div>{transition.description ?? (guardsWords(guards) !== null ? `Requires: ${guardsWords(guards)}` : fields.length > 0 ? `Requires: ${fields.join(", ")}` : "A declared condition")}</div>
       <details className="text-meta text-muted-foreground">
         <summary className="cursor-pointer select-none">Declared rule</summary>
-        <code className="block pt-1 font-mono text-xs break-words whitespace-normal">{guards.join(" and ")}</code>
+        <code className="block pt-1 font-mono text-meta break-words whitespace-normal">{guards.join(" and ")}</code>
       </details>
     </div>
   )
@@ -238,17 +238,17 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
   const state = useNames()
   const { transition, actions } = step
   return (
-    <div className="grid gap-4 p-4 text-sm md:grid-cols-[1fr_1fr_1.4fr] 2xl:grid-cols-1">
+    <div className="grid gap-4 p-4 text-body md:grid-cols-[1fr_1fr_1.4fr] 2xl:grid-cols-1">
       <div className="md:col-span-3 2xl:col-span-1">
-        <div className="text-body font-medium">{state(transition.id)}</div>
+        <div className="text-body">{state(transition.id)}</div>
         <div className="text-muted-foreground">{transition.from.map(state).join(" or ")} → {state(transition.to)}</div>
       </div>
       <div className="space-y-1">
-        <div className="text-meta font-medium text-muted-foreground">Allowed only when</div>
+        <div className="text-meta text-muted-foreground">Allowed only when</div>
         <Condition transition={transition} />
       </div>
       <div className="space-y-1">
-        <div className="text-meta font-medium text-muted-foreground">Action</div>
+        <div className="text-meta text-muted-foreground">Action</div>
         {actions.length === 0 && <div className="text-muted-foreground">None declared</div>}
         {actions.map((action) => (
           <div key={action.actionId} className="space-y-1">
@@ -258,12 +258,12 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
         ))}
       </div>
       <div className="space-y-1">
-        <div className="text-meta font-medium text-muted-foreground">Laws that govern it</div>
+        <div className="text-meta text-muted-foreground">Laws that govern it</div>
         {workflow.laws.length === 0 && <div className="text-muted-foreground">None declared on {words(workflow.objectType)}</div>}
         {workflow.laws.map((law) => (
           <div key={law.id} className="space-y-1 rounded-md border bg-background p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-xs">{law.id}</span>
+              <span className="font-mono text-meta">{law.id}</span>
               <Badge variant={law.severity === "error" ? "secondary" : "outline"}>{law.severity === "error" ? "Must hold" : "Warning"}</Badge>
             </div>
             <p className="text-meta text-muted-foreground">{law.rationale}</p>
@@ -328,8 +328,8 @@ function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonl
   const into = workflow.steps.filter(({ transition }) => transition.to === name).map(({ transition }) => state(transition.id))
   const out = workflow.steps.filter(({ transition }) => transition.from.includes(name)).map(({ transition }) => `${state(transition.id)} → ${state(transition.to)}`)
   return (
-    <div className="space-y-2 p-4 text-sm">
-      <div className="text-body font-medium">{state(name)}</div>
+    <div className="space-y-2 p-4 text-body">
+      <div className="text-body">{state(name)}</div>
       <div><span className="text-muted-foreground">Reached by: </span>{into.join(", ") || "nothing; it is where records start"}</div>
       <div><span className="text-muted-foreground">Leads to: </span>{out.join(", ") || "nothing; it ends here"}</div>
       {workflow.lifecycle.immutable?.includes(name) && <div className="text-muted-foreground">Its details are locked here.</div>}

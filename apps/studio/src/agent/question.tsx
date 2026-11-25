@@ -66,8 +66,8 @@ export function planWords(plan: NonNullable<QuestionVerdict["plan"]>): readonly 
 export function QuestionCard({ verdict }: { readonly verdict: QuestionVerdict }) {
   if (verdict.admitted && verdict.plan) {
     return (
-      <div className="space-y-2 rounded-xl border bg-card p-3 text-sm">
-        <div className="flex flex-wrap items-center gap-2 font-medium"><CircleCheck className="size-4 text-success" />Question admitted by the checker<Badge variant="outline">Admitted, not yet run</Badge></div>
+      <div className="space-y-2 rounded-xl border bg-card p-3 text-body">
+        <div className="flex flex-wrap items-center gap-2"><CircleCheck className="size-4 text-success" />Question admitted by the checker<Badge variant="outline">Admitted, not yet run</Badge></div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {planWords(verdict.plan).map(([label, text]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd>{text}</dd></div>)}
         </dl>
@@ -76,8 +76,8 @@ export function QuestionCard({ verdict }: { readonly verdict: QuestionVerdict })
     )
   }
   return (
-    <div className="space-y-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
-      <div className="flex items-center gap-2 font-medium"><CircleX className="size-4 text-destructive" />Question refused by the checker</div>
+    <div className="space-y-2 rounded-xl border border-destructive/40 bg-card p-3 text-body">
+      <div className="flex items-center gap-2"><CircleX className="size-4 text-destructive" />Question refused by the checker</div>
       {verdict.findings.map(({ code, message }, index) => <div key={`${code}:${index}`} className="rounded-lg bg-muted px-3 py-2">{message}</div>)}
       <details className="text-meta text-muted-foreground"><summary className="cursor-pointer">Details</summary><div className="mt-1 space-y-1 font-mono break-all">{verdict.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div></details>
     </div>

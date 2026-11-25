@@ -39,7 +39,7 @@ function DeferredSidekick({ scope, scopeKey }: { readonly scope?: StudioScope | 
   useEffect(() => { if (open) setActivated(true) }, [open])
   if (!activated) return null
   return (
-    <Suspense fallback={<p role="status" className="p-4 text-sm text-muted-foreground">Loading Sidekick…</p>}>
+    <Suspense fallback={<p role="status" className="p-4 text-body text-muted-foreground">Loading Sidekick…</p>}>
       <LazySidekick scope={scope} scopeKey={scopeKey} />
     </Suspense>
   )
@@ -143,7 +143,7 @@ const queryClient = new QueryClient({
   },
 })
 function RoutePending() {
-  return <div role="status" aria-label="Loading page" className="min-h-40 py-8 text-sm text-muted-foreground">Loading…</div>
+  return <div role="status" aria-label="Loading page" className="min-h-40 py-8 text-body text-muted-foreground">Loading…</div>
 }
 
 const root = createRootRoute({ component: Root })

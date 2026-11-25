@@ -74,8 +74,8 @@ function HeldRecords({ held }: { readonly held: Group }) {
       {shown.map((record) => {
         const others = record.otherFindings ?? []
         return (
-          <div key={`${record.objectType}:${record.id}`} data-held-record={record.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
-            <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{recordName(record)}</RouteLink>
+          <div key={`${record.objectType}:${record.id}`} data-held-record={record.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-body">
+            <RouteLink to={record.target} className="underline-offset-4 hover:underline">{recordName(record)}</RouteLink>
             {record.finding && <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">{record.finding.words}</span>}
             {record.suggestedFix && (
               <Button asChild size="xs" variant="secondary" className="ms-auto">
@@ -83,7 +83,7 @@ function HeldRecords({ held }: { readonly held: Group }) {
               </Button>
             )}
             {others.length > 0 && (
-              <div className="basis-full space-y-0.5 text-xs text-muted-foreground">
+              <div className="basis-full space-y-0.5 text-meta text-muted-foreground">
                 <Badge variant="outline">Needs review: {others.length + 1} laws disagree</Badge>
                 {others.map((other) => <p key={other.id} className="tabular-nums">{other.words}</p>)}
               </div>
@@ -109,10 +109,10 @@ function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Gr
   const { view } = useView()
   const headline = lawHeadline(law)
   return (
-    <div className="flex gap-3 px-4 py-3 text-sm" data-law={law.id}>
+    <div className="flex gap-3 px-4 py-3 text-body" data-law={law.id}>
       <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span>
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p lang={law.titleLang} className="font-medium text-pretty">{headline}</p>
+        <p lang={law.titleLang} className="text-pretty">{headline}</p>
         {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip tone={law.severity === "error" ? "red" : "amber"} icon={law.severity === "error" ? ShieldAlert : undefined} dot={law.severity !== "error"}
@@ -130,7 +130,7 @@ function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Gr
           {view === "technical" && (
             <>
               <Chip tone="violet" title="The pack or module that owns this rule">{law.owner}</Chip>
-              <code className="font-mono text-xs text-muted-foreground">{law.id}</code>
+              <code className="font-mono text-meta text-muted-foreground">{law.id}</code>
             </>
           )}
         </div>
@@ -146,10 +146,10 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
   const technicalId = heldRuleTechnicalId(held.ruleRef)
   const title = heldRuleTitle(held)
   return (
-    <div className="flex gap-3 px-4 py-3 text-sm" data-rule={heldGroupKey(held)}>
+    <div className="flex gap-3 px-4 py-3 text-body" data-rule={heldGroupKey(held)}>
       <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-amber/12 text-tone-amber dark:bg-tone-amber/15"><ShieldAlert aria-hidden className="size-4" /></span>
       <div className="min-w-0 flex-1 space-y-1.5">
-        <p className="font-medium text-pretty">{title}</p>
+        <p className="text-pretty">{title}</p>
         {held.rationale && held.rationale !== title && held.rationale !== technicalId && <p className="text-meta text-pretty text-muted-foreground">{held.rationale}</p>}
         <div className="flex flex-wrap items-center gap-1.5">
           {held.ruleRef.kind === "builtin" && <Chip tone="gray">Built-in</Chip>}
@@ -160,7 +160,7 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
               Review {heldCountText(held.count, held.approximate)}
             </RouteLink>
           )}
-          {view === "technical" && <code className="font-mono text-xs text-muted-foreground">{technicalId}</code>}
+          {view === "technical" && <code className="font-mono text-meta text-muted-foreground">{technicalId}</code>}
         </div>
         {held.records.length > 0 && <HeldRecords held={held} />}
       </div>
@@ -225,7 +225,7 @@ export function LawsPanel({ concept, label = "Rules it must keep", enforced = tr
         {empty && <EmptyState icon={Scale}>{heldOnly ? "No rule is holding back records of this type." : "No rule is declared on this object type itself."}</EmptyState>}
         {shownLaws.map(({ law, held }) => <LawRow key={law.id} law={law} held={held} scanLimit={bound} />)}
         {extraHeld.map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={bound} />)}
-        {invariants.map((rule) => <div key={rule} className="flex gap-3 px-4 py-3 text-sm"><span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span><p className="min-w-0 flex-1 font-medium text-pretty">{rule}</p></div>)}
+        {invariants.map((rule) => <div key={rule} className="flex gap-3 px-4 py-3 text-body"><span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span><p className="min-w-0 flex-1 text-pretty">{rule}</p></div>)}
         {enforced && !empty && <p className="px-4 py-3 text-meta text-muted-foreground">{ENFORCED}</p>}
         {live && !heldOnly && concept.definition === "object type" && <Quarantined objectType={concept.name} />}
       </Well>

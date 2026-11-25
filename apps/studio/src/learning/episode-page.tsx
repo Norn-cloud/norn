@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/status-dot"
 import { Link, useParams } from "@tanstack/react-router"
 import { ArrowLeft, Bot, CheckCircle2, CircleDashed, Clock, Database, GitCompareArrows, Hourglass, Scale, ShieldAlert, ShieldCheck, ShieldX, UserCheck, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
@@ -45,7 +46,7 @@ function EpisodePageContent() {
   if (read.isPending) return <div className="mx-auto grid max-w-5xl gap-3" aria-label="Reading the episode"><Skeleton className="h-8 w-80" />{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 rounded-lg" />)}</div>
   if (read.isError) return (
     <div role="alert" className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
-      <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><span>{read.error instanceof Error ? read.error.message : "The episode could not be read."}</span><span className="flex-1" />
+      <Dot tone="bad" /><span>{read.error instanceof Error ? read.error.message : "The episode could not be read."}</span><span className="flex-1" />
       <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
     </div>
   )

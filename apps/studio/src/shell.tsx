@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/status-dot"
 import { Link, Outlet, createLink, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
@@ -911,7 +912,7 @@ function ConnectionBanner() {
   if (retrying) {
     return (
       <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 text-body text-foreground md:px-8">
-        <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-held" />
+        <Dot tone="held" />
         <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
         <span>Couldn't reach the cell.</span>
         <span className="text-muted-foreground">Reconnecting…</span>
@@ -926,7 +927,7 @@ function ConnectionBanner() {
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2.5 text-body md:px-8">
-      <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />
+      <Dot tone="bad" />
       <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
       <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="text-foreground">Workspace unavailable.</span>
@@ -1001,12 +1002,13 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   )
 }
 
-/** Speech-bubble "AI" glyph from v6/shell.tsx, rendered in the accent colour. */
+/** Speech-bubble "AI" glyph from v6/shell.tsx, in the ink of the control it sits in (the dock is dark in every skin). */
 function AiGlyph({ className }: { readonly className?: string }) {
   return (
-    <span aria-hidden className={cn("relative grid size-[18px] place-items-center text-action", className)}>
+    <span aria-hidden className={cn("relative grid size-[18px] place-items-center", className)}>
       <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
-      <span className="relative text-[7px] leading-none tracking-tight">AI</span>
+      {/* The letters are part of the icon (they scale with it), so they are drawn, not set in the type scale. */}
+      <svg viewBox="0 0 24 24" className="absolute inset-0 size-full"><text x="12" y="14.6" textAnchor="middle" fontSize="7.5" fill="currentColor" fontFamily="var(--font-sans)">AI</text></svg>
     </span>
   )
 }

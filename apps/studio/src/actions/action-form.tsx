@@ -175,11 +175,11 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         if (wizard && step < review) { go(step + 1); return } // the cell validates once, on submit; steps never block
         submit() // a risky action asks first: the core moves to confirm before it calls
       }}>
-      {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
-      {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
+      {action.description && <p className="text-body text-muted-foreground">{action.description}</p>}
+      {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-body">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
       {refusal}
       {phase.kind === "failed" && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
           <span>{unreachable(phase)}</span><span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={() => dispatch({ kind: "retry" })}>Retry</Button>
         </div>
@@ -194,7 +194,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         return (
           <section key={section.id ?? "rest"} aria-labelledby={heading === null ? undefined : headingId} aria-label={heading === null ? action.title : undefined}
             className="grid min-w-0 gap-4 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
-            {heading !== null && <h3 id={headingId} className={cn("text-sm font-medium", section.title === null && "text-muted-foreground")}>{heading}</h3>}
+            {heading !== null && <h3 id={headingId} className={cn("text-body", section.title === null && "text-muted-foreground")}>{heading}</h3>}
             {section.fields.map((field) => (
               <FieldRow key={field.pointer} field={field} label={sectionLabel(fields, field)} draft={draft} diagnostics={diagnostics}
                 locked={prefill[field.name] !== undefined && field.pointer === `/${escapePointer(field.name)}`} onEdit={edit} />
@@ -204,8 +204,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       })}
       </fieldset>
       {phase.kind === "confirm" && (
-        <div role="alertdialog" aria-labelledby="confirm-title" className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-          <p id="confirm-title" className="flex items-center gap-2 font-medium text-destructive"><AlertTriangle className="size-4" aria-hidden />
+        <div role="alertdialog" aria-labelledby="confirm-title" className="grid gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-body">
+          <p id="confirm-title" className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4" aria-hidden />
             {action.uiEffects.irreversible ? "This can't be undone." : "This removes business data."}</p>
           <p className="text-muted-foreground">{action.title}{action.uiEffects.destructive && action.uiEffects.irreversible ? ": it removes business data and can't be undone." : "."} The cell still checks it before anything changes.</p>
         </div>
@@ -274,7 +274,7 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
   const aria = { id, "aria-describedby": described, "aria-invalid": problems.length > 0 || undefined, "aria-required": field.required || undefined }
   return (
     <div className="grid gap-1.5" data-pointer={field.pointer}>
-      <label htmlFor={id} className="flex items-center gap-1 text-sm font-medium">
+      <label htmlFor={id} className="flex items-center gap-1 text-body">
         {label}
         {field.spec.kind === "decimal" && field.spec.unit && <span className="text-meta font-normal text-muted-foreground">({field.spec.unit})</span>}
         {field.required && <span aria-hidden className="text-destructive">*</span>}
@@ -289,9 +289,9 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
       {locked
         ? (
           <div className="relative">
-            <Lock className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Lock className="pointer-events-none absolute top-1/2 start-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input id={id} readOnly aria-readonly value={String(value)} title="Set by where you opened the action"
-              className="h-9 cursor-default bg-muted/70 pl-8 font-mono text-xs text-muted-foreground focus-visible:ring-0" />
+              className="h-9 cursor-default bg-muted/70 ps-8 font-mono text-meta text-muted-foreground focus-visible:ring-0" />
           </div>
         )
         : field.nullable
@@ -348,8 +348,8 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
       )
     case "choice":
       return <ChoiceSelect aria={aria} pointer={pointer} value={text} values={spec.values} onEdit={onEdit} />
-    case "fixed": return <p {...aria} className="text-sm"><code>{spec.value}</code></p>
-    case "json": return <Textarea {...aria} className="min-h-20 font-mono text-xs" spellCheck={false} placeholder="JSON" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "fixed": return <p {...aria} className="text-body"><code>{spec.value}</code></p>
+    case "json": return <Textarea {...aria} className="min-h-20 font-mono text-meta" spellCheck={false} placeholder="JSON" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
     case "object":
       return (
         <div className={cn("grid gap-3", !bare && "rounded-lg border border-node-border p-3")}>
@@ -363,11 +363,11 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
       return (
         <div className="grid gap-2">
           {items.map((item, index) => (
-            <div key={index} className="relative rounded-lg border border-node-border bg-card p-3 pr-11">
+            <div key={index} className="relative rounded-lg border border-node-border bg-card p-3 pe-11">
               <Widget spec={spec.item.kind === "object" ? { ...spec.item, fields: rebase(spec.item.fields, `${pointer}/0`, `${pointer}/${index}`) } : spec.item}
                 pointer={`${pointer}/${index}`} label={`${noun} ${index + 1}`} value={item} root={root} diagnostics={diagnostics} onEdit={onEdit} bare
                 aria={{ "aria-label": `${noun.charAt(0).toUpperCase()}${noun.slice(1)} ${index + 1}` }} />
-              <Button type="button" variant="ghost" size="icon" className="absolute top-2 right-2 size-7 text-muted-foreground hover:text-foreground"
+              <Button type="button" variant="ghost" size="icon" className="absolute top-2 end-2 size-7 text-muted-foreground hover:text-foreground"
                 aria-label={`Remove ${noun} ${index + 1}`} title={`Remove ${noun} ${index + 1}`} onClick={() => onEdit(pointer, items.filter((_, i) => i !== index))}><X /></Button>
             </div>
           ))}
@@ -401,7 +401,7 @@ function DateTimePicker({ aria, value, onChange }: { readonly aria: Aria; readon
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Input {...aria} aria-invalid={gap || aria["aria-invalid"] === true || undefined} type="datetime-local" step={60} className="h-9 w-60 tabular-nums" value={shown} onChange={(e) => onChange(e.target.value)} />
         {alternatives !== null && (
-          <select aria-label="Time zone offset" className="h-9 rounded-lg border border-node-border bg-background px-2 font-mono text-xs tabular-nums"
+          <select aria-label="Time zone offset" className="h-9 rounded-lg border border-node-border bg-background px-2 font-mono text-meta tabular-nums"
             value={selectedAlternative(sent, alternatives)}
             onChange={(e) => onChange(e.target.value)}>
             {alternatives.map((iso, idx) => (
@@ -412,7 +412,7 @@ function DateTimePicker({ aria, value, onChange }: { readonly aria: Aria; readon
           </select>
         )}
         <span className="text-meta text-muted-foreground">
-          {zone}{sent !== null && <> · sent as <code className="text-xs">{sent}</code></>}
+          {zone}{sent !== null && <> · sent as <code className="text-meta">{sent}</code></>}
         </span>
       </div>
       {gap && <p role="alert" className="text-meta text-destructive">This local time doesn't exist in {zone} (clocks spring forward). Pick a valid time.</p>}
@@ -443,10 +443,10 @@ function Steps({ sections, step, reached, counts, onGo }: {
   }
   return (
     <div className="grid gap-2">
-      <p aria-live="polite" className="flex items-baseline gap-1.5 text-sm">
+      <p aria-live="polite" className="flex items-baseline gap-1.5 text-body">
         <span className="text-muted-foreground tabular-nums">Step {step + 1} of {names.length}</span>
         <span aria-hidden className="text-muted-foreground">·</span>
-        <span className="font-medium">{names[step]}</span>
+        <span className="">{names[step]}</span>
       </p>
       <nav aria-label="Steps">
         <ol className="flex gap-1">
@@ -501,21 +501,21 @@ function Review({ sections, fields, draft, counts, prefill, onEdit }: {
   const rows = (field: FormField): readonly FormField[] => field.spec.kind === "object" ? field.spec.fields.flatMap(rows) : [field]
   return (
     <section aria-label="Review" className="grid gap-3">
-      <p className="text-sm text-muted-foreground">Check what you entered. The cell checks it when you submit.</p>
+      <p className="text-body text-muted-foreground">Check what you entered. The cell checks it when you submit.</p>
       {sections.map((section, index) => (
         <div key={section.id ?? "rest"} className="grid gap-2 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-medium">{section.title ?? "More"}</h3>
+            <h3 className="text-body">{section.title ?? "More"}</h3>
             {(counts[index] ?? 0) > 0 && <span className="text-meta text-destructive">{counts[index]} to fix</span>}
             <span className="flex-1" />
             <Button type="button" variant="ghost" size="sm" className="h-7" aria-label={`Edit ${section.title ?? "More"}`} onClick={() => onEdit(index)}><Pencil /> Edit</Button>
           </div>
-          <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm">
+          <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-body">
             {section.fields.flatMap(rows).map((field) => (
               <div key={field.pointer} className="contents">
                 <dt className="text-muted-foreground">{sectionLabel(fields, field)}</dt>
                 <dd className="min-w-0 break-words">
-                  {prefill[field.name] !== undefined && field.pointer === `/${escapePointer(field.name)}` && <Lock className="mr-1 inline size-3 text-muted-foreground" aria-label="This record" />}
+                  {prefill[field.name] !== undefined && field.pointer === `/${escapePointer(field.name)}` && <Lock className="me-1 inline size-3 text-muted-foreground" aria-label="This record" />}
                   {shownValue(field, draftAt(draft, field.pointer))}
                 </dd>
               </div>
@@ -549,9 +549,9 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
   if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation || phase.message} technical={technical} request={request} at={at} decidedAt={phase.decidedAt} />
   const shown = atFields ? top : phase.diagnostics
   return (
-    <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
-      <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span></span>
-      {guard !== null && <span className="text-sm text-foreground">Requires: {guard}</span>}
+    <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-body">
+      <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="">{REFUSED[phase.code] ?? phase.message}</span></span>
+      {guard !== null && <span className="text-body text-foreground">Requires: {guard}</span>}
       {/* A guard the cell quoted is shown in words above; its declared text stays under Technical. */}
       {(guard === null || technical) && (phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>)}
       {phase.incidentId && <span className="flex items-center gap-1.5 text-meta text-muted-foreground">Incident <CopyId value={phase.incidentId} /></span>}
@@ -559,7 +559,7 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
       {atFields && top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
       <details open={technical} className="text-meta text-muted-foreground">
         <summary className="cursor-pointer select-none">Technical</summary>
-        <span className="mt-1 block font-mono text-xs">{phase.code}</span>
+        <span className="mt-1 block font-mono text-meta">{phase.code}</span>
       </details>
     </div>
   )
@@ -598,7 +598,7 @@ function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technic
   return (
     <section aria-label={approved ? "Approved call" : "Sent for approval"} className="grid gap-4">
       <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
-        <p role="status" className="flex items-start gap-2 text-sm font-medium">
+        <p role="status" className="flex items-start gap-2 text-body">
           {phase.kind === "refused" || phase.kind === "failed"
             ? <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
             : approved
@@ -628,7 +628,7 @@ function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technic
       </div>
       {refusal}
       {failure !== null && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
           <span>{failure}</span><span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={onRetry}>Retry</Button>
         </div>
@@ -656,30 +656,30 @@ function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUnd
   return (
     <section aria-label="Receipt" className="grid gap-4">
       <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
-        <p role="status" className="flex items-start gap-2 text-sm font-medium">
+        <p role="status" className="flex items-start gap-2 text-body">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
           <span>{sentence}{receipt.outcome === "replayed" && <span className="font-normal text-muted-foreground"> (already done: the cell returned the first receipt)</span>}</span>
         </p>
         {onView && <Button type="button" variant="outline" size="sm" className="justify-self-start border-node-border" onClick={() => onView(receipt.objectId)}>View record</Button>}
-        <details open={technical} className="group text-sm">
+        <details open={technical} className="group text-body">
           <summary className="cursor-pointer text-meta text-muted-foreground select-none hover:text-foreground">Details</summary>
           <dl className="mt-3 grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2">
             <dt className="text-muted-foreground">Receipt</dt><dd className="min-w-0"><CopyId value={receipt.receipt.receiptHash} short={16} /></dd>
             <dt className="text-muted-foreground">Commit</dt><dd className="tabular-nums">{receipt.receipt.commitSeq}</dd>
             <dt className="text-muted-foreground">Recorded</dt><dd><time dateTime={at.toISOString()} title={at.toISOString()} className="whitespace-nowrap">{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</time></dd>
             <dt className="text-muted-foreground">Version</dt><dd className="tabular-nums">{receipt.version}</dd>
-            <dt className="text-muted-foreground">Action</dt><dd><code className="text-xs">{action.actionId}</code></dd>
+            <dt className="text-muted-foreground">Action</dt><dd><code className="text-meta">{action.actionId}</code></dd>
           </dl>
         </details>
       </div>
       {phase.kind === "undone" && (
-        <p role="status" className="flex items-start gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">
+        <p role="status" className="flex items-start gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-body">
           <Undo2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <span>Undone · {when(phase.reversal.receipt.recordedAtMs)}{technical && <span className="text-muted-foreground"> · commit {phase.reversal.receipt.commitSeq}</span>}</span>
         </p>
       )}
       {phase.kind === "undo-failed" && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
           <span>{phase.known ? `${phase.message ?? "The cell did not take the undo."} Nothing was undone.` : "Couldn't confirm the undo: the cell's answer was lost, so it may or may not have happened. Retrying sends the same request, so it can't apply twice."}</span><span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={onRetryUndo}>Retry undo</Button>
         </div>

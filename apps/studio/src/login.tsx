@@ -19,8 +19,8 @@ const MODES: readonly { readonly mode: Mode; readonly label: string }[] = [
 
 function Field({ label, ...props }: { readonly label: string } & React.ComponentProps<typeof Input>) {
   return (
-    <label className="grid gap-1.5 text-sm">
-      <span className="font-medium">{label}</span>
+    <label className="grid gap-1.5 text-body">
+      <span className="">{label}</span>
       <Input required {...props} />
     </label>
   )
@@ -95,7 +95,7 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center gap-2">
           <img src={nornMark} alt="" width={32} height={32} className="size-8 object-contain" />
-          <span className="font-medium">Norn Studio</span>
+          <span className="">Norn Studio</span>
         </div>
         <Card>
           <CardHeader>
@@ -106,7 +106,7 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
             <div role="tablist" aria-label="How to sign in" className={cn("grid gap-1 rounded-md border bg-surface-subtle p-1 text-meta", modes.length === 3 ? "grid-cols-3" : "grid-cols-2")}>
               {modes.map((entry) => (
                 <button key={entry.mode} type="button" role="tab" aria-selected={activeMode === entry.mode} disabled={pending} onClick={() => { setMode(entry.mode); setMessage(null) }}
-                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60", activeMode === entry.mode ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}>
+                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60", activeMode === entry.mode ? "bg-card shadow-xs" : "text-muted-foreground hover:text-foreground")}>
                   {entry.label}
                 </button>
               ))}

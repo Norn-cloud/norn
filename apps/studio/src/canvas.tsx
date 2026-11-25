@@ -136,7 +136,7 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
       {edge && <InspectorHead kind="route" kindLabel="Step" id={`${words(edge.source)} → ${words(edge.target)}`} />}
       {own.map((issue, index) => <IssueCard key={index} issue={issue} />)}
       {node && <>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Name</span>
+        <label className="block space-y-1.5"><span className="text-meta text-foreground/80">Name</span>
           <Input aria-label="Name" defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => {
             const to = event.target.value.trim()
             if (!to || to === node.id) return
@@ -144,19 +144,19 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
             edit(g.renameNode(graph, node.id, to)); select({ nodes: [to], edges: [] })
           }} /></label>
         {FLAGS.map((flag) => (
-          <label key={flag} className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
+          <label key={flag} className="flex items-center gap-2 text-body"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
         ))}
       </>}
       {edge && siblings.length > 1 && (
         <section className="space-y-2" data-testid="step-sources">
-          <h3 className="text-xs font-semibold text-muted-foreground">From {siblings.length} states</h3>
+          <h3 className="text-meta text-muted-foreground">From {siblings.length} states</h3>
           <ul className="space-y-1.5">
             {siblings.map((id) => { const one = graph.edges.find((other) => other.id === id)!; return (
-              <li key={id} className="flex items-center justify-between gap-2 rounded-lg border border-node-border bg-card px-2.5 py-1.5 text-sm">
+              <li key={id} className="flex items-center justify-between gap-2 rounded-lg border border-node-border bg-card px-2.5 py-1.5 text-body">
                 <span>{words(one.source)} → {words(one.target)}</span>
                 <span className="flex items-center gap-1">
                   {/* Reconnect, for a step drawn inside a bundle: point this one step at another state (undoable). */}
-                  <select aria-label={`Change target of the step from ${words(one.source)}`} className="h-8 rounded-3xl bg-input/50 px-2 text-xs" value=""
+                  <select aria-label={`Change target of the step from ${words(one.source)}`} className="h-8 rounded-3xl bg-input/50 px-2 text-meta" value=""
                     onChange={(event) => {
                       const target = event.target.value
                       if (!target) return
@@ -174,11 +174,11 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
         </section>
       )}
       {edge && <>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Step id</span>
+        <label className="block space-y-1.5"><span className="text-meta text-foreground/80">Step id</span>
           <Input aria-label="Step id" defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Allowed only when (one rule per line)</span>
-          <Textarea aria-label="Guards" defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Description</span>
+        <label className="block space-y-1.5"><span className="text-meta text-foreground/80">Allowed only when (one rule per line)</span>
+          <Textarea aria-label="Guards" defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-meta" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
+        <label className="block space-y-1.5"><span className="text-meta text-foreground/80">Description</span>
           <Input aria-label="Description" defaultValue={edge.config.description} key={`${edge.id}:description:${edge.config.description}`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
       </>}
       <div className="border-t border-node-border pt-3"><Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remove}><Trash2 />Delete</Button></div>
@@ -227,7 +227,7 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
     },
     copyEdgeConfig: (edge, taken) => ({ ...edge.config, transition: g.freshName(taken, `${edge.config.transition || "step"}_copy`) }),
     palette: ({ graph, edit, select }) => (
-      <Button size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
+      <Button size="sm" variant="ghost" className="gap-1.5 ps-1.5" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
     ),
     inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} kinds={lifecycleKinds(lifecycle)} />,
   }
@@ -276,7 +276,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Canvas</h1>
+        <h1 className="text-title font-medium tracking-tight">Canvas</h1>
         <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -284,8 +284,8 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
         <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
       </div>
       {kind === "automation" && <AutomationEditor />}
-      {kind === "lifecycle" && definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-sm text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
-      {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="p-6 text-sm text-destructive" role="alert">The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
+      {kind === "lifecycle" && definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-body text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
+      {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="p-6 text-body text-destructive" role="alert">The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
       {kind === "lifecycle" && definitions.data && found.length === 0 && <Panel label="Canvas"><Well><EmptyState icon={Network}>No admitted definition declares a lifecycle yet.</EmptyState></Well></Panel>}
       {kind === "lifecycle" && lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} />}
     </section>

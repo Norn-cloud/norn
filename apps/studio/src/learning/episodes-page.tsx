@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/status-dot"
 import { Link } from "@tanstack/react-router"
 import { CheckCircle2, CircleDashed, Clock, Filter, GitCompareArrows, Hourglass, RefreshCw, ShieldAlert, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
@@ -139,7 +140,7 @@ function EpisodesPageContent() {
     if (read.isError) {
       return (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
-          <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><span>{read.error instanceof Error ? read.error.message : "Episodes could not be read."}</span>
+          <Dot tone="bad" /><span>{read.error instanceof Error ? read.error.message : "Episodes could not be read."}</span>
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
         </div>
@@ -150,7 +151,7 @@ function EpisodesPageContent() {
     if (data?.kind === "refused") {
       return (
         <div role="alert" className="grid gap-1 rounded-(--radius-well) border border-(--panel-border) bg-card px-4 py-3 text-body text-foreground">
-          <p className="flex items-center gap-2"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />{data.message}</p>
+          <p className="flex items-center gap-2"><Dot tone="bad" />{data.message}</p>
           {data.diagnostics.length > 0 && (
             <ul className="list-disc ps-5 text-meta">
               {data.diagnostics.map((d, index) => <li key={`${d.code}:${index}`}>{d.message}{d.pointer ? ` (${d.pointer})` : ""}</li>)}
@@ -197,7 +198,7 @@ function EpisodesPageContent() {
                     <TableRow key={row.id} data-malformed="true">
                       <TableCell className="font-mono text-meta">{row.id}</TableCell>
                       <TableCell colSpan={5} className="text-foreground">
-                        <span className="inline-flex items-center gap-1.5"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Malformed episode ({row.problem})</span>
+                        <span className="inline-flex items-center gap-1.5"><Dot tone="bad" />Malformed episode ({row.problem})</span>
                       </TableCell>
                     </TableRow>
                   )

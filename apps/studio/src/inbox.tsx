@@ -95,7 +95,7 @@ export function Inbox() {
                   {decisions.map(({ decision, target }) => (
                     <RouteLink key={decision.id} to={target} className={rowLink}>
                       <span className="min-w-0 flex-1 truncate">{decision.question}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
+                      <span className="shrink-0 text-meta text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
                       <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                     </RouteLink>
                   ))}
@@ -109,7 +109,7 @@ export function Inbox() {
                   {sources.map((source) => (
                     <RouteLink key={source.id} to={source.target} className={rowLink}>
                       <span className="min-w-0 flex-1 truncate">{text(source.values.label) ?? source.id}</span>
-                      <span className="min-w-0 max-w-[50%] truncate text-xs text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
+                      <span className="min-w-0 max-w-[50%] truncate text-meta text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
                       <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                     </RouteLink>
                   ))}
@@ -123,7 +123,7 @@ export function Inbox() {
   )
 }
 
-const rowLink = "flex items-center gap-3 px-4 py-1.5 ps-10 text-sm hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+const rowLink = "flex items-center gap-3 px-4 py-1.5 ps-10 text-body hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 
 /** A group's head row: a small muted icon, what the group is, its count, and an optional action at the end. */
 function GroupHead({ icon: Icon, title, count, description, children }: { readonly icon: LucideIcon; readonly title: ReactNode; readonly count?: number; readonly description?: ReactNode; readonly children?: ReactNode }) {
@@ -131,7 +131,7 @@ function GroupHead({ icon: Icon, title, count, description, children }: { readon
     <div className="flex items-start gap-3 px-4 pt-3 pb-1.5">
       <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
-        <h3 className="text-sm font-medium">{title}{count !== undefined && <span className="ms-2 font-normal text-muted-foreground tabular-nums">{count}</span>}</h3>
+        <h3 className="text-body">{title}{count !== undefined && <span className="ms-2 font-normal text-muted-foreground tabular-nums">{count}</span>}</h3>
         {description && <p className="text-meta text-muted-foreground">{description}</p>}
       </div>
       {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}
@@ -154,11 +154,11 @@ function HeldBack({ group }: { readonly group: Group }) {
           // The record's other open findings, or laws a fix would break: the server offers no fix then.
           const others = record.otherFindings ?? []
           return (
-            <div key={`${record.objectType}:${record.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1 ps-11 text-sm">
-              <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{name}</RouteLink>
+            <div key={`${record.objectType}:${record.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1 ps-11 text-body">
+              <RouteLink to={record.target} className="underline-offset-4 hover:underline">{name}</RouteLink>
               {record.finding && <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">{record.finding.words}</span>}
               {others.length > 0 && (
-                <div className="basis-full space-y-0.5 text-xs text-muted-foreground">
+                <div className="basis-full space-y-0.5 text-meta text-muted-foreground">
                   <Badge variant="outline">Needs review: {others.length + 1} laws disagree</Badge>
                   {others.map((other) => <p key={other.id}>{other.words}</p>)}
                 </div>

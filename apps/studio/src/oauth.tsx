@@ -46,7 +46,7 @@ function Frame({ title, description, children }: { readonly title: string; reado
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center gap-2">
           <img src={nornMark} alt="" width={32} height={32} className="size-8 object-contain" />
-          <span className="font-medium">Norn</span>
+          <span className="">Norn</span>
         </div>
         <Card>
           <CardHeader>
@@ -61,7 +61,7 @@ function Frame({ title, description, children }: { readonly title: string; reado
 }
 
 function Failure({ text }: { readonly text: string | null }) {
-  return text === null ? null : <p role="alert" className="text-sm text-destructive">{text}</p>
+  return text === null ? null : <p role="alert" className="text-body text-destructive">{text}</p>
 }
 
 /** Sign in to continue connecting an assistant. Accounts are made in Studio, not here. */
@@ -90,8 +90,8 @@ export function OAuthSignIn() {
     <Frame title="Sign in to Norn" description="Your assistant asked to connect to Norn. Sign in with your Studio account to continue.">
       <form onSubmit={(event) => void submit(event)}>
         <CardContent className="grid gap-4">
-          <label className="grid gap-1.5 text-sm"><span className="font-medium">Email</span><Input required name="email" type="email" autoComplete="email" /></label>
-          <label className="grid gap-1.5 text-sm"><span className="font-medium">Password</span><Input required name="password" type="password" autoComplete="current-password" /></label>
+          <label className="grid gap-1.5 text-body"><span className="">Email</span><Input required name="email" type="email" autoComplete="email" /></label>
+          <label className="grid gap-1.5 text-body"><span className="">Password</span><Input required name="password" type="password" autoComplete="current-password" /></label>
           <Failure text={failure} />
         </CardContent>
         <CardFooter className="pt-4"><Button type="submit" className="w-full" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</Button></CardFooter>
@@ -181,7 +181,7 @@ export function OAuthConsent() {
       title={`Allow ${requester.name} to use Norn?`}
       description={readyWorkspace ? `It will act as ${workspace.user} in ${workspace.organization}.` : "You do not have an active workspace to connect right now."}
     >
-      <CardContent className="grid gap-3 text-sm">
+      <CardContent className="grid gap-3 text-body">
         <p>It can read what you may read and ask Norn to run actions you may run. Norn's rules decide every request, exactly as they do in Studio, and refuse anything you could not do yourself.</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
           {requester.site === null ? null : <><dt>Site</dt><dd className="font-mono">{requester.site}</dd></>}

@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Dot, type DotTone } from "@/components/status-dot"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { Inbox, Play, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
@@ -51,17 +52,17 @@ function inboxRefusalError(refusal: CellReadRefusal): Error {
  * nothing left to run); the accent while an approval waits for the reader to run it; bad when the
  * decider rejected it or the cell refused the approved call; quiet when it expired or was withdrawn.
  */
-export function requestDot(item: Pick<RequestedDecision, "status" | "canRun" | "call">): string {
+export function requestDot(item: Pick<RequestedDecision, "status" | "canRun" | "call">): DotTone {
   switch (item.status) {
-    case "pending": return "bg-dot-held"
-    case "rejected": return "bg-dot-bad"
+    case "pending": return "held"
+    case "rejected": return "bad"
     case "expired":
-    case "withdrawn": return "bg-dot-quiet"
+    case "withdrawn": return "quiet"
     case "approved": {
       const state = item.call.state?.state
-      if (state === "refused") return "bg-dot-bad"
-      if (state === "committed") return "bg-dot-live"
-      return item.canRun ? "bg-dot-accent" : "bg-dot-live"
+      if (state === "refused") return "bad"
+      if (state === "committed") return "live"
+      return item.canRun ? "accent" : "live"
     }
   }
 }
@@ -180,7 +181,7 @@ function RequestedCalls() {
         {items.map((item) => (
           <li key={item.id} className="flex min-h-12 flex-wrap items-center gap-3 rounded-(--radius-row) px-3 py-2.5">
             {/* Dot-first (DESIGN.md 4.3, 12): one dot per outcome; the words below say which. */}
-            <span aria-hidden data-status={item.status} className={`size-[6px] shrink-0 rounded-full ${requestDot(item)}`} />
+            <Dot tone={requestDot(item)} data-status={item.status} />
             <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
               <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                 <span>{requestedAction(actions, item).title}</span>

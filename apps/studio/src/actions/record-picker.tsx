@@ -15,7 +15,7 @@ import { readRecords, type RecordsRead } from "../lib/records-source.ts"
 export type Aria = Record<string, string | boolean | undefined>
 
 /** The form's select and input look. */
-export const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-sm aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
+export const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-body aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
 
 /** One record a picker offers: its id (the value it sets) and its title (what it reads as). */
 export interface PickedRecord { readonly id: string; readonly title: string }
@@ -148,7 +148,7 @@ export function pickerChoices({ records, moved, optional, value, more, typed }: 
 
 const sameChoice = (a: PickerChoice, b: PickerChoice): boolean => a.key === b.key
 
-const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-sm:min-h-[44px] text-sm outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-sm:min-h-[44px] text-body outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
 
 /**
  * A field that names an existing record (the cell's `inputLinks`): a searchable list of the
@@ -242,7 +242,7 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
                 <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <Combobox.Input aria-label={`Search ${noun} records`}
                   placeholder={property === undefined ? "Type an id" : `Search ${noun} by ${property.replaceAll("_", " ")} or type an id`}
-                  className="h-10 w-full rounded-md bg-transparent text-sm outline-none max-sm:min-h-[44px] placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring" />
+                  className="h-10 w-full rounded-md bg-transparent text-body outline-none max-sm:min-h-[44px] placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring" />
               </div>
               <Combobox.Status className="grid gap-1 px-3 empty:hidden [&>p]:py-2 text-meta text-muted-foreground">
                 {pages.isPending && <p>Reading {noun} records…</p>}

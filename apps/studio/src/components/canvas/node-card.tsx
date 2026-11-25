@@ -27,7 +27,7 @@ export const cardHeight = ({ kindLine = true, subtitle = false }: { readonly kin
   22 + (kindLine ? 16 : 0) + 20 + (subtitle ? 16 : 0)
 
 /** An edge's label: a small pill on the canvas surface, the same on every canvas (exits, lifecycle steps). */
-export const EDGE_PILL = "nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-0 text-[11px] leading-4 font-medium text-muted-foreground shadow-node"
+export const EDGE_PILL = "nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-0 text-meta leading-4 text-muted-foreground shadow-node"
 
 /** A small tinted icon chip for a kind; the tint is mixed into a pale fill so it reads as a hint. */
 export function KindChip({ kind, className }: { readonly kind: string; readonly className?: string }) {
@@ -63,17 +63,17 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
   // The kind line names what the card is; it is left out when the title already says it (a start called Start).
   const name = kindLabel ?? NODE_KINDS[kind]?.label ?? kind
   return (
-    <div data-testid={testId} style={minHeight ? { minHeight } : undefined} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-left",
+    <div data-testid={testId} style={minHeight ? { minHeight } : undefined} className={cn("canvas-node group relative w-[208px] rounded-node border border-node-border bg-card px-3 py-2.5 text-start",
       selected && "canvas-node-selected", problems > 0 && "canvas-node-failing", className)}>
       {children}
       <div className="flex items-start gap-2.5">
         <KindChip kind={kind} />
         <div className="min-w-0 flex-1">
-          {name !== title && <div className="truncate text-xs leading-4 font-medium text-muted-foreground">{name}</div>}
-          <div data-node-title className="text-[15px] leading-5 font-semibold tracking-[-0.01em] break-words text-foreground">{title}</div>
-          {subtitle && <div className="truncate text-xs leading-4 text-muted-foreground">{subtitle}</div>}
+          {name !== title && <div className="truncate text-meta leading-4 text-muted-foreground">{name}</div>}
+          <div data-node-title className="text-body leading-5 tracking-[-0.01em] break-words text-foreground">{title}</div>
+          {subtitle && <div className="truncate text-meta leading-4 text-muted-foreground">{subtitle}</div>}
           {problems > 0 && (
-            <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 text-[11px] leading-4 font-medium text-destructive-text">
+            <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 text-meta leading-4 text-destructive-text">
               <span className="size-1.5 rounded-full bg-destructive" />{problems} {problems === 1 ? "problem" : "problems"}
             </div>
           )}
@@ -90,9 +90,9 @@ export function InspectorHead({ kind, kindLabel, id }: { readonly kind: string; 
       <KindChip kind={kind} />
       {/* One heading names what the inspector edits, written once: the separator is read, not drawn. */}
       <h3 className="min-w-0">
-        <span className="block text-[13px] leading-5 font-semibold">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</span>
+        <span className="block text-meta leading-5">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</span>
         <span className="sr-only"> · </span>
-        <span className="block truncate font-mono text-[11px] leading-4 font-normal text-muted-foreground">{id}</span>
+        <span className="block truncate font-mono text-meta leading-4 font-normal text-muted-foreground">{id}</span>
       </h3>
     </div>
   )
@@ -102,7 +102,7 @@ export function InspectorHead({ kind, kindLabel, id }: { readonly kind: string; 
 export function InspectorSection({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-xs font-semibold text-muted-foreground">{title}</h3>
+      <h3 className="text-meta text-muted-foreground">{title}</h3>
       {children}
     </section>
   )

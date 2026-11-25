@@ -38,7 +38,7 @@ function AttentionDot({ tone, label }: { readonly tone: MapAttentionTone; readon
         ? "bg-success"
         : "bg-muted-foreground/45"
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+    <span className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dotClass)} />
       <span>{label}</span>
     </span>
@@ -111,13 +111,13 @@ function IslandCard({
       <div className="flex items-start justify-between gap-3 border-b border-border/80 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-body font-medium text-foreground">{island.title}</h3>
+            <h3 className="truncate text-body text-foreground">{island.title}</h3>
             {dimmed && <span className="sr-only">(outside the current lens)</span>}
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground tabular-nums">
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground tabular-nums">
               {island.nodes.length}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{island.subtitle}</p>
+          <p className="mt-0.5 truncate text-meta text-muted-foreground">{island.subtitle}</p>
         </div>
         <AttentionDot tone={island.attention} label={statusText} />
       </div>
@@ -128,7 +128,7 @@ function IslandCard({
             key={node.id}
             type="button"
             onClick={() => onSelectNode(node.id)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-start text-sm transition-colors outline-none hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-start text-body transition-colors outline-none hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring"
           >
             <span
               aria-hidden
@@ -137,19 +137,19 @@ function IslandCard({
                 node.attention === "critical" ? "bg-destructive" : "bg-foreground/35",
               )}
             />
-            <span className="min-w-0 flex-1 truncate font-medium text-foreground" lang={node.titleLang}>
+            <span className="min-w-0 flex-1 truncate text-foreground" lang={node.titleLang}>
               {node.title}
             </span>
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
               {node.fieldCount} facts
             </span>
             {node.lawCount > 0 && (
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
                 · {node.lawCount} {node.lawCount === 1 ? "law" : "laws"}
               </span>
             )}
             {node.ruleHoldings > 0 && (
-              <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-[0.6875rem] tabular-nums">
+              <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-meta tabular-nums">
                 {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)}
               </Badge>
             )}
@@ -159,7 +159,7 @@ function IslandCard({
           <button
             type="button"
             onClick={onOpen}
-            className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-meta text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
             <span>+{overflow} more object {overflow === 1 ? "type" : "types"}</span>
             <ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />
@@ -167,7 +167,7 @@ function IslandCard({
         )}
       </div>
 
-      <footer className="flex items-center justify-between gap-2 border-t border-border/80 px-4 py-2.5 text-xs text-muted-foreground">
+      <footer className="flex items-center justify-between gap-2 border-t border-border/80 px-4 py-2.5 text-meta text-muted-foreground">
         <span className="tabular-nums">
           {island.lawCount} {island.lawCount === 1 ? "law" : "laws"} · {bridgeCount} {bridgeCount === 1 ? "bridge" : "bridges"}
         </span>
@@ -225,14 +225,14 @@ function IslandExpansion({
         </Button>
         <div className="min-w-0">
           <h2 ref={heading} tabIndex={-1} className="text-heading font-medium text-foreground outline-none">{island.title}</h2>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             {island.subtitle} · {island.nodes.length} object {island.nodes.length === 1 ? "type" : "types"} · {island.lawCount} {island.lawCount === 1 ? "law" : "laws"}
           </p>
         </div>
       </div>
 
       {island.sourceErrors > 0 && (
-        <div role="status" className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive-text">
+        <div role="status" className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-meta text-destructive-text">
           <ShieldAlert aria-hidden className="size-4 shrink-0" />
           <span>{atLeast(island.sourceErrors, island.sourceErrorsApproximate)} source sync {island.sourceErrors === 1 && !island.sourceErrorsApproximate ? "error reported" : "errors reported"} for this island.</span>
         </div>
@@ -259,8 +259,8 @@ function IslandExpansion({
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground" lang={node.titleLang}>{node.title}</div>
-                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{node.id}</div>
+                  <div className="truncate text-body text-foreground" lang={node.titleLang}>{node.title}</div>
+                  <div className="truncate font-mono text-meta text-muted-foreground">{node.id}</div>
                   {!matched && <span className="sr-only">Outside the current lens.</span>}
                 </div>
                 {node.ruleHoldings > 0 || node.sourceErrors > 0 ? (
@@ -283,9 +283,9 @@ function IslandExpansion({
                 )}
               </div>
               {node.summary && (
-                <p className="line-clamp-2 text-xs text-muted-foreground">{node.summary}</p>
+                <p className="line-clamp-2 text-meta text-muted-foreground">{node.summary}</p>
               )}
-              <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground tabular-nums">
+              <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-meta text-muted-foreground tabular-nums">
                 <span>{node.fieldCount} facts</span>
                 <span>{node.relationshipCount} links</span>
                 {node.lawCount > 0 && <span>{node.lawCount} {node.lawCount === 1 ? "law" : "laws"}</span>}
@@ -298,7 +298,7 @@ function IslandExpansion({
 
       {ghostNeighbors.size > 0 && (
         <div className="space-y-2">
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Cross-island neighbors</h3>
+          <h3 className="text-meta text-muted-foreground">Cross-island neighbors</h3>
           <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
             {[...ghostNeighbors.values()].map(({ island: other, linkCount, labels }) => (
               <button
@@ -308,8 +308,8 @@ function IslandExpansion({
                 className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface-subtle/60 px-3.5 py-2.5 text-start transition-colors hover:border-foreground/30 hover:bg-muted/60"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground">{other.title}</div>
-                  <div className="truncate text-xs text-muted-foreground">
+                  <div className="truncate text-body text-foreground">{other.title}</div>
+                  <div className="truncate text-meta text-muted-foreground">
                     {linkCount} {linkCount === 1 ? "link" : "links"} · {labels.slice(0, 2).join(", ")}
                   </div>
                 </div>
@@ -345,21 +345,21 @@ function ProvenanceSideSheet({
           <Link
             to="/sources/$concept"
             params={{ concept: node.id }}
-            className="inline-flex max-w-full items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground hover:text-foreground"
+            className="inline-flex max-w-full items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 font-mono text-meta text-muted-foreground hover:text-foreground"
             title="Inspect admitted definition artifact"
           >
             <span className="truncate">{node.artifactId}</span>
             <ExternalLink aria-hidden className="size-3 shrink-0" />
           </Link>
           <h2 className="mt-1.5 truncate text-heading font-medium text-foreground" lang={node.titleLang}>{node.title}</h2>
-          <p className="text-xs text-muted-foreground">Island: {island.title}</p>
+          <p className="text-meta text-muted-foreground">Island: {island.title}</p>
         </div>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="Close provenance sheet" onClick={onClose}>
           <X aria-hidden className="size-4" />
         </Button>
       </div>
 
-      {node.summary && <p className="text-sm text-muted-foreground">{node.summary}</p>}
+      {node.summary && <p className="text-body text-muted-foreground">{node.summary}</p>}
 
       <div className="flex flex-wrap gap-2">
         <Button asChild size="sm" variant="default">
@@ -375,7 +375,7 @@ function ProvenanceSideSheet({
       </div>
 
       {node.ruleHoldings > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive-text">
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-meta text-destructive-text">
           <ShieldAlert aria-hidden className="size-4 shrink-0" />
           <span>
             {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)} rule {node.ruleHoldings === 1 && !node.ruleHoldingsApproximate ? "holding" : "holdings"} reported in inbox.
@@ -384,14 +384,14 @@ function ProvenanceSideSheet({
       )}
 
       <section className="space-y-1.5">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">Source feeds ({sourceFeeds.length})</h3>
+        <h3 className="text-meta text-muted-foreground">Source feeds ({sourceFeeds.length})</h3>
         {sourceFeeds.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No external source feed mapped.</p>
+          <p className="text-meta text-muted-foreground">No external source feed mapped.</p>
         ) : (
           <ul className="space-y-1">
             {sourceFeeds.map((feed) => (
-              <li key={`${feed.mappingId ?? feed.system}:${feed.dataset}`} className="flex items-center justify-between gap-2 rounded-lg bg-well px-2.5 py-1.5 text-xs">
-                <span className="truncate font-medium text-foreground">{feed.system} · {feed.dataset}</span>
+              <li key={`${feed.mappingId ?? feed.system}:${feed.dataset}`} className="flex items-center justify-between gap-2 rounded-lg bg-well px-2.5 py-1.5 text-meta">
+                <span className="truncate text-foreground">{feed.system} · {feed.dataset}</span>
                 <span className="shrink-0 text-muted-foreground tabular-nums">
                   {feed.mappedFields} mapped{feed.gapCount > 0 ? ` · ${feed.gapCount} ${feed.gapCount === 1 ? "gap" : "gaps"}` : ""}
                 </span>
@@ -402,21 +402,21 @@ function ProvenanceSideSheet({
       </section>
 
       <section className="space-y-1.5">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">Governing laws ({laws.length})</h3>
+        <h3 className="text-meta text-muted-foreground">Governing laws ({laws.length})</h3>
         {laws.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No admitted laws scoped to this type.</p>
+          <p className="text-meta text-muted-foreground">No admitted laws scoped to this type.</p>
         ) : (
           <ul className="space-y-1.5">
             {laws.slice(0, 6).map((law) => (
-              <li key={law.id} className="rounded-lg border border-border/80 bg-well px-2.5 py-2 text-xs">
+              <li key={law.id} className="rounded-lg border border-border/80 bg-well px-2.5 py-2 text-meta">
                 <div className="flex items-start justify-between gap-2">
-                  <span className="font-medium text-foreground">{lawHeadline(law)}</span>
-                  <Badge variant={law.severity === "error" ? "destructive" : "outline"} className="shrink-0 text-[0.625rem]">
+                  <span className="text-foreground">{lawHeadline(law)}</span>
+                  <Badge variant={law.severity === "error" ? "destructive" : "outline"} className="shrink-0 text-meta">
                     {law.severity}
                   </Badge>
                 </div>
                 {law.inheritedFrom && (
-                  <p className="mt-0.5 text-[0.6875rem] text-muted-foreground">Inherited from {law.inheritedFrom}</p>
+                  <p className="mt-0.5 text-meta text-muted-foreground">Inherited from {law.inheritedFrom}</p>
                 )}
               </li>
             ))}
@@ -426,19 +426,19 @@ function ProvenanceSideSheet({
 
       {node.markings.length > 0 && (
         <section className="space-y-1.5">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase">Markings</h3>
+          <h3 className="text-meta text-muted-foreground">Markings</h3>
           <div className="flex flex-wrap gap-1.5">
             {node.markings.map((marking) => (
-              <Badge key={marking} variant="outline" className="font-mono text-[0.6875rem]">{marking}</Badge>
+              <Badge key={marking} variant="outline" className="font-mono text-meta">{marking}</Badge>
             ))}
           </div>
         </section>
       )}
 
       <section className="space-y-1.5">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">Connected types ({incoming.length + outgoing.length})</h3>
+        <h3 className="text-meta text-muted-foreground">Connected types ({incoming.length + outgoing.length})</h3>
         {incoming.length + outgoing.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No declared relationships.</p>
+          <p className="text-meta text-muted-foreground">No declared relationships.</p>
         ) : (
           <ul className="space-y-1">
             {outgoing.map((edge) => (
@@ -446,10 +446,10 @@ function ProvenanceSideSheet({
                 <button
                   type="button"
                   onClick={() => onSelectNode(edge.targetConcept)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-start text-xs transition-colors hover:bg-muted"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-start text-meta transition-colors hover:bg-muted"
                 >
                   <span className="truncate text-muted-foreground">→ {edge.relationshipId.replaceAll("_", " ")}</span>
-                  <span className="truncate font-medium text-foreground">{edge.targetTitle}</span>
+                  <span className="truncate text-foreground">{edge.targetTitle}</span>
                 </button>
               </li>
             ))}
@@ -458,9 +458,9 @@ function ProvenanceSideSheet({
                 <button
                   type="button"
                   onClick={() => onSelectNode(edge.sourceConcept)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-start text-xs transition-colors hover:bg-muted"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-start text-meta transition-colors hover:bg-muted"
                 >
-                  <span className="truncate font-medium text-foreground">{edge.sourceTitle}</span>
+                  <span className="truncate text-foreground">{edge.sourceTitle}</span>
                   <span className="truncate text-muted-foreground">← {edge.relationshipId.replaceAll("_", " ")}</span>
                 </button>
               </li>
@@ -644,13 +644,13 @@ export function SemanticMapPage() {
                               const from = map.islandsById.get(bridge.fromIsland)
                               const to = map.islandsById.get(bridge.toIsland)
                               return (
-                                <div key={bridge.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
+                                <div key={bridge.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-body">
                                   <button
                                     type="button"
                                     data-bridge-id={bridge.id}
                                     data-bridge-end="from"
                                     onClick={() => openIsland(bridge.fromIsland, { kind: "bridge", id: bridge.id, end: "from" })}
-                                    className="font-medium text-foreground underline-offset-4 hover:underline"
+                                    className="text-foreground underline-offset-4 hover:underline"
                                   >
                                     {from?.title ?? bridge.fromIsland}
                                   </button>
@@ -660,11 +660,11 @@ export function SemanticMapPage() {
                                     data-bridge-id={bridge.id}
                                     data-bridge-end="to"
                                     onClick={() => openIsland(bridge.toIsland, { kind: "bridge", id: bridge.id, end: "to" })}
-                                    className="font-medium text-foreground underline-offset-4 hover:underline"
+                                    className="text-foreground underline-offset-4 hover:underline"
                                   >
                                     {to?.title ?? bridge.toIsland}
                                   </button>
-                                  <span className="truncate text-xs text-muted-foreground">
+                                  <span className="truncate text-meta text-muted-foreground">
                                     {bridge.edges.slice(0, 3).map((edge) => edge.relationshipId.replaceAll("_", " ")).join(", ")}
                                     {bridge.edges.length > 3 ? ` +${bridge.edges.length - 3}` : ""}
                                   </span>

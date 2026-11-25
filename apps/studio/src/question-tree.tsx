@@ -288,7 +288,7 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
             if (choice) { setCustomCondition(false); patch({ filters: conditionsOf(choice) }) }
           }}>
           {chosen.condition === "custom" && (
-            <div className="grid gap-2 rounded-lg border bg-card p-2 text-sm">
+            <div className="grid gap-2 rounded-lg border bg-card p-2 text-body">
               <select aria-label="Condition property" className="h-8 rounded-3xl bg-input/50 px-3" value={custom.property} onChange={(event) => patch({ filters: [{ ...custom, property: event.target.value, value: "" }] })}>
                 {filterable.map(({ name }) => <option key={name} value={name}>{words(name)}</option>)}
               </select>
@@ -323,16 +323,16 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
       {failure && <p role="alert" className="text-destructive">{failure}</p>}
       {restatementFailure && <p role="alert" className="text-destructive">{restatementFailure}</p>}
       {currentCheck && !admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{currentCheck.verdict.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
-      {currentCheck && restated === null && <p role="status" className="text-sm text-muted-foreground">This question cannot be stated in plain words, so it cannot be signed off: {currentCheck.restatementError ?? "the checker gave no reason"}.</p>}
+      {currentCheck && restated === null && <p role="status" className="text-body text-muted-foreground">This question cannot be stated in plain words, so it cannot be signed off: {currentCheck.restatementError ?? "the checker gave no reason"}.</p>}
       {restated && (
-        <Panel icon={ShieldCheck} label="In plain words" action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span> : undefined}>
+        <Panel icon={ShieldCheck} label="In plain words" action={view === "technical" ? <span className="font-mono text-meta text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span> : undefined}>
           <div className="space-y-3 p-1">
-            {fromCell && <p className="font-medium">The server reads your question as:</p>}
-            <p className="text-base" data-testid="restatement">{restated.text}</p>
+            {fromCell && <p className="">The server reads your question as:</p>}
+            <p className="text-body" data-testid="restatement">{restated.text}</p>
             <p className="text-meta text-muted-foreground">Written from the question itself by the server, not by the assistant. Check that it says what you mean.</p>
             <div className="flex flex-wrap items-center gap-3">
               {signed
-                ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />{signOff.signer ? <>Signed off by {signOff.displayName} on {new Date(signOff.atMs).toLocaleDateString()}{view === "technical" && <span className="font-mono text-meta text-muted-foreground">({signOff.signer})</span>}</> : "Signed off: this is what you asked for"}</span>
+                ? <span className="flex items-center gap-2 text-body"><BadgeCheck className="size-4 text-success" />{signOff.signer ? <>Signed off by {signOff.displayName} on {new Date(signOff.atMs).toLocaleDateString()}{view === "technical" && <span className="font-mono text-meta text-muted-foreground">({signOff.signer})</span>}</> : "Signed off: this is what you asked for"}</span>
                 : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now(), scopeKey: pinnedScopeKey })}>This is what I asked for</Button>}
               {!admitted && <span className="text-meta text-muted-foreground">Sign-off opens once the checker admits the question.</span>}
             </div>
@@ -341,12 +341,12 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
       )}
       <div className="space-y-2" data-testid="question-save-controls">
         <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
+          <label className="grid gap-1.5 text-body">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
           <Button type="button" onClick={save} disabled={!cellAvailable || !signed || !draft.title.trim() || saving} aria-describedby={!signed ? "question-save-reason" : undefined}>{saving ? "Saving…" : "Save question"}</Button>
           {saved && <Button type="button" variant="outline" disabled={!cellAvailable || saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
           {removed && <Button type="button" variant="outline" disabled={!cellAvailable || saving} onClick={undoRemove}>Undo removal</Button>}
         </div>
-        {scope.isSuccess && scope.data === null && <p role="status" className="text-sm text-muted-foreground">{NO_DATA_CELL}</p>}
+        {scope.isSuccess && scope.data === null && <p role="status" className="text-body text-muted-foreground">{NO_DATA_CELL}</p>}
         {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
         {!signed && <p id="question-save-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
         {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
@@ -355,7 +355,7 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
       <Panel icon={ChartLine} label="Saved questions">
         {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
         {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
-        {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
+        {list.data?.items.length === 0 && <p className="text-body text-muted-foreground">No saved questions yet.</p>}
         {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span><span>{item.title || item.id} · version {item.version}</span><span className="block text-meta text-muted-foreground">{item.id}</span></span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
         {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
         {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
@@ -372,7 +372,7 @@ export function QuestionTreePage() {
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Explore a metric, step by step</h1>
+        <h1 className="text-title font-medium tracking-tight">Explore a metric, step by step</h1>
         <p className="max-w-2xl text-muted-foreground">Choose left to right: what to measure, how to group it, which records count and over which dates. The server recommends a pick in each column from what the cell declares, checks every change and says the question back in plain words.</p>
       </div>
       {(scope.isPending || catalog.isPending || tree.isPending) && <p className="text-muted-foreground">Reading the catalogue…</p>}

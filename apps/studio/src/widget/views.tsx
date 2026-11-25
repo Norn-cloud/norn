@@ -113,13 +113,13 @@ function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readon
   const max = Math.max(0, ...rows.map((row) => Math.abs(Number(row.value)) || 0))
   return (
     <Table>
-      <TableHeader><TableRow><TableHead>{label}</TableHead><TableHead className="w-[45%]" /><TableHead className="text-right">{valueLabel}</TableHead></TableRow></TableHeader>
+      <TableHeader><TableRow><TableHead>{label}</TableHead><TableHead className="w-[45%]" /><TableHead className="text-end">{valueLabel}</TableHead></TableRow></TableHeader>
       <TableBody>
         {rows.map((row) => (
           <TableRow key={row.key} className={onSelect ? "cursor-pointer" : undefined} onClick={onSelect ? () => onSelect(row.key) : undefined}>
             <TableCell>{row.label}</TableCell>
             <TableCell><div className="h-1.5 rounded-full bg-foreground/70" style={{ width: `${max > 0 ? Math.max(2, (Math.abs(Number(row.value)) / max) * 100) : 0}%` }} /></TableCell>
-            <TableCell className="text-right tabular-nums">{grouped(row.value)}</TableCell>
+            <TableCell className="text-end tabular-nums">{grouped(row.value)}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -150,7 +150,7 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
     <Card size="sm">
       <CardHeader>
         <CardDescription>{title}{latest && buckets.length === 1 ? `, ${latest.label}` : ""}</CardDescription>
-        <CardTitle className="text-3xl font-semibold tracking-tight tabular-nums">{latest ? (latest.suppressed ? SUPPRESSED : grouped(latest.value)) : "—"}</CardTitle>
+        <CardTitle className="text-title font-medium tracking-tight tabular-nums">{latest ? (latest.suppressed ? SUPPRESSED : grouped(latest.value)) : "—"}</CardTitle>
         <CardAction className="flex flex-wrap justify-end gap-1">
           <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "ok" : "warn"} title={freshness.meaning}>{answer.freshness}</Chip>
           {typeof engine === "string" && <Chip>{engine}</Chip>}
@@ -159,11 +159,11 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
         </CardAction>
       </CardHeader>
       <CardContent>
-        {rows.length > 0 ? <BarTable rows={rows} label={buckets.length === 1 ? "Record" : "Bucket"} valueLabel="Value" onSelect={(key) => void trace(key)} /> : <p className="text-sm text-muted-foreground">No records in this answer.</p>}
+        {rows.length > 0 ? <BarTable rows={rows} label={buckets.length === 1 ? "Record" : "Bucket"} valueLabel="Value" onSelect={(key) => void trace(key)} /> : <p className="text-body text-muted-foreground">No records in this answer.</p>}
       </CardContent>
       {traced && "read" in traced && <CardContent><LineageTable read={traced.read} /></CardContent>}
       {traced && "refusal" in traced && <CardContent><RefusalBody refusal={traced.refusal} /></CardContent>}
-      <CardFooter className="text-xs text-muted-foreground">Select a row to trace it to its source records.</CardFooter>
+      <CardFooter className="text-meta text-muted-foreground">Select a row to trace it to its source records.</CardFooter>
     </Card>
   )
 }
@@ -181,22 +181,22 @@ function LineageTable({ read }: { readonly read: Read<Trace> }) {
   return (
     <div className="space-y-2">
       <Table>
-        <TableHeader><TableRow><TableHead className="text-right">Value</TableHead><TableHead>Source system</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead className="text-end">Value</TableHead><TableHead>Source system</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
         <TableBody>
           {contributions.map((contribution, index) => {
             const ref = contribution.source.status === "resolved" ? (contribution.source.provenance as { documentRef?: { system?: string; record?: string } } | undefined)?.documentRef : undefined
             return (
               <TableRow key={`${contribution.fact.key}-${index}`}>
-                <TableCell className="text-right tabular-nums">{contribution.restricted ? "withheld" : text(index)}</TableCell>
+                <TableCell className="text-end tabular-nums">{contribution.restricted ? "withheld" : text(index)}</TableCell>
                 <TableCell>{ref?.system ?? contribution.source.status}</TableCell>
-                <TableCell className="font-mono text-xs">{ref?.record ?? contribution.fact.key}</TableCell>
-                <TableCell className="font-mono text-xs" title={contribution.receiptHash ?? undefined}>{short(contribution.receiptHash)}</TableCell>
+                <TableCell className="font-mono text-meta">{ref?.record ?? contribution.fact.key}</TableCell>
+                <TableCell className="font-mono text-meta" title={contribution.receiptHash ?? undefined}>{short(contribution.receiptHash)}</TableCell>
               </TableRow>
             )
           })}
         </TableBody>
       </Table>
-      {mapping && <p className="text-xs text-muted-foreground">Each field carries its mapping version and source fields, e.g. {mapping}.</p>}
+      {mapping && <p className="text-meta text-muted-foreground">Each field carries its mapping version and source fields, e.g. {mapping}.</p>}
     </div>
   )
 }
@@ -224,14 +224,14 @@ function ObjectLineage({ read }: { readonly read: Read<SourceLineage> }) {
     <Card size="sm">
       <CardHeader>
         <CardTitle>Where this record comes from</CardTitle>
-        <CardDescription className="font-mono text-xs">{lineage.documentRef?.system} · {lineage.documentRef?.record}</CardDescription>
+        <CardDescription className="font-mono text-meta">{lineage.documentRef?.system} · {lineage.documentRef?.record}</CardDescription>
       </CardHeader>
       <CardContent>
-        {fields.length === 0 ? <p className="text-sm text-muted-foreground">The server recorded no source for this record.</p> : (
+        {fields.length === 0 ? <p className="text-body text-muted-foreground">The server recorded no source for this record.</p> : (
           <Table>
             <TableHeader><TableRow><TableHead>Field</TableHead><TableHead>Source fields</TableHead><TableHead>Mapping</TableHead></TableRow></TableHeader>
             <TableBody>{fields.map(([name, field]) => (
-              <TableRow key={name}><TableCell>{name}</TableCell><TableCell className="font-mono text-xs">{(field.sourceFields ?? []).join(", ")}</TableCell><TableCell className="font-mono text-xs">{field.mappingVersion}</TableCell></TableRow>
+              <TableRow key={name}><TableCell>{name}</TableCell><TableCell className="font-mono text-meta">{(field.sourceFields ?? []).join(", ")}</TableCell><TableCell className="font-mono text-meta">{field.mappingVersion}</TableCell></TableRow>
             ))}</TableBody>
           </Table>
         )}
@@ -273,14 +273,14 @@ function RecordsCard({ read }: { readonly read: Read<RecordsPage> }) {
           <TableHeader><TableRow><TableHead>Id</TableHead>{columns.map((column) => <TableHead key={column}>{column.replaceAll("_", " ")}</TableHead>)}</TableRow></TableHeader>
           <TableBody>{page.records.map((record, index) => (
             <TableRow key={record.id}>
-              <TableCell className="font-mono text-xs">{record.id}</TableCell>
-              {columns.map((column) => <TableCell key={column} className={typeof record.values[column] === "number" ? "text-right tabular-nums" : undefined}>{record.withheldProperties?.includes(column) ? "withheld" : cell(index, column, record.values[column])}</TableCell>)}
+              <TableCell className="font-mono text-meta">{record.id}</TableCell>
+              {columns.map((column) => <TableCell key={column} className={typeof record.values[column] === "number" ? "text-end tabular-nums" : undefined}>{record.withheldProperties?.includes(column) ? "withheld" : cell(index, column, record.values[column])}</TableCell>)}
             </TableRow>
           ))}</TableBody>
         </Table>
       </CardContent>
       {masked.size > 0 && (
-        <CardFooter className="flex-col items-start gap-1 text-xs text-muted-foreground">
+        <CardFooter className="flex-col items-start gap-1 text-meta text-muted-foreground">
           {[...masked].map(([name, mask]) => (
             <span key={name}>{name.replaceAll("_", " ")} is a pseudonym ({mask.markings.join(", ")}) · reveal: <b className="text-foreground">{mask.revealable ? "allowed" : "not allowed"}</b>{mask.revealable ? ", and every reveal leaves a receipt" : ""}</span>
           ))}
@@ -339,15 +339,15 @@ function FindingsCard({ read }: { readonly read: Read<Findings> }) {
               const finding = item.findings?.[0]
               return (
                 <TableRow key={item.id}>
-                  <TableCell className="font-mono text-xs">{item.id}</TableCell>
-                  <TableCell className="font-mono text-xs">{finding?.law ?? `${item.openFindings ?? 0} open`}</TableCell>
+                  <TableCell className="font-mono text-meta">{item.id}</TableCell>
+                  <TableCell className="font-mono text-meta">{finding?.law ?? `${item.openFindings ?? 0} open`}</TableCell>
                   <TableCell>{finding?.values ? <Compared read={read as Read<unknown>} pointer={`/items/${index}/findings/0/values`} values={finding.values} /> : "—"}</TableCell>
                 </TableRow>
               )
             })}</TableBody>
           </Table>
         </CardContent>
-        {remedies.length > 0 && <CardFooter className="text-xs text-muted-foreground">Fix with {remedies.join(", ")}; the laws decide again.</CardFooter>}
+        {remedies.length > 0 && <CardFooter className="text-meta text-muted-foreground">Fix with {remedies.join(", ")}; the laws decide again.</CardFooter>}
       </Card>
     )
   }
@@ -355,21 +355,21 @@ function FindingsCard({ read }: { readonly read: Read<Findings> }) {
   return (
     <Card size="sm">
       <CardHeader>
-        <CardDescription className="font-mono text-xs">{document.objectType} · {document.id}</CardDescription>
+        <CardDescription className="font-mono text-meta">{document.objectType} · {document.id}</CardDescription>
         <CardTitle>{document.quarantined ? "Held back by law" : findings.length > 0 ? "Findings" : "No findings"}</CardTitle>
         <CardAction><Chip tone={document.quarantined ? "bad" : "ok"}>{document.quarantined ? "held" : "released"}</Chip></CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
         {findings.map((finding, index) => (
-          <div key={finding.id ?? index} className="space-y-1 text-sm">
-            <div className="font-mono text-xs text-muted-foreground">{finding.ruleRef?.lawId ?? finding.law}</div>
+          <div key={finding.id ?? index} className="space-y-1 text-body">
+            <div className="font-mono text-meta text-muted-foreground">{finding.ruleRef?.lawId ?? finding.law}</div>
             {finding.values && <div><Compared read={read as Read<unknown>} pointer={`/findings/${index}/values`} values={finding.values} /></div>}
             <div className="text-muted-foreground">{finding.message?.replace(/^[^:]+:\s*/, "")}</div>
-            <div className="text-xs text-muted-foreground">{finding.status ?? "open"}{finding.firstSeen ? ` since ${finding.firstSeen.slice(0, 10)}` : ""}</div>
+            <div className="text-meta text-muted-foreground">{finding.status ?? "open"}{finding.firstSeen ? ` since ${finding.firstSeen.slice(0, 10)}` : ""}</div>
           </div>
         ))}
       </CardContent>
-      {remedies.length > 0 && <CardFooter className="text-xs text-muted-foreground">Fix with {remedies.join(", ")}: the laws decide again, and answer with a receipt or the reason.</CardFooter>}
+      {remedies.length > 0 && <CardFooter className="text-meta text-muted-foreground">Fix with {remedies.join(", ")}: the laws decide again, and answer with a receipt or the reason.</CardFooter>}
     </Card>
   )
 }
@@ -401,18 +401,18 @@ function PlanCard({ plan, title }: { readonly plan: Plan; readonly title?: strin
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        {plan.newObjectTypes.length > 0 && <p className="text-sm">New types: {plan.newObjectTypes.join(", ")}</p>}
+        {plan.newObjectTypes.length > 0 && <p className="text-body">New types: {plan.newObjectTypes.join(", ")}</p>}
         {rows.length > 0 && (
           <Table>
             <TableHeader><TableRow><TableHead>Change</TableHead><TableHead>Artifact</TableHead><TableHead>Kind</TableHead><TableHead>Version</TableHead></TableRow></TableHeader>
             <TableBody>{rows.map(({ artifact, change }) => (
-              <TableRow key={artifact.artifactId}><TableCell>{change}</TableCell><TableCell className="font-mono text-xs">{artifact.artifactId}</TableCell><TableCell>{artifact.kind}</TableCell><TableCell className="font-mono text-xs">{artifact.fromVersion ? `${artifact.fromVersion} → ` : ""}{artifact.toVersion}</TableCell></TableRow>
+              <TableRow key={artifact.artifactId}><TableCell>{change}</TableCell><TableCell className="font-mono text-meta">{artifact.artifactId}</TableCell><TableCell>{artifact.kind}</TableCell><TableCell className="font-mono text-meta">{artifact.fromVersion ? `${artifact.fromVersion} → ` : ""}{artifact.toVersion}</TableCell></TableRow>
             ))}</TableBody>
           </Table>
         )}
-        {plan.diagnostics.map((diagnostic, index) => <p key={`${diagnostic.code}-${index}`} className="text-sm"><span className="font-mono text-xs text-muted-foreground">{diagnostic.code}</span> {diagnostic.message}</p>)}
+        {plan.diagnostics.map((diagnostic, index) => <p key={`${diagnostic.code}-${index}`} className="text-body"><span className="font-mono text-meta text-muted-foreground">{diagnostic.code}</span> {diagnostic.message}</p>)}
       </CardContent>
-      {!plan.unchanged && title === undefined && <CardFooter className="text-xs text-muted-foreground">Nothing is installed yet. Apply with expectedVersion {plan.baseVersion}.</CardFooter>}
+      {!plan.unchanged && title === undefined && <CardFooter className="text-meta text-muted-foreground">Nothing is installed yet. Apply with expectedVersion {plan.baseVersion}.</CardFooter>}
     </Card>
   )
 }
@@ -443,16 +443,16 @@ function InboxCard({ read }: { readonly read: Read<Inbox> }) {
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-4">
-        {items.length === 0 && <p className="text-sm text-muted-foreground">Nothing needs you right now.</p>}
+        {items.length === 0 && <p className="text-body text-muted-foreground">Nothing needs you right now.</p>}
         {items.map((item, index) => {
           if (item.kind === "held_back") return (
             <div key={index} className="space-y-1">
-              <div className="text-sm font-medium">{item.title} <span className="font-normal text-muted-foreground">· {item.count}{item.approximate ? "+" : ""} {item.objectType}</span></div>
+              <div className="text-body">{item.title} <span className="font-normal text-muted-foreground">· {item.count}{item.approximate ? "+" : ""} {item.objectType}</span></div>
               <Table>
                 <TableHeader><TableRow><TableHead>Record</TableHead><TableHead>Finding</TableHead><TableHead>Fix</TableHead></TableRow></TableHeader>
                 <TableBody>{item.records.map((record) => (
                   <TableRow key={record.id}>
-                    <TableCell className="font-mono text-xs">{record.id}</TableCell>
+                    <TableCell className="font-mono text-meta">{record.id}</TableCell>
                     <TableCell className="tabular-nums">{record.finding?.words ?? "—"}</TableCell>
                     <TableCell>{record.suggestedFix ? <span title={record.suggestedFix.title}>{record.suggestedFix.label}{record.suggestedFix.needs?.length ? <span className="text-muted-foreground"> · needs {record.suggestedFix.needs.join(", ")}</span> : null}</span> : "—"}</TableCell>
                   </TableRow>
@@ -460,11 +460,11 @@ function InboxCard({ read }: { readonly read: Read<Inbox> }) {
               </Table>
             </div>
           )
-          if (item.kind === "decision") return <div key={index} className="text-sm"><Chip tone="warn">decision</Chip> {item.decision.question ?? "A decision waits on you."}</div>
-          return <div key={index} className="text-sm"><Chip tone="bad">source</Chip> <span className="font-mono text-xs">{item.id}</span> last sync failed</div>
+          if (item.kind === "decision") return <div key={index} className="text-body"><Chip tone="warn">decision</Chip> {item.decision.question ?? "A decision waits on you."}</div>
+          return <div key={index} className="text-body"><Chip tone="bad">source</Chip> <span className="font-mono text-meta">{item.id}</span> last sync failed</div>
         })}
       </CardContent>
-      <CardFooter className="text-xs text-muted-foreground">Fixes are the server's suggestions; each is applied only through its action tool, and the laws decide again.</CardFooter>
+      <CardFooter className="text-meta text-muted-foreground">Fixes are the server's suggestions; each is applied only through its action tool, and the laws decide again.</CardFooter>
     </Card>
   )
 }
@@ -487,17 +487,17 @@ function ProposalCard({ read, input, studio, bridge }: { readonly read: Read<Adm
         <CardAction><Chip tone={admitted ? "ok" : "bad"}>{admitted ? "admitted" : "refused"}</Chip></CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
-        {restatement && <p className="whitespace-pre-wrap text-sm">{restatement}</p>}
+        {restatement && <p className="whitespace-pre-wrap text-body">{restatement}</p>}
         {diagnostics.length > 0 && (
           <Table>
             <TableHeader><TableRow><TableHead>Finding</TableHead><TableHead>Where</TableHead></TableRow></TableHeader>
             <TableBody>{diagnostics.map((diagnostic, index) => (
-              <TableRow key={`${diagnostic.code}-${index}`}><TableCell><div>{diagnostic.message}</div><div className="font-mono text-xs text-muted-foreground">{diagnostic.code}</div></TableCell><TableCell className="font-mono text-xs">{diagnostic.span?.pointer ?? ""}</TableCell></TableRow>
+              <TableRow key={`${diagnostic.code}-${index}`}><TableCell><div>{diagnostic.message}</div><div className="font-mono text-meta text-muted-foreground">{diagnostic.code}</div></TableCell><TableCell className="font-mono text-meta">{diagnostic.span?.pointer ?? ""}</TableCell></TableRow>
             ))}</TableBody>
           </Table>
         )}
       </CardContent>
-      <CardFooter className="justify-between gap-2 text-xs text-muted-foreground">
+      <CardFooter className="justify-between gap-2 text-meta text-muted-foreground">
         <span>Nothing is saved yet. A person installs it in Norn Studio by signing this restatement.</span>
         {admitted && studio !== null && <Button size="sm" variant="outline" onClick={() => bridge.openLink(new URL("/dashboards", studio).href)}>Open Studio</Button>}
       </CardFooter>
@@ -531,10 +531,10 @@ function ReceiptCard({ read, tool }: { readonly read: Read<Receipt>; readonly to
         <CardTitle>{outcome === "replayed" ? "Already done" : outcome === "pending_approval" || outcome === "held" ? "Waiting for approval" : "Accepted"}</CardTitle>
         <CardAction><Chip tone={outcome === "committed" || outcome === "replayed" ? "ok" : "warn"}>{outcome}</Chip></CardAction>
       </CardHeader>
-      <CardContent className="text-sm text-muted-foreground">
-        <span className="font-mono text-xs text-foreground">{objectId ?? tool ?? objectType}</span>
+      <CardContent className="text-body text-muted-foreground">
+        <span className="font-mono text-meta text-foreground">{objectId ?? tool ?? objectType}</span>
         {version !== undefined && ` → version ${version}`}
-        {receipt && <> · commit {receipt.commitSeq} · receipt <span className="font-mono text-xs" title={receipt.receiptHash}>{short(receipt.receiptHash)}</span></>}
+        {receipt && <> · commit {receipt.commitSeq} · receipt <span className="font-mono text-meta" title={receipt.receiptHash}>{short(receipt.receiptHash)}</span></>}
       </CardContent>
     </Card>
   )
@@ -545,8 +545,8 @@ function RefusalBody({ refusal }: { readonly refusal: Refusal }) {
   const reason = (refusal as { reason?: { law?: string; values?: Record<string, unknown> } | null }).reason
   const explanation = (refusal as { explanation?: string }).explanation
   return (
-    <div className="space-y-1 text-sm">
-      {reason?.law && <div className="font-mono text-xs text-muted-foreground">{reason.law}</div>}
+    <div className="space-y-1 text-body">
+      {reason?.law && <div className="font-mono text-meta text-muted-foreground">{reason.law}</div>}
       {reason?.values && <div className="tabular-nums">{Object.entries(reason.values).map(([key, value], index) => <span key={key}>{index > 0 ? " · " : ""}{key} <b>{Array.isArray(value) ? value.map((item) => grouped(String(item))).join(" + ") : grouped(String(value))}</b></span>)}</div>}
       <div className="text-muted-foreground">{explanation ?? refusal.message}</div>
     </div>
@@ -563,7 +563,7 @@ function Refused({ refusal, action }: { readonly refusal: Refusal; readonly acti
         <CardAction><Chip tone="bad">{refusal.code}</Chip></CardAction>
       </CardHeader>
       <CardContent><RefusalBody refusal={refusal} /></CardContent>
-      {action && <CardFooter className="text-xs text-muted-foreground">Nothing was changed. The agent asked; the workspace's laws and policy decided.</CardFooter>}
+      {action && <CardFooter className="text-meta text-muted-foreground">Nothing was changed. The agent asked; the workspace's laws and policy decided.</CardFooter>}
     </Card>
   )
 }
@@ -571,11 +571,11 @@ function Refused({ refusal, action }: { readonly refusal: Refusal; readonly acti
 /** The view for one delivery, chosen by the template the host loaded and the document's own shape. */
 export function DeliveryView({ view, delivery, bridge, studio, tool }: { readonly view: View; readonly delivery: Delivery; readonly bridge: ToolHost; readonly studio: string | null; readonly tool?: string }) {
   const { input, result } = delivery
-  if (result === undefined) return <p className="p-3 text-sm text-muted-foreground">Asking Norn…</p>
+  if (result === undefined) return <p className="p-3 text-body text-muted-foreground">Asking Norn…</p>
   const read = exactDocument<unknown>(result)
   if (result.isError === true || read === null) {
     const refusal = asRefusal(read?.document ?? result.structuredContent)
-    return refusal === null ? <p className="p-3 text-sm text-muted-foreground">Norn sent nothing to show.</p> : <Refused refusal={refusal} action={view === "receipt"} />
+    return refusal === null ? <p className="p-3 text-body text-muted-foreground">Norn sent nothing to show.</p> : <Refused refusal={refusal} action={view === "receipt"} />
   }
   const document = read.document as Record<string, unknown>
   if (view === "answer" && typeof document.lineageRef === "string" && typeof document.rows === "object") return <AnswerCard read={read as Read<Answer>} input={input} bridge={bridge} />
@@ -587,7 +587,7 @@ export function DeliveryView({ view, delivery, bridge, studio, tool }: { readonl
   if (view === "findings" && (Array.isArray(document.findings) || Array.isArray(document.items))) return <FindingsCard read={read as Read<Findings>} />
   if (view === "inbox" && Array.isArray(document.items) && Array.isArray(document.sections)) return <InboxCard read={read as Read<Inbox>} />
   if (view === "plan" && typeof document.baseVersion === "number") return <PlanCard plan={document as unknown as Plan} />
-  return <p className="p-3 text-sm text-muted-foreground">Norn answered with a document this view does not draw.</p>
+  return <p className="p-3 text-body text-muted-foreground">Norn answered with a document this view does not draw.</p>
 }
 
 /** Follow the host's tool input and result as they arrive. */

@@ -16,7 +16,7 @@ import { CodedMessage } from "@/components/coded-message"
  * pass through Norn. Every refusal is the server's, shown with the fix it names.
  */
 
-const Note = ({ children }: { children: ReactNode }) => <p className="px-4 py-3 text-sm text-muted-foreground">{children}</p>
+const Note = ({ children }: { children: ReactNode }) => <p className="px-4 py-3 text-body text-muted-foreground">{children}</p>
 const go = ({ url }: { url: string }) => window.location.assign(url)
 
 /** A refusal: what went wrong, its code, and the button that fixes it when there is one. */
@@ -29,7 +29,7 @@ export function ConnectorProblem({ error, scope }: { readonly error: unknown; re
   const effectiveScope = typed?.scope !== undefined ? typed.scope : scope !== undefined ? scope : pinnedScope
   const action = typed?.action ?? null
   return (
-    <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+    <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-body">
       <TriangleAlert aria-hidden className="size-4 text-destructive" />
       <span className="min-w-0 flex-1">{typed ? <CodedMessage code={typed.code} message={typed.message} showCode /> : error instanceof Error ? error.message : String(error)}</span>
       {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => startFix(action, undefined, effectiveScope).then((url) => window.location.assign(url), (e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
@@ -59,7 +59,7 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
     <div className="border-t first:border-t-0" data-requirement={requirement.requirement}>
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{account === null ? requirement.requirement : label ?? account}</div>
+          <div className="">{account === null ? requirement.requirement : label ?? account}</div>
           <div className="text-meta text-muted-foreground">{requirement.requirement}{requirement.state && ` · ${requirement.state.replaceAll("_", " ")}`}</div>
         </div>
         {account === null
@@ -103,7 +103,7 @@ function AppAccounts({ app, name, inventory, scope }: { readonly app: string; re
   const labelOf = (account: string | null) => inventory.accounts.find((entry) => entry.id === account)?.label ?? null
   return (
     <section aria-label={name} className="rounded-md border bg-background">
-      <header className="px-4 pt-3 text-sm font-medium">{name}</header>
+      <header className="px-4 pt-3 text-body">{name}</header>
       {requirements.isPending ? <Note>Loading…</Note>
         : requirements.isError ? <ConnectorProblem error={requirements.error} scope={scope} />
         : requirements.data.requirements.length === 0 ? <Note>This app needs no account of yours.</Note>
@@ -128,7 +128,7 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Connections</h1>
+        <h1 className="text-title font-medium tracking-tight">Connections</h1>
         <p className="max-w-2xl text-muted-foreground">Sign in to the tool gateway and connect the accounts your tools use. Credentials stay in the gateway; Norn keeps only the tool bindings your organization makes.</p>
       </div>
       <Panel icon={Plug} label="Tool gateway" action={status.data?.gateway ?? undefined}>

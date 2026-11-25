@@ -24,10 +24,10 @@ export function QuarantinePanel({ objectType }: { readonly objectType: string })
     queryFn: () => cellRead<Quarantined>(`/v1/objects/${encodeURIComponent(objectType)}:quarantined`, "Quarantined records are"),
     retry: false,
   })
-  if (held.isPending) return <p className="text-sm text-muted-foreground">Reading what the cell holds back…</p>
+  if (held.isPending) return <p className="text-body text-muted-foreground">Reading what the cell holds back…</p>
   if (held.isError) return held.error instanceof NotServed
     ? <EmptyState icon={ShieldAlert} title="Not served">{held.error.message}</EmptyState>
-    : <p role="alert" className="text-sm text-destructive">{held.error.message}</p>
+    : <p role="alert" className="text-body text-destructive">{held.error.message}</p>
   const { items, approximate, scanLimit } = held.data.document
   return (
     <Panel icon={ShieldAlert} label="In quarantine">
@@ -38,7 +38,7 @@ export function QuarantinePanel({ objectType }: { readonly objectType: string })
             : <EmptyState icon={ShieldAlert} title="Nothing held back">No record of this type is in quarantine.</EmptyState>
         )}
         {items.map(({ id, openFindings }) => (
-          <div key={id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+          <div key={id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-body">
             <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} className="font-mono underline-offset-4 hover:underline">{id}</Link>
             <Badge variant={openFindings > 0 ? "destructive" : "outline"}>{openFindings} open {openFindings === 1 ? "finding" : "findings"}</Badge>
           </div>
