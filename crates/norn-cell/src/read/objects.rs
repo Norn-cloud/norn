@@ -830,19 +830,18 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             fv = crate::system::FACT_VALUES,
         );
         let sql = format!(
-            "WITH counts AS MATERIALIZED ( \
-               SELECT mv.\"subject\" AS \"subject\", mv.\"version\" AS \"version\", COUNT(*) AS \"cnt\" \
-               FROM \"{ver}\" AS mv INDEXED BY \"{ver_idx}\" \
-               WHERE mv.\"world\" = ?1 AND mv.\"object_type\" = ?3 AND mv.\"markings\" != '[]' \
-               GROUP BY mv.\"subject\", mv.\"version\" \
-             ) \
-             SELECT 1 FROM \"{fv}\" AS fv \
+            "SELECT 1 FROM \"{fv}\" AS fv \
              LEFT JOIN \"{snap}\" AS s \
                ON s.\"world\" = fv.\"world\" AND s.\"object_type\" = fv.\"object_type\" \
               AND s.\"id\" = fv.\"id\" AND s.\"version\" = fv.\"version\" AND s.\"is_current\" = 0 \
              LEFT JOIN \"{subj}\" AS ms \
                ON ms.\"world\" = s.\"world\" AND ms.\"object_type\" = s.\"object_type\" AND ms.\"id\" = s.\"id\" \
-             LEFT JOIN counts AS c \
+             LEFT JOIN ( \
+               SELECT mv.\"subject\" AS \"subject\", mv.\"version\" AS \"version\", COUNT(*) AS \"cnt\" \
+               FROM \"{ver}\" AS mv INDEXED BY \"{ver_idx}\" \
+               WHERE mv.\"world\" = ?1 AND mv.\"object_type\" = ?3 AND mv.\"markings\" != '[]' \
+               GROUP BY mv.\"subject\", mv.\"version\" \
+             ) AS c \
                ON c.\"subject\" = ms.\"subject\" AND c.\"version\" = s.\"version\" \
              WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
                AND json_type(fv.\"snapshot\", '$.values') = 'object' \

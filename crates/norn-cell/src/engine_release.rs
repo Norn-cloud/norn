@@ -405,7 +405,7 @@ fn backfill_snapshot_nonempty_slots<E: SqlEngine>(engine: &E) -> Result<(), Cell
         )?
         .is_some();
     engine.execute(
-        "UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = 0",
+        "UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = 0 WHERE \"nonempty_slots\" IS NOT 0",
         params![],
     )?;
     for (table, is_current) in [
