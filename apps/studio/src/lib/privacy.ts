@@ -1,5 +1,5 @@
 import { cellCall, defaultFetch, type Fetch } from "./cell-read.ts"
-import type { StudioScope } from "./definitions.ts"
+import { CELL_FETCH_TIMEOUT_MS, StudioScopeError, type StudioScope } from "./definitions.ts"
 
 /**
  * PRIVACY-1/2. A marked property arrives already projected by the server: a pseudonym, `•••`,
@@ -44,23 +44,52 @@ export type RevealResult =
   | { readonly kind: "refused"; readonly message: string }
   | { readonly kind: "unavailable" }
 
-/** Ask the cell to reveal one marked property, with an optional purpose kept in the receipt. */
+/**
+ * Ask the cell to reveal one marked property, with an optional purpose kept in the receipt. The
+ * call goes to `boundScope` (the workspace the row was read from) with its expected-scope headers,
+ * so the server refuses it if the session moved elsewhere. A transport failure or a cell that does
+ * not answer in time is `unavailable`, never a thrown error: the caller can retry with the same key.
+ */
 export async function revealProperty(
   objectType: string, id: string, property: string, purpose: string,
   idempotencyKey: string = globalThis.crypto.randomUUID(), fetcher: Fetch = defaultFetch,
   boundScope?: StudioScope | null,
+  timeoutMs = CELL_FETCH_TIMEOUT_MS,
 ): Promise<RevealResult> {
   const body = { property, ...purpose.trim() === "" ? {} : { purpose: purpose.trim() }, idempotencyKey }
-  const result = await cellCall<{ value: unknown; receipt: RevealReceipt }>(
-    `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}/reveal`,
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
-    fetcher,
-    boundScope,
-  )
+  let result: Awaited<ReturnType<typeof cellCall<{ value: unknown; receipt: RevealReceipt }>>>
+  try {
+    result = await cellCall<{ value: unknown; receipt: RevealReceipt }>(
+      `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}/reveal`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) },
+      fetcher,
+      boundScope,
+    )
+  } catch (error) {
+    if (error instanceof StudioScopeError) return { kind: "refused", message: error.message }
+    return { kind: "unavailable" }
+  }
   switch (result.kind) {
     case "ok": return { kind: "revealed", value: result.value.value, receipt: result.value.receipt }
     case "refused": return { kind: "refused", message: result.refusal.message }
     default: return { kind: "unavailable" }
+  }
+}
+
+/**
+ * The idempotency key of one reveal request. A retry of the same request (same purpose) after the
+ * cell did not answer reuses it, so the cell records at most one receipt for it; a new purpose, or
+ * a request the cell decided (revealed or refused), starts a new key.
+ */
+export function revealKeys(newKey: () => string = () => globalThis.crypto.randomUUID()) {
+  let held: { readonly purpose: string; readonly key: string } | null = null
+  return {
+    for(purpose: string): string {
+      const trimmed = purpose.trim()
+      if (held === null || held.purpose !== trimmed) held = { purpose: trimmed, key: newKey() }
+      return held.key
+    },
+    settle(): void { held = null },
   }
 }
 

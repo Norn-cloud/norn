@@ -1,0 +1,9 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "5:16 @norn/authoring#Norn.flow",
+    "5:75 effect/Effect#gen",
+    "6:26 @norn/authoring#Norn.perform"
+  ]
+}
