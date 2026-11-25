@@ -173,6 +173,7 @@ fn a_dev_cell_keeps_principal_inputs_through_a_rollback_and_a_restart() {
         loaded: RefCell::new(None),
         root: directory.path(),
         manifest: &manifest,
+        named: Arc::default(),
         scope: &cell_scope,
         url: "http://127.0.0.1:0",
         started_at: 0,

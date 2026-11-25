@@ -651,21 +651,16 @@ impl Session<'_> {
         if let Some(object) = event.as_object_mut() {
             object.insert("event".to_owned(), json!("ready"));
         }
-        let named = self
-            .manifest
-            .dev
-            .principals
-            .iter()
-            .enumerate()
-            .map(|(index, principal)| {
-                format!(
-                    "\n  as {} ({}): {}",
-                    principal.actor,
-                    principal.roles.join(", "),
-                    principal_token_file(index.saturating_add(1))
-                )
-            })
-            .collect::<String>();
+        let mut named = String::new();
+        for (index, principal) in self.manifest.dev.principals.iter().enumerate() {
+            let _written = write!(
+                named,
+                "\n  as {} ({}): {}",
+                principal.actor,
+                principal.roles.join(", "),
+                principal_token_file(index.saturating_add(1))
+            );
+        }
         out.emit(
             &event,
             &format!(
