@@ -111,10 +111,12 @@ pub mod pack_mbt_support {
         Verdict as LawExampleVerdict, evaluate_runtime as evaluate_law_example_runtime,
     };
     pub use norn_expr::{EvaluationBudget, Expression, Value as ExprValue, expression_read_paths};
+    pub use norn_ir::UpsertWriteMode;
     pub use norn_ir::access::{
         AccessCondition, AccessIr, AccessLiteral, AccessRule, PolicyRoot, ResourceCompareOp,
         ResourceCondition, ResourceOperand, ScopeDimension,
     };
+    pub use norn_ir::mapping::MappingIr;
     pub use norn_ir::{
         ActionEffectProgram, ActionRoot, ActionUiEffect, ArtifactEnvelope, ArtifactPayload,
         DataQualityOutcome, DataQualityRuleRef, Decimal, DecisionOutput, EntityRoot, FactChange,

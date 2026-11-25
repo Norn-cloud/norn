@@ -1,0 +1,129 @@
+{
+  "artifactId": "supply.wms_scan.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic WMS scan feed",
+  "namespace": "supply",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "stock_count",
+        "fields": [
+          "scan_id"
+        ],
+        "id": "scan_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "stock_count",
+        "kind": "table",
+        "nativeName": "WMS stock count export"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "stock_count",
+        "name": "scan_id",
+        "nativeType": "VARCHAR",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock_count",
+        "name": "site",
+        "nativeType": "VARCHAR",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock_count",
+        "name": "item",
+        "nativeType": "VARCHAR",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock_count",
+        "name": "qty",
+        "nativeType": "NUMERIC",
+        "ordinal": 3,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "stock_count",
+        "name": "uom",
+        "nativeType": "VARCHAR",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock_count",
+        "name": "basis",
+        "nativeType": "VARCHAR",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "stock_count",
+        "name": "counted_at",
+        "nativeType": "TIMESTAMP",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-26T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+      "uri": "evidence://supply-lab/wms-scan-v3"
+    },
+    "source": {
+      "instance": "supply-lab",
+      "system": "synthetic-wms",
+      "version": "scan-export-v3"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.wms_scan.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

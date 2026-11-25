@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.SupplierReceiptLine.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Supplier receipt row labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "سطر استلام المورد",
+          "en": "Supplier receipt row"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.SupplierReceiptLine"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.SupplierReceiptLine.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

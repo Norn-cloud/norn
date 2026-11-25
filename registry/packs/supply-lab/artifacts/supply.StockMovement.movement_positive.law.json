@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.StockMovement.movement_positive.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StockMovement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A receipt, issue or transfer moves a positive quantity; only an adjustment may carry a sign.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.StockMovement.movement_positive",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A receipt, issue or transfer moves a positive quantity; only an adjustment may carry a sign.",
+    "response": {
+      "expression": "(self.movement_kind == 'adjustment') or (self.qty > 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StockMovement"
+      ],
+      "root": {
+        "id": "supply.StockMovement",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StockMovement"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StockMovement.movement_positive.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

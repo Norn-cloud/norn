@@ -22,6 +22,9 @@
       "transition": "retire"
     },
     "idempotent": true,
+    "independentOf": [
+      "registered_by"
+    ],
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

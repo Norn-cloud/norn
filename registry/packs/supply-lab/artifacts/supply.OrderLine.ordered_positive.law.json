@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.OrderLine.ordered_positive.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A line orders a positive quantity and never records a negative cumulative receipt.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.OrderLine.ordered_positive",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A line orders a positive quantity and never records a negative cumulative receipt.",
+    "response": {
+      "expression": "(self.ordered_qty > 0) and (self.received_qty >= 0)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.OrderLine"
+      ],
+      "root": {
+        "id": "supply.OrderLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.OrderLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.OrderLine.ordered_positive.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

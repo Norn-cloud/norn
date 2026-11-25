@@ -74,7 +74,12 @@ pub(super) fn actor_binding_findings(
             for field in properties.keys().filter(|field| protected(field.as_str())) {
                 let message = match (stamped.contains(field), write_mode) {
                     (true, UpsertWriteMode::CreateOnly) => continue,
-                    (true, UpsertWriteMode::Upsert | UpsertWriteMode::DraftOnly { .. }) => format!(
+                    (
+                        true,
+                        UpsertWriteMode::Upsert
+                        | UpsertWriteMode::DraftOnly { .. }
+                        | UpsertWriteMode::UpdateOnly,
+                    ) => format!(
                         "the stamp of protected property {field:?} of {kind:?} requires writeMode create_only; an update would overwrite the recorded principal"
                     ),
                     (false, _) => format!(
@@ -508,6 +513,8 @@ mod tests {
                 lifecycle: PropertyId("status".into()),
                 state: "submitted".into(),
             },
+            // An update never stamps: it would overwrite the recorded principal.
+            UpsertWriteMode::UpdateOnly,
         ] {
             let mut overwrite = admitted.clone();
             let Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }) =

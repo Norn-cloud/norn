@@ -24,6 +24,13 @@
         "targetType": "tracking.Run"
       }
     ],
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "registered_by",
+        "inputRequired": false
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "ml.ModelVersion.entity",
       "entityArtifactVersion": "0.1.0",
@@ -78,6 +85,9 @@
         "pinned_dataset_revision": {
           "type": "string"
         },
+        "registered_by": {
+          "type": "string"
+        },
         "training_run": {
           "type": "string"
         },
@@ -103,7 +113,8 @@
         "evaluation_revision",
         "metric_name",
         "metric_value",
-        "contracts_passed"
+        "contracts_passed",
+        "registered_by"
       ],
       "type": "object"
     },
