@@ -1,103 +1,84 @@
 ---
 name: norn-authoring
-description: Write or review Norn definitions (types, machines, laws, flows, packs, connectors) the one right way under the Authoring DX v2 spec, using today's CURRENT syntax where v2 is not built, and run the checks that admit them.
+description: Write or review Norn definitions (types, machines, laws, norms, settings, flows, packs, connectors, widgets) under the authoring contract, using CURRENT syntax where v2 is not built, and run the checks that admit them.
 ---
 
 # Norn authoring
 
 ## Read first
 
-- [Authoring DX v2 spec](../../../docs/authoring/dx-spec.md): the target surface, its lowering to IR, and what is CURRENT vs PROPOSED vs GAP. Its lowering table (§5) says which builder file and IR kind each construct becomes.
-- [Authoring reference](../../../docs/authoring/README.md), the [2026-11-01 decision record](../../../docs/architecture/decisions/2026-11-01.md) (it governs meaning) and the relevant [core spec](../../../docs/spec/core/README.md).
-- [`tools/norn-ts/profile/norn-authoring.d.ts`](../../../tools/norn-ts/profile/norn-authoring.d.ts): the only CURRENT import surface (`@norn/authoring`). Fixtures and the accept/reject corpus under `tools/norn-ts/corpus` show what compiles.
+- [Authoring DX v2 spec](../../../docs/authoring/dx-spec.md): target syntax, lowering to IR, and what is CURRENT, PROPOSED, or GAP. Section 5 maps each construct to its builder file and IR kind.
+- [Authoring reference](../../../docs/authoring/README.md), the [2026-11-01 decision record](../../../docs/architecture/decisions/2026-11-01.md) (which governs meaning), and the relevant [core spec](../../../docs/spec/core/README.md).
+- [`tools/norn-ts/profile/norn-authoring.d.ts`](../../../tools/norn-ts/profile/norn-authoring.d.ts): the CURRENT `@norn/authoring` profile. Fixtures and the accept/reject corpus under `tools/norn-ts/corpus` show what compiles.
 
 ## The rule
 
-**Explicit about meaning, inferred about plumbing.** Write states, transitions, who may act, what must hold, named failures, units and external effects. Never invent ids, versions, dependency pins, `lawVersion`, provenance or scope boilerplate in v2 source. In CURRENT syntax you still have to write that plumbing: copy it exactly from a neighboring definition and keep pins in step with the target's version.
+**Explicit about meaning, inferred about plumbing.** Write states, transitions, who may act, what must hold, named failures, units, and external effects. Do not invent ids, versions, dependency pins, `lawVersion`, provenance, or scope boilerplate where the compiler infers them. Where CURRENT syntax still requires explicit ids, versions, or pins, copy the exact shape from a neighboring definition and keep pins aligned with the target version.
 
 ## Which syntax to write
 
-`@norn/authoring/v2` does not exist yet. Until [#1176](https://github.com/Norn-cloud/norn/issues/1176) checks a unit off, write the CURRENT form and keep the shape the v2 form will take, so the codemod can print it back.
+`@norn/authoring/v2` does not exist yet. Until [#1176](https://github.com/Norn-cloud/norn/issues/1176) checks a unit off, write the CURRENT form and keep the v2 structure so the codemod can round-trip it.
 
-| Meaning | v2 (PROPOSED) | Write today (CURRENT) |
+| Meaning | v2 (PROPOSED) | Write today (CURRENT, `origin/main` `591b091`) |
 |---|---|---|
-| Thing / happening | `thing("Party", { implements, props, links, key })` / `happening(...)` | `Norn.type({ name: "<ns>.Party", role, implements, properties: Schema.Struct(...), identity, links })` |
-| Interface | `thing.interface(...)` | `Norn.interfaceType({...})` |
-| Reference to a type | the imported value | the imported value; a string only for installed types with no source module |
-| Link | `link.one(T).required()`, `link.many(() => T).owned()` | `links: [{ id, target: T, cardinality: { to, from, required } }]` |
-| Lifecycle | `machine: { initial, states: { s: { on: { e: { to, by, when } } }, done: final({ immutable: true }) } }` | `lifecycles: [{ property: "status", initial, terminal, immutable, transitions: [{ id, from, to, guards }] }]` + one `Norn.action` (`fire_transition`) and one `Norn.access` rule per event |
-| Law | `law("name", { on: T, when, must, because })` | `Norn.law({ id, title, version, law: LawIR, dependencies })`; prefer an interface invariant with `Norn.expression(Schema, self => ...)` and a law `response: { kind: "invariant" }` (see `registry/core/src/restatement.ts`) over a ZEN string |
-| Guard / derivation | typed lambda | `Norn.expression(Schema, x => ...)` |
-| Flow | `flow("name", { input, retry, run: async (input) => { await step(...); await wait.for(...) } })` | `Norn.flow(meta, Effect.gen(function* () { yield* Norn.perform(...) }))` (stays accepted in v2) |
-| Function / failure | `fn(...)`, `failure("Tag", {...})` | `Norn.fn(...)`, `Data.TaggedError` |
-| Connector | `connector(...).map(source, Target, s => ({...}), { ignore, authority: "evidence" })` | `Norn.connector` + `Norn.sourceSchema` + `Norn.mapping` + `Norn.ontologyPack` / `Norn.packLink` |
-| Pack | `pack("accounting", { version, requires, exports })` | a pack directory compiled by `compilePack`; no composition-pack constructor yet |
-| Defeasible law / override | `unless: [...]`, `severity: { override }` | **not available** (engine gaps, spec §8, #1126). Do not emulate them with `warning` or by weakening a law; report the gap |
+| Thing or happening | `thing("Party", { implements, props, links, key })` / `happening(...)` | `Norn.type({ name: "<ns>.Party", role, implements, properties: Schema.Struct(...), identity, links, defaults, protected, ownedCollections, pathEquations })` |
+| Interface | `thing.interface(...)` | `Norn.interfaceType({ name, title, version, properties, links, invariants })` |
+| Reference to a type | imported value | imported value; use a string only for installed types with no source module |
+| Link | `link.one(T).required()`, `link.many(() => T).owned()` | `links: [{ id, target: T, cardinality: { to, from, required }, acyclic, inverse }]` |
+| Lifecycle | `machine: { initial, states: { s: { on: { e: { to, by, when } } }, done: final({ immutable: true }) } }` | `lifecycles: [{ property: "status", initial, states: { s: { on, after, final, resting, immutable } }, events }]` (machine shape, `LIFE-SOUND-1..9`) or flat `transitions: [...]`; separate `Norn.action` (`fire_transition`) and `Norn.access` per event |
+| Action & approval | `action(...)` | `Norn.action` with `effect` (`fire_transition`, `upsert_input_object` with `writeMode: "upsert" \| "create_only" \| "update_only" \| "draft_only"`, or `mutate_parent_with_rows`), `fromCaller`, `independentOf`, `aggregates`, `createLinks`, `synchronousRule`, `inputLabels`, `inputGroups`; `Norn.approval(...)` for human approval gates; `Norn.callerId()` in `derive` |
+| Law | `law("name", { on: T, when, must, because })` | `Norn.law("name", { on: T, when?, must \| never \| eventually, within?, severity?, unless?, because })` (inferred id, scope, dependencies); legacy raw `LawIR` overload remains only for `#58` |
+| Norms & examples | same | `Norn.obligation`, `Norn.prohibition`, `Norn.permission` (`cite`, `yieldsTo`, `unless`), and `Norn.example(name, { of, given, expect })` |
+| Defeasible law / override | `unless: { label: { when, because } }`, `severity: { override }` | `unless` record syntax is CURRENT in authoring and checker admission; commit-path evaluation (`core.laws.unsupported_semantics`) and `severity: { override }` remain engine gaps (`#1126`). Do not emulate them with `warning` or by weakening a law |
+| Guard, decision, derivation | typed lambda | `Norn.expression(Schema, x => ...)`, `Norn.decision(meta, callback \| rows)` (including `hit: "unique"` tables and `principalInputs`), `Norn.orderedFold(...)` |
+| Parameter / setting | `param(...)` | `Norn.setting({ id, title, version, settingKey, effectiveFrom, effectiveTo?, supersedes?, review, scopeRequired, valueType, value })` (`"number"` requires exact `DecimalLiteral` string, `PARAM-EXACT-1`) |
+| Flow, function, failure | `flow("name", { input, retry, run: async ... })`, `fn(...)`, `failure(...)` | `Norn.flow(meta, Effect.gen(function* () { yield* Norn.perform(...) }))`, `Norn.fn(...)`, `Data.TaggedError` |
+| Connector & mapping | `connector(...).map(source, Target, s => ({...}), { ignore, authority: "evidence" })` | `Norn.connector` (`poll` / `pull`), `Norn.sourceSchema`, `Norn.mapping` (reference-bound source pin, `MAP-ENUM-TEXT-1`), `Norn.ontologyPack`, `Norn.packLink` |
+| Questions, dashboards, transforms, models | `question(...)` | `Norn.question` (`link`/`links` paths, `asOf: "effective" \| "knowledge"`), `Norn.metricId(...)`, `Norn.dashboard`, `Norn.transform`, `Norn.model`, `Norn.labels`, `Norn.markings` |
+| Pack | `pack("accounting", { version, requires, exports })` | pack directory compiled by `compilePack`; no composition-pack TS constructor yet |
+| Widgets & UI (`#1763`) | declarative UI in pack | `W.widget`, `W.uiSdk`, `W.fromUiSdk`, `W.outcome`, `W.lowerWidget` from `tools/norn-ts/src/builder/widget.ts` (`builder/index.ts`, not yet in `@norn/authoring`); admitted by Ring-1 `norn-ui-checker` (`check_artifact_set`, `check_widget_ux_set`); rendered by `<NornAppRenderer>` in `@norn/react` |
 
-Hard rules in both syntaxes:
+### Newly landed runtime and SDK contracts (`origin/main` `591b091`)
 
-- No string expressions you could write as a typed lambda. `Norn.unsafeZen` and raw JDM are the open [#58 gap](https://github.com/Norn-cloud/norn/issues/58), never an endorsed pattern.
-- Lambdas are compiled, never run: only the subset in spec §4.5 (comparisons, boolean ops, arithmetic, `?:`, `??`, path reads, string builtins, `date`/`timestamp` parsing). In CURRENT syntax the typed builder (`tools/norn-ts/src/builder/expr.ts`) has no closures and no `sum`, so `some`/`every`/`filter`/`map`/`sum` are PROPOSED (v2 only); do not write them in CURRENT sources. `%` is not admitted by `norn-zen/6` in either syntax. No local helper calls, clocks, randomness, mutation or loops.
-- Object references are links, never scalar `*_id` strings or `Norn.ref` (which names a **value type**).
-- Money and quantities are exact: `Norn.decimal(scale, { unit })`, `{ currency: "<prop>" }`, `Norn.rate(...)`. Never `Schema.Number` in exact arithmetic.
-- No domain code or opcodes in the kernel. Domain meaning lives in packs.
+- **Typed SDK & codegen (`#1684`):** `bun tools/norn-ts/src/cli.ts codegen --ts <path> [--base <path>]... [--out file.d.ts] [--check]` emits types-only `ActionMap`, `ObjectMap`, `DefinitionsDigest`, `NornDefinitions` (and `WidgetIslands` / `RequiredCatalogRegistry` when catalog islands exist). Pass `ActionMap` to `createNornClient<ActionMap>` from `@norn/sdk` (3-arm `CallResult`: `receipt | pending | refused`, `callEncoded`, `intent`, `pinned`, `LiveClient`, `parseExactJson`).
+- **Overnight `time.WorkingWindow` (`#1683`):** `time.WorkingWindow` v0.2.0 and `time.window.materialize_interval` v0.2.0 (`registry/packs/time/calendars.ts`) add `end_day_offset` in `{0, 1}` (default `0`). `weekday` anchors the start civil date; `end_day_offset = 1` ends on the next civil date, supporting overnight shifts and equal-endpoint civil days (23 h spring-forward, 25 h fall-back).
+- **Production `FunctionReceipt` (`#1688`):** `SqliteCell::{set_result_authorizer, retain_function_receipt, commit_result_refusal}` (`norn_cell::ResultAuthority`) resolves and atomically consumes retained `norn.function/v1` receipts on `SqliteCell`. Hosts fail closed (`action.receipt_effect_unsupported`) until they install an authorizer.
+- **Runtime catalog & MBT seeding (`#1769`):** `norn_cell::AdmittedDefinitions::from_envelopes` builds one model, action list, and guard set (`catalog()` binds `TransitionGuard`s by construction). `norn-testkit`'s `AdmittedPack` and `pack_mbt::{seed, dst}` bind guards and seed `protected` (`ACTOR-STAMP-1`) types through their `create_only` stamping actions.
+
+### Hard rules
+
+- Write typed lambdas instead of string expressions. `Norn.unsafeZen` and raw JDM are the open [#58 gap](https://github.com/Norn-cloud/norn/issues/58), never an endorsed pattern.
+- Lambdas are compiled statically under `norn-zen/7` (`crates/norn-expr/README.md`) and never executed. Supported operations include comparisons, boolean ops, checked arithmetic (`%` is not admitted), `?:`, `??`, path reads, string methods, array closures (`.some`, `.every`, `.filter`, `.map`, `.filter(...).length`), `Norn.sum`, `Norn.floor`, `Norn.byteLength`, `Norn.take`, date/timestamp helpers (`parseDate`, `parseTimestamp`, `dateBefore`, `timestampBefore`, `timestampAtOrBefore`, `daysBetween`, `addDays`, `secondsBetween`, `addSeconds`), interval helpers (`intervalsOverlap`, `intervalGapSeconds`, `intervalIntersectionSeconds`), and `resolveLocalTimestamp`. Local helper calls, clocks, randomness, mutation, and loops are refused.
+- Object references belong in `links`, never scalar `*_id` strings or `Norn.ref` (which names a value type).
+- Money and quantities are exact: `Norn.decimal(scale, { unit })`, `{ currency: "<prop>" }`, `{ unitSource: [...] }`, `Norn.rate(...)`, `Norn.boundDecimal(group)`. Never use `Schema.Number` in exact arithmetic.
+- Keep domain logic and opcodes out of the kernel. Domain meaning belongs in packs.
+- Never add `observe()`, `workflow()`, or a second business runtime. `Norn.flow` compiles to lifecycle and rule data.
+- Never hide balancing work in a later trigger, rewrite posted history, weaken an inherited law, or treat `unknown` evidence as proved.
 
 ## Semantics to get right
 
-1. State the invariant, its subject type, units and atomic cell boundary before choosing syntax. Reuse `registry/core` interfaces (`core.Agent`, `core.Resource`, `core.EconomicEvent`, `core.LedgerEffect`, `core.Claim`, `core.Commitment`, `core.Hold`) (`registry/core/src/rea.ts`).
-2. Things vs happenings: catalog Item vs Holding/lot; a Claim is never a Commitment. Posted happenings are immutable; a correction is a new linked reversal.
-3. Every policy that needs approval or evidence needs an executable path (an event with `by`). Every machine needs terminal paths and named refusals.
-4. Enumerate all writers: actions, imports, timers, flow results, triggered rules. All synchronous balancing effects commit together; a later trigger never finishes today's balance.
-5. Laws attach where they govern; implementations inherit interface laws and never weaken them (`law.model.weakens_inherited`).
-6. External effects go through `perform` / `step` on a declared Function; results are accepted by a checked action. Imported rows are evidence until a checked action promotes them.
-7. Cross-link derivations are questions, not stored props. Declare grain, units, freshness and zero-denominator behavior.
-8. Jewelry (sell, assay, melt) and data-engineering work have their own contracts: [jewelry acceptance](../../../docs/spec/acceptance/jewelry-demo.md), [data acceptance](../../../docs/spec/acceptance/data-engineering.md) and the [reference's data section](../../../docs/authoring/README.md#data-engineering-target-unless-marked-current).
-9. Proof claims: only the constitution Melt law has a generated model-checked result today (`verification/profiles/constitution-one-create.json`); core laws have hand-written reference models. Never report a law as proved because it compiles; unknown is never proved.
+1. State the invariant, subject type, units, and atomic cell boundary before choosing syntax. Reuse `registry/core` interfaces (`core.Agent`, `core.Resource`, `core.EconomicEvent`, `core.LedgerEffect`, `core.Claim`, `core.Commitment`, `core.Hold` in `registry/core/src/rea.ts`).
+2. Separate things from happenings: catalog `Item` is not `Holding`; a `Claim` is not a `Commitment`. Posted happenings are immutable; correct them with a linked reversal.
+3. Give every policy that requires approval or evidence an executable path (an event or action with an authorized role), and give every machine terminal or resting paths and named refusals.
+4. Enumerate every writer: actions, imports, timers, flow results, and synchronous rules. Commit all synchronous balancing effects in one cell commit.
+5. Attach laws where their quantifiers live. Implementations inherit interface laws and cannot weaken them (`law.model.weakens_inherited`).
+6. Route external computation and effects through `perform` on a declared Function, and accept results through a checked action. Imported rows stay evidence until a checked action promotes them.
+7. Express cross-link derivations as questions or transforms, not stored properties. Declare grain, units, freshness, and zero-denominator behavior.
+8. Follow the domain acceptance contracts when touching jewelry or data engineering:
+   - **Jewelry** ([`docs/spec/acceptance/jewelry-demo.md`](../../../docs/spec/acceptance/jewelry-demo.md)): sales post delivery, cost allocation, and payment or receivable with balanced per-currency effects (scrap buyback is a new exchange unless it is a sale return); assays append versioned evidence and reconcile posted holdings via explicit adjustments rather than overwriting purity; melts reserve inputs, fund WIP, record output and loss provenance, invalidate stale approvals on revision, and post output, loss, and value effects atomically.
+   - **Data engineering** ([`docs/spec/acceptance/data-engineering.md`](../../../docs/spec/acceptance/data-engineering.md), [reference data section](../../../docs/authoring/README.md#data-engineering-target-unless-marked-current)): declare one question for exact cell, IVM, and OLAP (`DuckDB`/`DataFusion`) with matching canonical totals and contribution IDs at the same frontier; specify grain, fan-out, freshness, completeness, lineage, and bitemporal cutoffs; quarantine invalid imports as replay-stable `DataQualityFinding` evidence while refusing invalid native actions.
+9. Label proof evidence honestly. Only the constitution Melt law has a generated model-checked result (`verification/profiles/constitution-one-create.json`); core laws use hand-written reference models. Never claim a law is proved because it compiles or passes examples.
 
 ## Checks to run
 
-From `tools/norn-ts` (heavy runs go to Boat, per repo rules):
+From `tools/norn-ts` (run heavy Rust builds and full suites on CI or disposable Boat sandboxes, never on shared dev hosts):
 
-1. `bun src/cli.ts profile <file.ts>`: profile recognition (not admission).
-2. `bun src/cli.ts check <pack-dir|file.ts> --org ID --env ID` with `NORN_CHECKER_WASM_PKG` built as the SDK README says: the authoritative Rust checker.
-3. When you changed a registry source, regenerate through the registry path, not `compile`: `compile` emits one scoped draft array, while checked-in `registry/*/artifacts/*.json` are separate files with system envelopes, so a direct diff reports changes even when the definition is unchanged. `NORN_PACKS_UPDATE=1 bun test test/registry-packs.test.ts` regenerates packs; core artifacts are written per `test/core-rea.test.ts`. Generated artifacts change only when meaning changed.
-4. `bun run typecheck` and `bun test` for any SDK change; `bash scripts/ci/core.sh cheap` from the repo root.
-5. For changed semantics add named positive and refusal scenarios (no partial writes, replay/idempotency, the relevant races). For a new law on a type with live data, record what `norn plan` would report (spec §9); until `plan` evaluates laws, say so.
+1. Cache prebuilt checker WASM and dev host once: `bun src/cli.ts setup` (or `scripts/dev/fetch-local-runtime.sh` from repo root), or set `NORN_CHECKER_WASM_PKG` and `NORN_DEV_HOST_BIN` to local builds.
+2. Profile recognition (not admission): `bun src/cli.ts profile <file.ts>`.
+3. Authoritative Rust checker admission: `bun src/cli.ts check <pack-dir|project-dir|file.ts> --org ID --env ID`.
+4. Types-only SDK codegen check (when changing actions, objects, or catalog islands): `bun src/cli.ts codegen --ts <path> [--base <path>]... --out <file.d.ts> --check`.
+5. Registry regeneration: when changing registry sources, regenerate via the registry test path rather than `compile` (`compile` emits one scoped draft array, whereas checked-in `registry/*/artifacts/*.json` are separate files with system envelopes): `NORN_PACKS_UPDATE=1 bun test test/registry-packs.test.ts` (and `test/core-rea.test.ts` for core).
+6. SDK and repo gates: `bun run typecheck` and `bun test` in `tools/norn-ts`; `python3 scripts/record_new_files.py --check` and `bash scripts/ci/core.sh cheap` from repo root.
+7. Add named positive, refusal, and correspondence scenarios for changed semantics (no partial writes, replay idempotency, relevant races).
 
-Report: changed definitions, the invariants and scenarios, exact-head gate results, and remaining gaps marked CURRENT / PROPOSED / GAP. A review verdict is **approve** or **needs-attention**, with severity and confidence per finding.
-
-## Appendix: review prompts kept from the previous skill
-
-### Jewelry review prompts
-
-- Sell: delivery plus payment/receivable, original-cost allocations and balanced per-currency effects. Scrap buyback is a new exchange unless it is a true sale return.
-- Assay: append versioned evidence. A posted holding's changed fine-metal measure requires an explicit reconciling movement and variance counterpart; never overwrite purity/history.
-- Melt: reserve inputs, fund WIP/`melting`, record output and loss provenance, derive declared totals/ratio, provide APPROVE/REJECT paths, invalidate stale approvals, and post output + loss + value effects atomically.
-- A balanced constructor covers its own pairs; it does not certify account selection, valuation or arbitrary writers. Cardinality alone does not prevent double counting.
-
-### Data engineering checklist (TARGET unless verified CURRENT)
-
-Read [the authoring section](../../../docs/authoring/README.md#data-engineering-target-unless-marked-current), [acceptance](../../../docs/spec/acceptance/data-engineering.md) and the decision record's data-engineering section.
-
-- Declare one question for exact cell, IVM and DuckDB/Iceberg; require equivalent canonical totals and contribution IDs at the same version, temporal slice and frontier. Generated pipelines replace authored DAGs.
-- Specify grain, stable keys, source ownership/gaps, units, rounding and fan-out; distinguish enrichment from numeric contributions. Use synthetic orders/payments only for a generic contrast.
-- Return per-source cursors, lag, freshness, completeness, quarantine count and generation identity; fresh does not imply complete. Stale analytical reads need labels; exact governed-law use refuses.
-- Preserve column/source-document and definition-level lineage, including transforms, mapping versions/digests and visible redaction.
-- Capture invalid imports as evidence plus law-linked DataQualityFinding/quarantine, not refusals; native invalid actions refuse. Replay/redelivery creates no duplicate active finding or contribution.
-- Pin effective and knowledge times. Append late evidence; restate explicitly, preserve old answers/books and expose only complete generations. Reject publication using features/labels recorded after their declared cutoff.
-- Check incremental = recompute, exact cell and OLAP through the nine DATA-* scenarios, including restart, quarantine and restatement. Guard statistical publication and retain refused unpublished results.
-- Verify MappingIR, DataQualityFinding, lineage and QuestionIR/metric behavior on main before marking anything CURRENT; distinguish IR, checking, runtime, authoring and proof evidence.
-
-### Reject these shortcuts
-
-- No domain code/opcodes in the kernel, including stock helpers renamed as generic operations. Domain compositions must expose their reads and effects.
-- No hand-written per-feature theorem statements/models as application evidence. Proof bodies may be Lean only against generated statements and count after checking.
-- No raw IR/`unsafeZen`/JDM in the normal authoring profile. Current `Norn.law`/`unsafeZen` leakage is the open [#58 gap](https://github.com/Norn-cloud/norn/issues/58), not an endorsed pattern; use supported typed expressions or report missing SDK semantics.
-- No special observation construct, `observe()`, mining authority, `workflow()` or separate business runtime. Current `Norn.flow` is compiled lifecycle syntax.
-- No hidden future trigger to finish balancing today's transaction, silent history rewrite, weakened inherited law or “unknown = proved.”
-
-### Validate and return
-
-- Use the reference's CURRENT command sequence: profile → compile/admission. Add named positive/refusal/correspondence scenarios for changed semantics; verify no partial writes, replay/idempotency and relevant races.
-- Run the repo-required gates in its prescribed environment. SDK changes need its typecheck/tests; engine changes need affected tests, enrollment/provenance, cheap and required full gates. Never claim TARGET examples ran against today's SDK.
-- Report changed definitions, invariants/scenarios, exact-head gate results and remaining semantic gaps. Review verdict: **approve** or **needs-attention**, with severity/confidence for findings. Leave merge/deploy decisions to the applicable repo rules and task authorization.
+Report changed definitions, invariants and scenarios, exact-head gate results, and remaining gaps marked CURRENT, PROPOSED, or GAP. A review verdict is **approve** or **needs-attention**, with severity and confidence per finding.

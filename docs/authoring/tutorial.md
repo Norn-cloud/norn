@@ -15,18 +15,22 @@ Norn is in alpha. Read "What works where" first.
 
 Two programs are called `norn` (renaming one is [#1451](https://github.com/Norn-cloud/norn/issues/1451)):
 
-- the **TypeScript `norn`** in `tools/norn-ts`: `init`, `dev`, `fmt`, `check` and `compile` (typed sources), `profile`, `question`, `dashboard`, `plan`, `apply`, `explain`. Every `norn` command in this tutorial is this one. Inside a project made by `norn init` it runs as `bunx norn`.
-- the **Rust `norn`** in `crates/norn-cli`: `check` (compiled JSON IR), `eval`, `explain`, `mcp`, `remote`, `cell`, `source`, `capabilities`, `openapi`, `source-digest`. The drop releases attach this one.
+- the **TypeScript `norn`** in `tools/norn-ts`: `init`, `setup`, `dev`, `fmt`, `check` and `compile` (typed sources), `profile`, `codegen`, `question`, `dashboard`, `plan`, `apply`, `explain`. Every `norn` command in this tutorial is this one. Inside a project made by `norn init` it runs as `bunx norn`.
+- the **Rust `norn`** in `crates/norn-cli`: `check` (compiled JSON IR), `eval`, `explain`, `mcp`, `remote`, `cell`, `source`, `capabilities`, `openapi`, `source-digest`.
 
-## 1. Build from source
+## 1. Install the runtime (prebuilt or from source)
 
-No release carries the TypeScript CLI, the checker WASM or the dev host yet. From `drop-29` on, a `drop-*` release attaches the Rust `norn` for Linux and macOS, the TypeScript SDK, the Python client, `install.sh` and `SHA256SUMS` (what [`scripts/release/assets.sh`](../../scripts/release/assets.sh) builds); none of these is needed for this tutorial.
-
-You need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (the checker build prints checksums with it; on macOS it comes with GNU coreutils, `brew install coreutils`). Build in a checkout of the repository:
+Each `drop-*` release attaches the prebuilt checker WASM (`norn-checker-wasm.tar.gz`), local dev host (`norn-dev-host-PLATFORM.tar.gz`), Rust `norn`, `@norn/sdk`, Python client, `install.sh`, and `SHA256SUMS` ([`scripts/release/assets.sh`](../../scripts/release/assets.sh)). The fastest way from a checkout is `norn setup`, which downloads and verifies the checker WASM and dev host into `~/.cache/norn/runtime/`:
 
 ```sh
 git clone https://github.com/Norn-cloud/norn && cd norn
 NORN=$PWD
+(cd tools/norn-ts && bun install --frozen-lockfile && bun src/cli.ts setup)
+```
+
+To build the checker WASM and dev host from source instead, you need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (on macOS, `brew install coreutils`):
+
+```sh
 rustup target add wasm32-unknown-unknown
 cargo install --locked wasm-bindgen-cli --version 0.2.129
 crates/norn-checker-wasm/scripts/build-pkg.sh
@@ -37,9 +41,7 @@ export NORN_CHECKER_WASM_PKG="$TARGET/norn-checker-wasm/pkg"
 export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 ```
 
-Both builds write under `CARGO_TARGET_DIR` when it is set, so the two paths follow it; `TARGET` is that directory as an absolute path, so the exports stay valid when `CARGO_TARGET_DIR` is relative and you later run from another directory.
-
-`NORN_CHECKER_WASM_PKG` is the checker that `norn check` and `norn dev` load; `NORN_DEV_HOST_BIN` is the native host that `norn dev` runs. Keep both set in every terminal you use below. The [quickstart](../../QUICK_START.md) has the same build and the release path.
+When you build from source, `TARGET` is an absolute path so the exports stay valid from other directories. When you use `norn setup`, leave both env vars unset and the CLI loads the cached runtime automatically. The [quickstart](../../QUICK_START.md) has the same setup and release options.
 
 ## 2. Create a project
 
@@ -107,7 +109,7 @@ Put `"sku"` back and save; the next revision installs.
 
 ## Not in the alpha yet
 
-- A `norn call` command (until then, use `curl` as above).
-- Prebuilt TypeScript CLI, checker or dev host files: build them from source as in step 1.
+- A `norn call` command (until then, use `curl` as above or `@norn/sdk`).
+- Standalone npm package for the TypeScript CLI (run from `tools/norn-ts` in a checkout; `norn setup` downloads the prebuilt checker WASM and dev host).
 
-`norn plan` and `norn apply` send a pack to a running hosted cell (`--url`), and the Rust `norn mcp` serves the available operations to an agent over MCP stdio.
+`norn plan` and `norn apply` send a pack to a running hosted cell (`--url`), `norn codegen --ts` generates TypeScript definitions for `@norn/sdk`, and the Rust `norn mcp` serves the available operations to an agent over MCP stdio.

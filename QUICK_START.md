@@ -1,7 +1,8 @@
 # Install
 
-Nothing is on npm, PyPI or crates.io. Today you build Norn from a checkout of this
-repository. Prebuilt release files start with the next drop release.
+Nothing is on npm, PyPI or crates.io yet. Prebuilt archives for the Rust `norn`,
+the checker WASM, the local dev host, `@norn/sdk`, and the Python client attach
+to each `drop-*` release, or you can build from a checkout of this repository.
 
 ## Which `norn`?
 
@@ -11,15 +12,29 @@ Two different programs are called `norn`:
 |---|---|---|
 | Source | `crates/norn-cli` | `tools/norn-ts` (`src/cli.ts`) |
 | Run it as | `target/release/norn`, or `cargo run -p norn-cli --` | `bun tools/norn-ts/src/cli.ts`, or `bunx norn` inside a project made by `norn init` |
-| Commands | `check`, `eval`, `explain`, `mcp`, `remote`, `cell`, `source`, `capabilities`, `openapi`, `source-digest` | `init`, `dev`, `fmt`, `check`, `compile`, `profile`, `question`, `dashboard`, `plan`, `apply`, `explain` |
-| Use it to | admit compiled IR, evaluate decisions, serve MCP, plan and apply on a hosted cell | write typed definitions, compile them to IR, run a local dev cell |
+| Commands | `check`, `eval`, `explain`, `mcp`, `remote`, `cell`, `source`, `capabilities`, `openapi`, `source-digest` | `init`, `setup`, `dev`, `fmt`, `check`, `compile`, `profile`, `codegen`, `question`, `dashboard`, `plan`, `apply`, `explain` |
+| Use it to | admit compiled IR, evaluate decisions, serve MCP, plan and apply on a hosted cell | write typed definitions, compile them to IR, generate SDK types, run a local dev cell |
 
 Both have `check` and `explain`, and they take different inputs: the TypeScript
 `check` reads `.ts` sources, the Rust `check` reads the compiled JSON IR.
-The release files below carry only the Rust `norn`. Renaming one of them is tracked
-in [#1451](https://github.com/Norn-cloud/norn/issues/1451).
+Renaming one of them is tracked in [#1451](https://github.com/Norn-cloud/norn/issues/1451).
 
-## From source (works today)
+## Fastest setup from a checkout (`norn setup`)
+
+`norn setup` downloads and verifies the prebuilt checker WASM, dev host, and Rust
+`norn` from a GitHub release into `~/.cache/norn/runtime/`, so you do not need
+a local Rust toolchain just to author and run definitions:
+
+```sh
+git clone https://github.com/Norn-cloud/norn && cd norn
+(cd tools/norn-ts && bun install --frozen-lockfile && bun src/cli.ts setup)
+```
+
+You can also run `scripts/dev/fetch-local-runtime.sh` from the repository root.
+When `NORN_CHECKER_WASM_PKG` and `NORN_DEV_HOST_BIN` are unset, the TypeScript
+CLI uses that cache automatically.
+
+## From source
 
 You need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli`
 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's
@@ -52,18 +67,17 @@ export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 The hosted-cell smoke in [`crates/norn-cell`](crates/norn-cell/README.md) also needs
 `esbuild` and Wrangler 4.157.0 on `PATH` (see that README). To install only the Rust `norn` from a tag:
 `cargo install --locked --git https://github.com/Norn-cloud/norn --tag TAG norn-cli`.
-
-A one-command `norn dev` setup for a project with packs is in progress; this page
-will link its guide once it lands. Until then, follow
-[the authoring tutorial](docs/authoring/tutorial.md).
+For a step-by-step walkthrough, follow [the authoring tutorial](docs/authoring/tutorial.md).
 
 ## From a release (available from drop-29)
 
 `drop-28` and earlier releases have no files attached. From `drop-29` on, each
 `drop-*` release attaches what [`scripts/release/assets.sh`](scripts/release/assets.sh)
-builds: the Rust `norn` for Linux and macOS on x64 and arm64 (`norn-PLATFORM.tar.gz`),
-the TypeScript SDK (`norn-sdk-VERSION.tgz`), the Python client (wheel and sdist),
-`install.sh`, and `SHA256SUMS`. `VERSION` is `0.0.N` for `drop-N`.
+builds: the Rust `norn` (`norn-PLATFORM.tar.gz`) and local dev host
+(`norn-dev-host-PLATFORM.tar.gz`) for Linux and macOS on x64 and arm64, the
+checker WASM (`norn-checker-wasm.tar.gz`), the TypeScript SDK
+(`norn-sdk-VERSION.tgz`), the Python client (wheel and sdist), `install.sh`, and
+`SHA256SUMS`. `VERSION` is `0.0.N` for `drop-N`.
 
 ```sh
 TAG=drop-29
@@ -77,8 +91,9 @@ npm i https://github.com/Norn-cloud/norn/releases/download/$TAG/norn-sdk-0.0.29.
 
 `install.sh` checks the archive it downloads against `SHA256SUMS`; that catches a
 damaged download, it is not a signature. The macOS binaries are cross-built on Linux
-and have not been run natively yet; treat them as experimental. The TypeScript `norn`,
-the checker WASM and the dev host are not release files: build them from source as above.
+and have not been run natively yet; treat them as experimental. The TypeScript `norn`
+runs from `tools/norn-ts` in a checkout; run `bun tools/norn-ts/src/cli.ts setup`
+to download and verify the prebuilt checker WASM and dev host automatically.
 
 # Check a typed definition
 
@@ -116,8 +131,8 @@ binaryen 132.0.0's `wasm-opt` through `npx`, so it needs the network once, or
 (`apps/norn-cell-do/smoke.py`) also needs `esbuild` and Wrangler.
 
 ```sh
-cargo build --release -p norn-cell-do --bin norn-dev-host
-export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"
+# Either cache prebuilt binaries once with `bun tools/norn-ts/src/cli.ts setup`,
+# or build locally and set NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host".
 bun tools/norn-ts/src/cli.ts init /tmp/packs --template three-systems
 cd /tmp/packs && bunx norn dev --load data/erpnext.json --load data/shopify.json --load data/odoo.json
 ```
