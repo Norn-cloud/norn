@@ -426,6 +426,165 @@ requested world before index lookup. If the identity is absent, every verified
 indexed root for that key is checked conservatively; an interface name never
 causes `UnknownObjectType` at the dispute fence or silently loses quarantine.
 
+## Deterministic geo functions (GEO-1, #191)
+
+GEO-1: four pure functions over WGS84 coordinates and RFC 7946 GeoJSON text
+live in `norn_builtins::geo`. Each returns a discrete value or a typed refusal
+with a stable `geo.*` code; no binary64 value is ever an output, so no key or
+receipt holds a float. They are a library, not registered built-ins:
+`norn_builtins::resolve` answers nothing for them, so no flow can `perform` one
+and no executor can supply a result for one. Registering them as host Functions
+with cell-side execution, and binding them into mappings and rules, are
+separate units; the expression language is unchanged.
+
+| Call | Arguments | Result |
+|---|---|---|
+| `geo.distance_meters` | `lat1, lon1, lat2, lon2` | whole metres |
+| `geo.h3_cell` | `lat, lon, resolution` | cell index text |
+| `geo.point_in_shape` | `lat, lon, shape` | boolean |
+| `geo.validate_shape` | `shape` | `true`, or a refusal naming the defect |
+
+A coordinate is a decimal number of degrees and a shape is GeoJSON text.
+
+GEO-DETERMINISM-1: the same arguments give the same result on every host,
+because of three fixed choices.
+
+1. *Decode.* A decimal coordinate, whether an argument or a number token in
+   shape text, is used as the nearest binary64 to that decimal, ties to even,
+   through the Rust standard library's correctly rounded parser. Shape text is
+   read by `RuntimeValue::from_json_text`, so a duplicate key, a non-finite
+   number or a number outside the exact decimal range refuses
+   `geo.shape.invalid_json`. No `serde_json` number is involved: its float
+   parser depends on the `float_roundtrip` Cargo feature, which differs between
+   build graphs. Ranges are checked on the binary64 value.
+2. *Trigonometry.* Distance and cell indexing are `h3o`'s, built without its
+   `std` feature, so every trigonometric call is the pure-Rust `libm` crate and
+   never the host C library, whose last bit differs between hosts. `deny.toml`
+   bans the `std` feature of `h3o` for the whole graph, `wasm32` included.
+3. *Predicates.* Shape validity, winding and containment are decided by
+   comparisons of coordinates and by one orientation test, `geo`'s
+   `RobustKernel`, the exact adaptive predicate of `robust`, which uses only
+   `+`, `-` and `*`. Nothing computes an intersection point, a distance or a
+   square root. `geo`'s `Validation`, `relate` and line intersection are not
+   used: they reach the host C library's `hypot`, and they compare every pair
+   of holes and polygons.
+
+`h3o` and `geo` are pinned to one exact version each in
+`crates/norn-builtins/Cargo.toml`, inside the tree BUILTIN-PIN-1 digests, so a
+version change is a reviewed re-pin; what they depend on is pinned by
+`Cargo.lock`. Evidence: structural for the three choices above, and sampled for
+the results. The golden values come from independent implementations (the H3 C
+library for cell indexes, a separate haversine for distances), and when the
+functions were introduced an x86-64 build and a `wasm32` build agreed byte for
+byte on 530,005 sampled results. Neither is a proof that two hosts agree on
+every input, and no gate runs the functions on `wasm32`.
+
+GEO-POINT-1: a point is finite, with latitude in `[-90, 90]` and longitude in
+`[-180, 180]`, bounds included. Refusals: `geo.coordinate.not_finite`,
+`geo.coordinate.latitude_out_of_range`, `geo.coordinate.longitude_out_of_range`.
+Longitudes `-180` and `180` are distinct values of the same meridian.
+
+GEO-DISTANCE-1: `geo.distance_meters` is the haversine great-circle distance on
+a sphere of radius 6,371,007.180918475 m (H3's authalic Earth radius), rounded
+to the nearest whole metre, ties to even. It is not the WGS84 ellipsoidal
+distance and can differ from it by about 0.5%. Every pair of points has a
+distance: for some antipodal pairs rounding pushes the haversine term above
+one, and the distance is then half the circumference, 20,015,109 m, which is
+exact to the metre there. `geo.distance.unrepresentable` is defensive; no pair
+of valid points reaches it.
+
+GEO-H3-1: `geo.h3_cell` is the H3 cell containing the point at an integer
+resolution in `0..=15`, as 15 lower-case hexadecimal digits with no prefix.
+Any other resolution refuses `geo.h3.resolution_out_of_range`.
+
+GEO-SHAPE-1: `geo.validate_shape` accepts one RFC 7946 geometry object
+(`Point`, `MultiPoint`, `LineString`, `MultiLineString`, `Polygon`,
+`MultiPolygon`, or a `GeometryCollection` that holds no other collection) of at
+most 262,144 bytes, 4,096 positions and 256 polygon rings, counted over all its
+members. A `Feature` or `FeatureCollection` is not a geometry. A geometry has
+the `coordinates` or `geometries` member its type defines and not the other. A
+position is longitude, latitude and an optional altitude, which is otherwise
+ignored, as are `bbox` and foreign members.
+
+A shape is planar in longitude and latitude (RFC 7946 section 3.1.1): an edge is
+a straight line in that plane, not a geodesic, and nothing wraps at the
+antimeridian, so a shape that crosses it must be split (section 3.1.9). A ring
+edge whose ends differ by more than 180 degrees of longitude, computed in
+binary64, is taken for an unsplit crossing and refused; a wider ring needs an
+intermediate position.
+
+GEO-SHAPE-VALID-1: an accepted `Polygon` or `MultiPolygon` has these
+properties, each of which is checked.
+
+1. Every ring has at least three distinct positions and non-zero area, and
+   does not cross or touch itself. A position repeated consecutively is
+   accepted and adds nothing; so is a position on a straight edge.
+2. An exterior ring is counterclockwise and a hole is clockwise. RFC 7946
+   section 3.1.6 asks readers not to reject the other winding; this contract is
+   deliberately stricter, so one text has one meaning.
+3. No two rings of the shape share a point, whether they are rings of one
+   polygon or of two polygons of a `MultiPolygon`.
+4. Every hole is inside its exterior ring, no hole is inside another, and no
+   polygon of a `MultiPolygon` is inside another's area. A polygon may lie
+   inside another's hole.
+
+So an accepted shape is valid in the OGC Simple Features sense, with a
+connected interior. The converse does not hold: OGC allows rings that touch at
+single points, and property 3 refuses them.
+
+BOUNDS-1: the bounds are what limit the work. Checking property 3 compares
+pairs of edges whose bounding boxes overlap, at worst every pair of 4,096
+edges; checking property 4 tests one position of each ring against the other
+rings, at worst 256 rings against 4,096 edges. No other step is more than
+linear in the text.
+
+Refusals:
+
+| Code | Defect |
+|---|---|
+| `geo.shape.too_large` | more than 262,144 bytes |
+| `geo.shape.invalid_json` | not one exact JSON document |
+| `geo.shape.not_a_geometry` | not a geometry object: no known `type`, the wrong defining member, or a member of the wrong JSON kind |
+| `geo.shape.nested_collection` | a collection inside a collection |
+| `geo.shape.empty` | a multi-geometry, polygon or collection with no member |
+| `geo.shape.too_many_positions`, `geo.shape.too_many_rings` | over a bound |
+| `geo.shape.position_arity` | a position that is not two or three numbers, wherever it is |
+| `geo.shape.line_too_short` | a `LineString` of fewer than two positions |
+| `geo.shape.ring_too_short` | a ring of fewer than four positions |
+| `geo.shape.ring_not_closed` | first and last positions not identical |
+| `geo.shape.antimeridian_edge` | a ring edge spanning more than 180 degrees of longitude |
+| `geo.shape.ring_degenerate` | a ring of fewer than three distinct positions, or of zero area |
+| `geo.shape.ring_self_intersects` | a ring that crosses or touches itself |
+| `geo.shape.rings_intersect` | two rings of one polygon share a point, or one hole is inside another |
+| `geo.shape.polygons_overlap` | two polygons of a `MultiPolygon` share a point, or one is inside another's area |
+| `geo.shape.exterior_not_counterclockwise`, `geo.shape.hole_not_clockwise` | winding |
+| `geo.shape.hole_outside_exterior` | a hole not inside its exterior ring |
+
+One defect is reported. Defects of structure, bounds, positions and single
+rings up to `geo.shape.antimeridian_edge` are reported in document order. The
+defects of one `Polygon` or `MultiPolygon` follow in this order: a degenerate
+ring; a ring that crosses or touches itself; two rings of one polygon that
+share a point; two polygons that share a point; winding; then, per polygon, a
+hole outside its exterior ring and a hole inside another; a polygon inside
+another's area.
+
+The coordinate refusals of GEO-POINT-1 apply to every position.
+
+GEO-CONTAINS-1: `geo.point_in_shape` validates the shape (GEO-SHAPE-1; any
+refusal is its refusal) and requires a `Polygon` or `MultiPolygon`, else
+`geo.shape.not_areal`. The boundary is in the shape: a point on an edge or
+vertex of an exterior ring or of a hole is in; a point strictly inside a hole is
+out. A `MultiPolygon` holds the point when any member polygon does. The test is
+exact on the binary64 coordinates, with no tolerance.
+
+A call with an unknown name refuses `geo.call.unknown_function`; the wrong
+number or kind of arguments refuses `geo.call.arguments`.
+
+Named scenarios (`crates/norn-builtins/tests/geo.rs`): **GEO-POINT-RANGE**,
+**GEO-DISTANCE-GOLDEN**, **GEO-DISTANCE-TOTAL**, **GEO-H3-GOLDEN**,
+**GEO-SHAPE-VALID**, **GEO-SHAPE-REFUSE**, **GEO-SHAPE-BOUNDS**,
+**GEO-BOUNDARY**, **GEO-DECODE-EXACT**, **GEO-CALL** and **GEO-UNREGISTERED**.
+
 ## Receipt consumption (RECEIPT-CONSUME-1)
 
 RECEIPT-CONSUME-1: a `fire_transition` action that declares `acceptReceipt`

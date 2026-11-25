@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test"
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test"
 import { workspaceCell } from "./workspace-cell.ts"
 
 const shots = process.env.SHOTS
@@ -12,6 +12,12 @@ async function shoot(page: Page, name: string) {
     await page.screenshot({ path: `${shots}/${name}-${scheme}.png`, fullPage: false })
   }
   await page.emulateMedia({ colorScheme: "light" })
+}
+
+/** A saved view's other verbs sit behind its "More" menu, on a list card and in the open view's header alike. */
+async function viewAction(page: Page, title: string, verb: "Edit" | "Rename" | "Duplicate" | "Delete", within: Page | Locator = page) {
+  await within.getByRole("button", { name: `More actions for ${title}`, exact: true }).click()
+  await page.getByRole("menuitem", { name: verb, exact: true }).click()
 }
 
 test.beforeEach(({ }, info) => {
@@ -89,15 +95,17 @@ test("views: create 'Applications needing help' in Operations Space, keep column
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page.getByText("Updated triage view description.")).toBeVisible()
 
-  await page.getByRole("button", { name: "Rename" }).click()
-  await page.getByLabel("View name").fill("Stalled funnel triage")
-  await page.locator('[data-slot="popover-content"]').getByRole("button", { name: "Rename" }).click()
+  await viewAction(page, "Applications needing help", "Rename")
+  const renaming = page.getByRole("dialog", { name: "Rename view" })
+  await renaming.getByLabel("View name").fill("Stalled funnel triage")
+  await renaming.getByRole("button", { name: "Rename" }).click()
+  await expect(renaming).toHaveCount(0)
   await expect(page.getByRole("heading", { name: "Stalled funnel triage" })).toBeVisible()
 
-  await page.getByRole("button", { name: "Duplicate" }).click()
+  await viewAction(page, "Stalled funnel triage", "Duplicate")
   await expect(page.getByRole("heading", { name: "Stalled funnel triage (copy)" })).toBeVisible()
 
-  await page.getByRole("button", { name: "Delete" }).click()
+  await viewAction(page, "Stalled funnel triage (copy)", "Delete")
   await expect(page.getByText(/Deleted “Stalled funnel triage \(copy\)”/)).toBeVisible()
   await page.getByRole("button", { name: "Undo" }).click()
   await expect(page.getByRole("heading", { name: "Stalled funnel triage (copy)" })).toBeVisible()
@@ -529,6 +537,7 @@ test("views: a definition of another kind never opens as a view or offers Delete
   await page.goto(`/views/${id}`)
   await expect(page.getByText(`No view ${id} is saved.`)).toBeVisible()
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^More actions for / })).toHaveCount(0)
 })
 
 // #1700 S7: each deletion keeps its own Undo, across navigation.
@@ -539,9 +548,9 @@ test("views: two deletions keep two Undos across navigation, and undoing one lea
   cell.defs.set("studio.view.funnel_application.second", savedView("Second view"))
   await page.goto("/views")
   const panel = (title: string) => page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: title, exact: true }) })
-  await panel("First view").getByRole("button", { name: "Delete" }).click()
+  await viewAction(page, "First view", "Delete", panel("First view"))
   await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
-  await panel("Second view").getByRole("button", { name: "Delete" }).click()
+  await viewAction(page, "Second view", "Delete", panel("Second view"))
   await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
   await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
 
@@ -604,7 +613,7 @@ test("views: a deletion answered after a role change leaves no receipt or Undo f
   await page.goto("/views")
   const panel = page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Held view", exact: true }) })
   const retire = page.waitForRequest(/:retire/)
-  await panel.getByRole("button", { name: "Delete" }).click()
+  await viewAction(page, "Held view", "Delete", panel)
   await retire
 
   // The same person's role drops in this workspace while the deletion is out; the session is read again.
@@ -627,7 +636,7 @@ test("views: a view restored elsewhere drops the stale Deleted notice on the lis
   const id = "studio.view.funnel_application.restored"
   cell.defs.set(id, savedView("Restored view"))
   await page.goto(`/views/${id}`)
-  await page.getByRole("button", { name: "Delete" }).click()
+  await viewAction(page, "Restored view", "Delete")
   await expect(page.getByText(/Deleted “Restored view”/)).toBeVisible()
 
   // Someone else restores it: a newer active revision.
@@ -708,4 +717,64 @@ test("views: in a workspace with no data cell the editor's live preview says so,
   await expect(preview.getByRole("table")).toHaveCount(0)
   await preview.scrollIntoViewIfNeeded()
   await shoot(page, "views-editor-preview-no-cell")
+})
+
+// UI polish: a list card and the open view show one primary action each; Edit, Rename, Duplicate and
+// Delete sit in one "More" menu, so no verb wraps onto a line of its own at phone width.
+test("views: each card and the open view show one primary action and keep the rest in one More menu, which never wraps at 390px", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.menu"
+  cell.defs.set(id, savedView("Menu view"))
+  await page.goto("/views")
+  await expect(page.getByText("Saved lists of records, filtered and sorted the way you need them, grouped by Space.")).toBeVisible()
+  const card = page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Menu view", exact: true }) })
+  await expect(card.getByRole("link", { name: "Open" })).toBeVisible()
+  for (const verb of ["Edit", "Rename", "Duplicate", "Delete"]) await expect(card.getByRole("button", { name: verb, exact: true })).toHaveCount(0)
+  await card.getByRole("button", { name: "More actions for Menu view" }).click()
+  await expect(page.getByRole("menuitem")).toHaveText(["Edit", "Rename", "Duplicate", "Delete"])
+  await shoot(page, "views-more-menu")
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("menuitem")).toHaveCount(0)
+  // Edit from the menu opens the editor.
+  await viewAction(page, "Menu view", "Edit", card)
+  await expect(page).toHaveURL(new RegExp(`/views/${id.replaceAll(".", "\\.")}/edit$`))
+
+  // The open view: Edit is the one primary action, and More sits on the same line at 390px.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/views/${id}`)
+  const edit = page.getByRole("link", { name: "Edit", exact: true })
+  const more = page.getByRole("button", { name: "More actions for Menu view" })
+  await expect(edit).toBeVisible()
+  await expect(more).toBeVisible()
+  const [a, b] = [await edit.boundingBox(), await more.boundingBox()]
+  expect(Math.abs((a?.y ?? 0) - (b?.y ?? 100))).toBeLessThan(4)
+  expect(b?.height ?? 0).toBeGreaterThanOrEqual(44)
+  await more.click()
+  await expect(page.getByRole("menuitem")).toHaveText(["Rename", "Duplicate", "Delete"])
+  await page.keyboard.press("Escape")
+})
+
+// UI polish: the open view's rail counts the view's own choice (stage) and text (channel) columns, as the
+// cell's facets route serves them, and narrowing by one value narrows the grid.
+test("views: the open view's Narrow by rail lists its choice and text columns with the cell's counts, and a value narrows the grid", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.facets"
+  cell.defs.set(id, { ...savedView("Facet view"), payload: { ...savedView("Facet view").payload, filter: { all: [{ property: "stage", op: "eq", value: "stalled" }] } } })
+  await page.goto(`/views/${id}`)
+  const rail = page.locator('aside [aria-label="Narrow by"]')
+  await expect(rail).toContainText("3 records, counted by the cell")
+  await expect(rail.getByRole("heading", { name: "stage" })).toBeVisible()
+  await expect(rail.getByRole("heading", { name: "channel" })).toBeVisible()
+  await expect(page.getByText("No text, choice or yes/no values to narrow by.")).toHaveCount(0)
+  // A choice's own counts leave out its own choice: every stage the type holds.
+  await expect(rail.getByRole("button", { name: /stalled\s*3/ })).toHaveAttribute("aria-pressed", "true")
+  await expect(rail.getByRole("button", { name: /in review|in_review/ })).toBeVisible()
+  await expect(rail.getByRole("button", { name: /web\s*2/ })).toBeVisible()
+  await rail.getByRole("button", { name: /partner\s*1/ }).click()
+  const grid = page.getByRole("grid", { name: "Application records" })
+  await expect(grid).toContainText("Ben Park")
+  await expect(grid).not.toContainText("Ada Reyes")
+  await shoot(page, "views-facets-rail")
 })

@@ -146,6 +146,12 @@ pub struct AccessIr {
     /// catalog. These are templates, never one rule per entitlement row.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub generic_rules: Vec<GenericAccessRule>,
+    /// Declared entries of the principal attribute catalog (#1091): the
+    /// roles, role profiles and scoped attributes a decision may read as
+    /// typed principal inputs. A scoped attribute's type must agree with
+    /// every `principalAttribute` use `norn-authz` infers for it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub principal_catalog: Vec<PrincipalCatalogEntry>,
     /// Reserved extension slots keyed by `<name>/<semver>`; `null` is rejected.
     #[serde(
         default,
@@ -154,6 +160,192 @@ pub struct AccessIr {
     )]
     #[schemars(with = "JsonObject")]
     pub extensions: Option<JsonObject>,
+}
+
+impl AccessIr {
+    /// A policy of `rules` alone: no generic rules, catalog entries or
+    /// extensions.
+    #[must_use]
+    pub fn with_rules(policy_id: impl Into<String>, rules: Vec<AccessRule>) -> Self {
+        Self {
+            access_version: IrVersion01::V0_1,
+            policy_id: policy_id.into(),
+            rules,
+            generic_rules: Vec::new(),
+            principal_catalog: Vec::new(),
+            extensions: None,
+        }
+    }
+}
+
+/// One declared entry of the principal attribute catalog (#1091): a name, a
+/// type and a source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrincipalCatalogEntry {
+    /// The role id, role profile name or scoped attribute name.
+    pub name: String,
+    /// The type a decision reads the entry at.
+    #[serde(rename = "type")]
+    pub value_type: PrincipalAttributeType,
+    /// Where the trusted resolver takes the value from.
+    pub source: PrincipalAttributeSource,
+}
+
+/// The closed set of principal attribute types.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum PrincipalAttributeType {
+    Bool,
+    Long,
+    String,
+    /// `set<string>`.
+    StringSet,
+}
+
+/// Where a catalog entry's value comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum PrincipalAttributeSource {
+    /// A role, named by the entry: a boolean the PDP evaluates.
+    Role,
+    /// A named role bundle: the set of its roles the principal holds.
+    RoleProfile {
+        /// The bundled role ids; at least one.
+        roles: Vec<String>,
+    },
+    /// A scoped attribute supplied by the trusted resolver.
+    Attribute,
+}
+
+/// Why a catalog entry or a principal input does not resolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrincipalCatalogError {
+    /// The entry's name is not well formed (a scoped attribute is an
+    /// identifier, `[A-Za-z_][A-Za-z0-9_]*`), or its type contradicts its
+    /// source (a role is `bool`, a role profile `stringSet`).
+    InvalidEntry {
+        /// The entry.
+        name: String,
+    },
+    /// Two declarations of one name differ.
+    Conflict {
+        /// The entry.
+        name: String,
+    },
+    /// No entry of the source the input reads has this name.
+    Unknown {
+        /// The name the input reads.
+        name: String,
+    },
+}
+
+/// The principal attribute catalog shared by `AccessIR` and decisions
+/// (#1091): every declared entry, by name. One implementation resolves a
+/// decision's [`crate::rule::PrincipalInputKind`] to its type for the
+/// checker, `norn-authz` and the host resolver.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PrincipalAttributeCatalog {
+    entries: std::collections::BTreeMap<String, PrincipalCatalogEntry>,
+}
+
+impl PrincipalAttributeCatalog {
+    /// Add one declaration. Declaring an identical entry twice is accepted.
+    ///
+    /// # Errors
+    /// An invalid entry, or one that differs from an earlier declaration.
+    pub fn declare(&mut self, entry: &PrincipalCatalogEntry) -> Result<(), PrincipalCatalogError> {
+        // A scoped attribute is read as `principal.<name>` by Cedar and by
+        // decisions, so it is an identifier; a role or role profile name is a
+        // role id, which may also carry `.` and `-` after its first character.
+        let attribute = entry.source == PrincipalAttributeSource::Attribute;
+        let named = entry
+            .name
+            .chars()
+            .enumerate()
+            .all(|(index, character)| match character {
+                'A'..='Z' | 'a'..='z' | '_' => true,
+                '0'..='9' => index > 0,
+                '.' | '-' => index > 0 && !attribute,
+                _ => false,
+            });
+        let typed = match &entry.source {
+            PrincipalAttributeSource::Role => entry.value_type == PrincipalAttributeType::Bool,
+            PrincipalAttributeSource::RoleProfile { roles } => {
+                entry.value_type == PrincipalAttributeType::StringSet
+                    && !roles.is_empty()
+                    && roles.iter().all(|role| !role.trim().is_empty())
+            }
+            PrincipalAttributeSource::Attribute => true,
+        };
+        if entry.name.is_empty() || !named || !typed {
+            return Err(PrincipalCatalogError::InvalidEntry {
+                name: entry.name.clone(),
+            });
+        }
+        match self.entries.get(&entry.name) {
+            Some(declared) if declared != entry => Err(PrincipalCatalogError::Conflict {
+                name: entry.name.clone(),
+            }),
+            Some(_) => Ok(()),
+            None => {
+                self.entries.insert(entry.name.clone(), entry.clone());
+                Ok(())
+            }
+        }
+    }
+
+    /// The declared entry named `name`.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&PrincipalCatalogEntry> {
+        self.entries.get(name)
+    }
+
+    /// Every declared entry, ordered by name.
+    pub fn entries(&self) -> impl Iterator<Item = &PrincipalCatalogEntry> {
+        self.entries.values()
+    }
+
+    /// The entry a decision input reads: a `holdsRole` reads a role, a
+    /// `roleProfile` a role profile and an `attribute` a scoped attribute.
+    ///
+    /// # Errors
+    /// [`PrincipalCatalogError::Unknown`] when no entry of that source has
+    /// the name.
+    pub fn resolve(
+        &self,
+        kind: &crate::rule::PrincipalInputKind,
+    ) -> Result<&PrincipalCatalogEntry, PrincipalCatalogError> {
+        use crate::rule::PrincipalInputKind;
+        let name = kind.catalog_name();
+        self.entries
+            .get(name)
+            .filter(|entry| {
+                matches!(
+                    (kind, &entry.source),
+                    (
+                        PrincipalInputKind::HoldsRole(_),
+                        PrincipalAttributeSource::Role
+                    ) | (
+                        PrincipalInputKind::RoleProfile(_),
+                        PrincipalAttributeSource::RoleProfile { .. }
+                    ) | (
+                        PrincipalInputKind::Attribute(_),
+                        PrincipalAttributeSource::Attribute
+                    )
+                )
+            })
+            .ok_or_else(|| PrincipalCatalogError::Unknown {
+                name: name.to_owned(),
+            })
+    }
 }
 
 /// A fixed, typed rule template compiled once for each admitted target type and

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Chip, type Tone } from "../src/components/chip.tsx"
+import { Chip, type Tone } from "../src/components/system/chip.tsx"
 import { ChoiceColumn } from "../src/components/decision/choice-columns.tsx"
 import { badgeVariants } from "../src/components/ui/badge.tsx"
 import { buttonVariants } from "../src/components/ui/button.tsx"
@@ -650,3 +650,26 @@ test("cn keeps a type-scale step beside a text colour, leading and tracking in e
   // The live case: the start node's label keeps its leading beside the step.
   expect(cn("font-medium leading-snug", "text-body")).toBe("font-medium leading-snug text-body")
 })
+
+// UI polish: the projected value's chip and a refused verb in "Who can see or act" are text, so their ink keeps
+// 4.5:1 on every surface they sit on (a grid row, a well and its hover, a sheet, the page), in every skin and
+// scheme. The chip has no tint or fill of its own; a refused verb is struck, never faded.
+const maskedValueSource = readSrc("components/masked-value.tsx")
+const recordRailSource = readSrc("record-rail.tsx")
+for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const) {
+  test(`${skin}/${theme}: the masked-value chip and a refused verb keep 4.5:1 ink on every host, with no fill or fade`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
+    const chip = /const MASK_CHIP = "([^"]+)"/.exec(maskedValueSource)?.[1]
+    expect(chip, "MASK_CHIP in masked-value.tsx").toBeDefined()
+    const deny = /deny: "([^"]+)"/.exec(recordRailSource)?.[1]
+    expect(deny, "VERB_STYLE.deny in record-rail.tsx").toBeDefined()
+    expect(chip!.split(/\s+/).some((token) => /^bg-/.test(token)), `the chip carries no fill (${chip})`).toBe(false)
+    for (const [name, classes] of [["masked chip", chip!], ["refused verb", deny!]] as const) {
+      expect(classes.split(/\s+/).some((token) => /^(?:text-[a-z-]+\/\d+|opacity-\d+)$/.test(token)), `${name} is not faded (${classes})`).toBe(false)
+      for (const host of ["card", "well", "well-hover", "popover", "background"] as const) {
+        const pair = resolveClasses(classes, theme, "rest", tokenHex(theme, host))
+        expect(pair.ratio, `${skin}/${theme} ${name} ink on --${host}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+}

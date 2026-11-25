@@ -110,6 +110,12 @@
     "artifact_set.decision.invalid_stored_property_write": {
       "message": "the decision writes {$property} of {$objectType}, which violates its effective stored-property contract: {$detail}"
     },
+    "artifact_set.decision.principal_input_type": {
+      "message": "{$detail}"
+    },
+    "artifact_set.decision.principal_input_unknown": {
+      "message": "{$detail}"
+    },
     "artifact_set.decision.sub_decision_bound": {
       "message": "sub-decision {$key} nests {$depth} levels deep, or the closure holds {$count} graphs; the Norn profile admits at most {$max}"
     },
@@ -184,6 +190,9 @@
     },
     "artifact_set.marking.unknown": {
       "message": "marking reference {$id} has no declaration in the base or candidate set"
+    },
+    "artifact_set.policy.principal_catalog_conflict": {
+      "message": "{$detail}"
     },
     "artifact_set.resolution.conflicting_version": {
       "message": "artifact {$artifactId} is in the artifact set at versions {$first} and {$second}; a resolved set holds one version of each artifact"
@@ -1837,6 +1846,12 @@
     },
     "rule.validation.ordered_fold_unsupported": {
       "message": "ordered-fold execution is unavailable in this semantics profile"
+    },
+    "rule.validation.principal_input_invalid": {
+      "message": "{$detail}"
+    },
+    "rule.validation.principal_input_undeclared": {
+      "message": "{$detail}"
     },
     "sealing.extension_point.capability_missing": {
       "message": "operation lacks the capabilities its extension point grants: {$capabilities}"

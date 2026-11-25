@@ -1103,6 +1103,7 @@ fn action_call_record_parameter_pins_roundtrip_and_reject_corrupt_values() {
         to: "posted".to_owned(),
         row_operations: Vec::new(),
         trace: None,
+        principal_inputs: None,
     };
     let empty_values: JsonObject =
         serde_json::from_value(serde_json::to_value(&record).expect("serialize empty pins"))

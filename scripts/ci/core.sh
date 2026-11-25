@@ -442,9 +442,13 @@ PY
       # A RivetKit change ships only with a storage version bump, judged against the base (#1513).
       python3 scripts/ci/test_rivetkit_channel.py
       python3 scripts/ci/rivetkit_channel.py --base "${NORN_CI_BASE:-origin/main}" --require-lock
+      ensure_tool cargo-deny 0.19.0 cargo-deny
       (
         cd crates/norn-cell-rivet
         export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet"
+        # This workspace has its own lockfile, so the root `cargo deny` never reads it: the
+        # crate and feature bans (GEO-1: `h3o/std`) are checked against this graph too.
+        cargo deny --locked check bans --config ../../deny.toml
         cargo fmt --check
         cargo clippy --locked --all-targets -- -D warnings
         cargo clippy --locked --all-targets --features conformance -- -D warnings

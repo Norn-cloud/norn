@@ -10,6 +10,9 @@ targets = [
   { triple = "x86_64-unknown-linux-gnu" },
   { triple = "aarch64-unknown-linux-gnu" },
   { triple = "aarch64-apple-darwin" },
+  # The cell and the checker ship as wasm32, so a dependency or feature that
+  # only that target pulls in is under the same policy (GEO-1: `h3o/std`).
+  { triple = "wasm32-unknown-unknown" },
 ]
 
 [advisories]
@@ -78,6 +81,14 @@ deny = [
   { crate = "cedar-policy", wrappers = ["norn-authz", "cedar-policy-symcc"], reason = "SKELETON.md: cedar-policy is confined to norn-authz and is never an expression evaluator" },
   { crate = "zen-engine", wrappers = ["norn-decisions"], reason = "SKELETON.md: the kernel consumes only Norn-owned decision types via norn-decisions" },
   { crate = "zen-expression", wrappers = ["norn-expr", "zen-engine", "zen-tmpl"], reason = "SKELETON.md: norn-expr owns ZEN Expression; zen-engine and its zen-tmpl use it internally" },
+]
+# GEO-1 (Core 07, #191): with `std`, h3o calls the host C library's sin, cos
+# and atan2, whose last bit differs between hosts. Without it h3o uses the
+# pure-Rust `libm`, so a cell index and a distance replay identically on every
+# host. Cargo unifies features across the graph, so one dependant enabling
+# `std` would change the answer everywhere.
+features = [
+  { crate = "h3o", deny = ["std"], reason = "GEO-1: h3o must do its trigonometry in libm, never the host C library" },
 ]
 
 [sources]

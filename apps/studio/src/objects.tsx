@@ -4,13 +4,13 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { sentence } from "@/components/lifecycle-view"
 import { useLocale } from "./lib/locale.tsx"
-import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
-import { Chip, FactChip } from "@/components/chip"
-import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
+import { Clock, GitCommitHorizontal, ShieldX } from "lucide-react"
+import { Chip, FactChip } from "@/components/system/chip"
+import { FACT_STATUS_META, FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyId, DigestId, PathText } from "@/components/copy-id"
 import { FactProvenance, ProvenanceChain } from "@/components/provenance"
@@ -36,6 +36,7 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
+import { formatLocale } from "./lib/timeline.ts"
 import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
@@ -141,8 +142,11 @@ export function ObjectPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
-            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
-            {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
+            {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
+                the record: the title says exactly how many, and each value says how it was projected. */}
+            {recordStatus === "withheld" && maskedRecord !== undefined
+              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord, formatLocale(locale))}</Chip>
+              : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
@@ -199,7 +203,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {workspace.kind === "live" && <Findings objectType={name} id={id} reader={workspace.reader} actionFor={corrections.actionFor} />}
+                {workspace.kind === "live" && <Findings objectType={name} id={id} reader={workspace.reader} actionFor={corrections.actionFor} quarantineStated={heldBack} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}
@@ -261,6 +265,19 @@ export function ObjectPage() {
 }
 
 const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const
+
+/**
+ * How many of the record's values the server projected for this reader, in words: "1 value masked",
+ * "2 values withheld", "3 values masked or withheld" when the modes differ. The count is in `numbers`,
+ * the reader's number format (`formatLocale`).
+ */
+export function maskedWords(masked: Readonly<Record<string, unknown>>, numbers = "en"): string {
+  const modes = Object.values(masked).map((entry) => (entry as { mode?: unknown } | null)?.mode)
+  const count = modes.length
+  const refused = modes.filter((mode) => mode === "refuse").length
+  const verb = refused === 0 ? "masked" : refused === count ? "withheld" : "masked or withheld"
+  return `${count.toLocaleString(numbers)} ${count === 1 ? "value" : "values"} ${verb}`
+}
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the

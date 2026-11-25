@@ -2,11 +2,12 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Link, useParams } from "@tanstack/react-router"
 import { AlertTriangle, ArrowLeft, CheckCircle2, FileDiff, GitCommitHorizontal, RefreshCw, Scale, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { Chip, type Tone } from "@/components/chip"
+import { Chip, type Tone } from "@/components/system/chip"
 import { CopyId } from "@/components/copy-id"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -42,7 +43,7 @@ const REPLAY_OUTCOME_STYLE: Readonly<Record<ReplayOutcome, { readonly label: str
 }
 
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 /**
  * `/learning/proposals`: server-driven list of `learning.GapProposal` records (#1220 L-5).
@@ -127,12 +128,12 @@ function ProposalsPageContent() {
         </div>
       )}
 
-      {notice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">{notice}</p>}
+      {notice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-body">{notice}</p>}
 
       {read.isPending ? (
         <div className="grid gap-2" aria-label="Reading proposals">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
       ) : read.isError ? (
-        <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
           <span>{read.error instanceof Error ? read.error.message : "Proposals could not be read."}</span>
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
@@ -142,7 +143,7 @@ function ProposalsPageContent() {
       ) : data?.kind === "unavailable" ? (
         <EmptyState icon={FileDiff} title="Not served yet">{PROPOSALS_UNAVAILABLE}</EmptyState>
       ) : data?.kind === "refused" ? (
-        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{data.message}</p>
+        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-body text-destructive">{data.message}</p>
       ) : page === undefined || page.rows.length === 0 ? (
         <EmptyState icon={FileDiff} title={status ? "No matching proposals" : "No gap proposals yet"}
           next={status ? <Button type="button" variant="outline" size="sm" onClick={() => setStatus(undefined)}>Show all</Button> : <TypeActions objectKind={GAP_PROPOSAL_TYPE} onChanged={refresh} />}>
@@ -158,8 +159,8 @@ function ProposalsPageContent() {
                   <TableHead>Target</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Replay impact</TableHead>
-                  <TableHead className="text-right">Episodes</TableHead>
-                  <TableHead className="text-right">Updated</TableHead>
+                  <TableHead className="text-end">Episodes</TableHead>
+                  <TableHead className="text-end">Updated</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -167,7 +168,7 @@ function ProposalsPageContent() {
                   if (row.kind === "withheld") {
                     return (
                       <TableRow key={row.id} data-withheld="true">
-                        <TableCell className="font-mono text-xs text-muted-foreground">{row.id}</TableCell>
+                        <TableCell className="font-mono text-meta text-muted-foreground">{row.id}</TableCell>
                         <TableCell colSpan={5} className="text-muted-foreground">Withheld by cell policy</TableCell>
                       </TableRow>
                     )
@@ -175,7 +176,7 @@ function ProposalsPageContent() {
                   if (row.kind === "malformed") {
                     return (
                       <TableRow key={row.id} data-malformed="true">
-                        <TableCell className="font-mono text-xs">{row.id}</TableCell>
+                        <TableCell className="font-mono text-meta">{row.id}</TableCell>
                         <TableCell colSpan={5} className="text-destructive">
                           <span className="inline-flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />Malformed proposal ({row.problem})</span>
                         </TableCell>
@@ -188,20 +189,20 @@ function ProposalsPageContent() {
                     <TableRow key={p.id} data-proposal-row={p.id}>
                       <TableCell className="max-w-md whitespace-normal">
                         <div className="grid gap-0.5 py-1">
-                          <Link to="/learning/proposals/$id" params={{ id: p.id }} className="font-medium text-foreground underline-offset-4 hover:underline">
+                          <Link to="/learning/proposals/$id" params={{ id: p.id }} className="text-foreground underline-offset-4 hover:underline">
                             {p.title}
                           </Link>
-                          <span className="text-xs text-muted-foreground">{p.diff.summary}</span>
+                          <span className="text-meta text-muted-foreground">{p.diff.summary}</span>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{p.target.label ?? p.target.artifactId}</div>
-                        {technical && <code className="font-mono text-xs text-muted-foreground">{p.target.artifactId}</code>}
+                        <div>{p.target.label ?? p.target.artifactId}</div>
+                        {technical && <code className="font-mono text-meta text-muted-foreground">{p.target.artifactId}</code>}
                       </TableCell>
                       <TableCell><Chip tone={st.tone}>{st.label}</Chip></TableCell>
                       <TableCell>
                         {p.replay === null ? (
-                          <span className="text-xs text-muted-foreground">Not replayed yet</span>
+                          <span className="text-meta text-muted-foreground">Not replayed yet</span>
                         ) : (
                           <div className="flex flex-wrap items-center gap-1.5">
                             <Chip tone={p.replay.flippedCount > 0 ? "amber" : "green"}>{p.replay.flippedCount} flipped</Chip>
@@ -211,10 +212,10 @@ function ProposalsPageContent() {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">{p.episodeIds.length}</TableCell>
-                      <TableCell className="text-right text-muted-foreground">
+                      <TableCell className="text-end tabular-nums text-muted-foreground">{p.episodeIds.length}</TableCell>
+                      <TableCell className="text-end text-muted-foreground">
                         <div>{p.author}</div>
-                        <div className="text-xs">{when(p.updatedAtMs)}</div>
+                        <div className="text-meta">{when(p.updatedAtMs)}</div>
                       </TableCell>
                     </TableRow>
                   )
@@ -298,7 +299,7 @@ function ProposalDetail({ id, bound, onOpen }: {
   }
   if (read.isError) {
     return (
-      <div role="alert" className="mx-auto flex max-w-5xl items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+      <div role="alert" className="mx-auto flex max-w-5xl items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
         <span>{read.error instanceof Error ? read.error.message : "The proposal could not be read."}</span>
         <span className="flex-1" />
         <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
@@ -344,18 +345,18 @@ function ProposalReview({ proposal: p, record, onOpen }: {
           {/* ---- Definition diff ---- */}
           <Panel icon={FileDiff} label="Proposed definition diff" action={p.target.kind}>
             <Well className="grid gap-3 p-4">
-              <p className="text-sm font-medium">{p.diff.summary}</p>
+              <p className="text-body">{p.diff.summary}</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-md border bg-muted/40 p-3">
-                  <div className="text-xs font-medium text-muted-foreground">Current definition</div>
-                  <div className="mt-1 font-mono text-sm">{p.diff.before}</div>
+                  <div className="text-meta text-muted-foreground">Current definition</div>
+                  <div className="mt-1 font-mono text-body">{p.diff.before}</div>
                 </div>
                 <div className="rounded-md border border-tone-amber/30 bg-tone-amber/5 p-3">
-                  <div className="text-xs font-medium text-muted-foreground">Proposed definition</div>
-                  <div className="mt-1 font-mono text-sm font-medium">{p.diff.after}</div>
+                  <div className="text-meta text-muted-foreground">Proposed definition</div>
+                  <div className="mt-1 font-mono text-body">{p.diff.after}</div>
                 </div>
               </div>
-              <pre className="overflow-x-auto rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed">{p.diff.patch}</pre>
+              <pre className="overflow-x-auto rounded-md border bg-muted/30 p-3 font-mono text-meta leading-relaxed">{p.diff.patch}</pre>
             </Well>
           </Panel>
 
@@ -368,7 +369,7 @@ function ProposalReview({ proposal: p, record, onOpen }: {
               {p.checker.status === "admitted" ? "Admitted" : p.checker.status === "refused" ? "Refused" : "Not run yet"}
             </Chip>
           }>
-            <Well className="grid gap-2 p-4 text-sm">
+            <Well className="grid gap-2 p-4 text-body">
               {p.checker.diagnostics.length === 0 ? (
                 <p className="text-muted-foreground">
                   {p.checker.status === "not_run" ? "Submit this proposal to run the checker and curated-case replay." : "No checker diagnostics."}
@@ -376,9 +377,9 @@ function ProposalReview({ proposal: p, record, onOpen }: {
               ) : (
                 <ul className="grid gap-2" aria-label="Checker diagnostics">
                   {p.checker.diagnostics.map((d, index) => (
-                    <li key={`${d.code}:${index}`} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                      <span className="font-medium">{d.message}</span>
-                      {technical && <code className="ms-2 font-mono text-xs">{d.code}</code>}
+                    <li key={`${d.code}:${index}`} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
+                      <span>{d.message}</span>
+                      {technical && <code className="ms-2 font-mono text-meta">{d.code}</code>}
                     </li>
                   ))}
                 </ul>
@@ -394,11 +395,11 @@ function ProposalReview({ proposal: p, record, onOpen }: {
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-meta">
                 <dt className="text-muted-foreground">Author</dt><dd>{p.author}</dd>
                 <dt className="text-muted-foreground">Updated</dt><dd>{when(p.updatedAtMs)}</dd>
-                {technical && <><dt className="text-muted-foreground">Target</dt><dd className="min-w-0 truncate font-mono text-xs">{p.target.artifactId}</dd></>}
+                {technical && <><dt className="text-muted-foreground">Target</dt><dd className="min-w-0 truncate font-mono text-meta">{p.target.artifactId}</dd></>}
                 {p.supersedesProposalId && (
                   <>
                     <dt className="text-muted-foreground">Supersedes</dt>
-                    <dd><Link to="/learning/proposals/$id" params={{ id: p.supersedesProposalId }} className="font-mono text-xs underline-offset-4 hover:underline">{p.supersedesProposalId}</Link></dd>
+                    <dd><Link to="/learning/proposals/$id" params={{ id: p.supersedesProposalId }} className="font-mono text-meta underline-offset-4 hover:underline">{p.supersedesProposalId}</Link></dd>
                   </>
                 )}
               </dl>
@@ -416,7 +417,7 @@ function ProposalReview({ proposal: p, record, onOpen }: {
 
           {p.ruling !== null && (
             <Panel icon={CheckCircle2} label="Ruling">
-              <Well className="grid gap-2 p-4 text-sm">
+              <Well className="grid gap-2 p-4 text-body">
                 <dl className="grid gap-1.5">
                   <div>
                     <dt className="text-meta text-muted-foreground">Ratified by</dt>
@@ -444,10 +445,10 @@ function ProposalReview({ proposal: p, record, onOpen }: {
               {p.episodeIds.length === 0 ? (
                 <p className="text-meta text-muted-foreground">No episodes cited.</p>
               ) : (
-                <ul className="grid gap-1.5 text-sm" aria-label="Cited episodes">
+                <ul className="grid gap-1.5 text-body" aria-label="Cited episodes">
                   {p.episodeIds.map((epId) => (
                     <li key={epId}>
-                      <Link to="/episodes/$id" params={{ id: epId }} className="font-mono text-xs underline-offset-4 hover:underline">
+                      <Link to="/episodes/$id" params={{ id: epId }} className="font-mono text-meta underline-offset-4 hover:underline">
                         {epId}
                       </Link>
                     </li>
@@ -496,8 +497,8 @@ function ReplayIsland({ replay, technical }: { readonly replay: ProposalReplay |
     >
       <Well className="grid gap-4 p-4">
         {replay.admissionStatus === "refused" && (
-          <div role="alert" data-replay-refusal="true" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-            <p className="flex items-center gap-2 font-medium">
+          <div role="alert" data-replay-refusal="true" className="grid gap-1 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-body text-destructive">
+            <p className="flex items-center gap-2">
               <ShieldX className="size-4 shrink-0" aria-hidden />
               Admission refused by replay
             </p>
@@ -520,7 +521,7 @@ function ReplayIsland({ replay, technical }: { readonly replay: ProposalReplay |
             <ToggleGroupItem value="flipped" size="sm">Flipped ({replay.flippedCount})</ToggleGroupItem>
             <ToggleGroupItem value="protected" size="sm">Protected flipped ({replay.protectedFlippedCount})</ToggleGroupItem>
           </ToggleGroup>
-          {technical && <span className="font-mono text-xs text-muted-foreground">pin {replay.definitionPin.slice(0, 18)}…</span>}
+          {technical && <span className="font-mono text-meta text-muted-foreground">pin {replay.definitionPin.slice(0, 18)}…</span>}
         </div>
       </Well>
 
@@ -548,12 +549,12 @@ function ReplayIsland({ replay, technical }: { readonly replay: ProposalReplay |
                     className={cn(blocking && "bg-destructive/5")}>
                     <TableCell className="max-w-xs whitespace-normal">
                       <div className="grid gap-0.5 py-1">
-                        <span className="font-medium">{c.label}</span>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>{c.label}</span>
+                        <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                           <Link to="/episodes/$id" params={{ id: c.episodeId }} className="font-mono underline-offset-4 hover:underline">{c.episodeId}</Link>
                           {technical && <code className="font-mono">{c.caseId}</code>}
                         </div>
-                        {c.detail && <span className="text-xs text-muted-foreground">{c.detail}</span>}
+                        {c.detail && <span className="text-meta text-muted-foreground">{c.detail}</span>}
                       </div>
                     </TableCell>
                     <TableCell>

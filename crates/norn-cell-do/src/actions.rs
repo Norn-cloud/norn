@@ -60,6 +60,8 @@ pub struct ActionPolicy {
     resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
     /// Whether the rules read the principal's `id`.
     principal_id: bool,
+    /// PRINCIPAL-INPUT-1 (#1091): this revision's principal input resolver.
+    principal: crate::principal_inputs::PrincipalResolver,
     /// ADMIT-CACHE-1 (#1533): each caller's PDP (the base rules plus that
     /// caller's call grant), compiled once per revision instead of per call.
     /// The grant is a function of the caller's subject and kind and of this
@@ -211,6 +213,8 @@ struct Compiled {
     base: Pdp,
     resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
     principal_id: bool,
+    /// The principal attributes the rules read, as inferred.
+    principal_attributes: BTreeMap<String, CedarPrincipalAttribute>,
 }
 
 fn compiled(
@@ -224,6 +228,7 @@ fn compiled(
         policy_id: ACTION_POLICY_ID.into(),
         rules,
         generic_rules: vec![],
+        principal_catalog: vec![],
         extensions: None,
     };
     // ACTION-RESOURCE-1: the projection types each resource condition;
@@ -268,6 +273,7 @@ fn compiled(
         base,
         resource_attributes,
         principal_id: principal.contains_key(PRINCIPAL_ID_ATTRIBUTE),
+        principal_attributes: principal,
     })
 }
 
@@ -359,13 +365,21 @@ impl ActionPolicy {
             base,
             resource_attributes,
             principal_id,
+            principal_attributes,
         } = compiled(&types, &interfaces, &roots, rules)?;
+        let key = scope_key(scope);
+        let principal = crate::principal_inputs::PrincipalResolver::compile(
+            artifacts,
+            &principal_attributes,
+            &key,
+        )?;
         Ok(Some(Self {
             base,
             callable,
-            key: scope_key(scope),
+            key,
             resource_attributes,
             principal_id,
+            principal,
             callers: std::sync::Mutex::new(BTreeMap::new()),
             targets,
             conditional,
@@ -475,6 +489,12 @@ impl ActionPolicy {
                 }
             })
             .collect()
+    }
+
+    /// PRINCIPAL-INPUT-1: this revision's principal input resolver.
+    #[must_use]
+    pub const fn principal_resolver(&self) -> &crate::principal_inputs::PrincipalResolver {
+        &self.principal
     }
 
     /// Whether `action_id` names a callable action.

@@ -404,3 +404,22 @@ test("not served and no cell: the inbox and the run view say why, and call nothi
   await expect(page.getByText("This workspace has no data cell yet.")).toBeVisible()
   expect(calls).toBe(0)
 })
+
+// UI polish: on a phone each question wraps in full (no ellipsis), the deadline moves to the meta line, and
+// the meta line's items are spaced by the gap alone, so no wrapped line starts or ends on a stray "·".
+test("view at 390px: every question wraps in full, the deadline sits in the meta line, and no separator dangles", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await inbox(page)
+  await expect(list(page)).toHaveCount(3)
+  for (const row of await list(page).all()) {
+    const question = row.locator("[data-question]")
+    // Not clipped: the clamp (three lines here) holds the whole question.
+    expect(await question.evaluate((element) => element.scrollHeight <= element.clientHeight + 1), await question.innerText()).toBe(true)
+    const meta = row.locator("[data-meta]")
+    await expect(meta.getByText(/left$/)).toBeVisible()
+    // No item of the meta line is a bare separator.
+    expect(await meta.evaluate((element) => [...element.children].map((child) => (child.textContent ?? "").trim()).filter((text) => text === "·" || text === ""))).toEqual([])
+  }
+  await expect(list(page).nth(1)).toContainText("Refund 1,240.00 USD to Al Noor Trading for the short delivery?")
+  await shoot(page, "inbox-390")
+})
