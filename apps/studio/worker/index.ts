@@ -1,4 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
+import { cellHostOf } from "./http-host.ts"
 import { activeMembership, createAuth, DISABLED_AUTH_PATHS, DISABLED_ORG_PATHS, issueConsentApproval, verifyMagicLinkOrigin, type Auth, type MagicLinkMail, type ProvisionDb } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
@@ -35,6 +36,8 @@ export interface Env {
   readonly AUTH_SCRYPT?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher
+  /** Or the cell host's https origin (a self-hosted host, http-host.ts); never both. */
+  readonly NORN_HOST_URL?: string
   /** The organization members' sessions start in (preview: the seeded `org_demo`). */
   readonly STUDIO_DEFAULT_ORG?: string
   /** The header the edge sets to the client's address (client-ip.ts); required, the Worker refuses auth without it. */
@@ -397,8 +400,21 @@ const OAUTH_DISCOVERY = new Set([
   `/.well-known/oauth-protected-resource${MCP_PATH}`,
 ])
 
+// One cell host per stage: the binding, or the https origin as a Fetcher (http-host.ts). Derived
+// once per runtime env, so `auth(env)` keeps reusing its instance across requests.
+const hosted = new WeakMap<object, Env>()
+function withCellHost(given: Env): Env {
+  const cached = hosted.get(given)
+  if (cached !== undefined) return cached
+  const host = cellHostOf(given)
+  const env: Env = host === undefined || host === given.NORN_HOST ? given : { ...given, NORN_HOST: host }
+  hosted.set(given, env)
+  return env
+}
+
 const handler = {
-  async fetch(request, env, ctx) {
+  async fetch(request, given, ctx) {
+    const env = withCellHost(given)
     const { pathname } = new URL(request.url)
     if (mcpOn(env) && pathname === MCP_PATH) {
       if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in grant, not a request header.")

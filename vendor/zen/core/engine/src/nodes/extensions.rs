@@ -52,6 +52,18 @@ pub trait DecisionContracts: std::fmt::Debug + Send + Sync {
         input: bool,
         meter: Option<&zen_expression::meter::Meter>,
     ) -> Result<(), Box<dyn std::error::Error>>;
+    /// Norn (#1708): checks `value` at a sub-decision boundary as [`Self::check`]
+    /// does and returns the value carried across it instead, when the host shapes
+    /// one (for example only the declared members, in their checked form).
+    fn cross(
+        &self,
+        key: &str,
+        value: &zen_expression::Variable,
+        input: bool,
+        meter: Option<&zen_expression::meter::Meter>,
+    ) -> Result<Option<zen_expression::Variable>, Box<dyn std::error::Error>> {
+        self.check(key, value, input, meter).map(|()| None)
+    }
     fn derive(
         &self,
         _key: &str,
