@@ -6,14 +6,16 @@ use serde::{Deserialize, Serialize};
 pub use super::parameter::ActionParameterPin;
 use crate::action::ActionCommandRejection;
 use crate::cell_host::{
-    CellCommit, CommitReceipt, FactExpectation, FactKey, FactState, FactVersion, FactWrite,
-    JsonObject, JsonValue, LinkReadExpectation, LinkWrite, PredicateReadExpectation,
+    CommitReceipt, FactKey, FactState, FactVersion, JsonObject, JsonValue, LinkReadExpectation,
+    PredicateReadExpectation,
 };
 use crate::decision_commit::{DecisionRefusal, DecisionTurn, FactSlice};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
 use crate::principal_inputs::UnresolvedPrincipalInput;
+
+pub use super::receipt::ActionReferenceReads;
 
 /// Object type of the kernel's idempotency records of action calls (registered by host, #2911).
 pub const ACTION_CALL_TYPE: &str = "norn.ActionCall";
@@ -60,6 +62,10 @@ pub struct ActionCall<'a> {
     pub scope: BTreeMap<String, String>,
     /// The calling actor's identity.
     pub actor: String,
+    /// The prepared-intent digest ([`super::prepare_action_intent`]) of the
+    /// commit an approval of this call was granted for, read by the host from
+    /// its approval record. The call commits only as exactly that commit.
+    pub approved_intent: Option<String>,
     /// The caller's raw input. The kernel derives and validates its effective
     /// input while retaining this value for idempotency and delegation
     /// binding.
@@ -827,6 +833,10 @@ pub enum ActionRefusal<X> {
         /// The authorizer's reason code.
         reason: String,
     },
+    /// AUTH-INDEPENDENT-PERSON (#618): the commit differs from the one the
+    /// call's approval was granted for.
+    #[error("the prepared commit is not the one this call's approval was granted for")]
+    ApprovedIntentChanged,
     /// The target is not of the effect's object kind or a subtype.
     #[error("the action fires on {expected}, but the target is a {actual}")]
     KindMismatch {
@@ -887,6 +897,7 @@ impl<X> ActionRefusal<X> {
             Self::PreconditionFailed { .. } => "action.precondition_failed",
             Self::TargetNotFound => "action.target_not_found",
             Self::PermissionDenied { .. } => "action.permission_denied",
+            Self::ApprovedIntentChanged => "action.approved_intent_changed",
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
@@ -928,77 +939,10 @@ pub(super) struct Pending {
     pub(super) creator_stamp: Option<crate::creator_stamp::CreatorStamp>,
 }
 
-/// Per-decision limits and, when present, the shared aggregate turn meter.
+/// Per-decision limits and, when present, the shared aggregate turn meter and
+/// the slot [`super::prepare_action_intent`] captures the prepared digest in.
 pub(super) struct EnvelopePolicy<'a> {
     pub(super) limits: &'a EnvelopeLimits,
     pub(super) meter: Option<&'a mut TurnEnvelopeMeter>,
-}
-
-/// Kernel-owned attribution for direct reference validation. It cannot cross a
-/// serialized commit boundary or be constructed by an action caller.
-#[derive(Debug)]
-pub struct ActionReferenceReads {
-    pub(super) reads: Vec<FactExpectation>,
-    pub(super) references: Vec<FactExpectation>,
-    pub(super) property_reads: Vec<(FactExpectation, Vec<String>)>,
-    pub(super) writes: Vec<FactWrite>,
-    pub(super) links: Vec<LinkWrite>,
-    pub(super) link_reads: Vec<LinkReadExpectation>,
-    pub(super) event_count: usize,
-}
-
-impl ActionReferenceReads {
-    /// Exact-version references whose existence, rather than values, was used.
-    #[must_use]
-    pub fn reference_reads(&self) -> &[FactExpectation] {
-        &self.references
-    }
-
-    /// Exact property operands proved by the kernel's expression analysis.
-    /// Empty properties preserve an independent patch target's identity only.
-    #[must_use]
-    pub fn property_reads(&self) -> &[(FactExpectation, Vec<String>)] {
-        &self.property_reads
-    }
-
-    /// Bind the one-use proof to the kernel-prepared transaction.
-    #[must_use]
-    pub fn validates<E, C, I>(&self, commit: &CellCommit<E, C, I>) -> bool {
-        self.reads == commit.reads
-            && self.writes == commit.writes
-            && self.links == commit.links
-            && self.link_reads == commit.link_reads
-            && commit.predicate_reads.is_empty()
-            && self.event_count == commit.events.len()
-            && commit.effects.is_empty()
-            && commit.consumes.is_none()
-    }
-
-    /// Add ordinary CAS/lineage guards without changing any authorized output.
-    /// An overlapping guard restores whole-object lineage for that source.
-    pub fn with_read_guards<E, C, I>(
-        mut self,
-        commit: &mut CellCommit<E, C, I>,
-        guards: &[FactExpectation],
-    ) -> Option<Self> {
-        if !self.validates(commit) {
-            return None;
-        }
-        for guard in guards {
-            if let Some(previous) = commit.reads.iter().find(|read| read.key == guard.key) {
-                if previous.expected != guard.expected {
-                    return None;
-                }
-            } else if commit.writes.iter().any(|write| write.key == guard.key) {
-                return None;
-            } else {
-                commit.reads.push(guard.clone());
-            }
-            self.references.retain(|read| read.key != guard.key);
-            self.property_reads
-                .retain(|(read, _)| read.key != guard.key);
-        }
-        self.reads.clone_from(&commit.reads);
-        Some(self)
-    }
+    pub(super) capture: Option<&'a mut Option<super::approval::PreparedIntent>>,
 }

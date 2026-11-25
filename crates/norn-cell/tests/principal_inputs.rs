@@ -511,6 +511,7 @@ fn call_with<'a>(
             ("environmentId".into(), "dev".into()),
         ]),
         actor: actor.into(),
+        approved_intent: None,
         input: serde_json::from_value(input)?,
         idempotency_key: key.into(),
         object_type: None,

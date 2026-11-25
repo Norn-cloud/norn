@@ -494,6 +494,7 @@ fn confirm<'a>(action: &'a ActionRoot, run: &str, receipt: &str, key: &str) -> A
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "user:dispatcher".to_owned(),
+        approved_intent: None,
         input: JsonObject::from([
             ("run_id".to_owned(), JsonValue::String(run.to_owned())),
             ("receipt".to_owned(), JsonValue::String(receipt.to_owned())),

@@ -727,6 +727,7 @@ impl<X> ActionRefusal<X> {
                 norn_checker::parameter::ParameterError::Invalid => RefusalCategory::Invalid,
             },
             Self::IdempotencyConflict { .. }
+            | Self::ApprovedIntentChanged
             | Self::StalePreconditionRead { .. }
             | Self::StaleAggregateRead { .. } => RefusalCategory::Conflict,
             Self::ReceiptRefused { reason } => reason.category(),

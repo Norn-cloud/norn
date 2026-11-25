@@ -91,6 +91,7 @@ fn invocation(action: &ActionRoot) -> ActionCall<'_> {
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "fashion:manager".to_owned(),
+        approved_intent: None,
         input: object(json!({"code": " c26 ", "season_code": " ss26 ", "brand": "NORN"})),
         idempotency_key: "create-c26".to_owned(),
         object_type: None,
@@ -1008,6 +1009,7 @@ fn action_guard_admits_and_evaluates_exact_decimal_with_temporal_builtins()
                 ("environmentId".to_owned(), "dev".to_owned()),
             ]),
             actor: "time:manager".to_owned(),
+            approved_intent: None,
             input,
             idempotency_key: idempotency_key.to_owned(),
             object_type: None,
@@ -1222,6 +1224,7 @@ impl TimeMaterializeFixture {
                 ("environmentId".to_owned(), "dev".to_owned()),
             ]),
             actor: "time:scheduler".to_owned(),
+            approved_intent: None,
             input: object(json!({
                 "id": id,
                 "calendar_id": "cal-ny",

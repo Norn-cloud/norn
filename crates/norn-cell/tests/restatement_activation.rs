@@ -399,6 +399,7 @@ fn governed_on(store: CellStore, model: &Model, transition: &str, key: &str, all
             ("environmentId".into(), "dev".into()),
         ]),
         actor: "synthetic:reviewer".into(),
+        approved_intent: None,
         input: serde_json::from_value(json!({"id":ID})).expect("input"),
         idempotency_key: key.into(),
         object_type: None,

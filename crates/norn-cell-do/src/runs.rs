@@ -413,6 +413,7 @@ pub(crate) fn principal_of(caller: Caller) -> RunStarter {
         actor_kind: caller.actor_kind.to_owned(),
         roles: caller.roles,
         role_table: caller.role_table.to_owned(),
+        accountable_person: caller.accountable_person,
     }
 }
 
@@ -434,6 +435,7 @@ fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Calle
         roles: starter.roles.clone(),
         actor_kind,
         role_table,
+        accountable_person: starter.accountable_person.clone(),
     })
 }
 

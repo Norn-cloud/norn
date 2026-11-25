@@ -14,6 +14,9 @@ pub struct Caller {
     pub actor_kind: &'static str,
     /// The declared role table the roles came from.
     pub role_table: &'static str,
+    /// AUTH-INDEPENDENT-PERSON (#618): the accountable person the verified
+    /// token names, if it names one.
+    pub accountable_person: Option<String>,
 }
 
 /// One thread's caller, and whether it is a recorded principal acting.
@@ -103,6 +106,7 @@ mod tests {
             roles: vec!["member".to_owned()],
             actor_kind: "user",
             role_table: "studio-roles/1",
+            accountable_person: Some(subject.to_owned()),
         }
     }
 
