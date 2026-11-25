@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 // Wire documents in the shapes crates/norn-cell-do/tests/actions.rs pins, with neutral names.
 import served from "./fixtures/action-call.json"
-import { createIntentKey, createNornClient, NornUnavailable, NornUnexpectedResponse, type CallResult, type ExactDocument, type RouteResult, type Schemas } from "../src/index.ts"
+import { createIntentKey, createNornClient, NO_HOST_ERROR, NornUnavailable, NornUnexpectedResponse, type CallResult, type ExactDocument, type RouteResult, type Schemas } from "../src/index.ts"
 
 interface Sent { readonly url: string; readonly method: string; readonly body: string | null; readonly headers: Record<string, string> }
 
@@ -59,9 +59,15 @@ test("SDK-CALL-2: what is none of the three arms throws NornUnavailable, saying 
     // A 404 is the route's absence, even when its body is a refusal (`route.not_found`): nothing was done.
     [new Response("", { status: 404 }), 404, true, notApplied, false],
     [Response.json(served.routeNotFound, { status: 404 }), 404, true, notApplied, false],
-    // Anything else may have been applied before its answer was garbled.
-    [new Response("", { status: 503 }), 503, true, unknown, false],
-    [Response.json({ code: "host.down", message: "down" }, { status: 503 }), 503, true, unknown, false],
+    // A deployment with no host bound does not serve the route either; the request may still have
+    // reached a host that was being unbound, so its outcome is unknown.
+    [Response.json({ error: NO_HOST_ERROR }, { status: 503 }), 503, true, unknown, false],
+    // Anything else may have been applied before its answer was garbled. A 503 that is neither a
+    // refusal nor the no-host answer (a gateway's page while the host restarts) is no "not served".
+    [new Response("", { status: 503 }), 503, false, unknown, false],
+    [new Response("<html>service unavailable</html>", { status: 503, headers: { "content-type": "text/html" } }), 503, false, unknown, false],
+    [Response.json({ code: "host.down", message: "down" }, { status: 503 }), 503, false, unknown, false],
+    [Response.json({ error: "No Norn host is connected" }, { status: 503 }), 503, false, unknown, false],
     [new Response("<html>bad gateway</html>", { status: 502 }), 502, false, unknown, false],
     // A gateway's `{ code, message }` is not the cell's refusal, whatever its status: the call behind
     // it may have reached the cell, so it is never read as "refused" (a fresh key would write twice).
@@ -343,14 +349,16 @@ test("SDK-ROUTE-3: a route's refusal is its refused arm, a 404 one included; rou
   const gone = { ...denied, code: "object.not_found", category: "visibility" }
   expect(await createNornClient({ scope, fetch: cell(json(404, JSON.stringify(gone))).fetch }).get("/v1/runs/{id}", { path: { id: "r" } }))
     .toMatchObject({ kind: "refused", status: 404, code: "object.not_found" })
-  // The cell's `route.not_found`, and a 404 or 503 that is no refusal, say the route is not served.
-  for (const [status, body] of [[404, JSON.stringify(served.routeNotFound)], [404, ""], [503, '{"error":"No Norn host is connected to this deployment."}']] as const) {
+  // The cell's `route.not_found`, a 404 that is no refusal, and the deployment's no-host 503 say the route is not served.
+  for (const [status, body] of [[404, JSON.stringify(served.routeNotFound)], [404, ""], [503, JSON.stringify({ error: NO_HOST_ERROR })]] as const) {
     const error = await failure(createNornClient({ scope, fetch: cell(json(status, body)).fetch }).get("/v1/runs/{id}", { path: { id: "r" } })) as NornUnavailable
     expect([status, body, error instanceof NornUnavailable, error.notServed]).toEqual([status, body, true, true])
   }
-  // Anything less than a whole Refusal@2 is unavailable: a gateway's page, a Worker's code, a bad reason.
+  // Anything less than a whole Refusal@2 is unavailable: a gateway's page, a Worker's code, a bad
+  // reason. A gateway's 503 is a cell that did not answer, so a read of it may be repeated.
   for (const [status, body] of [
-    [502, "<html>bad gateway</html>"], [403, '{"code":"PLAN_LIMIT","message":"upgrade"}'],
+    [502, "<html>bad gateway</html>"], [503, "<html>service unavailable</html>"], [503, ""], [503, '{"error":"upstream restarting"}'],
+    [403, '{"code":"PLAN_LIMIT","message":"upgrade"}'],
     [403, JSON.stringify({ ...denied, format: undefined })], [403, JSON.stringify({ ...denied, reason: {} })],
   ] as const) {
     const error = await failure(createNornClient({ scope, fetch: cell(json(status, body)).fetch }).get("/v1/runs/{id}", { path: { id: "r" } })) as NornUnavailable
@@ -363,11 +371,20 @@ test("SDK-ROUTE-3: a route's refusal is its refused arm, a 404 one included; rou
   expect([read.status, read.cause]).toEqual([0, down])
   const write = await failure(offline.post("/v1/actions/{actionId}", { path: { actionId: "a" }, body: { input: {}, idempotencyKey: "k" } })) as NornUnavailable
   expect([write.status, write.outcome]).toEqual([0, "unknown"])
-  // A success that is no JSON document is unexpected: a file's bytes are never decoded.
+  // A success that is no JSON document is unexpected: a file's bytes are never decoded, and an
+  // empty body, or one that is no object or array, is never handed on typed as the route's document.
   for (const response of [
     new Response("<!doctype html>", { status: 200, headers: { "content-type": "text/html" } }),
     new Response("PAR1", { status: 200, headers: { "content-type": "application/vnd.apache.parquet" } }),
+    new Response("", { status: 200, headers: { "content-type": "application/json" } }),
+    new Response("  ", { status: 200 }),
+    new Response(null, { status: 202 }),
+    new Response("null", { status: 200, headers: { "content-type": "application/json" } }),
+    new Response('"done"', { status: 200, headers: { "content-type": "application/json" } }),
   ]) expect(await failure(createNornClient({ scope, fetch: cell(() => response).fetch }).get("/v1/runs/{id}", { path: { id: "r" } }))).toBeInstanceOf(NornUnexpectedResponse)
+  // Only the success a route declares without content may be empty: a write's other empty answer is unexpected too.
+  expect(await failure(createNornClient({ scope, fetch: cell(() => new Response(null, { status: 200 })).fetch }).post("/v1/mcp", { body: { jsonrpc: "2.0", method: "ping" } as never })))
+    .toBeInstanceOf(NornUnexpectedResponse)
 })
 
 test("SDK-ROUTE-4: route templates fill in one linear pass and refuse a missing or unclosed parameter", async () => {

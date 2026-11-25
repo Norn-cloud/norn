@@ -10,8 +10,10 @@
  *        body ActionRequest { input, idempotencyKey, trace? }
  *        200 ActionReceipt; 202 PendingAction (APPROVAL-1); otherwise Refusal@2, among them
  *        409 `defs.stale` when the pinned definitions version is no longer active.
- *   A 404 means the cell does not serve the route; so does a 503 that is not a Refusal@2. A 503
- *   that is one (`action.receipts_unconfigured`, say) is that refusal.
+ *   A 404 means the cell does not serve the route; so does the 503 a deployment with no host
+ *   bound answers (`NO_HOST_ERROR`). Any other 503 that is not a Refusal@2 (a gateway's page while
+ *   the host restarts) is a cell that did not answer, never "not served". A 503 that is a Refusal@2
+ *   (`action.receipts_unconfigured`, say) is that refusal.
  *   A visibility or permission refusal is the one opaque 403 `authz.denied`. The guarantee is not
  *   universal: a caller the host lets call any action and that pins a stale `version` gets 409
  *   `defs.stale` for a known action but 403 `authz.denied` for an unknown one, until action-level
@@ -27,8 +29,10 @@
  * come from `norn openapi`, so a server field change is a compile error in every caller. A
  * document is read exactly (`ExactDocument`: every number is its source text). A route's
  * Refusal@2 is its `refused` arm, a 404 one included (a record the route does not hold), except
- * `route.not_found`: like a 404 that is no refusal, and a 503 that is none, the route is not
- * served (`NornUnavailable`).
+ * `route.not_found`: like a 404 that is no refusal, and the deployment's no-host 503, the route is
+ * not served (`NornUnavailable` with `notServed`). A success whose body is not a JSON document
+ * (empty, unless the route declares that success without content, or not an object or array) is
+ * `NornUnexpectedResponse`.
  */
 import type { components, paths } from "./generated/norn-api.ts"
 import { parseExactJson, type ExactJson } from "./exact-json.ts"
@@ -128,9 +132,17 @@ export type ActionCatalog =
   | ({ readonly kind: "refused" } & Refusal)
 
 /**
+ * What a Norn deployment with no host bound answers every cell route with: a 503 whose JSON body
+ * is `{ "error": NO_HOST_ERROR }` (Studio's Worker). The route is not served there, and no retry
+ * changes that. Any other 503 that is not a Refusal@2 is a cell that did not answer.
+ */
+export const NO_HOST_ERROR = "No Norn host is connected to this deployment."
+
+/**
  * The cell did not answer with a document this client can read: no receipt, decision or refusal.
- * `notServed`: the route is not served (404, or a 503 that is not a Refusal@2). `status` 0: no
- * answer arrived, or it broke off while it was read (see `cause`).
+ * `notServed`: the route is not served (a 404, or the deployment's no-host 503, `NO_HOST_ERROR`);
+ * any other status, a gateway's 503 included, is a cell that did not answer, so a read may be
+ * repeated. `status` 0: no answer arrived, or it broke off while it was read (see `cause`).
  *
  * `outcome` says what is known of this HTTP request, and of no earlier one. `not-applied` only for
  * a 404: the route does not exist, so this request did nothing. It says nothing of an earlier
@@ -143,14 +155,15 @@ export class NornUnavailable extends Error {
   readonly status: number
   readonly notServed: boolean
   readonly outcome: "not-applied" | "unknown"
-  constructor(status: number, message?: string, options?: { readonly cause?: unknown }) {
+  /** `options.notServed` defaults to a 404; the client sets it for the no-host 503, which it tells by its body (`answeredUnavailable`). */
+  constructor(status: number, message?: string, options?: { readonly cause?: unknown; readonly notServed?: boolean }) {
     const notApplied = status === 404
     super(message ?? (notApplied
       ? "The cell does not serve this route; nothing was read or saved."
       : `The cell's answer (${status === 0 ? "none arrived" : status}) could not be read, so the outcome is unknown: the request may have been applied. Retry a write with its original idempotency key, never a new one.`), options)
     this.name = "NornUnavailable"
     this.status = status
-    this.notServed = status === 404 || status === 503
+    this.notServed = options?.notServed ?? notApplied
     this.outcome = notApplied ? "not-applied" : "unknown"
   }
 }
@@ -175,6 +188,16 @@ function parsed(text: string): unknown {
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+
+/**
+ * A non-2xx answer that is no refusal, as `NornUnavailable`: not served for a 404, or for the 503
+ * a deployment with no host bound answers (`NO_HOST_ERROR`); any other (a gateway's 503 page, a
+ * 502) is a cell that did not answer.
+ */
+function answeredUnavailable(status: number, text: string): NornUnavailable {
+  const body = status === 503 ? parsed(text) : null
+  return new NornUnavailable(status, undefined, { notServed: status === 404 || (isRecord(body) && body["error"] === NO_HOST_ERROR) })
+}
 
 /**
  * Read a Refusal@2 body: null unless it is the whole envelope the contract requires
@@ -253,6 +276,29 @@ export const FILE_MEDIA = {
 type Unlisted = { [P in FileRoute]: Exclude<SuccessMedia<Operation<P, "get">>, (typeof FILE_MEDIA)[P][number]> }[FileRoute]
 const everyMediaListed: [Unlisted] extends [never] ? true : never = true
 void everyMediaListed
+
+type Responses<O> = O extends { readonly responses: infer R } ? R : never
+type SuccessOf<O> = Extract<keyof Responses<O>, SuccessStatus>
+/** The success statuses `O` declares without content (a `202` to a notification). */
+type EmptySuccess<O> = { [S in SuccessOf<O>]: Responses<O>[S] extends { readonly content: object } ? never : S }[SuccessOf<O>]
+type EmptyRoutes<M extends "get" | "post"> = { [P in DocumentRoutesWith<M>]: [EmptySuccess<Operation<P, M>>] extends [never] ? never : P }[DocumentRoutesWith<M>]
+type EmptyTable<M extends "get" | "post"> = { readonly [P in EmptyRoutes<M>]: readonly EmptySuccess<Operation<P, M>>[] }
+
+/**
+ * The successes each route declares without content: only these may answer with an empty body,
+ * which `get` and `post` return as `document: undefined`. Any other empty success is
+ * `NornUnexpectedResponse`, never an undefined document typed as the route's. The compiler holds
+ * the table to the contract both ways, as it does `FILE_MEDIA`.
+ */
+export const EMPTY_SUCCESS = {
+  GET: {},
+  POST: { "/v1/mcp": [202] },
+} as const satisfies { readonly GET: EmptyTable<"get">; readonly POST: EmptyTable<"post"> }
+type UnlistedEmpty<M extends "get" | "post", K extends keyof typeof EMPTY_SUCCESS> = {
+  [P in EmptyRoutes<M>]: Exclude<EmptySuccess<Operation<P, M>>, P extends keyof (typeof EMPTY_SUCCESS)[K] ? (typeof EMPTY_SUCCESS)[K][P] extends readonly (infer S)[] ? S : never : never>
+}[EmptyRoutes<M>]
+const everyEmptyListed: [UnlistedEmpty<"get", "GET"> | UnlistedEmpty<"post", "POST">] extends [never] ? true : never = true
+void everyEmptyListed
 
 type ParamsOf<O> = O extends { readonly parameters: infer X } ? X : never
 type Member<X, K extends string> = X extends { readonly [P in K]?: infer V } ? Defined<V> : never
@@ -445,19 +491,19 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
   const request = (path: string, query: Query, init: RequestInit, write: boolean) =>
     exchange(path, query, init, write, async (response) => ({ status: response.status, ok: response.ok, text: await response.text() }))
 
-  /** A non-2xx answer: its refusal, else the route is not served (404/503) or the cell did not answer. */
+  /** A non-2xx answer: its refusal, else the route is not served (a 404, the no-host 503) or the cell did not answer. */
   function refusalOrThrow(status: number, text: string): Refusal {
     // A 404 is the route's absence whatever its body (`route.not_found`). Any other status is a
     // refusal only when it is a Refusal@2 document (`readRefusal`).
     const refusal = status === 404 ? null : readRefusal(status, text)
-    if (refusal === null) throw new NornUnavailable(status)
+    if (refusal === null) throw answeredUnavailable(status, text)
     return refusal
   }
 
-  /** A route's non-2xx answer: its refusal (`routeRefusalOf`), else the route is not served (404/503) or the cell did not answer. */
+  /** A route's non-2xx answer: its refusal (`routeRefusalOf`), else the route is not served (a 404, the no-host 503) or the cell did not answer. */
   function routeRefusal(status: number, text: string): Refusal {
     const refusal = routeRefusalOf(status, parsed(text), () => parseExactJson(text))
-    if (refusal === null) throw new NornUnavailable(status)
+    if (refusal === null) throw answeredUnavailable(status, text)
     return refusal
   }
 
@@ -471,12 +517,18 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
       ...call.signal === undefined ? {} : { signal: call.signal },
     }, method === "POST", async (response) => ({ status: response.status, ok: response.ok, contentType: response.headers.get("content-type"), text: await response.text() }))
     if (!ok) return { kind: "refused", ...routeRefusal(status, text) }
-    // A file's bytes are never decoded as a document; a success the route declares without content
-    // (a `202` to a notification) has no document.
+    // A file's bytes are never decoded as a document. Only a success the route declares without
+    // content (a `202` to a notification, `EMPTY_SUCCESS`) has no document; any other empty body,
+    // and a body that is no JSON object or array (every document the contract declares is one), is
+    // not the route's document.
     if (!readsAsJson(contentType)) throw new NornUnexpectedResponse(status, "a JSON document")
-    if (text.trim() === "") return { kind: "document", status, document: undefined }
+    if (text.trim() === "") {
+      const empty: readonly number[] = Object.hasOwn(EMPTY_SUCCESS[method], template) ? (EMPTY_SUCCESS[method] as { readonly [route: string]: readonly number[] })[template] ?? [] : []
+      if (empty.includes(status)) return { kind: "document", status, document: undefined }
+      throw new NornUnexpectedResponse(status, "a JSON document")
+    }
     const document = parseExactJson(text)
-    if (document === undefined) throw new NornUnexpectedResponse(status, "a JSON document")
+    if (document === undefined || document === null || typeof document !== "object") throw new NornUnexpectedResponse(status, "a JSON document")
     return { kind: "document", status, document }
   }
 

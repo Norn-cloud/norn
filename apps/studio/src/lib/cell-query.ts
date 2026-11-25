@@ -1,13 +1,13 @@
 import { hashKey, queryOptions, replaceEqualDeep, useMutation, useQuery, useQueryClient, type MutateOptions, type MutationOptions, type QueryClient, type QueryKey, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import {
-  createNornClient, NornUnavailable,
+  createNornClient, NornUnavailable, NornUnexpectedResponse,
   type ExactDocument, type Fetch, type GetRoute, type LiveRefusal, type LiveSnapshot, type NornClient, type Operation, type PostRoute,
   type Refusal, type RouteCall, type RouteResult, type Success,
 } from "../../../../packages/norn-sdk/src/index.ts"
 import { CellUnavailable, defaultFetch, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
-import { CellRefusal, NotServed } from "./live-transport.ts"
+import { CellRefusal, MODE_AUTO_RETRIES, NotServed } from "./live-transport.ts"
 
 /**
  * One read primitive for the cell's documents (#1374): `useCellQuery(route, params, { scope })` is
@@ -22,6 +22,8 @@ import { CellRefusal, NotServed } from "./live-transport.ts"
  *   data, a {@link CellRefused} entry, so nothing TanStack does to the query's error state (a
  *   retry, a cancelled fetch's revert on unmount) can bring the refused document back; pages
  *   render {@link cellReadState}.
+ * - Only a read the cell did not answer is retried, as Studio's reads are ({@link retryCellRead}):
+ *   a refusal is an answer, and asking again gets the same one.
  * - Unmounting unsubscribes; the live client keeps its own limits (frame size, one wire
  *   subscription per path, the cell's `live.too_many_subscriptions`).
  * - A read the cell's answers no longer reach is stale (`CellReadState.stale`): its subscription
@@ -83,16 +85,35 @@ function refusalState(refusal: Refusal): Error {
   return new CellRefusal(refusal.status, refusal.code, refusal.message === "" ? refusal.code : refusal.message, detail)
 }
 
+/** The read states made from a cell that did not answer in a way asking again can change: only these are retried. */
+const transient = new WeakSet<Error>()
+
 /**
- * The SDK's "no readable answer" (`NornUnavailable`) as the existing state: a route the cell does
- * not serve (a 404 or 503 that is no refusal, as Studio's Worker answers with no host), or a cell
- * that did not answer. No code and no detail are read from it. Any other error passes as is.
+ * The SDK's "no readable answer" (`NornUnavailable`) as the existing state, as `cellRead` maps it:
+ * - a route the cell does not serve (`notServed`: a 404 that is no refusal, or the no-host 503 of a
+ *   deployment with no host bound) is {@link NotServed};
+ * - a cell that did not answer is {@link CellUnavailable} with no code and no detail. When asking
+ *   again can change that (no answer, a 5xx such as a gateway's 503 page while the host restarts,
+ *   a 408 or 429) it is `retryable`, so the page offers Retry and the read is retried.
+ * Any other error passes as is.
  */
 function unansweredState(error: unknown, what: string): unknown {
   if (!(error instanceof NornUnavailable)) return error
   if (error.notServed) return new NotServed(what)
-  return new CellUnavailable(error.status, undefined, error.status === 0 ? { retryable: true } : {})
+  const { status } = error
+  const passing = status === 0 || status >= 500 || status === 408 || status === 429
+  const state = new CellUnavailable(status, undefined, passing ? { retryable: true } : {})
+  if (passing) transient.add(state)
+  return state
 }
+
+/**
+ * Whether a failed read is asked again, as Studio's reads are (`main.tsx`, `MODE_AUTO_RETRIES`
+ * times): only when the cell did not answer and may on another try. A refusal, read or pushed, is
+ * the cell's answer and is never retried; neither is a route it does not serve.
+ */
+export const retryCellRead = (failureCount: number, error: Error): boolean =>
+  failureCount < MODE_AUTO_RETRIES && transient.has(error)
 
 /**
  * The refusal state for an answer the cell pushed with a failing status. The SDK's live client
@@ -101,6 +122,9 @@ function unansweredState(error: unknown, what: string): unknown {
  */
 export const pushedRefusal = (snapshot: Pick<LiveSnapshot, "status" | "refusal">, what: string): Error =>
   snapshot.refusal !== undefined ? refusalState(snapshot.refusal) : unansweredState(new NornUnavailable(snapshot.status), what) as Error
+
+/** Whether a pushed body is a document: every document the contract declares is a JSON object or array. */
+const isDocument = (exact: LiveSnapshot["exact"]): boolean => typeof exact === "object" && exact !== null
 
 type LooseCall = (route: string, call?: object) => Promise<RouteResult<unknown>>
 
@@ -111,14 +135,38 @@ type LooseCall = (route: string, call?: object) => Promise<RouteResult<unknown>>
  * landed while the read was in flight, so the read's answer may be older than the push and the
  * cache keeps what the push left. Arrival order on the one socket orders the frames: no value
  * comparison decides which answer is newer.
+ *
+ * A read's entry is held while anything compares against it, its live subscriptions and its reads
+ * in flight, and is dropped when the last one lets go: nothing is kept for a read no page shows.
+ * Sequence values come from one counter that only grows, so an entry made again after it was
+ * dropped never repeats a value a read in flight noted.
  */
-const sequences = new WeakMap<QueryClient, Map<string, number>>()
-const sequenceOf = (client: QueryClient, hash: string): number => sequences.get(client)?.get(hash) ?? 0
-function advance(client: QueryClient, hash: string): void {
-  let counts = sequences.get(client)
-  if (counts === undefined) sequences.set(client, counts = new Map())
-  counts.set(hash, (counts.get(hash) ?? 0) + 1)
+interface Sequence { seq: number; holders: number }
+const sequences = new WeakMap<QueryClient, Map<string, Sequence>>()
+let frames = 0
+const sequenceOf = (client: QueryClient, hash: string): number => sequences.get(client)?.get(hash)?.seq ?? 0
+/** Hold the read's entry while a subscription or a read uses it; returns the release. */
+function hold(client: QueryClient, hash: string): () => void {
+  let entries = sequences.get(client)
+  if (entries === undefined) sequences.set(client, entries = new Map())
+  const entry = entries.get(hash) ?? { seq: 0, holders: 0 }
+  entries.set(hash, entry)
+  entry.holders += 1
+  let held = true
+  return () => {
+    if (!held) return
+    held = false
+    entry.holders -= 1
+    if (entry.holders === 0 && entries.get(hash) === entry) entries.delete(hash)
+  }
 }
+function advance(client: QueryClient, hash: string): void {
+  const entry = sequences.get(client)?.get(hash)
+  if (entry !== undefined) entry.seq = ++frames
+}
+
+/** How many reads' live sequences `client` holds now: one per read with a subscription or a read in flight. */
+export const heldSequences = (client: QueryClient): number => sequences.get(client)?.size ?? 0
 
 export interface CellQueryConfig {
   readonly scope: StudioScope | null
@@ -135,27 +183,32 @@ export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route:
   return queryOptions<CellData<P>, Error, CellData<P>, CellQueryKey>({
     queryKey: cellQueryKey(route, scope, params),
     enabled: config.scope !== null && config.enabled !== false,
-    retry: false,
+    retry: retryCellRead,
     queryFn: async ({ queryKey, signal }) => {
       if (config.scope === null) throw new StudioScopeError(NO_DATA_CELL)
       const hash = hashKey(queryKey)
-      const started = sequenceOf(client, hash)
-      // A frame the cell pushed while this read was in flight (a document or a refusal) is at least
-      // as new as the read's answer.
-      const pushedSince = (): CellData<P> | undefined =>
-        sequenceOf(client, hash) === started ? undefined : client.getQueryData<CellData<P>>(queryKey)
-      let read: RouteResult<unknown>
+      const release = hold(client, hash)
       try {
-        read = await (studioCellClient(config.scope, config.fetch).get as LooseCall)(route, { ...params, signal })
-      } catch (error) {
+        const started = sequenceOf(client, hash)
+        // A frame the cell pushed while this read was in flight (a document or a refusal) is at least
+        // as new as the read's answer.
+        const pushedSince = (): CellData<P> | undefined =>
+          sequenceOf(client, hash) === started ? undefined : client.getQueryData<CellData<P>>(queryKey)
+        let read: RouteResult<unknown>
+        try {
+          read = await (studioCellClient(config.scope, config.fetch).get as LooseCall)(route, { ...params, signal })
+        } catch (error) {
+          const pushed = pushedSince()
+          if (pushed !== undefined) return pushed
+          throw unansweredState(error, what)
+        }
         const pushed = pushedSince()
         if (pushed !== undefined) return pushed
-        throw unansweredState(error, what)
+        if (read.kind === "refused") throw refusalState(read)
+        return { kind: "document", status: read.status, document: read.document as ExactDocument<Success<Operation<P, "get">>>, digest: null }
+      } finally {
+        release()
       }
-      const pushed = pushedSince()
-      if (pushed !== undefined) return pushed
-      if (read.kind === "refused") throw refusalState(read)
-      return { kind: "document", status: read.status, document: read.document as ExactDocument<Success<Operation<P, "get">>>, digest: null }
     },
   })
 }
@@ -181,6 +234,8 @@ export interface LiveSource {
  * - The live client hands a new listener what it last received for the path at once. That replay
  *   is not a new answer: every listener of the path writes this same entry, so the cache already
  *   holds it or something newer (a later read). It is ignored.
+ * - A pushed success whose body is no document (no body, or one that is no object or array) is
+ *   not the route's document: it is held as the unavailable state it is, never as the document.
  * - `onLiveRefusal` reports the live protocol's refusal of the subscription, and `null` once the
  *   cell sends this subscription a frame again (after a reconnect).
  */
@@ -195,11 +250,17 @@ export function attachLive(options: {
 }): () => void {
   const { client, queryKey, route, onLiveRefusal } = options
   const hash = hashKey(queryKey)
+  const release = hold(client, hash)
   let replaying = true
   const stop = options.live.subscribe(options.path, (snapshot) => {
     if (replaying) return
     advance(client, hash)
     onLiveRefusal?.(null)
+    if (snapshot.status >= 200 && snapshot.status < 300 && !isDocument(snapshot.exact)) {
+      const unexpected = unansweredState(new NornUnexpectedResponse(snapshot.status, "a JSON document"), options.what ?? route) as Error
+      client.setQueryData(queryKey, { kind: "refused", refusal: unexpected, seq: sequenceOf(client, hash) } satisfies CellRefused)
+      return
+    }
     if (snapshot.status >= 200 && snapshot.status < 300) {
       const state = client.getQueryState<CellEntry<unknown>, Error>(queryKey)
       const current = state?.data
@@ -216,7 +277,10 @@ export function attachLive(options: {
     client.setQueryData(queryKey, refused)
   }, onLiveRefusal ? { onRefused: onLiveRefusal } : undefined)
   replaying = false
-  return stop
+  return () => {
+    stop()
+    release()
+  }
 }
 
 /** What a page renders for one read: the document, or the refusal state (the read's error or a pushed refusal). */

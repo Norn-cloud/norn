@@ -6,10 +6,13 @@
  * whether pushes arrive: once they no longer do, the record is shown as the last answer read, with
  * its time and a way to read again. The workspace comes first: a failed scope discovery is the
  * shared Workspace unavailable panel, and a workspace with no data cell says so.
+ * `&next=<identity>` offers "Next record", which reads another record in the same mounted view (a
+ * new key), and "Close record" unmounts the read, so browser rows can watch the hook subscribe,
+ * reset and unsubscribe.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Database, RefreshCw } from "lucide-react"
-import { StrictMode } from "react"
+import { StrictMode, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState } from "@/components/panel"
@@ -22,17 +25,29 @@ import "./index.css"
 const shown = (value: unknown): string => typeof value === "string" ? value : JSON.stringify(value)
 
 /** The workspace first: a failed scope discovery is the shared Workspace unavailable panel, with its own Retry; no cell is said so. */
-function RecordRead({ type, id }: { readonly type: string; readonly id: string }) {
+function RecordRead({ type, ids }: { readonly type: string; readonly ids: readonly string[] }) {
   const scope = useStudioScope()
+  const [at, setAt] = useState(0)
+  const [open, setOpen] = useState(true)
+  const id = ids[at % Math.max(ids.length, 1)] ?? ""
   return (
     <section className="space-y-3" data-testid="record-read">
-      {scope.isError
-        ? <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />
-        : scope.isSuccess && scope.data === null
-          ? <EmptyState icon={Database} title="No data cell">{NO_DATA_CELL}</EmptyState>
-          : scope.isSuccess
-            ? <Record type={type} id={id} scope={scope.data as StudioScope} />
-            : <LoadState status="pending" skeleton="detail">{() => null}</LoadState>}
+      {ids.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={!open} onClick={() => setAt((n) => n + 1)}>Next record</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setOpen((shown) => !shown)}>{open ? "Close record" : "Open record"}</Button>
+        </div>
+      )}
+      {!open
+        ? null
+        : scope.isError
+          ? <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />
+          : scope.isSuccess && scope.data === null
+            ? <EmptyState icon={Database} title="No data cell">{NO_DATA_CELL}</EmptyState>
+            : scope.isSuccess
+              // One mounted view for every record: a new id is a new key for the same hook.
+              ? <Record type={type} id={id} scope={scope.data as StudioScope} />
+              : <LoadState status="pending" skeleton="detail">{() => null}</LoadState>}
     </section>
   )
 }
@@ -40,7 +55,7 @@ function RecordRead({ type, id }: { readonly type: string; readonly id: string }
 function Record({ type, id, scope }: { readonly type: string; readonly id: string; readonly scope: StudioScope }) {
   const { read, state, liveRefusal } = useCellQuery("/v1/objects/{type}/{id}", { path: { type, id } }, { scope, what: "This record" })
   return (
-    <div data-live-refusal-code={liveRefusal?.code}>
+    <div data-testid="record" data-record-id={id} data-live-refusal-code={liveRefusal?.code}>
       <LoadState status={state.status} data={state.data} error={state.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} skeleton="detail">
         {(doc) => (
           <dl className="grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1 text-sm">
@@ -82,7 +97,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     <QueryClientProvider client={client}>
       <main className="mx-auto max-w-2xl p-8">
-        <RecordRead type={search.get("type") ?? ""} id={search.get("id") ?? ""} />
+        <RecordRead type={search.get("type") ?? ""} ids={[search.get("id") ?? "", ...search.getAll("next")]} />
       </main>
     </QueryClientProvider>
   </StrictMode>,

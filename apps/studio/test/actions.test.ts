@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { instantText, isDiagnosticPlaced, offsetSuffix, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
 import { CALL_OUTCOME_UNKNOWN, callAction, decimalExample, itemNoun, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
-import { createIntentKey } from "../../../packages/norn-sdk/src/index.ts"
+import { createIntentKey, NO_HOST_ERROR } from "../../../packages/norn-sdk/src/index.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -222,7 +222,7 @@ test("a draft is read and written by pointer, nested records included", () => {
   expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":"10.500","location":{"site":"vault-a"}}')
 })
 
-test("a 404, whatever its body, or a 503 that is not a Refusal@2, is not served; a 503 refusal is that refusal", async () => {
+test("a 404, whatever its body, or the deployment's no-host 503, is not served; a gateway's 503 did not answer; a 503 refusal is that refusal", async () => {
   const notFound = () => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 })
   expect(await listActions(undefined, cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
@@ -233,7 +233,12 @@ test("a 404, whatever its body, or a 503 that is not a Refusal@2, is not served;
   const read = await listActions(undefined, cell(() => new Response("<html>bad gateway</html>", { status: 502 })).fetcher).then(() => null, (error: unknown) => error as Error)
   expect(read?.message).toBe("The cell did not answer (502); nothing was read or saved.")
   expect(read?.message).not.toContain("idempotency")
-  expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
+  // A deployment with no host bound does not serve the catalog; a gateway's 503 is a cell that did not answer, never "not served".
+  expect(await listActions(undefined, cell(() => Response.json({ error: NO_HOST_ERROR }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
+  for (const response of [Response.json({ code: "host.down", message: "down" }, { status: 503 }), new Response("<html>service unavailable</html>", { status: 503, headers: { "content-type": "text/html" } })]) {
+    const down = await listActions(undefined, cell(() => response).fetcher).then(() => null, (error: unknown) => error as Error)
+    expect([down?.message, (down as { status?: number } | null)?.status]).toEqual(["The cell did not answer (503); nothing was read or saved.", 503])
+  }
   const unconfigured = { format: "norn/refusal@2", code: "action.receipts_unconfigured", category: "internal", retryable: true, message: "this cell cannot commit governed actions now", explanation: "no lineage key", reason: null }
   expect(await callAction("a", "{}", "k", cell(() => Response.json(unconfigured, { status: 503 })).fetcher)).toMatchObject({ kind: "refused", status: 503, code: "action.receipts_unconfigured", retryable: true })
 })
