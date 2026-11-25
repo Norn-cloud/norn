@@ -1,0 +1,93 @@
+{
+  "artifactId": "supply.StockMovement.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Stock movement labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "حركة مخزون",
+          "en": "Stock movement"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.StockMovement"
+        }
+      },
+      {
+        "label": {
+          "ar": "استلام",
+          "en": "Receipt"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockMovement",
+          "property": "movement_kind",
+          "value": "receipt"
+        }
+      },
+      {
+        "label": {
+          "ar": "صرف",
+          "en": "Issue"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockMovement",
+          "property": "movement_kind",
+          "value": "issue"
+        }
+      },
+      {
+        "label": {
+          "ar": "تسوية",
+          "en": "Adjustment"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockMovement",
+          "property": "movement_kind",
+          "value": "adjustment"
+        }
+      },
+      {
+        "label": {
+          "ar": "تحويل",
+          "en": "Transfer"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.StockMovement",
+          "property": "movement_kind",
+          "value": "transfer"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StockMovement.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

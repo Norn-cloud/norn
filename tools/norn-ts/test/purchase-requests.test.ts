@@ -215,9 +215,9 @@ test("norn check, norn explain and norn dev read the project through one loader"
   expect(event.definitions).toEqual(pack.retained)
   expect(pack.retained.map((definition) => definition.id)).toEqual(["purchasing.large_requests"])
   expect(pack.artifacts.map((artifact) => (artifact as { artifactId: string }).artifactId)).toContain("norn.ObservedLinkClaim.entity")
-  // The mapping binds its source schema by reference: the hash is pending
-  // until the checker's own hash of the schema pins it.
-  expect(pendingSourceSchemas(pack.artifacts)).toBe(true)
+  // The mapping binds its source schema by reference: the compiler pins the
+  // schema's Norn1 hash (MAPPING-SOURCE-REF-1), and the checker verifies it.
+  expect(pendingSourceSchemas(pack.artifacts)).toBe(false)
   const { checker } = await import("./checker.ts")
   if (!checker) return
   const { report, input } = admit(checker, pack)

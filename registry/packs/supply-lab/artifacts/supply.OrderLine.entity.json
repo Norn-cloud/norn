@@ -1,0 +1,162 @@
+{
+  "artifactId": "supply.OrderLine.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Purchase order line",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "line_id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "order",
+          "target": "supply.PurchaseOrder"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        }
+      ],
+      "name": "supply.OrderLine",
+      "properties": [
+        {
+          "id": "line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "po_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "promised_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "ordered_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "received_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "fill_rate",
+          "type": {
+            "additivity": {
+              "denominator": "ordered_qty",
+              "kind": "ratio",
+              "numerator": "received_qty"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit_price",
+          "type": {
+            "additivity": {
+              "kind": "non_additive"
+            },
+            "currencySource": {
+              "links": [],
+              "property": "currency"
+            },
+            "kind": "decimal",
+            "scale": 4
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.OrderLine.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

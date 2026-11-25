@@ -1,0 +1,163 @@
+{
+  "artifactId": "supply.line.record_received.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a line's received quantity",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.line.record_received",
+    "derive": [
+      {
+        "expression": "input.received_qty / input.ordered_qty",
+        "field": "fill_rate",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.OrderLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "line_id",
+      "objectKind": "supply.OrderLine",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "fill_rate": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "ordered_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "po_id": {
+          "type": "string"
+        },
+        "promised_at": {
+          "type": "string"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "unit_price": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "line_id",
+        "po_id",
+        "sku_id",
+        "promised_at",
+        "ordered_qty",
+        "received_qty",
+        "fill_rate",
+        "unit",
+        "unit_price",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "line_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "line_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((((slice.order.status == 'submitted') or (slice.order.status == 'partially_received')) and (slice.line.po_id == input.po_id)) and (slice.line.sku_id == input.sku_id)) and (slice.line.unit == input.unit)) and (slice.line.ordered_qty == input.ordered_qty)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "line",
+        "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
+      }
+    ],
+    "title": "Record a line's received quantity",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.OrderLine"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.line.record_received.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

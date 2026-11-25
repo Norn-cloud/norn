@@ -3379,7 +3379,7 @@ fn encode(value: &Value, ty: &Type) -> Result<Option<RuntimeValue>, String> {
             | Type::Timestamp { .. }
             | Type::Duration
             | Type::Enum { .. },
-        ) => Ok(Some(RuntimeValue::String(text.clone()))),
+        ) => super::lens::enum_member(text, ty).map(|()| Some(RuntimeValue::String(text.clone()))),
         (Value::Number(number), Type::Integer) => {
             let integer = number
                 .as_str()

@@ -80,5 +80,7 @@ mod retained_definitions;
 mod source_agreement;
 #[path = "stress_purchase.rs"]
 mod stress_purchase;
+#[path = "supply_lab_stress.rs"]
+mod supply_lab_stress;
 #[path = "synchronous_action.rs"]
 mod synchronous_action;

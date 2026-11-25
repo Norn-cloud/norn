@@ -1,0 +1,104 @@
+{
+  "artifactId": "supply.inspection.record_orphan.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record an inspection without its receipt",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.inspection.record_orphan",
+    "effectProgram": {
+      "entityArtifactId": "supply.Inspection.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "inspection_id",
+      "objectKind": "supply.Inspection",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspected_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "inspection_id": {
+          "type": "string"
+        },
+        "receipt_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rejected_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_id",
+        "receipt_id",
+        "inspected_qty",
+        "rejected_qty",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "receipt_id == null"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record an inspection without its receipt",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.Inspection"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.inspection.record_orphan.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

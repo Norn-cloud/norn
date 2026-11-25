@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.po.fulfil.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Fulfil a purchase order labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "إكمال أمر الشراء",
+          "en": "Fulfil purchase order"
+        },
+        "target": {
+          "actionId": "supply.po.fulfil",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.po.fulfil.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

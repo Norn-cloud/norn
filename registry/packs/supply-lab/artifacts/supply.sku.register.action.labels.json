@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.sku.register.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Register a SKU labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تسجيل صنف",
+          "en": "Register SKU"
+        },
+        "target": {
+          "actionId": "supply.sku.register",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.sku.register.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

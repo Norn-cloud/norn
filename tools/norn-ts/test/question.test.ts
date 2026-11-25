@@ -62,8 +62,11 @@ test("typed_question_lowering uses resolved symbols and never silently drops a q
  const aliased = compile(source().replace('import { Norn }','import { Norn as N }').replace('Norn.question','N.question'))
  if (!ordinary.ok || !aliased.ok) throw new Error("valid question failed")
  expect(canonicalJson(ordinary.questions)).toBe(canonicalJson(aliased.questions))
+ // A question may sit beside a pack's definitions: artifact compilation skips it, saying so.
  const artifactResult = withModule(source(), file => compileDefinitions(file, {scope:{orgId:"org_demo",environmentId:"dev"},sourcePath:"question.ts"}))
- expect(artifactResult.ok).toBe(false)
+ if (!artifactResult.ok) throw new Error(JSON.stringify(artifactResult.diagnostics))
+ expect(artifactResult.artifacts).toEqual([])
+ expect(artifactResult.warnings.map(w => w.code)).toEqual(["NORN-FLOW-RESULT"])
 })
 
 test("typed_question_lowering retains a referenced object identity and remains bounded", () => {

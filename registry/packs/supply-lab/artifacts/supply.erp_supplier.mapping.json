@@ -1,0 +1,94 @@
+{
+  "artifactId": "supply.erp_supplier.mapping",
+  "dependencies": [
+    {
+      "artifactId": "supply.erp_supplier.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.ReceiptEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.SupplierReceiptLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "ERP supplier receipts into receipt evidence",
+  "namespace": "supply",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "supply.ReceiptEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "receipt_line",
+        "properties": [
+          {
+            "property": "receipt_line_id",
+            "value": "input.name"
+          },
+          {
+            "property": "supplier_id",
+            "value": "input.supplier == 'NILE-001' ? 'SUP-NILE' : (input.supplier == 'DELTA-07' ? 'SUP-DELTA' : input.supplier)"
+          },
+          {
+            "property": "po_item_ref",
+            "value": "input.purchase_order_item"
+          },
+          {
+            "property": "received_qty",
+            "value": "input.received_qty"
+          },
+          {
+            "property": "damaged_qty",
+            "value": "input.rejected_qty"
+          },
+          {
+            "property": "unit",
+            "value": "input.uom == 'Nos' ? 'each' : (input.uom == 'Kg' ? 'kg' : input.uom)"
+          },
+          {
+            "property": "received_at",
+            "value": "timestamp(input.posting_datetime)"
+          }
+        ],
+        "source": {
+          "dataset": "Purchase Receipt Item"
+        },
+        "sourceRecord": "input.parent + '/' + input.name",
+        "subject": "input.name",
+        "target": {
+          "entity": "supply.SupplierReceiptLine.entity",
+          "interface": "supply.ReceiptEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "supply.erp_supplier.source",
+      "sha256": "30ec888a4da1e67bd9b4d690bd3eb18cd9b559ca31622de64017dd8b6e7b4ffb",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.erp_supplier.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

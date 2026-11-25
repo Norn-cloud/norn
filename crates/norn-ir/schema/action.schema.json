@@ -1200,6 +1200,20 @@
             "lifecycle",
             "state"
           ]
+        },
+        {
+          "description": "The target must exist; it is patched and never created.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "update_only"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
         }
       ]
     },
