@@ -423,6 +423,12 @@ pub(crate) fn check_update_lifecycles(
     }
 }
 
+fn unrecorded(reason: &str) -> LifecycleInitRefusal {
+    LifecycleInitRefusal::UnrecordedChange {
+        reason: reason.to_owned(),
+    }
+}
+
 /// The decision path's rules for one written object, replayed over the fact
 /// events its commit records: from absence for a first write
 /// ([`check_first_write_lifecycles`]), from the stored row for an object

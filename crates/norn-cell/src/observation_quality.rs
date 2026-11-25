@@ -36,7 +36,8 @@ fn is_declared_default(
             .filter(|value| !value.is_null())
     };
     let declared = stored(RuntimeObject::new());
-    declared.is_some() && declared == stored(RuntimeObject::from([(member.to_owned(), value.clone())]))
+    declared.is_some()
+        && declared == stored(RuntimeObject::from([(member.to_owned(), value.clone())]))
 }
 
 /// One authoritative page with explicit excluded-row accounting.

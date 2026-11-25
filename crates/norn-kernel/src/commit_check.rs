@@ -553,10 +553,11 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
             CommitStage::Accounting => check_accounting_postings(commit, model, view),
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),
-            CommitStage::Versions => check_versions(commit, model, view, authorization)
-                .and_then(|()| {
+            CommitStage::Versions => {
+                check_versions(commit, model, view, authorization).and_then(|()| {
                     check_lifecycle_writes(commit, model, view, authorization, self.trust)
-                }),
+                })
+            }
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
                 self.links = live_links_after(commit, model, view)?;

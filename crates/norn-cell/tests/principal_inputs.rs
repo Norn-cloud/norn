@@ -794,11 +794,13 @@ fn a_governed_create_writer_reads_resolved_principal_inputs_and_fails_closed() -
     let host = Directory::new(&[("user:alice", &["approver"]), ("user:bob", &["member"])])?;
     let mut cell = open(&directory.path().join("create.sqlite"), &definitions)?;
     let advance = FactKey::new(ADVANCE, "ADV-1");
-    let file = |actor: &str, key: &str| {
-        call_with(&action, actor, key, json!({"advance_id": "ADV-1"}))
-    };
+    let file =
+        |actor: &str, key: &str| call_with(&action, actor, key, json!({"advance_id": "ADV-1"}));
     let untouched = |cell: &Cell, key: &str| -> TestResult {
-        assert!(!cell.load(&advance)?.exists(), "{key}: no object is created");
+        assert!(
+            !cell.load(&advance)?.exists(),
+            "{key}: no object is created"
+        );
         assert!(
             stored_call(cell, "expense.advance.file", key)?.is_none(),
             "{key}: no call record is written"

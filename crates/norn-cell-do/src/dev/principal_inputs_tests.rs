@@ -133,7 +133,11 @@ fn request(host: &DevHost<NativeEngine>, method: &str, path: &str, body: &str) -
             path,
             query: SCOPE,
             authorization: Some(&format!("Bearer {TOKEN}")),
-            now: 1_800_000_000,
+            // The session's own clock: a save after this request installs
+            // at a later time than anything the request commits.
+            now: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs()),
             body,
         },
     );

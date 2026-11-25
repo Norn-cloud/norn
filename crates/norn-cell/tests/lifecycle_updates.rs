@@ -15,10 +15,13 @@ mod common;
 
 use norn_cell::export::Exporter;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model, SqliteCell, StoreOptions};
-use norn_ir::{DecisionOutput, FactChange, ObjectTypeDef, ObjectTypeName, PropertyId, TransitionId};
+use norn_ir::mapping::ObservedLifecycleSnapshot;
+use norn_ir::{
+    DecisionOutput, FactChange, ObjectTypeDef, ObjectTypeName, PropertyId, TransitionId,
+};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::snapshot_observe::{
-    ObservationSynthesis, ObservedLifecycleSnapshot, ObservedSnapshot, prepare_observed_snapshot,
+    ObservationSynthesis, ObservedSnapshot, prepare_observed_snapshot,
 };
 use norn_kernel::{
     CellCommit, CellHost, CommitError, CommitModel, CommitView, DecisionTurn, EnvelopeLimits,
@@ -442,7 +445,11 @@ fn a_legal_transition_with_its_recorded_event_is_admitted() {
     // The decision path over an existing object, and its prepared commit
     // submitted directly: the kernel's own evidence replays.
     let decided = document("D-3");
-    create(&mut cell, &decided, json!({ "status": "draft", "pages": 2 }));
+    create(
+        &mut cell,
+        &decided,
+        json!({ "status": "draft", "pages": 2 }),
+    );
     let model = cell.store().model().clone();
     let catalog = model.type_catalog();
     let slice = load_slice(&cell, [decided.clone()]).expect("slice");
@@ -454,7 +461,10 @@ fn a_legal_transition_with_its_recorded_event_is_admitted() {
         &submit_and_publish(&decided),
     )
     .expect("a decision transitions an existing object");
-    assert_eq!(property(&cell, &decided, "status"), Some(json!("published")));
+    assert_eq!(
+        property(&cell, &decided, "status"),
+        Some(json!("published"))
+    );
 
     let prepared_key = document("D-4");
     create(
@@ -509,7 +519,10 @@ fn an_object_in_an_immutable_or_terminal_state_refuses_unrecorded_changes() {
         ))
         .expect_err("a change in an immutable state"),
     );
-    assert_eq!((refused, changed), (key.clone(), immutable("pages", "submitted")));
+    assert_eq!(
+        (refused, changed),
+        (key.clone(), immutable("pages", "submitted"))
+    );
     // Recording the change does not admit it: a `set` there is refused.
     let (_, recorded) = refusal(
         cell.commit(put(
@@ -807,7 +820,11 @@ fn a_sealed_observation_reconciles_an_existing_lifecycle_and_exempts_only_its_ow
     let mut cell: ObservedCell = open();
     let observed = document("D-1");
     let other = document("D-2");
-    create(&mut cell, &observed, json!({ "status": "draft", "pages": 2 }));
+    create(
+        &mut cell,
+        &observed,
+        json!({ "status": "draft", "pages": 2 }),
+    );
     let version = create(&mut cell, &other, json!({ "status": "draft", "pages": 2 }));
     let before = frozen(&cell);
 
@@ -847,7 +864,10 @@ fn a_sealed_observation_reconciles_an_existing_lifecycle_and_exempts_only_its_ow
     let (commit, authorization) = observe(&cell, &observed, 2, Some("published"));
     cell.commit_observed(commit, authorization)
         .expect("the sealed observation commits");
-    assert_eq!(property(&cell, &observed, "status"), Some(json!("published")));
+    assert_eq!(
+        property(&cell, &observed, "status"),
+        Some(json!("published"))
+    );
     assert_eq!(property(&cell, &other, "status"), Some(json!("draft")));
 }
 
@@ -911,11 +931,9 @@ fn an_unsealed_write_on_an_observed_commit_cannot_carry_a_protected_value() {
     // The sealed write alone is admitted under its own contract, and an
     // ordinary unprotected write may ride with it.
     let (mut commit, authorization) = observe(&cell, &observed, 2, None);
-    commit.writes.push(write(
-        &existing,
-        version,
-        json!({ "label": "renamed" }),
-    ));
+    commit
+        .writes
+        .push(write(&existing, version, json!({ "label": "renamed" })));
     cell.commit_observed(commit, authorization)
         .expect("the sealed observation and an ordinary write commit");
     assert!(cell.load(&observed).expect("loads").values.is_some());
@@ -1117,8 +1135,8 @@ async fn a_history_restore_rebuilds_lifecycle_states_and_the_rule_still_governs_
 
     let mut exporter = Exporter::local(&directory.path().join("export")).expect("exporter");
     let store = cell.store();
-    let exported = exporter.verify().await.expect("verify").head_commit_seq;
-    for seq in exported.saturating_add(1)..=store.export_commit_count().expect("count") {
+    let journaled = exporter.verify().await.expect("verify").head_commit_seq;
+    for seq in journaled.saturating_add(1)..=store.export_commit_count().expect("count") {
         exporter
             .append(&store.export_record(seq).expect("journal").expect("record"))
             .await
@@ -1140,8 +1158,14 @@ async fn a_history_restore_rebuilds_lifecycle_states_and_the_rule_still_governs_
 
     let mut restored = open_at(&target, model);
     assert_eq!(restored.store().read().dump().expect("dump"), dump);
-    assert_eq!(property(&restored, &key, "status"), Some(json!("published")));
-    assert_eq!(property(&restored, &held, "status"), Some(json!("submitted")));
+    assert_eq!(
+        property(&restored, &key, "status"),
+        Some(json!("published"))
+    );
+    assert_eq!(
+        property(&restored, &held, "status"),
+        Some(json!("submitted"))
+    );
     let version = restored.load(&held).expect("loads").version;
     let before = frozen(&restored);
     let (_, jumped) = refusal(

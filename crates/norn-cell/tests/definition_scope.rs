@@ -379,7 +379,7 @@ fn only_the_exact_principal_inputs_recording_form_rides_beside_a_definition_set(
         ("an extra member", extra_member, false),
         ("principalInputs of another type", wrong_type, false),
         ("a non-nullable principalInputs", not_nullable, false),
-        ("the exact recording form", recording.clone(), true),
+        ("the exact recording form", recording, true),
     ] {
         let mut types = vec![item.clone()];
         types.extend(records);

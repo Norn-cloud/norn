@@ -105,13 +105,19 @@ mod tests {
             }
         }
         assert!(scanned > 0, "no source was scanned");
-        assert!(offenders.is_empty(), "compiled out under cfg(kani): {offenders:?}");
+        assert!(
+            offenders.is_empty(),
+            "compiled out under cfg(kani): {offenders:?}"
+        );
         Ok(())
     }
 
     #[test]
     fn the_role_keeps_its_snake_case_wire_spelling() -> Result<(), serde_json::Error> {
-        for (role, wire) in [(Role::Thing, "\"thing\""), (Role::Happening, "\"happening\"")] {
+        for (role, wire) in [
+            (Role::Thing, "\"thing\""),
+            (Role::Happening, "\"happening\""),
+        ] {
             assert_eq!(serde_json::to_string(&role)?, wire);
             assert_eq!(serde_json::from_str::<Role>(wire)?, role);
         }
