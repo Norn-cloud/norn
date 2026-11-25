@@ -62,7 +62,7 @@ function Frame({ title, description, children }: { readonly title: string; reado
 }
 
 function Failure({ text }: { readonly text: string | null }) {
-  return text === null ? null : <p role="alert" className="flex items-center gap-2 text-body text-foreground"><Dot tone="bad" />{text}</p>
+  return text === null ? null : <p role="alert" className="flex items-center gap-2 text-body text-foreground"><Dot tone="bad">{text}</Dot></p>
 }
 
 /** Sign in to continue connecting an assistant. Accounts are made in Studio, not here. */

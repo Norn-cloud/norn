@@ -22,7 +22,7 @@ function Writer({ version }: { readonly version: ObjectVersion }) {
   if (writer.kind === "mapping") {
     return <span>Imported from {systemName(writer.lineage.sourceRecordRef.system)} record <code className="text-meta">{writer.lineage.sourceRecordRef.record}</code> by <code className="text-meta">{writer.lineage.mappingPin.artifactId}</code></span>
   }
-  if (writer.kind === "action") return <span><span className="">{writer.actor}</span> ran <code className="text-meta">{writer.actionId}</code></span>
+  if (writer.kind === "action") return <span><span>{writer.actor}</span> ran <code className="text-meta">{writer.actionId}</code></span>
   return <HiddenWriter />
 }
 

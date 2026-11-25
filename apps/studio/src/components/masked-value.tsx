@@ -117,7 +117,7 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
           <Button variant="outline" size="xs" data-reveal="">Reveal</Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-72 space-y-2 text-body">
-          <p className="">Reveal {property.replaceAll("_", " ")}</p>
+          <p>Reveal {property.replaceAll("_", " ")}</p>
           <p className="text-meta text-muted-foreground">The cell records who revealed it, when and why, before it shows the value.</p>
           <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Purpose (optional)" maxLength={500} aria-label="Purpose" />
           {state.kind === "error" && <p role="alert" className="text-meta text-destructive">{state.message}</p>}

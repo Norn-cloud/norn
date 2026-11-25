@@ -182,15 +182,16 @@ function RequestedCalls() {
         {items.map((item) => (
           <li key={item.id} className="flex min-h-12 flex-wrap items-center gap-3 rounded-(--radius-row) px-3 py-2.5">
             {/* Dot-first (DESIGN.md 4.3, 12): one dot per outcome; the words below say which. */}
-            <Dot tone={requestDot(item)} data-status={item.status} />
-            <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
-              <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-                <span>{requestedAction(actions, item).title}</span>
-                {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
-              </span>
-              <span className="line-clamp-2 text-body">{item.question}</span>
-              <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
-            </button>
+            <Dot tone={requestDot(item)} data-status={item.status}>
+              <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
+                <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+                  <span>{requestedAction(actions, item).title}</span>
+                  {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
+                </span>
+                <span className="line-clamp-2 text-body">{item.question}</span>
+                <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
+              </button>
+            </Dot>
             <RiskChip risk={item.risk} />
             {item.canRun && <Button type="button" size="sm" onClick={() => run(item)}><Play /> Approved, run it</Button>}
           </li>

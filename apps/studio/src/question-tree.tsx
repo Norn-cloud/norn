@@ -6,7 +6,7 @@ import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/compone
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { ListRow, RowList } from "@/components/system/list-row"
-import { Dot } from "@/components/system/status-dot"
+import { Dot, type Word } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
@@ -383,8 +383,8 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
 }
 
 /** A refusal or failure, dot first: the words in neutral text, never a red label (DESIGN.md 13). */
-function Alert({ children, className }: { readonly children: ReactNode; readonly className?: string }) {
-  return <p role="alert" className={`flex items-start gap-2 text-body text-foreground ${className ?? ""}`}><Dot tone="bad" className="mt-[7px]" />{children}</p>
+function Alert({ children, className }: { readonly children: Word; readonly className?: string }) {
+  return <p role="alert" className={`flex items-start gap-2 text-body text-foreground ${className ?? ""}`}><Dot tone="bad" className="mt-[7px]">{children}</Dot></p>
 }
 
 export function QuestionTreePage() {

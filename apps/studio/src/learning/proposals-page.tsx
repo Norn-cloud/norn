@@ -196,7 +196,7 @@ function ProposalsPageContent() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="">{p.target.label ?? p.target.artifactId}</div>
+                        <div>{p.target.label ?? p.target.artifactId}</div>
                         {technical && <code className="font-mono text-meta text-muted-foreground">{p.target.artifactId}</code>}
                       </TableCell>
                       <TableCell><Chip tone={st.tone}>{st.label}</Chip></TableCell>
@@ -378,7 +378,7 @@ function ProposalReview({ proposal: p, record, onOpen }: {
                 <ul className="grid gap-2" aria-label="Checker diagnostics">
                   {p.checker.diagnostics.map((d, index) => (
                     <li key={`${d.code}:${index}`} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
-                      <span className="">{d.message}</span>
+                      <span>{d.message}</span>
                       {technical && <code className="ms-2 font-mono text-meta">{d.code}</code>}
                     </li>
                   ))}
@@ -549,7 +549,7 @@ function ReplayIsland({ replay, technical }: { readonly replay: ProposalReplay |
                     className={cn(blocking && "bg-destructive/5")}>
                     <TableCell className="max-w-xs whitespace-normal">
                       <div className="grid gap-0.5 py-1">
-                        <span className="">{c.label}</span>
+                        <span>{c.label}</span>
                         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                           <Link to="/episodes/$id" params={{ id: c.episodeId }} className="font-mono underline-offset-4 hover:underline">{c.episodeId}</Link>
                           {technical && <code className="font-mono">{c.caseId}</code>}

@@ -123,21 +123,22 @@ function ColumnHead({ column, view }: { readonly column: TransformColumn; readon
 }
 
 /** The first column stays put while the others scroll sideways, as in the records grid. */
-const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)]"
+const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)] rtl:shadow-[-1px_0_0_var(--node-border)]"
 
 const numeric = (column: TransformColumn) => column.type.startsWith("decimal") || column.type === "integer" || column.type === "number"
 
 /**
- * Whether content is hidden past the right edge of the scroller `selector` finds inside `frame`:
+ * Whether content is hidden past the end edge (right, or left in RTL) of the scroller `selector` finds inside `frame`:
  * the edge then fades, as the records grid's does.
  */
-function useRightEdge(selector: string, deps: readonly unknown[]) {
+function useEndEdge(selector: string, deps: readonly unknown[]) {
   const frame = useRef<HTMLDivElement>(null)
-  const [right, setRight] = useState(false)
+  const [end, setEnd] = useState(false)
   useEffect(() => {
     const scroller = frame.current?.querySelector<HTMLElement>(selector)
     if (scroller === null || scroller === undefined) return
-    const measure = () => setRight(scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 1)
+    // RTL scrollers count scrollLeft down from 0, so its size is the distance from the start edge.
+    const measure = () => setEnd(Math.abs(scroller.scrollLeft) + scroller.clientWidth < scroller.scrollWidth - 1)
     measure()
     scroller.addEventListener("scroll", measure, { passive: true })
     // The scroller keeps its box when its content widens (Technical's two-line headers): observe the content too.
@@ -149,11 +150,11 @@ function useRightEdge(selector: string, deps: readonly unknown[]) {
       observer?.disconnect()
     }
   }, [selector, ...deps])
-  return { frame, right }
+  return { frame, end }
 }
 
 function EdgeFade() {
-  return <div aria-hidden data-edge="right" className="pointer-events-none absolute inset-y-px end-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent" />
+  return <div aria-hidden data-edge="end" className="pointer-events-none absolute inset-y-px end-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent rtl:bg-gradient-to-r" />
 }
 
 /**
@@ -178,7 +179,7 @@ function displayed(read: Read<TransformPage>, at: number, column: TransformColum
 function RowsGrid({ read, grains, onTrace }: { readonly read: Read<TransformPage>; readonly grains: ReadonlyMap<string, string>; readonly onTrace: (rowId: string) => void }) {
   const page = read.document
   const { view } = useView()
-  const { frame, right } = useRightEdge("[data-slot=table-container]", [page.rows.length, page.columns.length])
+  const { frame, end } = useEndEdge("[data-slot=table-container]", [page.rows.length, page.columns.length])
   return (
     <div ref={frame} className="relative">
       <TableCard>
@@ -205,7 +206,7 @@ function RowsGrid({ read, grains, onTrace }: { readonly read: Read<TransformPage
           </TableBody>
         </Table>
       </TableCard>
-      {right && <EdgeFade />}
+      {end && <EdgeFade />}
     </div>
   )
 }
@@ -388,7 +389,7 @@ function PlanTab({ id }: { readonly id: string }) {
     const width = Math.max(1, ...nodes.map(({ position }) => position.x + WIDTH))
     return { nodes, edges, height, width }
   }, [document, volumes, lens, selected])
-  const edge = useRightEdge("[data-slot=plan-scroller]", [graph.width])
+  const edge = useEndEdge("[data-slot=plan-scroller]", [graph.width])
   if (plan.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel="Reading transform plan" onRetry={() => void plan.refetch()}>{() => null}</LoadState>
   if (plan.isError) return <ReadError error={plan.error} isFetching={plan.isFetching} onRetry={() => void plan.refetch()} />
   const shown = plan.data.document
@@ -420,7 +421,7 @@ function PlanTab({ id }: { readonly id: string }) {
               </ReactFlow>
             </div>
           </div>
-          {edge.right && <EdgeFade />}
+          {edge.end && <EdgeFade />}
         </div>
         <p className="border-t border-(--well-border) px-3.5 py-2 text-meta text-muted-foreground">{shown.inputs.map(({ alias, objectType }) => `${alias}: ${objectType}`).join(" · ")}</p>
         </Well>

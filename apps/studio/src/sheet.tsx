@@ -74,7 +74,7 @@ const ORDER_LABELS = {
 const SPECIMEN_LOCALE: Locale = (() => { const tag = new URLSearchParams(window.location.search).get("locale"); return isLocale(tag) ? tag : "en" })()
 function OrderFacts() {
   const concept = catalogOf([...DEFINITIONS as unknown as Artifact[], ORDER_LABELS], SPECIMEN_LOCALE).byName.get("commerce.SalesOrder")
-  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang} className="">{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
+  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang}>{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
 }
 
 // The lifecycle view's specimens: the purchase order's approval lifecycle, its counts as one

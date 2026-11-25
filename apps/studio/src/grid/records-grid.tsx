@@ -64,7 +64,7 @@ function Shell({ children }: { readonly children: ReactNode }) {
 }
 
 /** The Record column stays put while the others scroll sideways. */
-const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)]"
+const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)] rtl:shadow-[-1px_0_0_var(--node-border)]"
 
 /**
  * An object type's records, one server page at a time. Sorting, filtering and paging are the
@@ -243,12 +243,13 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
   const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "10.5rem" : "11rem").join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
-  const [edges, setEdges] = useState({ right: false })
+  const [edges, setEdges] = useState({ end: false })
   const measureEdges = () => {
     const el = scroller.current
     if (el === null) return
-    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-    setEdges((current) => current.right === right ? current : { right })
+    // RTL scrollers count scrollLeft down from 0, so its size is the distance from the start edge.
+    const end = Math.abs(el.scrollLeft) + el.clientWidth < el.scrollWidth - 1
+    setEdges((current) => current.end === end ? current : { end })
   }
   useEffect(() => {
     measureEdges()
@@ -308,7 +309,7 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
-            <Dot tone="bad" /><span>{refused.message}</span>
+            <Dot tone="bad"><span>{refused.message}</span></Dot>
             {sortProblems.map((problem) => <span key={`${problem.pointer}:${problem.code}`} className="text-meta">{problem.message}</span>)}
             <span className="flex-1" />
             <Button variant="outline" size="sm" className={pill} onClick={() => { setDraft([]); changeQuery({ sort: [], filter: null }) }}>Reset sort and filter</Button>
@@ -476,7 +477,7 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
               </div>
             </div>
           </div>
-          {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 end-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
+          {edges.end && <div aria-hidden className="pointer-events-none absolute inset-y-0 end-0 z-30 w-12 bg-gradient-to-l from-card to-transparent rtl:bg-gradient-to-r" />}
         </div>
 
         {!shownLifecycle && (

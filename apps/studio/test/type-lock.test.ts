@@ -67,6 +67,7 @@ test("focus is the 2px --ring outline, never a translucent ring that misses 3:1 
 })
 
 test("a status dot fill lives only in the dot primitives, so it always sits beside its word", () => {
+  // The primitives' types then require the word (`Dot`'s children or name; test/system-primitives.test.tsx).
   const owners = new Set(["components/system/status-dot.tsx", "components/ui/badge.tsx"])
   const found = FILES.filter(({ file, text }) => !owners.has(file) && /(?<![\w-])(?:[^\s"'`]*:)?bg-dot-/.test(text)).map(({ file }) => file)
   expect(found).toEqual([])

@@ -67,9 +67,9 @@ function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; 
   }
   return (
     <form aria-label={binding === undefined ? `Bind ${tool.name}` : `Edit ${binding.label}`} className="space-y-3 border-t px-4 py-3" onSubmit={(e) => { e.preventDefault(); submit() }}>
-      <label className="grid gap-1 text-body"><span className="">Name</span><Input aria-label="Binding name" value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} /></label>
+      <label className="grid gap-1 text-body"><span>Name</span><Input aria-label="Binding name" value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} /></label>
       <label className="grid gap-1 text-body">
-        <span className="">Who may run it</span>
+        <span>Who may run it</span>
         <select aria-label="Who may run it" className="h-9 rounded-md border bg-background px-2" value={runRole} onChange={(e) => setRunRole(e.target.value as RunRole)}>
           <option value="member">Members and admins</option>
           <option value="admin">Admins only</option>
@@ -117,7 +117,7 @@ function TestRun({ binding, tool, scope }: { readonly binding: Binding; readonly
     <form aria-label={`Test run ${binding.label}`} className="space-y-3 border-t px-4 py-3" onSubmit={(e) => { e.preventDefault(); submit() }}>
       {fields.map((field) => (
         <label key={field.name} className="grid gap-1 text-body">
-          <span className="">{field.label}{field.required && <span className="text-destructive"> *</span>} <span className="text-meta text-muted-foreground">{field.kind}</span></span>
+          <span>{field.label}{field.required && <span className="text-destructive"> *</span>} <span className="text-meta text-muted-foreground">{field.kind}</span></span>
           <FieldInput field={field} value={texts[field.name] ?? ""} onChange={(next) => setTexts({ ...texts, [field.name]: next })} />
           {field.description && <span className="text-meta text-muted-foreground">{field.description}</span>}
         </label>
@@ -146,7 +146,7 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
     <div className="border-t first:border-t-0" data-binding={binding.id}>
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="">{binding.label}</div>
+          <div>{binding.label}</div>
           <div className="font-mono text-meta text-muted-foreground">{binding.app}.{binding.tool}</div>
         </div>
         <Badge variant="outline">{binding.runRole === "admin" ? "Admins only" : "Members"}</Badge>
@@ -191,7 +191,7 @@ function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
   return (
     <div className="space-y-2 border-t px-4 py-3">
       <label className="flex items-center gap-2 text-body">
-        <span className="">Add a binding for</span>
+        <span>Add a binding for</span>
         <select aria-label="App" className="h-9 rounded-md border bg-background px-2" value={app ?? ""} onChange={(e) => { setApp(e.target.value || null); setBinding(null) }}>
           <option value="">choose an app</option>
           {(inventory.data?.apps ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}

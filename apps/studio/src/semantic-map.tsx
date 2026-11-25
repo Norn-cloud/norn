@@ -5,7 +5,7 @@ import { LoadState } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { Panel, Well } from "@/components/system/panel"
 import { StatStrip, KpiTile } from "@/components/system/kpi-tile"
-import { Dot, StatusDot, type DotTone } from "@/components/system/status-dot"
+import { StatusDot, type DotTone } from "@/components/system/status-dot"
 import { ListRow, RowList } from "@/components/system/list-row"
 import { SourceTag } from "@/components/system/source-tag"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,7 @@ import {
   type SemanticIsland,
   type SemanticLens,
   type SemanticMapAttentionInput,
+  type SemanticNode,
 } from "./lib/semantic-map.ts"
 import { useInbox } from "./inbox.tsx"
 
@@ -41,6 +42,24 @@ function AttentionDot({ tone, label }: { readonly tone: MapAttentionTone; readon
 
 /** A count as the inbox reported it: `20+` when the inbox capped or bounded what it returned. */
 const atLeast = (count: number, approximate: boolean): string => `${count}${approximate ? "+" : ""}`
+
+/** A type's rule holdings and sync errors, each a red dot with its count and noun; nothing when it has neither. */
+function AttentionWords({ node }: { readonly node: SemanticNode }) {
+  return (
+    <>
+      {node.ruleHoldings > 0 && (
+        <StatusDot tone="bad" className="tabular-nums">
+          {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)} {node.ruleHoldings === 1 && !node.ruleHoldingsApproximate ? "holding" : "holdings"}
+        </StatusDot>
+      )}
+      {node.sourceErrors > 0 && (
+        <StatusDot tone="bad" className="tabular-nums">
+          {atLeast(node.sourceErrors, node.sourceErrorsApproximate)} sync {node.sourceErrors === 1 && !node.sourceErrorsApproximate ? "error" : "errors"}
+        </StatusDot>
+      )}
+    </>
+  )
+}
 
 /** A node's or island's attention in words, for when no count badge says it. */
 function attentionWords(tone: MapAttentionTone): string {
@@ -132,15 +151,15 @@ function IslandCard({
         <RowList className="flex-1">
           {preview.map((node) => (
             <li key={node.id}>
+              {/* No lead dot: a type's attention is the end slot's dot and its word, never a colour on its own. */}
               <ListRow
                 onClick={() => onSelectNode(node.id)}
-                lead={<Dot tone={node.attention === "critical" ? "bad" : "quiet"} />}
                 title={node.title}
                 titleLang={node.titleLang}
                 end={(
                   <>
                     <span className="text-meta">{node.fieldCount} facts{node.lawCount > 0 ? ` · ${node.lawCount} ${node.lawCount === 1 ? "law" : "laws"}` : ""}</span>
-                    {node.ruleHoldings > 0 && <StatusDot tone="bad">{atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)}</StatusDot>}
+                    <AttentionWords node={node} />
                   </>
                 )}
               />
@@ -254,7 +273,6 @@ function IslandExpansion({
                     aria-pressed={active}
                     selected={active}
                     onClick={() => onSelectNode(node.id)}
-                    lead={<Dot tone={node.ruleHoldings > 0 || node.sourceErrors > 0 ? "bad" : "quiet"} />}
                     title={node.title}
                     titleLang={node.titleLang}
                     code={node.id}
@@ -266,18 +284,7 @@ function IslandExpansion({
                       </>
                     )}
                     end={node.ruleHoldings > 0 || node.sourceErrors > 0 ? (
-                      <>
-                        {node.ruleHoldings > 0 && (
-                          <StatusDot tone="bad" className="tabular-nums">
-                            {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} {node.ruleHoldings === 1 ? "holding" : "holdings"}
-                          </StatusDot>
-                        )}
-                        {node.sourceErrors > 0 && (
-                          <StatusDot tone="bad" className="tabular-nums">
-                            {atLeast(node.sourceErrors, node.sourceErrorsApproximate)} sync
-                          </StatusDot>
-                        )}
-                      </>
+                      <AttentionWords node={node} />
                     ) : (
                       <span data-slot="node-status">
                         <AttentionDot tone={node.attention} label={attentionWords(node.attention)} />

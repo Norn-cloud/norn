@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react"
 import type { ComponentProps, ReactNode } from "react"
 import { SourceTag } from "./source-tag"
-import { Dot as StatusMark, StatusDot, type DotTone } from "./status-dot"
+import { StatusDot, type DotTone, type Word } from "./status-dot"
 import { cn } from "@/lib/utils"
 
 /** The detail colours of the design system: a dot or a series takes one; a surface or a label fill never does. */
@@ -10,11 +10,6 @@ export type Tone = "gray" | "green" | "amber" | "red" | "blue" | "violet" | "tea
 // A state reads in the saturated dot tokens (DESIGN.md 4.3); the other tones mark a kind or a category.
 const DOT_TONE: Readonly<Record<Tone, DotTone>> = {
   gray: "quiet", green: "live", amber: "held", red: "bad", blue: "blue", violet: "violet", teal: "teal", pink: "pink", orange: "orange",
-}
-
-/** A 6px round mark in a tone, always beside its word; `pulse` for something live (off under reduced motion). */
-export function Dot({ tone, pulse = false, className }: { tone: Tone; pulse?: boolean; className?: string }) {
-  return <StatusMark tone={DOT_TONE[tone]} pulse={pulse} className={className} />
 }
 
 /**
@@ -31,7 +26,7 @@ export function Chip({ tone = "gray", icon: Icon, dot = false, pulse = false, mo
   dot?: boolean
   pulse?: boolean
   mono?: boolean
-  children: ReactNode
+  children: Word
 } & Omit<ComponentProps<"span">, "children">) {
   const status = tone !== "gray" || dot
   return status

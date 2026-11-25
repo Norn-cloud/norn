@@ -626,8 +626,7 @@ export function SplitPaneReview({
                             onClick={(event) => { event.stopPropagation(); onJumpToAliases() }}
                             className="inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-meta text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring max-sm:min-h-[44px]"
                           >
-                            <Dot tone="held" />
-                            Unresolved alias — match in Step 1
+                            <Dot tone="held">Unresolved alias — match in Step 1</Dot>
                           </button>
                         )}
                         {entity.kind === "ignored" && (
@@ -776,40 +775,41 @@ export function SplitPaneReview({
                           data-row-outcome={outcome.kind}
                           className="flex flex-wrap items-center gap-2 text-meta text-foreground"
                         >
-                          <Dot tone={outcome.kind === "committed" ? "live" : outcome.kind === "pending" || outcome.kind === "stale" ? "held" : "bad"} />
-                          {outcome.kind === "committed" && (
-                            <>
-                              <span className="tabular-nums">
-                                Committed (commit {outcome.receipt.receipt.commitSeq}) — awaiting authoritative read from cell.
+                          <Dot tone={outcome.kind === "committed" ? "live" : outcome.kind === "pending" || outcome.kind === "stale" ? "held" : "bad"}>
+                            {outcome.kind === "committed" && (
+                              <>
+                                <span className="tabular-nums">
+                                  Committed (commit {outcome.receipt.receipt.commitSeq}) — awaiting authoritative read from cell.
+                                </span>
+                                <CopyId value={outcome.receipt.receipt.receiptHash} short={10} />
+                              </>
+                            )}
+                            {outcome.kind === "pending" && (
+                              <span>
+                                Pending approval decision <code className="font-mono">{outcome.decisionId}</code> — nothing is committed until approved.
                               </span>
-                              <CopyId value={outcome.receipt.receipt.receiptHash} short={10} />
-                            </>
-                          )}
-                          {outcome.kind === "pending" && (
-                            <span>
-                              Pending approval decision <code className="font-mono">{outcome.decisionId}</code> — nothing is committed until approved.
-                            </span>
-                          )}
-                          {outcome.kind === "stale" && <span>{outcome.message}</span>}
-                          {outcome.kind === "refused" && (
-                            <span>
-                              <span className="font-mono">{outcome.code}</span>: {outcome.message}
-                            </span>
-                          )}
-                          {outcome.kind === "error" && (
-                            <>
-                              <span className="min-w-0 flex-1">{outcome.message}</span>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                disabled={!canPromote}
-                                onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
-                              >
-                                Retry
-                              </Button>
-                            </>
-                          )}
+                            )}
+                            {outcome.kind === "stale" && <span>{outcome.message}</span>}
+                            {outcome.kind === "refused" && (
+                              <span>
+                                <span className="font-mono">{outcome.code}</span>: {outcome.message}
+                              </span>
+                            )}
+                            {outcome.kind === "error" && (
+                              <>
+                                <span className="min-w-0 flex-1">{outcome.message}</span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!canPromote}
+                                  onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
+                                >
+                                  Retry
+                                </Button>
+                              </>
+                            )}
+                          </Dot>
                         </div>
                       )}
 

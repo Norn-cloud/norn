@@ -97,7 +97,7 @@ export function ProfilePanel({ objectType, scope, scales = new Map() }: {
                 const ranged = property.kind === "numeric" || property.kind === "temporal"
                 return (
                   <TableRow key={property.property}>
-                    <TableCell><div className="">{property.property.replaceAll("_", " ")}</div><div className="text-meta text-muted-foreground">{property.kind}</div></TableCell>
+                    <TableCell><div>{property.property.replaceAll("_", " ")}</div><div className="text-meta text-muted-foreground">{property.kind}</div></TableCell>
                     <TableCell className="text-end tabular-nums">{property.count}</TableCell>
                     <TableCell className="text-end tabular-nums" title={`${property.nulls} of ${property.count + property.nulls}`}>{percent(property.nulls, property.count + property.nulls)}</TableCell>
                     <TableCell className="text-end tabular-nums">{property.distinct}</TableCell>

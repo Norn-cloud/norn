@@ -11,7 +11,7 @@ test("step: create, view, edit, delete, duplicate, move, undo/redo, validate, sa
   await page.getByRole("button", { name: "Wait", exact: true }).click()
   await expect(node(page, "sleep")).toContainText("60000 ms")
   await expect(node(page, "sleep")).toContainText("1 problem")
-  await expect(page.getByText("canvas.flow.unreachable").first()).toBeVisible()
+  await expect(page.locator('[data-code="canvas.flow.unreachable"]').first()).toBeVisible()
   await page.getByLabel("Wait (milliseconds)").fill("5000")
   await page.getByLabel("Wait (milliseconds)").blur()
   await expect(node(page, "sleep")).toContainText("5000 ms")
@@ -61,7 +61,7 @@ test("connection: create, view, delete, reconnect, undo/redo, validate, reopen",
   // reconnect: move its end onto remind, which already has an entry: a join the canvas names.
   await clickEdge(page, "overdue.next")
   await drag(page, edge(page, "overdue.next").locator(".react-flow__edgeupdater-target"), into(page, "remind"))
-  await expect(page.getByText("canvas.flow.join").first()).toBeVisible()
+  await expect(page.locator('[data-code="canvas.flow.join"]').first()).toBeVisible()
   await press(page, "z")
   await expect(page.getByText("Checker: no findings")).toBeVisible()
   // validate through lowering: leaving by otherwise instead leaves the remind path without an outcome.
@@ -69,12 +69,12 @@ test("connection: create, view, delete, reconnect, undo/redo, validate, reopen",
   await page.keyboard.press("Delete")
   await drag(page, out(page, "overdue", "otherwise"), into(page, "open"))
   await expect(edge(page, "overdue.otherwise")).toHaveCount(1)
-  await expect(page.getByText("NORN-FLOW-RESULT").first()).toBeVisible()
+  await expect(page.locator('[data-code="NORN-FLOW-RESULT"]').first()).toBeVisible()
   // reopen: the drawn connection and its finding come back after a reload.
   await page.reload()
   await page.getByRole("button", { name: "Automation", exact: true }).click()
   await expect(edge(page, "overdue.otherwise")).toHaveCount(1)
-  await expect(page.getByText("NORN-FLOW-RESULT").first()).toBeVisible()
+  await expect(page.locator('[data-code="NORN-FLOW-RESULT"]').first()).toBeVisible()
 })
 
 test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", async ({ page }) => {
@@ -83,12 +83,12 @@ test("tool binding: view, edit tool and inputs, undo/redo, validate, reopen", as
   await expect(page.getByLabel("invoiceId (string)")).toHaveValue("invoice.id")
   await page.getByLabel("invoiceId (string)").fill("invoice.amountMinor")
   await page.getByLabel("invoiceId (string)").blur()
-  await expect(page.getByText("NORN-FLOW-VALUE").first()).toBeVisible()
+  await expect(page.locator('[data-code="NORN-FLOW-VALUE"]').first()).toBeVisible()
   await expect(node(page, "remind")).toContainText("problem")
   await press(page, "z")
   await expect(page.getByText("Checker: no findings")).toBeVisible()
   await press(page, "Shift+z")
-  await expect(page.getByText("NORN-FLOW-VALUE").first()).toBeVisible()
+  await expect(page.locator('[data-code="NORN-FLOW-VALUE"]').first()).toBeVisible()
   await page.getByLabel("Name its result").fill("reminder")
   await page.getByLabel("Name its result").blur()
   await page.getByLabel("Tool").selectOption("billing.load_invoice")

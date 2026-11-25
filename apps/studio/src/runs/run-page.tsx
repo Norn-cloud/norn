@@ -141,7 +141,7 @@ export function RunPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Icon className={cn("size-4 shrink-0", s.tone, step.status === "running" && "animate-spin")} aria-hidden />
                 <span className="text-meta text-muted-foreground tabular-nums">{index + 1}</span>
-                <span className="">{stepTitle(step)}</span>
+                <span>{stepTitle(step)}</span>
                 <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground">{KIND[step.kind]}</span>
                 <span className="flex-1" />
                 <span className={cn("text-meta", s.tone)}>{statusLabel}</span>

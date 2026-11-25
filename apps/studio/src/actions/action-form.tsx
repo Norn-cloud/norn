@@ -446,7 +446,7 @@ function Steps({ sections, step, reached, counts, onGo }: {
       <p aria-live="polite" className="flex items-baseline gap-1.5 text-body">
         <span className="text-muted-foreground tabular-nums">Step {step + 1} of {names.length}</span>
         <span aria-hidden className="text-muted-foreground">·</span>
-        <span className="">{names[step]}</span>
+        <span>{names[step]}</span>
       </p>
       <nav aria-label="Steps">
         <ol className="flex gap-1">
@@ -550,7 +550,7 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
   const shown = atFields ? top : phase.diagnostics
   return (
     <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-body">
-      <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="">{REFUSED[phase.code] ?? phase.message}</span></span>
+      <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span>{REFUSED[phase.code] ?? phase.message}</span></span>
       {guard !== null && <span className="text-body text-foreground">Requires: {guard}</span>}
       {/* A guard the cell quoted is shown in words above; its declared text stays under Technical. */}
       {(guard === null || technical) && (phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>)}

@@ -311,7 +311,7 @@ export function CanvasPageView({ definitions, names = NO_NAMES }: { readonly def
       </div>
       {kind === "automation" && <AutomationEditor />}
       {kind === "lifecycle" && definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-body text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
-      {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="flex items-start gap-2 p-6 text-body text-foreground" role="alert"><Dot tone="bad" className="mt-[7px]" />The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
+      {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="flex items-start gap-2 p-6 text-body text-foreground" role="alert"><Dot tone="bad" className="mt-[7px]">The definitions could not be read: {definitions.error.message}</Dot></p></Well></Panel>}
       {kind === "lifecycle" && definitions.data && found.length === 0 && <Panel label="Canvas"><Well><EmptyState icon={Network}>No admitted definition declares a lifecycle yet.</EmptyState></Well></Panel>}
       {kind === "lifecycle" && lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} names={editorNames} />}
     </section>

@@ -925,9 +925,10 @@ function ConnectionBanner() {
   if (retrying) {
     return (
       <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 text-body text-foreground md:px-8">
-        <Dot tone="held" />
-        <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
-        <span>Couldn't reach the cell.</span>
+        <Dot tone="held">
+          <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
+          <span>Couldn't reach the cell.</span>
+        </Dot>
         <span className="text-muted-foreground">Reconnecting…</span>
         <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
       </div>
@@ -940,24 +941,25 @@ function ConnectionBanner() {
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2.5 text-body md:px-8">
-      <Dot tone="bad" />
-      <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
-      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="text-foreground">Workspace unavailable.</span>
-        <span className="text-muted-foreground">{info.headline}</span>
-        {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
-        {reachable !== null && reachableLabel !== null && (
-          <span className="text-meta text-muted-foreground">
-            · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
-          </span>
-        )}
-        {info.incidentId && (
-          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
-        )}
-        {view === "technical" && info.code && (
-          <span className="font-mono text-meta text-muted-foreground">· {info.code}</span>
-        )}
-      </div>
+      <Dot tone="bad">
+        <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-foreground">Workspace unavailable.</span>
+          <span className="text-muted-foreground">{info.headline}</span>
+          {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
+          {reachable !== null && reachableLabel !== null && (
+            <span className="text-meta text-muted-foreground">
+              · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
+            </span>
+          )}
+          {info.incidentId && (
+            <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
+          )}
+          {view === "technical" && info.code && (
+            <span className="font-mono text-meta text-muted-foreground">· {info.code}</span>
+          )}
+        </div>
+      </Dot>
       <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )

@@ -158,7 +158,7 @@ export function ProposalCard({ proposal, catalog, preview }: { readonly proposal
       <header className="flex flex-wrap items-start gap-2">
         <Sparkles aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="">{proposal.definition.title}</h3>
+          <h3>{proposal.definition.title}</h3>
           <p className="text-meta text-muted-foreground">You asked: “{proposal.request}”</p>
         </div>
         <Badge variant={state.variant}>{state.label}</Badge>

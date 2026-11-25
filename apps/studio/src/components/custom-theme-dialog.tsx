@@ -113,7 +113,7 @@ export function CustomThemeDialog({
 
           {issues.length > 0 && (
             <div role="alert" data-slot="theme-validation-errors" className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-meta text-destructive-text">
-              <div className="">Could not apply theme ({issues.length} {issues.length === 1 ? "issue" : "issues"}):</div>
+              <div>Could not apply theme ({issues.length} {issues.length === 1 ? "issue" : "issues"}):</div>
               <ul className="list-disc space-y-0.5 ps-4">
                 {issues.map((issue, idx) => (
                   <li key={`${issue.path}:${idx}`}>

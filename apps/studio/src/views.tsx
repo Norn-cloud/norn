@@ -373,11 +373,11 @@ export function ViewsPage() {
         primary={<Button disabled={!cellAvailable} onClick={() => void navigate({ to: "/views/new" })}><Plus />New view</Button>}
       />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />{scope.error.message}</p>}
+      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">{scope.error.message}</Dot></p>}
       {cellAvailable && list.isPending && <p className="text-muted-foreground">Reading views…</p>}
       {list.isError && <EmptyState icon={Bookmark}>{failure(list.error)}</EmptyState>}
-      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />Not duplicated. {failure(duplicate.error)}</p>}
-      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />Not deleted. {failure(remove.error)}</p>}
+      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not duplicated. {failure(duplicate.error)}</Dot></p>}
+      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not deleted. {failure(remove.error)}</Dot></p>}
       {receipts.map((receipt) => <DeletionReceiptNotice key={receipt.id} receipt={receipt} store={views} onRestored={() => void refresh()} />)}
       {list.data?.length === 0 && (
         <EmptyState
@@ -543,10 +543,10 @@ function ScopedViewDetail({ id, store = views }: {
       </div>
 
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />{scope.error.message}</p>}
+      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">{scope.error.message}</Dot></p>}
       {detailScopeMismatch && <p role="alert" className="text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>}
-      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />Not duplicated. {failure(duplicate.error)}</p>}
-      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />Not deleted. {failure(remove.error)}</p>}
+      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not duplicated. {failure(duplicate.error)}</Dot></p>}
+      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not deleted. {failure(remove.error)}</Dot></p>}
       {!detailScopeMismatch && (scope.isPending || (cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {!detailScopeMismatch && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
       {deleted && <DeletionReceiptNotice receipt={deleted} store={store} onRestored={() => { invalidate(); void stored.refetch() }} />}
@@ -1168,7 +1168,7 @@ export function ViewEditorPage() {
         )}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad" />{scope.error.message}</p>}
+      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">{scope.error.message}</Dot></p>}
       {(scope.isPending || read.isPending || (!fresh && cellAvailable && latched === null && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {read.isError && <EmptyState icon={Bookmark}>{read.error.message}</EmptyState>}
       {latched === null && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}

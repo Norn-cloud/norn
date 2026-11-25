@@ -198,7 +198,7 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
           {waiting && <p role="status" className="flex items-center gap-2 text-body text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{status === "connecting" ? "Connecting…" : "Thinking…"}</p>}
           {error !== null && (
             <div role="alert" className="rounded-xl border bg-card p-3 text-body">
-              <p className="">Sidekick couldn't answer.</p>
+              <p>Sidekick couldn't answer.</p>
               <p className="text-muted-foreground">{error}</p>
             </div>
           )}

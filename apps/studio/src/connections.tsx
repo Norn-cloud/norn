@@ -59,7 +59,7 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
     <div className="border-t first:border-t-0" data-requirement={requirement.requirement}>
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="">{account === null ? requirement.requirement : label ?? account}</div>
+          <div>{account === null ? requirement.requirement : label ?? account}</div>
           <div className="text-meta text-muted-foreground">{requirement.requirement}{requirement.state && ` · ${requirement.state.replaceAll("_", " ")}`}</div>
         </div>
         {account === null
