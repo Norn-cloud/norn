@@ -564,8 +564,9 @@ One defect is reported. Defects of structure, bounds, positions and single
 rings up to `geo.shape.antimeridian_edge` are reported in document order. The
 defects of one `Polygon` or `MultiPolygon` follow in this order: a degenerate
 ring; a ring that crosses or touches itself; two rings of one polygon that
-share a point; two polygons that share a point; winding; a hole outside its
-exterior ring; a hole inside another; a polygon inside another's area.
+share a point; two polygons that share a point; winding; then, per polygon, a
+hole outside its exterior ring and a hole inside another; a polygon inside
+another's area.
 
 The coordinate refusals of GEO-POINT-1 apply to every position.
 
@@ -594,7 +595,31 @@ only by its content digest (`FunctionReceipt::content_digest` under
 `action.receipt_body_forbidden` or `action.receipt_reference_invalid`. The cell
 host resolves the digest within its scope, world and the declared manifest, and
 re-runs RECEIPT-AUTH-BIND-1 against the persisted reconciliation acceptance. A
-host without receipt support refuses `action.receipt_effect_unsupported`.
+host without receipt support refuses `action.receipt_effect_unsupported`. The
+durable host (`SqliteCell`) resolves only evidence retained by RECEIPT-STORE-1
+(Core 04), and only once the host has installed its Function command-authority
+recheck; without one it refuses `action.receipt_effect_unsupported`. It
+re-derives the retained dispatch pins and re-reconciles, in one read
+snapshot, at its effective clock (its own clock raised to the cell's durable
+clock floor), state and authority (T2-RES-1 step 8): a re-issued, cancelled or
+expired command, revoked command authority or a moved relevant-state pin
+refuses `action.receipt_not_accepted`; a consumed delivery refuses
+`action.receipt_replayed`. The command state's version, read from the same row
+as the state, joins the reconciliation pins as a compare-and-swap read. Every
+commit that consumes a pending `norn.function/v1` delivery applies its result,
+through an action or `Acceptance::commit`. Inside that commit's transaction the
+host rechecks the dispatch's scope, its deadline and the command authority at
+the commit's effective clock, even when the commit itself writes nothing. A
+host commit consuming the pending result of a Function command, or a result
+delivery not pending at its exact generation (including a generation no
+stored delivery can carry), takes its time from the durable
+clock floor inside its transaction, so a losing or stale consumer refuses
+`action.receipt_not_pending`, never a clock regression. A failed recheck
+refuses `action.receipt_not_accepted` (`CommitError::ReceiptNotAccepted`) with
+nothing applied. Only the dedicated refusal entry point
+(`SqliteCell::commit_result_refusal`), chosen per call, consumes a pending
+Function delivery without the recheck, and its final store batch must apply
+nothing (no write, fact, link, event, effect or quantity posting).
 
 The kernel then checks the pins it can see. The receipt's manifest equals the
 declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
@@ -626,7 +651,20 @@ and the consumption as one ledger commit and replays an exact retry;
 with no commit; **RECEIPT-CONSUME-RUN** refuses a receipt of another run or
 generation with the delivery still pending; **RECEIPT-CONSUME-ATOMIC** shows no
 transition without consumption and no consumption without transition
-(`crates/norn-kernel/tests/receipt_effect.rs`).
+(`crates/norn-kernel/tests/receipt_effect.rs`). On the durable host,
+**RECEIPT-CONSUME-DURABLE** covers retained intake, atomic consumption across a
+crash and reopen, exact-retry replay, foreign scope or world, wrong manifest,
+invocation, run or recorded result, an intake retry that reruns every check,
+stale and expired evidence, command authority revoked before resolution or
+between resolution and commit (through an action or an embedded
+`Acceptance::commit`, including read-only, event-only and effect-only
+commits), refusal records, a stale-generation consumer behind a later clock, a command state another handle moves after resolution, another
+handle's clock moving before intake, resolution or commit, a losing consumer
+behind a later clock, one winner of
+concurrent consumers, laws and caller authority still deciding
+publication, forks and restored cells holding no evidence, and a host without
+the authority recheck failing closed
+(`crates/norn-cell/tests/receipt_consume.rs`).
 
 ## Observed canonical relation claims (#823)
 

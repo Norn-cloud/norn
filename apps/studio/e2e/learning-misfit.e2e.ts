@@ -23,7 +23,7 @@ const DRAFT_PROPOSAL = {
   title: "Draft gap proposal",
   description: "Draft a definition diff citing episodes for review and replay.",
   objectKind: "learning.GapProposal",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "proposalId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {
@@ -84,7 +84,7 @@ async function openMisfit(page: Page, options: MisfitOpenOptions = {}) {
   await page.route("**/api/host/v1/actions**", (route) => {
     if (mode !== "fixture") return route.fulfill({ status: 404, body: "not found" })
     const request = route.request()
-    if (request.method() === "GET") return route.fulfill({ json: { items: [DRAFT_PROPOSAL] } })
+    if (request.method() === "GET") return route.fulfill({ json: { definitionsVersion: 1, items: [DRAFT_PROPOSAL] } })
     const actionId = decodeURIComponent(new URL(request.url()).pathname.split("/v1/actions/")[1] ?? "")
     const { input } = JSON.parse(request.postData() ?? "{}") as { input: Record<string, unknown> }
     actionCalls.push({ actionId, input })

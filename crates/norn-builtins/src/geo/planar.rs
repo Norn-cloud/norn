@@ -36,7 +36,7 @@ use super::GeoRefusal;
 ///
 /// # Errors
 /// The [`GeoRefusal`] naming the first kind of defect, in the order the
-/// checks are listed in Core 07.
+/// checks are listed in Core 07 (the two hole checks run per polygon).
 pub(super) fn check_polygons(polygons: &[Polygon<f64>]) -> Result<(), GeoRefusal> {
     let mut edges = Vec::new();
     for (polygon_index, polygon) in polygons.iter().enumerate() {
