@@ -208,12 +208,25 @@ export interface ObjectCell {
   readonly rows: Holding[]
 }
 
-/** Serve `rows` as canon.Holding on the Studio Worker's host route, as CELL-DO will. */
+/**
+ * The cell's definitions read (`GET /v1/definitions`), as a cell that serves records answers it: the three
+ * systems' artifacts, so the page's mode is live and its records are that cell's (#1754: a mode decided
+ * recorded reads only the recording). Every other definitions route falls through to what a test or
+ * `viewsCell` routes, and any of them registered later answers the read instead.
+ */
+export async function servedDefinitions(page: Page) {
+  await page.route("**/api/host/v1/definitions**", (route: Route) => new URL(route.request().url()).pathname.endsWith("/v1/definitions")
+    ? route.fulfill({ json: { artifacts: JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown } })
+    : route.fallback())
+}
+
+/** Serve `rows` as canon.Holding on the Studio Worker's host route, as CELL-DO will, with the cell's definitions read. */
 export async function objectCell(page: Page, initial: readonly Holding[]): Promise<ObjectCell> {
   const rows = [...initial]
   const requests: URL[] = []
   let snapshot = 1
   let fail = false
+  await servedDefinitions(page)
   await page.route("**/api/host/v1/objects/**", async (route: Route) => {
     const url = new URL(route.request().url())
     requests.push(url)

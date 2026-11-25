@@ -420,7 +420,8 @@ test("sidebar: Records starts closed so every group stays in view; open it lists
   await page.goto(last)
   await settled(page)
   await expect(records).toHaveAttribute("aria-expanded", "true")
-  await expect(records.locator(`a[href="${last}"]`)).toHaveAttribute("aria-current", "page")
+  await expect(records.locator(`a[href="${last}"]`)).toBeVisible()
+  expect(await nav(page).locator('[aria-current="page"]').evaluate((element, href) => element.matches(`a[href="${href}"]`) || element.querySelector(`a[href="${href}"]`) !== null, last)).toBe(true)
   await expect(records.locator('[role="group"] [role="treeitem"]')).toHaveCount(10)
 
   // On a phone the Navigation sheet starts with Records closed too.

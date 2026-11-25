@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
-import { session } from "./object-cell.ts"
+import { servedDefinitions, session } from "./object-cell.ts"
 
 // PRIVACY-1/2: the grid shows what the server sent for a marked property: a pseudonym chip for a
 // viewer, a blurred chip with "Reveal" for a reader whose policy allows it, and the value with Copy
@@ -27,6 +27,7 @@ async function partyCell(page: Page, reader: "viewer" | "auditor", options: { re
   const reveals: unknown[] = []
   const revealScopes: { readonly orgId: string | null; readonly environmentId: string | null; readonly expectedOrg: string | null; readonly expectedEnv: string | null }[] = []
   let failNext = options.failFirstReveal === true
+  await servedDefinitions(page)
   await page.route("**/api/host/v1/objects/**", async (route) => {
     const url = new URL(route.request().url())
     if (route.request().method() === "POST" && url.pathname.endsWith("/reveal")) {
@@ -197,7 +198,21 @@ test("the pseudonym chip has no tinted fill and keeps 4.5:1 ink in light and dar
         }
         return getComputedStyle(document.body).backgroundColor
       }
-      return { fill: style.backgroundColor, ink: style.color, ground: ground(element.parentElement) }
+      // Any CSS colour (oklab, color-mix) as the sRGB the screen shows, read back through a canvas.
+      const canvas = document.createElement("canvas")
+      canvas.width = 1
+      canvas.height = 1
+      const context = canvas.getContext("2d", { willReadFrequently: true })!
+      const srgb = (color: string, under = "#ffffff") => {
+        context.fillStyle = under
+        context.fillRect(0, 0, 1, 1)
+        context.fillStyle = color
+        context.fillRect(0, 0, 1, 1)
+        const [r, g, b] = context.getImageData(0, 0, 1, 1).data
+        return `rgb(${r}, ${g}, ${b})`
+      }
+      const under = srgb(ground(element.parentElement))
+      return { fill: style.backgroundColor, ink: srgb(style.color, under), ground: under }
     })
     expect(painted.fill, scheme).toBe("rgba(0, 0, 0, 0)")
     const rgb = (text: string) => (text.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number)

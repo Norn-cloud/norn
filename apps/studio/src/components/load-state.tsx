@@ -1,5 +1,6 @@
+import { QueryClientContext, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react"
+import { use, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react"
 import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
 import { CopyId } from "@/components/copy-id"
 import { Disclosure } from "@/components/disclosure"
@@ -7,10 +8,11 @@ import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"
-import { NotServed } from "@/lib/live-transport"
+import { NotServed, retryMode, useMode } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
+import type { Workspace } from "@/lib/workspace"
 
 /** Wait before showing a quiet "Taking longer than usual…" hint beneath a skeleton. */
 export const SLOW_WAIT_MS = 4_000
@@ -101,6 +103,20 @@ const unavailableListeners = new Set<() => void>()
 const announceUnavailable = () => { for (const listener of unavailableListeners) listener() }
 const subscribeUnavailable = (listener: () => void) => { unavailableListeners.add(listener); return () => { unavailableListeners.delete(listener) } }
 
+/**
+ * Read the workspace again: the mode (and the scope when its read failed), then every read that failed
+ * with it. The shell's banner and a page's full Workspace unavailable state retry the same way.
+ */
+export function retryWorkspace(client: QueryClient): void {
+  void retryMode(client)
+  void client.invalidateQueries({
+    predicate: (query) => {
+      const head = query.queryKey[0]
+      return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+    },
+  })
+}
+
 /** Whether the page itself shows a full Workspace unavailable state (its message, incident and Retry). */
 export function useWorkspaceUnavailableShown(): boolean {
   return useSyncExternalStore(subscribeUnavailable, () => unavailableShown > 0, () => false)
@@ -134,6 +150,13 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
   const reachableLabel = formatLastReachable(reachable)
   const nonRetryable = info.retryable === false
   useShownUnavailable()
+  // This is the page's one Workspace unavailable state (the banner only points here), so its Retry also
+  // reads the workspace again when the shell's own read of it failed, as the banner's Retry used to.
+  const client = use(QueryClientContext)
+  const retry = onRetry && (() => {
+    if (client?.getQueryCache().findAll({ queryKey: ["studio-mode"] }).some((query) => query.state.status === "error")) retryWorkspace(client)
+    onRetry()
+  })
   return (
     <div role="alert" tabIndex={-1} data-workspace-unavailable="" data-retryable={nonRetryable ? "false" : "true"}
       className={`scroll-mt-20 rounded-(--radius-panel) border border-(--panel-border) bg-card text-body shadow-(--panel-shadow) outline-none ${compact ? "p-3.5" : "p-5"}`}>
@@ -168,8 +191,8 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
             </Disclosure>
           )}
         </div>
-        {onRetry && (
-          <Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
+        {retry && (
+          <Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={retry}>
             <RefreshCw className={isFetching ? "animate-spin" : undefined} />Retry
           </Button>
         )}
@@ -362,4 +385,31 @@ export function LoadState<T>({
     )
   }
   return <>{children(data)}</>
+}
+
+/**
+ * A section before its workspace is decided (`lib/workspace.tsx`): its skeleton while the mode is read,
+ * and Workspace unavailable with the mode's own Retry once the read failed. It reads nothing itself.
+ */
+export function WorkspaceUndecided({ workspace, bone, skeleton, loadingLabel }: {
+  readonly workspace: Extract<Workspace, { readonly kind: "deciding" | "unavailable" }>
+  readonly bone?: StudioBoneName
+  readonly skeleton?: SkeletonKind
+  readonly loadingLabel?: string
+}) {
+  const queries = useQueryClient()
+  const mode = useMode()
+  return (
+    <LoadState
+      status={workspace.kind === "deciding" ? "pending" : "error"}
+      error={workspace.kind === "unavailable" ? workspace.error : null}
+      isFetching={mode.isFetching}
+      onRetry={() => void retryMode(queries)}
+      {...bone === undefined ? {} : { bone }}
+      {...skeleton === undefined ? {} : { skeleton }}
+      {...loadingLabel === undefined ? {} : { loadingLabel }}
+    >
+      {() => null}
+    </LoadState>
+  )
 }

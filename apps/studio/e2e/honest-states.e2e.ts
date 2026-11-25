@@ -353,7 +353,7 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   // Explicit Retry recovers once the gateway is back.
   await page.clock.resume()
   gatewayDown = false
-  await banner.getByRole("button", { name: "Retry" }).click()
+  await page.locator("[data-workspace-unavailable]").getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 })

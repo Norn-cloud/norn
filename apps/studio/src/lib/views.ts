@@ -1,7 +1,9 @@
 import type { Fetch } from "./cell-read.ts"
 import { CellUnavailable, defaultFetch, NO_DATA_CELL, readAtScope, readStudioScope, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
 import type { Predicate, RecordsQuery, SortKey } from "./records-query.ts"
-import { readRecordsAtScope, type RecordsRead } from "./records-source.ts"
+import { readRecordsAtScope } from "./raw/records.ts"
+import type { RecordsRead } from "./records-source.ts"
+import type { DecidedScope } from "./workspace.tsx"
 
 export { WORKSPACE_CHANGED_MESSAGE }
 
@@ -250,14 +252,15 @@ export function cellViews(
   }
 
   /**
-   * Read a page of records bound explicitly to `expectedScope`. Verifies `/api/me` matches both
-   * before dispatch (refusing with zero `/api/host` requests on mismatch) and after resolution
-   * (discarding any in-flight response that resolves after a scope switch).
+   * Read a page of records bound explicitly to `expectedScope`, the workspace the page's mode decided
+   * (`lib/workspace.tsx`). Verifies `/api/me` matches both before dispatch (refusing with zero
+   * `/api/host` requests on mismatch) and after resolution (discarding any in-flight response that
+   * resolves after a scope switch).
    */
   const preview = async (
     objectType: string,
     query: RecordsQuery,
-    expectedScope: StudioScope,
+    expectedScope: DecidedScope,
     signal?: AbortSignal,
   ): Promise<RecordsRead> => readAtScope(
     expectedScope, readScope, () => readRecordsAtScope(objectType, query, expectedScope, fetcher, signal), signal, WORKSPACE_CHANGED_MESSAGE,

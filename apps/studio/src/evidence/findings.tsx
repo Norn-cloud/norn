@@ -8,6 +8,7 @@ import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { useLocale } from "@/lib/locale"
 import { transport } from "@/lib/transport"
 import { catalogOf, lawHeadline } from "../lib/catalog.ts"
+import { useCatalog } from "../lib/use-catalog.ts"
 import { readableTime } from "../lib/format.ts"
 import { useView } from "../lib/view.tsx"
 import { Disclosure } from "@/components/disclosure"
@@ -15,8 +16,7 @@ import { compared, isList, roleOf } from "../lib/law-values.ts"
 import { atScale } from "../lib/objects.ts"
 import { EvidenceList } from "./evidence-crop.tsx"
 import type { Evidence, Finding, RuleRef } from "./review.ts"
-import type { StudioScope } from "../lib/definitions.ts"
-import { findingsQuery } from "../lib/record-read.ts"
+import type { ScopedReader } from "../lib/workspace.tsx"
 
 /** The rule a finding records, by its stable id: shown only under Technical, beside the rule's name. */
 function ruleId(rule: RuleRef): string | undefined {
@@ -77,19 +77,19 @@ function ComparedValues({ objectType, finding }: { readonly objectType: string; 
  * each finding records, whether the object is held out of authoritative reads,
  * and the evidence of where its values were read.
  */
-export function Findings({ objectType, id, scope, actionFor, quarantineStated = false }: {
+export function Findings({ objectType, id, reader, actionFor, quarantineStated = false }: {
   readonly objectType: string; readonly id: string
-  /** The workspace the record was read at: its findings are read and cached there (#1745). */
-  readonly scope: StudioScope | undefined
+  /** The reader of the workspace the record was read at: its findings are read and cached there (#1745). */
+  readonly reader: ScopedReader
   readonly actionFor?: (evidence: Evidence) => ReactNode
   /** The page already says, once, that the record is held out of answers: the panel lists the findings only. */
   readonly quarantineStated?: boolean
 }) {
-  const read = useQuery(findingsQuery(objectType, id, scope))
-  const { locale } = useLocale()
+  const read = useQuery({ ...reader.findings(objectType, id), retry: false })
   const { view } = useView()
-  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const laws = catalog.data ? catalogOf(catalog.data.document, locale).byName.get(objectType)?.laws ?? [] : []
+  // The rules' names from the catalog the page already reads (no read of its own).
+  const { catalog } = useCatalog()
+  const laws = catalog?.byName.get(objectType)?.laws ?? []
   if (read.isPending) return <Panel icon={ShieldAlert} label="Findings"><Well className="p-3 text-meta text-muted-foreground">Reading the findings…</Well></Panel>
   if (read.isError) {
     const message = read.error instanceof NotServed ? "This cell does not serve findings yet." : read.error instanceof CellRefusal ? read.error.message : "The findings could not be read."

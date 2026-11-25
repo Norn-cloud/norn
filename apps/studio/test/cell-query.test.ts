@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { MutationObserver, onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query"
 import { LIVE_UNAVAILABLE, LiveClient, NO_HOST_ERROR, parseExactJson, readRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-sdk/src/index.ts"
 import { isWorkspaceUnavailableError } from "../src/components/load-state.tsx"
-import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, cellReadState, heldSequences, invalidateCellRoutes, retryCellRead, submitCall, type CellDocument, type CellEntry, type CellRefused, type CellSubmission, type LiveSource } from "../src/lib/cell-query.ts"
+import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, cellReadState, heldSequences, invalidateCellRoutes, readStateOf, retryCellRead, submitCall, type CellDocument, type CellEntry, type CellRefused, type CellSubmission, type LiveSource } from "../src/lib/cell-query.ts"
 import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, setDisplayedScope, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 import { live } from "../src/lib/live-reads.ts"
 import { CellRefusal, NotServed } from "../src/lib/live-transport.ts"
@@ -149,9 +149,8 @@ test("a refusal, read or pushed, is the existing refusal state", async () => {
   const entry = client.getQueryData<CellEntry<unknown>>(options.queryKey)
   expect(entry?.kind).toBe("refused")
   const shown = cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey) ?? { status: "pending", data: undefined, error: null })
-  expect(shown.status).toBe("error")
-  expect(shown.data).toBeUndefined()
-  expect((shown.error as CellRefusal).code).toBe("object.not_found")
+  expect(shown.kind).toBe("refused")
+  expect(shown.kind === "refused" && (shown.refusal as CellRefusal).code).toBe("object.not_found")
 })
 
 test("a route the cell does not serve is not served, not a refusal", async () => {
@@ -237,8 +236,9 @@ test("a refusal pushed during a refetch survives the last observer unmounting: t
     expect(seen.every((entry) => entry?.kind === "refused")).toBe(true)
     // Coming back to the record shows the refusal until the cell answers again.
     const back = new QueryObserver(client, { ...refetching, enabled: false })
-    expect(cellReadState(back.getCurrentResult()).status).toBe("error")
-    expect(cellReadState(back.getCurrentResult()).error).toBeInstanceOf(CellRefusal)
+    const shown = cellReadState(back.getCurrentResult())
+    expect(shown.kind).toBe("refused")
+    expect(shown.kind === "refused" && shown.refusal).toBeInstanceOf(CellRefusal)
     unwatch()
   } finally {
     client.unmount()
@@ -339,8 +339,9 @@ test("a live refusal leaves the read standing and is reported to the page", asyn
   expect(client.getQueryState(options.queryKey)?.status).toBe("success")
   // The read stands, but nothing follows it: the page shows it as stale, never as live.
   const shown = cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!, refusals[0] ?? null)
-  expect([shown.status, shown.stale]).toEqual(["success", true])
-  expect(cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!).stale).toBe(false)
+  expect([shown.kind, shown.kind === "ok" && shown.freshness]).toEqual(["ok", "stale"])
+  const followed = cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!)
+  expect(followed.kind === "ok" && followed.freshness).toBe("live")
 })
 
 test("a malformed refusal is never trusted for its code: the read is unavailable", async () => {
@@ -607,10 +608,11 @@ test("once the live client gives up reconnecting, the read is stale: the last an
   expect(live.state).toBe("unavailable")
   expect(seen).toEqual([LIVE_UNAVAILABLE])
   const state = () => cellReadState(client.getQueryState<CellEntry<{ readonly version?: number | null }>, Error>(options.queryKey)!, seen.at(-1) ?? null)
-  expect([state().status, state().stale, versionOf(state().data)]).toEqual(["success", true, "1"])
+  const shown = () => { const read = state(); return read.kind === "ok" ? [read.kind, read.freshness, versionOf(read.document)] : [read.kind] }
+  expect(shown()).toEqual(["ok", "stale", "1"])
   // Reading again reads the cell's answer; it stays marked stale, since nothing follows it.
   await client.fetchQuery({ ...cellQueryOptions(client, ROUTE, params, { scope, fetch: httpCell(() => new Response(record(2, "12"))).fetch }), staleTime: 0 })
-  expect([state().status, state().stale, versionOf(state().data)]).toEqual(["success", true, "2"])
+  expect(shown()).toEqual(["ok", "stale", "2"])
   stop()
 })
 
@@ -690,7 +692,7 @@ test("a success that is no document never reaches the page as the route's docume
     const entry = client.getQueryData<CellEntry<unknown>>(options.queryKey)
     expect([body, entry?.kind]).toEqual([body, "refused"])
     expect((entry as CellRefused).refusal).toBeInstanceOf(CellUnavailable)
-    expect(cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!).data).toBeUndefined()
+    expect(cellReadState(client.getQueryState<CellEntry<unknown>, Error>(options.queryKey)!).kind).toBe("unavailable")
   }
 })
 
@@ -728,4 +730,21 @@ test("each scope has its own live client: reading another scope never replaces o
   expect(live(scope)).toBe(mine)
   expect(live(other)).toBe(theirs)
   expect(mine.state).toBe("idle")
+})
+
+// #1762 Milestone A: each error a read raises is the read state it always was, by the class the read made of the cell's answer (#1686).
+test("a read's error is its state: not served, refused, timed out, or unavailable with retry as the cell said", () => {
+  const notServed = new NotServed("Records are")
+  expect(readStateOf(notServed)).toEqual({ kind: "not_served", error: notServed })
+  const refusal = new CellRefusal(403, "authz.denied", "denied")
+  expect(readStateOf(refusal)).toEqual({ kind: "refused", refusal })
+  const late = new CellUnavailable(0, "The workspace did not answer in time.", { timedOut: true, retryable: true, code: "cell.timeout" })
+  expect(readStateOf(late)).toEqual({ kind: "timed_out", error: late })
+  const sealed = new CellUnavailable(503, "sealed", { retryable: false })
+  expect(readStateOf(sealed)).toEqual({ kind: "unavailable", error: sealed, retry: false })
+  const gateway = new CellUnavailable(503, undefined, { retryable: true })
+  expect(readStateOf(gateway)).toEqual({ kind: "unavailable", error: gateway, retry: true })
+  const other = new Error("not the cell's")
+  expect(readStateOf(other)).toEqual({ kind: "unavailable", error: other, retry: false })
+  expect(cellReadState({ status: "pending", data: undefined, error: null })).toEqual({ kind: "pending" })
 })

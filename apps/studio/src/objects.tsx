@@ -24,7 +24,7 @@ import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
 import { retryMode, useMode } from "./lib/live-transport.ts"
-import { findingsQuery, recordRead } from "./lib/record-read.ts"
+import { untilDecided, useWorkspace } from "./lib/workspace.tsx"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
@@ -68,18 +68,18 @@ export function ObjectPage() {
   const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  // The record's source workspace: a live record is read at the scope its decided mode was read
-  // at (checked before and after the read), cached under it, and its reveals go to it. The same id
-  // in another workspace is another record, never this one's cached read. Nothing is read until the
-  // mode is decided: a failed mode read waits for Retry rather than reading without a workspace.
-  // Until then the read's key is the recording's, which no live answer reaches (#1740). Only a
-  // decided mode binds the page: after a failed refetch TanStack keeps the last answer, which is
-  // no longer current (#1745).
+  // The record's source workspace, as the page's mode decided it (lib/workspace.tsx): a live record is
+  // read at that workspace (checked before and after the read), cached under it, and its reveals go to
+  // it; a recorded workspace reads only the recording. The same id in another workspace is another
+  // record, never this one's cached read. Nothing is read until the workspace is decided, and after a
+  // failed mode read (TanStack keeps the last answer, which is no longer current) nothing it read shows:
+  // the page waits for Retry (#1740, #1745).
+  const workspace = useWorkspace()
   const mode = useMode()
-  const decided = mode.isSuccess ? mode.data : undefined
-  const sourceScope = decided?.kind === "live" ? decided.scope : undefined
-  const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })
-  const modeError = mode.isError ? mode.error : null
+  const decided = workspace.kind === "live" || workspace.kind === "recorded" ? workspace : undefined
+  const sourceScope = workspace.kind === "live" ? workspace.scope : undefined
+  const reads = useQuery(untilDecided(decided?.reader.object(name, id), ["object", name, id]))
+  const modeError = workspace.kind === "unavailable" ? workspace.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
   // read again reads both, so neither is left from an earlier read.
   const queries = useQueryClient()
@@ -89,14 +89,14 @@ export function ObjectPage() {
   const retry = () => {
     void retryMode(queries)
     void catalogRead.refetch()
-    if (mode.isSuccess) void reads.refetch()
+    if (decided !== undefined) void reads.refetch()
   }
-  const live = decided?.kind === "live"
+  const live = workspace.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   // Read and cached at the record's source workspace, and shown only while the mode is decided: no
   // findings from another workspace, or from before the mode failed, show beside Workspace unavailable (#1745).
-  const review = useQuery(findingsQuery(name, id, sourceScope))
-  const reviewed = mode.isSuccess ? review.data?.document : undefined
+  const review = useQuery({ ...untilDecided(workspace.kind === "live" ? workspace.reader.findings(name, id) : undefined, ["findings", name, id]), retry: false })
+  const reviewed = workspace.kind === "live" ? review.data?.document : undefined
   const evidence = reviewed?.evidence ?? []
   const broken = reviewed?.findings.filter(({ status }) => status === "open") ?? []
   const heldBack = reviewed?.quarantined === true
@@ -109,7 +109,7 @@ export function ObjectPage() {
   const lineage = data?.source?.document
   // A failed mode read is the workspace's state, not this read's: it shows Workspace unavailable
   // with the page's Retry (below) instead of a bare message.
-  const problem = mode.isError ? undefined : readProblem(catalogRead, reads)
+  const problem = workspace.kind === "unavailable" ? undefined : readProblem(catalogRead, reads)
   const { icon: TypeIcon, text } = KINDS.objectType
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
@@ -176,7 +176,7 @@ export function ObjectPage() {
         </LoadState>
       )}
       {reads.isSuccess && data === null && (live
-        ? <QuarantinedRecord objectType={name} id={id} scope={sourceScope} onDone={readAgain} />
+        ? workspace.kind === "live" && <QuarantinedRecord objectType={name} id={id} reader={workspace.reader} onDone={readAgain} />
         : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
@@ -197,7 +197,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {live && <Findings objectType={name} id={id} scope={sourceScope} actionFor={corrections.actionFor} quarantineStated={heldBack} />}
+                {workspace.kind === "live" && <Findings objectType={name} id={id} reader={workspace.reader} actionFor={corrections.actionFor} quarantineStated={heldBack} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}

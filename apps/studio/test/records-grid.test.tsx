@@ -8,8 +8,9 @@ import { catalogOf } from "../src/lib/catalog.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import type { RecordsRead } from "../src/lib/records-source.ts"
 import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
+import type { RecordedReader } from "../src/lib/workspace.tsx"
 
-mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
+mock.module("../src/lib/transport.ts", () => ({ transport: {} }))
 const { RecordsGrid } = await import("../src/grid/records-grid.tsx")
 const { RecordsTimeline } = await import("../src/grid/records-timeline.tsx")
 const { LocaleProvider } = await import("../src/lib/locale.tsx")
@@ -25,13 +26,20 @@ const concept = item
 /** Text as React writes it into markup. */
 const inHtml = (text: string) => text.replaceAll("'", "&#x27;")
 
+/** A stand-in reader that answers every page with `first`, under the key the test seeds. */
+const answering = (first: RecordsRead): RecordedReader => ({
+  kind: "recorded",
+  records: (objectType, query) => ({ queryKey: ["records", objectType, recordsQueryParams(query).toString()], queryFn: async () => first }),
+  object: (objectType, id) => ({ queryKey: ["object", "recorded", objectType, id], queryFn: async () => null }),
+})
+
 /** The grid with its first page already answered, rendered to markup. */
 async function grid(first: RecordsRead) {
   const client = new QueryClient()
   client.setQueryData(["records", concept.name, recordsQueryParams(EMPTY_QUERY).toString()], first)
   const root = createRootRoute()
   const router = createRouter({
-    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/", component: () => <RecordsGrid concept={concept} read={async () => first} /> })]),
+    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/", component: () => <RecordsGrid concept={concept} reader={answering(first)} /> })]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   })
   await router.load()
@@ -194,7 +202,7 @@ test("RecordsGrid offers the Lifecycle view toggle beside Table and Timeline onl
     client.setQueryData(["records", target.name, recordsQueryParams(EMPTY_QUERY).toString()], first)
     const root = createRootRoute()
     const router = createRouter({
-      routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/", component: () => <RecordsGrid concept={target} read={async () => first} timeline={timeline} /> })]),
+      routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/", component: () => <RecordsGrid concept={target} reader={answering(first)} timeline={timeline} /> })]),
       history: createMemoryHistory({ initialEntries: ["/"] }),
     })
     await router.load()

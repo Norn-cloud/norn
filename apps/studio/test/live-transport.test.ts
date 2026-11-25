@@ -2,6 +2,8 @@ import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
 import { CellUnavailable, studioScopeQuery } from "../src/lib/definitions.ts"
 import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, scopeAnswered, syncStudioScopeChange } from "../src/lib/live-transport.ts"
+import { EMPTY_QUERY } from "../src/lib/records-query.ts"
+import { workspaceOf } from "../src/lib/workspace.tsx"
 
 const realFetch = globalThis.fetch
 afterEach(() => {
@@ -187,7 +189,7 @@ test("Retry during the session body read leaves the catalog and mode caches live
     queryFn: async () => {
       const active = await currentMode()
       return active.kind === "live"
-        ? liveTransport(active.catalog, (input, init) => fetch(input, init), active.counts, active.scope).catalog()
+        ? liveTransport(active.catalog, active.counts).catalog()
         : recorded()
     },
   })
@@ -328,7 +330,7 @@ test("the catalog's per-type counts are the cell's, kept only when well formed; 
   const mode = await readMode(server({ "/v1/definitions": [200, counted] }).fetcher)
   if (mode.kind !== "live") throw new Error("expected live")
   expect(mode.counts).toEqual({ "shop.Product": { count: 12, approximate: false }, "shop.Order": { count: 500, approximate: true } })
-  expect(await liveTransport(mode.catalog, server({}).fetcher, mode.counts).objectCounts()).toEqual(mode.counts)
+  expect(await liveTransport(mode.catalog, mode.counts).objectCounts()).toEqual(mode.counts)
   const plain = await readMode(server({ "/v1/definitions": [200, DEFINITIONS] }).fetcher)
   expect(plain.kind === "live" && plain.counts).toEqual({})
   expect(plain.kind === "live" && plain.publishedQuestions.size).toBe(0)
@@ -367,22 +369,26 @@ test("an HTML catalog outage rejects the mode read and the next attempt can conn
   }
 })
 
+/** A live cell's mode, and the workspace it decides: its reader reads through the same stand-in cell. */
 const live = async (routes: Record<string, readonly [number, string]>) => {
   const { fetcher, calls } = server({ "/v1/definitions": [200, DEFINITIONS], ...routes })
   const mode = await readMode(fetcher)
   if (mode.kind !== "live") throw new Error("expected live")
-  return { transport: liveTransport(mode.catalog, fetcher), calls }
+  const workspace = workspaceOf({ status: "success", data: mode }, fetcher)
+  if (workspace.kind !== "live") throw new Error("expected a live workspace")
+  return { transport: liveTransport(mode.catalog), reader: workspace.reader, calls }
 }
+const signal = new AbortController().signal
 
 const OBJECT = '{"objectType":"shop.Product","id":"SKU-1","scope":"local/dev","version":1,"values":{"price":19.990,"sku":"SKU-1"},"withheld":false,"withheldProperties":[]}'
 
 test("an object reads with its links (a `next` cursor is `hasMore`) and its lineage; a 404 lineage is no source", async () => {
-  const { transport } = await live({
+  const { reader } = await live({
     "/v1/objects/shop.Product/SKU-1": [200, OBJECT],
     "/v1/objects/shop.Product/SKU-1/links": [200, '{"objectType":"shop.Product","id":"SKU-1","items":[{"sourceType":"shop.OrderLine","link":"product","source":"L-1","targetType":"shop.Product","target":"SKU-1","version":1}],"next":"L-1"}'],
     "/v1/objects/shop.Product/SKU-1/lineage": [404, '{"code":"object.not_found"}'],
   })
-  const reads = await transport.object("shop.Product", "SKU-1")
+  const reads = await reader.object("shop.Product", "SKU-1").queryFn({ signal })
   expect(reads?.object.origin).toBe("live")
   expect(reads?.object.numbers.get("/values/price")).toBe("19.990")
   expect(reads?.links.document).toEqual({ objectType: "shop.Product", id: "SKU-1", items: [{ sourceType: "shop.OrderLine", link: "product", source: "L-1", targetType: "shop.Product", target: "SKU-1", version: 1 }], hasMore: true })
@@ -390,16 +396,16 @@ test("an object reads with its links (a `next` cursor is `hasMore`) and its line
 })
 
 test("an object the cell does not have is null, never a recording; reads the cell does not serve say so", async () => {
-  const { transport } = await live({})
-  expect(await transport.object("canon.Item", "demo/item/gold")).toBeNull()
-  expect(await transport.objectPage("canon.Item")).toBeNull()
+  const { transport, reader } = await live({})
+  expect(await reader.object("canon.Item", "demo/item/gold").queryFn({ signal })).toBeNull()
+  expect(await reader.records("canon.Item", EMPTY_QUERY).queryFn({ signal })).toEqual({ kind: "none" })
   await expect(transport.questionBoard()).rejects.toBeInstanceOf(NotServed)
   await expect(transport.guarantees()).rejects.toThrow("not served by this cell")
 })
 
 test("a refused read is the cell's error, not an empty page", async () => {
-  const { transport } = await live({ "/v1/objects/shop.Product": [403, '{"code":"authz.denied","message":"the read request is not authorized"}'] })
-  await expect(transport.objectPage("shop.Product")).rejects.toThrow("the read request is not authorized")
+  const { reader } = await live({ "/v1/objects/shop.Product?limit=50": [403, '{"code":"authz.denied","message":"the read request is not authorized"}'] })
+  expect(await reader.records("shop.Product", EMPTY_QUERY).queryFn({ signal })).toMatchObject({ kind: "refused", status: 403, message: "the read request is not authorized" })
 })
 
 test("once the mode query settles on an outage, page reads reuse its error instead of probing /v1/definitions until Retry", async () => {

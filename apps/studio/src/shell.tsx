@@ -23,10 +23,10 @@ import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
-import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
+import { isRetryableModeError, useMode } from "@/lib/live-transport"
 import { lastReachableAt, useStudioScope } from "@/lib/definitions"
 import { CopyId } from "@/components/copy-id"
-import { formatLastReachable, useWorkspaceUnavailableShown } from "@/components/load-state"
+import { formatLastReachable, retryWorkspace, useWorkspaceUnavailableShown } from "@/components/load-state"
 import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
@@ -921,15 +921,7 @@ function ConnectionBanner() {
   const { locale } = useLocale()
   const { view } = useView()
   const onPage = useWorkspaceUnavailableShown()
-  const retry = () => {
-    void retryMode(queryClient)
-    void queryClient.invalidateQueries({
-      predicate: (query) => {
-        const head = query.queryKey[0]
-        return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
-      },
-    })
-  }
+  const retry = () => retryWorkspace(queryClient)
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null

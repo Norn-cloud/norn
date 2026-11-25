@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { CellUnavailable, scopeFromAccount, type StudioScope } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
+import { WorkspaceProvider } from "@/lib/workspace"
 import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
 import { storedCustomTheme } from "@/lib/studio-theme"
 import "./bones/registry.ts"
@@ -83,13 +84,16 @@ function SignedInShell({ account, sidekick }: { readonly account: Account; reado
   const sections = useMemo(() => SECTIONS.filter((section) => isSectionVisible(section.path, learning)), [learning])
   const sidekickScopeKey = `${account.user.id}:${account.organization?.id ?? ""}:${account.environmentId ?? ""}`
   const sidekickScope = scopeFromAccount(account)
+  // The workspace is decided once, here, from the server's mode answer; every page reads in it (#1762).
   return (
-    <Shell
-      sections={sections}
-      assistant={sidekick ? { title: "Sidekick", content: <DeferredSidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
-      account={account}
-      onSignOut={() => void signOut()}
-    />
+    <WorkspaceProvider>
+      <Shell
+        sections={sections}
+        assistant={sidekick ? { title: "Sidekick", content: <DeferredSidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+        account={account}
+        onSignOut={() => void signOut()}
+      />
+    </WorkspaceProvider>
   )
 }
 
