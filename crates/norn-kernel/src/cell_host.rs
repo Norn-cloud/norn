@@ -908,12 +908,14 @@ pub enum CommitError<X> {
         interface: String,
     },
     /// GRAPH-STATE-1: a first write's lifecycles do not begin in an admitted
-    /// initial state, or its recorded evidence does not replay to its row.
-    #[error("{key}: lifecycle initialization was refused: {refusal}")]
+    /// initial state, an existing object's lifecycle state moves without a
+    /// recorded transition or changes in an immutable state, or the recorded
+    /// evidence does not replay to the written row.
+    #[error("{key}: the lifecycle write was refused: {refusal}")]
     LifecycleInitialization {
-        /// The object written for the first time.
+        /// The written object.
         key: FactKey,
-        /// Why its initialization was refused.
+        /// Why its lifecycle write was refused.
         refusal: Box<crate::lifecycle_init::LifecycleInitRefusal>,
     },
     /// An observed write did not match its opaque prepared authorization, or

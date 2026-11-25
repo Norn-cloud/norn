@@ -45,9 +45,11 @@ impl CallerSlot {
 
     /// Put `caller` in the calling thread's slot and return what it held:
     /// the caller and whether it was acting. `acting` marks a recorded
-    /// principal (a run's starter, an approved call's requester) standing in
-    /// for the request's own: it carries the roles recorded when it was
-    /// verified, not this request's.
+    /// principal (a run's starter at a flow step) standing in for the
+    /// request's own: it carries the roles recorded when it was verified, not
+    /// this request's, so whatever needs the request's own principal fails
+    /// closed for it. An approved call never stands in this way: it runs
+    /// only on its requester's own live request, as that request's caller.
     pub fn replace(&self, caller: Option<Caller>, acting: bool) -> (Option<Caller>, bool) {
         let thread = this_thread();
         let Ok(mut slot) = self.0.lock() else {
@@ -76,9 +78,9 @@ impl CallerSlot {
         })
     }
 
-    /// Whether the calling thread's caller is a recorded principal acting,
-    /// not the one this request verified. A slot that cannot be read is
-    /// treated as acting.
+    /// Whether the calling thread's caller is a recorded principal acting
+    /// (a run's starter at a flow step), not the one this request verified.
+    /// A slot that cannot be read is treated as acting.
     #[must_use]
     pub fn is_acting(&self) -> bool {
         let me = this_thread();

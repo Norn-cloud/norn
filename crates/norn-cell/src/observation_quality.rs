@@ -5,29 +5,9 @@ use crate::{
     read::to_i64,
     system::LEDGER,
 };
-use norn_ir::{DataQualityFinding, DataQualityFindingStatus, RuntimeValue};
+use norn_ir::{DataQualityFinding, DataQualityFindingStatus, ObjectTypeName, RuntimeValue};
 use norn_kernel::{FactKey, TypeCatalog};
 use std::collections::BTreeSet;
-
-/// Whether `proof`, the stored snapshot of a row's version, is the row
-/// `current` as read today. A member installed after that version reads as
-/// null on the row and is absent from its proof: both say the row holds no
-/// value for it, so only held values are compared.
-fn proves(proof: Option<&ObjectRecord>, current: &ObjectRecord) -> bool {
-    fn held(record: &ObjectRecord) -> impl Iterator<Item = (&String, &RuntimeValue)> {
-        record.values.iter().filter(|(_, value)| !value.is_null())
-    }
-    proof.is_some_and(|proof| {
-        (&proof.object_type, &proof.id, &proof.scope, proof.version)
-            == (
-                &current.object_type,
-                &current.id,
-                &current.scope,
-                current.version,
-            )
-            && held(proof).eq(held(current))
-    })
-}
 
 /// One authoritative page with explicit excluded-row accounting.
 #[derive(Debug)]
@@ -198,6 +178,81 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(findings)
     }
 
+    /// Whether the authenticated snapshot of `current`'s version, replayed
+    /// through every intervening authenticated definitions install to the
+    /// active schema, produces the exact row `current` as read today.
+    ///
+    /// Replays `materialize_historical_values` step by step from the emitting
+    /// receipt's `definitions_version` through the active definitions version
+    /// (the same authenticated projection `verify_modified_before` uses), so
+    /// every column has one exact expected value: no union of historical and
+    /// active defaults, and no blanket null exemption for newly added columns.
+    fn proves(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        current: &ObjectRecord,
+    ) -> Result<bool, CellError> {
+        let evidence = self.fact_version_evidence(world, object_type, key, current.version)?;
+        let snapshot = evidence.snapshot();
+        if (
+            &snapshot.object_type,
+            &snapshot.key,
+            &snapshot.scope,
+            snapshot.version,
+        ) != (
+            &current.object_type,
+            &current.id,
+            &current.scope,
+            current.version,
+        ) {
+            return Ok(false);
+        }
+        let Some(mut materialized) = snapshot.values.clone() else {
+            return Ok(false);
+        };
+        let first = evidence.receipt().body.definitions_version;
+        let last = self.active_definitions_version()?.unwrap_or(0);
+        if first > last {
+            return Ok(false);
+        }
+        if first == last {
+            if first != 0
+                && self
+                    .installed_definitions(Some(first))?
+                    .is_none_or(|installed| installed.model_hash != snapshot.model_hash)
+            {
+                return Ok(false);
+            }
+            return Ok(
+                snapshot.model_hash == self.model().model_hash() && materialized == current.values
+            );
+        }
+        if first != 0 && self.retained_definition_model(first)?.model_hash() != snapshot.model_hash
+        {
+            return Ok(false);
+        }
+        let object_type_name = ObjectTypeName(snapshot.object_type.clone());
+        let mut previous_hash = snapshot.model_hash.clone();
+        for version in first.saturating_add(1)..=last {
+            let model = self.retained_definition_model(version)?;
+            if version == last && model.model_hash() != self.model().model_hash() {
+                return Ok(false);
+            }
+            if model.model_hash() == previous_hash {
+                continue;
+            }
+            materialized = crate::history::materialize_historical_values(
+                &model,
+                &object_type_name,
+                &materialized,
+            )?;
+            model.model_hash().clone_into(&mut previous_hash);
+        }
+        Ok(materialized == current.values)
+    }
+
     fn review_findings(
         &self,
         world: &str,
@@ -207,11 +262,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.check_history("observation quality findings")?;
         let current = self.object(world, object_type, key)?;
         if let Some(record) = current.as_ref()
-            && !proves(
-                self.object_at_version(world, object_type, key, record.version)?
-                    .as_ref(),
-                record,
-            )
+            && !self.proves(world, object_type, key, record)?
         {
             return Err(CellError::UnprovenCorrection);
         }
@@ -242,11 +293,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 break;
             }
             if let Some(record) = current
-                && !proves(
-                    self.object_at_version(world, object_type, key, record.version)?
-                        .as_ref(),
-                    record,
-                )
+                && !self.proves(world, object_type, key, record)?
             {
                 return Err(CellError::UnprovenCorrection);
             }
