@@ -88,7 +88,7 @@ export function readSession(project: string, as: string = "developer"): DevSessi
     try { const manifest = JSON.parse(readFileSync(join(project, "norn.json"), "utf8")) as { name?: unknown }; return typeof manifest.name === "string" ? manifest.name : undefined }
     catch { return undefined }
   })()
-  const which = as === "reviewer" ? { as } : named !== undefined ? { as: "principal" as const, roles: roles as string[] } : {}
+  const which = as === "reviewer" ? { as: "reviewer" as const } : named !== undefined ? { as: "principal" as const, roles: roles as string[] } : {}
   return { url, token: readFileSync(tokenPath, "utf8").trim(), actor, ...which, orgId: scope["orgId"], environmentId: scope["environmentId"], project: name ?? scope["orgId"] }
 }
 
