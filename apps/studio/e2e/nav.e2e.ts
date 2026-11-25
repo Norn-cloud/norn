@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
 
 /**
- * Every navigation entry goes somewhere: each destination on the rail, then, in each perspective,
- * every page its sidebar lists (items included). A route entry changes the URL and renders its page;
+ * Every navigation entry goes somewhere: each shared destination (Home, Inbox), then, in each
+ * perspective, every page the sidebar lists (items included). A route entry changes the URL and renders its page;
  * an anchor entry changes the hash and brings its section into view. No page throws.
  */
 async function recorded(page: Page, errors: string[]) {
@@ -15,17 +15,19 @@ async function recorded(page: Page, errors: string[]) {
 
 const settled = (page: Page) => expect(page.getByText("Connecting…")).toHaveCount(0)
 
-test("nav: every rail destination and every sidebar entry, in both perspectives, navigates and renders", async ({ page }) => {
+test("nav: every shared destination and every sidebar entry, in both perspectives, navigates and renders", async ({ page }) => {
   test.setTimeout(300_000)
   const errors: string[] = []
   await recorded(page, errors)
   await page.goto("/sources")
   await settled(page)
-  const rail = page.getByRole("toolbar", { name: "Studio" })
-  const global = await rail.locator("a[href]:not([href='/'])").evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))
-  expect(global).toContain("/decisions")
+  // One landmark holds every destination (DESIGN.md 9.1); the shared ones lead it.
+  const sidebar = page.getByRole("navigation", { name: "Studio navigation" })
+  await expect(sidebar).toHaveCount(1)
+  const global = await sidebar.locator('[data-section-path="/decisions"] > a[href]').evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))
+  expect(global).toEqual(["/decisions"])
   for (const href of global) {
-    await rail.locator(`a[href="${href}"]`).click()
+    await sidebar.locator(`a[href="${href}"]`).click()
     await expect(page).toHaveURL((url) => url.pathname === href)
     await expect(page.locator("main")).not.toContainText(/Something went wrong|Not Found/)
   }
@@ -34,7 +36,8 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
     await page.getByRole("group", { name: "Perspective" }).getByRole("button", { name: perspective }).click()
     await expect(page.getByRole("group", { name: "Perspective" }).getByRole("button", { name: perspective })).toHaveAttribute("aria-pressed", "true")
     await settled(page)
-    const nav = page.getByRole("navigation", { name: perspective })
+    const nav = page.getByRole("navigation", { name: "Studio navigation" })
+    await expect(nav.getByRole("tree", { name: `${perspective} pages` })).toBeVisible()
     // A destination lists its items once it is open, so walk until every link the sidebar shows has been followed.
     const visited = new Set<string>()
     for (let step = 0; step < 300; step += 1) {
@@ -67,12 +70,12 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   await page.goto("/sources")
   await settled(page)
   await page.getByRole("group", { name: "Perspective" }).getByRole("button", { name: "Builder" }).click()
-  await page.getByRole("navigation", { name: "Builder" }).getByRole("link", { name: "Holding" }).click()
+  await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("link", { name: "Holding" }).click()
   await expect(page).toHaveURL(/\/sources\/canon\.Holding$/)
   // On wide desktop, the enclosing @container activates <header>'s own @2xl/@4xl spacing and centered grid.
-  const headerStyle = () => page.locator("header").first().evaluate((el) => {
-    const style = getComputedStyle(el)
-    return { display: style.display, paddingLeft: Number.parseFloat(style.paddingLeft), columnGap: Number.parseFloat(style.columnGap) }
+  const headerStyle = () => page.locator('[data-slot="topbar"]').evaluate((el) => {
+    const row = getComputedStyle(el.firstElementChild!)
+    return { display: row.display, paddingLeft: Number.parseFloat(getComputedStyle(el).paddingLeft), columnGap: Number.parseFloat(row.columnGap) }
   })
   const desktopStyle = await headerStyle()
   expect(desktopStyle.display).toBe("grid")
@@ -80,8 +83,8 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   expect(desktopStyle.columnGap).toBeGreaterThanOrEqual(10)
 
   const checkHeader = async () => {
-    const header = await page.locator("header").first().boundingBox()
-    const trigger = await page.getByRole("button", { name: "Toggle Sidebar" }).boundingBox()
+    const header = await page.locator('[data-slot="topbar"]').boundingBox()
+    const trigger = await page.getByRole("button", { name: "Sidebar", exact: true }).boundingBox()
     const search = await page.getByRole("button", { name: "Search" }).boundingBox()
     const perspective = await page.getByRole("group", { name: "Perspective" }).boundingBox()
     const notifications = await page.getByRole("button", { name: "Notifications" }).boundingBox()
@@ -94,7 +97,7 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   }
 
   // Open Sidekick alongside the open sidebar.
-  await page.getByRole("toolbar", { name: "Studio" }).getByRole("button", { name: "Sidekick" }).click()
+  await page.locator('[data-slot="sidebar"]').getByRole("button", { name: "Sidekick" }).click()
   await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
 
   // At 850px with both panels docked, the Sources parent breadcrumb link remains visible and non-overlapping.
@@ -150,7 +153,8 @@ test("collapsing with Ctrl+B and activating collapsed Records (even with Data co
   })
   await page.goto("/")
   await settled(page)
-  const workspaceNav = page.getByRole("navigation", { name: "Workspace" })
+  const workspaceNav = page.getByRole("navigation", { name: "Studio navigation" })
+  const tree = workspaceNav.getByRole("tree", { name: "Workspace pages" })
   // Collapse the Data space first so activating Records from the collapsed rail must reopen it before focusing.
   const dataSpace = workspaceNav.locator('[role="treeitem"]', { hasText: "Data" }).first()
   await dataSpace.locator('> [data-slot="tree-label"]').click()
@@ -160,26 +164,26 @@ test("collapsing with Ctrl+B and activating collapsed Records (even with Data co
   await expect(metricsItem).toBeFocused()
   // Collapsing the sidebar while focus is inside the tree moves focus onto the rail/trigger rather than dropping it to body.
   await page.keyboard.press("Control+b")
-  await expect(workspaceNav).toBeHidden()
+  await expect(tree).toBeHidden()
   const afterCollapse = await page.evaluate(() => ({
     tag: document.activeElement?.tagName ?? "",
     inRailOrTrigger: Boolean(
-      document.activeElement?.closest('[role="toolbar"][aria-label="Studio"]') ||
+      document.activeElement?.closest('nav[aria-label="Studio navigation"] [role="toolbar"]') ||
       document.activeElement?.getAttribute("data-slot") === "sidebar-trigger",
     ),
   }))
   expect(afterCollapse.tag).not.toBe("BODY")
   expect(afterCollapse.inRailOrTrigger).toBe(true)
   // Activating the collapsed Records fallback button reopens the Data space and moves focus onto Records (never the workspace switcher).
-  const collapsedRecords = page.getByRole("toolbar", { name: "Studio" }).getByRole("button", { name: "Records" })
+  const collapsedRecords = workspaceNav.getByRole("toolbar", { name: "Workspace pages" }).getByRole("button", { name: "Records" })
   await collapsedRecords.focus()
   await page.keyboard.press("Enter")
-  await expect(workspaceNav).toBeVisible()
+  await expect(tree).toBeVisible()
   await expect(dataSpace).toHaveAttribute("aria-expanded", "true")
   const afterExpand = await page.evaluate(() => ({
     tag: document.activeElement?.tagName ?? "",
     sectionPath: document.activeElement?.getAttribute("data-section-path"),
-    inSidebar: Boolean(document.activeElement?.closest('nav[aria-label="Workspace"]')),
+    inSidebar: Boolean(document.activeElement?.closest('nav[aria-label="Studio navigation"] [role="tree"]')),
   }))
   expect(afterExpand.tag).not.toBe("BODY")
   expect(afterExpand.inSidebar).toBe(true)

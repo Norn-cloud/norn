@@ -9,6 +9,10 @@ import { badgeVariants } from "../src/components/ui/badge.tsx"
 import { buttonVariants } from "../src/components/ui/button.tsx"
 import { Tabs, TabsList, TabsTrigger } from "../src/components/ui/tabs.tsx"
 import { KINDS, STATUS, type Kind, type Status } from "../src/lib/kinds.ts"
+import { skinVars, themePalettes } from "../scripts/theme-palettes.ts"
+import { contrastOn, fade, over, parseColor, type Color } from "../src/lib/color.ts"
+
+type Skin = "polar" | "open" | "luma" | "glass"
 
 /**
  * Design v4 contrast, surface and focus-indicator invariants, derived directly from the live
@@ -22,20 +26,15 @@ const SRC = join(import.meta.dir, "../src")
 const readSrc = (rel: string) => readFileSync(join(SRC, rel), "utf8")
 const css = readSrc("index.css")
 
-function parseCssBlock(selector: ":root" | ".dark"): Readonly<Record<string, string>> {
-  const pattern = selector === ":root" ? /:root\s*\{([^}]+)\}/ : /\.dark\s*\{([^}]+)\}/
-  const body = pattern.exec(css)?.[1]
-  if (!body) throw new Error(`missing ${selector} block in index.css`)
-  const raw: Record<string, string> = {}
-  for (const [, name, value] of body.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) {
-    raw[name!] = value!.trim()
-  }
+/** A skin's tokens for one scheme, `var()` aliases resolved, from the same cascade the palettes use. */
+function skinTokens(skin: Skin, theme: Theme): Readonly<Record<string, string>> {
+  const raw = skinVars(css, skin, theme)
   const resolved: Record<string, string> = {}
   const resolve = (name: string, depth = 0): string => {
     if (resolved[name] !== undefined) return resolved[name]!
     if (depth > 8) throw new Error(`cyclic CSS token --${name}`)
     const value = raw[name]
-    if (value === undefined) throw new Error(`unknown CSS token --${name} in ${selector}`)
+    if (value === undefined) throw new Error(`unknown CSS token --${name} in ${skin}/${theme}`)
     const alias = /^var\(--([a-z0-9-]+)\)$/.exec(value)
     const out = alias ? resolve(alias[1]!, depth + 1) : value
     resolved[name] = out
@@ -45,10 +44,14 @@ function parseCssBlock(selector: ":root" | ".dark"): Readonly<Record<string, str
   return resolved
 }
 
-const THEME_TOKENS: Readonly<Record<Theme, Readonly<Record<string, string>>>> = {
-  light: parseCssBlock(":root"),
-  dark: parseCssBlock(".dark"),
-}
+/**
+ * The two opaque first-class skins every component class list is measured in: `polar`, the default
+ * (bare `:root` and `.dark`), and `open`.
+ */
+const OPAQUE_SKINS = ["polar", "open"] as const
+const SKIN_TOKENS = Object.fromEntries(OPAQUE_SKINS.map((skin) => [skin, { light: skinTokens(skin, "light"), dark: skinTokens(skin, "dark") }])) as
+  Readonly<Record<(typeof OPAQUE_SKINS)[number], Readonly<Record<Theme, Readonly<Record<string, string>>>>>>
+let THEME_TOKENS: Readonly<Record<Theme, Readonly<Record<string, string>>>> = SKIN_TOKENS.polar
 
 const COLOR_MAP: Readonly<Record<string, string>> = (() => {
   const block = /@theme\s+inline\s*\{([^}]+)\}/.exec(css)?.[1] ?? ""
@@ -128,7 +131,7 @@ interface ResolvedPair {
   readonly opacity: number
 }
 
-const SELECTED_VARIANTS = new Set(["data-active", "aria-pressed", "data-[status=active]", "data-current"])
+const SELECTED_VARIANTS = new Set(["data-active", "aria-pressed", "data-[status=active]", "data-current", "aria-[current=page]"])
 const HOVER_VARIANTS = new Set(["hover", "[a]:hover"])
 
 /**
@@ -235,8 +238,9 @@ const tabsSource = readSrc("components/ui/tabs.tsx")
 const recordsGridSource = readSrc("grid/records-grid.tsx")
 const decisionTreeSource = readSrc("decision-tree.tsx")
 
-for (const theme of ["light", "dark"] as const) {
-  test(`${theme}: surfaces stay distinct, text tokens pass 4.5:1, and edges/focus ring pass 3:1`, () => {
+for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const) {
+  test(`${skin}/${theme}: surfaces stay distinct, text tokens pass 4.5:1, and edges/focus ring pass 3:1`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
     expect(tokenHex(theme, "shell")).not.toBe(tokenHex(theme, "background"))
     expect(tokenHex(theme, "well")).not.toBe(tokenHex(theme, "background"))
     if (theme === "dark") expect(tokenHex(theme, "card")).not.toBe(tokenHex(theme, "background"))
@@ -257,7 +261,8 @@ for (const theme of ["light", "dark"] as const) {
     }
   })
 
-  test(`${theme}: every Button variant passes 4.5:1 at rest and on hover across real hosting surfaces, with dedicated focus outline and flat disabled state`, () => {
+  test(`${skin}/${theme}: every Button variant passes 4.5:1 at rest and on hover across real hosting surfaces, with dedicated focus outline and flat disabled state`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
     for (const variant of BUTTON_VARIANTS) {
       const classes = buttonVariants({ variant })
       for (const host of HOST_SURFACES) {
@@ -281,7 +286,8 @@ for (const theme of ["light", "dark"] as const) {
     }
   })
 
-  test(`${theme}: every rendered Chip tone and Badge variant passes 4.5:1 using its actual declared fill and hover classes`, () => {
+  test(`${skin}/${theme}: every rendered Chip tone and Badge variant passes 4.5:1 using its actual declared fill and hover classes`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
     for (const tone of TONES) {
       const html = renderToStaticMarkup(createElement(Chip, { tone, children: "Label" }))
       const classes = extractClass(html, /data-slot="chip"[^>]*class="([^"]+)"/)
@@ -315,7 +321,8 @@ for (const theme of ["light", "dark"] as const) {
     }
   })
 
-  test(`${theme}: ChoiceColumn stays opaque on enabled unselected options and passes 4.5:1 across resting, selected, unselected and hover states`, () => {
+  test(`${skin}/${theme}: ChoiceColumn stays opaque on enabled unselected options and passes 4.5:1 across resting, selected, unselected and hover states`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
     const options = [
       { id: "a", label: "Every record", detail: "all rows", marks: ["recommended" as const] },
       { id: "b", label: "Filtered", detail: "subset", marks: ["agent" as const] },
@@ -348,7 +355,8 @@ for (const theme of ["light", "dark"] as const) {
     }
   })
 
-  test(`${theme}: Records filter count and DecisionTree numbers/options/Agent's pick pass 4.5:1 without opacity dimming`, () => {
+  test(`${skin}/${theme}: Records filter count and DecisionTree numbers/options/Agent's pick pass 4.5:1 without opacity dimming`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
     // 1. Records filter count badge (resting on background and hovered inside ghost button on accent).
     const filterCountClass = /Filter\{filterCount > 0 && <span className="([^"]+)"/.exec(recordsGridSource)?.[1]
     expect(filterCountClass, "filter count span class in records-grid.tsx").toBeDefined()
@@ -382,7 +390,8 @@ for (const theme of ["light", "dark"] as const) {
     expect(optionButton).toContain("focus-visible:outline-ring")
   })
 
-  test(`${theme}: selected Tabs, Perspective switch, rail links and sidebar rows keep dedicated focus outlines and >= 4.5:1 active text`, () => {
+  test(`${skin}/${theme}: selected Tabs, Perspective switch, rail links and sidebar rows keep dedicated focus outlines and >= 4.5:1 active text`, () => {
+    THEME_TOKENS = SKIN_TOKENS[skin]
     // 1. Rendered TabsTrigger (both default and line variants).
     for (const variant of ["default", "line"] as const) {
       const html = renderToStaticMarkup(
@@ -429,17 +438,6 @@ for (const theme of ["light", "dark"] as const) {
   })
 }
 
-/** Parse any CSS token block by exact selector and layer overrides over a base token map. */
-function parseRawBlock(selectorPattern: RegExp): Record<string, string> {
-  const body = selectorPattern.exec(css)?.[1]
-  if (!body) return {}
-  const out: Record<string, string> = {}
-  for (const [, name, value] of body.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) {
-    out[name!] = value!.trim()
-  }
-  return out
-}
-
 /** Resolve a hex or `rgb(r g b / a)` color value over a backing hex color. */
 function resolveSurfaceColor(value: string, backdropHex: string): string {
   if (/^#[0-9a-fA-F]{6}$/.test(value)) return value
@@ -464,14 +462,7 @@ const SKIN_SELECTORS: readonly { readonly skin: "open" | "polar" | "luma" | "gla
 
 for (const { skin, theme } of SKIN_SELECTORS) {
   test(`skin=${skin} (${theme}): composited surfaces, foreground, muted-foreground, primary button, and focus ring pass WCAG AA`, () => {
-    const base = { ...THEME_TOKENS[theme] }
-    const skinLight = skin === "open" ? {} : parseRawBlock(new RegExp(`:root\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
-    const skinDark = skin === "open" || theme === "light" ? {} : parseRawBlock(new RegExp(`:root\\.dark\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
-    if (skin !== "open") expect(Object.keys(skinLight).length, `missing :root[data-skin="${skin}"] block`).toBeGreaterThan(0)
-    if ((skin === "luma" || skin === "glass") && theme === "dark") {
-      expect(Object.keys(skinDark).length, `missing :root.dark[data-skin="${skin}"] block`).toBeGreaterThan(0)
-    }
-    const merged: Record<string, string> = { ...base, ...skinLight, ...skinDark }
+    const merged: Readonly<Record<string, string>> = skinVars(css, skin, theme)
     const resolveVar = (name: string, depth = 0): string => {
       if (depth > 8) throw new Error(`cyclic skin token --${name}`)
       const raw = merged[name]
@@ -520,4 +511,69 @@ for (const { skin, theme } of SKIN_SELECTORS) {
 
 test("shell never duplicates data-skin inside the document body, keeping :root.dark[data-skin=...] authoritative", () => {
   expect(shellSource).not.toMatch(/data-skin=\{/)
+})
+
+/**
+ * DESIGN.md 4.6: the sidebar's measured pairs in every skin and scheme, composited the same way as
+ * section 4.2 (8 bits per layer). Ground is `--sidebar` over the canvas, the hover wash is
+ * `--sidebar-accent` at 50% over the ground, and the pill is `--sidebar-accent` over the ground. The
+ * phone sheet is opaque `--shell`, so it is measured again on that ground.
+ */
+const PALETTES = themePalettes(css)
+for (const skin of ["polar", "open", "luma", "glass"] as const) for (const theme of ["light", "dark"] as const) {
+  test(`skin=${skin} (${theme}): sidebar ground, 50% hover wash and selection pill pass DESIGN.md 4.6 (text 4.5:1, ring and dot 3:1)`, () => {
+    const palette = PALETTES[skin][theme]
+    const color = (token: string): Color => {
+      const parsed = parseColor(palette[token as keyof typeof palette]!)
+      expect(parsed, `${skin}/${theme} --${token}`).not.toBeNull()
+      return parsed!
+    }
+    const canvas = color("canvas")
+    for (const [where, ground] of [["sidebar", over(color("sidebar"), canvas)], ["phone sheet", over(color("shell"), canvas)]] as const) {
+      const hover = over(fade(color("sidebar-accent"), 0.5), ground)
+      const pill = over(color("sidebar-accent"), ground)
+      const at = (label: string) => `${skin}/${theme} ${where}: ${label}`
+      // Resting rows, group headers and counts: muted ink on the ground and on the hover wash (the text does not change on hover).
+      expect(contrastOn(color("muted-foreground"), ground), at("muted on ground")).toBeGreaterThanOrEqual(4.5)
+      expect(contrastOn(color("muted-foreground"), hover), at("muted on hover")).toBeGreaterThanOrEqual(4.5)
+      // The current row: label, icon and count all take the pill's ink.
+      expect(contrastOn(color("sidebar-accent-foreground"), pill), at("pill ink on pill")).toBeGreaterThanOrEqual(4.5)
+      // Workspace and principal names in the header and footer.
+      expect(contrastOn(color("sidebar-foreground"), ground), at("names on ground")).toBeGreaterThanOrEqual(4.5)
+      expect(contrastOn(color("sidebar-foreground"), hover), at("names on hover")).toBeGreaterThanOrEqual(4.5)
+      // The focus ring and the attention dot (also `--ring`): 3:1 on the ground, the wash and the pill.
+      for (const [label, surface] of [["ground", ground], ["hover", hover], ["pill", pill]] as const) {
+        expect(contrastOn(color("ring"), surface), at(`ring/dot on ${label}`)).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+}
+
+test("sidebar rows: a 50% wash on hover with no text change, the neutral pill with its own ink at 400 when current, and no ring, bar or accent", () => {
+  const row = /const row = "([^"]+)"/.exec(shellSource)?.[1] ?? ""
+  const rail = /const railButton = "([^"]+)"/.exec(shellSource)?.[1] ?? ""
+  const groupHeading = /const groupHeading = "([^"]+)"/.exec(shellSource)?.[1] ?? ""
+  for (const [name, cls, current] of [["row", row, "data-current"], ["railButton", rail, "aria-[current=page]"]] as const) {
+    expect(cls, name).toContain("hover:bg-sidebar-accent/50")
+    expect(cls, `${name} keeps its text colour on hover`).not.toMatch(/hover:text-/)
+    expect(cls, name).toContain(`${current}:bg-sidebar-accent`)
+    expect(cls, name).toContain(`${current}:text-sidebar-accent-foreground`)
+    const whenCurrent = cls.split(/\s+/).filter((token) => token.startsWith(`${current}:`)).map((token) => token.slice(current.length + 1))
+    expect(whenCurrent.sort(), `${name}: the current row is only the pill and its ink (no ring, bar, shadow, weight or accent)`).toEqual(["bg-sidebar-accent", "text-sidebar-accent-foreground"])
+    expect(cls, `${name} is 32px`).toContain(name === "row" ? "h-[32px]" : "size-[32px]")
+    expect(cls, `${name} weight`).not.toMatch(/font-(medium|semibold|bold)/)
+  }
+  expect(row).toContain("text-body")
+  expect(row).toContain("max-sm:min-h-[44px]")
+  expect(groupHeading).toContain("text-meta")
+  expect(groupHeading).toContain("h-[32px]")
+  expect(groupHeading).not.toMatch(/uppercase|tracking-|font-semibold/)
+  for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const) {
+    THEME_TOKENS = SKIN_TOKENS[skin]
+    const ground = tokenHex(theme, "sidebar")
+    for (const state of ["rest", "hover", "selected"] as const) {
+      const pair = resolveClasses(row, theme, state, ground, tokenHex(theme, "muted-foreground"))
+      expect(pair.ratio, `${skin}/${theme} row ${state} (${pair.fg} on ${pair.bg})`).toBeGreaterThanOrEqual(4.5)
+    }
+  }
 })

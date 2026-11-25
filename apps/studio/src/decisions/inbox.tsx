@@ -97,7 +97,7 @@ export function DecisionsPage() {
             <button type="button" onClick={() => choose(d.id)} aria-current={selected?.id === d.id ? "true" : undefined}
               className="grid w-full gap-1 px-4 py-3 text-start transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-current:bg-muted">
               <span className="flex items-baseline gap-3">
-                <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium">{d.question}</span>
+                <span className="line-clamp-2 min-w-0 flex-1 text-body">{d.question}</span>
                 <span className="shrink-0 text-meta"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>
               </span>
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
@@ -127,7 +127,7 @@ export function DecisionsPage() {
           </Button>
           <Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>
         </>} />
-      {missing && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
+      {missing && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-body">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
       {body}
       <RequestedCalls />
       <DecisionSheet decision={selected} now={now} onClose={() => choose(undefined)} onSettled={refresh} />
@@ -158,7 +158,7 @@ function RequestedCalls() {
   return (
     <>
     {items.length > 0 && <section aria-labelledby="requested-heading" className="grid gap-2">
-      <h2 id="requested-heading" className="text-section font-medium">Your requests</h2>
+      <h2 id="requested-heading" className="text-heading">Your requests</h2>
       <ol className="divide-y overflow-hidden rounded-lg border bg-card" aria-label="Your requests">
         {items.map((item) => (
           <li key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -170,7 +170,7 @@ function RequestedCalls() {
                 <span>{requestedAction(actions, item).title}</span>
                 {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
               </span>
-              <span className="line-clamp-2 text-sm font-medium">{item.question}</span>
+              <span className="line-clamp-2 text-body">{item.question}</span>
               <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
             </button>
             <RiskChip risk={item.risk} />

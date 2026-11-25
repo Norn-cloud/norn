@@ -56,7 +56,7 @@ export function Inbox() {
   return (
     <section aria-labelledby="needs-attention" className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h2 id="needs-attention" className="text-section font-medium">Needs attention</h2>
+        <h2 id="needs-attention" className="text-heading font-medium">Needs attention</h2>
         {document && (total > 0 || anyApproximate) && <span className="text-meta text-muted-foreground tabular-nums">{total}{anyApproximate ? "+" : ""}</span>}
         <Link to="/rules" search={{ view: "held" } as never} className="ms-auto text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">Held by rules</Link>
       </div>

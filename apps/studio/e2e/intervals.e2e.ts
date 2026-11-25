@@ -209,6 +209,59 @@ test("picker: on an optional field with a value, a search then Enter picks the m
   await expect(equipment).toContainText("Choose equipment")
 })
 
+// #1724 (Fable r2): rendered proof for the picker's phone targets, its focus ring and reduced motion (DESIGN.md 16.2: 4, 5, 7).
+test("picker below 640px: the trigger, Clear, search field and options are at least 44px; the trigger shows the 2px ring on keyboard focus", async ({ page }) => {
+  const optional = { ...BOOK_EQUIPMENT, inputSchema: { ...BOOK_EQUIPMENT.inputSchema, required: BOOK_EQUIPMENT.inputSchema.required.filter((field) => field !== "equipment") } }
+  await intervalCell(page, { actions: INTERVAL_ACTIONS.map((action) => action === BOOK_EQUIPMENT ? optional as unknown as typeof action : action) })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/objects/facilities.EquipmentBooking")
+  await page.getByRole("button", { name: "New equipment booking" }).click()
+  const form = sheet(page)
+  const equipment = form.getByRole("combobox", { name: "Equipment", exact: true })
+  const search = page.getByRole("combobox", { name: "Search equipment records" })
+  const list = page.getByRole("listbox", { name: "Equipment records" })
+  await equipment.click()
+  await search.fill("Spare unit 01")
+  await expect(list.getByRole("option").first()).toContainText("Spare unit 01")
+  // Every target in the open list is at least 44px tall.
+  expect((await search.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  for (const option of await list.getByRole("option").all()) expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  await page.keyboard.press("Enter")
+  await expect(list).toBeHidden()
+  const [trigger, clear] = await Promise.all([equipment.boundingBox(), form.getByRole("button", { name: "Clear selection" }).boundingBox()])
+  expect(trigger!.height).toBeGreaterThanOrEqual(44)
+  expect(clear!.width).toBeGreaterThanOrEqual(44)
+  expect(clear!.height).toBeGreaterThanOrEqual(44)
+  // Back on the trigger from the keyboard (Escape closes the list): a solid 2px ring in --ring.
+  await equipment.click()
+  await page.keyboard.press("Escape")
+  await expect(equipment).toBeFocused()
+  await expect(equipment).toHaveCSS("outline-style", "solid")
+  await expect(equipment).toHaveCSS("outline-width", "2px")
+  const ring = await page.evaluate(() => {
+    const probe = document.createElement("span")
+    probe.style.color = "var(--ring)"
+    document.body.append(probe)
+    const color = getComputedStyle(probe).color
+    probe.remove()
+    return color
+  })
+  await expect(equipment).toHaveCSS("outline-color", ring)
+  await shoot(page, "picker-phone-targets")
+})
+
+test("picker under reduced motion: the list opens without its scale and fade transition", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await intervalCell(page)
+  await page.goto("/objects/facilities.EquipmentBooking")
+  await page.getByRole("button", { name: "New equipment booking" }).click()
+  await sheet(page).getByRole("combobox", { name: "Equipment", exact: true }).click()
+  const popup = page.getByRole("dialog", { name: "Choose equipment" })
+  await expect(popup).toBeVisible()
+  await expect(popup).toHaveCSS("transition-property", "none")
+  await expect(popup).toHaveCSS("scale", "none")
+})
+
 test.describe("in Cairo", () => {
   test.use({ timezoneId: "Africa/Cairo" })
 

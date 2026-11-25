@@ -26,7 +26,7 @@ const RISK_LABEL: Readonly<Record<Risk, string>> = { low: "Low risk", medium: "M
 export function RiskChip({ risk }: { readonly risk: Risk }) {
   return (
     <span style={{ "--tint": `var(${RISK_TINT[risk]})` } as CSSProperties}
-      className="inline-flex items-center rounded-md bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] px-1.5 py-0.5 text-xs text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset">
+      className="inline-flex items-center rounded-md bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] px-1.5 py-0.5 text-meta text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset">
       {RISK_LABEL[risk]}
     </span>
   )
@@ -39,7 +39,7 @@ export function Countdown({ expiresAtMs, now }: { readonly expiresAtMs: number; 
   const at = new Date(expiresAtMs)
   return (
     <span title={`Decide by ${at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
-      className={cn("inline-flex items-center gap-1 text-meta tabular-nums", left === null ? "text-destructive" : urgent(expiresAtMs, now) ? "font-medium text-destructive" : "text-muted-foreground")}>
+      className={cn("inline-flex items-center gap-1 text-meta tabular-nums", left === null ? "text-destructive" : urgent(expiresAtMs, now) ? "text-destructive" : "text-muted-foreground")}>
       <Clock className="size-3" aria-hidden />{left === null ? "Expired" : `${left} left`}
     </span>
   )
@@ -142,12 +142,12 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
 
   return (
     <Sheet open={decision !== null} onOpenChange={(open) => { if (!open) request() }}>
-      <SheetContent className="w-[min(34rem,100vw)] gap-0 overflow-y-auto border-node-border p-0 shadow-float sm:max-w-lg">
+      <SheetContent className="gap-0 overflow-y-auto p-0">
         {/* The dialog's name; the element draws the visible heading, so this is not a second one. */}
         <SheetTitle asChild><span className="sr-only">{decision?.question ?? ""}</span></SheetTitle>
         <SheetDescription asChild><span className="sr-only">{decision ? `${flowTitle(decision)} · ${stepTitle(decision)}` : ""}</span></SheetDescription>
         {engine.isError
-          ? <p role="alert" className="p-6 text-sm text-destructive">The decision engine is not part of this build, so nothing can be decided here.</p>
+          ? <p role="alert" className="p-6 text-body text-destructive">The decision engine is not part of this build, so nothing can be decided here.</p>
           : <div ref={setHost} className="contents" />}
       </SheetContent>
     </Sheet>

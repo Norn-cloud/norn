@@ -83,7 +83,7 @@ test("metrics: the sidebar says Metrics and its page offers Explore a metric", a
   await holdingsCell(page)
   await page.goto("/questions")
   await expect(page).toHaveURL((url) => url.pathname === "/metrics")
-  await expect(page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Metrics" })).toBeVisible()
+  await expect(page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" }).getByRole("link", { name: "Metrics" })).toBeVisible()
   await expect(page.getByRole("heading", { name: "Metrics", level: 1 })).toBeVisible()
   await expect(page.locator("main").getByRole("link", { name: "Explore a metric" })).toHaveAttribute("href", "/metrics/new")
 })

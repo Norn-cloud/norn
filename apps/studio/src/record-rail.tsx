@@ -30,7 +30,7 @@ const DECISION_WORDS: Readonly<Record<Decision, string>> = {
 function Verb({ icon: Icon, label, decision, verb }: { readonly icon: LucideIcon; readonly label: string; readonly decision: Decision; readonly verb: string }) {
   return (
     <span data-verb={verb} data-decision={decision} title={`${label}: ${DECISION_WORDS[decision]}`} aria-label={`${label}: ${DECISION_WORDS[decision]}`}
-      className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-md px-1.5 text-xs font-medium whitespace-nowrap",
+      className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-md px-1.5 text-meta whitespace-nowrap",
         decision === "permit" && "bg-foreground/[0.06] text-foreground",
         decision === "partial" && "bg-foreground/[0.04] text-muted-foreground",
         decision === "conditional" && "border border-dashed border-foreground/30 text-foreground",
@@ -45,8 +45,8 @@ function RoleRow({ entry, you }: { readonly entry: RoleAccess; readonly you: boo
   const see = entry.see.decision
   return (
     <li data-role={entry.role} className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="min-w-0 flex-1 truncate font-medium capitalize">{entry.role}</span>
+      <div className="flex items-center gap-2 text-body">
+        <span className="min-w-0 flex-1 truncate capitalize">{entry.role}</span>
         {you && <Chip tone="blue">You</Chip>}
       </div>
       <div className="flex flex-wrap gap-1">
@@ -108,7 +108,7 @@ export function RulesKept({ rules, laws = [], title }: { readonly rules: readonl
       <Well className="px-3.5 pb-3">
         {items.length === 0 ? note(`No rule is declared over ${title.toLowerCase()} records.`) : (
           <ul className="space-y-2">
-            {items.map((item) => <li key={item.key} lang={item.lang} className="flex gap-2 text-sm leading-snug text-pretty"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0 text-tone-green" />{item.text}</li>)}
+            {items.map((item) => <li key={item.key} lang={item.lang} className="flex gap-2 text-body leading-snug text-pretty"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0 text-tone-green" />{item.text}</li>)}
           </ul>
         )}
       </Well>
@@ -159,9 +159,9 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                   : <HiddenWriter />
                 const when = readableTime(new Date(version.logicalTime).toISOString())
                 return (
-                  <li key={version.version} data-version={version.version} className="text-sm leading-snug">
-                    <div className="font-medium [overflow-wrap:anywhere]">{what}</div>
-                    <div className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  <li key={version.version} data-version={version.version} className="text-body leading-snug">
+                    <div className="[overflow-wrap:anywhere]">{what}</div>
+                    <div className="text-meta text-muted-foreground [overflow-wrap:anywhere]">
                       {writer.kind === "action" && <>{writer.actor} · </>}{when}
                       {version.values === null ? " · deleted" : last ? " · created" : changed.length > 0 ? ` · changed ${changed.slice(0, 2).map((property) => property.replaceAll("_", " ")).join(", ")}${changed.length > 2 ? ` and ${changed.length - 2} more` : ""}` : " · no value changed"}
                     </div>

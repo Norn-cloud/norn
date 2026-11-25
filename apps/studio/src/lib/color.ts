@@ -28,8 +28,11 @@ const toRgb = converter("rgb")
 /** An sRGB colour, channels 0–1, with alpha 0–1. */
 export type Color = Required<Pick<Rgb, "r" | "g" | "b" | "alpha">> & { readonly mode: "rgb" }
 
-/** A functional colour whose alpha is written `/ none`, e.g. `rgb(0 0 0 / none)`. */
-const EXPLICIT_NONE_ALPHA = /\/\s*none\s*\)$/i
+/**
+ * A functional colour whose alpha is written `/ none`, e.g. `rgb(0 0 0 / none)`. Lower case only:
+ * culori refuses `NONE` before this is read, so a case-insensitive match would never fire.
+ */
+const EXPLICIT_NONE_ALPHA = /\/\s*none\s*\)$/
 
 /**
  * Parse one CSS colour (CSS Color 4: hex, named, rgb, hsl, hwb, lab, lch, oklab, oklch) into sRGB,
@@ -63,10 +66,16 @@ export function canonicalColor(raw: string): string | null {
   return parsed === null ? null : cssColor(parsed)
 }
 
-/** `top` painted over `bottom` (CSS `normal` blending, source-over). */
+/** A channel (0–1) rounded to the nearest of the 256 values a browser paints. */
+const to8 = (channel: number) => Math.round(channel * 255) / 255
+
+/**
+ * `top` painted over `bottom` (CSS `normal` blending, source-over), with each channel rounded to 8
+ * bits, as a browser paints every layer and as DESIGN.md section 4.2 measures composited surfaces.
+ */
 export function over(top: Color, bottom: Color): Color {
   const flat = blend([bottom, top], "normal") as Rgb
-  return { mode: "rgb", r: flat.r, g: flat.g, b: flat.b, alpha: flat.alpha ?? 1 }
+  return { mode: "rgb", r: to8(flat.r), g: to8(flat.g), b: to8(flat.b), alpha: flat.alpha ?? 1 }
 }
 
 /** A colour with its alpha scaled, as `color-mix(in …, c p%, transparent)` and Tailwind's `/p` modifier paint it. */

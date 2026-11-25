@@ -9,61 +9,77 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Norn Studio swappable skin architecture (derived from norn-mockups v6 + Polar):
- * - `open` (default, `:root` + `.dark`): Open Analytics v6 calm — pure white / near-black canvas,
- *   signature double-shell cards (20px outer rim + 15px soft inner well), Geist / Geist Mono
- *   normal/medium editorial weights, one crisp blue accent (#3a6df0 / #5b8cff), and dark floating dock.
- * - `polar` (`:root[data-skin="polar"]` + `:root.dark[data-skin="polar"]`): monochrome Polar craft —
- *   near-black light primary / stark-white dark primary (zero purple CRUD buttons), flat hairlines.
- * - `luma` (`:root[data-skin="luma"]` + `:root.dark[data-skin="luma"]`): soft architectural mist
- *   two-surface shell ground with knot-violet accent.
- * - `glass` (`:root[data-skin="glass"]` + `:root.dark[data-skin="glass"]`): translucent frosted
- *   liquid-glass surfaces with backdrop blur, specular hairlines, and ambient mesh backdrop.
- * Every palette maintains WCAG AA contrast (>= 4.5:1 body/controls, >= 3:1 focus rings/edges).
+ * Norn Studio skins (apps/studio/DESIGN.md sections 3-6). Bare `:root` and `.dark` are the default
+ * `polar` palette and geometry, so the default holds before any script runs and on any page that
+ * loads this sheet without `applyAppearance`:
+ * - `polar` (default, `:root` + `.dark`): monochrome ink on neutral surfaces, colour only where
+ *   DESIGN.md section 13 allows it.
+ * - `open` (`:root[data-skin="open"]`): white canvas, 20/15px double shell, one blue accent. `luma` and
+ *   `glass` start from `open`'s text and action rows, then set their own surfaces.
+ * - `luma`: soft architectural mist two-surface shell with a knot-violet accent.
+ * - `glass`: translucent frosted surfaces with backdrop blur over an ambient mesh.
+ * Geometry is in px so it does not scale with the 90% root. Every palette passes the contrast gate
+ * (`test/contrast.test.ts`, the StudioTheme validator): 4.5:1 for text, 3:1 for rings and indicators.
  */
 :root {
-  --radius: 0.5rem;
-  --radius-chip: 0.375rem;
-  --radius-panel: 1.25rem;
-  --radius-well: 0.9375rem;
-  --radius-shell: 0.875rem;
-  /* Open v6 light: white canvas, thin #ebebeb rim, soft #f5f5f5 inner well, one blue accent. */
-  --shell: #f6f6f7;
-  --canvas: #ffffff;
+  /* Concentric double shell: radius-panel = radius-well + panel-inset + 1px border (11 + 4 + 1 = 16). */
+  --radius: 8px;
+  --radius-chip: 5px;
+  --radius-panel: 16px;
+  --panel-inset: 4px;
+  --radius-well: 11px;
+  --radius-row: 11px;
+  --radius-sheet: 24px;
+  --radius-search: 18px;
+  --radius-dock: 26px;
+  --radius-popup: 16px;
+  --shell: #f6f6f8;
+  --canvas: #f6f6f8;
   --background: #ffffff;
-  --foreground: #1b1b1d;
+  --foreground: #18181b;
   --card: #ffffff;
-  --card-foreground: #1b1b1d;
-  --well: #f5f5f5;
-  --well-border: #ededed;
-  --well-hover: #eeeeee;
+  --card-foreground: #18181b;
+  --well: #f7f7f9;
+  --well-border: #e8e8ec;
+  --well-hover: #efefef;
   --popover: #ffffff;
-  --popover-foreground: #1b1b1d;
-  /* Single crisp blue accent from v6/tokens.css (tuned for WCAG AA >= 4.5:1 on both white & #f5f5f5 wells); knot violet reserved for the Norn mark. */
+  --popover-foreground: #18181b;
+  /* Knot violet is reserved for the Norn mark. */
   --knot: #5b52f0;
-  /* Darker than --primary so action-coloured text holds 4.5:1 on its own /15 tint (the active rail item). */
-  --action: #2755d0;
-  --action-hover: #2451c7;
-  --action-foreground: #ffffff;
-  --primary: #2e60e0;
-  --primary-foreground: #ffffff;
-  --secondary: #f5f5f5;
-  --secondary-foreground: #1b1b1d;
-  --muted: #f5f5f5;
-  --muted-foreground: #5c5c63;
-  --accent: #eeeeee;
-  --accent-foreground: #1b1b1d;
-  --surface-subtle: #f5f5f5;
-  /* Muted semantic colours, each >= 4.5:1 as text on white, card, well, and tinted pill fills. */
+  /* Fill and text are separate roles (DESIGN.md 4.2): `--primary` fills the CTA, `--action` is accent text. */
+  --action: #18181b;
+  --action-hover: #2c2c32;
+  --action-foreground: #fafafa;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --action-dot: #71717a;
+  --action-soft: rgb(24 24 27 / 0.08);
+  --secondary: #f4f4f6;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f6;
+  --muted-foreground: #585861;
+  /* Decorative only (separators, chevrons, info glyphs): never the only carrier of information. */
+  --subtle-foreground: #85858b;
+  --accent: #ededf0;
+  --accent-foreground: #18181b;
+  --surface-subtle: #f5f5f7;
+  /* Muted semantic colours, each >= 4.5:1 as text on white, card and well. */
   --destructive: #b83228;
   --destructive-foreground: #ffffff;
   --destructive-text: #b83228;
   --success: #1f7a4d;
   --warning: #8a5600;
-  --border: #ebebeb;
-  --input: #e4e4e4;
-  --ring: #2e60e0;
-  --link: #2451c7;
+  /* Status dots (DESIGN.md 4.3): saturated, 6px, always beside a text label. */
+  --dot-live: #1f9d61;
+  --dot-held: #e09a2b;
+  --dot-bad: #e5484d;
+  --dot-quiet: color-mix(in oklab, var(--subtle-foreground) 60%, transparent);
+  --dot-accent: var(--action-dot);
+  --border: #e5e5ea;
+  --line: #e5e5ea;
+  --input: #dcdce2;
+  --ring: #52525b;
+  --link: #18181b;
   /* Detail colour per kind of artefact; each >= 4.5:1 on card and on its tinted fill. */
   --kind-source: #0f726a;
   --kind-mapping: #475569;
@@ -73,38 +89,40 @@
   --kind-workflow: #4f46e5;
   --kind-guarantee: #166534;
   --kind-policy: #b33b0a;
-  /* Chart series: primary series in v6 blue, categorical secondary series clearly separated. */
-  --chart-1: #3a6df0;
+  /* Chart series: the accent first, then a categorical set separated for 3:1 marks. */
+  --chart-1: #18181b;
   --chart-2: #0f726a;
   --chart-3: #b45309;
   --chart-4: #9a1ca6;
   --chart-5: #7d8494;
-  --sidebar: #f6f6f7;
-  --sidebar-foreground: #1b1b1d;
-  --sidebar-primary: #3a6df0;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #ececef;
-  --sidebar-accent-foreground: #1b1b1d;
-  --sidebar-border: #ebebeb;
-  --sidebar-ring: #3a6df0;
-  /* Skin-level framing tokens (v6 double-shell card & floating dark pill dock). */
-  --panel-border: #ebebeb;
-  --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
-  --table-border: #ebebeb;
+  /* The default sidebar shell (DESIGN.md 4.6 and 9.1). */
+  --sidebar: #f6f6f8;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #18181b;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #ebebef;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e5e5ea;
+  --sidebar-ring: #52525b;
+  --panel-border: #e5e5ea;
+  --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.02);
+  --table-border: #e5e5ea;
+  /* The opt-in floating dock (DESIGN.md 4.5): dark in every skin and scheme. */
   --dock-surface: #1d1d20;
   --dock-border: rgb(255 255 255 / 0.08);
   --dock-well: #34343a;
   --dock-foreground: #ffffff;
-  --dock-muted: #a5a5ad;
+  --dock-muted: #b4b4bc;
   --dock-active: #34343a;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
+  --dock-ring: #e4e4e7;
+  --dock-indicator: #f4f4f5;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.12);
-  /* Layered shadow tokens: whisper contact + soft diffused ambient shadow, never harsh blobs. */
-  --elevation-shell: 0 1px 2px rgb(0 0 0 / 0.025), 0 8px 24px -16px rgb(0 0 0 / 0.07);
+  /* Elevation (DESIGN.md 6): whisper contact plus soft ambient shadow, never a hard blob. */
+  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
+  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
   --elevation-control: 0 1px 2px rgb(0 0 0 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.75);
-  --elevation-action: 0 1px 2px rgb(58 109 240 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.18);
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.14);
   --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
   --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
   --elevation-float: 0 16px 40px -12px rgb(0 0 0 / 0.16), 0 2px 6px rgb(0 0 0 / 0.05);
@@ -126,7 +144,7 @@
   --tint-agent: #2d5cd9;
   --tint-law: #be123c;
   --tint-start: #334155;
-  /* Tones: colour for chips, status pills, kind indicators and dots — never loud surfaces. */
+  /* Tones: colour for dots, marks and kind indicators, never loud surfaces. */
   --tone-gray: #525560;
   --tone-green: #156d42;
   --tone-amber: #8a5600;
@@ -139,40 +157,46 @@
 }
 
 .dark {
-  /* Open v6 dark: #0d0d0e canvas, #151517 outer card, #1c1c1f inner well, #5b8cff blue accent. */
-  --shell: #09090a;
-  --canvas: #0d0d0e;
-  --background: #0d0d0e;
-  --foreground: #ececee;
+  --shell: #0a0a0b;
+  --canvas: #0a0a0b;
+  --background: #111113;
+  --foreground: #fafafa;
   --card: #151517;
-  --card-foreground: #ececee;
-  --well: #1c1c1f;
-  --well-border: #27272b;
-  --well-hover: #232327;
-  --popover: #19191c;
-  --popover-foreground: #ececee;
+  --card-foreground: #fafafa;
+  --well: #1b1b1e;
+  --well-border: #26262b;
+  --well-hover: #222226;
+  --popover: #1c1c20;
+  --popover-foreground: #fafafa;
   --knot: #7c74ff;
-  --action: #6b98ff;
-  --action-hover: #2451c7;
-  --action-foreground: #ffffff;
-  --primary: #2e60e0;
-  --primary-foreground: #ffffff;
-  --secondary: #1c1c1f;
-  --secondary-foreground: #ececee;
-  --muted: #1c1c1f;
-  --muted-foreground: #9b9ba3;
-  --accent: #232327;
-  --accent-foreground: #ececee;
+  --action: #f4f4f5;
+  --action-hover: #e4e4e7;
+  --action-foreground: #141416;
+  --primary: #f4f4f5;
+  --primary-foreground: #141416;
+  --action-dot: #a1a1aa;
+  --action-soft: rgb(244 244 245 / 0.1);
+  --secondary: #202024;
+  --secondary-foreground: #fafafa;
+  --muted: #202024;
+  --muted-foreground: #9d9da6;
+  --subtle-foreground: #686870;
+  --accent: #26262b;
+  --accent-foreground: #fafafa;
   --surface-subtle: #1c1c1f;
   --destructive: #eb7168;
   --destructive-foreground: #0b0b0e;
   --destructive-text: #f07b73;
   --success: #3ccf8e;
   --warning: #f0b04a;
-  --border: #232326;
-  --input: #2c2c30;
-  --ring: #5b8cff;
-  --link: #7da4ff;
+  --dot-live: #3ccf8e;
+  --dot-held: #f0b04a;
+  --dot-bad: #ff6b6f;
+  --border: #26262b;
+  --line: #26262b;
+  --input: #323238;
+  --ring: #a1a1aa;
+  --link: #e4e4e7;
   --kind-source: #34d8c4;
   --kind-mapping: #9caac0;
   --kind-object: #84aaff;
@@ -181,35 +205,36 @@
   --kind-workflow: #a5b4fc;
   --kind-guarantee: #52e086;
   --kind-policy: #fdbd7c;
-  --chart-1: #5b8cff;
+  --chart-1: #f4f4f5;
   --chart-2: #34d8c4;
   --chart-3: #fbc236;
   --chart-4: #f2b2fc;
   --chart-5: #7b7d8e;
-  --sidebar: #09090a;
-  --sidebar-foreground: #ececee;
-  --sidebar-primary: #5b8cff;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #18181b;
-  --sidebar-accent-foreground: #ececee;
-  --sidebar-border: #202024;
-  --sidebar-ring: #5b8cff;
-  --panel-border: #232326;
-  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.02);
-  --table-border: #232326;
+  --sidebar: #0a0a0b;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #f4f4f5;
+  --sidebar-primary-foreground: #141416;
+  --sidebar-accent: #1d1d21;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #232328;
+  --sidebar-ring: #a1a1aa;
+  --panel-border: #25252a;
+  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --table-border: #26262b;
   --dock-surface: #222226;
   --dock-border: rgb(255 255 255 / 0.08);
   --dock-well: #3a3a41;
   --dock-foreground: #ffffff;
-  --dock-muted: #a5a5ad;
+  --dock-muted: #b4b4bc;
   --dock-active: #3a3a41;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
+  --dock-ring: #e4e4e7;
+  --dock-indicator: #f4f4f5;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.7);
-  --elevation-shell: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 1px 2px rgb(0 0 0 / 0.45), 0 16px 40px -16px rgb(0 0 0 / 0.72);
+  --popup-shadow: 0 18px 44px -14px rgb(0 0 0 / 0.72);
+  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.8);
   --elevation-1: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 1px 2px rgb(0 0 0 / 0.4);
   --elevation-control: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 1px 2px rgb(0 0 0 / 0.4);
-  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.18);
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45);
   --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
   --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 16px 40px -10px rgb(0 0 0 / 0.75);
@@ -241,105 +266,119 @@
 }
 
 /*
- * Skin: Polar Monochrome (from norn-mockups/src/index.css) — monochrome ink primaries
- * (#18181b light / #f4f4f5 dark), zero purple CRUD buttons, flat hairlines, calm negative space.
+ * Skin: Open (the first-party app's white canvas and blue accent). `luma` and `glass` start from its
+ * text and action rows, so they share these blocks and set their own surfaces after them.
  */
-:root[data-skin="polar"] {
-  --radius-panel: 0.75rem;
-  --radius-well: 0.5rem;
-  --shell: #f6f6f8;
-  --canvas: #f6f6f8;
+:root[data-skin="open"],
+:root[data-skin="luma"],
+:root[data-skin="glass"] {
+  --radius-panel: 20px;
+  --radius-well: 15px;
+  --shell: #f6f6f7;
+  --canvas: #ffffff;
   --background: #ffffff;
-  --foreground: #18181b;
+  --foreground: #1b1b1d;
   --card: #ffffff;
-  --card-foreground: #18181b;
-  --well: #f7f7f9;
-  --well-border: #e8e8ec;
-  --well-hover: #efefef;
+  --card-foreground: #1b1b1d;
+  --well: #f5f5f5;
+  --well-border: #ededed;
+  --well-hover: #eeeeee;
   --popover: #ffffff;
-  --popover-foreground: #18181b;
-  --primary: #18181b;
-  --primary-foreground: #fafafa;
-  --action: #18181b;
-  --action-hover: #2c2c32;
-  --action-foreground: #fafafa;
-  --secondary: #f4f4f6;
-  --secondary-foreground: #18181b;
-  --muted: #f4f4f6;
-  --muted-foreground: #585861;
-  --accent: #ededf0;
-  --accent-foreground: #18181b;
-  --surface-subtle: #f5f5f7;
-  --border: #e5e5ea;
-  --input: #dcdce2;
-  --ring: #52525b;
-  --link: #18181b;
-  --sidebar: #f6f6f8;
-  --sidebar-foreground: #18181b;
-  --sidebar-primary: #18181b;
-  --sidebar-primary-foreground: #fafafa;
-  --sidebar-accent: #ebebef;
-  --sidebar-accent-foreground: #18181b;
-  --sidebar-border: #e5e5ea;
-  --sidebar-ring: #52525b;
-  --panel-border: #e5e5ea;
-  --panel-shadow: none;
-  --table-border: #e5e5ea;
-  --chart-1: #18181b;
-  --dock-ring: #e4e4e7;
-  --dock-indicator: #f4f4f5;
-  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.14);
+  --popover-foreground: #1b1b1d;
+  /* Darker than --primary so action-coloured text holds 4.5:1 on its own tint. */
+  --action: #2755d0;
+  --action-hover: #2451c7;
+  --action-foreground: #ffffff;
+  --primary: #2e60e0;
+  --primary-foreground: #ffffff;
+  --action-dot: #7f9ef4;
+  --action-soft: rgb(58 109 240 / 0.1);
+  --secondary: #f5f5f5;
+  --secondary-foreground: #1b1b1d;
+  --muted: #f5f5f5;
+  --muted-foreground: #5c5c63;
+  --accent: #eeeeee;
+  --accent-foreground: #1b1b1d;
+  --surface-subtle: #f5f5f5;
+  --border: #ebebeb;
+  --line: #e8e8e8;
+  --input: #e4e4e4;
+  --ring: #2e60e0;
+  --link: #2451c7;
+  --chart-1: #3a6df0;
+  --sidebar: #f6f6f7;
+  --sidebar-foreground: #1b1b1d;
+  --sidebar-primary: #3a6df0;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ececef;
+  --sidebar-accent-foreground: #1b1b1d;
+  --sidebar-border: #ebebeb;
+  --sidebar-ring: #3a6df0;
+  --panel-border: #ebebeb;
+  --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
+  --table-border: #ebebeb;
+  --dock-ring: #93b4ff;
+  --dock-indicator: #6b98ff;
+  --elevation-action: 0 1px 2px rgb(58 109 240 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.18);
 }
 
-:root.dark[data-skin="polar"] {
-  --shell: #0a0a0b;
-  --canvas: #0a0a0b;
-  --background: #111113;
-  --foreground: #fafafa;
-  --card: #161618;
-  --card-foreground: #fafafa;
-  --well: #1b1b1e;
-  --well-border: #26262b;
-  --well-hover: #222226;
-  --popover: #1c1c20;
-  --popover-foreground: #fafafa;
-  --primary: #f4f4f5;
-  --primary-foreground: #141416;
-  --action: #f4f4f5;
-  --action-hover: #e4e4e7;
-  --action-foreground: #141416;
-  --secondary: #202024;
-  --secondary-foreground: #fafafa;
-  --muted: #202024;
-  --muted-foreground: #9d9da6;
-  --accent: #26262b;
-  --accent-foreground: #fafafa;
+:root.dark[data-skin="open"],
+:root.dark[data-skin="luma"],
+:root.dark[data-skin="glass"] {
+  --shell: #09090a;
+  --canvas: #0d0d0e;
+  --background: #0d0d0e;
+  --foreground: #ececee;
+  --card: #151517;
+  --card-foreground: #ececee;
+  --well: #1c1c1f;
+  --well-border: #27272b;
+  --well-hover: #232327;
+  --popover: #19191c;
+  --popover-foreground: #ececee;
+  --action: #6b98ff;
+  --action-hover: #2451c7;
+  --action-foreground: #ffffff;
+  --primary: #2e60e0;
+  --primary-foreground: #ffffff;
+  --action-dot: #6f97ff;
+  --action-soft: rgb(91 140 255 / 0.14);
+  --secondary: #1c1c1f;
+  --secondary-foreground: #ececee;
+  --muted: #1c1c1f;
+  --muted-foreground: #9b9ba3;
+  --subtle-foreground: #6a6a72;
+  --accent: #232327;
+  --accent-foreground: #ececee;
   --surface-subtle: #1c1c1f;
-  --border: #26262b;
-  --input: #323238;
-  --ring: #a1a1aa;
-  --link: #e4e4e7;
-  --sidebar: #0a0a0b;
-  --sidebar-foreground: #fafafa;
-  --sidebar-primary: #f4f4f5;
-  --sidebar-primary-foreground: #141416;
-  --sidebar-accent: #1d1d21;
-  --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #232328;
-  --sidebar-ring: #a1a1aa;
-  --panel-border: #26262b;
-  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
-  --table-border: #26262b;
-  --chart-1: #f4f4f5;
-  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45);
+  --border: #232326;
+  --line: #2a2a2e;
+  --input: #2c2c30;
+  --ring: #5b8cff;
+  --link: #7da4ff;
+  --chart-1: #5b8cff;
+  --sidebar: #09090a;
+  --sidebar-foreground: #ececee;
+  --sidebar-primary: #5b8cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #18181b;
+  --sidebar-accent-foreground: #ececee;
+  --sidebar-border: #202024;
+  --sidebar-ring: #5b8cff;
+  --panel-border: #232326;
+  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.02);
+  --table-border: #232326;
+  --dock-ring: #93b4ff;
+  --dock-indicator: #6b98ff;
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.18);
 }
 
 /*
  * Skin: Luma — soft tinted two-surface shell ground + knot-violet craft with framed panels.
  */
 :root[data-skin="luma"] {
-  --radius-panel: 0.6875rem;
-  --radius-well: 0.5rem;
+  --radius-panel: 16px;
+  --radius-well: 11px;
   --shell: #f3f4f6;
   --canvas: #f3f4f6;
   --background: #ffffff;
@@ -365,7 +404,6 @@
   --panel-border: color-mix(in oklab, var(--border) 92%, transparent);
   --panel-shadow: var(--elevation-1);
   --table-border: color-mix(in oklab, var(--border) 92%, transparent);
-  --elevation-shell: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 28px -14px rgb(15 23 42 / 0.11);
 }
 
 :root.dark[data-skin="luma"] {
@@ -401,8 +439,8 @@
  * Skin: Liquid Glass — translucent frosted surfaces, soft ambient canvas mesh, and specular hairlines.
  */
 :root[data-skin="glass"] {
-  --radius-panel: 1rem;
-  --radius-well: 0.75rem;
+  --radius-panel: 20px;
+  --radius-well: 15px;
   --shell: #eef1f8;
   --canvas: #eef1f8;
   --background: rgb(255 255 255 / 0.74);
@@ -422,7 +460,6 @@
   --panel-border: rgb(255 255 255 / 0.72);
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(44 52 94 / 0.14);
   --table-border: rgb(58 109 240 / 0.14);
-  --elevation-shell: inset 0 1px 0 rgb(255 255 255 / 0.9), 0 12px 36px -14px rgb(44 52 94 / 0.16);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 16px 40px -12px rgb(44 52 94 / 0.22);
   --dock-surface: rgb(24 26 36 / 0.82);
   --dock-border: rgb(255 255 255 / 0.22);
@@ -449,7 +486,6 @@
   --panel-border: rgb(255 255 255 / 0.15);
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 10px 30px -12px rgb(0 0 0 / 0.55);
   --table-border: rgb(255 255 255 / 0.13);
-  --elevation-shell: inset 0 1px 0 rgb(255 255 255 / 0.14), 0 16px 44px -14px rgb(0 0 0 / 0.72);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 20px 48px -12px rgb(0 0 0 / 0.78);
   --dock-surface: rgb(18 20 34 / 0.8);
   --dock-border: rgb(255 255 255 / 0.18);
@@ -474,6 +510,7 @@
 }
 
 :root[data-skin="glass"] [data-slot="sidebar-inset"],
+:root[data-skin="glass"] [data-slot="sidebar"]:not([data-mobile]),
 :root[data-skin="glass"] [data-slot="panel"],
 :root[data-skin="glass"] [data-slot="stat-strip"],
 :root[data-skin="glass"] [data-slot="table-card"],
@@ -484,34 +521,32 @@
   backdrop-filter: blur(20px) saturate(165%);
 }
 
-/* Signature Open v6 double-shell geometry: outer white/charcoal rim (p-1, 20px) around a soft inner well (15px). */
-:root:not([data-skin]) [data-slot="panel"],
-:root[data-skin="open"] [data-slot="panel"] {
-  padding: 0.25rem;
+/* A translucent sidebar material falls back to the opaque shell when the reader asks for less transparency (DESIGN.md 9.1). */
+@media (prefers-reduced-transparency: reduce) {
+  [data-slot="sidebar"] {
+    background-color: var(--shell);
+    backdrop-filter: none;
+  }
 }
 
-:root:not([data-skin]) [data-slot="panel"] > [data-slot="well"],
-:root[data-skin="open"] [data-slot="panel"] > [data-slot="well"],
-:root:not([data-skin]) [data-slot="panel"] > [data-slot="table-card"],
-:root[data-skin="open"] [data-slot="panel"] > [data-slot="table-card"] {
-  border: 1px solid var(--well-border);
-  border-radius: var(--radius-well);
-  background: var(--well);
-}
-
-:root:not([data-skin]) [data-slot="panel"] > :not(header):not([data-slot="well"]):not([data-slot="table-card"]),
-:root[data-skin="open"] [data-slot="panel"] > :not(header):not([data-slot="well"]):not([data-slot="table-card"]) {
-  border-radius: var(--radius-well);
-}
-
-/* Polar stays flat and minimal: crisp top-hairline KPIs and zero double-shell outer padding. */
-:root[data-skin="polar"] [data-slot="panel"] {
-  padding: 0;
-}
-:root[data-skin="polar"] [data-slot="kpi"] > [data-slot="kpi-well"] {
-  background: transparent;
-  border-color: transparent;
-  padding-inline: 0.75rem;
+/*
+ * The concentric double shell in every skin (DESIGN.md 5 and 10): a card rim at --radius-panel with
+ * --panel-inset padding around one inset well. Layered so a utility (a panel nested in a well, which
+ * becomes a ruled section of it) still wins.
+ */
+@layer components {
+  [data-slot="panel"] {
+    padding: var(--panel-inset);
+  }
+  [data-slot="panel"] > [data-slot="well"],
+  [data-slot="panel"] > [data-slot="table-card"] {
+    border: 1px solid var(--well-border);
+    border-radius: var(--radius-well);
+    background: var(--well);
+  }
+  [data-slot="panel"] > :not(header):not([data-slot="well"]):not([data-slot="table-card"]) {
+    border-radius: var(--radius-well);
+  }
 }
 
 /*
@@ -530,7 +565,7 @@
 }
 
 @theme inline {
-  --radius-sm: 0.25rem;
+  --radius-sm: 4px;
   --radius-md: var(--radius-chip);
   --radius-lg: var(--radius);
   --radius-xl: var(--radius-panel);
@@ -541,6 +576,15 @@
   --color-well-border: var(--well-border);
   --color-well-hover: var(--well-hover);
   --color-panel-border: var(--panel-border);
+  --color-line: var(--line);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-action-dot: var(--action-dot);
+  --color-action-soft: var(--action-soft);
+  --color-dot-live: var(--dot-live);
+  --color-dot-held: var(--dot-held);
+  --color-dot-bad: var(--dot-bad);
+  --color-dot-quiet: var(--dot-quiet);
+  --color-dot-accent: var(--dot-accent);
   --color-link: var(--link);
   --color-action: var(--action);
   --color-action-hover: var(--action-hover);
@@ -564,15 +608,15 @@
   --color-tone-teal: var(--tone-teal);
   --color-tone-pink: var(--tone-pink);
   --color-tone-orange: var(--tone-orange);
-  --shadow-shell: var(--elevation-shell);
   --shadow-elevation: var(--elevation-1);
   --shadow-control: var(--elevation-control);
   --shadow-action: var(--elevation-action);
   --shadow-node: var(--elevation-node);
   --shadow-node-hover: var(--elevation-node-hover);
   --shadow-float: var(--elevation-float);
+  --shadow-popup: var(--popup-shadow);
+  --shadow-sheet: var(--sheet-shadow);
   --radius-node: var(--node-radius);
-  --radius-shell: var(--radius-shell);
   --color-node-border: var(--node-border);
   --color-canvas-surface: var(--canvas-surface);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
@@ -581,11 +625,21 @@
   --spacing-row-read: var(--density-row-read);
   --spacing-cell: var(--density-cell);
   --spacing-inspector: 20rem;
-  --text-meta: 0.8125rem;
-  --text-panel: 0.9375rem;
-  --text-section: 1.0625rem;
-  --text-title: 1.75rem;
+  /* The locked five-step type scale (DESIGN.md 8.1). No other sizes in first-party screens. */
+  --text-meta: 0.84rem;
+  --text-meta--line-height: 1.4;
+  --text-body: 1rem;
+  --text-body--line-height: 1.45;
+  --text-body--letter-spacing: -0.003em;
+  --text-heading: 1.35rem;
+  --text-heading--line-height: 1.25;
+  --text-heading--letter-spacing: -0.02em;
+  --text-title: 1.85rem;
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.025em;
   --text-figure: 2rem;
+  --text-figure--line-height: 1;
+  --text-figure--letter-spacing: -0.025em;
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -622,7 +676,7 @@
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
-  --radius-2xl: 0.75rem;
+  --radius-2xl: 12px;
   /* Controls (buttons, inputs, toggles) keep the crisp 8px control radius. */
   --radius-3xl: var(--radius);
   --radius-4xl: var(--radius);
@@ -633,7 +687,7 @@
   * { @apply border-border outline-ring/50; }
   /* 90% root: the whole UI (rem type, spacing, icons) renders as at 90% browser zoom. No CSS zoom, which breaks React Flow's pointer maths. */
   html { @apply font-sans; font-size: 90%; }
-  body { @apply bg-canvas text-foreground antialiased; font-size: 0.875rem; line-height: 1.45; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; }
+  body { @apply bg-canvas text-foreground antialiased; font-size: var(--text-body); line-height: 1.45; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; }
   h1, h2, h3 { letter-spacing: -0.025em; }
   /* The browser's own surfaces carry the palette too: selection, scrollbars, the caret. */
   ::selection { background: color-mix(in oklab, var(--ring) 24%, transparent); }

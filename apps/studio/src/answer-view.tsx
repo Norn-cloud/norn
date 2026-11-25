@@ -173,7 +173,7 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
 function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void } }) {
   return (
     <Sheet open={bucket !== undefined} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
+      <SheetContent>
         {bucket && <>
           <SheetHeader>
             <SheetTitle>{bucket.label}</SheetTitle>
@@ -277,7 +277,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       <div className="space-y-2 px-1">
         {heading === "none" ? null : heading === "h1" ? <h1 className="text-title font-normal tracking-[-0.025em]">{named}</h1>
           : heading === "h3" ? <h3 className="font-medium">{named}</h3>
-          : <h2 className="text-section font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
+          : <h2 className="text-heading font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
         <p className="text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -371,7 +371,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </div>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
       <Sheet open={drill !== undefined} onOpenChange={(next) => { if (!next) setDrill(undefined) }}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
+        <SheetContent className="w-[56rem] overflow-y-auto">
           {drill && <>
             <SheetHeader>
               <SheetTitle>{named}, {drill.label.charAt(0).toLowerCase() + drill.label.slice(1)}</SheetTitle>

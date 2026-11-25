@@ -42,10 +42,10 @@ function EmptyWorkspaceChecklist() {
           {CHECKLIST.map(({ step, title, description, to, icon: Icon }) => (
             <li key={to}>
               <Link to={to} className="group flex items-center gap-4 px-4 py-3.5 transition-colors hover:bg-muted/40">
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-surface-subtle text-xs font-medium text-muted-foreground tabular-nums">{step}</span>
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-surface-subtle text-meta text-muted-foreground tabular-nums">{step}</span>
                 <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-foreground">{title}</span>
+                  <span className="block text-body text-foreground">{title}</span>
                   <span className="block text-meta text-muted-foreground">{description}</span>
                 </span>
                 <ArrowRight aria-hidden className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
@@ -149,7 +149,7 @@ function KeyNumbers() {
   })
   return (
     <section aria-labelledby="key-numbers" className="space-y-3">
-      <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
+      <h2 id="key-numbers" className="text-heading">Key numbers</h2>
       <LoadState
         status={metrics.status}
         data={metrics.data}
@@ -181,9 +181,9 @@ function KeyNumbers() {
                     <section key={metric.name} data-slot="kpi" className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
                       <h3 className="truncate text-meta text-muted-foreground" title={label}>{label}</h3>
                       {answer?.isPending && <Skeleton className="h-7 w-24" />}
-                      {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
+                      {result && <p className="text-figure leading-none tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
                       {answer?.isError && (
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-body text-muted-foreground">
                           Couldn't read this number.{" "}
                           <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void answer?.refetch()}>Retry</button>
                         </p>

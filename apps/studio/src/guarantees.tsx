@@ -79,7 +79,7 @@ function Document({ name, document }: { readonly name: string; readonly document
     <section id={`guarantee-${name}`} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-section font-medium">{TITLE[name] ?? name}</h2>
+          <h2 className="text-heading font-medium">{TITLE[name] ?? name}</h2>
           <Badge variant="outline" title="A document the model checker produced, replayed exactly. Not a live connection.">Recorded</Badge>
         </div>
         <p className="text-meta text-muted-foreground">Rule {document.lawId} {document.lawVersion} · <Verdict verdict={document.verdict} /></p>
@@ -187,7 +187,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
       {broken && counterexample && (
         <Panel icon={CircleX} label="A deliberately broken copy is caught">
           <Well className="flex flex-col gap-4 px-5 py-5">
-            <p className="text-panel text-pretty">With the loss rule removed, the model checker finds a case that breaks the rule:</p>
+            <p className="text-body text-pretty">With the loss rule removed, the model checker finds a case that breaks the rule:</p>
             <BeforeAfter scenario={counterexample} />
             <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} supported checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
           </Well>

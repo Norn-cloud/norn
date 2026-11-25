@@ -303,11 +303,19 @@ export function resolveCustomThemeTokens(theme: StudioTheme, scheme: "light" | "
 type Alpha = number | { readonly light: number; readonly dark: number }
 type Surface = readonly (StudioThemeToken | readonly [StudioThemeToken, Alpha])[]
 
+const CANVAS: Surface = ["canvas"]
 const SHELL: Surface = ["canvas", "shell"]
 const BG: Surface = [...SHELL, "background"]
 const CARD: Surface = [...BG, "card"]
 const POPOVER: Surface = [...BG, "popover"]
-const SIDEBAR: Surface = [...SHELL, "sidebar"]
+const SIDEBAR: Surface = [...CANVAS, "sidebar"]
+// DESIGN.md 4.6: a row's hover is `--sidebar-accent` at 50% over the ground; the current row is the full pill.
+const SIDEBAR_HOVER: Surface = [...SIDEBAR, ["sidebar-accent", 0.5]]
+const SIDEBAR_PILL: Surface = [...SIDEBAR, "sidebar-accent"]
+// The phone sheet is opaque `--shell` in every skin, so its rows are measured on that ground too.
+const SHEET: Surface = [...CANVAS, "shell"]
+const SHEET_HOVER: Surface = [...SHEET, ["sidebar-accent", 0.5]]
+const SHEET_PILL: Surface = [...SHEET, "sidebar-accent"]
 const DOCK: Surface = [...BG, "dock-surface"]
 
 /**
@@ -316,6 +324,12 @@ const DOCK: Surface = [...BG, "dock-surface"]
  * between its host and the full fill, so gating both ends covers it.
  */
 const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] = [
+  // The content column is the unframed canvas (DESIGN.md 9.1): page heads, prose and links sit on it.
+  ["foreground", "canvas", CANVAS, 4.5],
+  ["muted-foreground", "canvas", CANVAS, 4.5],
+  ["action", "canvas", CANVAS, 4.5],
+  ["link", "canvas", CANVAS, 4.5],
+  ["ring", "canvas", CANVAS, 3],
   ["foreground", "background", BG, 4.5],
   ["foreground", "card", CARD, 4.5],
   ["foreground", "well", [...CARD, "well"], 4.5],
@@ -330,7 +344,7 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["foreground", "accent", [...BG, "accent"], 4.5],
   ["foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
   ["foreground", "surface-subtle over card", [...CARD, "surface-subtle"], 4.5],
-  ["foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["card-foreground", "card", CARD, 4.5],
   ["popover-foreground", "popover", POPOVER, 4.5],
   ["muted-foreground", "background", BG, 4.5],
@@ -344,21 +358,32 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["muted-foreground", "accent", [...BG, "accent"], 4.5],
   ["muted-foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
   ["muted-foreground", "sidebar", SIDEBAR, 4.5],
-  ["muted-foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["muted-foreground", "sidebar hover wash", SIDEBAR_HOVER, 4.5],
+  ["muted-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
+  ["muted-foreground", "phone sheet", SHEET, 4.5],
+  ["muted-foreground", "phone sheet hover wash", SHEET_HOVER, 4.5],
   ["secondary-foreground", "secondary", [...BG, "secondary"], 4.5],
   ["secondary-foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
   ["accent-foreground", "accent", [...BG, "accent"], 4.5],
   ["sidebar-foreground", "sidebar", SIDEBAR, 4.5],
-  ["sidebar-foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
-  ["sidebar-accent-foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["sidebar-foreground", "sidebar hover wash", SIDEBAR_HOVER, 4.5],
+  ["sidebar-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
+  ["sidebar-foreground", "phone sheet", SHEET, 4.5],
+  ["sidebar-accent-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
+  ["sidebar-accent-foreground", "phone sheet pill", SHEET_PILL, 4.5],
+  // The focus ring and the attention dot (both `--ring`) on the ground, the wash and the pill.
+  ["ring", "sidebar", SIDEBAR, 3],
+  ["ring", "sidebar hover wash", SIDEBAR_HOVER, 3],
+  ["ring", "sidebar-accent", SIDEBAR_PILL, 3],
+  ["ring", "phone sheet", SHEET, 3],
+  ["ring", "phone sheet hover wash", SHEET_HOVER, 3],
+  ["ring", "phone sheet pill", SHEET_PILL, 3],
   ["primary-foreground", "primary", [...BG, "primary"], 4.5],
   ["primary-foreground", "action-hover", [...BG, "action-hover"], 4.5],
   ["action", "background", BG, 4.5],
   ["action", "card", CARD, 4.5],
   ["action", "popover", POPOVER, 4.5],
-  ["action", "sidebar", SIDEBAR, 4.5],
-  // The rail's active and hover items: `bg-action/12 hover:bg-action/15 dark:bg-action/18`.
-  ["action", "action/15 over sidebar", [...SIDEBAR, ["action", { light: 0.15, dark: 0.18 }]], 4.5],
+
   ["link", "background", BG, 4.5],
   ["link", "card", CARD, 4.5],
   ["link", "popover", POPOVER, 4.5],

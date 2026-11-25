@@ -194,7 +194,7 @@ export function ViewConflictBanner({
 }) {
   if (conflict.kind === "deleted") {
     return (
-      <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
+      <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-body">
         <span>This view was deleted by someone else.</span>
         <Button type="button" size="sm" variant="outline" disabled={!canCreate || saving} onClick={onSaveAsNew}>
           Save as new view
@@ -208,7 +208,7 @@ export function ViewConflictBanner({
     )
   }
   return (
-    <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
+    <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-body">
       <span>
         {conflict.kind === "updated"
           ? `Someone saved version ${conflict.version} of this view since you opened it.`
@@ -255,7 +255,7 @@ function UndoDeleteView({ removed, pending, error, onUndo }: {
   readonly onUndo: () => void
 }) {
   return (
-    <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 text-sm shadow-elevation">
+    <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3 text-body shadow-elevation">
       <span>Deleted “{removed.view.title || "Untitled view"}”. Its history stays in the cell.</span>
       <Button type="button" size="sm" variant="outline" className="ms-auto" disabled={pending} onClick={onUndo}>
         <Undo2 />{pending ? "Restoring…" : "Undo"}
@@ -289,7 +289,7 @@ function RenamePopover({ current, onRename }: {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">
         <form onSubmit={(e) => void submit(e)} className="grid gap-2">
-          <label className="grid gap-1 text-sm font-medium">
+          <label className="grid gap-1 text-body">
             View name
             <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
           </label>
@@ -411,7 +411,7 @@ export function ViewsPage() {
       )}
       {grouped.map(([space, items]) => (
         <div key={space} className="space-y-3">
-          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{space}</h2>
+          <h2 className="text-meta text-muted-foreground">{space}</h2>
           <div className="grid gap-3">
             {items.map((stored) => {
               const concept = catalog?.byName.get(stored.view.objectType)
@@ -431,13 +431,13 @@ export function ViewsPage() {
                     </div>
                   }
                 >
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-2 text-body text-muted-foreground">
                     <Badge variant="secondary">{concept?.title ?? stored.view.objectType}</Badge>
                     {stored.view.space && <Badge variant="outline">Space: {stored.view.space}</Badge>}
                     <span>{filterCount === 0 ? "All records" : `${filterCount} filter${filterCount === 1 ? "" : "s"}`}</span>
                     <span>· Version {stored.version}</span>
                   </div>
-                  {stored.view.description && <p className="mt-1.5 text-sm text-muted-foreground">{stored.view.description}</p>}
+                  {stored.view.description && <p className="mt-1.5 text-body text-muted-foreground">{stored.view.description}</p>}
                 </Panel>
               )
             })}
@@ -547,12 +547,12 @@ function ScopedViewDetail({ id, store = views }: {
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-title font-semibold tracking-tight">{active?.view.title || "View"}</h1>
+            <h1 className="text-title tracking-tight">{active?.view.title || "View"}</h1>
             {active?.view.space && <Badge variant="outline">Space: {active.view.space}</Badge>}
             {active && <Badge variant="secondary">{concept?.title ?? active.view.objectType}</Badge>}
             {active && <Badge variant="outline">Version {active.version}</Badge>}
           </div>
-          {active?.view.description && <p className="text-sm text-muted-foreground">{active.view.description}</p>}
+          {active?.view.description && <p className="text-body text-muted-foreground">{active.view.description}</p>}
         </div>
         {active && (
           <div className="flex flex-wrap items-center gap-1">
@@ -857,7 +857,7 @@ export function ViewEditor({
 
   const issues = issuesOf(findings)
   const invalid = (field: string) => issues.some((i) => i.field === field)
-  const selectCls = "h-9 rounded-md border bg-background px-2.5 text-sm"
+  const selectCls = "h-9 rounded-md border bg-background px-2.5 text-body"
 
   const pickType = (nextType: string) => {
     const nextConcept = concepts.find(({ name }) => name === nextType)
@@ -910,14 +910,14 @@ export function ViewEditor({
       )}
       <ValidationPanel issues={issues} title="The cell refused this view" />
       {restatement && (
-        <p role="status" className="rounded-lg border border-node-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+        <p role="status" className="rounded-lg border border-node-border bg-muted/40 px-3 py-2 text-body text-muted-foreground">
           {restatement}
         </p>
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
-        <label className="grid gap-1.5 text-sm" data-field="title">
-          <span className={invalid("title") ? "font-medium text-destructive" : "font-medium"}>View title</span>
+        <label className="grid gap-1.5 text-body" data-field="title">
+          <span className={invalid("title") ? "text-destructive" : ""}>View title</span>
           <Input
             aria-label="View title"
             aria-invalid={invalid("title") || undefined}
@@ -927,8 +927,8 @@ export function ViewEditor({
           />
         </label>
 
-        <label className="grid gap-1.5 text-sm" data-field="objectType">
-          <span className={invalid("objectType") ? "font-medium text-destructive" : "font-medium"}>Record type</span>
+        <label className="grid gap-1.5 text-body" data-field="objectType">
+          <span className={invalid("objectType") ? "text-destructive" : ""}>Record type</span>
           <select
             aria-label="Record type"
             className={selectCls}
@@ -939,8 +939,8 @@ export function ViewEditor({
           </select>
         </label>
 
-        <label className="grid gap-1.5 text-sm" data-field="description">
-          <span className="font-medium">Description <span className="font-normal text-muted-foreground">(optional)</span></span>
+        <label className="grid gap-1.5 text-body" data-field="description">
+          <span>Description <span className="font-normal text-muted-foreground">(optional)</span></span>
           <Input
             aria-label="Description"
             placeholder="What this view helps an operator track"
@@ -949,8 +949,8 @@ export function ViewEditor({
           />
         </label>
 
-        <div className="grid gap-1.5 text-sm" data-field="space">
-          <span className="font-medium">Pin to Space</span>
+        <div className="grid gap-1.5 text-body" data-field="space">
+          <span>Pin to Space</span>
           <div className="flex flex-wrap gap-2">
             <select
               aria-label="Space"
@@ -1004,7 +1004,7 @@ export function ViewEditor({
           <div className="space-y-3 border-t px-4 py-3">
             <div className="flex flex-wrap gap-3">
               {fields.map((field) => (
-                <label key={field.id} className="inline-flex items-center gap-1.5 text-sm">
+                <label key={field.id} className="inline-flex items-center gap-1.5 text-body">
                   <input
                     type="checkbox"
                     checked={columns.includes(field.id)}
@@ -1016,7 +1016,7 @@ export function ViewEditor({
               ))}
             </div>
             {columns.length > 1 && (
-              <ol className="divide-y rounded-lg border text-sm" aria-label="Column order">
+              <ol className="divide-y rounded-lg border text-body" aria-label="Column order">
                 {columns.map((col, idx) => (
                   <li key={`${col}:${idx}`} className="flex items-center justify-between px-2.5 py-1">
                     <span>{col.replaceAll("_", " ")}</span>
@@ -1035,7 +1035,7 @@ export function ViewEditor({
         <div data-field="sort">
         <Panel label="Sort order">
           <div className="space-y-2 border-t px-4 py-3">
-            {sort.length === 0 && <p className="text-sm text-muted-foreground">Default record order.</p>}
+            {sort.length === 0 && <p className="text-body text-muted-foreground">Default record order.</p>}
             {sort.map((key, index) => (
               <div key={`${key.property}:${index}`} className="flex flex-wrap items-center gap-2">
                 <select
@@ -1077,21 +1077,21 @@ export function ViewEditor({
 
       <Panel label={`Live preview${previewPage?.total ? ` · ${totalText(previewPage.total)}` : ""}`}>
         <div className="border-t px-4 py-3">
-        {workspaceAlert && <p className="text-sm text-destructive">{workspaceAlert}</p>}
-        {!workspaceAlert && previewQuery.isPending && <p className="text-sm text-muted-foreground">Checking matching records…</p>}
-        {!workspaceAlert && previewQuery.isError && <p className="text-sm text-muted-foreground">{failure(previewQuery.error)}</p>}
-        {!workspaceAlert && previewQuery.data?.kind === "refused" && <p role="alert" className="text-sm text-destructive">{previewQuery.data.message}</p>}
+        {workspaceAlert && <p className="text-body text-destructive">{workspaceAlert}</p>}
+        {!workspaceAlert && previewQuery.isPending && <p className="text-body text-muted-foreground">Checking matching records…</p>}
+        {!workspaceAlert && previewQuery.isError && <p className="text-body text-muted-foreground">{failure(previewQuery.error)}</p>}
+        {!workspaceAlert && previewQuery.data?.kind === "refused" && <p role="alert" className="text-body text-destructive">{previewQuery.data.message}</p>}
         {!workspaceAlert && previewPage && previewPage.read.document.records.length === 0 && (
-          <p className="text-sm text-muted-foreground">No records currently match this filter.</p>
+          <p className="text-body text-muted-foreground">No records currently match this filter.</p>
         )}
         {!workspaceAlert && previewPage && previewPage.read.document.records.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-body">
               <thead>
-                <tr className="border-b text-start text-xs text-muted-foreground">
-                  <th className="py-1.5 pe-3 text-start font-medium">Record</th>
+                <tr className="border-b text-start text-meta text-muted-foreground">
+                  <th className="py-1.5 pe-3 text-start">Record</th>
                   {previewCols.map((col, colIdx) => (
-                    <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start font-medium">{col.replaceAll("_", " ")}</th>
+                    <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start">{col.replaceAll("_", " ")}</th>
                   ))}
                 </tr>
               </thead>
@@ -1101,7 +1101,7 @@ export function ViewEditor({
                   const withheld = isWithheld(row)
                   return (
                     <tr key={rec.id} data-withheld={withheld || undefined}>
-                      <td className="py-1.5 pe-3 font-medium">
+                      <td className="py-1.5 pe-3">
                         {withheld ? rec.id : recordName(rec)}
                         {withheld && previewCols.length === 0 && (
                           <span className="ms-2 font-normal"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></span>
@@ -1170,7 +1170,7 @@ export function ViewEditorPage() {
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-title font-semibold tracking-tight">{fresh ? "New view" : (editorStored?.view.title || stored.data?.view.title || "Edit view")}</h1>
+        <h1 className="text-title tracking-tight">{fresh ? "New view" : (editorStored?.view.title || stored.data?.view.title || "Edit view")}</h1>
         {id !== undefined && (
           <Button asChild variant="outline" size="sm" className="ms-auto">
             <Link to="/views/$id" params={{ id }}><Eye />Open view</Link>
