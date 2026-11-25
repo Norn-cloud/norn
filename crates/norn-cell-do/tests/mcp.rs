@@ -16,6 +16,9 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::server::{self, Response};
 use serde_json::{Value, json};
 
+#[path = "support/tools_list.rs"]
+mod tools_list;
+
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const GUEST: Option<&str> = Some("Bearer fixture:guest@demo");
@@ -119,27 +122,6 @@ fn keys(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-/// MCP-TOOLS-SNAPSHOT-1 (#1762): the exact bytes of a `tools/list` answer,
-/// kept under `tests/fixtures/mcp-tools-list`. Agents rely on the tool names,
-/// schemas and annotations; a change to where the catalog comes from must not
-/// change them. `NORN_BLESS=1` rewrites the fixture.
-pub(crate) fn tools_list_snapshot(name: &str, body: &str) {
-    let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/mcp-tools-list")
-        .join(name);
-    let text = format!("{body}\n");
-    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, &text).unwrap();
-    }
-    let kept =
-        std::fs::read_to_string(&file).expect("tools/list snapshot; bless with NORN_BLESS=1");
-    assert!(
-        kept == text,
-        "{name}: tools/list differs from the snapshot byte for byte; review it and rerun with NORN_BLESS=1"
-    );
-}
-
 /// The analytics demo's `tools/list` for each demo caller, byte for byte.
 #[test]
 fn the_tools_list_is_byte_for_byte_the_snapshot() {
@@ -151,7 +133,7 @@ fn the_tools_list_is_byte_for_byte_the_snapshot() {
             &json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {"limit": 100}}),
         );
         assert_eq!(response.status, 200, "{}", response.body);
-        tools_list_snapshot(&format!("analytics.{caller}.json"), &response.body);
+        tools_list::snapshot(&format!("analytics.{caller}.json"), &response.body);
     }
 }
 
