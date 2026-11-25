@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
-import { session } from "./object-cell.ts"
+import { servedDefinitions, session } from "./object-cell.ts"
 
 // PRIVACY-1/2: the grid shows what the server sent for a marked property: a pseudonym chip for a
 // viewer, a blurred chip with "Reveal" for a reader whose policy allows it, and the value with Copy
@@ -27,6 +27,7 @@ async function partyCell(page: Page, reader: "viewer" | "auditor", options: { re
   const reveals: unknown[] = []
   const revealScopes: { readonly orgId: string | null; readonly environmentId: string | null; readonly expectedOrg: string | null; readonly expectedEnv: string | null }[] = []
   let failNext = options.failFirstReveal === true
+  await servedDefinitions(page)
   await page.route("**/api/host/v1/objects/**", async (route) => {
     const url = new URL(route.request().url())
     if (route.request().method() === "POST" && url.pathname.endsWith("/reveal")) {

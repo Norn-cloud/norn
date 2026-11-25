@@ -15,7 +15,7 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { CellUnavailable, NO_DATA_CELL, studioScopeKey, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, studioScopeKey, StudioScopeError, useStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, type RecordsRead } from "../lib/records-source.ts"
@@ -108,9 +108,12 @@ export function DecidedRecordsGrid({ concept, timeline = false }: {
   readonly timeline?: boolean
 }) {
   const workspace = useWorkspace()
+  const session = useStudioScope()
   if (workspace.kind === "deciding" || workspace.kind === "unavailable") {
     return <Shell><WorkspaceUndecided workspace={workspace} bone="records-table" loadingLabel="Reading the records" /></Shell>
   }
+  // The session names a workspace with no data cell: it has no records, and the recording is not its own.
+  if (workspace.kind === "recorded" && session.isSuccess && session.data === null) return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
   const key = workspace.kind === "live" ? studioScopeKey(workspace.scope) : "recorded"
   return <RecordsGrid key={`${concept.name}:${key}`} concept={concept} reader={workspace.reader} timeline={timeline} />
 }

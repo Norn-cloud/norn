@@ -1,8 +1,7 @@
 import { useQueryClient, type QueryKey } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { LiveClient, type LiveRefusal } from "../../../../packages/norn-sdk/src/index.ts"
-import { type StudioScope, studioScopeKey } from "./definitions.ts"
-import { useWorkspace } from "./workspace.tsx"
+import { type StudioScope, studioScopeKey, useStudioScope } from "./definitions.ts"
 
 /**
  * Live reads (UI-LIVE-1): Studio holds one socket per scope to the cell through its Worker
@@ -41,14 +40,11 @@ export function scopedPath(path: string, scope: StudioScope): string {
 
 /**
  * Read `queryKey` again whenever the cell's answer to `path` changes. The first answer only marks
- * where the page already is; `null` subscribes to nothing (a page that has ended, or no cell). It
- * subscribes only at the workspace the page's mode decided (`lib/workspace.tsx`), never at the
- * session's scope while the mode is undecided or failed, and never in the recording.
+ * where the page already is; `null` subscribes to nothing (a page that has ended, or no cell).
  */
 export function useLiveRefresh(path: string | null, queryKey: QueryKey): void {
   const queries = useQueryClient()
-  const workspace = useWorkspace()
-  const scope = workspace.kind === "live" ? workspace.scope : null
+  const scope = useStudioScope().data ?? null
   const key = JSON.stringify(queryKey)
   useEffect(() => {
     if (path === null || scope === null || typeof WebSocket === "undefined") return
