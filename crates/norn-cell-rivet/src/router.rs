@@ -150,6 +150,32 @@ impl Router {
         })
     }
 
+    /// Like [`Router::new`], with the gate's cold-start JWKS backoff
+    /// cooldown overridden (0 disables the backoff: every call retries).
+    /// For tests only; production builds through [`Router::new`].
+    ///
+    /// # Errors
+    /// The gate's outbound HTTP client cannot be built.
+    #[doc(hidden)]
+    pub fn with_cold_backoff_ms(
+        client: Client,
+        config: Arc<HostConfig>,
+        cold_backoff_ms: u64,
+    ) -> anyhow::Result<Self> {
+        let gate = Gate::with_cold_backoff_ms(&config, cold_backoff_ms)?;
+        Ok(Self {
+            client,
+            config,
+            gate,
+        })
+    }
+
+    /// Clear the gate's cold-start backoff state (test-only).
+    #[doc(hidden)]
+    pub async fn clear_cold_backoff_for_test(&self) {
+        self.gate.clear_cold_backoff_for_test().await;
+    }
+
     /// The gate's answer for a request carrying `headers` to `target`, as a
     /// refusal when it is not admitted.
     async fn admitted(&self, headers: &HeaderMap, target: &Target) -> Result<(), Box<Response>> {
