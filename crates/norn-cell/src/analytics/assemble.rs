@@ -657,12 +657,18 @@ fn check_members(members: &[MemberRow], bucket: &BucketTotals) -> Result<(), Cel
         .all(|w| matches!(w, [a, b] if a.id < b.id));
     let count = u64::try_from(members.len()).unwrap_or(u64::MAX);
     let mut sums = vec![norn_ir::ExactSum::ZERO; bucket.totals.len()];
+    // Members without a coefficient for an operand: a null measurement or a
+    // row outside that operand. A bucket can report at most that many nulls.
+    let mut valueless = vec![0_u64; sums.len()];
     for member in members {
         if member.amounts.len() != sums.len() {
             return Err(CellError::Engine("member operand arity".into()));
         }
-        for (sum, amount) in sums.iter_mut().zip(&member.amounts) {
-            *sum = math::add(*sum, amount.unwrap_or(0))?;
+        for ((sum, valueless), amount) in sums.iter_mut().zip(&mut valueless).zip(&member.amounts) {
+            match amount {
+                Some(amount) => *sum = math::add(*sum, *amount)?,
+                None => *valueless = valueless.saturating_add(1),
+            }
         }
     }
     let totals = bucket
@@ -673,6 +679,12 @@ fn check_members(members: &[MemberRow], bucket: &BucketTotals) -> Result<(), Cel
     if !ordered
         || count != bucket.count
         || MembershipDigest::of(members) != bucket.digest
+        || bucket.nulls.len() != valueless.len()
+        || bucket
+            .nulls
+            .iter()
+            .zip(&valueless)
+            .any(|(nulls, valueless)| nulls > valueless)
         || sums.iter().zip(&bucket.magnitude).any(|(sum, reported)| {
             reported
                 .parse::<u128>()
@@ -723,6 +735,32 @@ mod exact_sum_tests {
         assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_ok());
         reported.nulls = vec![1];
         assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_err());
+    }
+
+    #[test]
+    fn inline_nulls_are_bounded_by_valueless_members() {
+        for (amount, nulls, admitted) in [
+            (Some(0), 1, false),
+            (None, 1, true),
+            (None, 0, true),
+            (None, 2, false),
+        ] {
+            let mut bucket = bucket(
+                vec![MemberRow {
+                    id: "a".into(),
+                    version: 1,
+                    amounts: vec![amount],
+                }],
+                0,
+            );
+            bucket.nulls = vec![nulls];
+            let row = assemble_row(&bucket, RuntimeValue::Null, 1, true);
+            assert_eq!(
+                row.is_ok(),
+                admitted,
+                "amount {amount:?}, nulls {nulls}: {row:?}"
+            );
+        }
     }
 
     #[test]
