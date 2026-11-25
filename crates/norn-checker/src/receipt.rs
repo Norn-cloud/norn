@@ -355,16 +355,7 @@ pub fn check_artifact_set_with_receipt(
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    let context = artifacts.validated_context(context)?;
-    check_artifact_set_with_profile(ReceiptCheckRequest {
-        artifacts: &artifacts.artifacts,
-        context: &context,
-        limits,
-        artifact_set: artifacts.identity.clone(),
-        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
-        flow_source_map: None,
-        retained: false,
-    })
+    check_artifact_set_with_flow_source_map(artifacts, context, limits, None)
 }
 
 /// Check retained exact semantic sources and bind their Norn1 bytes.
@@ -516,8 +507,44 @@ struct ReceiptCheckRequest<'a> {
     retained: bool,
 }
 
+/// Finalize a [`CheckReceipt`] from already-computed diagnostics under the
+/// current admission profile (used by Ring-1 checkers composing above Ring-0).
+///
+/// # Errors
+///
+/// As [`check_artifact_set_with_receipt`].
+pub fn check_artifact_set_with_diagnostics(
+    artifacts: &ReceiptSources,
+    context: &EntityArtifactSetContext<'_>,
+    limits: &ResourceLimitProfile,
+    flow_source_map: Option<&FlowSourceMap>,
+    diagnostics: Vec<Diagnostic>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    let context = artifacts.validated_context(context)?;
+    finalize_receipt_with_profile(
+        ReceiptCheckRequest {
+            artifacts: &artifacts.artifacts,
+            context: &context,
+            limits,
+            artifact_set: artifacts.identity.clone(),
+            identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
+            flow_source_map,
+            retained: false,
+        },
+        diagnostics,
+    )
+}
+
 fn check_artifact_set_with_profile(
     request: ReceiptCheckRequest<'_>,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    let diagnostics = crate::check_artifact_set(request.artifacts, request.context);
+    finalize_receipt_with_profile(request, diagnostics)
+}
+
+fn finalize_receipt_with_profile(
+    request: ReceiptCheckRequest<'_>,
+    mut diagnostics: Vec<Diagnostic>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     let ReceiptCheckRequest {
         artifacts,
@@ -529,7 +556,6 @@ fn check_artifact_set_with_profile(
         retained,
     } = request;
     let limit_profile = limits.reference()?;
-    let mut diagnostics = crate::check_artifact_set(artifacts, context);
     if !retained {
         for artifact in artifacts {
             if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
@@ -847,7 +873,6 @@ pub fn recover_legacy_admission_receipt(
         ));
     }
 
-    // The checker context's registry contains external property type names.
     let empty_registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &empty_registry,
@@ -1062,7 +1087,6 @@ impl ArtifactSetRef {
         Self::of_with(artifacts, base, ArtifactRef::of)
     }
 
-    /// The full-envelope identity used by persisted checker 0.1.0 receipts.
     /// Full-envelope identity for checker 0.1.0 receipt reconstruction.
     /// New admissions use [`Self::of`] to exclude editor geometry.
     ///

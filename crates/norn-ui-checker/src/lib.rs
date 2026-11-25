@@ -22,12 +22,11 @@ pub mod ui_view;
 pub mod widget_ux;
 
 use norn_checker::{
-    CheckReceipt, CheckedArtifactSet, Diagnostic, DiagnosticCode, DiagnosticRemediation,
-    DiagnosticSeverity, DiagnosticsDigest, EntityArtifactSetContext, IDENTIFIER_ADMISSION_PROFILE,
+    CheckedArtifactSet, Diagnostic, DiagnosticCode, DiagnosticSeverity, EntityArtifactSetContext,
     ReceiptError, ReceiptSources,
 };
 use norn_ir::explain::{ExplainKind, ExplainReport};
-use norn_ir::{ArtifactEnvelope, ArtifactPayload, FlowSourceMap, ResourceLimitProfile};
+use norn_ir::{ArtifactEnvelope, FlowSourceMap, ResourceLimitProfile};
 
 pub use widget_ux::{
     GeneratedTransitionEnabledWhenError, check_widget_ux_set, generated_transition_enabled_when,
@@ -286,80 +285,15 @@ fn check_artifact_set_with_receipt_inner(
     limits: &ResourceLimitProfile,
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    let context = sources.validated_context(context)?;
-    let artifacts = sources.artifacts();
-    let limit_profile = limits.reference()?;
-    let mut diagnostics = check_artifact_set(artifacts, &context);
-    for artifact in artifacts {
-        if matches!(
-            &artifact.payload,
-            ArtifactPayload::Setting(s)
-                if s.setting_version.as_value()
-                    != Some(&norn_ir::JsonValue::String(
-                        norn_checker::receipt::CURRENT_SETTING_VERSION.into()
-                    ))
-        ) {
-            diagnostics.push(Diagnostic {
-                witness: None,
-                code: DiagnosticCode::new("setting.validation.invalid_payload"),
-                severity: DiagnosticSeverity::Error,
-                message: format!(
-                    "new setting admissions require settingVersion {}; retained value profiles require their verified receipt",
-                    norn_checker::receipt::CURRENT_SETTING_VERSION
-                ),
-                span: None,
-                artifact_id: Some(artifact.artifact_id.clone()),
-                remediation: Some(DiagnosticRemediation::FixDefinition),
-            });
-        }
-    }
-    if let Some(flow_source_map) = flow_source_map {
-        diagnostics.extend(norn_checker::validate_flow_source_map(
-            flow_source_map,
-            artifacts,
-            context.base,
-        ));
-    }
-    let mut type_env = None;
-    if !diagnostics.iter().any(Diagnostic::is_error) {
-        match norn_checker::entity_scopes::receipt_type_env(artifacts, context.base, limits) {
-            Ok(env_ref) => type_env = Some(env_ref),
-            Err(Ok(errors)) => diagnostics.extend(errors.iter().map(|error| Diagnostic {
-                witness: None,
-                code: DiagnosticCode::new(norn_checker::receipt::codes::ENVIRONMENT_UNDERIVABLE),
-                severity: DiagnosticSeverity::Error,
-                message: format!(
-                    "the ZEN Expression type environment of the artifact set cannot be derived: {error}"
-                ),
-                span: None,
-                artifact_id: None,
-                remediation: Some(DiagnosticRemediation::FixDefinition),
-            })),
-            Err(Err(error)) => return Err(error.into()),
-        }
-    }
-    let has_errors = diagnostics.iter().any(Diagnostic::is_error);
-    let receipt = CheckReceipt {
-        checker: norn_checker::receipt::CHECKER_NAME.to_owned(),
-        checker_version: norn_checker::receipt::CHECKER_VERSION.to_owned(),
-        artifact_set: sources.identity().clone(),
-        limit_profile,
-        expr_profile: norn_checker::receipt::EXPR_PROFILE.to_owned(),
-        identifier_profile: IDENTIFIER_ADMISSION_PROFILE.to_owned(),
-        type_env,
-        diagnostics: DiagnosticsDigest::of(&diagnostics)?,
-        admitted: !has_errors,
-        flow_source_map: flow_source_map.cloned(),
-        law_enrollment: if has_errors {
-            Vec::new()
-        } else {
-            norn_checker::law_enrollment::inherited_laws(context.base)?
-        },
-    };
-    Ok(CheckedArtifactSet {
+    let validated = sources.validated_context(context)?;
+    let diagnostics = check_artifact_set(sources.artifacts(), &validated);
+    norn_checker::receipt::check_artifact_set_with_diagnostics(
+        sources,
+        context,
+        limits,
+        flow_source_map,
         diagnostics,
-        receipt,
-    })
+    )
 }
 
 /// Check `artifacts` against `context` (Ring-0 + Ring-1 UI checks) under
