@@ -4,14 +4,6 @@
 //! any change to a row a residue is rebuilt from refuses, and budgeted reads
 //! charge every row they rebuild from.
 #![cfg(feature = "native")]
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    missing_docs,
-    reason = "integration-test crate"
-)]
 
 use std::collections::BTreeMap;
 
@@ -29,6 +21,7 @@ const SCOPE: &str = "org_demo/dev";
 const RESIDUE: &str = "norn.cell.export-residue/1:";
 const PACKED: &str = "norn.cell.payload-storage/1:";
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn item_type() -> ObjectTypeDef {
     serde_json::from_value(json!({
         "name": "residue.Item",
@@ -45,6 +38,7 @@ fn item_type() -> ObjectTypeDef {
     .expect("object type")
 }
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn model() -> Model {
     Model::from_definitions(&[item_type()], &[]).expect("model")
 }
@@ -87,6 +81,7 @@ fn event(kind: &str) -> RuntimeValue {
 
 /// A bound in-memory cell with three steady-state commits after its first:
 /// a multi-fact create, links between them, and a large text value.
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn steady_store() -> CellStore {
     let mut store = CellStore::open_in_memory(model()).expect("store");
     store.bind("scope", SCOPE).expect("scope");
@@ -106,6 +101,7 @@ fn steady_store() -> CellStore {
     store
 }
 
+#[allow(clippy::expect_used, reason = "test helper")]
 fn journal_row(store: &CellStore, seq: u64) -> (String, String) {
     store
         .conn
@@ -119,6 +115,7 @@ fn journal_row(store: &CellStore, seq: u64) -> (String, String) {
         .expect("journal row")
 }
 
+#[allow(clippy::expect_used, reason = "test helper")]
 fn count(store: &CellStore, table: &str) -> i64 {
     store
         .conn
@@ -131,6 +128,7 @@ fn count(store: &CellStore, table: &str) -> i64 {
 /// Read `seq`'s record and prove it is the record its commit hashed: the
 /// stored hash is the Norn1 hash of the complete record's canonical bytes,
 /// and its receipt and entries are the commit's own rows.
+#[allow(clippy::expect_used, reason = "test assertion helper")]
 fn assert_exact(store: &CellStore, seq: u64, residue: bool) -> ExportRecord {
     let (hash, raw) = journal_row(store, seq);
     assert_eq!(raw.starts_with(RESIDUE), residue, "commit {seq}: {raw:.80}");
@@ -166,6 +164,7 @@ fn assert_exact(store: &CellStore, seq: u64, residue: bool) -> ExportRecord {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test")]
 fn steady_main_commits_store_residues_that_rebuild_their_hashed_records() {
     let store = steady_store();
     let first = assert_exact(&store, 1, false);
@@ -197,6 +196,7 @@ fn steady_main_commits_store_residues_that_rebuild_their_hashed_records() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test")]
 fn a_batch_command_result_and_another_world_keep_the_packed_encoding() {
     let dir = tempfile::tempdir().expect("directory");
     let mut store = CellStore::open(
@@ -230,6 +230,7 @@ fn a_batch_command_result_and_another_world_keep_the_packed_encoding() {
     assert_exact(&fork, 4, false);
 }
 
+#[allow(clippy::expect_used, reason = "test fixture")]
 fn install_input() -> (Model, InstalledDefinitionInput) {
     let definition = json!({ "name": "install.Item", "properties": [{ "id": "code", "type": { "kind": "text" } }] });
     let typed: ObjectTypeDef = serde_json::from_value(definition.clone()).expect("typed");
@@ -258,6 +259,7 @@ fn install_input() -> (Model, InstalledDefinitionInput) {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test")]
 fn records_before_and_after_an_install_rebuild_their_own_model() {
     let before = Model::from_definitions(&[], &[]).expect("empty model");
     let mut store = CellStore::open_in_memory(before.clone()).expect("store");
@@ -298,6 +300,7 @@ fn refuses(store: &CellStore, seq: u64, what: &str) {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test")]
 fn a_changed_row_beneath_a_residue_refuses_its_record() {
     let tampers = [
         (
@@ -339,6 +342,7 @@ fn a_changed_row_beneath_a_residue_refuses_its_record() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test")]
 fn a_changed_context_row_refuses_the_next_commit_that_names_it() {
     let mut store = steady_store();
     store
@@ -362,6 +366,7 @@ fn a_changed_context_row_refuses_the_next_commit_that_names_it() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "test")]
 fn budgeted_reads_charge_every_row_a_residue_is_rebuilt_from() {
     use crate::payload_storage::ExportDecodeCursor;
     use crate::scrub::RowBudget;
@@ -391,7 +396,7 @@ fn budgeted_reads_charge_every_row_a_residue_is_rebuilt_from() {
             break record;
         }
         budget = RowBudget::new(4);
-        wakes += 1;
+        wakes = wakes.saturating_add(1);
         assert!(wakes < 64, "a residue read makes progress every wake");
     };
     assert_eq!(record, expected);
