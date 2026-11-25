@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -19,8 +19,8 @@ import { CellUnavailable, NO_DATA_CELL, readAtScope, readStudioScope, StudioScop
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, readRecordsAtScope, type RecordsRead } from "../lib/records-source.ts"
-import { readObjectAtScope } from "../lib/live-transport.ts"
-import { transport } from "../lib/transport.ts"
+import { retryMode, type Mode } from "../lib/live-transport.ts"
+import { drawerRead } from "../lib/record-read.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole } from "../lib/actions.ts"
 import { type ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import { ActionSheet, useActions, type ActionScopeBinding, type OpenAction } from "../actions/action-sheet.tsx"
@@ -101,11 +101,20 @@ export function visibleDrawerRow(openedId: string | null, rows: readonly GridRow
   return rows.find(({ record }) => record.id === openedId) ?? null
 }
 
-export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline = false }: {
+/** The page's own mode read, for a grid shown before the mode is decided: what a live row's drawer says meanwhile. */
+export type GridMode = Pick<UseQueryResult<Mode>, "isPending" | "isError" | "error" | "isFetching">
+
+export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, timeline = false }: {
   readonly concept: Concept
   readonly read?: Read
-  /** The source workspace for a saved view's query cache and facet reads. */
+  /**
+   * The workspace the records were decided in: a saved view's, or the page's decided mode's. Its
+   * query cache, facets, actions, reveals and drawer reads are bound to it. Without one, a live
+   * row's drawer reads nothing.
+   */
   readonly scope?: StudioScope
+  /** The page's mode read, while it may be undecided (the type pages): a live row's drawer shows its state. */
+  readonly mode?: GridMode
   /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
   readonly timeline?: boolean
   /** The query to open with: a saved view's. */
@@ -467,7 +476,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
         )}
       </div>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={drawerRow} origin={page?.origin} scope={scope} actions={actions} actionsOff={actionsOff} onClose={() => setOpenedId(null)}
+      <RecordDrawer concept={concept} fields={fields} row={drawerRow} origin={page?.origin} scope={scope} mode={mode} actions={actions} actionsOff={actionsOff} onClose={() => setOpenedId(null)}
         onAction={(action, id) => { setOpenedId(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} scopeBinding={actionScope} />
     </Shell>
@@ -495,8 +504,20 @@ function NewRecord({ title, creates, off, pending, onPick }: {
   )
 }
 
-function RecordDrawer({ concept, fields, row, origin, scope, actions, actionsOff, onClose, onAction }: {
-  readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly origin: "live" | "recorded" | undefined; readonly scope?: StudioScope; readonly onClose: () => void
+/**
+ * A live row's links while the grid has no decided workspace: nothing is read. A failed mode read
+ * shows the shared Workspace unavailable state with the mode's own Retry; once it is decided, the
+ * page passes its scope and the drawer reads there.
+ */
+function UndecidedWorkspace({ mode }: { readonly mode: GridMode | undefined }) {
+  const queries = useQueryClient()
+  if (mode?.isError) return <WorkspaceUnavailable compact error={mode.error} isFetching={mode.isFetching} onRetry={() => void retryMode(queries)} />
+  if (mode?.isPending) return <Skeleton className="h-5" aria-label="Deciding the workspace" />
+  return <p className="text-meta text-muted-foreground">{"This record's links are read only in a decided workspace."}</p>
+}
+
+function RecordDrawer({ concept, fields, row, origin, scope, mode, actions, actionsOff, onClose, onAction }: {
+  readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly origin: "live" | "recorded" | undefined; readonly scope?: StudioScope; readonly mode?: GridMode; readonly onClose: () => void
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
@@ -505,14 +526,13 @@ function RecordDrawer({ concept, fields, row, origin, scope, actions, actionsOff
   // What can act on this record now: the cell narrows the type's catalog to the record's state.
   const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live", scopeBinding)
   const offered = recordCatalog(origin === "live", narrowed, actions)
+  // The row's record, read at the grid's workspace (or, for a recorded row, from the recording) and
+  // cached under the same key as its full page. A live row with no decided workspace is not read (#1740).
+  const recordReads = record === undefined ? null : drawerRead(record.objectType, record.id, scope, origin)
   const object = useQuery({
-    queryKey: scope === undefined ? ["object", record?.objectType, record?.id] : ["object", record?.objectType, record?.id, scope.orgId, scope.environmentId],
-    queryFn: ({ signal }) => record
-      ? (scope !== undefined
-        ? readObjectAtScope(record.objectType, record.id, scope, signal)
-        : transport.object(record.objectType, record.id))
-      : null,
-    enabled: record !== undefined && row !== null && !isWithheld(row),
+    queryKey: recordReads?.queryKey ?? ["object", "unread"],
+    queryFn: recordReads?.queryFn ?? (async () => null),
+    enabled: recordReads !== null && row !== null && !isWithheld(row),
   })
   const links = object.data?.links.document.items ?? []
   return (
@@ -532,7 +552,8 @@ function RecordDrawer({ concept, fields, row, origin, scope, actions, actionsOff
               </dl>}
             {!isWithheld(row) && <section className="grid gap-2">
               <h3 className="text-sm font-medium">Linked records</h3>
-              {object.isPending ? <Skeleton className="h-5" />
+              {recordReads === null ? <UndecidedWorkspace mode={mode} />
+                : object.isPending ? <Skeleton className="h-5" />
                 : object.data === null || object.data === undefined
                   ? <p className="text-meta text-muted-foreground">{origin === "live" ? "This cell doesn't serve a record's links yet." : "No recorded links for this record."}</p>
                   : links.length === 0 ? <p className="text-meta text-muted-foreground">Nothing links to or from this record.</p>
