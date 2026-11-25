@@ -107,6 +107,12 @@ pub struct ExportRecord {
     /// Original automation continuation, when matching paused in this commit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation_continuation: Option<crate::automation_outbox::AutomationOutboxContinuation>,
+    /// #1704: evidence of the inline candidates recorded before the pause,
+    /// present exactly when a matcher version 2 commit paused. A restore
+    /// accepts the continuation only when its replay records the same set.
+    /// Absent, it leaves the record's bytes and hash unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_inline: Option<crate::automation_outbox::AutomationInlineEvidence>,
 }
 
 impl ExportRecord {

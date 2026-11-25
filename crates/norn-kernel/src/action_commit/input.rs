@@ -370,7 +370,7 @@ fn prepare_action_input_inner<'a, X>(
     check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
     let has_preparation = has_action_preparation_features(action);
     let normalized = normalize_action_input::<X>(action, raw_input)?;
-    if !has_preparation && normalized == *raw_input {
+    if !receipt_input_bound_applies(action, raw_input, &normalized) {
         validate_action_input(action, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
@@ -390,14 +390,7 @@ fn prepare_action_input_inner<'a, X>(
     if !has_preparation {
         check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
     }
-    let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
-    if raw_bytes > max_receipt_bytes {
-        return Err(ActionRefusal::InputBoundExceeded {
-            subject: "action call receipt input".to_owned(),
-            actual_bytes: raw_bytes,
-            max_bytes: max_receipt_bytes,
-        });
-    }
+    let raw_bytes = check_receipt_input_bound::<X>(raw_input)?;
     let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
@@ -762,6 +755,55 @@ fn expression_object(values: &JsonObject) -> Result<BTreeMap<String, ExprValue>,
         .iter()
         .map(|(name, value)| expr_value(value).map(|value| (name.clone(), value)))
         .collect()
+}
+
+/// Whether a call's raw input is held to the receipt input bound
+/// ([`check_receipt_input_bound`]): a call to an action without preparation
+/// features whose input normalizes to itself keeps its admitted fast path.
+fn receipt_input_bound_applies(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+    normalized: &JsonObject,
+) -> bool {
+    has_action_preparation_features(action) || normalized != raw_input
+}
+
+/// The action call receipt input bound: the raw input's canonical bytes must
+/// fit the envelope's `max_output_bytes`. Returns those bytes.
+fn check_receipt_input_bound<X>(raw_input: &JsonObject) -> Result<usize, ActionRefusal<X>> {
+    let max_receipt_bytes = usize::try_from(
+        ResourceLimitProfile::norn_limits_v1()
+            .envelope
+            .max_output_bytes,
+    )
+    .unwrap_or(usize::MAX);
+    let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
+    if raw_bytes > max_receipt_bytes {
+        return Err(ActionRefusal::InputBoundExceeded {
+            subject: "action call receipt input".to_owned(),
+            actual_bytes: raw_bytes,
+            max_bytes: max_receipt_bytes,
+        });
+    }
+    Ok(raw_bytes)
+}
+
+/// AUTOMATION-1 (#1704): apply the receipt input bound a call to `action`
+/// with `raw_input` would meet at runtime, under the same condition
+/// ([`receipt_input_bound_applies`]). Admission passes the static input with
+/// the runtime-injected target id, so an input refused here is refused for
+/// every matched record.
+pub(super) fn check_call_receipt_input<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+) -> Result<(), ActionRefusal<X>> {
+    if !has_action_preparation_features(action) {
+        let normalized = normalize_action_input::<X>(action, raw_input)?;
+        if !receipt_input_bound_applies(action, raw_input, &normalized) {
+            return Ok(());
+        }
+    }
+    check_receipt_input_bound::<X>(raw_input).map(drop)
 }
 
 fn has_action_preparation_features(action: &ActionRoot) -> bool {
