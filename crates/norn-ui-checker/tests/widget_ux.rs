@@ -4742,25 +4742,23 @@ fn studio_decision_sheet_is_admitted_clean() {
 /// (UI-TEXT-1) and its islands held in declared states. The checker admits it with no finding.
 #[test]
 fn studio_record_page_is_admitted_clean() {
-    let found: Vec<Diagnostic> = findings_with_support(record_page(), Vec::new(), &[])
+    let page: Value = serde_json::from_str(RECORD_PAGE).expect("record page should be JSON");
+    let found: Vec<Diagnostic> = findings_with_support(page, Vec::new(), &[])
         .into_iter()
         .filter(|finding| finding.artifact_id.as_deref() == Some("norn.studio.record.widget"))
         .collect();
     assert_clean(&found);
 }
 
-fn record_page() -> Value {
-    serde_json::from_str(include_str!(
-        "../../../registry/studio/artifacts/norn.studio.record.widget.json"
-    ))
-    .expect("record page should be JSON")
-}
+const RECORD_PAGE: &str =
+    include_str!("../../../registry/studio/artifacts/norn.studio.record.widget.json");
 
 /// Each broken variant of the record page is refused, at the member that breaks it.
 #[test]
 fn a_broken_record_page_is_refused() {
+    let admitted: Value = serde_json::from_str(RECORD_PAGE).expect("record page should be JSON");
     let refused = |change: &dyn Fn(&mut Value), pointer: &str, part: &str| {
-        let mut page = record_page();
+        let mut page = admitted.clone();
         change(&mut page);
         let found = findings_with_support(page, Vec::new(), &[]);
         assert!(
