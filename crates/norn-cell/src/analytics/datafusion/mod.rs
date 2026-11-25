@@ -258,7 +258,7 @@ impl Engine {
             .parquet
             .schema_force_view_types = false;
         let ctx = SessionContext::new_with_config_rt(config, Arc::clone(&tenant.runtime));
-        let batches = self.block_on(async move {
+        let batches = Self::block_on(async move {
             let frame = ctx
                 .read_parquet(paths, ParquetReadOptions::default())
                 .await?;
@@ -284,12 +284,11 @@ impl Engine {
     /// Drive `future` to completion on a current-thread runtime of its own,
     /// on a thread of its own, so a caller inside another runtime never nests
     /// one; memory and spill stay bounded by the tenant's shared `RuntimeEnv`.
-    fn block_on<F>(&self, future: F) -> Outcome<F::Output>
+    fn block_on<F>(future: F) -> Outcome<F::Output>
     where
         F: std::future::Future + Send,
         F::Output: Send,
     {
-        let _settings = &self.settings;
         std::thread::scope(|scope| {
             scope
                 .spawn(|| {

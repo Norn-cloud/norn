@@ -7,15 +7,15 @@
 //! lists them; `autotests = false`), and a fixture in any other crate writes
 //! through the kernel path (`tests/support/governed.rs`).
 
-#[cfg(all(feature = "datafusion", not(target_arch = "wasm32")))]
-#[path = "../tests/analytics_engine_datafusion.rs"]
-mod analytics_engine_datafusion;
-#[cfg(all(feature = "duckdb", feature = "native"))]
-#[path = "../tests/analytics_engine.rs"]
-mod analytics_engine;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "../tests/backends/duckdb.rs"]
 mod analytics_backend;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "../tests/analytics_engine.rs"]
+mod analytics_engine;
+#[cfg(all(feature = "datafusion", not(target_arch = "wasm32")))]
+#[path = "../tests/analytics_engine_datafusion.rs"]
+mod analytics_engine_datafusion;
 #[path = "../tests/answer_documents.rs"]
 mod answer_documents;
 #[path = "../tests/bench_latency.rs"]

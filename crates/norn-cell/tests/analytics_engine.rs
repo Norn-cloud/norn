@@ -93,7 +93,10 @@ fn ask(
         }
     })?;
     // D137: the answer is the engine under test's, never another's.
-    assert_eq!(response.provenance.engine, super::analytics_backend::ENGINE_ID);
+    assert_eq!(
+        response.provenance.engine,
+        super::analytics_backend::ENGINE_ID
+    );
     store
         .analytics_answer(prepared, response)
         .map_err(|e| code(&e))
@@ -522,7 +525,10 @@ fn the_engine_names_its_snapshot_and_refuses_another_model()
     let prepared = store.analytics_prepare(&plan, context, &tenant())?;
     let mut other = prepared.request().clone();
     let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
-    assert_eq!(response.provenance.engine, super::analytics_backend::ENGINE_ID);
+    assert_eq!(
+        response.provenance.engine,
+        super::analytics_backend::ENGINE_ID
+    );
     store.analytics_answer(prepared, response)?;
     other.model_pin = "another model".into();
     assert!(matches!(
@@ -593,7 +599,10 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
         ));
         assert_eq!(eng.frontier(frontier_req).map_err(|r| r.detail)?, *expected);
         drop(eng);
-        assert_eq!(super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE), 0);
+        assert_eq!(
+            super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE),
+            0
+        );
         reopen()
     };
     let mut other_schema = batch.clone();
