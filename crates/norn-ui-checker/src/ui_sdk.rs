@@ -428,6 +428,21 @@ mod tests {
                 dismissal_methods: Vec::new(),
             },
         ];
+        let heading = serde_json::json!({ "en": "Lines" });
+        let wire = [
+            serde_json::json!({ "kind": "section", "section": {
+                "sectionId": "main", "kind": "tab", "label": heading, "fields": [], "order": 0 } }),
+            serde_json::json!({ "kind": "child_grid", "formId": "order", "label": heading,
+                "collectionId": "lines", "orderingKey": "position", "rowOpsInputName": "lines",
+                "maxRows": 10, "fieldIds": [] }),
+        ];
+        let components: Vec<WidgetComponent> = components
+            .into_iter()
+            .chain(
+                wire.into_iter()
+                    .map(|component| serde_json::from_value(component).expect("component")),
+            )
+            .collect();
         for component in &components {
             let behaviors = native_behaviors(component);
             assert!(!behaviors.is_empty());

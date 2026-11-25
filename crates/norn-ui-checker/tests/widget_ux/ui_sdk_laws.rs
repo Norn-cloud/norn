@@ -165,6 +165,162 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
     assert_admits(&found, LAYER);
 }
 
+fn push_transition(machine: &mut Value, transition: Value) {
+    machine
+        .at_mut("transitions")
+        .as_array_mut()
+        .req("transitions")
+        .push(transition);
+}
+
+#[test]
+fn l1_asking_is_a_way_out_only_when_it_leaves_the_held_states() {
+    let refuse = json!({ "dismissible": "false" });
+    // Refused: `onDismissAttempt` back into the same state lets nobody out.
+    let found = layer_codes(layered(
+        "ui-sdk:dialog",
+        &refuse,
+        &json!(["confirming"]),
+        |m| {
+            without(m, "confirm-cancel");
+            push_transition(
+                m,
+                json!({ "transitionId": "confirm-ask", "from": "confirming", "on": "confirm-ask", "target": "confirming" }),
+            );
+        },
+    ));
+    assert_refuses(&found, LAYER, "cannot be dismissed at all");
+    // Refused: asking loops between two states the layer is held in.
+    let looping = |exit: Option<Value>| {
+        layer_codes(layered(
+            "ui-sdk:dialog",
+            &refuse,
+            &json!(["confirming", "discarding"]),
+            |m| {
+                without(m, "confirm-cancel");
+                m.at_mut("states")
+                    .as_array_mut()
+                    .req("states")
+                    .push(json!({ "stateId": "discarding", "role": "idle" }));
+                push_transition(
+                    m,
+                    json!({ "transitionId": "ask-1", "from": "confirming", "on": "confirm-ask", "target": "discarding" }),
+                );
+                push_transition(
+                    m,
+                    json!({ "transitionId": "ask-2", "from": "discarding", "on": "confirm-ask", "target": "confirming" }),
+                );
+                if let Some(exit) = exit {
+                    push_transition(m, exit);
+                }
+            },
+        ))
+    };
+    let found = looping(None);
+    assert_refuses(&found, LAYER, "`confirming`");
+    assert_refuses(&found, LAYER, "`discarding`");
+    // Admitted: "Discard changes?" leads on, through a held state, to Cancel inside the layer.
+    assert_admits(
+        &looping(Some(
+            json!({ "transitionId": "discard", "from": "discarding", "on": "confirm-cancel", "target": "browsing" }),
+        )),
+        LAYER,
+    );
+}
+
+#[test]
+fn l1_a_control_that_starts_the_call_is_not_cancel() {
+    // The layer's only control is Confirm: it leaves the held state, but to send the command.
+    let confirm_only = |transition: Value| {
+        layer_codes(layered(
+            "ui-sdk:alert-dialog",
+            &json!({}),
+            &json!(["confirming"]),
+            |m| {
+                without(m, "confirm-cancel");
+                push_transition(m, transition);
+            },
+        ))
+    };
+    let start = json!([{ "kind": "start", "call": { "kind": "action", "bindingId": "approve" } }]);
+    // Refused: Confirm starts the call and waits on it.
+    assert_refuses(
+        &confirm_only(
+            json!({ "transitionId": "confirm", "from": "confirming", "on": "confirm-cancel", "target": "approving", "effects": start }),
+        ),
+        LAYER,
+        "locks out an outside press or swipe",
+    );
+    // Refused: a step that starts a call is no way out, wherever it goes.
+    assert_refuses(
+        &confirm_only(
+            json!({ "transitionId": "confirm", "from": "confirming", "on": "confirm-cancel", "target": "browsing", "effects": start }),
+        ),
+        LAYER,
+        "`confirming`",
+    );
+    // Refused: nor is a step into a pending state.
+    assert_refuses(
+        &confirm_only(
+            json!({ "transitionId": "confirm", "from": "confirming", "on": "confirm-cancel", "target": "approving" }),
+        ),
+        LAYER,
+        "`confirming`",
+    );
+}
+
+#[test]
+fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
+    // Refused: a controlled `open` keeps a plain dialog open whatever Escape asks.
+    let found = layer_codes(layered(
+        "ui-sdk:dialog",
+        &json!({ "open": "true" }),
+        &json!([]),
+        |_| {},
+    ));
+    assert_refuses(&found, LAYER, "sets `open`");
+    // Refused: a lock held only while the call is pending, but opened by `open` in every state.
+    let found = layer_codes(layered(
+        "ui-sdk:dialog",
+        &json!({ "dismissible": "false", "open": "true" }),
+        &json!(["approving"]),
+        |_| {},
+    ));
+    assert_refuses(&found, LAYER, "sets `open`");
+    // Refused: an alert dialog with Cancel, whose `open` follows a field instead of its states.
+    let found = layer_codes(layered(
+        "ui-sdk:alert-dialog",
+        &json!({ "open": "input.fields.lastCode == 'locked'" }),
+        &json!(["confirming"]),
+        |_| {},
+    ));
+    assert_refuses(&found, LAYER, "sets `open`");
+    // Refused: `defaultOpen` opens a lock on load, before any state holds it.
+    let found = layer_codes(layered(
+        "ui-sdk:dialog",
+        &json!({ "dismissible": "false", "defaultOpen": "true" }),
+        &json!(["approving"]),
+        |_| {},
+    ));
+    assert_refuses(&found, LAYER, "sets `defaultOpen`");
+    // Refused: and on a layer that names `heldIn`, whatever it refuses.
+    let found = layer_codes(layered(
+        "ui-sdk:dialog",
+        &json!({ "defaultOpen": "true" }),
+        &json!(["confirming"]),
+        |_| {},
+    ));
+    assert_refuses(&found, LAYER, "sets `defaultOpen`");
+    // Admitted: a plain dialog that starts open, which Escape closes.
+    let found = layer_codes(layered(
+        "ui-sdk:dialog",
+        &json!({ "defaultOpen": "true" }),
+        &json!([]),
+        |_| {},
+    ));
+    assert_admits(&found, LAYER);
+}
+
 #[test]
 fn ui_sdk_nodes_are_checked_against_the_pinned_catalog() {
     let found = layer_codes(layered(
@@ -267,15 +423,14 @@ fn l3_notifications_never_hold_the_page() {
         NOTIFICATION,
     );
     assert_admits(&toast(&json!({}), &json!([])), NOTIFICATION);
-    assert_refuses(
+    // How a toast is announced is UI SDK's call: assertive is its own default for an error.
+    assert_admits(
         &toast(&json!({ "priority": "\"assertive\"" }), &json!([])),
         NOTIFICATION,
-        "assertively",
     );
-    assert_refuses(
+    assert_admits(
         &toast(&json!({ "type": "\"error\"" }), &json!([])),
         NOTIFICATION,
-        "assertively",
     );
     assert_refuses(
         &toast(

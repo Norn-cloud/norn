@@ -1,7 +1,7 @@
 /**
  * The pinned UI SDK catalog (#1762, milestone B): what `@ui-sdk/core` at the exact version Studio
  * pins says about itself, written to `crates/norn-ui-checker/catalog/ui-sdk.json` for the Ring-1
- * checker. Nothing here is copied by hand:
+ * checker. Everything but three generator rules (below) comes from UI SDK itself:
  *
  * - every exported symbol, its kind and its stability tag (information only), and each primitive's
  *   options, dismissal reasons, parts, state and api come from the package's own `.d.ts`, read with
@@ -10,6 +10,12 @@
  *   one instance of each primitive is made with the kernel's `watchers` hook installed, which is
  *   how `page/agent` learns them. The fallback verb rule is read from `page/agent`'s source with
  *   the TypeScript parser.
+ *
+ * Three rules are this generator's own, not read from UI SDK: an agent can `press` a primitive
+ * with a trigger, close, button or action part, or one that runs an `action` when pressed
+ * (`PRESSED_PARTS`); a primitive whose state has `pending` also reports `pending` and `error` to
+ * an agent; and a primitive whose items are added at run time takes the exported option type
+ * `ITEM_OPTIONS` names (a toast's `ToastOptions`).
  *
  * `bun scripts/ui-sdk-catalog.ts --write` regenerates it; `test/ui-sdk-catalog.test.ts` is the
  * drift gate (regenerating must give the checked-in bytes). The gate makes an upgrade's changes

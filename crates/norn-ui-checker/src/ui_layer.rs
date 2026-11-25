@@ -6,16 +6,26 @@
 //!
 //! - **L1, dismissal** (`widget.layer.dismissal_refused_without_cause`). A layer refuses dismissal
 //!   at one of two levels. *Total*: Escape cannot close it (`dismissible: false`, or a primitive
-//!   without Escape) and the state offers no Cancel and no `onDismissAttempt` question; it is legal
-//!   only in a `pending` state, whose call has a deadline and an exit on every outcome. *Lock*: an
-//!   outside press or a swipe cannot close it (an alert dialog, `closeOnOutsidePress: false`,
-//!   `dismissible: false` with a way out) but Escape, a Cancel control or the question still works;
-//!   it is legal in `pending`, in an `idle` state that asks through `onDismissAttempt` (a dirty
-//!   form's "Discard changes?"), or in an `idle` confirmation that offers Cancel. A layer that
-//!   refuses dismissal with no `heldIn` state refuses it whenever a person opens it: refused.
+//!   without Escape). *Lock*: Escape still can, but an outside press or a swipe cannot (an alert
+//!   dialog, `closeOnOutsidePress: false`). Either is legal in a `pending` state, whose call has a
+//!   deadline and an exit on every outcome, and in an `idle` state with a *way out*: a path of
+//!   unguarded transitions on the person's own events (the layer's `onDismissAttempt`, as a dirty
+//!   form's "Discard changes?", or a control inside the layer, as Cancel) to a state the layer is
+//!   not held in, where no step starts a call or enters a pending state. Asking again into the same
+//!   state, or between held states, is no way out, and neither is a Confirm control that sends the
+//!   command. A layer that refuses dismissal with no `heldIn` state refuses it whenever a person
+//!   opens it: refused.
+//!
+//!   `heldIn` is the one source of whether a layer is open. A prop reads only the machine's fields,
+//!   never its state, and UI SDK keeps a layer whose `open` is set as `open` says whatever Escape,
+//!   an outside press, a Close part or Cancel asks (its `.d.ts`: "Pass it to control the dialog";
+//!   a controlled component ignores `cancel()`, "since the next value comes from you"). So `open`
+//!   is refused on every layer, and `defaultOpen`, which opens it on load, on a layer that refuses a
+//!   dismissal or names `heldIn`.
 //! - **L3, notifications** (`widget.layer.notification_intrusive`). A toast never holds the page:
-//!   it is never held open or modal, it is announced politely, and it is dismissible or expires. A
-//!   native node that announces changes never also traps focus.
+//!   it is never held open or modal, never traps focus, and is dismissible or expires. How it is
+//!   announced is UI SDK's call (assertive is its default for an error). A native node that
+//!   announces changes never also traps focus.
 //! - **L5, authority** (`widget.authority.action_outside_binding`). A Norn action is reached only
 //!   through its action binding: no machine calls the host's action-call or MCP operation directly.
 //!   UI SDK's page agent fills and presses the page; pressing a bound control raises the same
@@ -236,6 +246,7 @@ impl Layer<'_> {
             && surely(self.props, "closeOnOutsidePress", true);
         let locks = !escape_closes
             || (!outside_closes && primitive.dismiss_attempts.contains("outside-press"));
+        self.opened(locks, findings);
         let id = &self.node.node_id;
         if !locks {
             return;
@@ -246,7 +257,7 @@ impl Layer<'_> {
                 code: DISMISSAL_REFUSED,
                 pointer: at,
                 message: format!(
-                    "layer `{id}` refuses a dismissal whenever it is open: hold it (`heldIn`) only in a pending state, an idle state that asks through `onDismissAttempt`, or an idle confirmation that offers Cancel"
+                    "layer `{id}` refuses a dismissal whenever it is open: hold it (`heldIn`) only in a pending state, or in an idle state with a way out (`onDismissAttempt` or a control inside the layer that reaches a state it is not held in, without starting a call)"
                 ),
             });
             return;
@@ -266,33 +277,14 @@ impl Layer<'_> {
                 });
                 continue;
             };
-            // An unguarded transition out of this state on a person's event from `raised`.
-            let on = |raised: &dyn Fn(&str, Option<&str>, &str) -> bool| {
-                machine.transitions.iter().any(|transition| {
-                    transition.from == *state_id
-                        && transition.guard.is_none()
-                        && transition.component_guard.is_none()
-                        && machine.events.iter().any(|event| {
-                            event.event_id == transition.on
-                                && matches!(&event.source, WidgetMachineEventSource::User { node_id, emits }
-                                    if raised(node_id, emits.as_deref(), &transition.target))
-                        })
-                })
-            };
-            // The layer asks ("Discard changes?") on a refused dismissal.
-            let asks = on(&|node_id, emits, _| node_id == id && emits == Some(DISMISS_ATTEMPT));
-            // A control inside the layer closes it: Cancel.
-            let cancel = on(&|node_id, _, target| {
-                inside.contains(node_id) && !self.held_in.iter().any(|held| held == target)
-            });
-            let leave = escape_closes || asks || cancel;
+            let out = way_out(machine, id, &inside, self.held_in, state_id);
             let legal = match state.role {
                 WidgetStateRole::Pending => true,
-                WidgetStateRole::Idle => leave && (asks || cancel),
+                WidgetStateRole::Idle => out,
                 WidgetStateRole::Error | WidgetStateRole::Terminal => false,
             };
             if !legal {
-                let level = if leave {
+                let level = if escape_closes || out {
                     "locks out an outside press or swipe"
                 } else {
                     "cannot be dismissed at all"
@@ -301,17 +293,90 @@ impl Layer<'_> {
                     code: DISMISSAL_REFUSED,
                     pointer: format!("{at}/{index}"),
                     message: format!(
-                        "layer `{id}` {level} in `{state_id}`: that is legal only while a call is pending{}",
-                        if leave {
-                            ", or in an idle state that asks through `onDismissAttempt` or offers a Cancel control inside the layer"
-                        } else {
-                            ""
-                        }
+                        "layer `{id}` {level} in `{state_id}`: that is legal only while a call is pending, or in an idle state with a way out (`onDismissAttempt` or a control inside the layer that reaches a state it is not held in, without starting a call or entering a pending state)"
                     ),
                 });
             }
         }
     }
+
+    /// `heldIn` is the one source of whether the layer is open (see the module docs).
+    fn opened(&self, locks: bool, findings: &mut Vec<Finding>) {
+        let id = &self.node.node_id;
+        let at = |name: &str| format!("{}/component/props/{name}", self.pointer);
+        if self.props.contains_key("open") {
+            findings.push(Finding {
+                code: DISMISSAL_REFUSED,
+                pointer: at("open"),
+                message: format!(
+                    "layer `{id}` sets `open`, so it stays as `open` says whatever Escape, an outside press or Cancel asks, in every state: name the states it is open in with `heldIn` instead"
+                ),
+            });
+        }
+        if self.props.contains_key("defaultOpen") && (locks || !self.held_in.is_empty()) {
+            findings.push(Finding {
+                code: DISMISSAL_REFUSED,
+                pointer: at("defaultOpen"),
+                message: format!(
+                    "layer `{id}` sets `defaultOpen`, so it opens on load outside its `heldIn` states: a layer that refuses a dismissal or names `heldIn` is open only in its `heldIn` states"
+                ),
+            });
+        }
+    }
+}
+
+/// Whether a person can leave a layer held in `held_in` from `start`: a path of unguarded
+/// transitions on the person's own events (the layer's `onDismissAttempt`, or a control inside the
+/// layer) to a state the layer is not held in, where no step starts a call or enters a pending
+/// state. A Confirm control that sends the command is not Cancel, and asking again into the same
+/// state, or between held states, never ends.
+fn way_out(
+    machine: &WidgetMachine,
+    layer: &str,
+    inside: &BTreeSet<&str>,
+    held_in: &[String],
+    start: &str,
+) -> bool {
+    let pending: BTreeSet<&str> = machine
+        .states
+        .iter()
+        .filter(|state| state.role == WidgetStateRole::Pending)
+        .map(|state| state.state_id.as_str())
+        .collect();
+    let by_person = |on: &str| {
+        machine.events.iter().any(|event| {
+            event.event_id == on
+                && matches!(&event.source, WidgetMachineEventSource::User { node_id, emits }
+                    if (node_id == layer && emits.as_deref() == Some(DISMISS_ATTEMPT))
+                        || inside.contains(node_id.as_str()))
+        })
+    };
+    let mut seen = BTreeSet::from([start]);
+    let mut queue = vec![start];
+    while let Some(from) = queue.pop() {
+        for transition in &machine.transitions {
+            let target = transition.target.as_str();
+            let step = transition.from == from
+                && transition.guard.is_none()
+                && transition.component_guard.is_none()
+                && by_person(&transition.on)
+                && !transition
+                    .effects
+                    .iter()
+                    .any(|effect| matches!(effect, WidgetMachineEffect::Start { .. }))
+                && !pending.contains(target);
+            if !step {
+                continue;
+            }
+            if !held_in.iter().any(|held| held == target) {
+                return true;
+            }
+            if seen.insert(target) {
+                queue.push(target);
+            }
+        }
+    }
+    false
 }
 
 fn notification(node: &WidgetNode, pointer: &str, findings: &mut Vec<Finding>) {
@@ -330,15 +395,6 @@ fn notification(node: &WidgetNode, pointer: &str, findings: &mut Vec<Finding>) {
         let kind = literal(props, "type");
         let kind_is = |name: &str| kind.is(&Value::String(name.to_owned()));
         let kind_known = kind != Prop::Computed;
-        let polite = match literal(props, "priority") {
-            Prop::Absent => kind_known && !kind_is("error"),
-            prop @ (Prop::Computed | Prop::Literal(_)) => {
-                prop.is(&Value::String("polite".to_owned()))
-            }
-        };
-        if !polite {
-            problems.push("it is announced assertively (set `priority` to \"polite\")".to_owned());
-        }
         let expires = match literal(props, "duration") {
             Prop::Absent => kind_known && !kind_is("loading"),
             Prop::Computed => false,
