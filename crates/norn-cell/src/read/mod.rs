@@ -612,7 +612,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 #[allow(clippy::expect_used, reason = "SQLite index plan regression tests")]
 mod link_candidate_index_tests {
     use super::links::{link_candidate_page_sql, link_locator_endpoint_order};
-    use super::objects::marking_property_rows_sql;
+    use super::objects::marking_snapshot_rows_sql;
     use super::{LinkDirection, LinkPagePosition};
     use crate::engine::{NativeEngine, SqlEngine, SqlValue};
     use crate::system::SYSTEM_DDL;
@@ -677,28 +677,22 @@ mod link_candidate_index_tests {
     }
 
     #[test]
-    fn marking_property_rows_seek_subjects_and_current_rows_by_key() {
-        let engine = NativeEngine::open_in_memory().expect("opens SQLite");
+    fn marking_snapshot_rows_seek_live_objects_and_markers_by_key() -> Result<(), crate::CellError>
+    {
+        let engine = NativeEngine::open_in_memory()?;
         for statement in SYSTEM_DDL {
-            engine
-                .execute(statement, &[])
-                .expect("creates system schema");
+            engine.execute(statement, &[])?;
         }
-        engine
-            .execute(
-                r#"CREATE TABLE "o:test.Item" ("_world" TEXT NOT NULL, "_id" TEXT NOT NULL, "_type" TEXT NOT NULL, "_version" INTEGER NOT NULL, PRIMARY KEY ("_world", "_id"))"#,
-                &[],
-            )
-            .expect("creates root table");
-        let sql = marking_property_rows_sql("o:test.Item");
+        engine.execute(
+            r#"CREATE TABLE "o:test.Item" ("_world" TEXT NOT NULL, "_id" TEXT NOT NULL, "_type" TEXT NOT NULL, "_version" INTEGER NOT NULL, PRIMARY KEY ("_world", "_id"))"#,
+            &[],
+        )?;
+        let sql = marking_snapshot_rows_sql("o:test.Item");
         let bindings = [
             SqlValue::Text("main".to_owned()),
             SqlValue::Text("test.Item".to_owned()),
-            SqlValue::Text("name".to_owned()),
         ];
-        let plan = engine
-            .query(&format!("EXPLAIN QUERY PLAN {sql}"), &bindings)
-            .expect("explains marking count");
+        let plan = engine.query(&format!("EXPLAIN QUERY PLAN {sql}"), &bindings)?;
         let details = plan
             .iter()
             .filter_map(|row| match row.get(3) {
@@ -706,15 +700,15 @@ mod link_candidate_index_tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        // A per-object correlated lookup re-scans every matching marking row
-        // (about 800x more SQLite work at 1,000 objects).
         assert!(
             details.iter().all(|detail| !detail.contains("CORRELATED")),
             "no correlated subquery: {details:?}"
         );
-        // Every table is reached by a keyed search, whichever join order SQLite picks,
-        // so the work is linear in the driving rows.
-        for table in ["o ", "ms ", "m "] {
+        assert!(
+            details.iter().all(|detail| !detail.contains("TEMP B-TREE")),
+            "no temp B-tree: {details:?}"
+        );
+        for table in ["o ", "s ", "ms ", "m "] {
             assert!(
                 details
                     .iter()
@@ -723,9 +717,68 @@ mod link_candidate_index_tests {
             );
         }
         assert!(
-            details.iter().all(|detail| !detail.starts_with("SCAN")),
-            "no full scan: {details:?}"
+            details
+                .iter()
+                .all(|detail| !detail.starts_with("SCAN ") || detail.contains("subquery")),
+            "no full table scan: {details:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn link_sources_to_uses_covering_target_order_without_prefix_indexes()
+    -> Result<(), crate::CellError> {
+        let engine = NativeEngine::open_in_memory()?;
+        for statement in SYSTEM_DDL {
+            engine.execute(statement, &[])?;
+        }
+        let indexes = engine.query(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = '_norn_link_version' AND sql IS NOT NULL ORDER BY name",
+            &[],
+        )?;
+        let names = indexes
+            .iter()
+            .filter_map(|row| match row.first() {
+                Some(SqlValue::Text(name)) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "_norn_link_version/source_link_order",
+                "_norn_link_version/source_order",
+                "_norn_link_version/target_link_order",
+                "_norn_link_version/target_order",
+            ]
+        );
+        let sql = "SELECT \"link\", \"source\" FROM \"_norn_link_version\" WHERE \"world\" = ?1 AND \"target\" = ?2 ORDER BY \"link_table\", \"source\" LIMIT ?3";
+        let bindings = [
+            SqlValue::Text("main".to_owned()),
+            SqlValue::Text("anchor".to_owned()),
+            SqlValue::Integer(8),
+        ];
+        let plan = engine.query(&format!("EXPLAIN QUERY PLAN {sql}"), &bindings)?;
+        let details = plan
+            .iter()
+            .filter_map(|row| match row.get(3) {
+                Some(SqlValue::Text(detail)) => Some(detail.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("USING COVERING INDEX _norn_link_version/target_order")
+            }),
+            "expected covering target_order index: {details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .all(|detail| !detail.contains("USE TEMP B-TREE FOR ORDER BY")),
+            "expected pre-ordered index scan: {details:?}"
+        );
+        Ok(())
     }
 
     #[test]

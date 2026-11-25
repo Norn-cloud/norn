@@ -1,0 +1,4 @@
+{
+  "order": 94,
+  "value": "apps/studio/worker/migrations/0017_oauth_unscoped_grants.sql"
+}

@@ -413,7 +413,7 @@ function withCellHost(given: Env): Env {
 }
 
 const handler = {
-  async fetch(request, given) {
+  async fetch(request, given, ctx) {
     const env = withCellHost(given)
     const { pathname } = new URL(request.url)
     if (mcpOn(env) && pathname === MCP_PATH) {
@@ -501,6 +501,8 @@ const handler = {
         db: env.AUTH_DB, cell: cellFor(env.NORN_HOST, auth(env), actor, resolvedScope),
         scope: { orgId: resolvedScope.orgId, environmentId: resolvedScope.environmentId, userId: actor.subjectId },
         model: configuredModel(env), capMicroUsd: Math.round((Number.isFinite(cap) && cap >= 0 ? cap : 20) * 1_000_000), now: Date.now(),
+        // A disconnect must not stop a request between its provider calls and its settlement.
+        ...ctx === undefined ? {} : { waitUntil: (work: Promise<unknown>) => ctx.waitUntil(work) },
       })
     }
     if (pathname.startsWith("/api/connectors/")) {

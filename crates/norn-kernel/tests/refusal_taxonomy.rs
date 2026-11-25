@@ -206,6 +206,19 @@ fn refusal_categories_are_stable() {
             RefusalCategory::Limit,
         ),
         (
+            CommitError::<Infallible>::LifecycleInitialization {
+                key: key.clone(),
+                refusal: Box::new(norn_kernel::LifecycleInitRefusal::InvalidInitialState {
+                    lifecycle: "status".into(),
+                    state: Some("posted".into()),
+                    initial: vec!["draft".into()],
+                }),
+            }
+            .refusal(),
+            "lifecycle.validation.undeclared_write",
+            RefusalCategory::Invalid,
+        ),
+        (
             ActionRefusal::<Infallible>::TargetNotFound.refusal(),
             "action.target_not_found",
             RefusalCategory::Visibility,

@@ -39,6 +39,44 @@ const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 const STORAGE_V5: &str = include_str!("fixtures/engine-storage-v5.json");
 const STORAGE_V6: &str = include_str!("fixtures/engine-storage-v6.json");
+const STORAGE_V7: &str = include_str!("fixtures/engine-storage-v7.json");
+
+/// Storage version 8 (#1533 Part 1) adds `_norn_marking_snapshot.nonempty_slots`
+/// (backfilled from non-empty rows) and drops the strictly redundant
+/// `_norn_link_version/source` and `_norn_link_version/target` prefix indexes
+/// (exact prefixes of `source_order` and `target_order`). Existing stored
+/// `'[]'` marking rows are retained verbatim and remain readable as empty.
+fn apply_v8_sparse_markings_upgrade(image: &mut Value) {
+    if let Some(schema) = image["schema"].as_array_mut() {
+        schema.retain(|entry| {
+            entry["name"] != "_norn_link_version/source"
+                && entry["name"] != "_norn_link_version/target"
+        });
+        for entry in schema.iter_mut() {
+            if entry["name"] == "_norn_marking_snapshot"
+                && let Some(sql) = entry["sql"].as_str()
+            {
+                entry["sql"] = Value::String(sql.replacen(
+                    "\"is_current\" INTEGER NOT NULL,",
+                    "\"is_current\" INTEGER NOT NULL, \"nonempty_slots\" INTEGER NOT NULL DEFAULT 0,",
+                    1,
+                ));
+            }
+        }
+    }
+    if let Some(snapshot) = image["tables"]["_norn_marking_snapshot"].as_object_mut() {
+        if let Some(columns) = snapshot.get_mut("columns").and_then(Value::as_array_mut) {
+            columns.push(Value::String("nonempty_slots".to_owned()));
+        }
+        if let Some(rows) = snapshot.get_mut("rows").and_then(Value::as_array_mut) {
+            for row in rows.iter_mut() {
+                if let Some(cells) = row.as_array_mut() {
+                    cells.push(Value::from(0_i64));
+                }
+            }
+        }
+    }
+}
 
 /// Storage version 7 (#1424 U1) adds the transactional automation trigger
 /// outbox, the lossless outbox continuation table, the indexed trigger
@@ -695,6 +733,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -826,6 +865,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -928,6 +968,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1000,6 +1041,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1072,6 +1114,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1172,6 +1215,7 @@ fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(path);
     by_name(&mut actual);
@@ -1725,4 +1769,168 @@ async fn an_export_a_newer_engine_wrote_refuses_before_staging() {
         0,
         "nothing is staged"
     );
+}
+
+fn apply_v8_marked_fixture_upgrade(image: &mut Value) -> Result<(), Box<dyn std::error::Error>> {
+    let stamp = serde_json::to_string(&EngineStamp::current())?;
+    let stamp_row = image["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .and_then(|rows| rows.iter_mut().find(|row| row[1] == STAMP_KEY))
+        .ok_or_else(|| std::io::Error::other("v7 fixture missing engine stamp"))?;
+    stamp_row[2] = stamp.into();
+    image["storage"] = STORAGE_VERSION.into();
+    apply_v8_sparse_markings_upgrade(image);
+    let rows = image["tables"]["_norn_marking_snapshot"]["rows"]
+        .as_array_mut()
+        .ok_or_else(|| std::io::Error::other("v7 fixture missing snapshot rows"))?;
+    for row in rows.iter_mut() {
+        let Some(cells) = row.as_array_mut() else {
+            continue;
+        };
+        let is_marked = cells.get(2).and_then(Value::as_str) == Some("fixture.MarkedItem")
+            && matches!(
+                (
+                    cells.get(3).and_then(Value::as_str),
+                    cells.get(5).and_then(Value::as_i64),
+                ),
+                (Some("m1"), Some(0)) | (Some("m2"), Some(0 | 1))
+            );
+        if is_marked && let Some(last) = cells.last_mut() {
+            *last = Value::from(1_i64);
+        }
+    }
+    Ok(())
+}
+
+fn assert_v7_replays_and_markings(
+    store: &mut CellStore<NativeEngine>,
+    receipts: &[norn_cell::Receipt],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (batch, receipt) in engine_fixture::batches().iter().zip(receipts) {
+        let CommitOutcome::Replayed(replayed) = store.commit(batch)? else {
+            return Err("recorded v7 commit was committed again".into());
+        };
+        assert_eq!(&replayed, receipt);
+    }
+    let expected = |secret: &[&str]| {
+        Some(std::collections::BTreeMap::from([
+            ("label".to_owned(), Vec::new()),
+            (
+                "secret".to_owned(),
+                secret.iter().map(|s| (*s).to_owned()).collect(),
+            ),
+        ]))
+    };
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m1", None)?,
+        expected(&[])
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m1", Some(1))?,
+        expected(&["pii.contact"])
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m2", None)?,
+        expected(&["pii.contact"])
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.Item", "a0", None)?,
+        Some(std::collections::BTreeMap::from([
+            ("label".to_owned(), Vec::new()),
+            ("qty".to_owned(), Vec::new()),
+        ]))
+    );
+    Ok(())
+}
+
+/// Storage version 7 → 8 (#1533 Part 1): opening the genuine storage-v7 fixture
+/// (carrying unmarked, marked, and declassified snapshots plus an authenticated
+/// checkpoint) drops the two redundant `_norn_link_version` prefix indexes,
+/// backfills exact `_norn_marking_snapshot.nonempty_slots` pins (`0` for
+/// unmarked/declassified current, `1` for marked current and historical),
+/// preserves ledger/receipts/checkpoint verbatim, and fails closed if a marked
+/// row is later deleted.
+#[test]
+fn a_storage_v7_cell_opens_on_this_engine_and_backfills_nonempty_slots()
+-> Result<(), Box<dyn std::error::Error>> {
+    const V7_COMMITS: u64 = 5;
+    let image: Value = serde_json::from_str(STORAGE_V7)?;
+    assert_eq!(image["storage"], 7);
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("v7-marked.sqlite");
+    engine_fixture::load(&image, &path);
+    assert_eq!(engine_fixture::image_of(&path), image);
+    assert_eq!(
+        engine_release::admission(&raw(&path))?,
+        Admission::Upgrade { from: 7 }
+    );
+
+    let model = engine_fixture::v7_marked_model()?;
+    let mut store = CellStore::open(
+        &path,
+        model.clone(),
+        engine_fixture::checkpoint_fixture_options(),
+    )?;
+    assert!(matches!(
+        store.scrub_status(),
+        norn_cell::ScrubStatus::Verifying {
+            target: V7_COMMITS,
+            history_ready: false,
+            ..
+        }
+    ));
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
+    let head = store.verified_head()?;
+    assert_eq!(head.commits, V7_COMMITS);
+    let receipts = store.read().receipts()?;
+    assert_eq!(u64::try_from(receipts.len())?, V7_COMMITS);
+    assert_v7_replays_and_markings(&mut store, &receipts)?;
+    drop(store);
+
+    let mut expected = image;
+    add_function_receipt_table(&mut expected);
+    apply_v8_marked_fixture_upgrade(&mut expected)?;
+    by_name(&mut expected);
+    let mut actual = engine_fixture::image_of(&path);
+    by_name(&mut actual);
+    assert_eq!(
+        actual, expected,
+        "v8 drops redundant link prefix indexes, backfills nonempty_slots, and restamps"
+    );
+    assert_eq!(engine_release::admission(&raw(&path))?, Admission::Current);
+
+    let store = CellStore::open(
+        &path,
+        model.clone(),
+        engine_fixture::checkpoint_fixture_options(),
+    )?;
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, actual, "a current open writes nothing");
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
+    assert_eq!(store.read().verify_ledger()?, head);
+    assert_eq!(store.read().receipts()?, receipts);
+    drop(store);
+
+    // Deleting `m2`'s marked row while leaving its backfilled snapshot pin intact must fail closed.
+    raw(&path).execute(
+        "DELETE FROM _norn_marking_current WHERE world = 'main' AND object_type = 'fixture.MarkedItem' AND subject = (SELECT subject FROM _norn_marking_subject WHERE world = 'main' AND object_type = 'fixture.MarkedItem' AND id = 'm2') AND property = 'secret'",
+        &[],
+    )?;
+    let tampered = CellStore::open(&path, model, StoreOptions::default())?;
+    assert_eq!(
+        tampered
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m2", None)?,
+        None
+    );
+    Ok(())
 }

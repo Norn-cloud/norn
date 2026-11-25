@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
-import { LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
+import { inviteFromLocation, LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
 import { readAuthConfig, type AuthConfig } from "../src/lib/session.ts"
 
 const render = (initial: Mode, config?: AuthConfig) =>
@@ -29,10 +29,15 @@ test("creating an account asks for a name and a 12-character password and states
   expect(open).toContain('minLength="12"')
   expect(open).toContain('autoComplete="new-password"')
   expect(open).not.toContain("invite-only")
+  expect(open).not.toContain('name="invite"')
 
   const inviteOnly = render("sign-up", { magicLink: false, inviteOnly: true })
   expect(inviteOnly).toContain("invite-only")
   expect(inviteOnly).not.toContain("Email link")
+  // Invite-only sign-up carries the operator's invitation (from the link's #invite=), required.
+  expect(inviteOnly).toContain('name="invite"')
+  expect(inviteFromLocation("#invite=v1.123.abc.def")).toBe("v1.123.abc.def")
+  expect(inviteFromLocation("#other=1")).toBe("")
 })
 
 test("an email link needs only the address when the server enables magic links", () => {

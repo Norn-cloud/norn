@@ -72,25 +72,16 @@ impl DecisionTableNodeHandler {
                 None => continue,
                 Some(RowResult::WithTrace {
                     output,
-                    reference_map,
-                    rule,
-                }) => Some((index, output, reference_map, rule)),
-                Some(RowResult::Output(output)) => {
-                    Some((index, output, Default::default(), Default::default()))
-                }
+                    explanation,
+                }) => Some((index, output, explanation)),
+                Some(RowResult::Output(output)) => Some((index, output, Default::default())),
             };
             break;
         }
 
         match hit {
-            Some((index, output, reference_map, rule)) => {
-                ctx.trace(|t| {
-                    *t = DecisionTableNodeTrace::FirstHit(DecisionTableRowTrace {
-                        reference_map,
-                        index,
-                        rule,
-                    })
-                });
+            Some((index, output, explanation)) => {
+                ctx.trace(|t| *t = DecisionTableNodeTrace::FirstHit(explanation.into_trace(index)));
                 ctx.success(output)
             }
             None => Ok(NodeResponse {
@@ -116,15 +107,10 @@ impl DecisionTableNodeHandler {
                     }
                     RowResult::WithTrace {
                         output,
-                        reference_map,
-                        rule,
+                        explanation,
                     } => {
                         outputs.push(output);
-                        traces.push(DecisionTableRowTrace {
-                            index,
-                            rule,
-                            reference_map,
-                        });
+                        traces.push(explanation.into_trace(index));
                     }
                 }
             }
@@ -204,12 +190,7 @@ impl DecisionTableNodeHandler {
             }
 
             if ctx.config.trace {
-                let (reference_map, rule_trace) = Self::row_trace_parts(&ctx, rule, &mut isolate);
-                traces.push(DecisionTableRowTrace {
-                    index: row_idx,
-                    reference_map,
-                    rule: rule_trace,
-                });
+                traces.push(Self::row_explanation(&ctx, rule, &isolate).into_trace(row_idx));
             }
         }
 
@@ -314,24 +295,15 @@ impl DecisionTableNodeHandler {
         Ok(Some((scalars, collects)))
     }
 
-    fn row_trace_parts(
+    /// Norn (#1711): a row's explanation is built only from selector values observed
+    /// while the row was matched (the isolate's reference cache). A selector whose cell
+    /// is blank or absent was skipped by matching, so it is listed as unevaluated and never run
+    /// here: building a trace does no work outside the meter and cannot fail.
+    fn row_explanation(
         ctx: &DecisionTableContext,
         rule: &HashMap<Arc<str>, Arc<str>>,
-        isolate: &mut Isolate,
-    ) -> (HashMap<Rc<str>, Variable>, HashMap<Rc<str>, Rc<str>>) {
-        // Norn `metering`: trace-only work is not charged, so tracing never changes cost.
-        let meter = isolate.take_meter();
-        #[allow(clippy::let_and_return)]
-        let parts = Self::row_trace_parts_inner(ctx, rule, isolate);
-        isolate.set_meter(meter);
-        parts
-    }
-
-    fn row_trace_parts_inner(
-        ctx: &DecisionTableContext,
-        rule: &HashMap<Arc<str>, Arc<str>>,
-        isolate: &mut Isolate,
-    ) -> (HashMap<Rc<str>, Variable>, HashMap<Rc<str>, Rc<str>>) {
+        isolate: &Isolate,
+    ) -> RowExplanation {
         let id_str = Rc::<str>::from("_id");
         let description_str = Rc::<str>::from("_description");
 
@@ -340,36 +312,40 @@ impl DecisionTableNodeHandler {
             None => Rc::from(""),
         };
 
-        let mut expressions: HashMap<Rc<str>, Rc<str>> = Default::default();
-        let mut reference_map: HashMap<Rc<str>, Variable> = Default::default();
-
-        expressions.insert(id_str.clone(), rule_id.clone());
+        let mut explanation = RowExplanation::default();
+        explanation.rule.insert(id_str.clone(), rule_id.clone());
         if let Some(description) = rule.get(description_str.as_ref()) {
-            expressions.insert(description_str.clone(), Rc::from(description.deref()));
+            explanation
+                .rule
+                .insert(description_str.clone(), Rc::from(description.deref()));
         }
 
         for input in ctx.node.inputs.iter() {
-            let Some(rule_value) = rule.get(input.id.deref()) else {
-                continue;
-            };
             let Some(input_field) = &input.field else {
                 continue;
             };
-
-            if let Some(reference) = isolate.get_reference(input_field.deref()) {
-                reference_map.insert(Rc::from(input_field.deref()), reference);
-            } else if let Ok(reference) = isolate.run_standard(input_field.deref()) {
-                reference_map.insert(Rc::from(input_field.deref()), reference);
+            // Matching skips an absent cell and a blank one alike: neither is observed.
+            let cell = rule.get(input.id.deref()).filter(|value| !value.is_empty());
+            match cell.and_then(|_| isolate.get_reference(input_field.deref())) {
+                Some(reference) => {
+                    explanation
+                        .reference_map
+                        .insert(Rc::from(input_field.deref()), reference);
+                }
+                None => explanation.unevaluated.push(Rc::from(input_field.deref())),
             }
 
+            let Some(rule_value) = rule.get(input.id.deref()) else {
+                continue;
+            };
             let input_identifier = format!("{input_field}[{}]", input.id);
-            expressions.insert(
+            explanation.rule.insert(
                 Rc::from(input_identifier.as_str()),
                 Rc::from(rule_value.deref()),
             );
         }
 
-        (reference_map, expressions)
+        explanation
     }
 
     fn evaluate_row<'a>(
@@ -403,11 +379,9 @@ impl DecisionTableNodeHandler {
             return Ok(Some(RowResult::Output(outputs)));
         }
 
-        let (reference_map, expressions) = Self::row_trace_parts(ctx, rule, isolate);
         Ok(Some(RowResult::WithTrace {
             output: outputs.to_variable(),
-            reference_map,
-            rule: expressions,
+            explanation: Self::row_explanation(ctx, rule, isolate),
         }))
     }
 }
@@ -416,9 +390,27 @@ enum RowResult {
     Output(Variable),
     WithTrace {
         output: Variable,
-        reference_map: HashMap<Rc<str>, Variable>,
-        rule: HashMap<Rc<str>, Rc<str>>,
+        explanation: RowExplanation,
     },
+}
+
+/// Norn (#1711): what a matched row's trace records, observed while matching.
+#[derive(Default)]
+struct RowExplanation {
+    reference_map: HashMap<Rc<str>, Variable>,
+    rule: HashMap<Rc<str>, Rc<str>>,
+    unevaluated: Vec<Rc<str>>,
+}
+
+impl RowExplanation {
+    fn into_trace(self, index: usize) -> DecisionTableRowTrace {
+        DecisionTableRowTrace {
+            index,
+            reference_map: self.reference_map,
+            rule: self.rule,
+            unevaluated: self.unevaluated,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, ToVariable)]
@@ -426,6 +418,9 @@ pub struct DecisionTableRowTrace {
     index: usize,
     reference_map: HashMap<Rc<str>, Variable>,
     rule: HashMap<Rc<str>, Rc<str>>,
+    /// Norn (#1711): input selectors the row skipped (blank or absent cells); never evaluated
+    /// for the trace.
+    unevaluated: Vec<Rc<str>>,
 }
 
 #[derive(Debug, Clone, Serialize, ToVariable)]

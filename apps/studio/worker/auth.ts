@@ -258,6 +258,10 @@ interface ConsentSnapshot {
 }
 
 interface OAuthConsentScope {
+  /** A verified sign-up invitation for this request's address (invite-only deployments). */
+  signupInvite?: { readonly nonceHash: string; readonly email: string }
+  /** The invitation claimed for the user this request inserts; released if that insert never commits. */
+  signupClaim?: { readonly nonceHash: string; readonly userId: string }
   referenceId?: string
   memberId?: string
   claimedApprovalId?: string
@@ -377,14 +381,19 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
             throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
           }
           // Never re-run null-fallback: confirm this exact validated workspace & membership generation is still ready.
-          const verified = await activeMembershipWithAdapter(adapter, user.id, parsed.organizationId)
+          const verified = await membershipInWithAdapter(adapter, user.id, parsed.organizationId)
           if (verified === null || verified.organizationId !== parsed.organizationId || verified.memberId !== parsed.memberId) {
             throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
           }
           return pinned
         }
-        const rawOrg = (session as { activeOrganizationId?: unknown }).activeOrganizationId
-        const member = await activeMembershipWithAdapter(adapter, user.id, nonEmptyString(rawOrg))
+        // A grant names one workspace: the session's active one, never a fallback to another membership.
+        // A session without one names no grant: no stored consent matches (unscoped consents are refused
+        // at write by migration 0013 and withdrawn by 0017), so the person is sent to the consent page,
+        // where they approve one named workspace (x-norn-expected-org, pinned above).
+        const rawOrg = nonEmptyString((session as { activeOrganizationId?: unknown }).activeOrganizationId)
+        if (rawOrg === null) return undefined
+        const member = await membershipInWithAdapter(adapter, user.id, rawOrg)
         if (member === null) {
           throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
         }
@@ -404,7 +413,7 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
       }
       const adapter = (await self.auth?.$context)?.adapter as AdapterLike | undefined
       if (adapter === undefined) throw new APIError("INTERNAL_SERVER_ERROR", { message: "Auth context unavailable." })
-      const member = await activeMembershipWithAdapter(adapter, user.id, parsed.organizationId)
+      const member = await membershipInWithAdapter(adapter, user.id, parsed.organizationId)
       if (member === null || member.organizationId !== parsed.organizationId || member.memberId !== parsed.memberId) {
         throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires the original active ready workspace membership." })
       }
@@ -1055,8 +1064,61 @@ async function workspaceIdentity(secret: string, userId: string) {
   return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
 }
 
-/** Shown when a non-allowlisted address attempts sign-up on an invite-only deployment. */
+/**
+ * Shown for every refused sign-up on an invite-only deployment: an address that is not invited, and an
+ * invited address without a valid, unspent invitation for it. One answer, so a refusal reveals nothing
+ * about which addresses are invited.
+ */
 export const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
+
+/** The header carrying a sign-up invitation (the `?invite=` value of the link an operator sends). */
+export const SIGNUP_INVITE_HEADER = "x-norn-signup-invite"
+/** How long an invitation stays valid by default, and at most. */
+export const SIGNUP_INVITE_TTL_MS = 7 * 24 * 60 * 60_000
+export const SIGNUP_INVITE_MAX_TTL_MS = 30 * 24 * 60 * 60_000
+/** Clock skew allowed between an invitation's issuer and the Worker when checking the maximum. */
+export const SIGNUP_INVITE_SKEW_MS = 5 * 60_000
+const SIGNUP_INVITE_DOMAIN = "norn.signup-invite.v1"
+const SIGNUP_INVITE_FORMAT = /^v1\.(\d{13})\.([A-Za-z0-9_-]{24})\.([A-Za-z0-9_-]{43})$/
+
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+const fromBase64url = (text: string) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (text.length % 4)) % 4)), (c) => c.charCodeAt(0))
+const hmacKey = (raw: BufferSource) => crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"])
+/** A key used only for invitations: HMAC(BETTER_AUTH_SECRET, "norn:signup-invite:v1"), never the auth secret itself. */
+const inviteKey = async (secret: string) =>
+  hmacKey(await crypto.subtle.sign("HMAC", await hmacKey(new TextEncoder().encode(secret)), new TextEncoder().encode("norn:signup-invite:v1")))
+/** How long a claimed but never-consumed invitation stays held (an isolate that died before writing the user). */
+export const SIGNUP_CLAIM_STALE_MS = 5 * 60_000
+const inviteMessage = (email: string, expiresAt: number, nonce: string) => new TextEncoder().encode(`${SIGNUP_INVITE_DOMAIN}|${email}|${expiresAt}|${nonce}`)
+const normalEmail = (email: string) => email.trim().toLowerCase()
+
+/**
+ * An operator-issued sign-up invitation (scripts/signup-invite.ts): a capability bound to one email
+ * address and an expiry, signed with the deployment's auth secret. It is spent at most once (migration
+ * 0015): the user insert consumes it.
+ */
+export async function issueSignupInvite(secret: string, email: string, options: { readonly now?: number; readonly ttlMs?: number } = {}): Promise<{ readonly token: string; readonly expiresAt: number }> {
+  const address = normalEmail(email)
+  if (!/^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/.test(address)) throw new Error("An invitation needs one email address.")
+  const ttlMs = options.ttlMs ?? SIGNUP_INVITE_TTL_MS
+  if (!Number.isInteger(ttlMs) || ttlMs <= 0 || ttlMs > SIGNUP_INVITE_MAX_TTL_MS) throw new Error("An invitation lives between one millisecond and 30 days.")
+  const expiresAt = (options.now ?? Date.now()) + ttlMs
+  const nonce = base64url(crypto.getRandomValues(new Uint8Array(18)))
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", await inviteKey(secret), inviteMessage(address, expiresAt, nonce)))
+  return { token: `v1.${expiresAt}.${nonce}.${base64url(signature)}`, expiresAt }
+}
+
+/** The invitation's nonce when `token` is a valid, unexpired invitation for `email`; null otherwise (the signature is checked in constant time). */
+export async function verifySignupInvite(secret: string, token: string, email: string, now = Date.now()): Promise<{ readonly nonce: string; readonly expiresAt: number } | null> {
+  const match = SIGNUP_INVITE_FORMAT.exec(token)
+  if (match === null) return null
+  const [, expiry = "", nonce = "", signature = ""] = match
+  const expiresAt = Number(expiry)
+  // The 30-day maximum allows five minutes of clock skew between the issuer and the Worker.
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt - now > SIGNUP_INVITE_MAX_TTL_MS + SIGNUP_INVITE_SKEW_MS) return null
+  const valid = await crypto.subtle.verify("HMAC", await inviteKey(secret), fromBase64url(signature), inviteMessage(normalEmail(email), expiresAt, nonce))
+  return valid ? { nonce, expiresAt } : null
+}
 
 /** Whether an email address may create an account under the deployment's allowlist (undefined = open). */
 export const signUpAllowed = (allowlist: readonly string[] | undefined, email: string): boolean =>
@@ -1231,10 +1293,20 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       before: createAuthMiddleware(async (ctx) => {
         const path = ctx.path.replace(/\/+$/, "").toLowerCase()
         if (path === "/sign-up/email" && config.signUpEmails !== undefined) {
+          // Invite-only: the address must be invited AND the request must carry a valid, unexpired
+          // invitation for exactly that address. The invitation is claimed (single use) only when the
+          // user row is about to be written (databaseHooks.user.create.before).
           const body = ctx.body as { email?: unknown } | undefined
-          if (typeof body?.email === "string" && body.email.trim() !== "" && !signUpAllowed(config.signUpEmails, body.email)) {
+          if (typeof body?.email !== "string" || body.email.trim() === "") return
+          const email = normalEmail(body.email)
+          const token = nonEmptyString((ctx.headers ?? ctx.request?.headers)?.get(SIGNUP_INVITE_HEADER))
+          const invite = token === null ? null : await verifySignupInvite(config.secret, token, email)
+          if (!signUpAllowed(config.signUpEmails, email) || invite === null) {
             throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
           }
+          const store = oauthScopeStore.getStore()
+          if (store === undefined) throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+          store.signupInvite = { nonceHash: await sha256Hex(invite.nonce), email }
           return
         }
         if (path === "/organization/create") {
@@ -1725,8 +1797,15 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your session or active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
           const adapter = await getCurrentAdapter(ctx.context.adapter) as unknown as AdapterLike
-          const rawOrg = (session.session as { activeOrganizationId?: unknown }).activeOrganizationId
-          const member = await activeMembershipWithAdapter(adapter, session.user.id, nonEmptyString(rawOrg))
+          // Consent binds to the workspace the page showed (x-norn-expected-org), which must still be the
+          // session's active workspace; membership is resolved in that organization only, never a fallback.
+          // (A session with no active workspace approves the one the consent page displayed and the
+          // approval token is bound to.)
+          const rawOrg = nonEmptyString((session.session as { activeOrganizationId?: unknown }).activeOrganizationId)
+          if (rawOrg !== null && rawOrg !== expectedOrg) {
+            throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
+          }
+          const member = await membershipInWithAdapter(adapter, session.user.id, expectedOrg)
           if (member === null) {
             throw apiError(409, { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." }, responseHeaders)
           }
@@ -1812,6 +1891,31 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (!signUpAllowed(config.signUpEmails, String(user.email))) {
               throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
             }
+            if (config.signUpEmails === undefined) return
+            // Invite-only: no user row without this request's verified invitation for this exact
+            // address. Claim it under the new user's id; the insert consumes the claim (migration 0015),
+            // so one invitation creates at most one account.
+            const store = oauthScopeStore.getStore()
+            const invite = store?.signupInvite
+            if (store === undefined || invite === undefined || invite.email !== normalEmail(String(user.email)) || store.signupClaim !== undefined) {
+              throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+            }
+            // A claim left by a request that never wrote its user (its isolate died) is taken over after
+            // SIGNUP_CLAIM_STALE_MS; the superseded user id can then never be inserted (migration 0015).
+            // A consumed claim is never taken again.
+            const userId = generateRandomString(32, "a-z", "A-Z", "0-9")
+            const now = Date.now()
+            const claimed = await dbFirst<{ user_id: string }>(
+              config.database as unknown as ProvisionDb,
+              `insert into "signup_invite_use" ("nonce_hash", "email", "user_id", "claimed_at") values (?, ?, ?, ?)
+               on conflict ("nonce_hash") do update set "user_id" = excluded."user_id", "claimed_at" = excluded."claimed_at"
+               where "signup_invite_use"."consumed_at" is null and "signup_invite_use"."claimed_at" < ? and "signup_invite_use"."email" = excluded."email"
+               returning "user_id"`,
+              invite.nonceHash, invite.email, userId, now, now - SIGNUP_CLAIM_STALE_MS,
+            )
+            if (claimed === null || claimed.user_id !== userId) throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+            store.signupClaim = { nonceHash: invite.nonceHash, userId }
+            return { data: { ...user, id: userId } }
           },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
@@ -1910,6 +2014,19 @@ async function activeMembershipWithAdapter(
   if (member === undefined || org === null) return null
   const environmentId = metadataObject(org.metadata).environmentId
   return { memberId: member.id, organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
+}
+
+/** The user's ready membership in exactly `organizationId`; null for an empty organization or none there (never another workspace). */
+async function membershipInWithAdapter(adapter: AdapterLike, userId: string, organizationId: string): Promise<Membership | null> {
+  if (typeof organizationId !== "string" || organizationId.trim() === "") return null
+  const member = await activeMembershipWithAdapter(adapter, userId, organizationId)
+  return member !== null && member.organizationId === organizationId ? member : null
+}
+
+/** The user's ready membership in exactly `organizationId` (an assistant grant's workspace claim); never a fallback to another membership. */
+export async function membershipIn(auth: Auth, userId: string, organizationId: string): Promise<Membership | null> {
+  const { adapter } = await auth.$context
+  return membershipInWithAdapter(adapter as unknown as AdapterLike, userId, organizationId)
 }
 
 /**
@@ -2026,6 +2143,13 @@ export function createAuth(config: AuthConfig) {
       await dbRun(db, `delete from "oauth_consent_claim" where "id" = ?`, claimId).catch(() => undefined)
     }
   }
+  // An invitation claimed for a user that was never inserted (a refused or failed sign-up) is released, so
+  // the invitee can try again. A consumed claim (its user committed) never is.
+  const releaseSignupClaim = async (store: OAuthConsentScope) => {
+    const claim = store.signupClaim
+    if (claim === undefined) return
+    await dbRun(db, `delete from "signup_invite_use" where "nonce_hash" = ? and "user_id" = ? and "consumed_at" is null`, claim.nonceHash, claim.userId).catch(() => undefined)
+  }
   const rawHandler = auth.handler
   auth.handler = async (request: Request) => {
     await ensureClaimAdapterWrapped()
@@ -2046,6 +2170,7 @@ export function createAuth(config: AuthConfig) {
       throw error
     } finally {
       await cleanupApproval(store, failed)
+      await releaseSignupClaim(store)
     }
   }
   const rawApi = auth.api
@@ -2086,7 +2211,10 @@ export function createAuth(config: AuthConfig) {
             }
             throw error
           } finally {
-            if (outer === undefined) await cleanupApproval(store, failed)
+            if (outer === undefined) {
+              await cleanupApproval(store, failed)
+              await releaseSignupClaim(store)
+            }
           }
         }
         return outer === undefined ? oauthScopeStore.run(store, invoke) : invoke()
