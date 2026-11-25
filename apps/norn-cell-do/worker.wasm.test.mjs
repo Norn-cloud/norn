@@ -9,7 +9,7 @@
 // Run: NORN_CELL_DO_PKG=<pkg> bun test ./worker.wasm.test.mjs (from apps/norn-cell-do).
 import { plugin } from "bun";
 import { Database } from "bun:sqlite";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -183,29 +183,22 @@ async function raw(response) {
 }
 
 /**
- * Two sequential router.fetch calls can straddle a UTC second boundary, shifting the body's
- * `"decidedAt":"<UTC second>"` field by 1 s (e.g. 03:40:21Z vs 03:40:22Z) while every other byte
- * is identical. Validate both timestamps as calendar-valid ISO UTC seconds within a 2 s window,
- * replace ONLY that matched value with a fixed placeholder in both bodies, then assert exact
- * equality on { status, headers, body } — preserving byte-for-byte comparison on every other field.
+ * #1746: every test runs at one frozen host instant. The Worker reads the host clock only as
+ * Date.now(), which it hands the Wasm gate as the request's `now`; the gate stamps a refusal's
+ * `decidedAt` from it. Frozen, two requests answer at the same instant however long they take,
+ * so the same refusal is the same bytes, `decidedAt` included. The instant is mid-second, so the
+ * stamp also shows the gate truncates to the UTC second.
+ */
+const FROZEN_MS = Date.UTC(2026, 10, 25, 12, 0, 0, 250);
+const FROZEN_SECOND = "2026-11-25T12:00:00Z";
+
+/**
+ * The two refusals are byte for byte the same (status, every header, the whole body), and both
+ * were decided at the frozen instant: the comparison held the clock still, it did not skip it.
  */
 function expectSameRefusal(actual, expected) {
-  const pattern = /"decidedAt":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/;
-  const stamp = (body, label) => {
-    const match = body.match(pattern);
-    expect(match, `${label} body must contain a "decidedAt":"<UTC second>" field`).not.toBeNull();
-    const value = match[0].slice('"decidedAt":"'.length, -1);
-    const ms = Date.parse(value);
-    expect(Number.isNaN(ms), `${label} decidedAt "${value}" must parse as a UTC timestamp`).toBe(false);
-    expect(`${new Date(ms).toISOString().slice(0, 19)}Z`, `${label} decidedAt "${value}" must be a calendar-valid UTC timestamp`).toBe(value);
-    return ms;
-  };
-  const tsActual = stamp(actual.body, "actual");
-  const tsExpected = stamp(expected.body, "expected");
-  expect(Math.abs(tsActual - tsExpected)).toBeLessThanOrEqual(2_000);
-  const placeholder = '"decidedAt":"<utc-second>"';
-  const normalise = (r) => ({ ...r, body: r.body.replace(pattern, placeholder) });
-  expect(normalise(actual)).toEqual(normalise(expected));
+  expect(actual).toEqual(expected);
+  expect(JSON.parse(actual.body).decidedAt).toBe(FROZEN_SECOND);
 }
 
 const B = ["org_b", "prod"];
@@ -239,6 +232,14 @@ async function provisioned() {
 }
 
 describe("the real Wasm gate at the Worker boundary", () => {
+  // Tokens, the JWKS cache, provisioning and every request below read this one instant.
+  beforeEach(() => {
+    setSystemTime(FROZEN_MS);
+  });
+  afterEach(() => {
+    setSystemTime();
+  });
+
   for (const [method, path, body] of [
     ["GET", "/v1/objects/canon.Item", undefined],
     ["GET", "/v1/access", undefined],
