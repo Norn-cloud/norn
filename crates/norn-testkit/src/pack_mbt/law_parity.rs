@@ -204,8 +204,8 @@ fn lifecycle_steps(
                 .iter()
                 .find(|transition| transition.id.as_str() == id)
                 .ok_or_else(|| format!("undeclared transition {id}"))?;
-            steps.push((lifecycle.clone(), transition.clone(), from));
-            from = transition.to.clone();
+            let left = std::mem::replace(&mut from, transition.to.clone());
+            steps.push((lifecycle.clone(), transition.clone(), left));
         }
     }
     Ok(steps)
