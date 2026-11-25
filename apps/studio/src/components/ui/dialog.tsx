@@ -99,7 +99,7 @@ function DialogContent({
       ref={attach}
       data-slot="dialog-content"
       className={cn(
-        "fixed top-1/2 left-1/2 z-50 m-0 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-2xl bg-popover p-6 text-body text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-100 sm:max-w-md data-starting-style:scale-95 data-starting-style:opacity-0 data-closed:transition-none data-closed:**:transition-none backdrop:bg-black/35 supports-backdrop-filter:backdrop:backdrop-blur-xs",
+        "fixed top-1/2 left-1/2 z-50 m-0 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-(--radius-sheet) bg-popover p-6 text-body text-popover-foreground shadow-(--sheet-shadow) ring-1 ring-(--panel-border) outline-none transition-[opacity,scale] duration-100 sm:max-w-md data-starting-style:scale-95 data-starting-style:opacity-0 data-closed:transition-none data-closed:**:transition-none backdrop:bg-black/35 supports-backdrop-filter:backdrop:backdrop-blur-xs",
         className
       )}
       {...props}

@@ -1,11 +1,12 @@
 import { useState } from "react"
-import { Clock, GitBranch, Sparkles, UserRound, Wrench, Zap } from "lucide-react"
+import { Clock, GitBranch, UserRound, Wrench, Zap } from "lucide-react"
 import { KindChip } from "@/components/canvas/node-card"
 import { SourceTag } from "@/components/system/source-tag"
 import { StatusDot, type DotTone } from "@/components/system/status-dot"
 import { cn } from "@/lib/utils"
 import { Unavailable } from "./canvas-frame.tsx"
 import type { DecisionView } from "./lib/canvas/decision.ts"
+import { Mascot } from "@/components/system/mascot"
 
 /** A time limit as the decider should read it: exact, never rounded to whole hours (30 min, 1 h 30 min, 2 d 4 h). */
 export function formatDuration(ms: number): string {
@@ -51,7 +52,7 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
                     <span className="min-w-0 flex-1 space-y-1">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <span data-option-label className={cn("tracking-[-0.01em]", muted && "text-muted-foreground")}>{option.label}</span>
-                        {agentPick && <span className="inline-flex items-center gap-1 text-meta leading-5 text-muted-foreground"><Sparkles aria-hidden className="size-3 text-tone-violet" />Agent's pick</span>}
+                        {agentPick && <span className="inline-flex items-center gap-1 text-meta leading-5 text-muted-foreground"><Mascot tone="ink" size={14} />Agent's pick</span>}
                       </span>
                       <span className="block text-meta text-muted-foreground">{option.scope || "No scope stated"}</span>
                       {(option.effect || extra.length > 0) && (

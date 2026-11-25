@@ -1,18 +1,18 @@
-import type { SessionNotification } from "@agentclientprotocol/sdk"
+import type { SessionNotification, ToolCallUpdate } from "@agentclientprotocol/sdk"
+import type { UIMessage, UIMessageChunk } from "ai"
 import type { ViewDelivery } from "./client.ts"
 
 /**
- * One Sidekick chat as the panel draws it, folded from ACP session updates: the person's
- * prompts, the agent's words, each Norn tool it called (compact), and the view each tool's
- * result carries. Pure, so the panel only renders.
+ * One Sidekick turn as the chat draws it. The bridge speaks ACP; the panel's chat state is the AI
+ * SDK's `useChat` (DESIGN.md 19.3), so each ACP session update becomes the UI message chunk that
+ * draws it: the agent's words as text, each Norn tool call as a tool part (with the person's
+ * approval when the bridge asks for it), and the view a tool's result carries as a `view` data
+ * part. Pure, so the transport only routes and the panel only renders.
  */
-export type Item =
-  | { readonly kind: "user"; readonly id: string; readonly text: string }
-  | { readonly kind: "text"; readonly id: string; readonly text: string }
-  | { readonly kind: "tool"; readonly id: string; readonly tool: string; readonly status: "pending" | "in_progress" | "completed" | "failed" }
-  | { readonly kind: "view"; readonly id: string; readonly delivery: ViewDelivery }
 
-export type Transcript = readonly Item[]
+export type SidekickData = { readonly view: ViewDelivery }
+export type SidekickMessage = UIMessage<unknown, SidekickData>
+export type SidekickChunk = UIMessageChunk<unknown, SidekickData>
 
 const TOOL_PREFIX = /^mcp__norn__/
 
@@ -48,33 +48,115 @@ const TOOL_WORDS: Readonly<Record<string, string>> = {
 }
 export const toolWords = (tool: string) => TOOL_WORDS[tool] ?? tool.replace(/^norn_/, "").replaceAll("_", " ")
 
-export function promptItem(transcript: Transcript, id: string, text: string): Transcript {
-  return [...transcript, { kind: "user", id, text }]
+/** The text an ACP tool call's content carries, if any. */
+function contentText(update: Pick<ToolCallUpdate, "content">): string {
+  return (update.content ?? []).flatMap((block) => block.type === "content" && block.content.type === "text" ? [block.content.text] : []).join("\n").trim()
 }
 
-export function viewItem(transcript: Transcript, delivery: ViewDelivery): Transcript {
-  return [...transcript, { kind: "view", id: `view:${transcript.length}`, delivery }]
-}
+/**
+ * Folds one prompt turn into chunks, in order. Every tool chunk names a tool call this turn opened,
+ * so the chat never meets a tool it does not know.
+ */
+export class Turn {
+  private text: string | null = null
+  private texts = 0
+  private views = 0
+  private readonly tools = new Map<string, { settled: boolean }>()
+  private finished = false
 
-/** Fold one session update into the transcript. Updates it does not draw leave it as it is. */
-export function applyUpdate(transcript: Transcript, notification: SessionNotification): Transcript {
-  const update = notification.update
-  switch (update.sessionUpdate) {
-    case "agent_message_chunk": {
-      if (update.content.type !== "text") return transcript
-      const last = transcript.at(-1)
-      if (last?.kind === "text") return [...transcript.slice(0, -1), { ...last, text: last.text + update.content.text }]
-      return [...transcript, { kind: "text", id: `text:${transcript.length}`, text: update.content.text }]
+  constructor(private readonly emit: (chunk: SidekickChunk) => void) {}
+
+  start() {
+    this.emit({ type: "start" })
+  }
+
+  private closeText() {
+    if (this.text === null) return
+    this.emit({ type: "text-end", id: this.text })
+    this.text = null
+  }
+
+  /** Open a tool part for this call if the turn has not seen it yet. */
+  private openTool(call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">) {
+    if (this.tools.has(call.toolCallId)) return
+    this.closeText()
+    this.tools.set(call.toolCallId, { settled: false })
+    const name = toolName(call)
+    this.emit({ type: "tool-input-available", toolCallId: call.toolCallId, toolName: name, title: toolWords(name), input: call.rawInput ?? {}, dynamic: true })
+  }
+
+  private settle(toolCallId: string, chunk: SidekickChunk) {
+    const tool = this.tools.get(toolCallId)
+    if (tool === undefined || tool.settled) return
+    tool.settled = true
+    this.emit(chunk)
+  }
+
+  update(notification: SessionNotification) {
+    if (this.finished) return
+    const update = notification.update
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk": {
+        if (update.content.type !== "text" || update.content.text === "") return
+        if (this.text === null) {
+          this.text = `text-${this.texts++}`
+          this.emit({ type: "text-start", id: this.text })
+        }
+        this.emit({ type: "text-delta", id: this.text, delta: update.content.text })
+        return
+      }
+      case "tool_call":
+        this.openTool(update)
+        if (update.status === "completed") this.settle(update.toolCallId, { type: "tool-output-available", toolCallId: update.toolCallId, output: contentText(update), dynamic: true })
+        if (update.status === "failed") this.settle(update.toolCallId, { type: "tool-output-error", toolCallId: update.toolCallId, errorText: contentText(update) || "The tool call failed.", dynamic: true })
+        return
+      case "tool_call_update":
+        if (!this.tools.has(update.toolCallId)) return
+        if (update.status === "completed") this.settle(update.toolCallId, { type: "tool-output-available", toolCallId: update.toolCallId, output: contentText(update), dynamic: true })
+        if (update.status === "failed") this.settle(update.toolCallId, { type: "tool-output-error", toolCallId: update.toolCallId, errorText: contentText(update) || "The tool call failed.", dynamic: true })
+        return
+      default:
+        return
     }
-    case "tool_call":
-      if (transcript.some((item) => item.kind === "tool" && item.id === update.toolCallId)) return transcript
-      return [...transcript, { kind: "tool", id: update.toolCallId, tool: toolName(update), status: update.status ?? "pending" }]
-    case "tool_call_update": {
-      const status = update.status
-      if (status === undefined || status === null) return transcript
-      return transcript.map((item) => item.kind === "tool" && item.id === update.toolCallId ? { ...item, status } : item)
-    }
-    default:
-      return transcript
+  }
+
+  /** A tool result's MCP Apps view, drawn where it arrived in the turn. */
+  view(delivery: ViewDelivery) {
+    if (this.finished) return
+    this.closeText()
+    this.emit({ type: "data-view", id: `view-${this.views++}`, data: delivery })
+  }
+
+  /** The bridge asks the person before this call runs. */
+  approval(approvalId: string, call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">) {
+    if (this.finished) return
+    this.openTool(call)
+    this.emit({ type: "tool-approval-request", approvalId, toolCallId: call.toolCallId })
+  }
+
+  /** The person declined: the call never ran. */
+  denied(toolCallId: string) {
+    if (this.finished) return
+    this.settle(toolCallId, { type: "tool-output-denied", toolCallId })
+  }
+
+  /** The turn ended: its stop reason, in the message's metadata-free finish. */
+  finish() {
+    if (this.finished) return
+    this.closeText()
+    this.finished = true
+    this.emit({ type: "finish" })
+  }
+
+  /** The turn failed: Sidekick says so in words, and the chat offers Retry. */
+  error(errorText: string) {
+    if (this.finished) return
+    this.closeText()
+    this.finished = true
+    this.emit({ type: "error", errorText })
   }
 }
+
+/** The person's words in a user message (Sidekick sends text only). */
+export const promptText = (message: SidekickMessage): string =>
+  message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")

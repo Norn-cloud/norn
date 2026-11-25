@@ -1,13 +1,14 @@
 {
   "vendor": {
     "path": "apps/studio/src/components/ui",
-    "method": "shadcn CLI 4.23.0 base component layouts (MIT), migrated to @base-ui/react and @ui-sdk/react primitives",
+    "method": "shadcn CLI 4.23.0 output for the base-luma style (components.json `style: base-luma`, `rtl: true`; `npx shadcn@4.23.0 add <name> --dry-run --view`) (MIT), migrated to @base-ui/react and @ui-sdk/react primitives",
     "license": {
       "spdx": "MIT",
       "file": "LICENSE",
       "copyright": "Copyright (c) 2023 shadcn"
     },
     "files": [
+      "apps/studio/src/components/ui/alert.tsx",
       "apps/studio/src/components/ui/avatar.tsx",
       "apps/studio/src/components/ui/badge.tsx",
       "apps/studio/src/components/ui/breadcrumb.tsx",
@@ -20,11 +21,13 @@
       "apps/studio/src/components/ui/input-group.tsx",
       "apps/studio/src/components/ui/input.tsx",
       "apps/studio/src/components/ui/popover.tsx",
+      "apps/studio/src/components/ui/scroll-area.tsx",
       "apps/studio/src/components/ui/separator.tsx",
       "apps/studio/src/components/ui/shadcn.css",
       "apps/studio/src/components/ui/sheet.tsx",
       "apps/studio/src/components/ui/sidebar.tsx",
       "apps/studio/src/components/ui/skeleton.tsx",
+      "apps/studio/src/components/ui/spinner.tsx",
       "apps/studio/src/components/ui/table.tsx",
       "apps/studio/src/components/ui/tabs.tsx",
       "apps/studio/src/components/ui/textarea.tsx",
@@ -36,14 +39,16 @@
       "apps/studio/src/lib/utils.ts"
     ],
     "changes": [
-      "`cn` is imported from `@/lib/utils`",
+      "`cn` is imported from `@/lib/utils` (it knows the five type steps), not the CLI's `cn` package",
       "All interactive primitives are backed by @base-ui/react or @ui-sdk/react (no Radix dependencies or CSS variables)",
+      "Luma's geometry (pill controls, filled bg-input/50 fields, rounded-3xl popovers and menus, rounded-4xl cards and dialogs, shadow-md/lg/xl) reaches the components through Norn's tokens (--radius-*, --radius-step-*, --panel-shadow, --popup-shadow, --sheet-shadow)",
+      "Type steps and weights of DESIGN.md section 8 (text-sm and text-xs become text-body and text-meta; 400 except where 500 is allowed), the 2px --ring focus outline in place of Luma's translucent ring, 44px targets below 640px",
       "shadcn.css holds Base UI / UI SDK keyframes, state variants and the no-scrollbar utility",
-      "index.css carries the Norn theme tokens, swappable skin palettes (open, polar, luma, glass), and base layer"
+      "index.css carries the Norn theme tokens: luma (shadcn's neutral theme and radius scale mapped onto Norn's semantic tokens, with AA-passing neutrals where Luma's raw values fail a gate), and the polar, open and glass skins, and base layer"
     ]
   },
   "upstream": {
     "repository": "shadcn-ui/ui",
-    "commit": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610"
+    "commit": "055aa6b7837b1808456a24beb4c97a677864aa82"
   }
 }

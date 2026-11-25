@@ -8,7 +8,7 @@ import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, Code2, Keyboard, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, Code2, Keyboard, Loader2, LogOut, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -34,6 +34,7 @@ import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
+import { Mascot } from "@/components/system/mascot"
 
 const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
 
@@ -655,21 +656,10 @@ function DockLabel({ children }: { readonly children: ReactNode }) {
   return <span aria-hidden className="hidden max-w-[5.5rem] truncate text-meta leading-none max-sm:block">{children}</span>
 }
 
-/** Speech-bubble "AI" glyph from v6/shell.tsx, in the ink of the control it sits in (the dock is dark in every skin). */
-function AiGlyph({ className }: { readonly className?: string }) {
-  return (
-    <span aria-hidden className={cn("relative grid size-[18px] place-items-center", className)}>
-      <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
-      {/* The letters are part of the icon (they scale with it), so they are drawn, not set in the type scale. */}
-      <svg viewBox="0 0 24 24" className="absolute inset-0 size-full"><text x="12" y="14.6" textAnchor="middle" fontSize="7.5" fill="currentColor" fontFamily="var(--font-sans)">AI</text></svg>
-    </span>
-  )
-}
-
 /**
  * Centered icon-only floating dark pill dock rendered in `dock` shell mode (`data-shell="dock"`),
  * following norn-mockups v6/shell.tsx craft: rounded-[26px] dark pill, size-10 circular buttons,
- * soft #34343a active well, hover tooltips, AI glyph, appearance tray, and overflow destinations.
+ * soft #34343a active well, hover tooltips, the assistant mascot, appearance tray, and overflow destinations.
  */
 function FloatingDock({ sections, navigation, current, assistant }: {
   readonly sections: readonly Section[]
@@ -753,7 +743,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
               onClick={toggle}
               className={dockBtn}
             >
-              <AiGlyph />
+              <Mascot tone="ink" size={20} state={open ? "answered" : "idle"} />
               <DockLabel>{assistant.title}</DockLabel>
             </ToolbarButton>
           </Hint>

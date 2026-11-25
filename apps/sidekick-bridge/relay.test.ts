@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose"
-import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, verifyGrant, viewOf } from "./relay.ts"
+import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionDecision, personAnswer, questionFor, readOnlyTools, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, verifyGrant, viewOf } from "./relay.ts"
 
 const STUDIO = "https://studio.norn.test"
 
@@ -55,13 +55,16 @@ test("the agent gets no client file system or terminal, whatever the browser dec
 })
 
 test("a session has only the relay's Norn server, no built-in tools, settings, skills or persistence, in the scratch cwd", () => {
-  const session = rewriteNewSession("/scratch/c1", "http://127.0.0.1:17951/mcp/cap", "claude-sonnet-5-5") as { cwd: string; mcpServers: unknown[]; _meta: { claudeCode: { options: Record<string, unknown> } } }
+  const session = rewriteNewSession("/scratch/c1", "http://127.0.0.1:17951/mcp/cap", "claude-sonnet-5-5", new Set(["norn_inbox", "norn_answer", "mcp__x"])) as { cwd: string; mcpServers: unknown[]; _meta: { claudeCode: { options: Record<string, unknown> } } }
   expect(session.cwd).toBe("/scratch/c1")
   expect(session.mcpServers).toEqual([{ type: "http", name: MCP_SERVER_NAME, url: "http://127.0.0.1:17951/mcp/cap", headers: [] }])
   const options = session._meta.claudeCode.options
-  expect(options).toMatchObject({ tools: [], settingSources: [], strictMcpConfig: true, skills: [], plugins: [], persistSession: false, allowedTools: ["mcp__norn"], model: "claude-sonnet-5-5" })
+  expect(options).toMatchObject({ tools: [], settingSources: [], strictMcpConfig: true, skills: [], plugins: [], persistSession: false, allowedTools: ["mcp__norn__norn_answer", "mcp__norn__norn_inbox"], model: "claude-sonnet-5-5" })
   for (const tool of ["Bash", "Edit", "Write", "Read", "WebFetch", "WebSearch", "Task", "Agent", "Glob", "Grep", "NotebookEdit", "Skill"]) expect(options.disallowedTools as string[]).toContain(tool)
   expect(BUILT_IN_TOOLS.length).toBeGreaterThan(20)
+  // Without the cell's tool list, nothing is pre-allowed: every Norn tool asks the person.
+  const unlisted = rewriteNewSession("/scratch/c1", "http://127.0.0.1:17951/mcp/cap") as { _meta: { claudeCode: { options: Record<string, unknown> } } }
+  expect(unlisted._meta.claudeCode.options.allowedTools).toEqual([])
 })
 
 test("only text reaches the agent", () => {
@@ -70,12 +73,40 @@ test("only text reaches the agent", () => {
   expect(rewritePrompt({ prompt: [] })).toBeNull()
 })
 
-test("a Norn tool is allowed once; any other tool's permission request is rejected", () => {
-  const options = [{ optionId: "a", kind: "allow_always", name: "Always" }, { optionId: "o", kind: "allow_once", name: "Once" }, { optionId: "r", kind: "reject_once", name: "No" }]
-  expect(permissionAnswer({ toolCall: { toolCallId: "t", _meta: { claudeCode: { toolName: "mcp__norn__norn_answer" } } }, options })).toEqual({ outcome: { outcome: "selected", optionId: "o" } })
-  expect(permissionAnswer({ toolCall: { toolCallId: "t", _meta: { claudeCode: { toolName: "Bash" } } }, options })).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
-  expect(permissionAnswer({ toolCall: { toolCallId: "t", title: "mcp__other__norn_answer" }, options })).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
-  expect(permissionAnswer({ toolCall: { toolCallId: "t" }, options: [{ optionId: "a", kind: "allow_once" }] })).toEqual({ outcome: { outcome: "cancelled" } })
+const OPTIONS = [{ optionId: "a", kind: "allow_always", name: "Always" }, { optionId: "o", kind: "allow_once", name: "Once" }, { optionId: "r", kind: "reject_once", name: "No" }]
+const call = (toolName: string) => ({ sessionId: "s", toolCall: { toolCallId: "t", title: toolName, rawInput: { action: "x.close" }, _meta: { claudeCode: { toolName, secret: "kept back" } } }, options: OPTIONS })
+
+test("only the tools the cell lists as read-only run without asking", () => {
+  expect([...readOnlyTools([{ name: "norn_answer", annotations: { readOnlyHint: true } }, { name: "norn_call_action", annotations: { readOnlyHint: false, destructiveHint: true } }, { name: "norn_x" }])]).toEqual(["norn_answer"])
+})
+
+test("permissions: a read-only Norn tool is allowed once, another tool is rejected, any other Norn tool asks the person", () => {
+  const readOnly = new Set(["norn_answer"])
+  expect(permissionDecision(call("mcp__norn__norn_answer"), readOnly)).toEqual({ answer: { outcome: { outcome: "selected", optionId: "o" } } })
+  expect(permissionDecision(call("Bash"), readOnly)).toEqual({ answer: { outcome: { outcome: "selected", optionId: "r" } } })
+  expect(permissionDecision(call("mcp__other__norn_answer"), readOnly)).toEqual({ answer: { outcome: { outcome: "selected", optionId: "r" } } })
+  // "Always allow" never reaches the person: each call is asked on its own.
+  const asked = permissionDecision(call("mcp__norn__norn_call_action"), readOnly)
+  expect(asked).toEqual({ ask: { options: [{ optionId: "o", kind: "allow_once", name: "Once" }, { optionId: "r", kind: "reject_once", name: "No" }], reject: "r" } })
+  // Without both a one-time allow and a reject to offer, the relay cancels rather than guess.
+  expect(permissionDecision({ ...call("mcp__norn__norn_call_action"), options: [{ optionId: "a", kind: "allow_always" }, { optionId: "r", kind: "reject_once" }] }, readOnly)).toEqual({ answer: { outcome: { outcome: "cancelled" } } })
+})
+
+test("permissions: the person is asked about the call's id, title and input only, and only an offered option goes back", () => {
+  const { ask } = permissionDecision(call("mcp__norn__norn_call_action"), new Set()) as { ask: Parameters<typeof personAnswer>[0] }
+  expect(questionFor(call("mcp__norn__norn_call_action"), ask)).toEqual({
+    sessionId: "s",
+    toolCall: { toolCallId: "t", title: "mcp__norn__norn_call_action", rawInput: { action: "x.close" }, _meta: { claudeCode: { toolName: "mcp__norn__norn_call_action" } } },
+    options: ask.options,
+  })
+  const reply = (result: unknown, error?: unknown) => ({ jsonrpc: "2.0" as const, id: "p1", result, ...error === undefined ? {} : { error } })
+  expect(personAnswer(ask, reply({ outcome: { outcome: "selected", optionId: "o" } }))).toEqual({ outcome: { outcome: "selected", optionId: "o" } })
+  expect(personAnswer(ask, reply({ outcome: { outcome: "selected", optionId: "r" } }))).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
+  expect(personAnswer(ask, reply({ outcome: { outcome: "cancelled" } }))).toEqual({ outcome: { outcome: "cancelled" } })
+  // An option the relay never offered (always-allow), a malformed answer or an error is the reject.
+  expect(personAnswer(ask, reply({ outcome: { outcome: "selected", optionId: "a" } }))).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
+  expect(personAnswer(ask, reply("yes"))).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
+  expect(personAnswer(ask, reply(undefined, { code: -1, message: "no" }))).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
 })
 
 test("a forwarded message never carries the grant", () => {

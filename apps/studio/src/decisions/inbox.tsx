@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Dot, type DotTone } from "@/components/system/status-dot"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
-import { Inbox, Play, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react"
+import { Inbox, Play, RefreshCw, ShieldAlert, Workflow } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { LoadState } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
@@ -121,7 +121,7 @@ export function DecisionsPage() {
                 <RiskChip risk={d.risk} />
                 <span>{flowTitle(d)} · {stepTitle(d)}</span>
                 <span aria-hidden>·</span><span>{d.options.length} options</span>
-                {d.agentPick !== null && <><span aria-hidden>·</span><span className="inline-flex items-center gap-1"><Sparkles className="size-3" aria-hidden />Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span></>}
+                {d.agentPick !== null && <><span aria-hidden>·</span><span className="inline-flex items-center gap-1">Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span></>}
               </span>
             </button>
           </li>

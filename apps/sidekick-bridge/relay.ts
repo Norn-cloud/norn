@@ -16,6 +16,13 @@
  *   nothing is persisted, and the working directory is an empty scratch directory. Any permission
  *   request for a tool outside the Norn server is denied here; file system and terminal requests
  *   from the agent are refused.
+ * - The person approves every call that can change something. Only the Norn tools the cell's own
+ *   `tools/list` marks `readOnlyHint: true` are pre-allowed; for any other Norn tool the agent must
+ *   ask, and the relay forwards that `session/request_permission` to the browser with only the
+ *   "allow once" and "reject" options. It forwards back only an option it offered (anything else
+ *   is the reject), answers `cancelled` for every open question when the person stops the turn, and
+ *   never lets "always allow" through. If `tools/list` fails, nothing is pre-allowed. The cell
+ *   still decides each call as the person.
  * - The grant never reaches the agent. The agent's MCP server is this relay
  *   (`http://127.0.0.1:<port>/mcp/<capability>`, a random per-connection path); the relay adds the
  *   person's current grant on the way to Studio's /mcp, so the cell's PDP decides every call as
@@ -163,7 +170,7 @@ export function rewriteInitialize(params: Json | undefined): Json {
 }
 
 /** The `session/new` the adapter sees: whatever the browser asked, only the Norn server, locked options, the scratch cwd. */
-export function rewriteNewSession(cwd: string, mcpUrl: string, model?: string): Json {
+export function rewriteNewSession(cwd: string, mcpUrl: string, model?: string, readOnly: Iterable<string> = []): Json {
   return {
     cwd,
     mcpServers: [{ type: "http", name: MCP_SERVER_NAME, url: mcpUrl, headers: [] }],
@@ -172,7 +179,8 @@ export function rewriteNewSession(cwd: string, mcpUrl: string, model?: string): 
         options: {
           tools: [],
           disallowedTools: BUILT_IN_TOOLS,
-          allowedTools: [`mcp__${MCP_SERVER_NAME}`],
+          // Only the cell's read-only tools run without asking; every other Norn tool asks the person.
+          allowedTools: [...readOnly].filter((name) => /^norn_[a-z0-9_]+$/.test(name)).sort().map((name) => `mcp__${MCP_SERVER_NAME}__${name}`),
           settingSources: [],
           strictMcpConfig: true,
           skills: [],
@@ -205,12 +213,70 @@ export function isNornTool(params: Json | undefined): boolean {
   return typeof name === "string" && name.startsWith(`mcp__${MCP_SERVER_NAME}__`)
 }
 
-/** The relay's own answer to a permission request: allow a Norn tool once, reject anything else. */
-export function permissionAnswer(params: Json | undefined): Json {
-  const options = Array.isArray(params?.options) ? params.options as { optionId: string; kind: string }[] : []
-  const pick = (kinds: string[]) => kinds.map((kind) => options.find((option) => option.kind === kind)).find((option) => option !== undefined)
-  const choice = isNornTool(params) ? pick(["allow_once", "allow_always"]) : pick(["reject_once", "reject_always"])
-  return choice === undefined ? { outcome: { outcome: "cancelled" } } : { outcome: { outcome: "selected", optionId: choice.optionId } }
+/** The Norn tool a permission request names, without the server prefix; null when it is not a Norn tool. */
+export function nornToolName(params: Json | undefined): string | null {
+  if (!isNornTool(params)) return null
+  const call = params?.toolCall as Json | undefined
+  const meta = call?._meta as { claudeCode?: { toolName?: unknown } } | undefined
+  const name = (meta?.claudeCode?.toolName ?? call?.title) as string
+  return name.slice(`mcp__${MCP_SERVER_NAME}__`.length)
+}
+
+/** The tools the cell's own `tools/list` marks read-only: the only ones that run without asking. */
+export function readOnlyTools(tools: readonly { name: string; annotations?: Json }[]): Set<string> {
+  return new Set(tools.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name))
+}
+
+type Option = { optionId: string; kind: string; name?: string }
+const CANCELLED: Json = { outcome: { outcome: "cancelled" } }
+const selected = (optionId: string): Json => ({ outcome: { outcome: "selected", optionId } })
+
+/** A question for the person: the two options the relay lets through, and the reject it falls back to. */
+export interface Question { readonly options: readonly Option[]; readonly reject: string }
+
+/**
+ * What the relay does with the agent's permission request: answer it itself (reject a tool outside
+ * the Norn server, allow a tool the cell marks read-only, cancel when the options it needs are
+ * missing), or ask the person, offering only "allow once" and "reject".
+ */
+export function permissionDecision(params: Json | undefined, readOnly: ReadonlySet<string>): { readonly answer: Json } | { readonly ask: Question } {
+  const options = Array.isArray(params?.options) ? params.options as Option[] : []
+  const find = (kind: string) => options.find((option) => option.kind === kind)
+  const name = nornToolName(params)
+  if (name === null) {
+    const reject = find("reject_once") ?? find("reject_always")
+    return { answer: reject === undefined ? CANCELLED : selected(reject.optionId) }
+  }
+  const allow = find("allow_once")
+  if (readOnly.has(name)) return { answer: allow === undefined ? CANCELLED : selected(allow.optionId) }
+  const reject = find("reject_once")
+  if (allow === undefined || reject === undefined) return { answer: CANCELLED }
+  return { ask: { options: [allow, reject].map(({ optionId, kind, name: label }) => ({ optionId, kind, name: label ?? (kind === "allow_once" ? "Allow" : "Reject") })), reject: reject.optionId } }
+}
+
+/** The person's answer as the agent gets it: an option the relay offered, `cancelled`, or else the reject. */
+export function personAnswer(question: Question, reply: Message): Json {
+  const outcome = (reply.result as { outcome?: { outcome?: unknown; optionId?: unknown } } | undefined)?.outcome
+  if (reply.error === undefined && outcome?.outcome === "selected" && question.options.some((option) => option.optionId === outcome.optionId)) return selected(outcome.optionId as string)
+  if (reply.error === undefined && outcome?.outcome === "cancelled") return CANCELLED
+  return selected(question.reject)
+}
+
+/** The tool call the person is asked about: its id, title, kind and input, nothing else of the agent's. */
+export function questionFor(params: Json | undefined, question: Question): Json {
+  const call = (params?.toolCall ?? {}) as Json
+  const name = nornToolName(params)
+  return {
+    sessionId: params?.sessionId,
+    toolCall: {
+      toolCallId: call.toolCallId,
+      ...typeof call.title === "string" ? { title: call.title } : {},
+      ...typeof call.kind === "string" ? { kind: call.kind } : {},
+      ...call.rawInput !== undefined ? { rawInput: call.rawInput } : {},
+      _meta: { claudeCode: { toolName: `mcp__${MCP_SERVER_NAME}__${name}` } },
+    },
+    options: question.options,
+  }
 }
 
 /** Whether an adapter notification is a session update the browser may see (not usage or quota). */
@@ -241,6 +307,10 @@ interface Connection {
   adapter: Subprocess<"pipe", "pipe", "pipe"> | null
   /** The MCP Apps view of each Norn tool that has one, from tools/list. */
   views: Map<string, string>
+  /** The Norn tools the cell marks read-only, from tools/list: the only ones pre-allowed. */
+  readOnly: Set<string>
+  /** Permission questions forwarded to the person, by the relay's id, with the agent's request id. */
+  readonly questions: Map<string, { adapterId: Message["id"]; question: Question }>
   /** Ids the relay used for its own requests to the adapter, mapped back to the browser's id. */
   readonly pendingFromBrowser: Map<string, { id: Message["id"]; method: string }>
   nextId: number
@@ -280,11 +350,13 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   async function listTools(connection: Connection) {
     const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params: {} }), { "mcp-protocol-version": "2025-06-18" })
     if (!response.ok) return
-    const body = await response.json().catch(() => null) as { result?: { tools?: { name: string; _meta?: Json }[] } } | null
-    for (const tool of body?.result?.tools ?? []) {
+    const body = await response.json().catch(() => null) as { result?: { tools?: { name: string; _meta?: Json; annotations?: Json }[] } } | null
+    const tools = body?.result?.tools ?? []
+    for (const tool of tools) {
       const view = viewOf(tool)
       if (view !== null) connection.views.set(tool.name, view)
     }
+    connection.readOnly = readOnlyTools(tools)
   }
 
   /** Whether Studio's /mcp accepts this grant right now: the Worker's own answer, not just the signature. */
@@ -345,9 +417,17 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     // A request from the agent to the client.
     if (message.id !== undefined) {
       if (message.method === "session/request_permission") {
-        const answer = permissionAnswer(message.params)
-        log(`conn ${connection.id} permission ${isNornTool(message.params) ? "allowed" : "denied"}`)
-        toAdapter(connection, { jsonrpc: "2.0", id: message.id, result: answer })
+        const decision = permissionDecision(message.params, connection.readOnly)
+        if ("answer" in decision) {
+          log(`conn ${connection.id} permission ${(decision.answer.outcome as Json).outcome === "selected" && isNornTool(message.params) ? "allowed (read-only)" : "refused"}`)
+          toAdapter(connection, { jsonrpc: "2.0", id: message.id, result: decision.answer })
+          return
+        }
+        // Ask the person: the browser answers with one of the two options, or the reject stands.
+        const id = `p${connection.nextId++}`
+        connection.questions.set(id, { adapterId: message.id, question: decision.ask })
+        log(`conn ${connection.id} permission asked ${nornToolName(message.params)}`)
+        send(connection.ws, { jsonrpc: "2.0", id, method: "session/request_permission", params: questionFor(message.params, decision.ask) }, secrets(connection))
         return
       }
       // Every other client method (file system, terminal, elicitation) is refused: the browser is never asked.
@@ -363,8 +443,16 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   async function fromBrowser(connection: Connection, raw: string) {
     let message: Message
     try { message = JSON.parse(raw) as Message } catch { return send(connection.ws, rpcError(null, -32700, "Parse error"), []) }
-    // Responses from the browser: the relay sends it no requests, so there is nothing to route.
-    if (message.method === undefined) return
+    // Responses from the browser: only the person's answers to the questions the relay forwarded.
+    if (message.method === undefined) {
+      const asked = typeof message.id === "string" ? connection.questions.get(message.id) : undefined
+      if (asked === undefined) return
+      connection.questions.delete(message.id as string)
+      const answer = personAnswer(asked.question, message)
+      log(`conn ${connection.id} permission ${(answer.outcome as Json).outcome === "cancelled" ? "cancelled" : (answer.outcome as Json).optionId === asked.question.reject ? "declined" : "allowed"} by the person`)
+      toAdapter(connection, { jsonrpc: "2.0", id: asked.adapterId, result: answer })
+      return
+    }
     const method = message.method
     if (!BROWSER_METHODS.has(method)) return message.id === undefined ? undefined : send(connection.ws, rpcError(message.id, -32601, `Sidekick does not offer ${method}.`), secrets(connection))
     if (method === "initialize" || method === "_norn/grant") {
@@ -393,9 +481,14 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         return
       }
       await listTools(connection).catch(() => undefined)
-      params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${config.mcpPort}/mcp/${connection.capability}`, config.model)
+      params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${config.mcpPort}/mcp/${connection.capability}`, config.model, connection.readOnly)
     }
     if (method === "session/prompt") params = rewritePrompt(message.params)
+    if (method === "session/cancel") {
+      // Stopping the turn cancels every question still open (ACP: pending permissions answer `cancelled`).
+      for (const asked of connection.questions.values()) toAdapter(connection, { jsonrpc: "2.0", id: asked.adapterId, result: CANCELLED })
+      connection.questions.clear()
+    }
     if (params === null) return send(connection.ws, rpcError(message.id, -32602, "Send text only."), secrets(connection))
     if (method === "_norn/call_tool") {
       // A view's follow-up read: one Norn tool, as the person.
@@ -466,7 +559,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       open(ws) {
         const id = crypto.randomUUID()
         const capability = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
-        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), pendingFromBrowser: new Map(), nextId: 1, closed: false }
+        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), readOnly: new Set(), questions: new Map(), pendingFromBrowser: new Map(), nextId: 1, closed: false }
         ws.data.connection = connection
         connections.set(id, connection)
         byCapability.set(capability, connection)

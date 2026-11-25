@@ -9,7 +9,7 @@ import {
 
 /**
  * Swappable visual skin applied to the document root (`data-skin`).
- * - `luma`: two-surface architectural mist with a knot-violet accent and liquid-glass islands (default; owner decision, 2026-11-25).
+ * - `luma`: shadcn's Luma style (base-luma): its neutral theme, pill controls and rounded cards, on liquid-glass islands (default; owner decision, 2026-11-25).
  * - `polar`: strict Polar / Linear monochrome surfaces (black/grey/white) with colour reserved for data, status, badges, CTAs, and the knot.
  * - `open`: airy open-canvas surface with double-shell cards and crisp blue accent.
  * - `glass`: translucent liquid-glass surfaces with backdrop blur and specular hairlines.
@@ -29,7 +29,7 @@ export const SKINS: readonly {
   readonly detail: string
   readonly swatch: string
 }[] = [
-  { id: "luma", label: "Luma", detail: "Mist and knot violet on glass islands", swatch: "#554ce8" },
+  { id: "luma", label: "Luma", detail: "shadcn Luma: neutral and rounded, on glass islands", swatch: "#171717" },
   { id: "polar", label: "Polar", detail: "Monochrome ink and flat hairlines", swatch: "#18181b" },
   { id: "open", label: "Open", detail: "Double-shell white canvas, blue accent", swatch: "#3a6df0" },
   { id: "glass", label: "Glass", detail: "Translucent frosted liquid glass", swatch: "#dbe6ff" },

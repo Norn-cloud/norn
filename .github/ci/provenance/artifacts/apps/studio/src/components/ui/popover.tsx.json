@@ -1,15 +1,15 @@
 {
-  "sha256": "9b3a6ad6b6f8db24e6399bbd45dedcb90a5c63a5c68d5847b22994186be1540c",
+  "sha256": "898819db648911604160edd0d2844928756c9f240fb3ad8854e4e4ef13613100",
   "origin": "derived",
   "category": "software",
   "license": "MIT",
   "sources": [
     {
       "id": "software.shadcn-ui",
-      "revision": "4aaea19d9cff3e0908e12a8c1d504b8c5ec34610",
+      "revision": "055aa6b7837b1808456a24beb4c97a677864aa82",
       "evidence": {
         "path": "apps/studio/src/components/ui/provenance.json",
-        "sha256": "91db8f2f85155d91e63ce8d8806b39caeba77214c40070211309abf572970cea"
+        "sha256": "2ea25c72fbe44ebcda69d828b996c8b7a133a89a767807c5fb4a8b2d0c9f53e3"
       }
     }
   ],
@@ -18,7 +18,7 @@
   "rights_evidence": [
     {
       "path": "apps/studio/src/components/ui/provenance.json",
-      "sha256": "91db8f2f85155d91e63ce8d8806b39caeba77214c40070211309abf572970cea"
+      "sha256": "2ea25c72fbe44ebcda69d828b996c8b7a133a89a767807c5fb4a8b2d0c9f53e3"
     },
     {
       "path": "apps/studio/src/components/ui/LICENSE",

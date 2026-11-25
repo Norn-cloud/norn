@@ -1,5 +1,5 @@
 import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
-import { Check, Copy, RotateCcw, Sparkles, X } from "lucide-react"
+import { Check, Copy, Palette, RotateCcw, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppearance } from "@/lib/appearance"
@@ -90,7 +90,7 @@ export function CustomThemeDialog({
                   setIssues([])
                 }}
               >
-                <Sparkles aria-hidden className="size-3" />
+                <Palette aria-hidden className="size-3" />
                 {preset.name}
               </Button>
             ))}

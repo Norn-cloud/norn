@@ -1,12 +1,13 @@
 import { createLink } from "@tanstack/react-router"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
-import { ChevronDown, ChevronRight, Search, Sparkles, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Search, X } from "lucide-react"
 import { useId, useRef, type ComponentProps, type ReactNode } from "react"
 import { useAssistant } from "@/assistant-slot"
 import { Hint } from "@/components/system/kit"
 import { Keys } from "@/components/keys"
 import { cn } from "@/lib/utils"
+import { Mascot } from "@/components/system/mascot"
 import {
   currentIn, diffExpanded, matches, named, shown, target, visibleItems,
   type Applet, type AppletMenu, type MenuDestination, type MenuEntry, type PinnedEntry,
@@ -125,7 +126,7 @@ export function AssistantButton({ title }: { readonly title: string }) {
   const { open, toggle } = useAssistant()
   return (
     <Hint side="end" label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
-      <button type="button" aria-label={title} aria-pressed={open} onClick={toggle} className={railButton}><Sparkles aria-hidden strokeWidth={1.6} /></button>
+      <button type="button" aria-label={title} aria-pressed={open} onClick={toggle} className={railButton}><Mascot tone="ink" size={20} state={open ? "answered" : "idle"} /></button>
     </Hint>
   )
 }

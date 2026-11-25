@@ -1,0 +1,35 @@
+{
+  "sha256": "b4f9adb7c568904834d0dd6cc98d16c390d21ca32fc17ae7a267715269bd5529",
+  "origin": "derived",
+  "category": "software",
+  "license": "Apache-2.0",
+  "sources": [
+    {
+      "id": "software.ai-elements",
+      "revision": "ca8be600bfd01b3131f9bf6134b51602a71f4374",
+      "evidence": {
+        "path": "apps/studio/src/components/ai-elements/provenance.json",
+        "sha256": "40cfbb5c2486e0a5b3994d4eb388b1f629e4b0327b16a2430e61af1b33461932"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "apps/studio/src/components/ai-elements/provenance.json",
+      "sha256": "40cfbb5c2486e0a5b3994d4eb388b1f629e4b0327b16a2430e61af1b33461932"
+    },
+    {
+      "path": "apps/studio/src/components/ai-elements/LICENSE",
+      "sha256": "b4f9adb7c568904834d0dd6cc98d16c390d21ca32fc17ae7a267715269bd5529"
+    }
+  ],
+  "notices": [
+    {
+      "path": "apps/studio/src/components/ai-elements/LICENSE",
+      "sha256": "b4f9adb7c568904834d0dd6cc98d16c390d21ca32fc17ae7a267715269bd5529"
+    }
+  ],
+  "connector": null
+}

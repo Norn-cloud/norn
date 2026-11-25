@@ -12,7 +12,7 @@
  * Norn Studio skins (apps/studio/DESIGN.md sections 3-6). Bare `:root` and `.dark` are the default
  * `luma` palette, geometry and island material, so the default holds before any script runs and on
  * any page that loads this sheet without `applyAppearance`:
- * - `luma` (default, `:root` + `.dark`): two-surface architectural mist with a knot-violet accent,
+ * - `luma` (default, `:root` + `.dark`): shadcn's Luma style (base-luma): its neutral theme and radius scale,
  *   and liquid-glass islands on a backdrop with two ambient glows (DESIGN.md 4.7).
  * - `polar` (`:root[data-skin="polar"]`): monochrome ink on neutral surfaces, colour only where
  *   DESIGN.md section 13 allows it; opaque islands.
@@ -24,48 +24,64 @@
  * on each island over its worst-case backdrop.
  */
 :root {
-  /* Concentric double shell: radius-panel = radius-well + panel-inset + 1px border (11 + 4 + 1 = 16). */
-  --radius: 8px;
-  --radius-chip: 5px;
-  --radius-panel: 16px;
+  /*
+   * Luma (shadcn's official style, base-luma; DESIGN.md 3 and 5): its neutral theme and its radius scale
+   * (--radius 0.625rem = 10px; sm..4xl = 0.6, 0.8, 1, 1.4, 1.8, 2.2, 2.6 × that), mapped onto Norn's tokens.
+   * Concentric double shell: radius-panel = radius-well + panel-inset + 1px border (21 + 4 + 1 = 26, Luma's card).
+   */
+  --radius: 10px;
+  --radius-chip: 9999px;
+  --radius-panel: 26px;
   --panel-inset: 4px;
-  --radius-well: 11px;
-  --radius-row: 11px;
-  --radius-sheet: 24px;
-  --radius-search: 18px;
+  --radius-well: 21px;
+  --radius-row: 16px;
+  --radius-sheet: 26px;
+  --radius-search: 26px;
   --radius-dock: 26px;
-  --radius-popup: 16px;
+  --radius-popup: 22px;
+  /* The chat composer and the Ask bar's field: Luma's input-group textarea (3xl). */
+  --radius-composer: 22px;
+  /* Tailwind's rounded-* steps (the @theme below reads these): Luma's scale in luma; the crisp one elsewhere. */
+  --radius-step-xl: 14px;
+  --radius-step-2xl: 18px;
+  --radius-step-3xl: 22px;
+  --radius-step-4xl: 26px;
   --shell: #f3f4f6;
   --canvas: #f3f4f6;
   --background: #ffffff;
-  --foreground: #1b1b1d;
-  --card: #fafafb;
-  --card-foreground: #1b1b1d;
-  --well: #fafafb;
-  --well-border: #e4e5ea;
-  --well-hover: #f1f2f5;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --well: #fafafa;
+  --well-border: #ebebeb;
+  --well-hover: #f2f2f2;
   --popover: #ffffff;
-  --popover-foreground: #1b1b1d;
+  --popover-foreground: #0a0a0a;
   /* Knot violet is reserved for the Norn mark. */
   --knot: #5b52f0;
+  /* The assistant mascot (DESIGN.md 19.4) is the Norn mark's character: knot body, white eyes (5.42:1 light,
+     3.62:1 on the dark knot; a graphic, so 3:1). Declared once here: `.dark` changes `--knot` on the same element. */
+  --mascot-body: var(--knot);
+  --mascot-eye: #ffffff;
   /* Fill and text are separate roles (DESIGN.md 4.2): `--primary` fills the CTA, `--action` is accent text. */
-  --action: #4c43e0;
-  --action-hover: #4940dc;
-  --action-foreground: #ffffff;
-  --primary: #554ce8;
-  --primary-foreground: #ffffff;
-  --action-dot: var(--action);
-  --action-soft: color-mix(in oklab, var(--action) 10%, transparent);
+  --action: #171717;
+  --action-hover: #404040;
+  --action-foreground: #fafafa;
+  --primary: #171717;
+  --primary-foreground: #fafafa;
+  --action-dot: #737373;
+  --action-soft: color-mix(in oklab, var(--action) 8%, transparent);
   --secondary: #f5f5f5;
-  --secondary-foreground: #1b1b1d;
-  --muted: #f1f2f5;
-  --muted-foreground: #5c5c63;
+  --secondary-foreground: #171717;
+  --muted: #f5f5f5;
+  --muted-foreground: #6b6b6b;
   /* Decorative only (separators, chevrons, info glyphs): never the only carrier of information. */
-  --subtle-foreground: #85858b;
-  --accent: #eceef2;
-  --accent-foreground: #1b1b1d;
-  --surface-subtle: #f4f5f7;
+  --subtle-foreground: #8a8a8a;
+  --accent: #f5f5f5;
+  --accent-foreground: #171717;
+  --surface-subtle: #fafafa;
   /* Muted semantic colours, each >= 4.5:1 as text on white, card and well. */
+  /* Luma's red (#e7000b) is 4.01:1 as text on its own 10% wash; Norn keeps its AA red (DESIGN.md 19.1). */
   --destructive: #b83228;
   --destructive-foreground: #ffffff;
   --destructive-text: #b83228;
@@ -77,11 +93,11 @@
   --dot-bad: #e5484d;
   --dot-quiet: color-mix(in oklab, var(--subtle-foreground) 60%, transparent);
   --dot-accent: var(--action-dot);
-  --border: #e4e5ea;
-  --line: #e8e8e8;
-  --input: #e4e4e4;
-  --ring: #554ce8;
-  --link: #4f46e5;
+  --border: #e5e5e5;
+  --line: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #737373;
+  --link: #171717;
   /* Detail colour per kind of artefact; each >= 4.5:1 on card and on its tinted fill. */
   --kind-source: #0f726a;
   --kind-mapping: #475569;
@@ -100,14 +116,14 @@
   /* The default sidebar shell (DESIGN.md 4.6 and 9.1). */
   --sidebar: rgb(247 248 249 / 0.8);
   --sidebar-foreground: #1b1b1d;
-  --sidebar-primary: #554ce8;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #171717;
+  --sidebar-primary-foreground: #fafafa;
   --sidebar-accent: #e8eaf0;
   --sidebar-accent-foreground: #1b1b1d;
   --sidebar-border: #e2e4ea;
-  --sidebar-ring: #554ce8;
-  --panel-border: color-mix(in oklab, var(--border) 92%, transparent);
-  --panel-shadow: var(--elevation-1);
+  --sidebar-ring: #737373;
+  --panel-border: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --panel-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --table-border: color-mix(in oklab, var(--border) 92%, transparent);
   /* The opt-in floating dock (DESIGN.md 4.5): dark in every skin and scheme. */
   --dock-surface: #1d1d20;
@@ -120,11 +136,11 @@
   --dock-indicator: #6b98ff;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.12);
   /* Elevation (DESIGN.md 6): whisper contact plus soft ambient shadow, never a hard blob. */
-  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
-  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
+  --popup-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --sheet-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
   --elevation-control: 0 1px 2px rgb(0 0 0 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.75);
-  --elevation-action: 0 1px 2px rgb(58 109 240 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.18);
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.12);
   --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
   --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
   --elevation-float: 0 16px 40px -12px rgb(0 0 0 / 0.16), 0 2px 6px rgb(0 0 0 / 0.05);
@@ -191,44 +207,44 @@
 .dark {
   --shell: #0b0b0e;
   --canvas: #0b0b0e;
-  --background: #111115;
-  --foreground: #ececee;
-  --card: #17171d;
-  --card-foreground: #ececee;
-  --well: #17171d;
-  --well-border: #262730;
-  --well-hover: #1d1d24;
-  --popover: #1f1f27;
-  --popover-foreground: #ececee;
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --card: #171717;
+  --card-foreground: #fafafa;
+  --well: #1c1c1c;
+  --well-border: #2a2a2a;
+  --well-hover: #262626;
+  --popover: #171717;
+  --popover-foreground: #fafafa;
   --knot: #7c74ff;
-  --action: #847dff;
-  --action-hover: #695ff0;
-  --action-foreground: #ffffff;
-  --primary: #6258ec;
-  --primary-foreground: #ffffff;
-  --action-dot: var(--action);
-  --action-soft: color-mix(in oklab, var(--action) 14%, transparent);
-  --secondary: #1c1c1f;
-  --secondary-foreground: #ececee;
-  --muted: #1d1d24;
-  --muted-foreground: #9b9ba3;
-  --subtle-foreground: #6a6a72;
-  --accent: #23232d;
-  --accent-foreground: #ececee;
-  --surface-subtle: #1c1c23;
-  --destructive: #eb7168;
-  --destructive-foreground: #0b0b0e;
-  --destructive-text: #f07b73;
+  --action: #e5e5e5;
+  --action-hover: #d4d4d4;
+  --action-foreground: #171717;
+  --primary: #e5e5e5;
+  --primary-foreground: #171717;
+  --action-dot: #a1a1a1;
+  --action-soft: color-mix(in oklab, var(--action) 10%, transparent);
+  --secondary: #262626;
+  --secondary-foreground: #fafafa;
+  --muted: #262626;
+  --muted-foreground: #a1a1a1;
+  --subtle-foreground: #7a7a7a;
+  --accent: #262626;
+  --accent-foreground: #fafafa;
+  --surface-subtle: #1c1c1c;
+  --destructive: #ff6467;
+  --destructive-foreground: #0a0a0a;
+  --destructive-text: #ff6467;
   --success: #3ccf8e;
   --warning: #f0b04a;
   --dot-live: #3ccf8e;
   --dot-held: #f0b04a;
   --dot-bad: #ff6b6f;
-  --border: #262730;
-  --line: #2a2a2e;
-  --input: #2c2c30;
-  --ring: #7c74ff;
-  --link: #938cff;
+  --border: #2e2e2e;
+  --line: #2a2a2a;
+  --input: #383838;
+  --ring: #737373;
+  --link: #e5e5e5;
   --kind-source: #34d8c4;
   --kind-mapping: #9caac0;
   --kind-object: #84aaff;
@@ -244,13 +260,13 @@
   --chart-5: #7b7d8e;
   --sidebar: rgb(13 13 16 / 0.8);
   --sidebar-foreground: #ececee;
-  --sidebar-primary: #7c74ff;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #e5e5e5;
+  --sidebar-primary-foreground: #171717;
   --sidebar-accent: #18181f;
   --sidebar-accent-foreground: #ececee;
   --sidebar-border: #1e1e26;
-  --sidebar-ring: #7c74ff;
-  --panel-border: color-mix(in oklab, var(--border) 95%, transparent);
+  --sidebar-ring: #737373;
+  --panel-border: color-mix(in oklab, var(--foreground) 10%, transparent);
   --panel-shadow: var(--elevation-1);
   --table-border: color-mix(in oklab, var(--border) 95%, transparent);
   --dock-surface: #222226;
@@ -320,6 +336,18 @@
  * Skin: Polar (monochrome ink on neutral surfaces; colour only where DESIGN.md section 13 allows it).
  */
 :root[data-skin="polar"] {
+  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups. */
+  --radius: 8px;
+  --radius-chip: 5px;
+  --radius-row: 11px;
+  --radius-sheet: 24px;
+  --radius-search: 18px;
+  --radius-popup: 16px;
+  --radius-composer: 12px;
+  --radius-step-xl: var(--radius-panel);
+  --radius-step-2xl: 12px;
+  --radius-step-3xl: 8px;
+  --radius-step-4xl: 8px;
   --accent: #ededf0;
   --accent-foreground: #18181b;
   --action: #18181b;
@@ -376,6 +404,10 @@
   --island-border: rgb(24 24 27 / 0.06);
   --island-shadow: 0 1px 2px rgb(0 0 0 / 0.03);
   --island-blur: none;
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #b83228;
+  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
+  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
 }
 
 :root.dark[data-skin="polar"] {
@@ -429,6 +461,10 @@
   --island: #0a0a0b;
   --island-border: rgb(255 255 255 / 0.07);
   --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #eb7168;
+  --destructive-foreground: #0b0b0e;
+  --destructive-text: #f07b73;
 }
 
 /*
@@ -437,6 +473,18 @@
  */
 :root[data-skin="open"],
 :root[data-skin="glass"] {
+  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups. */
+  --radius: 8px;
+  --radius-chip: 5px;
+  --radius-row: 11px;
+  --radius-sheet: 24px;
+  --radius-search: 18px;
+  --radius-popup: 16px;
+  --radius-composer: 12px;
+  --radius-step-xl: var(--radius-panel);
+  --radius-step-2xl: 12px;
+  --radius-step-3xl: 8px;
+  --radius-step-4xl: 8px;
   --radius-panel: 20px;
   --radius-well: 15px;
   --shell: #f6f6f7;
@@ -492,6 +540,11 @@
   --island-border: rgb(0 0 0 / 0.06);
   --island-shadow: 0 1px 2px rgb(0 0 0 / 0.03), 0 8px 24px -16px rgb(0 0 0 / 0.1);
   --island-blur: none;
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #b83228;
+  --popup-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.04);
+  --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.18), 0 4px 12px rgb(0 0 0 / 0.04);
+  --subtle-foreground: #85858b;
 }
 
 :root.dark[data-skin="open"],
@@ -546,6 +599,10 @@
   --island: #0d0d0e;
   --island-border: rgb(255 255 255 / 0.07);
   --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+  /* Inherited from the pre-Luma default; this skin keeps them. */
+  --destructive: #eb7168;
+  --destructive-foreground: #0b0b0e;
+  --destructive-text: #f07b73;
 }
 
 /*
@@ -719,10 +776,10 @@
 }
 
 @theme inline {
-  --radius-sm: 4px;
-  --radius-md: var(--radius-chip);
+  --radius-sm: 6px;
+  --radius-md: 8px;
   --radius-lg: var(--radius);
-  --radius-xl: var(--radius-panel);
+  --radius-xl: var(--radius-step-xl);
   --color-background: var(--background);
   --color-canvas: var(--canvas);
   --color-surface-subtle: var(--surface-subtle);
@@ -844,11 +901,10 @@
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
-  --radius-2xl: 12px;
-  /* Controls (buttons, inputs, toggles) keep the crisp 8px control radius. */
-  --radius-3xl: var(--radius);
-  --radius-4xl: var(--radius);
-  --shadow-md: var(--elevation-1);
+  /* Luma's pill controls and fully rounded cards in luma; the crisp steps in polar, open and glass. */
+  --radius-2xl: var(--radius-step-2xl);
+  --radius-3xl: var(--radius-step-3xl);
+  --radius-4xl: var(--radius-step-4xl);
 }
 
 @layer base {
@@ -917,3 +973,21 @@
 [dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, label, button, a, dt, dd, figcaption, span):not([dir]) {
   unicode-bidi: plaintext;
 }
+
+/* The assistant mascot (components/system/mascot.tsx, DESIGN.md 19.4). Idle blinks now and then; thinking
+   turns its thread and lifts its gaze; asking raises its hand. Every pose holds still under reduced motion. */
+@keyframes mascot-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.12); } }
+@keyframes mascot-sway { 0%, 100% { transform: rotate(-16deg); } 50% { transform: rotate(16deg); } }
+@keyframes mascot-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-0.8px); } }
+@keyframes mascot-wave { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-14deg); } }
+[data-slot="mascot"] [data-part="eyes"] { transform-box: fill-box; transform-origin: center; }
+[data-slot="mascot"] [data-part="thread"] { transform-box: view-box; transform-origin: 16px 6px; }
+[data-slot="mascot"] [data-part="hand"] { transform-box: view-box; transform-origin: 26.4px 16.4px; }
+[data-slot="mascot"][data-state="idle"] [data-part="eyes"] { animation: mascot-blink 6s ease-in-out infinite; }
+[data-slot="mascot"][data-state="thinking"] [data-part="figure"] { animation: mascot-bob 1.6s ease-in-out infinite; }
+[data-slot="mascot"][data-variant="pebble"][data-state="thinking"] [data-part="thread"] { animation: mascot-sway 1.2s ease-in-out infinite; }
+[data-slot="mascot"][data-state="asking"] [data-part="hand"] { animation: mascot-wave 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="mascot"] [data-part] { animation: none !important; }
+}
+

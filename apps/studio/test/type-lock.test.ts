@@ -71,3 +71,17 @@ test("a status dot fill lives only in the dot primitives, so it always sits besi
   const found = FILES.filter(({ file, text }) => !owners.has(file) && /(?<![\w-])(?:[^\s"'`]*:)?bg-dot-/.test(text)).map(({ file }) => file)
   expect(found).toEqual([])
 })
+
+test("no sparkle \"AI\" glyph: the assistant is the mascot or its name in words (DESIGN.md 19.2)", () => {
+  // Owner, 2026-11-25: the sparkle "AI" icon is banned. No lucide sparkle, wand or stars icon (named,
+  // aliased or deep-imported), no ✨, and no hand-drawn "AI" lettering glyph. No allowlist.
+  const icon = /Sparkle|Wand|^Stars(?:Icon)?$/
+  const found = FILES.flatMap(({ file, text }) => {
+    const named = [...text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']lucide-react[^"']*["']/g)]
+      .flatMap((match) => match[1]!.split(",").map((part) => part.trim().split(/\s+as\s+/)[0]!).filter((name) => icon.test(name)))
+    const deep = [...text.matchAll(/["']lucide-react\/[^"']*(?:sparkle|wand|\/stars?)[^"']*["']/gi)].map((match) => match[0])
+    const glyph = [...text.matchAll(/✨|\bAiGlyph\b|>\s*AI\s*<\/text>/g)].map((match) => match[0])
+    return [...named, ...deep, ...glyph].map((hit) => `${file}  ${hit}`)
+  })
+  expect(found).toEqual([])
+})

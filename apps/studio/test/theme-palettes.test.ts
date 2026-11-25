@@ -19,9 +19,9 @@ test("bare :root and .dark are the luma palette, so the default needs no data-sk
   expect(css).not.toContain('[data-skin="luma"]')
   const palettes = themePalettes(css)
   expect(palettes.luma.light.canvas).toBe("#f3f4f6")
-  expect(palettes.luma.light.primary).toBe("#554ce8")
+  expect(palettes.luma.light.primary).toBe("#171717")
   expect(palettes.luma.dark.canvas).toBe("#0b0b0e")
-  expect(palettes.luma.dark.primary).toBe("#6258ec")
+  expect(palettes.luma.dark.primary).toBe("#e5e5e5")
   // Its islands are glass: a translucent material over a backdrop of its own.
   expect(palettes.luma.light.island).toMatch(/^rgba\(/)
   expect(palettes.luma.light.backdrop).not.toBe(palettes.luma.light.canvas)
