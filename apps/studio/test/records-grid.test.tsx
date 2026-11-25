@@ -31,6 +31,7 @@ const answering = (first: RecordsRead): RecordedReader => ({
   kind: "recorded",
   records: (objectType, query) => ({ queryKey: ["records", objectType, recordsQueryParams(query).toString()], queryFn: async () => first }),
   object: (objectType, id) => ({ queryKey: ["object", "recorded", objectType, id], queryFn: async () => null }),
+  widget: (read) => ({ queryKey: ["widget", "recorded", read], queryFn: async () => ({ outcome: "not_served", payload: {} }) }),
 })
 
 /** The grid with its first page already answered, rendered to markup. */

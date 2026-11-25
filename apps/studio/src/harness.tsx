@@ -18,7 +18,7 @@ import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { useCellQuery } from "./lib/cell-query.ts"
-import { matchReadState } from "./lib/state/index.ts"
+import { matchReadState } from "../../../packages/norn-react/src/state.ts"
 import { NO_DATA_CELL, useStudioScope, type StudioScope } from "./lib/definitions.ts"
 import "./index.css"
 

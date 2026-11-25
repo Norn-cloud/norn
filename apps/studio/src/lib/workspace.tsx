@@ -21,11 +21,14 @@ import type { Read } from "./exact.ts"
 import { useMode, type Fetch, type Mode } from "./live-transport.ts"
 import { readFindings, readObjectAtScope, readRecordedObject } from "./raw/record.ts"
 import { readRecordedRecords, readRecordsAtScope } from "./raw/records.ts"
+import { readRecordedWidget, readWidgetAtScope } from "./raw/widget.ts"
 import { recordsQueryParams, recordsQueryPrefix, type RecordsQuery } from "./records-query.ts"
 import type { PageRead, RecordsRead } from "./records-source.ts"
 import type { ObjectReads } from "./transport.ts"
 import type { ObjectFindings } from "../evidence/review.ts"
-import type { WorkspaceState } from "./state/index.ts"
+import type { WorkspaceState } from "../../../../packages/norn-react/src/state.ts"
+import type { Classified } from "../../../../packages/norn-react/src/machine/outcome.ts"
+import type { BindingRead } from "../../../../packages/norn-react/src/reads.ts"
 
 declare const decided: unique symbol
 
@@ -56,6 +59,8 @@ export interface ScopedReader {
   readonly object: (objectType: string, id: string) => ReaderQuery<ObjectReads | null>
   /** One record's findings: `["findings", type, id, orgId, environmentId]`. */
   readonly findings: (objectType: string, id: string) => ReaderQuery<Read<ObjectFindings>>
+  /** A Widget UX page's data binding, classified as its machine's outcome (`<NornAppRenderer>`): `["widget", read, orgId, environmentId]`. */
+  readonly widget: (read: BindingRead) => ReaderQuery<Classified>
 }
 
 /** The reads of the recording, under keys no live answer reaches. The recording keeps no findings. */
@@ -65,9 +70,11 @@ export interface RecordedReader {
   readonly records: (objectType: string, query: RecordsQuery) => ReaderQuery<RecordsRead>
   /** One recorded record: `["object", "recorded", type, id]`. */
   readonly object: (objectType: string, id: string) => ReaderQuery<ObjectReads | null>
+  /** A Widget UX page's data binding from the recording: `["widget", "recorded", read]`. */
+  readonly widget: (read: BindingRead) => ReaderQuery<Classified>
 }
 
-/** The workspace a page reads in, as the server's mode answer decided it (`lib/state`'s {@link WorkspaceState}). */
+/** The workspace a page reads in, as the server's mode answer decided it (`@norn/react`'s {@link WorkspaceState}). */
 export type Workspace = WorkspaceState<DecidedScope, ScopedReader, RecordedReader>
 
 /** A decided workspace: one a page may read in. */
@@ -97,6 +104,10 @@ const RECORDED: RecordedReader = Object.freeze({
     queryKey: ["object", "recorded", objectType, id],
     queryFn: () => readRecordedObject(objectType, id),
   }),
+  widget: (read: BindingRead) => ({
+    queryKey: ["widget", "recorded", read],
+    queryFn: () => readRecordedWidget(read),
+  }),
 })
 
 function scopedReader(scope: DecidedScope, fetcher: Fetch): ScopedReader {
@@ -116,6 +127,10 @@ function scopedReader(scope: DecidedScope, fetcher: Fetch): ScopedReader {
       queryKey: ["findings", objectType, id, scope.orgId, scope.environmentId],
       queryFn: ({ signal }: { readonly signal: AbortSignal }) => readFindings(objectType, id, scope, signal, fetcher),
       staleTime: FINDINGS_STALE_MS,
+    }),
+    widget: (read: BindingRead) => ({
+      queryKey: ["widget", read, scope.orgId, scope.environmentId],
+      queryFn: ({ signal }: { readonly signal: AbortSignal }) => readWidgetAtScope(read, scope, signal, fetcher),
     }),
   })
 }

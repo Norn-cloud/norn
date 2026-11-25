@@ -1,0 +1,6 @@
+{
+  "contracts": "generated-openapi",
+  "scope": "authorized-definition-document-presentation",
+  "runtime": "react-renderer",
+  "authority": "server"
+}

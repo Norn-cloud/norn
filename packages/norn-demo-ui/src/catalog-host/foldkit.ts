@@ -12,7 +12,7 @@ import type { Schema } from "effect"
 import type { MessageUnion } from "foldkit/message"
 import type { CallableTaggedStruct } from "foldkit/schema"
 
-import type { Machine, MachineField, MachineTransition, StateRole, ValueType } from "../machine/machine.ts"
+import type { Machine, MachineField, MachineTransition, StateRole, ValueType } from "../../../norn-react/src/machine/machine.ts"
 
 /** The parts of a Foldkit `Machine` the compiler reads (`foldkit/experimental/machine`). */
 export interface FoldkitMachine {

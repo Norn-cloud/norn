@@ -1,0 +1,63 @@
+// What `<NornAppRenderer>` draws and refuses (#1762 milestone C, L6). The capability walk is held to
+// the checker's own `renderer_capabilities` through its WASM export (`rendererCapabilities`), and the
+// behaviours it declares to the pinned UI SDK catalog.
+import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
+import { missingCapabilities, RENDERED_BEHAVIORS, RENDERED_PRIMITIVES, RENDERER_CAPABILITIES, requiredCapabilities } from "../src/capabilities.ts"
+import { refusalsOf } from "../src/renderer.tsx"
+import type { WidgetUx } from "../src/ux.ts"
+import { matrixArtifact } from "./fixtures/matrix-page.ts"
+
+const ROOT = join(import.meta.dir, "../../..")
+const read = (path: string) => JSON.parse(readFileSync(join(ROOT, path), "utf8")) as { payload: { ux: WidgetUx } }
+const pkg = process.env.NORN_CHECKER_WASM_PKG
+const checker = pkg
+  ? ((await import(pathToFileURL(join(pkg, "norn_checker_wasm.js")).href)) as { initSync(options: { module: Uint8Array }): unknown; rendererCapabilities(uxJson: string): string })
+  : null
+checker?.initSync({ module: readFileSync(join(pkg ?? "", "norn_checker_wasm_bg.wasm")) })
+if (!checker && process.env.NORN_CHECKER_WASM_REQUIRED) throw new Error("NORN_CHECKER_WASM_PKG is required")
+
+const fixture = matrixArtifact().payload.ux as WidgetUx
+const documents: Readonly<Record<string, WidgetUx>> = {
+  fixture,
+  "decision sheet": read("apps/studio/src/decisions/decision-sheet.widget.json").payload.ux,
+  "lifecycle view": read("packages/norn-demo-ui/src/elements/lifecycle-view.widget.json").payload.ux,
+}
+
+describe.skipIf(checker === null)("the capability walk is the checker's", () => {
+  for (const [name, ux] of Object.entries(documents)) {
+    test(name, () => {
+      expect(requiredCapabilities(ux)).toEqual(JSON.parse(checker!.rendererCapabilities(JSON.stringify(ux))) as string[])
+    })
+  }
+})
+
+test("the declared behaviours are the pinned catalog's for the primitives drawn", () => {
+  const catalog = JSON.parse(readFileSync(join(ROOT, "crates/norn-ui-checker/catalog/ui-sdk.json"), "utf8")) as { primitives: Record<string, { behaviors: string[] }> }
+  const expected = [...new Set(RENDERED_PRIMITIVES.flatMap((name) => catalog.primitives[name]!.behaviors))].sort()
+  expect([...RENDERED_BEHAVIORS]).toEqual(expected)
+})
+
+test("the fixture is drawn whole; every capability it needs is declared", () => {
+  expect(requiredCapabilities(fixture)).toContain("agent:redaction")
+  expect(requiredCapabilities(fixture)).toContain("agent:confirm")
+  expect(missingCapabilities(fixture)).toEqual([])
+  expect(refusalsOf(fixture, { "fixture-meter": () => null, "fixture-status": () => null }, false)).toEqual([])
+})
+
+test("a page that needs what the renderer does not draw is refused, saying what", () => {
+  const page = fixture.pages[0]!
+  const form = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-form", component: { kind: "form" as const, formId: "f" }, children: [] }] } }] }
+  expect(missingCapabilities(form)).toEqual(["component:form"])
+  const operation = { ...fixture, pages: [{ ...page, machine: { ...page.machine!, transitions: [...page.machine!.transitions, { transitionId: "op", from: "browsing", on: "save", target: "saving", effects: [{ kind: "start" as const, call: { kind: "operation" as const, operationId: "x" } }] }] } }] }
+  expect(missingCapabilities(operation)).toEqual(["effect:start:operation"])
+  const filtered = { ...fixture, dataBindings: fixture.dataBindings.map((binding) => ({ ...binding, query: { kind: "object_list" as const, filters: [{}], sort: [], page: { size: 1, maxSize: 1 } } })) }
+  expect(missingCapabilities(filtered)).toEqual(["read:object_list:filtered (records)"])
+  const declared = new Set([...RENDERER_CAPABILITIES].filter((capability) => capability !== "agent:redaction"))
+  expect(missingCapabilities(fixture, declared)).toEqual(["agent:redaction"])
+  expect(refusalsOf(fixture, { "fixture-meter": () => null }, false)).toEqual(["island:fixture-status"])
+  const subscribed = { ...fixture, pages: [{ ...page, machine: { ...page.machine!, events: [...page.machine!.events, { eventId: "changed", source: { kind: "subscription" as const, bindingId: "records" } }] } }] }
+  expect(refusalsOf(subscribed, { "fixture-meter": () => null, "fixture-status": () => null }, false)).toEqual(["live:feed"])
+})

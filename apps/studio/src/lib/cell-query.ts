@@ -8,7 +8,7 @@ import {
 import { CellUnavailable, defaultFetch, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
 import { CellRefusal, MODE_AUTO_RETRIES, NotServed } from "./live-transport.ts"
-import type { ReadState } from "./state/index.ts"
+import type { ReadState } from "../../../../packages/norn-react/src/state.ts"
 
 /**
  * One read primitive for the cell's documents (#1374): `useCellQuery(route, params, { scope })` is
@@ -292,7 +292,7 @@ export function attachLive(options: {
 }
 
 /**
- * What a page renders for one read (`lib/state`'s {@link ReadState}): the document, or the state its
+ * What a page renders for one read (`@norn/react`'s {@link ReadState}): the document, or the state its
  * error or pushed refusal is. Each error keeps the class the read made of the cell's answer (#1686):
  *
  * - {@link NotServed} (a 404 that is no refusal, or the deployment's no-host 503, `NO_HOST_ERROR`) is `not_served`;
