@@ -6,7 +6,6 @@ import { PageHeader } from "@/components/panel"
 import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { refreshMode } from "@/lib/live-transport"
 import type { Concept } from "../lib/catalog.ts"
 import { studioScopeKey } from "../lib/definitions.ts"
 import { useWorkspace, type ScopedReader } from "../lib/workspace.tsx"
@@ -71,7 +70,9 @@ export function RecordsPage() {
         data={catalog}
         error={read.error}
         isFetching={read.isFetching}
-        onRetry={() => { refreshMode(); void read.refetch() }}
+        // A refusal's Retry reads again; Workspace unavailable owns its own Retry, which decides the
+        // mode again as the shell's would (`WorkspaceUnavailable`).
+        onRetry={() => void read.refetch()}
         bone="records-table"
         skeleton="table"
         loadingLabel="Reading records"

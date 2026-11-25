@@ -993,3 +993,170 @@ test("syncStudioScopeChange(client, undefined) immediately flips mounted scope o
     client.clear()
   }
 })
+
+test.each([
+  ["a pushed refusal held as the read's data (CellRefused)", { kind: "refused", refusal: new CellUnavailable(503, "unavailable", { retryable: false }), seq: 1 }],
+  ["a cell call's refused result (the decisions inbox)", { result: { kind: "refused", refusal: { status: 503, code: "cell.unopenable", message: "the cell cannot open", diagnostics: [], body: { retryable: false } } } }],
+] as const)("the workspace Retry reads again a read whose answer is %s, not only an errored one", async (_name, refused) => {
+  const client = new QueryClient()
+  const reads: string[] = []
+  const observe = (key: string) => new QueryObserver(client, {
+    queryKey: [key],
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      reads.push(key)
+      return { kind: "document" }
+    },
+  })
+  client.setQueryData(["refused-read"], refused)
+  client.setQueryData(["answered-read"], { kind: "document" })
+  const offRefused = observe("refused-read").subscribe(() => {})
+  const offAnswered = observe("answered-read").subscribe(() => {})
+  try {
+    expect(client.getQueryState(["refused-read"])?.status).toBe("success")
+    await retryWorkspace(client)
+    expect(reads).toEqual(["refused-read"])
+    expect(client.getQueryData<unknown>(["refused-read"])).toEqual({ kind: "document" })
+  } finally {
+    offRefused()
+    offAnswered()
+    client.clear()
+  }
+})
+
+test("when the workspace Retry's mode read settles in error, nothing else is read again (no fan-out to the cell that did not answer)", async () => {
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  const client = new QueryClient()
+  const definitionReads: string[] = []
+  const pageReads: string[] = []
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    definitionReads.push(url)
+    return new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  client.setQueryData(["studio-scope"], scopeA)
+  const mode = new QueryObserver(client, { ...modeQuery(scopeA), retryDelay: 0 })
+  const page = new QueryObserver(client, {
+    queryKey: ["page-read"],
+    retry: false,
+    queryFn: async () => {
+      pageReads.push("page")
+      throw new CellUnavailable(502, "unavailable")
+    },
+  })
+  const offMode = mode.subscribe(() => {})
+  const offPage = page.subscribe(() => {})
+  try {
+    await until(mode, settled)
+    await until(page, settled)
+    definitionReads.length = 0
+    pageReads.length = 0
+
+    await retryWorkspace(client)
+
+    expect(mode.getCurrentResult().isError).toBe(true)
+    expect(definitionReads.length).toBeGreaterThan(0)
+    expect(pageReads).toEqual([])
+  } finally {
+    offPage()
+    offMode()
+    client.clear()
+    fetch.mockRestore()
+  }
+})
+
+test.each([
+  ["workspace A goes down, and Retry finds the session moved to workspace B", true],
+  ["the first /api/me read fails, and Retry finds workspace B", false],
+] as const)("Retry after an outage: %s; one /api/me read, and nothing is read in A", async (_name, startsInA) => {
+  const ME_B = { ...ME, organization: { ...ME.organization, id: "org-b" }, environmentId: "env-b" }
+  const scopeB = { orgId: "org-b", environmentId: "env-b" }
+  let me: "a" | "down" | "b" = startsInA ? "a" : "down"
+  let meReads = 0
+  const hostReads: string[] = []
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") {
+      meReads += 1
+      return me === "down"
+        ? new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+        : Response.json(me === "a" ? ME : ME_B)
+    }
+    hostReads.push(url)
+    // A's cell is down with the session; B's answers.
+    if (me !== "b" && url.includes("orgId=local")) {
+      return me === "a"
+        ? new Response(url.includes("/v1/definitions") ? DEFINITIONS : "{}", { headers: { "content-type": "application/json" } })
+        : new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+    }
+    if (url.includes("orgId=org-b")) return new Response(url.includes("/v1/definitions") ? DEFINITIONS : "{}", { headers: { "content-type": "application/json" } })
+    return new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  const client = new QueryClient()
+  const page = mountUseMode(client)
+  // A page read bound to workspace A (as a decided reader's is), and a read through the transport.
+  const scopedA = new QueryObserver(client, {
+    queryKey: ["records", "T", "local", "dev"],
+    retry: false,
+    enabled: startsInA,
+    queryFn: async () => {
+      const response = await globalThis.fetch("/api/host/v1/records?orgId=local&environmentId=dev")
+      if (!response.ok) throw new CellUnavailable(response.status, "unavailable")
+      return response.text()
+    },
+  })
+  // Mirrors transport.catalog() without importing ../src/lib/transport.ts, which other test files mock.module().
+  const catalog = new QueryObserver(client, {
+    queryKey: ["catalog"],
+    retry: false,
+    queryFn: async () => {
+      const active = await currentMode()
+      if (active.kind !== "live") throw new Error("expected a live mode")
+      return liveTransport(active.catalog, active.counts).catalog()
+    },
+  })
+  const offScoped = scopedA.subscribe(() => {})
+  const offCatalog = catalog.subscribe(() => {})
+  try {
+    if (startsInA) {
+      await until(page.modeObs, (result) => result.isSuccess)
+      await until(scopedA, (result) => result.isSuccess)
+      await until(catalog, (result) => result.isSuccess)
+      // The outage: the session and A's cell stop answering; the page's scope and reads fail.
+      me = "down"
+      await page.scopeObs.refetch()
+      await scopedA.refetch()
+      await until(scopedA, settled)
+      await until(page.modeObs, settled)
+    } else {
+      // The first /api/me read fails: the page's mode and its read through the transport both settle.
+      await until(page.modeObs, settled)
+      await catalog.refetch()
+      await until(catalog, settled)
+    }
+
+    // The session answers again, now in workspace B.
+    me = "b"
+    meReads = 0
+    hostReads.length = 0
+    await retryWorkspace(client)
+
+    expect(meReads).toBe(1)
+    expect(hostReads.filter((url) => url.includes("orgId=local"))).toEqual([])
+    expect(client.getQueryState(["studio-mode", JSON.stringify([scopeB.orgId, scopeB.environmentId])])?.status).toBe("success")
+    await until(page.modeObs, (result) => result.isSuccess && !result.isFetching)
+    expect(page.modeObs.getCurrentResult().data).toMatchObject({ kind: "live", scope: scopeB })
+    if (!startsInA) expect(catalog.getCurrentResult().isSuccess).toBe(true)
+    expect(meReads).toBe(1)
+  } finally {
+    offCatalog()
+    offScoped()
+    page.unmount()
+    fetch.mockRestore()
+    client.clear()
+  }
+})

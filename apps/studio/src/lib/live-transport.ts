@@ -559,8 +559,17 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
   })
 }
 
-/** Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh replacements. */
-export async function retryMode(client: QueryClient): Promise<void> {
+/**
+ * Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh
+ * replacements. Resolves `true` once the page's mode is decided again, `false` when it settled in error
+ * (the session or the cell still does not answer).
+ *
+ * When the scope is read again and answers, that answer is applied here, at once ({@link scopeAnswered}:
+ * a different workspace purges the old one's reads), and that workspace's mode is read here too, not
+ * left to `useMode`'s next render: until it runs, no mode query of the new key is mounted, and whatever
+ * reads again next would discover the scope a second time or read in the old workspace.
+ */
+export async function retryMode(client: QueryClient): Promise<boolean> {
   const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
   const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
   const scopeState = client.getQueryState(["studio-scope"])
@@ -577,34 +586,50 @@ export async function retryMode(client: QueryClient): Promise<void> {
   if (retryScope) {
     await client.refetchQueries(scopeFilter, { cancelRefetch: false })
     const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
-    const nextModeKey =
-      nextScope?.status === "success"
-        ? studioScopeKey(nextScope.data)
-        : nextScope?.status === "error"
-          ? "outage"
-          : null
-    if (nextModeKey !== null) {
-      await client.refetchQueries({ queryKey: ["studio-mode", nextModeKey], exact: true, type: "active" }, { cancelRefetch: false })
+    if (nextScope?.status === "success") {
+      const scope = nextScope.data ?? null
+      scopeAnswered(client, scope)
+      // Read always (`staleTime: 0`): Retry decides the mode again even when this workspace's is cached.
+      // A mode query of this key that `useMode` mounts meanwhile joins this read.
+      return client.fetchQuery({ ...modeQuery(scope), staleTime: 0 }).then(() => true, () => false)
     }
-    return
+    if (nextScope?.status !== "error") return false
+    const outage = ["studio-mode", "outage"]
+    await client.refetchQueries({ queryKey: outage, exact: true, type: "active" }, { cancelRefetch: false })
+    return client.getQueryState(outage)?.status === "success"
   }
   await client.refetchQueries(modeFilter, { cancelRefetch: false })
+  return client.getQueryCache().findAll(modeFilter).every((query) => query.state.status === "success")
+}
+
+/**
+ * Whether a read's answer is a refusal held as data, not as the query's error: a pushed refusal
+ * (`CellRefused`, `{ kind: "refused" }`) or a cell call's refused result (`{ result: { kind: "refused" } }`,
+ * such as the decisions inbox). The query succeeded, but what it shows is the refusal, and its page may
+ * show it as Workspace unavailable, whose Retry is {@link retryWorkspace}.
+ */
+function holdsRefusal(data: unknown): boolean {
+  const refused = (value: unknown) => typeof value === "object" && value !== null && (value as { readonly kind?: unknown }).kind === "refused"
+  return refused(data) || (typeof data === "object" && data !== null && refused((data as { readonly result?: unknown }).result))
 }
 
 /**
  * The one user Retry for the workspace (the shell's one-line status, a page's own Workspace unavailable
  * state, a skeleton's Retry while the mode is read): decide the mode again (`retryMode`), and only once
- * it has settled read again every errored read on screen. Sequenced, so a page's read never runs while
- * the mode is still undecided (that read would discover the scope a second time); a read that is
- * already running again is joined, not restarted. Resolves when both are done, so a Retry button can
- * stay disabled until then.
+ * it is decided read again every read on screen that errored or holds a refusal. Sequenced, so a page's
+ * read never runs while the mode is still undecided (that read would discover the scope a second time);
+ * a read that is already running again is joined, not restarted. When the mode settles in error nothing
+ * else is read: the page shows Workspace unavailable for the mode, and its reads would only ask the cell
+ * that did not answer again (each with its own automatic retries, keeping Retry disabled meanwhile).
+ * Resolves when both are done, so a Retry button can stay disabled until then.
  */
 export async function retryWorkspace(client: QueryClient): Promise<void> {
-  await retryMode(client)
+  if (!await retryMode(client)) return
   await client.invalidateQueries({
     predicate: (query) => {
       const head = query.queryKey[0]
-      return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+      if (head === "studio-scope" || head === "studio-mode") return false
+      return query.state.status === "error" || holdsRefusal(query.state.data)
     },
   }, { cancelRefetch: false })
 }

@@ -91,12 +91,19 @@ export function ObjectPage() {
     void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) })
     if (workspace.kind === "live") void queries.invalidateQueries({ queryKey: workspace.reader.findings(name, id).queryKey, exact: true })
   }
-  // Retry decides the mode again (the shell's own retry), and only then reads the type and the record
-  // again, at that mode's scope (`retryWorkspace`); a read the retry already restarted is joined.
+  // Retry is the workspace's (`retryWorkspace`): it decides the mode again and then reads again every
+  // errored read, the type's and the record's among them, at that mode's scope. A read still waiting
+  // for its answer (its skeleton timed out) did not error, so it is read again here, once the mode is
+  // decided, and only if it is still waiting then: no read is sent twice.
   const retry = () => {
+    const waiting = [
+      ...catalogRead.isPending ? [["catalog"]] : [],
+      ...decided !== undefined && reads.isPending ? [decided.reader.object(name, id).queryKey] : [],
+    ]
     void retryWorkspace(queries).then(() => {
-      void catalogRead.refetch({ cancelRefetch: false })
-      if (decided !== undefined) void reads.refetch({ cancelRefetch: false })
+      for (const queryKey of waiting) {
+        if (queries.getQueryState(queryKey)?.status === "pending") void queries.refetchQueries({ queryKey, exact: true })
+      }
     })
   }
   const live = workspace.kind === "live"

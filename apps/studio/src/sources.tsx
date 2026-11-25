@@ -9,7 +9,6 @@ import { cn } from "@/lib/utils"
 import { LoadState } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
-import { refreshMode } from "./lib/live-transport.ts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -275,7 +274,9 @@ export function ObjectTypePage() {
         data={catalog}
         error={read.error}
         isFetching={read.isFetching}
-        onRetry={() => { refreshMode(); void read.refetch() }}
+        // A refusal's Retry reads again; Workspace unavailable owns its own Retry, which decides the
+        // mode again as the shell's would (`WorkspaceUnavailable`).
+        onRetry={() => void read.refetch()}
         skeleton="detail"
         loadingLabel="Reading type definition"
       >
