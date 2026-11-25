@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { CheckCircle2, Circle, Hourglass, Loader2, MinusCircle, Play, Radio, Workflow, XCircle, type LucideIcon } from "lucide-react"
 import { useRef } from "react"
 import { CopyId } from "@/components/copy-id"
-import { EmptyState } from "@/components/panel"
+import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useView } from "@/lib/view"
@@ -81,7 +81,7 @@ export function RunPage() {
 
   if (read.isPending) return <div className="grid max-w-4xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
   if (read.isError) return (
-    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
       <span>{read.error instanceof Error ? read.error.message : "The run could not be read."}</span><span className="flex-1" />
       <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
     </div>
@@ -98,8 +98,8 @@ export function RunPage() {
     <div className="grid max-w-4xl gap-4">
       <header className="grid gap-2">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-title font-semibold tracking-tight">{runTitle(run)}</h1>
-          <span className={cn("rounded-md px-2 py-0.5 text-xs", phase === "failed" ? "bg-destructive/10 text-destructive" : phase === "succeeded" ? "bg-[color-mix(in_oklab,var(--tint-outcome)_14%,transparent)] text-[color-mix(in_oklab,var(--tint-outcome)_80%,var(--foreground))]" : "bg-muted text-foreground")}>{PHASE[phase]}</span>
+          <h1 className="text-title font-medium tracking-tight">{runTitle(run)}</h1>
+          <span className={cn("rounded-md px-2 py-0.5 text-meta", phase === "failed" ? "bg-destructive/10 text-destructive" : phase === "succeeded" ? "bg-[color-mix(in_oklab,var(--tint-outcome)_14%,transparent)] text-[color-mix(in_oklab,var(--tint-outcome)_80%,var(--foreground))]" : "bg-muted text-foreground")}>{PHASE[phase]}</span>
           {live && <span className="inline-flex items-center gap-1 text-meta text-muted-foreground" aria-live="polite"><Radio className="size-3 animate-pulse" aria-hidden />Live</span>}
           <span className="flex-1" />
           <RunButton flow={flowId} label="Run again" variant="outline" />
@@ -112,8 +112,8 @@ export function RunPage() {
       </header>
       {run.steps === undefined && (
         <section aria-label="Run" className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
-          <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">State</dt><dd>{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-xs">{run.state}</code>}</dd>
+          <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2 text-body">
+            <dt className="text-muted-foreground">State</dt><dd>{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-meta">{run.state}</code>}</dd>
             <dt className="text-muted-foreground">Flow</dt><dd>{runTitle(run)} <span className="text-meta text-muted-foreground">v{run.flow.version}</span></dd>
             <dt className="text-muted-foreground">Generation</dt><dd className="tabular-nums">{run.generation}</dd>
             <dt className="text-muted-foreground">Updated</dt><dd>{new Date(run.updatedAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</dd>
@@ -122,10 +122,10 @@ export function RunPage() {
         </section>
       )}
       {(run.decision ?? null) !== null && (
-        <div className="flex flex-wrap items-center gap-3 rounded-node border border-[color-mix(in_oklab,var(--tint-ask)_35%,transparent)] bg-[color-mix(in_oklab,var(--tint-ask)_8%,var(--card))] px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-node border border-[color-mix(in_oklab,var(--tint-ask)_35%,transparent)] bg-[color-mix(in_oklab,var(--tint-ask)_8%,var(--card))] px-4 py-3 text-body">
           <Hourglass className="size-4 text-[var(--tint-ask)]" aria-hidden />
           <span>This run waits on a person's decision.</span><span className="flex-1" />
-          <Link to="/decisions" search={{ open: run.decision!.id } as never} className="font-medium underline-offset-4 hover:underline">Open decision</Link>
+          <Link to="/decisions" search={{ open: run.decision!.id } as never} className="underline-offset-4 hover:underline">Open decision</Link>
         </div>
       )}
       {run.steps !== undefined && <ol aria-label="Steps" className="grid gap-2">
@@ -141,15 +141,15 @@ export function RunPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Icon className={cn("size-4 shrink-0", s.tone, step.status === "running" && "animate-spin")} aria-hidden />
                 <span className="text-meta text-muted-foreground tabular-nums">{index + 1}</span>
-                <span className="font-medium">{stepTitle(step)}</span>
-                <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{KIND[step.kind]}</span>
+                <span className="">{stepTitle(step)}</span>
+                <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground">{KIND[step.kind]}</span>
                 <span className="flex-1" />
                 <span className={cn("text-meta", s.tone)}>{statusLabel}</span>
                 {took(step) && <span className="text-meta text-muted-foreground tabular-nums">· {took(step)}</span>}
               </div>
-              {step.error && <p role="alert" className="text-sm text-destructive">{step.error.message}{technical && <code className="ms-2 text-xs">{step.error.code}</code>}</p>}
+              {step.error && <p role="alert" className="text-body text-destructive">{step.error.message}{technical && <code className="ms-2 text-meta">{step.error.code}</code>}</p>}
               {step.receipts.length > 0 && (
-                <details open={technical} className="text-sm">
+                <details open={technical} className="text-body">
                   <summary className="cursor-pointer text-meta text-muted-foreground select-none hover:text-foreground">
                     {step.receipts.some((r) => r.executor) ? `Done by ${step.receipts.find((r) => r.executor)?.executor}` : "Details"}{started ? ` · ${started.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : ""}
                   </summary>

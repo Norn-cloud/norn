@@ -8,8 +8,12 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { LoadState } from "@/components/load-state"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { ListRow, RowList } from "@/components/system/list-row"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { SourceTag } from "@/components/system/source-tag"
+import { StatusDot } from "@/components/system/status-dot"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { member, type Read } from "@/lib/exact"
@@ -34,28 +38,24 @@ export function TransformsPage() {
   const transforms = useMemo(() => read.data ? transformsOf(read.data.document) : [], [read.data])
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <h1 className="text-title font-semibold tracking-tight">Transforms</h1>
-        <p className="text-muted-foreground">Derived datasets the cell's checker admits: every column typed, every join declared, every row traced to the records it comes from.</p>
-      </header>
+      <PageHeader title="Transforms" description="Derived datasets the cell's checker admits: every column typed, every join declared, every row traced to the records it comes from." />
       {read.isPending && <LoadState status="pending" skeleton="table" loadingLabel="Reading transforms" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
       {read.isError && <ReadError error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} />}
       {read.data && transforms.length === 0 && <EmptyState icon={Blend} title="No transforms yet">A transform turns loaded records into a checked dataset (a join, a total per week). Load records first, then define one in code with <code className="font-mono">norn.transform</code>.</EmptyState>}
       {transforms.length > 0 && (
-        <TableCard>
-          <Table>
-            <TableHeader><TableRow><TableHead scope="col">Transform</TableHead><TableHead scope="col">Reads</TableHead><TableHead scope="col">Version</TableHead></TableRow></TableHeader>
-            <TableBody>
+        <Panel icon={Blend} label="Installed" action={`${transforms.length}`}>
+          <Well>
+            <RowList>
               {transforms.map((transform) => (
-                <TableRow key={transform.id}>
-                  <TableCell><Link to="/transforms/$id" params={{ id: transform.id }} className="font-medium underline-offset-4 hover:underline">{transform.title}</Link><div className="font-mono text-meta text-muted-foreground">{transform.id}</div></TableCell>
-                  <TableCell className="space-x-1">{transform.inputs.map((input) => <Badge key={input} variant="secondary">{input}</Badge>)}</TableCell>
-                  <TableCell className="font-mono text-meta">{transform.version}</TableCell>
-                </TableRow>
+                <li key={transform.id}>
+                  <ListRow render={<Link to="/transforms/$id" params={{ id: transform.id }} />} title={transform.title} code={transform.id}
+                    description={transform.inputs.length === 0 ? undefined : <span className="flex flex-wrap items-center gap-1.5 pt-0.5"><span>reads</span>{transform.inputs.map((input) => <SourceTag key={input}>{input}</SourceTag>)}</span>}
+                    end={<span className="font-mono text-meta" title="Version">{transform.version}</span>} />
+                </li>
               ))}
-            </TableBody>
-          </Table>
-        </TableCard>
+            </RowList>
+          </Well>
+        </Panel>
       )}
       {read.data && <CheckQuery reads={transforms[0]?.inputs[0]} />}
     </div>
@@ -75,17 +75,17 @@ function CheckQuery({ reads }: { readonly reads: string | undefined }) {
   const output = plan?.nodes.find((node) => node.id === plan.output)
   return (
     <Panel icon={FileCheck2} label="Check a query">
-      <div className="space-y-3 px-2.5 pb-2.5">
-        <p className="text-sm text-muted-foreground">Write a query in the transform dialect. The cell's checker types it against the installed definitions, as it would a transform, and says why it refuses one. Nothing runs and nothing is installed.</p>
-        <Textarea aria-label="Query" rows={3} spellCheck={false} value={sql} placeholder={`SELECT t.id FROM "${reads ?? "namespace.Type"}" t`} className="font-mono text-xs" onChange={(event) => { setSql(event.target.value); check.reset() }} />
+      <Well className="space-y-3 p-3">
+        <p className="text-body text-muted-foreground">Write a query in the transform dialect. The cell's checker types it against the installed definitions, as it would a transform, and says why it refuses one. Nothing runs and nothing is installed.</p>
+        <Textarea aria-label="Query" rows={3} spellCheck={false} value={sql} placeholder={`SELECT t.id FROM "${reads ?? "namespace.Type"}" t`} className="font-mono text-meta" onChange={(event) => { setSql(event.target.value); check.reset() }} />
         <div className="flex gap-2">
-          <Button size="sm" disabled={sql.trim() === "" || check.isPending} onClick={() => check.mutate(sql)}>{check.isPending ? "Checking…" : "Check"}</Button>
-          <Button size="sm" variant="ghost" disabled={sql === ""} onClick={() => { setSql(""); check.reset() }}>Clear</Button>
+          <Button size="sm" className="max-sm:min-h-[44px]" disabled={sql.trim() === "" || check.isPending} onClick={() => check.mutate(sql)}>{check.isPending ? "Checking…" : "Check"}</Button>
+          <Button size="sm" variant="ghost" className="max-sm:min-h-[44px]" disabled={sql === ""} onClick={() => { setSql(""); check.reset() }}>Clear</Button>
         </div>
         {check.isError && <ReadError error={check.error} />}
         {result && !result.admitted && (
-          <Well className="space-y-1.5 border-destructive/40 px-3 py-2 text-sm">
-            <p role="status" className="font-medium text-destructive">Refused</p>
+          <div className="space-y-1.5 border-t border-(--well-border) pt-3 text-body">
+            <p role="status"><StatusDot tone="bad" className="text-body">Refused</StatusDot></p>
             <ul aria-label="Why the query is refused" className="space-y-1.5">
               {result.diagnostics.map((finding, at) => (
                 <li key={`${finding.code}/${at}`}>
@@ -94,15 +94,15 @@ function CheckQuery({ reads }: { readonly reads: string | undefined }) {
                 </li>
               ))}
             </ul>
-          </Well>
+          </div>
         )}
         {result?.admitted && output && (
-          <div className="space-y-2">
-            <p role="status" className="text-sm"><span className="font-medium">Admitted</span> <span className="text-muted-foreground">· one row per {output.grain.length === 0 ? "query" : output.grain.join(", ")}</span></p>
+          <div className="space-y-2 border-t border-(--well-border) pt-3">
+            <p role="status" className="text-body"><StatusDot tone="live" className="text-body">Admitted</StatusDot> <span className="text-muted-foreground">· one row per {output.grain.length === 0 ? "query" : output.grain.join(", ")}</span></p>
             <ColumnList label="Columns of the checked query" node={output} view={view} />
           </div>
         )}
-      </div>
+      </Well>
     </Panel>
   )
 }
@@ -117,13 +117,13 @@ function ColumnHead({ column, view }: { readonly column: TransformColumn; readon
   return (
     <div className="space-y-0.5">
       <div>{column.name}</div>
-      <div className="font-mono text-[11px] font-normal text-muted-foreground">{contract(column)}</div>
+      <div className="font-mono text-meta font-normal text-muted-foreground">{contract(column)}</div>
     </div>
   )
 }
 
 /** The first column stays put while the others scroll sideways, as in the records grid. */
-const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
+const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 
 const numeric = (column: TransformColumn) => column.type.startsWith("decimal") || column.type === "integer" || column.type === "number"
 
@@ -153,7 +153,7 @@ function useRightEdge(selector: string, deps: readonly unknown[]) {
 }
 
 function EdgeFade() {
-  return <div aria-hidden data-edge="right" className="pointer-events-none absolute inset-y-px right-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent" />
+  return <div aria-hidden data-edge="right" className="pointer-events-none absolute inset-y-px end-px z-20 w-12 rounded-e-sm bg-gradient-to-l from-card to-transparent" />
 }
 
 /**
@@ -186,7 +186,7 @@ function RowsGrid({ read, grains, onTrace }: { readonly read: Read<TransformPage
           <TableHeader>
             <TableRow>
               {page.columns.map((column, at) => (
-                <TableHead scope="col" key={column.name} className={cn(at === 0 && cn(STICKY, "bg-surface-subtle"), numeric(column) && "text-right")}><ColumnHead column={column} view={view} /></TableHead>
+                <TableHead scope="col" key={column.name} className={cn(at === 0 && cn(STICKY, "bg-surface-subtle"), numeric(column) && "text-end")}><ColumnHead column={column} view={view} /></TableHead>
               ))}
               <TableHead scope="col">Lineage</TableHead>
             </TableRow>
@@ -195,7 +195,7 @@ function RowsGrid({ read, grains, onTrace }: { readonly read: Read<TransformPage
             {page.rows.map((row, index) => (
               <TableRow key={row.rowId}>
                 {page.columns.map((column, at) => (
-                  <TableCell key={column.name} className={cn("whitespace-nowrap", at === 0 && cn(STICKY, "bg-card font-medium"), numeric(column) && "text-right font-mono tabular-nums")}>
+                  <TableCell key={column.name} className={cn("whitespace-nowrap", at === 0 && cn(STICKY, "bg-card"), numeric(column) && "text-end font-mono tabular-nums")}>
                     {displayed(read, index, column, grains, view)}
                   </TableCell>
                 ))}
@@ -225,14 +225,14 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
         <span>{page.totalRows} rows</span><span aria-hidden>·</span><span>engine {page.engine}</span><span aria-hidden>·</span><span>at commit {page.commits}</span>
-        {page.complete ? <Badge variant="secondary">complete</Badge> : <Badge variant="outline">incomplete for you</Badge>}
-        {withheld.map(([input, count]) => <Badge key={input} variant="outline">{count} {input} withheld</Badge>)}
-        {page.excluded > 0 && <Badge variant="outline">{page.excluded} quarantined</Badge>}
+        {page.complete ? <StatusDot tone="live">complete</StatusDot> : <StatusDot tone="held">incomplete for you</StatusDot>}
+        {withheld.map(([input, count]) => <StatusDot key={input} tone="held">{count} {input} withheld</StatusDot>)}
+        {page.excluded > 0 && <StatusDot tone="held">{page.excluded} quarantined</StatusDot>}
       </div>
       <RowsGrid read={rows.data} grains={grains} onTrace={onTrace} />
       <div className="flex gap-2">
-        <Button variant="outline" size="sm" disabled={cursors.length === 1} onClick={() => setCursors(cursors.slice(0, -1))}>Previous</Button>
-        <Button variant="outline" size="sm" disabled={page.nextAfter === null} onClick={() => page.nextAfter !== null && setCursors([...cursors, page.nextAfter])}>Next</Button>
+        <Button variant="outline" size="sm" className="max-sm:min-h-[44px]" disabled={cursors.length === 1} onClick={() => setCursors(cursors.slice(0, -1))}>Previous</Button>
+        <Button variant="outline" size="sm" className="max-sm:min-h-[44px]" disabled={page.nextAfter === null} onClick={() => page.nextAfter !== null && setCursors([...cursors, page.nextAfter])}>Next</Button>
       </div>
     </div>
   )
@@ -255,21 +255,21 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
   const document = lineage.data.document
   return (
     <div className="space-y-3">
-      <Well className="flex flex-wrap gap-x-4 gap-y-1 px-3 py-2 text-sm">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-body">
         {Object.entries(document.values).map(([name, value]) => (
           <span key={name}><span className="text-muted-foreground">{columnTitle(output?.columns.find((column) => column.name === name) ?? { name }, view)}</span> <span className="font-mono">{exactValue(lineage.data, `/values/${member(name)}`, value, scale(name))}</span></span>
         ))}
-      </Well>
+      </div>
       <TableCard>
         <Table>
-          <TableHeader><TableRow><TableHead scope="col">Input</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Record</TableHead><TableHead scope="col" className="text-right">Version</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead scope="col">Input</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Record</TableHead><TableHead scope="col" className="text-end">Version</TableHead></TableRow></TableHeader>
           <TableBody>
             {document.members.map((source) => (
               <TableRow key={`${source.input}/${source.id}`}>
                 <TableCell>{source.input}</TableCell>
                 <TableCell className="font-mono text-meta">{source.objectType}</TableCell>
                 <TableCell><Link to="/sources/$concept/$" params={{ concept: source.objectType, _splat: source.id }} className="font-mono underline-offset-4 hover:underline">{source.id}</Link></TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{source.version}</TableCell>
+                <TableCell className="text-end font-mono tabular-nums">{source.version}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -282,11 +282,12 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
 /** A node's columns: each one's title, contract and where it comes from. */
 function ColumnList({ label, node, view }: { readonly label: string; readonly node: TransformNode; readonly view: View }) {
   return (
-    <ul aria-label={label} className="divide-y rounded-md border text-sm">
+    // A ruled list inside the well, not a box in it: hairlines between columns, no frame.
+    <ul aria-label={label} className="divide-y divide-(--well-border) border-t border-(--well-border) text-body">
       {node.columns.map((column) => (
-        <li key={column.name} className="space-y-0.5 px-3 py-2">
+        <li key={column.name} className="space-y-0.5 py-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{columnTitle(column, view)}</span>
+            <span>{columnTitle(column, view)}</span>
             {node.grain.includes(column.name) && <Badge variant="outline">grain</Badge>}
             <span className="ms-auto font-mono text-meta text-muted-foreground">{contract(column)}</span>
           </div>
@@ -319,8 +320,8 @@ function StepCard({ data: { node, output, selected, rows, share } }: NodeProps<P
     <div data-node={node.id} data-selected={selected || undefined} style={shade === undefined ? undefined : { background: shade }}
       className={cn("w-[220px] rounded-lg border bg-card px-3 py-2 shadow-sm transition-shadow", output && "border-foreground/40", selected && "ring-2 ring-ring")}>
       <Handle type="target" position={Position.Left} className="!opacity-0" />
-      <div className="flex items-center gap-2 text-sm font-medium"><Badge variant="secondary" className="font-mono text-[11px]">{node.op}</Badge><span className="truncate">{node.id}</span></div>
-      <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-body"><SourceTag>{node.op}</SourceTag><span className="truncate">{node.id}</span></div>
+      <div className="mt-1 flex items-center justify-between gap-2 text-meta text-muted-foreground">
         <span className="truncate">{node.columns.length} columns · {node.grain.length === 0 ? "one row" : node.grain.join(", ")}</span>
         {rows !== undefined && <span className="shrink-0 font-mono tabular-nums text-foreground">{count.format(rows)}</span>}
       </div>
@@ -398,18 +399,19 @@ function PlanTab({ id }: { readonly id: string }) {
   return (
     <div className="space-y-4">
       <Panel icon={GitBranch} label="Definition graph" action={
-        <div role="radiogroup" aria-label="Shade nodes by" className="inline-flex rounded-md border p-0.5 text-meta">
+        <div role="radiogroup" aria-label="Shade nodes by" className="inline-flex rounded-full bg-(--well) p-0.5 text-meta ring-1 ring-line ring-inset">
           {(["operator", "volume"] as const).map((option) => (
             <button key={option} type="button" role="radio" aria-checked={lens === option} disabled={option === "volume" && volumes === undefined}
               title={option === "volume" && volumes === undefined ? "This cell does not report node volumes" : undefined}
               onClick={() => setLens(option)}
-              className={cn("rounded px-2 py-0.5 capitalize disabled:opacity-50", lens === option ? "bg-muted font-medium text-foreground" : "text-muted-foreground")}>{option}</button>
+              className="rounded-full px-2.5 py-0.5 text-muted-foreground capitalize outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring disabled:opacity-50 aria-checked:bg-card aria-checked:font-medium aria-checked:text-foreground aria-checked:ring-1 aria-checked:ring-(--panel-border) max-sm:min-h-[44px] max-sm:px-3.5">{option}</button>
           ))}
         </div>
       }>
         {/* Read at full size, never shrunk to fit: a wide plan scrolls sideways, and the panel is as tall as the plan. */}
+        <Well>
         <div ref={edge.frame} className="relative">
-          <div data-slot="plan-scroller" className="overflow-x-auto rounded-md border bg-surface-subtle">
+          <div data-slot="plan-scroller" className="overflow-x-auto">
             <div style={{ width: graph.width + 48, height: graph.height + 48 }}>
               <ReactFlow nodes={graph.nodes} edges={graph.edges} nodeTypes={NODE_TYPES} colorMode="system" defaultViewport={{ x: 24, y: 24, zoom: 1 }}
                 onNodeClick={(_, node) => setPicked(node.id)} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} panOnDrag={false} preventScrolling={false}
@@ -420,21 +422,22 @@ function PlanTab({ id }: { readonly id: string }) {
           </div>
           {edge.right && <EdgeFade />}
         </div>
-        <p className="mt-2 px-2.5 pb-1 text-meta text-muted-foreground">{shown.inputs.map(({ alias, objectType }) => `${alias}: ${objectType}`).join(" · ")}</p>
+        <p className="border-t border-(--well-border) px-3.5 py-2 text-meta text-muted-foreground">{shown.inputs.map(({ alias, objectType }) => `${alias}: ${objectType}`).join(" · ")}</p>
+        </Well>
       </Panel>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
         <Panel icon={ListTree} label="Nodes">
           <TableCard>
             <Table aria-label="Plan nodes">
-              <TableHeader><TableRow><TableHead scope="col">Node</TableHead><TableHead scope="col">Operator</TableHead><TableHead scope="col">Reads</TableHead><TableHead scope="col" className="text-right">Rows</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead scope="col">Node</TableHead><TableHead scope="col">Operator</TableHead><TableHead scope="col">Reads</TableHead><TableHead scope="col" className="text-end">Rows</TableHead></TableRow></TableHeader>
               <TableBody>
                 {shown.nodes.map((node) => (
                   <TableRow key={node.id} aria-selected={node.id === selected} data-state={node.id === selected ? "selected" : undefined}
                     className="cursor-pointer" onClick={() => setPicked(node.id)}>
-                    <TableCell className="font-medium"><button type="button" className="text-start underline-offset-4 hover:underline" onClick={() => setPicked(node.id)}>{node.id}</button>{node.id === shown.output && <Badge variant="outline" className="ms-2">output</Badge>}</TableCell>
+                    <TableCell><button type="button" className="text-start underline-offset-4 hover:underline max-sm:min-h-[44px]" onClick={() => setPicked(node.id)}>{node.id}</button>{node.id === shown.output && <Badge variant="outline" className="ms-2">output</Badge>}</TableCell>
                     <TableCell className="font-mono text-meta">{node.op}</TableCell>
                     <TableCell className="font-mono text-meta">{node.inputs.join(", ")}</TableCell>
-                    <TableCell className="text-right font-mono tabular-nums">{volumes?.[node.id] === undefined ? "—" : count.format(volumes[node.id] ?? 0)}</TableCell>
+                    <TableCell className="text-end font-mono tabular-nums">{volumes?.[node.id] === undefined ? "—" : count.format(volumes[node.id] ?? 0)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -443,21 +446,19 @@ function PlanTab({ id }: { readonly id: string }) {
         </Panel>
         {focus && (
           <Panel icon={Rows3} label={`Node ${focus.id}`}>
-            <div className="space-y-3">
+            <Well className="space-y-3 p-3">
               <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-                <Badge variant="secondary" className="font-mono text-[11px]">{focus.op}</Badge>
+                <SourceTag>{focus.op}</SourceTag>
                 <span>grain {focus.grain.length === 0 ? "one row" : focus.grain.join(", ")}</span>
               </div>
               {view === "business" && declared !== undefined && (
-                <p aria-label={`What ${focus.id} does`} className="text-sm">{describeStep(declared, inputs)}</p>
+                <p aria-label={`What ${focus.id} does`} className="text-body">{describeStep(declared, inputs)}</p>
               )}
               {view === "technical" && definition !== undefined && (
-                <Well className="max-h-64 overflow-auto px-3 py-2">
-                  <pre aria-label={`Definition of ${focus.id}`} className="font-mono text-[12px] leading-relaxed whitespace-pre-wrap">{definition}</pre>
-                </Well>
+                <pre aria-label={`Definition of ${focus.id}`} className="max-h-64 overflow-auto border-t border-(--well-border) pt-2 font-mono text-meta leading-relaxed whitespace-pre-wrap">{definition}</pre>
               )}
               <ColumnList label={`Columns of ${focus.id}`} node={focus} view={view} />
-            </div>
+            </Well>
           </Panel>
         )}
       </div>
@@ -479,9 +480,9 @@ export function TransformPage() {
       {read.data && entry === undefined && <EmptyState icon={Blend}>No transform named {id} is installed.</EmptyState>}
       {entry && <>
         <header className="flex flex-wrap items-baseline gap-3">
-          <h1 className="text-xl font-medium">{entry.title}</h1>
+          <h1 className="text-title font-medium">{entry.title}</h1>
           <span className="font-mono text-meta text-muted-foreground">{entry.id}</span>
-          <Link to="/transforms" className="text-meta underline-offset-4 hover:underline">All transforms</Link>
+          <Link to="/transforms" className="text-meta text-link underline-offset-4 hover:underline max-sm:inline-flex max-sm:min-h-[44px] max-sm:items-center">All transforms</Link>
         </header>
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList><TabsTrigger value="rows">Rows</TabsTrigger><TabsTrigger value="lineage">Lineage</TabsTrigger><TabsTrigger value="plan">Plan</TabsTrigger></TabsList>

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Workflow } from "lucide-react"
 import { LoadState } from "@/components/load-state"
-import { Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
 import { CellRefusal, NotServed, useMode } from "@/lib/live-transport"
 import { readFlows } from "@/lib/flows"
 import { RunButton } from "./runs/run-page.tsx"
@@ -42,8 +42,8 @@ export function Automations() {
             {items.map((item) => (
               <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="font-medium">{item.flow?.title ?? item.title ?? item.id}</div>
-                  <div className="font-mono text-xs text-muted-foreground">{item.id}{item.flow?.version ? ` · ${item.flow.version}` : ""}</div>
+                  <div className="">{item.flow?.title ?? item.title ?? item.id}</div>
+                  <div className="font-mono text-meta text-muted-foreground">{item.id}{item.flow?.version ? ` · ${item.flow.version}` : ""}</div>
                 </div>
                 {item.canStart === false
                   ? <span className="text-meta text-muted-foreground">Your role cannot start this.</span>

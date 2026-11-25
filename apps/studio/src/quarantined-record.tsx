@@ -35,10 +35,10 @@ export function QuarantinedRecord({ objectType, id, reader, onDone }: {
         <ShieldAlert aria-hidden className="mt-0.5 size-5 shrink-0 text-destructive" />
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-medium">Held in quarantine</p>
+            <p className="">Held in quarantine</p>
             <FactStatusBadge status="quarantined" />
           </div>
-          <p className="text-sm text-muted-foreground">The cell loaded this record but does not serve it: it breaks a law. It stays out of every answer until it is corrected.</p>
+          <p className="text-body text-muted-foreground">The cell loaded this record but does not serve it: it breaks a law. It stays out of every answer until it is corrected.</p>
         </div>
       </div>
       <FindingsPanel objectType={objectType} id={id} reader={reader} actionFor={corrections.actionFor} />

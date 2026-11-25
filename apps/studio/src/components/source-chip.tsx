@@ -1,4 +1,4 @@
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { systemName, systemTone } from "@/lib/catalog"
 
 /** The source system a value was read from, as a chip in that system's tone ("ERPNext"). */

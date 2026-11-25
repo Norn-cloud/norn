@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
+import { Dot } from "@/components/system/status-dot"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { AuthRefusal, DEFAULT_AUTH_CONFIG, authApi, useAuthConfig, useRefreshAccount, type AuthConfig } from "@/lib/session"
@@ -19,8 +20,8 @@ const MODES: readonly { readonly mode: Mode; readonly label: string }[] = [
 
 function Field({ label, ...props }: { readonly label: string } & React.ComponentProps<typeof Input>) {
   return (
-    <label className="grid gap-1.5 text-sm">
-      <span className="font-medium">{label}</span>
+    <label className="grid gap-1.5 text-body">
+      <span>{label}</span>
       <Input required {...props} />
     </label>
   )
@@ -91,26 +92,27 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
   const heading = modes.find((entry) => entry.mode === activeMode)?.label ?? "Sign in"
 
   return (
-    <main className="flex min-h-svh items-center justify-center bg-surface-subtle p-4">
+    <main className="flex min-h-svh items-center justify-center bg-canvas p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center gap-2">
           <img src={nornMark} alt="" width={32} height={32} className="size-8 object-contain" />
-          <span className="font-medium">Norn Studio</span>
+          <span>Norn Studio</span>
         </div>
         <Card>
           <CardHeader>
             <CardTitle>{heading}</CardTitle>
             <CardDescription>Studio is available to signed-in members of an organization.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div role="tablist" aria-label="How to sign in" className={cn("grid gap-1 rounded-md border bg-surface-subtle p-1 text-meta", modes.length === 3 ? "grid-cols-3" : "grid-cols-2")}>
+            {/* A segmented control on the rim (DESIGN.md 10): a --well track, the active segment on --card at 500. */}
+            <div role="tablist" aria-label="How to sign in" className={cn("mt-2 grid gap-0.5 rounded-full bg-(--well) p-0.5 text-body ring-1 ring-(--well-border) ring-inset", modes.length === 3 ? "grid-cols-3" : "grid-cols-2")}>
               {modes.map((entry) => (
                 <button key={entry.mode} type="button" role="tab" aria-selected={activeMode === entry.mode} disabled={pending} onClick={() => { setMode(entry.mode); setMessage(null) }}
-                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60", activeMode === entry.mode ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}>
+                  className="h-[30px] rounded-full px-2 text-muted-foreground outline-none transition-colors duration-150 hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60 aria-selected:bg-card aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-control aria-selected:ring-1 aria-selected:ring-(--panel-border) motion-reduce:transition-none max-sm:min-h-[44px]">
                   {entry.label}
                 </button>
               ))}
             </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
             {config === undefined && authConfig.isError && (
               <p role="status" className="flex items-center justify-between gap-2 text-meta text-muted-foreground">
                 <span>Could not load all sign-in options.</span>
@@ -121,7 +123,7 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
             <form key={activeMode} onSubmit={submit} className="grid gap-3" aria-busy={pending || undefined}>
               <fieldset disabled={pending} className="contents">
               {activeMode === "sign-up" && activeConfig.inviteOnly && (
-                <p className="rounded-md border bg-surface-subtle px-3 py-2 text-meta text-muted-foreground">
+                <p className="text-meta text-pretty text-muted-foreground">
                   This alpha is invite-only. Open the invitation link your admin sent, with your invited email address, or ask your admin for an invitation.
                 </p>
               )}
@@ -133,7 +135,7 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
                   autoComplete={activeMode === "sign-up" ? "new-password" : "current-password"} />
               )}
               {activeMode === "sign-up" && <p className="text-meta text-muted-foreground">At least 12 characters. You start with your own workspace.</p>}
-              {message && <p role={message.tone === "error" ? "alert" : "status"} className={cn("text-meta", message.tone === "error" ? "text-destructive" : "text-muted-foreground")}>{message.text}</p>}
+              {message && <p role={message.tone === "error" ? "alert" : "status"} className={cn("flex items-center gap-2 text-meta", message.tone === "error" ? "text-foreground" : "text-muted-foreground")}>{message.tone === "error" && <Dot tone="bad" />}{message.text}</p>}
               <Button type="submit" disabled={pending}>{pending ? "Working…" : activeMode === "email-link" ? "Send link" : heading}</Button>
               </fieldset>
             </form>

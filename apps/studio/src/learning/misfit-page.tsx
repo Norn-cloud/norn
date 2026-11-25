@@ -5,10 +5,11 @@ import { useState } from "react"
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
 import { RefusedNote } from "../answer-view.tsx"
-import { Chip } from "@/components/chip"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { Chip } from "@/components/system/chip"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -48,7 +49,7 @@ const TRIAGE_CHART_CONFIG: ChartConfig = {
 function MetaChips({ meta }: { readonly meta: AnswerMeta }) {
   const freshness = FRESHNESS[meta.freshness]
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+    <div className="flex flex-wrap items-center gap-1.5 text-meta">
       <Chip tone={meta.freshness === "exact" || meta.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{freshness.label}</Chip>
       {!meta.complete && <Chip tone="amber">Incomplete coverage</Chip>}
       {meta.exclusionCount > 0 && <Chip tone="amber">{meta.exclusionCount} quarantined excluded</Chip>}
@@ -63,9 +64,9 @@ function RateCell({ figure }: { readonly figure: RateFigure | null }) {
   if (figure.percent === null) return <span className="text-muted-foreground">—</span>
   return (
     <span className="inline-flex items-baseline justify-end gap-2 tabular-nums">
-      <span className="font-medium">{figure.percent}</span>
+      <span className="">{figure.percent}</span>
       {figure.numerator !== null && figure.denominator !== null && (
-        <span className="text-xs text-muted-foreground">({groupDigits(figure.numerator)}/{groupDigits(figure.denominator)})</span>
+        <span className="text-meta text-muted-foreground">({groupDigits(figure.numerator)}/{groupDigits(figure.denominator)})</span>
       )}
     </span>
   )
@@ -196,7 +197,7 @@ function MisfitPageContent() {
           <Well className="grid gap-3 p-4" aria-label="Reading misfit by law"><Skeleton className="h-56 rounded-lg" /><Skeleton className="h-28 rounded-lg" /></Well>
         ) : misfitRead.isError ? (
           <Well className="p-4">
-            <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
+            <div role="alert" className="flex items-center gap-3 text-body text-destructive">
               <span>{misfitRead.error instanceof Error ? misfitRead.error.message : "Could not read learning.misfit_by_law."}</span>
               <span className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => void misfitRead.refetch()}>Retry</Button>
@@ -240,25 +241,25 @@ function MisfitPageContent() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Law</TableHead>
-                    <TableHead className="text-right">Override rate</TableHead>
-                    <TableHead className="text-right">Exception rate</TableHead>
-                    <TableHead className="text-right">Episodes</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead className="text-end">Override rate</TableHead>
+                    <TableHead className="text-end">Exception rate</TableHead>
+                    <TableHead className="text-end">Episodes</TableHead>
+                    <TableHead className="text-end">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {misfit.rows.map((row) => (
                     <TableRow key={row.lawId} data-misfit-law={row.lawId}>
                       <TableCell className="whitespace-normal">
-                        <div className="font-medium">{lawTitle(row.lawId)}</div>
-                        {technical && <code className="font-mono text-xs text-muted-foreground">{row.lawId}</code>}
+                        <div className="">{lawTitle(row.lawId)}</div>
+                        {technical && <code className="font-mono text-meta text-muted-foreground">{row.lawId}</code>}
                       </TableCell>
-                      <TableCell className="text-right"><RateCell figure={row.override} /></TableCell>
-                      <TableCell className="text-right"><RateCell figure={row.exception} /></TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                      <TableCell className="text-end"><RateCell figure={row.override} /></TableCell>
+                      <TableCell className="text-end"><RateCell figure={row.exception} /></TableCell>
+                      <TableCell className="text-end tabular-nums text-muted-foreground">
                         {row.episodeCount === null ? "—" : groupDigits(row.episodeCount)}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-end">
                         <div className="flex items-center justify-end gap-1.5">
                           {/*
                             Backend follow-up (#1220 / #1208): deep-linking `?law=` returns once
@@ -295,7 +296,7 @@ function MisfitPageContent() {
           <Well className="grid gap-3 p-4" aria-label="Reading triage over time"><Skeleton className="h-56 rounded-lg" /><Skeleton className="h-24 rounded-lg" /></Well>
         ) : triageRead.isError ? (
           <Well className="p-4">
-            <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
+            <div role="alert" className="flex items-center gap-3 text-body text-destructive">
               <span>{triageRead.error instanceof Error ? triageRead.error.message : "Could not read learning.triage_over_time."}</span>
               <span className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => void triageRead.refetch()}>Retry</Button>
@@ -333,18 +334,18 @@ function MisfitPageContent() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Week</TableHead>
-                    {VERDICTS.map((v) => <TableHead key={v} className="text-right">{VERDICT_LABEL[v]}</TableHead>)}
-                    <TableHead className="text-right">Total</TableHead>
+                    {VERDICTS.map((v) => <TableHead key={v} className="text-end">{VERDICT_LABEL[v]}</TableHead>)}
+                    <TableHead className="text-end">Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {triage.weeks.map((w) => (
                     <TableRow key={w.weekStart} data-triage-week={w.weekStart}>
-                      <TableCell className="font-medium">{w.label}</TableCell>
+                      <TableCell className="">{w.label}</TableCell>
                       {VERDICTS.map((v) => {
                         const cell = w.counts[v]
                         return (
-                          <TableCell key={v} className="text-right tabular-nums">
+                          <TableCell key={v} className="text-end tabular-nums">
                             {cell.status === "suppressed" ? (
                               <Chip tone="gray" title={SUPPRESSED}>Suppressed</Chip>
                             ) : cell.status === "unknown" ? (
@@ -355,7 +356,7 @@ function MisfitPageContent() {
                           </TableCell>
                         )
                       })}
-                      <TableCell className="text-right font-medium tabular-nums">
+                      <TableCell className="text-end tabular-nums">
                         {w.total === null ? (
                           <Chip tone="gray" title={w.anySuppressed ? "One or more verdict buckets in this week were suppressed." : "One or more verdict buckets in this week were not returned by the cell."}>
                             {w.anySuppressed ? "Partial" : "Unknown"}

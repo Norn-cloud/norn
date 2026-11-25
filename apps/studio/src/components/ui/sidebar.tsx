@@ -172,7 +172,10 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<"div">)
         open={openMobile}
         onOpenChange={(next, details) => {
           if (!next && details.reason === "escape-key" && escapeIsInnerLayers(details.event)) {
+            // The sheet stays open, and the Escape still reaches the UI SDK's document-level listener,
+            // which closes the menu open in the top layer (Base UI would otherwise stop its propagation).
             details.cancel()
+            details.allowPropagation()
             return
           }
           setOpenMobile(next)

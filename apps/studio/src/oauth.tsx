@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
+import { Dot } from "@/components/system/status-dot"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { EXPECTED_ORG_HEADER } from "@/lib/definitions"
@@ -42,11 +43,11 @@ async function post(path: string, body: Record<string, unknown>, extraHeaders: H
 
 function Frame({ title, description, children }: { readonly title: string; readonly description: string; readonly children: React.ReactNode }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-surface-subtle p-4">
+    <main className="flex min-h-svh items-center justify-center bg-canvas p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center gap-2">
           <img src={nornMark} alt="" width={32} height={32} className="size-8 object-contain" />
-          <span className="font-medium">Norn</span>
+          <span>Norn</span>
         </div>
         <Card>
           <CardHeader>
@@ -61,7 +62,7 @@ function Frame({ title, description, children }: { readonly title: string; reado
 }
 
 function Failure({ text }: { readonly text: string | null }) {
-  return text === null ? null : <p role="alert" className="text-sm text-destructive">{text}</p>
+  return text === null ? null : <p role="alert" className="flex items-center gap-2 text-body text-foreground"><Dot tone="bad" />{text}</p>
 }
 
 /** Sign in to continue connecting an assistant. Accounts are made in Studio, not here. */
@@ -85,16 +86,16 @@ export function OAuthSignIn() {
     setFailure(answer === null ? "The sign-in service did not answer. Try again." : answer.status === 429 ? "Too many attempts. Wait a few minutes and try again." : answer.ok ? "Signed in, but the connection could not continue. Start it again from your assistant." : ((answer.body as { message?: string } | null)?.message ?? "Sign-in failed."))
   }
 
-  if (query === undefined) return <Frame title="Link expired" description="Start connecting Norn again from your assistant."><CardContent /></Frame>
+  if (query === undefined) return <Frame title="Link expired" description="Start connecting Norn again from your assistant.">{null}</Frame>
   return (
     <Frame title="Sign in to Norn" description="Your assistant asked to connect to Norn. Sign in with your Studio account to continue.">
       <form onSubmit={(event) => void submit(event)}>
         <CardContent className="grid gap-4">
-          <label className="grid gap-1.5 text-sm"><span className="font-medium">Email</span><Input required name="email" type="email" autoComplete="email" /></label>
-          <label className="grid gap-1.5 text-sm"><span className="font-medium">Password</span><Input required name="password" type="password" autoComplete="current-password" /></label>
+          <label className="grid gap-1.5 text-body"><span>Email</span><Input required name="email" type="email" autoComplete="email" /></label>
+          <label className="grid gap-1.5 text-body"><span>Password</span><Input required name="password" type="password" autoComplete="current-password" /></label>
           <Failure text={failure} />
         </CardContent>
-        <CardFooter className="pt-4"><Button type="submit" className="w-full" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</Button></CardFooter>
+        <CardFooter><Button type="submit" className="w-full" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</Button></CardFooter>
       </form>
     </Frame>
   )
@@ -172,7 +173,7 @@ export function OAuthConsent() {
     setFailure(typeof serverMessage === "string" && serverMessage !== "" ? serverMessage : "The decision was not recorded. Start connecting again from your assistant.")
   }
 
-  if (query === undefined || clientId === null) return <Frame title="Link expired" description="Start connecting Norn again from your assistant."><CardContent /></Frame>
+  if (query === undefined || clientId === null) return <Frame title="Link expired" description="Start connecting Norn again from your assistant.">{null}</Frame>
   if (client === undefined || workspace === undefined) return null
   const { requester, callbackHost } = consentFacts(window.location.search, client)
   const readyWorkspace = workspace?.organizationId != null && workspace.organization != null && workspace.approvalToken != null
@@ -181,7 +182,7 @@ export function OAuthConsent() {
       title={`Allow ${requester.name} to use Norn?`}
       description={readyWorkspace ? `It will act as ${workspace.user} in ${workspace.organization}.` : "You do not have an active workspace to connect right now."}
     >
-      <CardContent className="grid gap-3 text-sm">
+      <CardContent className="grid gap-3 text-body">
         <p>It can read what you may read and ask Norn to run actions you may run. Norn's rules decide every request, exactly as they do in Studio, and refuse anything you could not do yourself.</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
           {requester.site === null ? null : <><dt>Site</dt><dd className="font-mono">{requester.site}</dd></>}

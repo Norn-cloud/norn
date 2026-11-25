@@ -5,7 +5,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { TableCard } from "@/components/table-card"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { refreshMode } from "@/lib/live-transport"
 import { usePinnedScope } from "@/lib/session"
@@ -87,14 +87,14 @@ export function UploadCsv() {
           <div className="space-y-3">
             <Input type="file" accept=".csv,text/csv" aria-label="CSV file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             <Button type="button" disabled={file === null || sent.isPending} onClick={() => file && sent.mutate(file)}><FileUp />{sent.isPending ? "Uploading…" : "Upload"}</Button>
-            {sent.isError && <p role="alert" className="text-sm text-destructive">{sent.error.message}</p>}
+            {sent.isError && <p role="alert" className="text-body text-destructive">{sent.error.message}</p>}
           </div>
         )}
         {completed && outcome === null && (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground tabular-nums">{completed.rows} rows, {completed.columns.length} columns, {completed.size} bytes · sha256 <code className="font-mono text-xs">{completed.sha256.slice(0, 16)}…</code></p>
-            <label className="block space-y-1 text-sm">
-              <span className="font-medium">Type name</span>
+            <p className="text-body text-muted-foreground tabular-nums">{completed.rows} rows, {completed.columns.length} columns, {completed.size} bytes · sha256 <code className="font-mono text-meta">{completed.sha256.slice(0, 16)}…</code></p>
+            <label className="block space-y-1 text-body">
+              <span className="">Type name</span>
               <Input value={typeName} placeholder="e.g. Sale" onChange={(event) => setTypeName(event.target.value)} />
               <span className="block text-meta text-muted-foreground">One word starting with a capital letter; the cell refuses any other.</span>
             </label>
@@ -107,10 +107,10 @@ export function UploadCsv() {
                   return (
                     <TableRow key={id}>
                       <TableCell><input type="checkbox" aria-label={`Keep ${column.name}`} checked={choice.include} onChange={(event) => choose(id, { include: event.target.checked })} /></TableCell>
-                      <TableCell className="font-mono text-xs">{column.name}{column.nullable && <span className="ms-1 font-sans text-muted-foreground">(has empties)</span>}</TableCell>
+                      <TableCell className="font-mono text-meta">{column.name}{column.nullable && <span className="ms-1 font-sans text-muted-foreground">(has empties)</span>}</TableCell>
                       <TableCell><input type="checkbox" aria-label={`${column.name} is part of the key`} checked={choice.key} onChange={(event) => choose(id, { key: event.target.checked, ...event.target.checked ? { measure: false } : {} })} /></TableCell>
                       <TableCell>
-                        <select aria-label={`Kind of ${column.name}`} className="h-8 rounded-md border bg-background px-2 text-sm" value={choice.type} onChange={(event) => choose(id, { type: event.target.value as Kind })}>
+                        <select aria-label={`Kind of ${column.name}`} className="h-8 rounded-md border bg-background px-2 text-body" value={choice.type} onChange={(event) => choose(id, { type: event.target.value as Kind })}>
                           {KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
                         </select>
                       </TableCell>
@@ -120,13 +120,13 @@ export function UploadCsv() {
                           measure
                         </label>
                       </TableCell>
-                      <TableCell className="max-w-56 truncate font-mono text-xs text-muted-foreground">{column.samples.map((sample) => JSON.stringify(sample)).join(", ")}</TableCell>
+                      <TableCell className="max-w-56 truncate font-mono text-meta text-muted-foreground">{column.samples.map((sample) => JSON.stringify(sample)).join(", ")}</TableCell>
                     </TableRow>
                   )
                 })}
               </TableBody>
             </Table></TableCard>
-            {problem && <p role="alert" className="text-sm text-destructive">{problem.message}</p>}
+            {problem && <p role="alert" className="text-body text-destructive">{problem.message}</p>}
             <DialogFooter className="flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={reset} disabled={busy}>Start over</Button>
               <Button type="button" variant="outline" disabled={busy} onClick={() => asRecords.mutate()} title="Each row is written through the cell and checked against its laws, one at a time.">
@@ -141,16 +141,16 @@ export function UploadCsv() {
         {outcome !== null && (
           <div className="space-y-4">
             {outcome.kind === "dataset" && (
-              <div role="status" className="space-y-2 rounded-lg border p-4 text-sm">
-                <p className="font-medium">{outcome.loaded.rows} rows loaded into <code className="font-mono">{outcome.objectType}</code> in {outcome.loaded.millis} ms.</p>
+              <div role="status" className="space-y-2 rounded-lg border p-4 text-body">
+                <p className="">{outcome.loaded.rows} rows loaded into <code className="font-mono">{outcome.objectType}</code> in {outcome.loaded.millis} ms.</p>
                 {outcome.loaded.rejected > 0
                   ? <p className="text-muted-foreground">{outcome.loaded.rejected} set aside: {Object.entries(outcome.loaded.reasons).map(([reason, count]) => `${count} ${reason}`).join(", ")}.</p>
                   : <p className="text-muted-foreground">No row was set aside.</p>}
               </div>
             )}
-            {outcome.kind === "records" && <p role="status" className="rounded-lg border p-4 text-sm">The rows were written as <code className="font-mono">{outcome.objectType}</code> records, each checked by the cell.</p>}
+            {outcome.kind === "records" && <p role="status" className="rounded-lg border p-4 text-body">The rows were written as <code className="font-mono">{outcome.objectType}</code> records, each checked by the cell.</p>}
             {outcome.kind === "no-engine" && (
-              <div role="status" className="space-y-2 rounded-lg border p-4 text-sm">
+              <div role="status" className="space-y-2 rounded-lg border p-4 text-body">
                 <p>The cell admitted <code className="font-mono">{outcome.objectType}</code>, but it has no analytical engine to load the rows into.</p>
                 <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => asRecords.mutate()}><Rows3 />Write them as governed records instead</Button>
               </div>

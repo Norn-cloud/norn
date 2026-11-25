@@ -1,27 +1,28 @@
 import { useQuery } from "@tanstack/react-query"
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
   CheckCheck,
-  CheckCircle2,
-  Clock,
   Eye,
   EyeOff,
   FileSearch,
+  ListChecks,
+  ListFilter,
   LockKeyhole,
   MessageSquare,
   RotateCcw,
-  ShieldAlert,
   ZoomIn,
   ZoomOut,
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { CopyId } from "@/components/copy-id"
 import { FactStatusBadge } from "@/components/fact-status-badge"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { SourceTag } from "@/components/system/source-tag"
+import { Dot, StatusDot } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { readScan } from "@/evidence/review"
 import {
@@ -61,6 +62,12 @@ const ZOOM_STEP = 25
 const PAN_STEP = 40
 
 const pct = (fraction: string) => `${Number(fraction) * 100}%`
+
+/** An icon control in the artifact toolbar: the outline pill, 44px below 640px. */
+const ICON_BUTTON = "max-sm:size-[44px]"
+
+/** A segment of the row filter (DESIGN.md 10, SegmentedControl): the active one is the card at 500. */
+const SEGMENT = "shrink-0 rounded-full px-2.5 py-1 text-meta whitespace-nowrap text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring aria-pressed:bg-card aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-(--panel-border) max-sm:min-h-[44px]"
 
 /**
  * Load source artifact media strictly through cell-authorized paths:
@@ -120,9 +127,10 @@ interface OverlayBox {
  * Step 2 — Split-Pane Artifact Triage.
  * Left pane: zoomable/pannable source artifact with status-coloured bounding boxes + surrounding
  * source context messages.
- * Right pane: editable extracted candidate rows (amber = low-confidence extraction,
- * red = law/contract violation, green = verified fact, withheld fields read-only) + one-click
- * batch governed promotion of clean rows while keeping conflicts/breaches quarantined.
+ * Right pane: editable extracted candidate rows (a held dot = low-confidence extraction, a bad dot =
+ * law/contract violation, a live dot = verified fact, withheld fields read-only) + one-click batch
+ * governed promotion of clean rows while keeping conflicts/breaches quarantined. Each pane is a
+ * ShellCard with one well (DESIGN.md 10); states read dot-first (DESIGN.md 13).
  *
  * All in-flight / queued locks and batch queue execution live in `ImportTriagePage` keyed by
  * `batchId`, so switching between steps never drops promotion locks or unlocks queued rows.
@@ -300,655 +308,606 @@ export function SplitPaneReview({
   return (
     <section
       aria-label="Split-pane artifact triage"
-      className="grid overflow-hidden rounded-lg border border-border bg-background lg:grid-cols-[minmax(0,46%)_minmax(0,54%)] lg:divide-x lg:divide-border"
+      className="grid items-start gap-4 lg:grid-cols-[minmax(0,46fr)_minmax(0,54fr)]"
     >
       {/* LEFT PANE: Zoomable source artifact + surrounding source context */}
-      <div className="flex min-w-0 flex-col divide-y divide-border" data-pane="artifact">
-        {/* Artifact switcher & zoom/pan controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-subtle px-3 py-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            {artifacts.length > 1 ? (
-              <select
-                aria-label="Source artifact"
-                value={activeArtifact?.id ?? ""}
-                onChange={(event) => { setSelectedArtifactId(event.target.value); resetZoom() }}
-                className="h-7 max-w-52 rounded border border-border bg-background px-2 text-xs font-medium text-foreground"
-              >
-                {artifacts.map((artifact) => (
-                  <option key={artifact.id} value={artifact.id}>{artifact.label}</option>
-                ))}
-              </select>
-            ) : (
-              <span className="truncate text-xs font-medium text-foreground"><bdi>{activeArtifact?.label ?? "Source artifact"}</bdi></span>
-            )}
-            {activeArtifact && <Chip tone="gray"><bdi>{activeArtifact.sourceChannel}</bdi></Chip>}
-          </div>
-          <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Artifact zoom and pan controls">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              aria-label="Zoom out"
-              disabled={zoom <= ZOOM_MIN}
-              onClick={() => adjustZoom(-ZOOM_STEP)}
-              className="size-7 rounded border-border bg-background shadow-none"
-            >
-              <ZoomOut className="size-3.5" />
-            </Button>
-            <span data-zoom-level="" className="w-11 text-center font-mono text-xs tabular-nums text-muted-foreground">
-              {zoom}%
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-sm"
-              aria-label="Zoom in"
-              disabled={zoom >= ZOOM_MAX}
-              onClick={() => adjustZoom(ZOOM_STEP)}
-              className="size-7 rounded border-border bg-background shadow-none"
-            >
-              <ZoomIn className="size-3.5" />
-            </Button>
-            {zoom > 100 && (
-              <span className="inline-flex items-center gap-0.5" role="group" aria-label="Pan artifact">
-                <Button type="button" variant="outline" size="icon-sm" aria-label="Pan left" onClick={() => nudgePan(PAN_STEP, 0)} className="size-7 rounded border-border bg-background shadow-none"><ArrowLeft className="size-3" /></Button>
-                <Button type="button" variant="outline" size="icon-sm" aria-label="Pan up" onClick={() => nudgePan(0, PAN_STEP)} className="size-7 rounded border-border bg-background shadow-none"><ArrowUp className="size-3" /></Button>
-                <Button type="button" variant="outline" size="icon-sm" aria-label="Pan down" onClick={() => nudgePan(0, -PAN_STEP)} className="size-7 rounded border-border bg-background shadow-none"><ArrowDown className="size-3" /></Button>
-                <Button type="button" variant="outline" size="icon-sm" aria-label="Pan right" onClick={() => nudgePan(-PAN_STEP, 0)} className="size-7 rounded border-border bg-background shadow-none"><ArrowRight className="size-3" /></Button>
-              </span>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-label="Reset zoom"
-              onClick={resetZoom}
-              className="h-7 rounded border-border bg-background px-2 text-xs shadow-none"
-            >
-              <RotateCcw className="size-3" />
-              Fit
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-pressed={showBoxes}
-              aria-label={showBoxes ? "Hide extraction boxes" : "Show extraction boxes"}
-              onClick={() => setShowBoxes((current) => !current)}
-              className="h-7 rounded border-border bg-background px-2 text-xs shadow-none"
-            >
-              {showBoxes ? <Eye className="size-3" /> : <EyeOff className="size-3" />}
-              Boxes
-            </Button>
-          </div>
-        </div>
-
-        {/* Immutable artifact provenance strip */}
-        {activeArtifact && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-background px-3 py-2 text-[0.6875rem] text-muted-foreground">
-            <span className="inline-flex items-center gap-1">
-              <span>Blob</span>
-              <CopyId value={activeArtifact.blobDigest} short={12} />
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span>Receipt</span>
-              <CopyId value={activeArtifact.functionReceiptDigest} short={12} />
-            </span>
-            <span className="tabular-nums">Observed {formatTemporal(activeArtifact.observedAt)}</span>
-            {view === "technical" && (
-              <span className="font-mono">
-                {activeArtifact.extractor} {activeArtifact.extractorVersion}
-                {activeArtifact.promptDigest ? ` · prompt ${activeArtifact.promptDigest.slice(0, 10)}…` : ""}
-              </span>
-            )}
-            {activeArtifact.markings.map((marking) => (
-              <Chip key={marking} tone="gray" mono>{marking}</Chip>
-            ))}
-          </div>
-        )}
-
-        {/* Zoomable image viewport (keyboard focusable for +/-/0/Arrow pan) */}
-        <div
-          tabIndex={0}
-          role="region"
-          aria-label="Source artifact viewer"
-          onKeyDown={onViewportKeyDown}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          className={cn(
-            "relative min-h-72 overflow-hidden bg-muted/40 p-3 outline-none select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-            zoom > 100 && "cursor-grab active:cursor-grabbing",
-          )}
+      <div className="flex min-w-0 flex-col gap-4" data-pane="artifact">
+        <Panel
+          icon={FileSearch}
+          label="Source artifact"
+          action={activeArtifact ? <SourceTag mono={false}><bdi>{activeArtifact.sourceChannel}</bdi></SourceTag> : undefined}
         >
-          {mediaSource?.kind === "rejected" && (
-            <div role="alert" data-media-rejected="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-muted-foreground">
-              <LockKeyhole aria-hidden className="size-5 text-tone-amber" />
-              <span className="font-medium text-foreground">Artifact media blocked</span>
-              <span>{mediaSource.reason}</span>
+          <Well className="divide-y divide-(--well-border)">
+            {/* Artifact switcher & zoom/pan controls */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                {artifacts.length > 1 ? (
+                  <select
+                    aria-label="Source artifact"
+                    value={activeArtifact?.id ?? ""}
+                    onChange={(event) => { setSelectedArtifactId(event.target.value); resetZoom() }}
+                    className="h-8 max-w-52 rounded-lg border border-input bg-card px-2 text-meta text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:min-h-[44px]"
+                  >
+                    {artifacts.map((artifact) => (
+                      <option key={artifact.id} value={artifact.id}>{artifact.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="truncate text-body text-foreground"><bdi>{activeArtifact?.label ?? "Source artifact"}</bdi></span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1" role="toolbar" aria-label="Artifact zoom and pan controls">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Zoom out"
+                  disabled={zoom <= ZOOM_MIN}
+                  onClick={() => adjustZoom(-ZOOM_STEP)}
+                  className={ICON_BUTTON}
+                >
+                  <ZoomOut className="size-3.5" />
+                </Button>
+                <span data-zoom-level="" className="w-11 text-center font-mono text-meta tabular-nums text-muted-foreground">
+                  {zoom}%
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Zoom in"
+                  disabled={zoom >= ZOOM_MAX}
+                  onClick={() => adjustZoom(ZOOM_STEP)}
+                  className={ICON_BUTTON}
+                >
+                  <ZoomIn className="size-3.5" />
+                </Button>
+                {zoom > 100 && (
+                  <span className="inline-flex items-center gap-0.5" role="group" aria-label="Pan artifact">
+                    <Button type="button" variant="outline" size="icon-sm" aria-label="Pan left" onClick={() => nudgePan(PAN_STEP, 0)} className={ICON_BUTTON}><ArrowLeft className="size-3.5" /></Button>
+                    <Button type="button" variant="outline" size="icon-sm" aria-label="Pan up" onClick={() => nudgePan(0, PAN_STEP)} className={ICON_BUTTON}><ArrowUp className="size-3.5" /></Button>
+                    <Button type="button" variant="outline" size="icon-sm" aria-label="Pan down" onClick={() => nudgePan(0, -PAN_STEP)} className={ICON_BUTTON}><ArrowDown className="size-3.5" /></Button>
+                    <Button type="button" variant="outline" size="icon-sm" aria-label="Pan right" onClick={() => nudgePan(-PAN_STEP, 0)} className={ICON_BUTTON}><ArrowRight className="size-3.5" /></Button>
+                  </span>
+                )}
+                <Button type="button" variant="outline" size="sm" aria-label="Reset zoom" onClick={resetZoom}>
+                  <RotateCcw className="size-3.5" />
+                  Fit
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-pressed={showBoxes}
+                  aria-label={showBoxes ? "Hide extraction boxes" : "Show extraction boxes"}
+                  onClick={() => setShowBoxes((current) => !current)}
+                >
+                  {showBoxes ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+                  Boxes
+                </Button>
+              </div>
             </div>
-          )}
-          {mediaSource?.kind !== "rejected" && scan.isPending && (
-            <div className="flex h-64 items-center justify-center text-xs text-muted-foreground">
-              Loading source artifact…
-            </div>
-          )}
-          {mediaSource?.kind !== "rejected" && (scan.isError || imgError) && (
-            <div role="alert" data-media-error="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-xs text-muted-foreground">
-              <FileSearch aria-hidden className="size-5" />
-              <span className="font-medium text-foreground">Source artifact image could not be loaded</span>
-              <span>Bounding-box overlays are hidden until the artifact image loads cleanly.</span>
-            </div>
-          )}
-          {mediaSource?.kind !== "rejected" && !scan.isError && !imgError && imageUrl !== null && activeArtifact && (
+
+            {/* Immutable artifact provenance strip */}
+            {activeArtifact && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-meta text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <span>Blob</span>
+                  <CopyId value={activeArtifact.blobDigest} short={12} />
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span>Receipt</span>
+                  <CopyId value={activeArtifact.functionReceiptDigest} short={12} />
+                </span>
+                <span className="tabular-nums">Observed {formatTemporal(activeArtifact.observedAt)}</span>
+                {view === "technical" && (
+                  <span className="font-mono">
+                    {activeArtifact.extractor} {activeArtifact.extractorVersion}
+                    {activeArtifact.promptDigest ? ` · prompt ${activeArtifact.promptDigest.slice(0, 10)}…` : ""}
+                  </span>
+                )}
+                {activeArtifact.markings.map((marking) => (
+                  <SourceTag key={marking}>{marking}</SourceTag>
+                ))}
+              </div>
+            )}
+
+            {/* Zoomable image viewport (keyboard focusable for +/-/0/Arrow pan) */}
             <div
-              data-pan-offset={`${pan.x},${pan.y}`}
-              className="relative mx-auto origin-top-left transition-transform duration-150"
-              style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
-              }}
+              tabIndex={0}
+              role="region"
+              aria-label="Source artifact viewer"
+              onKeyDown={onViewportKeyDown}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+              className={cn(
+                "relative min-h-72 overflow-hidden p-3 outline-none select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                zoom > 100 && "cursor-grab active:cursor-grabbing",
+              )}
             >
-              <img
-                src={imageUrl}
-                alt={`Captured source artifact ${activeArtifact.label}`}
-                draggable={false}
-                onError={() => setImgError(true)}
-                onLoad={() => setImgError(false)}
-                className="block w-full rounded border border-border bg-white"
-              />
-              {showBoxes && !imgError && overlays.map((overlay) => {
-                const active = focusedFieldId === overlay.fieldId || (focusedFieldId === null && focusedRowId === overlay.rowId)
-                const boxStyle = overlay.status === "violation"
-                  ? "border-tone-red bg-tone-red/12"
-                  : overlay.status === "low_confidence"
-                    ? "border-tone-amber bg-tone-amber/15"
-                    : "border-tone-green/70 bg-tone-green/8"
-                return (
-                  <button
-                    key={`${overlay.rowId}:${overlay.fieldId}`}
-                    type="button"
-                    data-bbox-field={overlay.fieldId}
-                    data-bbox-status={overlay.status}
-                    aria-label={`Inspect ${overlay.label}`}
-                    onClick={() => activateBoundingBox(overlay)}
-                    className={cn(
-                      "absolute rounded-[2px] border-[1.5px] transition-shadow outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      boxStyle,
-                      active && "ring-2 ring-foreground/80 ring-offset-1 ring-offset-background",
-                    )}
-                    style={{
-                      left: pct(overlay.box.x),
-                      top: pct(overlay.box.y),
-                      width: pct(overlay.box.w),
-                      height: pct(overlay.box.h),
-                    }}
+              {mediaSource?.kind === "rejected" && (
+                <div role="alert" data-media-rejected="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-meta text-muted-foreground">
+                  <LockKeyhole aria-hidden className="size-5" strokeWidth={1.6} />
+                  <span className="text-body text-foreground">Artifact media blocked</span>
+                  <span>{mediaSource.reason}</span>
+                </div>
+              )}
+              {mediaSource?.kind !== "rejected" && scan.isPending && (
+                <div className="flex h-64 items-center justify-center text-meta text-muted-foreground">
+                  Loading source artifact…
+                </div>
+              )}
+              {mediaSource?.kind !== "rejected" && (scan.isError || imgError) && (
+                <div role="alert" data-media-error="" className="flex h-64 flex-col items-center justify-center gap-1.5 px-4 text-center text-meta text-muted-foreground">
+                  <FileSearch aria-hidden className="size-5" strokeWidth={1.6} />
+                  <span className="text-body text-foreground">Source artifact image could not be loaded</span>
+                  <span>Bounding-box overlays are hidden until the artifact image loads cleanly.</span>
+                </div>
+              )}
+              {mediaSource?.kind !== "rejected" && !scan.isError && !imgError && imageUrl !== null && activeArtifact && (
+                <div
+                  data-pan-offset={`${pan.x},${pan.y}`}
+                  className="relative mx-auto origin-top-left transition-transform duration-150"
+                  style={{
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
+                  }}
+                >
+                  <img
+                    src={imageUrl}
+                    alt={`Captured source artifact ${activeArtifact.label}`}
+                    draggable={false}
+                    onError={() => setImgError(true)}
+                    onLoad={() => setImgError(false)}
+                    className="block w-full rounded-sm bg-card ring-1 ring-line"
                   />
-                )
-              })}
+                  {showBoxes && !imgError && overlays.map((overlay) => {
+                    const active = focusedFieldId === overlay.fieldId || (focusedFieldId === null && focusedRowId === overlay.rowId)
+                    // Data marks on the image: the tone colours the box edge and a faint wash over the scan.
+                    const boxStyle = overlay.status === "violation"
+                      ? "border-tone-red bg-tone-red/12"
+                      : overlay.status === "low_confidence"
+                        ? "border-tone-amber bg-tone-amber/15"
+                        : "border-tone-green/70 bg-tone-green/8"
+                    return (
+                      <button
+                        key={`${overlay.rowId}:${overlay.fieldId}`}
+                        type="button"
+                        data-bbox-field={overlay.fieldId}
+                        data-bbox-status={overlay.status}
+                        aria-label={`Inspect ${overlay.label}`}
+                        onClick={() => activateBoundingBox(overlay)}
+                        className={cn(
+                          "absolute rounded-xs border-[1.5px] transition-shadow outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          boxStyle,
+                          active && "ring-2 ring-foreground/80 ring-offset-1 ring-offset-background",
+                        )}
+                        style={{
+                          left: pct(overlay.box.x),
+                          top: pct(overlay.box.y),
+                          width: pct(overlay.box.w),
+                          height: pct(overlay.box.h),
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </Well>
+        </Panel>
 
         {/* Surrounding message / source context */}
-        <div className="flex flex-col bg-background">
-          <div className="flex items-center justify-between border-b border-border bg-surface-subtle px-3 py-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <MessageSquare aria-hidden className="size-3.5 text-muted-foreground" />
-              Surrounding source context
-            </span>
-            <span className="text-[0.6875rem] text-muted-foreground tabular-nums">
-              {activeArtifact?.contextMessages.length ?? 0} entries
-            </span>
-          </div>
-          <ol className="max-h-56 divide-y divide-border overflow-y-auto" aria-label="Surrounding source messages">
-            {(activeArtifact?.contextMessages ?? []).map((message) => {
-              const boundAlias = message.aliasId ? resolvedAliases.get(message.aliasId) : undefined
-              const resolvedName = boundAlias && (boundAlias.kind === "bound" || boundAlias.kind === "created")
-                ? boundAlias.targetLabel
-                : null
-              return (
-                <li
-                  key={message.id}
-                  data-anchor={message.isAnchor ? "true" : undefined}
-                  className={cn("space-y-1 px-3 py-2 text-xs", message.isAnchor && "bg-surface-subtle")}
-                >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-mono font-medium text-foreground"><bdi>{message.senderHandle}</bdi></span>
-                    {resolvedName !== null && (
-                      <Chip tone="green"><bdi>{resolvedName}</bdi></Chip>
-                    )}
-                    {message.aliasId && boundAlias?.kind === "ignored" && (
-                      <Chip tone="gray">Ignored alias</Chip>
-                    )}
-                    {message.aliasId && boundAlias === undefined && (
-                      <Chip tone="amber">Unresolved alias</Chip>
-                    )}
-                    {message.isAnchor && <Chip tone="gray">Artifact attachment</Chip>}
-                    <span className="ms-auto font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
-                      {formatTemporal(message.observedAt)}
-                    </span>
-                  </div>
-                  <p dir="auto" className="text-foreground/90"><bdi>{message.body}</bdi></p>
-                </li>
-              )
-            })}
-          </ol>
-        </div>
+        <Panel
+          icon={MessageSquare}
+          label="Surrounding source context"
+          action={<span className="tabular-nums">{activeArtifact?.contextMessages.length ?? 0} entries</span>}
+        >
+          <Well>
+            <ol className="max-h-56 divide-y divide-(--well-border) overflow-y-auto" aria-label="Surrounding source messages">
+              {(activeArtifact?.contextMessages ?? []).map((message) => {
+                const boundAlias = message.aliasId ? resolvedAliases.get(message.aliasId) : undefined
+                const resolvedName = boundAlias && (boundAlias.kind === "bound" || boundAlias.kind === "created")
+                  ? boundAlias.targetLabel
+                  : null
+                return (
+                  <li
+                    key={message.id}
+                    data-anchor={message.isAnchor ? "true" : undefined}
+                    className={cn("space-y-1 px-3.5 py-2 text-meta", message.isAnchor && "bg-card")}
+                  >
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="font-mono text-foreground"><bdi>{message.senderHandle}</bdi></span>
+                      {resolvedName !== null && (
+                        <Chip tone="green"><bdi>{resolvedName}</bdi></Chip>
+                      )}
+                      {message.aliasId && boundAlias?.kind === "ignored" && (
+                        <Chip tone="gray" dot>Ignored alias</Chip>
+                      )}
+                      {message.aliasId && boundAlias === undefined && (
+                        <Chip tone="amber">Unresolved alias</Chip>
+                      )}
+                      {message.isAnchor && <SourceTag mono={false}>Artifact attachment</SourceTag>}
+                      <span className="ms-auto font-mono text-meta text-muted-foreground tabular-nums">
+                        {formatTemporal(message.observedAt)}
+                      </span>
+                    </div>
+                    <p dir="auto" className="text-body text-foreground"><bdi>{message.body}</bdi></p>
+                  </li>
+                )
+              })}
+            </ol>
+          </Well>
+        </Panel>
       </div>
 
       {/* RIGHT PANE: Editable extracted candidate rows + batch governed promotion */}
-      <div className="flex min-w-0 flex-col divide-y divide-border" data-pane="rows">
-        {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2 bg-surface-subtle px-3 py-2">
-          <div role="group" aria-label="Candidate row filter" className="inline-flex flex-wrap rounded-md border border-border bg-background p-0.5 text-xs">
-            {([
-              ["all", `All (${artifactRows.length})`],
-              ["clean", `Clean (${partition.eligible.length})`],
-              ["low_confidence", `Low confidence (${lowConfidenceCount})`],
-              ["violations", `Violations (${partition.quarantined.length})`],
-              ["verified", `Verified (${partition.verified.length})`],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={filter === key}
-                onClick={() => setFilter(key)}
-                className={cn(
-                  "rounded px-2 py-1 font-medium transition-colors",
-                  filter === key ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <span className="ms-auto text-[0.6875rem] text-muted-foreground tabular-nums">
-            Threshold &lt; {formatConfidence(lowConfidenceThresholdBps)} = amber
-          </span>
-        </div>
-
-        {/* Candidate rows */}
-        <div className="min-h-80 flex-1 divide-y divide-border overflow-y-auto">
-          {filteredRows.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No candidate rows match this filter.
+      <div className="flex min-w-0 flex-col" data-pane="rows">
+        <Panel
+          icon={ListChecks}
+          label="Extracted candidate rows"
+          action={`Low confidence below ${formatConfidence(lowConfidenceThresholdBps)}`}
+        >
+          <Well className="divide-y divide-(--well-border)">
+            {/* Filter bar */}
+            <div className="px-3 py-2">
+              <div role="group" aria-label="Candidate row filter" className="inline-flex max-w-full overflow-x-auto rounded-full bg-(--well) p-0.5 ring-1 ring-line ring-inset">
+                {([
+                  ["all", `All (${artifactRows.length})`],
+                  ["clean", `Clean (${partition.eligible.length})`],
+                  ["low_confidence", `Low confidence (${lowConfidenceCount})`],
+                  ["violations", `Violations (${partition.quarantined.length})`],
+                  ["verified", `Verified (${partition.verified.length})`],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={filter === key}
+                    onClick={() => setFilter(key)}
+                    className={SEGMENT}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
-          ) : (
-            filteredRows.map((row) => {
-              const selected = focusedRowId === row.id
-              const entity = resolveRowEntity(row, resolvedAliases)
-              const rowStatus = effectiveRowStatus(row)
-              const openFindings = openFindingsOf(row)
-              const violating = rowStatus === "quarantined"
-              const withheldRow = rowStatus === "withheld"
-              const verified = rowStatus === "verified_fact"
-              const busy = busyRowIds.has(row.id)
-              const queued = queuedRowIds.has(row.id)
-              const locked = busy || queued
-              const outcome = rowOutcomes[row.id] ?? null
-              const outcomeLocked = isOutcomeLocked(outcome)
-              const rowArtifact = artifacts.find((item) => item.id === row.artifactId)
-              const basisKey = rowBasisKey(row, rowArtifact)
-              const canPromote = rowStatus === "imported_unverified"
-                && entity.kind === "resolved"
-                && !locked
-                && !batchRunning
-                && !outcomeLocked
-                && rowArtifact !== undefined
 
-              return (
-                <article
-                  key={row.id}
-                  data-candidate-row={row.id}
-                  data-row-status={rowStatus}
-                  onClick={() => setFocusedRowId(row.id)}
-                  className={cn(
-                    "space-y-2.5 px-4 py-3 transition-colors",
-                    selected && "bg-surface-subtle/80",
-                    violating && "border-s-2 border-s-tone-red",
-                  )}
-                >
-                  {/* Row header */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-foreground"><bdi>{entity.label}</bdi></span>
-                    {entity.kind === "resolved" && (
-                      <code className="font-mono text-[0.6875rem] text-muted-foreground"><bdi>{entity.targetId}</bdi></code>
-                    )}
-                    {entity.kind === "unresolved" && (
-                      <button
-                        type="button"
-                        onClick={(event) => { event.stopPropagation(); onJumpToAliases() }}
-                        className="inline-flex items-center gap-1 rounded border border-tone-amber/40 bg-tone-amber/10 px-1.5 py-0.5 text-[0.6875rem] font-medium text-tone-amber hover:bg-tone-amber/20"
-                      >
-                        Unresolved alias — match in Step 1
-                      </button>
-                    )}
-                    {entity.kind === "ignored" && (
-                      <Chip tone="gray">Alias ignored — excluded</Chip>
-                    )}
-                    <FactStatusBadge status={rowStatus} />
-                    {queued && !busy && <Chip tone="gray">Queued for promotion…</Chip>}
-                    <span className="ms-auto font-mono text-[0.6875rem] text-muted-foreground tabular-nums">
-                      effective <bdi>{formatTemporal(row.effectiveAt)}</bdi>
-                    </span>
-                  </div>
+            {/* Candidate rows */}
+            <div className="min-h-80 divide-y divide-(--well-border) overflow-y-auto">
+              {filteredRows.length === 0 ? (
+                <EmptyState icon={ListFilter} title="No matching rows">
+                  No candidate rows match this filter.
+                </EmptyState>
+              ) : (
+                filteredRows.map((row) => {
+                  const selected = focusedRowId === row.id
+                  const entity = resolveRowEntity(row, resolvedAliases)
+                  const rowStatus = effectiveRowStatus(row)
+                  const openFindings = openFindingsOf(row)
+                  const violating = rowStatus === "quarantined"
+                  const withheldRow = rowStatus === "withheld"
+                  const verified = rowStatus === "verified_fact"
+                  const busy = busyRowIds.has(row.id)
+                  const queued = queuedRowIds.has(row.id)
+                  const locked = busy || queued
+                  const outcome = rowOutcomes[row.id] ?? null
+                  const outcomeLocked = isOutcomeLocked(outcome)
+                  const rowArtifact = artifacts.find((item) => item.id === row.artifactId)
+                  const basisKey = rowBasisKey(row, rowArtifact)
+                  const canPromote = rowStatus === "imported_unverified"
+                    && entity.kind === "resolved"
+                    && !locked
+                    && !batchRunning
+                    && !outcomeLocked
+                    && rowArtifact !== undefined
 
-                  {/* Extracted fields grid */}
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {row.fields.map((field) => {
-                      const lowConf = isLowConfidence(field.confidenceBps, lowConfidenceThresholdBps)
-                      const fieldFinding = openFindings.find((f) => f.fieldName === field.name || field.findingIds.includes(f.id))
-                      const hasRed = fieldFinding !== undefined
-                      const isFieldFocused = focusedRowId === row.id && focusedFieldId === field.id
-
-                      if (isFieldWithheld(field)) {
-                        return (
-                          <div
-                            key={field.id}
-                            data-field-name={field.name}
-                            data-field-withheld={field.masking}
-                            className={cn(
-                              "space-y-1 rounded-md border border-border bg-muted/40 p-2",
-                              isFieldFocused && "ring-2 ring-ring/50",
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-1.5 text-[0.6875rem]">
-                              <span className="font-medium text-muted-foreground">{field.label}</span>
-                              <span className="inline-flex items-center gap-1 font-mono text-muted-foreground">
-                                <LockKeyhole aria-hidden className="size-3" />
-                                Withheld ({field.masking})
-                              </span>
-                            </div>
-                            <div className="flex h-7 items-center gap-1.5 rounded border border-dashed border-border bg-background/60 px-2 font-mono text-xs text-muted-foreground">
-                              <bdi>{field.displayMask ?? "Redacted from your role"}</bdi>
-                            </div>
-                            {field.markings && field.markings.length > 0 && (
-                              <div className="flex flex-wrap gap-1 pt-0.5">
-                                {field.markings.map((marking) => <Chip key={marking} tone="gray" mono>{marking}</Chip>)}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      }
-
-                      // Verified rows ALWAYS show the authoritative cell value, never stale local drafts.
-                      // Local edits are scoped strictly to `(row.id, basisKey, field.name)` so edits from an
-                      // earlier capture never leak across supersession or baseline refreshes.
-                      const localEdit = edits[fieldEditKey(row.id, basisKey, field.name)]
-                      const current = verified ? field.value : (localEdit ?? field.value)
-                      const hasLocalEdit = !verified && localEdit !== undefined && localEdit !== field.value
-                      const differsFromExtracted = !verified && current !== field.extractedValue
-                      const hasAmber = !hasRed && lowConf
-
-                      return (
-                        <div
-                          key={field.id}
-                          data-field-name={field.name}
-                          data-field-tone={hasRed ? "red" : hasAmber ? "amber" : verified ? "green" : "neutral"}
-                          className={cn(
-                            "space-y-1 rounded-md border p-2 transition-colors",
-                            hasRed
-                              ? "border-tone-red/60 bg-tone-red/5"
-                              : hasAmber
-                                ? "border-tone-amber/60 bg-tone-amber/8"
-                                : verified
-                                  ? "border-tone-green/40 bg-tone-green/5"
-                                  : "border-border bg-background",
-                            isFieldFocused && "ring-2 ring-ring/50",
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-1.5 text-[0.6875rem]">
-                            <label htmlFor={`${row.id}-${field.id}`} className="font-medium text-muted-foreground">
-                              {field.label}
-                            </label>
-                            <div className="flex items-center gap-1">
-                              {hasRed && (
-                                <span className="inline-flex items-center gap-0.5 font-mono font-semibold text-tone-red">
-                                  <ShieldAlert aria-hidden className="size-3" />
-                                  {fieldFinding.code}
-                                </span>
-                              )}
-                              {hasAmber && (
-                                <span
-                                  data-low-confidence=""
-                                  className="inline-flex items-center gap-0.5 font-mono font-medium text-tone-amber tabular-nums"
-                                  title="Low extraction confidence — review against the artifact before promotion"
-                                >
-                                  <AlertTriangle aria-hidden className="size-3" />
-                                  {formatConfidence(field.confidenceBps)}
-                                </span>
-                              )}
-                              {!hasRed && !hasAmber && field.confidenceBps !== null && (
-                                <span className="font-mono text-muted-foreground tabular-nums">
-                                  {formatConfidence(field.confidenceBps)}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            <input
-                              id={`${row.id}-${field.id}`}
-                              type="text"
-                              dir="auto"
-                              value={current}
-                              readOnly={verified}
-                              disabled={locked || outcomeLocked}
-                              onFocus={() => { setFocusedRowId(row.id); setFocusedFieldId(field.id) }}
-                              onChange={(event) => onSetFieldValue(batchId, row.id, basisKey, field.name, field.value, current, event.target.value)}
-                              aria-invalid={hasRed || undefined}
-                              className={cn(
-                                "h-7 min-w-0 flex-1 rounded border bg-background px-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                                hasRed ? "border-tone-red/50" : hasAmber ? "border-tone-amber/50" : "border-border",
-                                (verified || locked || outcomeLocked) && "cursor-default bg-muted/40 text-foreground/85",
-                              )}
-                            />
-                            {hasLocalEdit && (
-                              <button
-                                type="button"
-                                disabled={locked || outcomeLocked}
-                                aria-label={`Reset ${field.label} edit`}
-                                title={`Row baseline is "${field.value}" — click to undo local edit`}
-                                onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, basisKey, field.name, field.value) }}
-                                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                              >
-                                <RotateCcw className="size-3" />
-                              </button>
-                            )}
-                          </div>
-                          {differsFromExtracted && (
-                            <div className="text-[0.6875rem] text-muted-foreground">
-                              Extracted: <span className="font-mono"><bdi>{field.extractedValue}</bdi></span> (preserved in lineage)
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {/* Cell-reported open law/contract violations */}
-                  {openFindings.length > 0 && (
-                    <div role="alert" data-cell-findings="" className="space-y-1 rounded-md border border-tone-red/40 bg-tone-red/5 px-2.5 py-2 text-xs">
-                      {openFindings.map((finding) => (
-                        <div key={finding.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                          <span className="inline-flex items-center gap-1 font-mono font-semibold text-tone-red">
-                            <ShieldAlert aria-hidden className="size-3.5 shrink-0 self-center" />
-                            {finding.code}
-                          </span>
-                          <span className="font-mono text-[0.6875rem] text-muted-foreground">{finding.ruleId}</span>
-                          <span dir="auto" className="text-foreground"><bdi>{finding.message}</bdi></span>
-                        </div>
-                      ))}
-                      <p className="text-[0.6875rem] text-muted-foreground">
-                        Laws are never bypassed on import — this row stays quarantined with immutable evidence lineage.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Distinct request outcome banner (never fabricated into a cell quarantine finding or optimistic Verified fact) */}
-                  {outcome !== null && !verified && (
-                    <div
-                      role={outcome.kind === "committed" || outcome.kind === "pending" || outcome.kind === "stale" ? "status" : "alert"}
-                      data-row-outcome={outcome.kind}
+                  return (
+                    <article
+                      key={row.id}
+                      data-candidate-row={row.id}
+                      data-row-status={rowStatus}
+                      onClick={() => setFocusedRowId(row.id)}
                       className={cn(
-                        "flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-xs",
-                        outcome.kind === "committed"
-                          ? "border-tone-green/40 bg-tone-green/5 text-foreground"
-                          : outcome.kind === "pending" || outcome.kind === "stale"
-                            ? "border-tone-amber/40 bg-tone-amber/8 text-foreground"
-                            : "border-destructive/35 bg-destructive/5 text-destructive",
+                        "space-y-3 px-4 py-3 transition-colors",
+                        selected && "bg-card",
+                        violating && "border-s-2 border-s-tone-red",
                       )}
                     >
-                      {outcome.kind === "committed" && (
-                        <>
-                          <CheckCircle2 aria-hidden className="size-3.5 shrink-0 text-tone-green" />
-                          <span className="tabular-nums">
-                            Committed (commit {outcome.receipt.receipt.commitSeq}) — awaiting authoritative read from cell.
+                      {/* Row header */}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-body text-foreground"><bdi>{entity.label}</bdi></span>
+                        {entity.kind === "resolved" && (
+                          <code className="font-mono text-meta text-muted-foreground"><bdi>{entity.targetId}</bdi></code>
+                        )}
+                        {entity.kind === "unresolved" && (
+                          <button
+                            type="button"
+                            onClick={(event) => { event.stopPropagation(); onJumpToAliases() }}
+                            className="inline-flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-meta text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring max-sm:min-h-[44px]"
+                          >
+                            <Dot tone="held" />
+                            Unresolved alias — match in Step 1
+                          </button>
+                        )}
+                        {entity.kind === "ignored" && (
+                          <Chip tone="gray" dot>Alias ignored — excluded</Chip>
+                        )}
+                        <FactStatusBadge status={rowStatus} />
+                        {queued && !busy && <Chip tone="gray" dot>Queued for promotion…</Chip>}
+                        <span className="ms-auto font-mono text-meta text-muted-foreground tabular-nums">
+                          effective <bdi>{formatTemporal(row.effectiveAt)}</bdi>
+                        </span>
+                      </div>
+
+                      {/* Extracted fields grid */}
+                      <div className="grid gap-x-3 gap-y-2 sm:grid-cols-2">
+                        {row.fields.map((field) => {
+                          const lowConf = isLowConfidence(field.confidenceBps, lowConfidenceThresholdBps)
+                          const fieldFinding = openFindings.find((f) => f.fieldName === field.name || field.findingIds.includes(f.id))
+                          const hasRed = fieldFinding !== undefined
+                          const isFieldFocused = focusedRowId === row.id && focusedFieldId === field.id
+
+                          if (isFieldWithheld(field)) {
+                            return (
+                              <div
+                                key={field.id}
+                                data-field-name={field.name}
+                                data-field-withheld={field.masking}
+                                className={cn("space-y-1 rounded-(--radius-row) p-1.5", isFieldFocused && "ring-2 ring-ring/50")}
+                              >
+                                <div className="flex items-center justify-between gap-1.5 text-meta">
+                                  <span className="text-muted-foreground">{field.label}</span>
+                                  <span className="inline-flex items-center gap-1 font-mono text-muted-foreground">
+                                    <LockKeyhole aria-hidden className="size-3" />
+                                    Withheld ({field.masking})
+                                  </span>
+                                </div>
+                                <div className="flex h-8 items-center gap-1.5 rounded-lg border border-input bg-muted/40 px-2 font-mono text-meta text-muted-foreground">
+                                  <bdi>{field.displayMask ?? "Redacted from your role"}</bdi>
+                                </div>
+                                {field.markings && field.markings.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 pt-0.5">
+                                    {field.markings.map((marking) => <SourceTag key={marking}>{marking}</SourceTag>)}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          }
+
+                          // Verified rows ALWAYS show the authoritative cell value, never stale local drafts.
+                          // Local edits are scoped strictly to `(row.id, basisKey, field.name)` so edits from an
+                          // earlier capture never leak across supersession or baseline refreshes.
+                          const localEdit = edits[fieldEditKey(row.id, basisKey, field.name)]
+                          const current = verified ? field.value : (localEdit ?? field.value)
+                          const hasLocalEdit = !verified && localEdit !== undefined && localEdit !== field.value
+                          const differsFromExtracted = !verified && current !== field.extractedValue
+                          const hasAmber = !hasRed && lowConf
+
+                          return (
+                            <div
+                              key={field.id}
+                              data-field-name={field.name}
+                              data-field-tone={hasRed ? "red" : hasAmber ? "amber" : verified ? "green" : "neutral"}
+                              className={cn("space-y-1 rounded-(--radius-row) p-1.5", isFieldFocused && "ring-2 ring-ring/50")}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 text-meta">
+                                <label htmlFor={`${row.id}-${field.id}`} className="text-muted-foreground">
+                                  {field.label}
+                                </label>
+                                {hasRed ? (
+                                  <StatusDot tone="bad" className="font-mono">{fieldFinding.code}</StatusDot>
+                                ) : hasAmber ? (
+                                  <StatusDot
+                                    tone="held"
+                                    data-low-confidence=""
+                                    className="tabular-nums"
+                                    title="Low extraction confidence — review against the artifact before promotion"
+                                  >
+                                    Low confidence {formatConfidence(field.confidenceBps)}
+                                  </StatusDot>
+                                ) : field.confidenceBps !== null ? (
+                                  <span className="font-mono text-muted-foreground tabular-nums">
+                                    {formatConfidence(field.confidenceBps)}
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <input
+                                  id={`${row.id}-${field.id}`}
+                                  type="text"
+                                  dir="auto"
+                                  value={current}
+                                  readOnly={verified}
+                                  disabled={locked || outcomeLocked}
+                                  onFocus={() => { setFocusedRowId(row.id); setFocusedFieldId(field.id) }}
+                                  onChange={(event) => onSetFieldValue(batchId, row.id, basisKey, field.name, field.value, current, event.target.value)}
+                                  aria-invalid={hasRed || undefined}
+                                  className={cn(
+                                    "h-8 min-w-0 flex-1 rounded-lg border bg-card px-2 font-mono text-meta text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:min-h-[44px]",
+                                    hasRed ? "border-tone-red/60" : hasAmber ? "border-tone-amber/60" : "border-input",
+                                    (verified || locked || outcomeLocked) && "cursor-default bg-muted/40 text-foreground/85",
+                                  )}
+                                />
+                                {hasLocalEdit && (
+                                  <button
+                                    type="button"
+                                    disabled={locked || outcomeLocked}
+                                    aria-label={`Reset ${field.label} edit`}
+                                    title={`Row baseline is "${field.value}" — click to undo local edit`}
+                                    onClick={(event) => { event.stopPropagation(); onResetFieldValue(batchId, row.id, basisKey, field.name, field.value) }}
+                                    className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-(--well-hover) hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring disabled:opacity-40 max-sm:size-[44px]"
+                                  >
+                                    <RotateCcw className="size-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              {differsFromExtracted && (
+                                <div className="text-meta text-muted-foreground">
+                                  Extracted: <span className="font-mono"><bdi>{field.extractedValue}</bdi></span> (preserved in lineage)
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      {/* Cell-reported open law/contract violations */}
+                      {openFindings.length > 0 && (
+                        <div role="alert" data-cell-findings="" className="space-y-1 text-meta">
+                          {openFindings.map((finding) => (
+                            <div key={finding.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <StatusDot tone="bad" className="font-mono">{finding.code}</StatusDot>
+                              <span className="font-mono text-meta text-muted-foreground">{finding.ruleId}</span>
+                              <span dir="auto" className="text-foreground"><bdi>{finding.message}</bdi></span>
+                            </div>
+                          ))}
+                          <p className="text-meta text-muted-foreground">
+                            Laws are never bypassed on import — this row stays quarantined with immutable evidence lineage.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Distinct request outcome line (never fabricated into a cell quarantine finding or optimistic Verified fact) */}
+                      {outcome !== null && !verified && (
+                        <div
+                          role={outcome.kind === "committed" || outcome.kind === "pending" || outcome.kind === "stale" ? "status" : "alert"}
+                          data-row-outcome={outcome.kind}
+                          className="flex flex-wrap items-center gap-2 text-meta text-foreground"
+                        >
+                          <Dot tone={outcome.kind === "committed" ? "live" : outcome.kind === "pending" || outcome.kind === "stale" ? "held" : "bad"} />
+                          {outcome.kind === "committed" && (
+                            <>
+                              <span className="tabular-nums">
+                                Committed (commit {outcome.receipt.receipt.commitSeq}) — awaiting authoritative read from cell.
+                              </span>
+                              <CopyId value={outcome.receipt.receipt.receiptHash} short={10} />
+                            </>
+                          )}
+                          {outcome.kind === "pending" && (
+                            <span>
+                              Pending approval decision <code className="font-mono">{outcome.decisionId}</code> — nothing is committed until approved.
+                            </span>
+                          )}
+                          {outcome.kind === "stale" && <span>{outcome.message}</span>}
+                          {outcome.kind === "refused" && (
+                            <span>
+                              <span className="font-mono">{outcome.code}</span>: {outcome.message}
+                            </span>
+                          )}
+                          {outcome.kind === "error" && (
+                            <>
+                              <span className="min-w-0 flex-1">{outcome.message}</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={!canPromote}
+                                onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
+                              >
+                                Retry
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Row footer: receipt or single-row governed promote */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-meta text-muted-foreground">
+                        <span className="tabular-nums">
+                          observed {formatTemporal(row.observedAt)}
+                          {row.recordedAt ? ` · recorded ${formatTemporal(row.recordedAt)}` : ""}
+                        </span>
+                        {verified && row.receipt ? (
+                          <span className="inline-flex items-center gap-1.5 tabular-nums">
+                            <StatusDot tone="live">commit {row.receipt.receipt.commitSeq}</StatusDot>
+                            <CopyId value={row.receipt.receipt.receiptHash} short={10} />
                           </span>
-                          <CopyId value={outcome.receipt.receipt.receiptHash} short={10} />
-                        </>
-                      )}
-                      {outcome.kind === "pending" && (
-                        <>
-                          <Clock aria-hidden className="size-3.5 shrink-0 text-tone-amber" />
-                          <span>
-                            Pending approval decision <code className="font-mono">{outcome.decisionId}</code> — nothing is committed until approved.
-                          </span>
-                        </>
-                      )}
-                      {outcome.kind === "stale" && (
-                        <>
-                          <AlertTriangle aria-hidden className="size-3.5 shrink-0 text-tone-amber" />
-                          <span>{outcome.message}</span>
-                        </>
-                      )}
-                      {outcome.kind === "refused" && (
-                        <>
-                          <ShieldAlert aria-hidden className="size-3.5 shrink-0" />
-                          <span>
-                            <strong className="font-mono font-semibold">{outcome.code}</strong>: {outcome.message}
-                          </span>
-                        </>
-                      )}
-                      {outcome.kind === "error" && (
-                        <>
-                          <AlertTriangle aria-hidden className="size-3.5 shrink-0" />
-                          <span className="min-w-0 flex-1">{outcome.message}</span>
+                        ) : violating ? (
+                          <StatusDot tone="bad">Held in quarantine</StatusDot>
+                        ) : withheldRow ? (
+                          <span>Withheld fields cannot be promoted by this role</span>
+                        ) : (
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
                             disabled={!canPromote}
                             onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
-                            className="h-7 shrink-0 border-border bg-background px-2 text-xs text-foreground shadow-none"
                           >
-                            Retry
+                            {busy
+                              ? "Promoting…"
+                              : queued
+                                ? "Queued…"
+                                : outcome?.kind === "committed"
+                                  ? "Committed — syncing…"
+                                  : outcome?.kind === "pending"
+                                    ? "Pending approval…"
+                                    : "Promote row"}
                           </Button>
-                        </>
+                        )}
+                      </div>
+                    </article>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Batch governed promotion bar */}
+            <div className="space-y-3 px-4 py-3">
+              {batchReport !== null && (
+                <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
+                  <span className="text-foreground">Batch run complete:</span>
+                  <StatusDot tone="live">{batchReport.promoted} promoted</StatusDot>
+                  {batchReport.pendingApproval > 0 && <StatusDot tone="held">{batchReport.pendingApproval} pending approval</StatusDot>}
+                  {batchReport.skippedStale > 0 && <StatusDot tone="held">{batchReport.skippedStale} skipped (basis changed)</StatusDot>}
+                  {batchReport.refused > 0 && <StatusDot tone="bad">{batchReport.refused} refused by action</StatusDot>}
+                  {batchReport.failed > 0 && <StatusDot tone="bad">{batchReport.failed} failed to send</StatusDot>}
+                  <StatusDot tone="quiet">{batchReport.keptQuarantined} held in quarantine</StatusDot>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-1 basis-64 space-y-1 text-meta">
+                  <div className="text-body text-foreground tabular-nums">
+                    {partition.eligible.length} clean {partition.eligible.length === 1 ? "row" : "rows"} ready for governed promotion
+                  </div>
+                  {(partition.quarantined.length > 0 || partition.withheld.length > 0 || partition.blockedByAlias.length > 0) && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 tabular-nums">
+                      {partition.quarantined.length > 0 && (
+                        <StatusDot tone="bad">
+                          {partition.quarantined.length} {partition.quarantined.length === 1 ? "row stays" : "rows stay"} quarantined
+                        </StatusDot>
+                      )}
+                      {partition.withheld.length > 0 && (
+                        <StatusDot tone="quiet">{partition.withheld.length} withheld</StatusDot>
+                      )}
+                      {partition.blockedByAlias.length > 0 && (
+                        <StatusDot tone="held">{partition.blockedByAlias.length} awaiting alias match</StatusDot>
                       )}
                     </div>
                   )}
-
-                  {/* Row footer: receipt or single-row governed promote */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[0.6875rem] text-muted-foreground">
-                    <span className="tabular-nums">
-                      observed {formatTemporal(row.observedAt)}
-                      {row.recordedAt ? ` · recorded ${formatTemporal(row.recordedAt)}` : ""}
-                    </span>
-                    {verified && row.receipt ? (
-                      <span className="inline-flex items-center gap-1.5 text-tone-green tabular-nums">
-                        <CheckCircle2 aria-hidden className="size-3.5" />
-                        <span>commit {row.receipt.receipt.commitSeq}</span>
-                        <CopyId value={row.receipt.receipt.receiptHash} short={10} />
-                      </span>
-                    ) : violating ? (
-                      <span className="font-medium text-tone-red">Held in quarantine</span>
-                    ) : withheldRow ? (
-                      <span className="font-medium text-muted-foreground">Withheld fields cannot be promoted by this role</span>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={!canPromote}
-                        onClick={(event) => { event.stopPropagation(); if (rowArtifact && entity.kind === "resolved") void onPromoteRow(batchId, row, rowArtifact, entity.targetId) }}
-                        className="h-7 rounded border-border bg-background px-2.5 text-xs shadow-none"
-                      >
-                        {busy
-                          ? "Promoting…"
-                          : queued
-                            ? "Queued…"
-                            : outcome?.kind === "committed"
-                              ? "Committed — syncing…"
-                              : outcome?.kind === "pending"
-                                ? "Pending approval…"
-                                : "Promote row"}
-                      </Button>
-                    )}
-                  </div>
-                </article>
-              )
-            })
-          )}
-        </div>
-
-        {/* Sticky batch governed promotion bar */}
-        <div className="space-y-2 bg-surface-subtle px-4 py-3">
-          {batchReport !== null && (
-            <div role="status" className="flex flex-wrap items-center gap-2 rounded border border-border bg-background px-2.5 py-1.5 text-xs">
-              <CheckCircle2 aria-hidden className="size-3.5 text-tone-green" />
-              <span>
-                Batch run complete: <strong className="font-medium text-tone-green">{batchReport.promoted} promoted</strong>
-                {batchReport.pendingApproval > 0 && <>, <strong className="font-medium text-tone-amber">{batchReport.pendingApproval} pending approval</strong></>}
-                {batchReport.skippedStale > 0 && <>, <strong className="font-medium text-tone-amber">{batchReport.skippedStale} skipped (basis changed)</strong></>}
-                {batchReport.refused > 0 && <>, <strong className="font-medium text-tone-red">{batchReport.refused} refused by action</strong></>}
-                {batchReport.failed > 0 && <>, <strong className="font-medium text-tone-red">{batchReport.failed} failed to send</strong></>}
-                , <span className="text-muted-foreground">{batchReport.keptQuarantined} held in quarantine.</span>
-              </span>
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-0.5 text-xs">
-              <div className="font-medium text-foreground tabular-nums">
-                {partition.eligible.length} clean {partition.eligible.length === 1 ? "row" : "rows"} ready for governed promotion
-                {partition.quarantined.length > 0 && (
-                  <span className="font-normal text-tone-red">
-                    {" "}· {partition.quarantined.length} {partition.quarantined.length === 1 ? "row stays" : "rows stay"} quarantined
-                  </span>
-                )}
-                {partition.withheld.length > 0 && (
-                  <span className="font-normal text-muted-foreground">
-                    {" "}· {partition.withheld.length} withheld
-                  </span>
-                )}
-                {partition.blockedByAlias.length > 0 && (
-                  <span className="font-normal text-tone-amber">
-                    {" "}· {partition.blockedByAlias.length} awaiting alias match
-                  </span>
-                )}
+                  <p className="text-meta text-muted-foreground">
+                    Extraction confidence is advisory — batch promotion runs every row through cell laws and preserves conflicts in quarantine.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  disabled={batchDisabled}
+                  onClick={() => {
+                    const queue = snapshotPromotionQueue(partition.eligible, artifacts, resolvedAliases, edits, lockedRowIds)
+                    void onPromoteCleanBatch(batchId, queue, partition.quarantined.length)
+                  }}
+                >
+                  <CheckCheck aria-hidden className="size-4" />
+                  {batchRunning
+                    ? "Promoting clean rows…"
+                    : `Promote ${partition.eligible.length} clean ${partition.eligible.length === 1 ? "row" : "rows"}`}
+                </Button>
               </div>
-              <p className="text-[0.6875rem] text-muted-foreground">
-                Extraction confidence is advisory — batch promotion runs every row through cell laws and preserves conflicts in quarantine.
-              </p>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={batchDisabled}
-              onClick={() => {
-                const queue = snapshotPromotionQueue(partition.eligible, artifacts, resolvedAliases, edits, lockedRowIds)
-                void onPromoteCleanBatch(batchId, queue, partition.quarantined.length)
-              }}
-              className="h-8 shrink-0 gap-1.5 px-3 text-xs"
-            >
-              <CheckCheck aria-hidden className="size-3.5" />
-              {batchRunning
-                ? "Promoting clean rows…"
-                : `Promote ${partition.eligible.length} clean ${partition.eligible.length === 1 ? "row" : "rows"}`}
-            </Button>
-          </div>
-        </div>
+          </Well>
+        </Panel>
       </div>
     </section>
   )

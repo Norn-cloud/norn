@@ -1,24 +1,20 @@
 import type { LucideIcon } from "lucide-react"
 import type { ComponentProps, ReactNode } from "react"
+import { SourceTag } from "./source-tag"
+import { Dot as StatusMark, StatusDot, type DotTone } from "./status-dot"
 import { cn } from "@/lib/utils"
 
 /** The detail colours of the design system: a dot or a series takes one; a surface or a label fill never does. */
 export type Tone = "gray" | "green" | "amber" | "red" | "blue" | "violet" | "teal" | "pink" | "orange"
 
-// Status dots use the saturated dot tokens (DESIGN.md 4.3); other tones mark a kind or a category.
-const DOT: Readonly<Record<Tone, string>> = {
-  gray: "bg-dot-quiet", green: "bg-dot-live", amber: "bg-dot-held", red: "bg-dot-bad", blue: "bg-tone-blue",
-  violet: "bg-tone-violet", teal: "bg-tone-teal", pink: "bg-tone-pink", orange: "bg-tone-orange",
+// A state reads in the saturated dot tokens (DESIGN.md 4.3); the other tones mark a kind or a category.
+const DOT_TONE: Readonly<Record<Tone, DotTone>> = {
+  gray: "quiet", green: "live", amber: "held", red: "bad", blue: "blue", violet: "violet", teal: "teal", pink: "pink", orange: "orange",
 }
 
 /** A 6px round mark in a tone, always beside its word; `pulse` for something live (off under reduced motion). */
 export function Dot({ tone, pulse = false, className }: { tone: Tone; pulse?: boolean; className?: string }) {
-  return (
-    <span aria-hidden className={cn("relative inline-flex size-[6px] shrink-0", className)}>
-      {pulse && <span className={cn("absolute inset-0 rounded-full opacity-60 motion-safe:animate-ping", DOT[tone])} />}
-      <span className={cn("relative inline-flex size-[6px] rounded-full", DOT[tone])} />
-    </span>
-  )
+  return <StatusMark tone={DOT_TONE[tone]} pulse={pulse} className={className} />
 }
 
 /**
@@ -38,15 +34,9 @@ export function Chip({ tone = "gray", icon: Icon, dot = false, pulse = false, mo
   children: ReactNode
 } & Omit<ComponentProps<"span">, "children">) {
   const status = tone !== "gray" || dot
-  return (
-    <span data-slot="chip" data-tone={tone} data-chip={status ? "status" : "tag"}
-      className={cn("inline-flex max-w-full shrink-0 items-center gap-1.5 text-meta whitespace-nowrap text-muted-foreground",
-        !status && "h-[1.2rem] rounded-(--radius-chip) px-1.5 ring-1 ring-line ring-inset",
-        mono && "font-mono tracking-[-0.01em]", className)} {...props}>
-      {status ? <Dot tone={tone} pulse={pulse} /> : Icon && <Icon aria-hidden className="size-3 shrink-0" strokeWidth={1.7} />}
-      {children}
-    </span>
-  )
+  return status
+    ? <StatusDot tone={DOT_TONE[tone]} pulse={pulse} data-slot="chip" data-tone={tone} data-chip="status" className={cn(mono && "font-mono tracking-[-0.01em]", className)} {...props}>{children}</StatusDot>
+    : <SourceTag icon={Icon} mono={mono} data-slot="chip" data-tone={tone} data-chip="tag" className={className} {...props}>{children}</SourceTag>
 }
 
 /** A passive info pill for a fact: a muted label and a value, like "commit 2983" or "DuckDB" (DESIGN.md 11 meta row). */

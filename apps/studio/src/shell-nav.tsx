@@ -4,7 +4,7 @@ import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui
 import { ChevronDown, ChevronRight, Search, Sparkles, X } from "lucide-react"
 import { useId, useRef, type ComponentProps, type ReactNode } from "react"
 import { useAssistant } from "@/assistant-slot"
-import { Hint } from "@/components/kit"
+import { Hint } from "@/components/system/kit"
 import { Keys } from "@/components/keys"
 import { cn } from "@/lib/utils"
 import {

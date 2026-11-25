@@ -15,7 +15,7 @@ import { Database, RefreshCw } from "lucide-react"
 import { StrictMode, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
-import { EmptyState } from "@/components/panel"
+import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { useCellQuery } from "./lib/cell-query.ts"
 import { matchReadState } from "./lib/state/index.ts"
@@ -72,7 +72,7 @@ function Record({ type, id, scope }: { readonly type: string; readonly id: strin
     <div data-testid="record" data-record-id={id} data-live-refusal-code={liveRefusal?.code}>
       <LoadState {...load} isFetching={read.isFetching} onRetry={() => void read.refetch()} skeleton="detail">
         {(doc) => (
-          <dl className="grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1 text-sm">
+          <dl className="grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1 text-body">
             <dt className="text-muted-foreground">Version</dt>
             <dd data-testid="record-version"><bdi dir="ltr" className="font-mono">{doc.document.version ?? "—"}</bdi></dd>
             <dt className="text-muted-foreground">Source</dt>

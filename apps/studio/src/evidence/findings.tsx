@@ -1,9 +1,9 @@
-import { Chip, FactChip } from "@/components/chip"
+import { Chip, FactChip } from "@/components/system/chip"
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { CircleAlert, CircleCheck, CircleDashed, CircleDot, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { useLocale } from "@/lib/locale"
 import { transport } from "@/lib/transport"
@@ -89,20 +89,20 @@ export function Findings({ objectType, id, reader, actionFor }: {
   return (
     <Panel icon={quarantined ? ShieldAlert : ShieldCheck} label="Findings" action={quarantined ? <Chip tone="amber" dot title="Held out of authoritative reads">Held out of authoritative reads</Chip> : undefined}>
       <Well className="space-y-3 p-3">
-        {findings.length === 0 && <p className="flex flex-wrap items-center gap-2 text-sm"><Chip tone="green" icon={ShieldCheck}>No findings</Chip><span className="text-muted-foreground">Every law the cell checks held when this record was imported.</span></p>}
-        {quarantined && <p className="text-sm">This record is quarantined: an open finding keeps it out of answers and totals until a correction satisfies the law. Its source values stay readable here.</p>}
+        {findings.length === 0 && <p className="flex flex-wrap items-center gap-2 text-body"><Chip tone="green" icon={ShieldCheck}>No findings</Chip><span className="text-muted-foreground">Every law the cell checks held when this record was imported.</span></p>}
+        {quarantined && <p className="text-body">This record is quarantined: an open finding keeps it out of answers and totals until a correction satisfies the law. Its source values stay readable here.</p>}
         {findings.map((finding) => (
           <article key={finding.id} className="space-y-1 rounded-md border bg-card p-3">
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={finding.status} />
-              <span className="font-mono text-xs">{ruleName(finding.ruleRef)}</span>
+              <span className="font-mono text-meta">{ruleName(finding.ruleRef)}</span>
               <span className="text-meta text-muted-foreground">{finding.severity} · first seen {finding.firstSeen}</span>
             </div>
-            <p className="text-sm">{finding.message}</p>
+            <p className="text-body">{finding.message}</p>
             <ComparedValues objectType={objectType} finding={finding} />
           </article>
         ))}
-        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta font-medium text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
+        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
       </Well>
     </Panel>
   )

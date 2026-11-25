@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Hand, ShieldCheck, ShieldX, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
-import { Chip, FactChip } from "@/components/chip"
+import { Chip, FactChip } from "@/components/system/chip"
 import { liveAccess } from "@/lib/live"
 import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"
@@ -52,7 +52,7 @@ function Step({ icon: Icon, label, children, last = false }: { readonly icon: Lu
       {!last && <span aria-hidden className="absolute start-[0.8125rem] top-8 bottom-0 w-px bg-border" />}
       <span aria-hidden className="flex size-7 items-center justify-center rounded-full bg-muted text-muted-foreground"><Icon className="size-3.5" /></span>
       <section aria-label={label} className="grid min-w-0 gap-2 pb-5">
-        <h3 className="pt-1 text-meta font-medium text-muted-foreground">{label}</h3>
+        <h3 className="pt-1 text-meta text-muted-foreground">{label}</h3>
         {children}
       </section>
     </li>
@@ -62,8 +62,8 @@ function Step({ icon: Icon, label, children, last = false }: { readonly icon: Lu
 /** A two-column list of labelled values: the request, or who · when · why. */
 function Rows({ rows, label }: { readonly rows: readonly (readonly [string, ReactNode])[]; readonly label: string }) {
   return (
-    <dl aria-label={label} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
-      {rows.map(([key, value]) => <div key={key} className="contents"><dt className="text-muted-foreground">{key}</dt><dd className="min-w-0 font-medium [overflow-wrap:anywhere]">{value}</dd></div>)}
+    <dl aria-label={label} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
+      {rows.map(([key, value]) => <div key={key} className="contents"><dt className="text-muted-foreground">{key}</dt><dd className="min-w-0 [overflow-wrap:anywhere]">{value}</dd></div>)}
     </dl>
   )
 }
@@ -93,17 +93,17 @@ function RefusalSteps({ variant, request, check, why, at: answered, decidedAt }:
   const shownTime = cellTime ?? answered
   const timeLabel = cellTime !== null ? "Decided at" : "Received at"
   return (
-    <div role="alert" data-refusal={variant} className="overflow-hidden rounded-xl border border-border bg-card text-sm">
+    <div role="alert" data-refusal={variant} className="overflow-hidden rounded-xl border border-border bg-card text-body">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
         <Chip tone="red" icon={ShieldX}>Refused</Chip>
-        <span className="font-medium">{variant === "redacted" ? "Refused by a law. Nothing was written." : "This change breaks a rule, so nothing was saved"}</span>
+        <span className="">{variant === "redacted" ? "Refused by a law. Nothing was written." : "This change breaks a rule, so nothing was saved"}</span>
       </div>
       <ol className="px-3 pt-3">
         {request && (
           <Step icon={Hand} label="The request">
             <Rows label="What was asked" rows={[
               ["Action", request.action],
-              ["Record", request.objectId === undefined ? "A new record" : <span className="font-mono text-xs">{request.objectId}</span>],
+              ["Record", request.objectId === undefined ? "A new record" : <span className="font-mono text-meta">{request.objectId}</span>],
               ...request.values.map(({ label, value }) => [label, <span className="tabular-nums">{value}</span>] as const),
             ]} />
           </Step>
@@ -155,16 +155,16 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   return (
     <RefusalSteps variant="disclosed" request={request} at={at} decidedAt={decidedAt} why={lawNameOf(catalog.data?.document ?? [], pin?.artifactId) ?? rationale ?? explanation} check={
       <div className="grid gap-2.5">
-        {rationale !== undefined && <p className="flex items-start gap-2 font-medium text-pretty text-foreground"><span className="min-w-0 flex-1">{rationale}</span><Chip tone="red" icon={ShieldX} data-verdict="fails">Fails</Chip></p>}
+        {rationale !== undefined && <p className="flex items-start gap-2 text-pretty text-foreground"><span className="min-w-0 flex-1">{rationale}</span><Chip tone="red" icon={ShieldX} data-verdict="fails">Fails</Chip></p>}
         {checked.length === 2 && held.length === 1 ? (() => {
           // Two values the law holds equal: the one the record holds against the one this form set.
           const [[heldPath, heldValue]] = held as [[string, unknown]]
           const [setPath, setValue] = checked.find(([path]) => path !== heldPath)!
           return <>
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 tabular-nums" aria-label="The values it checked">
-              <div className="rounded-lg bg-muted px-3 py-2" data-checked={heldPath}><div className="text-xs text-muted-foreground">{sentence(label(heldPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight">{shown(heldPath, heldValue)}</div>{parts(heldValue) && <div className="text-xs text-muted-foreground" aria-label="The lines it summed">{parts(heldValue)}</div>}</div>
-              <span aria-label="does not equal" className="flex size-7 items-center justify-center rounded-full bg-tone-red/12 text-sm text-tone-red">≠</span>
-              <div className="rounded-lg bg-muted px-3 py-2" data-checked={setPath}><div className="text-xs text-muted-foreground">{sentence(label(setPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight text-tone-red">{shown(setPath, setValue)}</div></div>
+              <div className="rounded-lg bg-muted px-3 py-2" data-checked={heldPath}><div className="text-meta text-muted-foreground">{sentence(label(heldPath))}</div><div className="pt-0.5 text-heading tracking-tight">{shown(heldPath, heldValue)}</div>{parts(heldValue) && <div className="text-meta text-muted-foreground" aria-label="The lines it summed">{parts(heldValue)}</div>}</div>
+              <span aria-label="does not equal" className="flex size-7 items-center justify-center rounded-full bg-tone-red/12 text-body text-tone-red">≠</span>
+              <div className="rounded-lg bg-muted px-3 py-2" data-checked={setPath}><div className="text-meta text-muted-foreground">{sentence(label(setPath))}</div><div className="pt-0.5 text-heading tracking-tight text-tone-red">{shown(setPath, setValue)}</div></div>
             </div>
             {onUse && Object.hasOwn(fields, setPath) && <div><Button type="button" size="sm" variant="outline" onClick={() => onUse(setPath, shown(setPath, heldValue))}>Use {shown(setPath, heldValue)}</Button></div>}
           </>
@@ -182,7 +182,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
             : "Change the values so the rule holds."}
         </p>
         {technical && (
-          <span className="grid gap-0.5 border-t border-border/70 pt-2 font-mono text-xs text-muted-foreground">
+          <span className="grid gap-0.5 border-t border-border/70 pt-2 font-mono text-meta text-muted-foreground">
             <span>{code} · {reason.subject}</span>
             {pin !== undefined && <span>{pin.artifactId}@{pin.version}</span>}
             <span className="whitespace-pre-wrap">{explanation}</span>
@@ -210,7 +210,7 @@ export function RedactedLawRefusal({ code, message, technical, request, at = new
     <RefusalSteps variant="redacted" request={request} at={at} decidedAt={decidedAt} why="A law this change would break. Your role is not told which." check={
       <div className="grid gap-2.5">
         <p className="text-meta text-muted-foreground">The cell said: “{message}”. It does not say which law, or which values, to your role.</p>
-        {technical && <span className="border-t border-border/70 pt-2 font-mono text-xs text-muted-foreground">{code}</span>}
+        {technical && <span className="border-t border-border/70 pt-2 font-mono text-meta text-muted-foreground">{code}</span>}
       </div>
     } />
   )

@@ -3,11 +3,12 @@ import { Link } from "@tanstack/react-router"
 import { AlertTriangle, BookMarked, FolderLock, Layers, Lock, LockOpen, RefreshCw, ShieldCheck } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ActionSheet, type OpenAction } from "../actions/action-sheet.tsx"
-import { Chip, type Tone } from "@/components/chip"
+import { Chip, type Tone } from "@/components/system/chip"
 import { CopyId } from "@/components/copy-id"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -213,11 +214,11 @@ function CasesPageContent() {
         </div>
 
         <TabsContent value="cases" className="grid gap-3 pt-3">
-          {casesNotice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">{casesNotice}</p>}
+          {casesNotice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-body">{casesNotice}</p>}
           {casesRead.isPending ? (
             <div className="grid gap-2" aria-label="Reading curated cases">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
           ) : casesRead.isError ? (
-            <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
               <span>{casesRead.error instanceof Error ? casesRead.error.message : "Curated cases could not be read."}</span>
               <span className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => void casesRead.refetch()}>Retry</Button>
@@ -227,7 +228,7 @@ function CasesPageContent() {
           ) : casesRead.data?.kind === "unavailable" ? (
             <EmptyState icon={BookMarked} title="Not served yet">{CASES_UNAVAILABLE}</EmptyState>
           ) : casesRead.data?.kind === "refused" ? (
-            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{casesRead.data.message}</p>
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-body text-destructive">{casesRead.data.message}</p>
           ) : casesPage === undefined || casesPage.rows.length === 0 ? (
             casesPageIndex > 0 ? (
               <EmptyState icon={BookMarked} title="No curated cases on this page"
@@ -249,7 +250,7 @@ function CasesPageContent() {
                       <TableHead>Agreement</TableHead>
                       <TableHead>Protection</TableHead>
                       <TableHead>Eval sets</TableHead>
-                      <TableHead className="text-right">Curated</TableHead>
+                      <TableHead className="text-end">Curated</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -257,7 +258,7 @@ function CasesPageContent() {
                       if (row.kind === "withheld") {
                         return (
                           <TableRow key={row.id} data-withheld="true">
-                            <TableCell className="font-mono text-xs text-muted-foreground">{row.id}</TableCell>
+                            <TableCell className="font-mono text-meta text-muted-foreground">{row.id}</TableCell>
                             <TableCell colSpan={4} className="text-muted-foreground">Withheld by cell policy</TableCell>
                           </TableRow>
                         )
@@ -265,7 +266,7 @@ function CasesPageContent() {
                       if (row.kind === "malformed") {
                         return (
                           <TableRow key={row.id} data-malformed="true">
-                            <TableCell className="font-mono text-xs">{row.id}</TableCell>
+                            <TableCell className="font-mono text-meta">{row.id}</TableCell>
                             <TableCell colSpan={4} className="text-destructive">
                               <span className="inline-flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />Malformed case ({row.problem})</span>
                             </TableCell>
@@ -277,11 +278,11 @@ function CasesPageContent() {
                         <TableRow key={c.id} data-case-row={c.id} className="cursor-pointer" onClick={() => setOpenedCaseId(c.id)}>
                           <TableCell className="max-w-md whitespace-normal">
                             <div className="grid gap-0.5 py-1">
-                              <button type="button" className="text-start font-medium underline-offset-4 hover:underline"
+                              <button type="button" className="text-start underline-offset-4 hover:underline"
                                 onClick={(event) => { event.stopPropagation(); setOpenedCaseId(c.id) }}>
                                 {c.question}
                               </button>
-                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                                 <Link to="/episodes/$id" params={{ id: c.episodeId }} className="underline-offset-4 hover:underline" onClick={(event) => event.stopPropagation()}>
                                   Episode {c.episodeId}
                                 </Link>
@@ -298,9 +299,9 @@ function CasesPageContent() {
                           <TableCell className="text-muted-foreground tabular-nums">
                             {c.evalSetIds.length === 0 ? "None" : `${c.evalSetIds.length} ${c.evalSetIds.length === 1 ? "set" : "sets"}`}
                           </TableCell>
-                          <TableCell className="text-right text-muted-foreground">
+                          <TableCell className="text-end text-muted-foreground">
                             <div>{c.curatedBy}</div>
-                            <div className="text-xs">{when(c.curatedAtMs)}</div>
+                            <div className="text-meta">{when(c.curatedAtMs)}</div>
                           </TableCell>
                         </TableRow>
                       )
@@ -332,11 +333,11 @@ function CasesPageContent() {
         </TabsContent>
 
         <TabsContent value="eval-sets" className="grid gap-3 pt-3">
-          {setsNotice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">{setsNotice}</p>}
+          {setsNotice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-body">{setsNotice}</p>}
           {setsRead.isPending ? (
             <div className="grid gap-2" aria-label="Reading eval sets">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
           ) : setsRead.isError ? (
-            <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            <div role="alert" className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
               <span>{setsRead.error instanceof Error ? setsRead.error.message : "Eval sets could not be read."}</span>
               <span className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => void setsRead.refetch()}>Retry</Button>
@@ -346,7 +347,7 @@ function CasesPageContent() {
           ) : setsRead.data?.kind === "unavailable" ? (
             <EmptyState icon={FolderLock} title="Not served yet">{EVAL_SETS_UNAVAILABLE}</EmptyState>
           ) : setsRead.data?.kind === "refused" ? (
-            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{setsRead.data.message}</p>
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-body text-destructive">{setsRead.data.message}</p>
           ) : setsPage === undefined || setsPage.rows.length === 0 ? (
             setsPageIndex > 0 ? (
               <EmptyState icon={FolderLock} title="No eval sets on this page"
@@ -377,12 +378,12 @@ function CasesPageContent() {
                           onClick={() => setSelectedSetId(s.id)}
                           className={cn("grid w-full gap-1 px-4 py-3 text-start transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", active && "bg-muted")}>
                           <span className="flex items-center justify-between gap-2">
-                            <span className="truncate text-sm font-medium">{s.name}</span>
+                            <span className="truncate text-body">{s.name}</span>
                             <Chip tone={s.status === "sealed" ? "violet" : "amber"} icon={s.status === "sealed" ? Lock : LockOpen}>
                               {s.status === "sealed" ? "Sealed" : "Unsealed"}
                             </Chip>
                           </span>
-                          <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground tabular-nums">
+                          <span className="flex flex-wrap items-center gap-x-2 text-meta text-muted-foreground tabular-nums">
                             <span>v{s.setVersion}</span>
                             <span>·</span>
                             <span>split: {s.splitKey}</span>
@@ -423,7 +424,7 @@ function CasesPageContent() {
                       action={`Split: ${liveSetRow.item.splitKey}`}
                     >
                       <Well className="grid gap-4 p-4">
-                        <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm">
+                        <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-body">
                           <dt className="text-muted-foreground">Created</dt>
                           <dd>{liveSetRow.item.createdBy}, {when(liveSetRow.item.createdAtMs)}</dd>
                           {liveSetRow.item.sealedAtMs !== null && liveSetRow.item.sealedBy !== null && (
@@ -435,7 +436,7 @@ function CasesPageContent() {
                           {liveSetRow.item.parentSetId && (
                             <>
                               <dt className="text-muted-foreground">Derived from</dt>
-                              <dd className="font-mono text-xs">{liveSetRow.item.parentSetId}</dd>
+                              <dd className="font-mono text-meta">{liveSetRow.item.parentSetId}</dd>
                             </>
                           )}
                           {technical && (
@@ -475,12 +476,12 @@ function CasesPageContent() {
                             <TableBody>
                               {liveSetRow.item.caseRefs.map((ref) => (
                                 <TableRow key={ref.caseId}>
-                                  <TableCell className="font-medium">
+                                  <TableCell className="">
                                     <div>{ref.label ?? ref.caseId}</div>
-                                    {technical && <code className="font-mono text-xs text-muted-foreground">{ref.caseId}</code>}
+                                    {technical && <code className="font-mono text-meta text-muted-foreground">{ref.caseId}</code>}
                                   </TableCell>
                                   <TableCell>
-                                    <Link to="/episodes/$id" params={{ id: ref.episodeId }} className="font-mono text-xs underline-offset-4 hover:underline">
+                                    <Link to="/episodes/$id" params={{ id: ref.episodeId }} className="font-mono text-meta underline-offset-4 hover:underline">
                                       {ref.episodeId}
                                     </Link>
                                   </TableCell>
@@ -545,7 +546,7 @@ function CasesPageContent() {
                     <CopyId value={liveCaseRow.item.id} />
                   </SheetDescription>
                 </SheetHeader>
-                <div className="grid gap-4 px-4 pb-6 text-sm" data-case-sheet-state="ok">
+                <div className="grid gap-4 px-4 pb-6 text-body" data-case-sheet-state="ok">
                   <div className="flex flex-wrap items-center gap-2">
                     <Chip tone={AGREEMENT_TONE[liveCaseRow.item.agreement]}>{AGREEMENT_STYLE[liveCaseRow.item.agreement].label}</Chip>
                     {liveCaseRow.item.protected ? <Chip tone="violet" icon={ShieldCheck}>Protected</Chip> : <Chip tone="gray">Standard</Chip>}
@@ -554,16 +555,16 @@ function CasesPageContent() {
                   <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2">
                     <dt className="text-muted-foreground">Episode</dt>
                     <dd>
-                      <Link to="/episodes/$id" params={{ id: liveCaseRow.item.episodeId }} className="font-mono text-xs underline-offset-4 hover:underline">
+                      <Link to="/episodes/$id" params={{ id: liveCaseRow.item.episodeId }} className="font-mono text-meta underline-offset-4 hover:underline">
                         {liveCaseRow.item.episodeId}
                       </Link>
                     </dd>
                     <dt className="text-muted-foreground">Expected choice</dt>
-                    <dd className="font-medium">{liveCaseRow.item.expectedChoice}</dd>
+                    <dd className="">{liveCaseRow.item.expectedChoice}</dd>
                     <dt className="text-muted-foreground">Decision receipt</dt>
-                    <dd><CopyId value={liveCaseRow.item.decisionReceipt.receiptHash} short={14} /> <span className="text-xs text-muted-foreground">commit {liveCaseRow.item.decisionReceipt.commitSeq}</span></dd>
+                    <dd><CopyId value={liveCaseRow.item.decisionReceipt.receiptHash} short={14} /> <span className="text-meta text-muted-foreground">commit {liveCaseRow.item.decisionReceipt.commitSeq}</span></dd>
                     <dt className="text-muted-foreground">Outcome receipt</dt>
-                    <dd><CopyId value={liveCaseRow.item.outcomeReceipt.receiptHash} short={14} /> <span className="text-xs text-muted-foreground">commit {liveCaseRow.item.outcomeReceipt.commitSeq}</span></dd>
+                    <dd><CopyId value={liveCaseRow.item.outcomeReceipt.receiptHash} short={14} /> <span className="text-meta text-muted-foreground">commit {liveCaseRow.item.outcomeReceipt.commitSeq}</span></dd>
                     <dt className="text-muted-foreground">Curated</dt>
                     <dd>{liveCaseRow.item.curatedBy}, {when(liveCaseRow.item.curatedAtMs)}</dd>
                     {liveCaseRow.item.note && (
@@ -575,7 +576,7 @@ function CasesPageContent() {
                   </dl>
 
                   <div className="border-t pt-3">
-                    <h3 className="mb-2 text-sm font-medium">Case actions</h3>
+                    <h3 className="mb-2 text-body">Case actions</h3>
                     <RecordActions
                       objectKind={CURATED_CASE_TYPE}
                       record={liveCaseRow.record}
@@ -590,7 +591,7 @@ function CasesPageContent() {
               <>
                 <SheetHeader>
                   <SheetTitle>Case withheld</SheetTitle>
-                  <SheetDescription className="font-mono text-xs">{openedCaseId}</SheetDescription>
+                  <SheetDescription className="font-mono text-meta">{openedCaseId}</SheetDescription>
                 </SheetHeader>
                 <div className="px-4 pb-6" data-case-sheet-state="withheld">
                   <EmptyState icon={BookMarked} title="Withheld by cell policy">
@@ -602,7 +603,7 @@ function CasesPageContent() {
               <>
                 <SheetHeader>
                   <SheetTitle>Case unreadable</SheetTitle>
-                  <SheetDescription className="font-mono text-xs">{openedCaseId}</SheetDescription>
+                  <SheetDescription className="font-mono text-meta">{openedCaseId}</SheetDescription>
                 </SheetHeader>
                 <div className="px-4 pb-6" data-case-sheet-state="malformed">
                   <EmptyState icon={AlertTriangle} title="Can't show this case">
@@ -614,7 +615,7 @@ function CasesPageContent() {
               <>
                 <SheetHeader>
                   <SheetTitle>Case unavailable</SheetTitle>
-                  <SheetDescription className="font-mono text-xs">{openedCaseId}</SheetDescription>
+                  <SheetDescription className="font-mono text-meta">{openedCaseId}</SheetDescription>
                 </SheetHeader>
                 <div className="px-4 pb-6" data-case-sheet-state="omitted">
                   <EmptyState icon={BookMarked} title="No longer available">

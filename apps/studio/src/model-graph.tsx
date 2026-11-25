@@ -16,8 +16,8 @@ function TypeCard({ data: { concept } }: NodeProps<TypeNode>) {
   return (
     <div className="w-[220px] cursor-pointer rounded-xl border bg-card px-3 py-2 shadow-sm transition-shadow hover:shadow-md">
       <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <div className="truncate text-sm font-medium" lang={concept.titleLang}>{concept.title}</div>
-      <div className="truncate text-xs text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links{systems.length > 0 ? ` · ${systems.join(", ")}` : ""}</div>
+      <div className="truncate text-body" lang={concept.titleLang}>{concept.title}</div>
+      <div className="truncate text-meta text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links{systems.length > 0 ? ` · ${systems.join(", ")}` : ""}</div>
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   )

@@ -2,9 +2,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { Columns2, GitCompareArrows, Inbox, Link2, RefreshCw, ShieldCheck } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { FactStatusBadge } from "@/components/fact-status-badge"
-import { EmptyState, PageHeader } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { Dot } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { type ActionReceipt } from "../../../../packages/norn-sdk/src/index.ts"
@@ -912,12 +914,12 @@ export function ImportTriagePage() {
         meta={workspace ? (
           <>
             <Chip tone="gray" mono>{workspace.targetObjectType}</Chip>
-            <span className="text-xs text-muted-foreground"><bdi>{workspace.title}</bdi></span>
+            <span className="text-meta text-muted-foreground"><bdi>{workspace.title}</bdi></span>
           </>
         ) : undefined}
         actions={
-          <Button variant="outline" size="sm" onClick={refresh} disabled={read.isFetching} className="h-8 gap-1.5 border-border bg-background text-xs shadow-none">
-            <RefreshCw className={cn("size-3.5", read.isFetching && "animate-spin")} />
+          <Button variant="outline" size="sm" onClick={refresh} disabled={read.isFetching}>
+            <RefreshCw aria-hidden className={cn("size-3.5", read.isFetching && "animate-spin")} />
             Refresh
           </Button>
         }
@@ -926,77 +928,77 @@ export function ImportTriagePage() {
       {/* Loading / error / unavailable / no-cell states */}
       {read.isPending && (
         <div className="grid gap-3" aria-label="Reading import triage batch">
-          <Skeleton className="h-12 rounded-lg" />
-          <Skeleton className="h-80 rounded-lg" />
+          <Skeleton className="h-12 rounded-(--radius-panel)" />
+          <Skeleton className="h-80 rounded-(--radius-panel)" />
         </div>
       )}
 
       {read.isError && (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span>{read.error instanceof Error ? read.error.message : "The import triage batch could not be read."}</span>
-          <span className="flex-1" />
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-(--radius-panel) border border-(--panel-border) bg-card px-3.5 py-2.5 text-body text-foreground shadow-(--panel-shadow)">
+          <Dot tone="bad" />
+          <span className="min-w-0 flex-1">{read.error instanceof Error ? read.error.message : "The import triage batch could not be read."}</span>
           <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
         </div>
       )}
 
       {!read.isPending && !read.isError && read.data?.kind === "no-cell" && (
-        <div className="rounded-lg border border-border bg-background">
-          <EmptyState icon={Inbox} title="No data cell">{NO_DATA_CELL}</EmptyState>
-        </div>
+        <Panel icon={Inbox} label="Import triage">
+          <Well>
+            <EmptyState icon={Inbox} title="No data cell">{NO_DATA_CELL}</EmptyState>
+          </Well>
+        </Panel>
       )}
 
       {!read.isPending && !read.isError && read.data?.kind === "unavailable" && (
-        <div className="rounded-lg border border-border bg-background">
-          <EmptyState icon={Inbox} title="Not served yet">{IMPORT_TRIAGE_UNAVAILABLE}</EmptyState>
-        </div>
+        <Panel icon={Inbox} label="Import triage">
+          <Well>
+            <EmptyState icon={Inbox} title="Not served yet">{IMPORT_TRIAGE_UNAVAILABLE}</EmptyState>
+          </Well>
+        </Panel>
       )}
 
       {!read.isPending && !read.isError && read.data?.kind === "refused" && (
-        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {read.data.refusal.message}
+        <p role="alert" className="flex items-center gap-3 rounded-(--radius-panel) border border-(--panel-border) bg-card px-3.5 py-2.5 text-body text-foreground shadow-(--panel-shadow)">
+          <Dot tone="bad" />
+          <span className="min-w-0 flex-1">{read.data.refusal.message}</span>
         </p>
       )}
 
       {workspace && summary && (
         <div className="space-y-3" data-triage-batch={workspace.batchId}>
-          {/* Progressive go-live honest status strip */}
+          {/* Progressive go-live honest status line: dot-first counts, no frame */}
           <div
             aria-label="Progressive verification status"
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface-subtle px-3.5 py-2"
+            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-0.5"
           >
-            <div className="flex flex-wrap items-center gap-2 text-xs tabular-nums">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-meta tabular-nums">
               <span className="inline-flex items-center gap-1.5">
                 <FactStatusBadge status="verified_fact" />
-                <span className="font-medium text-foreground">{summary.verifiedRows}</span>
+                <span className="text-foreground">{summary.verifiedRows}</span>
               </span>
-              <span className="text-border">|</span>
               <span className="inline-flex items-center gap-1.5">
                 <FactStatusBadge status="imported_unverified" />
-                <span className="font-medium text-foreground">{summary.unverifiedRows}</span>
+                <span className="text-foreground">{summary.unverifiedRows}</span>
               </span>
-              <span className="text-border">|</span>
               <span className="inline-flex items-center gap-1.5">
                 <FactStatusBadge status="quarantined" />
-                <span className="font-medium text-foreground">{summary.quarantinedRows}</span>
+                <span className="text-foreground">{summary.quarantinedRows}</span>
               </span>
               {summary.withheldRows > 0 && (
-                <>
-                  <span className="text-border">|</span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <FactStatusBadge status="withheld" />
-                    <span className="font-medium text-foreground">{summary.withheldRows}</span>
-                  </span>
-                </>
+                <span className="inline-flex items-center gap-1.5">
+                  <FactStatusBadge status="withheld" />
+                  <span className="text-foreground">{summary.withheldRows}</span>
+                </span>
               )}
             </div>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ShieldCheck aria-hidden className="size-3.5 text-muted-foreground" />
+            <span className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">
+              <ShieldCheck aria-hidden className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.6} />
               Advisory extraction only — every write runs through governed cell actions.
             </span>
           </div>
 
-          {/* 3-step flat horizontal stepper */}
-          <nav aria-label="Import triage steps" className="flex flex-wrap items-center gap-1 border-b border-border pb-2">
+          {/* 3-step stepper: a segmented track, the active step is the card at 500 */}
+          <nav aria-label="Import triage steps" className="flex flex-wrap items-center gap-1 rounded-(--radius-panel) bg-(--well) p-1 ring-1 ring-line sm:inline-flex sm:rounded-full">
             {([
               {
                 id: "aliases" as const,
@@ -1032,22 +1034,12 @@ export function ImportTriagePage() {
                   data-triage-step={item.id}
                   aria-current={active ? "step" : undefined}
                   onClick={() => setStep(item.id)}
-                  className={cn(
-                    "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    active
-                      ? "border-foreground/25 bg-background text-foreground"
-                      : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
+                  className="inline-flex h-9 items-center gap-2 rounded-full px-3.5 text-body text-muted-foreground transition-colors duration-150 outline-none hover:bg-(--well-hover) hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none max-sm:min-h-[44px] aria-[current=step]:bg-card aria-[current=step]:font-medium aria-[current=step]:text-foreground aria-[current=step]:shadow-control aria-[current=step]:ring-1 aria-[current=step]:ring-(--panel-border) aria-[current=step]:hover:bg-card"
                 >
-                  <span className={cn(
-                    "flex size-5 items-center justify-center rounded text-[0.6875rem] font-semibold tabular-nums",
-                    active ? "bg-foreground text-background" : "bg-muted text-muted-foreground",
-                  )}>
-                    {item.number}
-                  </span>
-                  <Icon aria-hidden className="size-3.5" />
+                  <span className="text-meta text-muted-foreground tabular-nums">{item.number}</span>
+                  <Icon aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.6} />
                   <span>{item.label}</span>
-                  <Chip tone={item.tone} className="tabular-nums">{item.count}</Chip>
+                  <Chip tone={item.tone} className="font-normal tabular-nums">{item.count}</Chip>
                 </button>
               )
             })}

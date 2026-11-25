@@ -3,7 +3,10 @@ import { BadgeCheck, ChartLine, ShieldCheck } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ChoiceColumn, PathSummary, pathNumbers, type ColumnOption } from "@/components/decision/choice-columns"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
-import { EmptyState, Panel } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { ListRow, RowList } from "@/components/system/list-row"
+import { Dot } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
@@ -288,15 +291,15 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
             if (choice) { setCustomCondition(false); patch({ filters: conditionsOf(choice) }) }
           }}>
           {chosen.condition === "custom" && (
-            <div className="grid gap-2 rounded-lg border bg-card p-2 text-sm">
-              <select aria-label="Condition property" className="h-8 rounded-3xl bg-input/50 px-3" value={custom.property} onChange={(event) => patch({ filters: [{ ...custom, property: event.target.value, value: "" }] })}>
+            <div className="grid gap-2 text-body">
+              <select aria-label="Condition property" className="h-8 rounded-full bg-input/50 px-3 max-sm:min-h-[44px]" value={custom.property} onChange={(event) => patch({ filters: [{ ...custom, property: event.target.value, value: "" }] })}>
                 {filterable.map(({ name }) => <option key={name} value={name}>{words(name)}</option>)}
               </select>
-              <select aria-label="Condition operator" className="h-8 rounded-3xl bg-input/50 px-3" value={custom.operator} onChange={(event) => patch({ filters: [{ ...custom, operator: event.target.value }] })}>
+              <select aria-label="Condition operator" className="h-8 rounded-full bg-input/50 px-3 max-sm:min-h-[44px]" value={custom.operator} onChange={(event) => patch({ filters: [{ ...custom, operator: event.target.value }] })}>
                 {catalog.operators.map((operator) => <option key={operator} value={operator}>{OPERATOR_WORDS[operator] ?? operator}</option>)}
               </select>
               {property && property.values.length > 0
-                ? <select aria-label="Condition value" className="h-8 rounded-3xl bg-input/50 px-3" value={custom.value} onChange={(event) => patch({ filters: [{ ...custom, value: event.target.value }] })}>
+                ? <select aria-label="Condition value" className="h-8 rounded-full bg-input/50 px-3 max-sm:min-h-[44px]" value={custom.value} onChange={(event) => patch({ filters: [{ ...custom, value: event.target.value }] })}>
                     <option value="">Choose a value</option>
                     {property.values.map((value) => <option key={value} value={value}>{value}</option>)}
                   </select>
@@ -312,7 +315,7 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
             else patch({ start: "", end: "" })
           }}>
           {chosen.window === "custom" && (
-            <div className="grid grid-cols-2 gap-2 rounded-lg border bg-card p-2">
+            <div className="grid grid-cols-2 gap-2">
               <Input aria-label="From" type="date" value={draft.start} onChange={(event) => patch({ start: event.target.value })} />
               <Input aria-label="Until" type="date" value={draft.end} onChange={(event) => patch({ end: event.target.value })} />
             </div>
@@ -320,48 +323,68 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
         </ChoiceColumn>
       </div>
       <PathSummary numbers={numbers}><span className="text-meta text-muted-foreground">{tree.basis}</span></PathSummary>
-      {failure && <p role="alert" className="text-destructive">{failure}</p>}
-      {restatementFailure && <p role="alert" className="text-destructive">{restatementFailure}</p>}
+      {failure && <Alert>{failure}</Alert>}
+      {restatementFailure && <Alert>{restatementFailure}</Alert>}
       {currentCheck && !admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{currentCheck.verdict.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
-      {currentCheck && restated === null && <p role="status" className="text-sm text-muted-foreground">This question cannot be stated in plain words, so it cannot be signed off: {currentCheck.restatementError ?? "the checker gave no reason"}.</p>}
+      {currentCheck && restated === null && <p role="status" className="text-body text-muted-foreground">This question cannot be stated in plain words, so it cannot be signed off: {currentCheck.restatementError ?? "the checker gave no reason"}.</p>}
       {restated && (
-        <Panel icon={ShieldCheck} label="In plain words" action={view === "technical" ? <span className="font-mono text-xs text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span> : undefined}>
-          <div className="space-y-3 p-1">
-            {fromCell && <p className="font-medium">The server reads your question as:</p>}
-            <p className="text-base" data-testid="restatement">{restated.text}</p>
+        <Panel icon={ShieldCheck} label="In plain words" action={view === "technical" ? <span className="font-mono text-meta text-muted-foreground" title={restated.sha256}>{restated.sha256.slice(0, 12)}</span> : undefined}>
+          <Well className="space-y-3 p-5">
+            {fromCell && <p className="text-body text-muted-foreground">The server reads your question as:</p>}
+            <p className="text-body" data-testid="restatement">{restated.text}</p>
             <p className="text-meta text-muted-foreground">Written from the question itself by the server, not by the assistant. Check that it says what you mean.</p>
             <div className="flex flex-wrap items-center gap-3">
               {signed
-                ? <span className="flex items-center gap-2 text-sm font-medium"><BadgeCheck className="size-4 text-success" />{signOff.signer ? <>Signed off by {signOff.displayName} on {new Date(signOff.atMs).toLocaleDateString()}{view === "technical" && <span className="font-mono text-meta text-muted-foreground">({signOff.signer})</span>}</> : "Signed off: this is what you asked for"}</span>
+                ? <span className="flex items-center gap-2 text-body"><BadgeCheck className="size-4 text-success" />{signOff.signer ? <>Signed off by {signOff.displayName} on {new Date(signOff.atMs).toLocaleDateString()}{view === "technical" && <span className="font-mono text-meta text-muted-foreground">({signOff.signer})</span>}</> : "Signed off: this is what you asked for"}</span>
                 : <Button type="button" size="sm" disabled={!admitted} title={admitted ? undefined : "The checker must admit the question first"} onClick={() => restated && setSignOff({ sha256: restated.sha256, atMs: Date.now(), scopeKey: pinnedScopeKey })}>This is what I asked for</Button>}
               {!admitted && <span className="text-meta text-muted-foreground">Sign-off opens once the checker admits the question.</span>}
             </div>
-          </div>
+          </Well>
         </Panel>
       )}
       <div className="space-y-2" data-testid="question-save-controls">
         <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1.5 text-sm">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
+          <label className="grid gap-1.5 text-body">Question name<Input value={draft.title} onChange={(event) => patch({ title: event.target.value })} /></label>
           <Button type="button" onClick={save} disabled={!cellAvailable || !signed || !draft.title.trim() || saving} aria-describedby={!signed ? "question-save-reason" : undefined}>{saving ? "Saving…" : "Save question"}</Button>
           {saved && <Button type="button" variant="outline" disabled={!cellAvailable || saving || !signed || !verified || editor.dirty} onClick={remove}>Remove question</Button>}
           {removed && <Button type="button" variant="outline" disabled={!cellAvailable || saving} onClick={undoRemove}>Undo removal</Button>}
         </div>
-        {scope.isSuccess && scope.data === null && <p role="status" className="text-sm text-muted-foreground">{NO_DATA_CELL}</p>}
-        {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
+        {scope.isSuccess && scope.data === null && <p role="status" className="text-body text-muted-foreground">{NO_DATA_CELL}</p>}
+        {scope.isError && <Alert>{scope.error.message}</Alert>}
         {!signed && <p id="question-save-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
-        {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
+        {saveError && <Alert>{saveError}</Alert>}
       </div>
       {signed ? <RunQuestion key={restated?.sha256} question={question} catalog={catalog} scope={pinnedScope} /> : <p className="text-meta text-muted-foreground">Run opens once you have signed off on the question in plain words.</p>}
-      <Panel icon={ChartLine} label="Saved questions">
-        {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
-        {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}
-        {list.data?.items.length === 0 && <p className="text-sm text-muted-foreground">No saved questions yet.</p>}
-        {list.data?.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-2"><span><span>{item.title || item.id} · version {item.version}</span><span className="block text-meta text-muted-foreground">{item.id}</span></span><Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button></div>)}
-        {pageCursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(undefined)}>First page</Button>}
-        {list.data?.cursor && <Button type="button" variant="ghost" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
+      <Panel icon={ChartLine} label="Saved questions" action={pageCursor || list.data?.cursor ? (
+        <span className="flex items-center gap-1">
+          {pageCursor && <Button type="button" variant="ghost" size="sm" onClick={() => setPageCursor(undefined)}>First page</Button>}
+          {list.data?.cursor && <Button type="button" variant="ghost" size="sm" onClick={() => setPageCursor(list.data.cursor ?? undefined)}>Next page</Button>}
+        </span>
+      ) : undefined}>
+        <Well>
+          {cellAvailable && list.isPending && <p role="status" className="px-3.5 py-3 text-body text-muted-foreground">Loading saved questions…</p>}
+          {list.isError && <Alert className="px-3.5 py-3">{list.error.message}</Alert>}
+          {list.data?.items.length === 0 && <p className="px-3.5 py-3 text-body text-muted-foreground">No saved questions yet.</p>}
+          {(list.data?.items.length ?? 0) > 0 && (
+            <RowList>
+              {/* A fact row per saved question: its name and version, its id under it, and Open at the end. */}
+              {list.data?.items.map((item) => (
+                <li key={item.id}>
+                  <ListRow passive title={`${item.title || item.id} · version ${item.version}`} description={item.id}
+                    end={<Button type="button" variant="outline" size="sm" disabled={!cellAvailable || saving} onClick={() => openSaved(item.id)}>Open</Button>} />
+                </li>
+              ))}
+            </RowList>
+          )}
+        </Well>
       </Panel>
     </div>
   )
+}
+
+/** A refusal or failure, dot first: the words in neutral text, never a red label (DESIGN.md 13). */
+function Alert({ children, className }: { readonly children: ReactNode; readonly className?: string }) {
+  return <p role="alert" className={`flex items-start gap-2 text-body text-foreground ${className ?? ""}`}><Dot tone="bad" className="mt-[7px]" />{children}</p>
 }
 
 export function QuestionTreePage() {
@@ -371,11 +394,8 @@ export function QuestionTreePage() {
   const tree = useQuery({ queryKey: ["question-tree", scope.data?.orgId, scope.data?.environmentId], queryFn: () => readRecommendations(scope.data), enabled: !scope.isPending, retry: false, staleTime: 60_000 })
   return (
     <section className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Explore a metric, step by step</h1>
-        <p className="max-w-2xl text-muted-foreground">Choose left to right: what to measure, how to group it, which records count and over which dates. The server recommends a pick in each column from what the cell declares, checks every change and says the question back in plain words.</p>
-      </div>
-      {(scope.isPending || catalog.isPending || tree.isPending) && <p className="text-muted-foreground">Reading the catalogue…</p>}
+      <PageHeader title="Explore a metric, step by step" description="Choose left to right: what to measure, how to group it, which records count and over which dates. The server recommends a pick in each column from what the cell declares, checks every change and says the question back in plain words." />
+      {(scope.isPending || catalog.isPending || tree.isPending) && <p role="status" className="text-body text-muted-foreground">Reading the catalogue…</p>}
       {catalog.isError && <EmptyState icon={ChartLine}>{catalog.error.message}</EmptyState>}
       {tree.isError && <EmptyState icon={ChartLine}>{tree.error.message}</EmptyState>}
       {catalog.data && tree.data && (tree.data.measures.length === 0

@@ -1,4 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/system/status-dot"
+import { Initials } from "@/components/system/list-row"
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
@@ -11,13 +13,14 @@ import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "rea
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
-import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
+import { AppearanceProvider, SCHEMES, SHELLS, SKINS, isScheme, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
+import { TopBarExtras } from "@/top-bar-extras"
 import { DENSITY } from "@/lib/perspective"
 import { appletHome, appletMenu, appletOf, appletOfSection, appletsOf, claim, decoded, destinationIn, initials, shown, target, type Applet, type AppletMenu, type MenuEntry, type Menus, type Section } from "@/lib/nav-model"
 import { AppletRail, AssistantButton, SheetApplets, SubmenuPanel, appletBadge, type MenuState, type RailApplet } from "@/shell-nav"
 import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/kit"
+import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/system/kit"
 import { Inspector, InspectorProvider } from "@/lib/inspector"
 import { KINDS } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
@@ -75,7 +78,9 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
           detail: mode.isError ? "Workspace unavailable" : retrying ? "Reconnecting…" : slow ? "Connecting to cell…" : "Connecting…",
         }
   const workspaceOpen = organization != null || live
-  return { live, open, active, workspaceOpen, recordedSelection: recorded ? recordedWorkspace?.id : undefined }
+  // The org disc hashes the workspace's own id, never its name (DESIGN.md 4.4).
+  const discId = organization?.id ?? (recorded ? recordedWorkspace?.id : undefined) ?? ""
+  return { live, open, active, workspaceOpen, discId, recordedSelection: recorded ? recordedWorkspace?.id : undefined }
 }
 
 /** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
@@ -85,11 +90,12 @@ const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspac
 function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" | "rail" | "pill" }) {
   const workspaces = useWorkspaces()
   const doc = workspaces.data
-  const { live, open, active, workspaceOpen, recordedSelection } = useOpenWorkspace(doc)
+  const { live, open, active, workspaceOpen, discId, recordedSelection } = useOpenWorkspace(doc)
   const realWorkspaces = doc?.workspaces ?? []
   const examples = WORKSPACES.filter((workspace) => real(workspace, live))
   const showWorkspaceSection = realWorkspaces.length > 0 || workspaceOpen
-  const disc = <span aria-hidden className="flex size-[24px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-foreground ring-1 ring-line">{initials(open?.name ?? "")}</span>
+  // The org disc takes the avatar pair hashed by the workspace's id (DESIGN.md 4.4, 9.1).
+  const disc = <Initials id={discId} name={open?.name ?? ""} letters={initials(open?.name ?? "")} size={24} />
   return (
     <Menu>
       {variant === "pill"
@@ -176,7 +182,7 @@ function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" |
 function ViewAndLanguage() {
   const { view, setView } = useView()
   const { locale, setLocale } = useLocale()
-  const { skin, setSkin, shell, setShell } = useAppearance()
+  const { skin, setSkin, shell, setShell, scheme, setScheme } = useAppearance()
   return <>
     <MenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
       <KitMenuLabel>View</KitMenuLabel>
@@ -187,6 +193,11 @@ function ViewAndLanguage() {
     <MenuRadioGroup value={locale} onValueChange={(next) => { if (isLocale(next)) setLocale(next) }}>
       <KitMenuLabel>Language</KitMenuLabel>
       {LOCALES.map(({ tag, name }) => <KitMenuRadioItem key={tag} value={tag} lang={tag} closeOnSelect>{name}</KitMenuRadioItem>)}
+    </MenuRadioGroup>
+    <KitMenuSeparator />
+    <MenuRadioGroup value={scheme} onValueChange={(next) => { if (isScheme(next)) setScheme(next) }}>
+      <KitMenuLabel>Colour scheme</KitMenuLabel>
+      {SCHEMES.map(({ id, label }) => <KitMenuRadioItem key={id} value={id} closeOnSelect>{label}</KitMenuRadioItem>)}
     </MenuRadioGroup>
     <KitMenuSeparator />
     <MenuRadioGroup value={skin} onValueChange={(next) => { if (isSkin(next)) setSkin(next) }}>
@@ -221,10 +232,11 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
       <ChromeDockTrigger
         aria-label="Appearance"
         className={variant === "dock"
-          ? "relative grid size-10 place-items-center rounded-full text-(--dock-muted) transition-colors outline-none hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-open:bg-(--dock-well) data-open:text-(--dock-foreground) [&_svg]:size-[18px]"
+          ? DOCK_BUTTON
           : cn(iconButton, "hidden @xl:flex")}
       >
         <Palette aria-hidden strokeWidth={1.7} />
+        {variant === "dock" && <DockLabel>Appearance</DockLabel>}
       </ChromeDockTrigger>
       <ChromeDockTray
         side={side}
@@ -306,15 +318,17 @@ export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "r
 }) {
   const { user, organization } = account
   const name = user.name || user.email
-  const disc = <span aria-hidden className="flex size-[24px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-foreground ring-1 ring-line">{initials(name)}</span>
+  // The principal's disc takes the avatar pair hashed by their id, never their name (DESIGN.md 4.4).
+  const disc = <Initials id={user.id} name={name} letters={initials(name)} size={24} />
   const triggerClass = variant === "topbar"
-    ? "grid size-9 place-items-center rounded-full bg-card text-meta text-foreground ring-1 ring-line outline-none transition-[box-shadow,transform] hover:ring-foreground/20 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+    ? "grid size-[36px] place-items-center rounded-full outline-none transition-[box-shadow,transform] hover:ring-2 hover:ring-line focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:size-[44px]"
     : variant === "dock"
       ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-meta text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
       : variant === "sidebar"
         ? "flex h-[32px] w-full min-w-0 items-center gap-[8px] rounded-(--radius-row) px-[8px] text-start text-body text-sidebar-foreground outline-none transition-colors duration-150 hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50 max-sm:min-h-[44px]"
         : "flex size-[32px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50"
-  const content = variant === "sidebar" ? <>{disc}<span className="truncate">{user.name || user.email}</span></> : variant === "rail" ? disc : initials(name)
+  const content = variant === "sidebar" ? <>{disc}<span className="truncate">{user.name || user.email}</span></> : variant === "rail" ? disc
+    : variant === "topbar" ? <Initials id={user.id} name={name} letters={initials(name)} size={36} /> : initials(name)
   const trigger = inToolbar
     ? <ToolbarButton render={<MenuTrigger />} aria-label="Account" className={triggerClass}>{content}</ToolbarButton>
     : <MenuTrigger aria-label="Account" className={triggerClass}>{content}</MenuTrigger>
@@ -519,7 +533,7 @@ function ConnectionBanner() {
   if (retrying) {
     return (
       <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 text-body text-foreground md:px-8">
-        <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-held" />
+        <Dot tone="held" />
         <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
         <span>Couldn't reach the cell.</span>
         <span className="text-muted-foreground">Reconnecting…</span>
@@ -534,7 +548,7 @@ function ConnectionBanner() {
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2.5 text-body md:px-8">
-      <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />
+      <Dot tone="bad" />
       <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
       <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="text-foreground">Workspace unavailable.</span>
@@ -590,6 +604,7 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
         <KitMenuContent align="end" className="w-52"><ViewAndLanguage /></KitMenuContent>
       </Menu>}
       {tools}
+      <TopBarExtras tickBar="hidden @6xl:flex" language="hidden @5xl:flex" scheme="hidden @xl:flex" />
       <AppearanceTray />
       <Popover>
         <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden strokeWidth={1.6} /></PopoverTrigger>
@@ -609,12 +624,24 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   )
 }
 
-/** Speech-bubble "AI" glyph from v6/shell.tsx, rendered in the accent colour. */
+/**
+ * A dock destination (DESIGN.md 9.2): a 40px round icon button from 640px up; below 640px a tile of
+ * at least 44 × 44px that shows its label under the icon, so a phone reader never guesses.
+ */
+const DOCK_BUTTON = "relative grid size-[40px] shrink-0 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground) max-sm:h-auto max-sm:min-h-[44px] max-sm:w-auto max-sm:min-w-[52px] max-sm:content-center max-sm:gap-0.5 max-sm:rounded-[18px] max-sm:px-1.5 max-sm:py-1 [&_svg]:size-[18px]"
+
+/** The label a dock tile shows under its icon below 640px (its accessible name carries it at every width). */
+function DockLabel({ children }: { readonly children: ReactNode }) {
+  return <span aria-hidden className="hidden max-w-[5.5rem] truncate text-meta leading-none max-sm:block">{children}</span>
+}
+
+/** Speech-bubble "AI" glyph from v6/shell.tsx, in the ink of the control it sits in (the dock is dark in every skin). */
 function AiGlyph({ className }: { readonly className?: string }) {
   return (
-    <span aria-hidden className={cn("relative grid size-[18px] place-items-center text-action", className)}>
+    <span aria-hidden className={cn("relative grid size-[18px] place-items-center", className)}>
       <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
-      <span className="relative text-[7px] leading-none tracking-tight">AI</span>
+      {/* The letters are part of the icon (they scale with it), so they are drawn, not set in the type scale. */}
+      <svg viewBox="0 0 24 24" className="absolute inset-0 size-full"><text x="12" y="14.6" textAnchor="middle" fontSize="7.5" fill="currentColor" fontFamily="var(--font-sans)">AI</text></svg>
     </span>
   )
 }
@@ -643,7 +670,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
     .filter((entry): entry is { readonly section: Section; readonly to: string; readonly count: string | undefined } => entry.to !== undefined)
   const primary = resolvedOwn.slice(0, 5)
   const overflow = resolvedOwn.slice(5)
-  const dockBtn = "relative grid size-10 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground)"
+  const dockBtn = DOCK_BUTTON
 
   return (
     <nav
@@ -653,7 +680,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
     >
       <Toolbar
         aria-label="Dock navigation"
-        className="pointer-events-auto flex max-w-full items-center gap-1 rounded-[26px] bg-(--dock-surface) p-1.5 text-(--dock-foreground) shadow-(--dock-shadow) ring-1 ring-(--dock-border) backdrop-blur-xl"
+        className="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-[26px] bg-(--dock-surface) p-1.5 text-(--dock-foreground) shadow-(--dock-shadow) ring-1 ring-(--dock-border) backdrop-blur-xl [scrollbar-width:none] max-sm:rounded-[24px]"
       >
         {global.map((section) => {
           const Icon = section.icon
@@ -670,6 +697,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
                 className={dockBtn}
               >
                 <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                <DockLabel>{section.label}</DockLabel>
                 {count && <span aria-hidden className="absolute top-[7px] end-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
               </ToolbarLink>
             </Hint>
@@ -689,12 +717,13 @@ function FloatingDock({ sections, navigation, current, assistant }: {
                 className={dockBtn}
               >
                 <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                <DockLabel>{section.label}</DockLabel>
                 {count && <span aria-hidden className="absolute top-[7px] end-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
               </ToolbarLink>
             </Hint>
           )
         })}
-        <ToolbarSeparator className="mx-1 h-5 w-px bg-white/10" />
+        <ToolbarSeparator className="mx-1 h-5 w-px shrink-0 bg-(--dock-border)" />
         {assistant && (
           <Hint side="top" label={assistant.title}>
             <ToolbarButton
@@ -705,6 +734,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
               className={dockBtn}
             >
               <AiGlyph />
+              <DockLabel>{assistant.title}</DockLabel>
             </ToolbarButton>
           </Hint>
         )}
@@ -714,6 +744,7 @@ function FloatingDock({ sections, navigation, current, assistant }: {
             <Hint side="top" label="More destinations">
               <MenuTrigger aria-label="More destinations" className={dockBtn}>
                 <CircleEllipsis aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                <DockLabel>More</DockLabel>
               </MenuTrigger>
             </Hint>
             <KitMenuContent side="top" align="end" className="min-w-48">
@@ -885,7 +916,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
         <div className="@container flex min-w-0 flex-1 flex-col">
           {isDock
             ? (
-              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 px-6 md:px-8">
+              <header data-slot="dock-topbar" className="flex h-[4.5rem] shrink-0 items-center gap-3 px-6 md:px-8">
                 <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
                   <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
                 </Link>
@@ -894,6 +925,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
                 <div className="ms-auto flex shrink-0 items-center gap-2">
                   <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} /></div>
                   {tools}
+                  <TopBarExtras tickBar="hidden @5xl:flex" language="hidden @3xl:flex" scheme="hidden @md:flex" />
                   <Notifications />
                   <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
                 </div>
@@ -902,7 +934,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
             : (
               // The top bar sits inside the main island: 52px, borderless, on the island's own material (DESIGN.md 9.1).
               <header data-slot="topbar" className="flex h-[52px] shrink-0 items-center px-2 @sm:px-3 @2xl:px-4">
-                <div className="mx-auto flex w-full max-w-[1260px] min-w-0 items-center justify-between gap-1 @sm:gap-2 @2xl:gap-3 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                <div className="mx-auto flex w-full max-w-[1260px] min-w-0 items-center justify-between gap-1 @sm:gap-2 @2xl:gap-3">
                   <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     <Hint side="bottom" label={<>{collapsed ? "Show sidebar" : "Hide sidebar"} <Keys className="opacity-70">⌘B</Keys></>}>
                       <SidebarTrigger ref={triggerRef} className="-ms-1" />
@@ -910,7 +942,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
                     {/* The crumbs collapse by the room they have beside the bar's controls, not by the page's width. */}
                     <div className="hidden min-w-0 flex-1 overflow-hidden @[17rem]:block"><div className="@container min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div></div>
                   </div>
-                  <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} /></div>
+                  <div className="flex shrink-0 justify-center @2xl:w-48 @6xl:w-64 @7xl:w-80"><CommandMenu sections={sections} navigation={navigation} /></div>
                   <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
                     <BarButtons tools={tools} />
                   </div>
