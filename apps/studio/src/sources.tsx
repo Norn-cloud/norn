@@ -20,6 +20,7 @@ import { ModelGraph } from "./model-graph.tsx"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DecidedRecordsGrid } from "./grid/records-grid.tsx"
 import { useCatalog } from "./lib/use-catalog.ts"
+import { useWorkspace } from "./lib/workspace.tsx"
 import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
 
@@ -301,7 +302,7 @@ export { useCatalog }
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
-  const mode = useMode()
+  const workspace = useWorkspace()
   const [search, setSearch] = useState("")
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -311,7 +312,7 @@ export function SourcesPage() {
         description="The systems that feed this workspace, and the one model every system's records are mapped into."
         // While the workspace can't be opened (the server's mode answer), nothing can be connected to it:
         // the page's Workspace unavailable state says why, so the action is not offered beside it.
-        primary={mode.isError ? undefined : <Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
+        primary={workspace.kind === "unavailable" ? undefined : <Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
       <LoadState
         status={read.status}
         data={catalog}

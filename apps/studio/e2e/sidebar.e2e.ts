@@ -376,65 +376,6 @@ test("sidebar under reduced motion: collapsing, rows and the phone sheet switch 
   expect(await style(sheet, "transition-property")).toBe("none")
 })
 
-// UI polish: a long Records list never pushes the groups below it off the screen. It starts closed; open, it
-// lists the first 8 types and "Show all"; the reader's choices (open, all) survive a reload.
-test("sidebar: Records starts closed so every group stays in view; open it lists 8 types and Show all; both choices survive a reload", async ({ page }) => {
-  await recorded(page)
-  await page.goto("/")
-  await settled(page)
-  const records = nav(page).locator('[role="treeitem"][data-section-path="/objects"]')
-  await expect(records).toHaveAttribute("aria-expanded", "false")
-  // Nothing under Records shows, and the last group's last row is on screen at 1440×900.
-  await expect(nav(page).getByRole("treeitem").last()).toBeInViewport()
-  if (SHOTS) await page.screenshot({ path: `${SHOTS}/sidebar-records-closed-light.png` })
-
-  await records.locator('> [data-slot="tree-label"]').click()
-  await expect(records).toHaveAttribute("aria-expanded", "true")
-  const more = records.getByRole("treeitem", { name: /^Show all \d+$/ })
-  await expect(more).toBeVisible()
-  const total = Number((await more.getAttribute("aria-label") ?? (await more.innerText())).match(/\d+/)?.[0])
-  expect(total).toBeGreaterThan(9)
-  // The first 8 types, then the "Show all" row.
-  await expect(records.locator('[role="group"] [role="treeitem"]')).toHaveCount(9)
-  await more.click()
-  await expect(records.getByRole("treeitem", { name: "Show fewer" })).toBeVisible()
-  await expect(records.locator('[role="group"] [role="treeitem"]')).toHaveCount(total + 1)
-  const hrefs = await records.locator('[role="group"] a[href]').evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))
-  expect(hrefs).toHaveLength(total)
-
-  // Both choices are the reader's, kept per browser.
-  await page.reload()
-  await settled(page)
-  await expect(records).toHaveAttribute("aria-expanded", "true")
-  await expect(records.getByRole("treeitem", { name: "Show fewer" })).toBeVisible()
-  await records.getByRole("treeitem", { name: "Show fewer" }).click()
-  await expect(records.locator('[role="group"] [role="treeitem"]')).toHaveCount(9)
-  await records.locator('> [data-slot="tree-label"]').click()
-  await expect(records).toHaveAttribute("aria-expanded", "false")
-  await page.reload()
-  await settled(page)
-  await expect(records).toHaveAttribute("aria-expanded", "false")
-
-  // The current type's row always shows, even past the first 8 and with Records closed by the reader.
-  const last = hrefs.at(-1) ?? ""
-  await page.goto(last)
-  await settled(page)
-  await expect(records).toHaveAttribute("aria-expanded", "true")
-  await expect(records.locator(`a[href="${last}"]`)).toBeVisible()
-  expect(await nav(page).locator('[aria-current="page"]').evaluate((element, href) => element.matches(`a[href="${href}"]`) || element.querySelector(`a[href="${href}"]`) !== null, last)).toBe(true)
-  await expect(records.locator('[role="group"] [role="treeitem"]')).toHaveCount(10)
-
-  // On a phone the Navigation sheet starts with Records closed too.
-  await page.evaluate(() => localStorage.removeItem("norn.studio.sidebar.branches"))
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.reload()
-  await settled(page)
-  await toggle(page).click()
-  const sheet = page.getByRole("dialog", { name: "Navigation" })
-  await expect(sheet.locator('[role="treeitem"][data-section-path="/objects"]')).toHaveAttribute("aria-expanded", "false")
-  if (SHOTS) await page.screenshot({ path: `${SHOTS}/sidebar-sheet-records-closed-390-light.png` })
-})
-
 test("notifications say honestly that the cell sends none yet, and point to the Inbox", async ({ page }) => {
   await recorded(page)
   await page.goto("/")

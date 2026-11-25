@@ -165,7 +165,7 @@ function HeldBack({ group }: { readonly group: Group }) {
   return (
     <Collapsible defaultOpen={group.records.length <= 3}>
       <GroupHead icon={ShieldAlert}
-        title={<><span>{heldRuleTitle(group)}</span><span data-held-type="" className="text-muted-foreground"> · {conceptTitle(group.objectType)} · <span className="tabular-nums">{held}</span> held back</span></>}>
+        title={<><span>{heldRuleTitle(group)}</span><span data-held-type="" className="text-muted-foreground"> · {conceptTitle(group.objectType)} · <span className="whitespace-nowrap tabular-nums">{held} held back</span></span></>}>
         <Button asChild size="sm" variant="outline"><RouteLink to={group.target}>Review</RouteLink></Button>
         <CollapsibleTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Show the records" className="data-open:rotate-90 max-sm:size-[44px]"><ChevronRight /></Button></CollapsibleTrigger>
       </GroupHead>

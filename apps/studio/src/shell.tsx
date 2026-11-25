@@ -23,10 +23,10 @@ import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
-import { isRetryableModeError, useMode } from "@/lib/live-transport"
+import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
 import { lastReachableAt, useStudioScope } from "@/lib/definitions"
 import { CopyId } from "@/components/copy-id"
-import { formatLastReachable, retryWorkspace, useWorkspaceUnavailableShown } from "@/components/load-state"
+import { formatLastReachable } from "@/components/load-state"
 import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
@@ -572,9 +572,7 @@ function SectionTree({ sections, perspective, navigation, pathname, chosen, onCh
     const entries = navigation.menus.get(section.path) ?? []
     const destEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
     const active = section === open
-    // A destination lists its items only while its page (or one of them) is open; a long list such as
-    // Records starts closed, so the groups below it stay in view. The reader's own choice wins.
-    if (destEntries.length > 0) defaults.set(`dest:${section.path}`, active)
+    if (destEntries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
     const headings = [...new Set(destEntries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
     headings.forEach((heading, index) => defaults.set(`group:${section.path}:${heading}`, index === 0))
     if (active) holding.add(`space:${section.group ?? ""}`)
@@ -592,14 +590,10 @@ function SectionTree({ sections, perspective, navigation, pathname, chosen, onCh
   const expanded = values.filter((value) => holding.has(value) || (chosen[value] ?? defaults.get(value)))
   const close = () => setOpenMobile(false)
   const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
-  // "Show all" rows are actions, not branches: pressing one flips the reader's choice for that list.
-  const onAction = (value: string) => {
-    if (value.startsWith("more:")) onChosenChange((previous) => ({ ...previous, [value]: !(previous[value] ?? false) }))
-  }
   return (
-    <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded} onAction={onAction}
+    <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
       onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
-      {global.map((section) => <Destination key={section.path} section={section} entries={[]} badge={navigation.badges.get(section.path)} close={close} current={current} showAll />)}
+      {global.map((section) => <Destination key={section.path} section={section} entries={[]} badge={navigation.badges.get(section.path)} close={close} />)}
       {spaces.map((space) => {
         const members = own.filter((section) => (section.group ?? "") === space)
         const pinnedItems = own.filter((section) => section.pinned).flatMap((section) =>
@@ -620,8 +614,7 @@ function SectionTree({ sections, perspective, navigation, pathname, chosen, onCh
           ...members.map((section) => {
             const entries = navigation.menus.get(section.path) ?? []
             const shownEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
-            return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close}
-              current={current} showAll={chosen[`more:${section.path}`] ?? false} />
+            return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close} />
           }),
           ...pinnedItems,
         ]
@@ -640,26 +633,8 @@ function SectionTree({ sections, perspective, navigation, pathname, chosen, onCh
   )
 }
 
-/** How many items a destination lists before a "Show all" row: enough to scan, few enough that the groups below stay in view. */
-export const MENU_SHOWN = 8
-
-/**
- * The items a destination lists: every one when the reader chose "Show all" or the list is short,
- * else the first {@link MENU_SHOWN} plus the current page's item, so the current row is never hidden.
- */
-export function shownItems(entries: readonly MenuEntry[], showAll: boolean, current: string | null): { readonly shown: readonly MenuEntry[]; readonly hidden: number } {
-  if (showAll || entries.length <= MENU_SHOWN + 1 || entries.some(({ group }) => group)) return { shown: entries, hidden: 0 }
-  const shown = entries.filter((entry, index) => index < MENU_SHOWN || entry.href === current)
-  return { shown, hidden: entries.length - shown.length }
-}
-
 /** One destination in the source list: its row (a link, or a plain heading when it has no page), then its items. */
-function Destination({ section, entries: listed, badge, close, current, showAll }: {
-  readonly section: Section; readonly entries: readonly MenuEntry[]; readonly badge: string | undefined; readonly close: () => void
-  readonly current: string | null; readonly showAll: boolean
-}) {
-  const { shown: entries, hidden } = shownItems(listed, showAll, current)
-  const long = hidden > 0 || (showAll && shownItems(listed, false, current).hidden > 0)
+function Destination({ section, entries, badge, close }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly badge: string | undefined; readonly close: () => void }) {
   const headings = [...new Set(entries.map(({ group }) => group ?? ""))]
   // Items indent to the label column and carry no icon: under one destination they are all one kind.
   const rows = (members: readonly MenuEntry[]) => members.map((entry) => {
@@ -692,21 +667,12 @@ function Destination({ section, entries: listed, badge, close, current, showAll 
     <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{section.label}</span>
     {badge && <span data-count className="ms-auto text-meta tabular-nums">{badge}</span>}
   </>
-  // The list's own "Show all" row: a quiet action at the items' indent that says how many it adds.
-  const more = long && (
-    <TreeItem key="more" value={`more:${section.path}`} label={showAll ? "Show fewer" : `Show all ${listed.length}`} data-show-all={showAll ? "true" : "false"} className={focusRow}>
-      <TreeItemLabel className={cn(row, "ps-[32px]")}>
-        <span className="truncate">{showAll ? "Show fewer" : `Show all ${listed.length}`}</span>
-        <ChevronDown aria-hidden strokeWidth={1.6} className={cn("ms-auto text-subtle-foreground transition-transform duration-150 motion-reduce:transition-none", showAll && "rotate-180")} />
-      </TreeItemLabel>
-    </TreeItem>
-  )
   return (
     <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
       {section.index === false
         ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
         : <TreeItemLabel render={<NavLink to={section.path} onClick={close} />} className={row}>{head}</TreeItemLabel>}
-      {entries.length > 0 && <TreeGroup>{children}{more}</TreeGroup>}
+      {entries.length > 0 && <TreeGroup>{children}</TreeGroup>}
     </TreeItem>
   )
 }
@@ -920,8 +886,15 @@ function ConnectionBanner() {
   const slow = useSlowConnecting(mode)
   const { locale } = useLocale()
   const { view } = useView()
-  const onPage = useWorkspaceUnavailableShown()
-  const retry = () => retryWorkspace(queryClient)
+  const retry = () => {
+    void retryMode(queryClient)
+    void queryClient.invalidateQueries({
+      predicate: (query) => {
+        const head = query.queryKey[0]
+        return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+      },
+    })
+  }
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null
@@ -930,7 +903,7 @@ function ConnectionBanner() {
         <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
         <span>Connecting to your workspace cell…</span>
         <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
-        <Button type="button" variant="outline" size="xs" className="ms-auto max-sm:min-h-[44px]" onClick={retry}>Retry now</Button>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={retry}>Retry now</Button>
       </div>
     )
   }
@@ -942,7 +915,7 @@ function ConnectionBanner() {
         <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
         <span>Couldn't reach the cell.</span>
         <span className="text-muted-foreground">Reconnecting…</span>
-        <Button type="button" variant="outline" size="xs" className="ms-auto max-sm:min-h-[44px]" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
       </div>
     )
   }
@@ -950,41 +923,28 @@ function ConnectionBanner() {
   const info = explainError(error, locale, view)
   const reachable = lastReachableAt(scope.data)
   const reachableLabel = formatLastReachable(reachable)
-  const lead = <><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} /></>
-  // The page shows the full state (message, incident, Retry): the banner is one line that points to it.
-  if (onPage) {
-    const reveal = () => {
-      const state = document.querySelector<HTMLElement>("[data-workspace-unavailable]")
-      state?.scrollIntoView({ behavior: "smooth", block: "start" })
-      state?.focus({ preventScroll: true })
-    }
-    return (
-      <div role="status" data-connection="unavailable" data-compact="" data-retryable={info.retryable === false ? "false" : "true"}
-        className="flex min-h-[40px] items-center gap-2.5 border-b border-line bg-canvas px-4 py-1.5 text-body md:px-8">
-        {lead}
-        <p className="min-w-0 flex-1 truncate" title={info.headline}><span className="text-foreground">Workspace unavailable.</span> <span className="text-muted-foreground">{info.headline}</span></p>
-        <Button type="button" variant="ghost" size="xs" className="shrink-0 max-sm:min-h-[44px]" onClick={reveal}>See details</Button>
-      </div>
-    )
-  }
-  // No full state on the page: the banner carries it, laid out as dot, words and Retry, with the
-  // details on one gap-spaced line under the words (no separator left at the start of a wrapped line).
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
-      className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2.5 gap-y-2 border-b border-line bg-canvas px-4 py-2.5 text-body sm:grid-cols-[auto_minmax(0,1fr)_auto] md:px-8">
-      <span className="flex h-[1.45em] items-center gap-2.5">{lead}</span>
-      <div className="min-w-0 space-y-0.5">
-        <p className="text-pretty"><span className="text-foreground">Workspace unavailable.</span> <span className="text-muted-foreground">{info.headline}</span></p>
-        <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-meta text-muted-foreground">
-          {info.detail && <span className="[overflow-wrap:anywhere]">{info.detail}</span>}
-          {reachable !== null && reachableLabel !== null && (
-            <span>Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time></span>
-          )}
-          {info.incidentId && <span className="inline-flex items-center gap-1">Incident <CopyId value={info.incidentId} /></span>}
-          {view === "technical" && info.code && <span className="font-mono">{info.code}</span>}
-        </p>
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2.5 text-body md:px-8">
+      <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />
+      <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-foreground">Workspace unavailable.</span>
+        <span className="text-muted-foreground">{info.headline}</span>
+        {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
+        {reachable !== null && reachableLabel !== null && (
+          <span className="text-meta text-muted-foreground">
+            · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
+          </span>
+        )}
+        {info.incidentId && (
+          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
+        )}
+        {view === "technical" && info.code && (
+          <span className="font-mono text-meta text-muted-foreground">· {info.code}</span>
+        )}
       </div>
-      <Button type="button" variant="outline" size="sm" className="col-start-2 justify-self-start sm:col-start-auto sm:justify-self-end max-sm:min-h-[44px]" disabled={mode.isFetching} onClick={retry}>Retry</Button>
+      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )
 }
@@ -1231,11 +1191,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
   // unmounts that control can hand focus to its rail counterpart.
   const lastInSidebarRef = useRef<{ readonly scope: boolean; readonly label: string | null } | null>(null)
   const pendingFocusSectionRef = useRef<string | null>(null)
-  const [chosenByPerspective, setChosenByPerspective] = useState<Branches>(storedBranches)
-  // The reader's open and closed lists (and "Show all") are kept per browser, as the sidebar's own width is.
-  useEffect(() => {
-    try { globalThis.localStorage?.setItem(BRANCHES_KEY, JSON.stringify(chosenByPerspective)) } catch { /* not kept */ }
-  }, [chosenByPerspective])
+  const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
   const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
     setChosenByPerspective((all) => ({ ...all, [perspective]: update(all[perspective]) }))
   const expandSection = (path: string) => {
@@ -1350,26 +1306,6 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
       {isDock && <FloatingDock sections={sections} perspective={perspective} navigation={navigation} current={current} assistant={assistant} />}
     </>
   )
-}
-
-type Branches = Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>
-
-const BRANCHES_KEY = "norn.studio.sidebar.branches"
-
-/** The lists the reader opened or closed on an earlier visit, per perspective; nothing when storage is blocked or holds something else. */
-export function storedBranches(): Branches {
-  const empty: Branches = { workspace: {}, builder: {} }
-  try {
-    const kept: unknown = JSON.parse(globalThis.localStorage?.getItem(BRANCHES_KEY) ?? "null")
-    if (typeof kept !== "object" || kept === null) return empty
-    const choices = (value: unknown): Record<string, boolean> => typeof value === "object" && value !== null
-      ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"))
-      : {}
-    const all = kept as Record<string, unknown>
-    return { workspace: choices(all["workspace"]), builder: choices(all["builder"]) }
-  } catch {
-    return empty
-  }
 }
 
 /** The shell in the reader's direction: in Arabic the sidebar sits on the right (it follows the document's `dir`). */

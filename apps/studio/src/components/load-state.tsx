@@ -1,6 +1,6 @@
-import { QueryClientContext, useQueryClient, type QueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
-import { use, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
 import { CopyId } from "@/components/copy-id"
 import { Disclosure } from "@/components/disclosure"
@@ -96,41 +96,6 @@ export function SkeletonBlock({ kind = "list", label = "Loading" }: { readonly k
   )
 }
 
-// How many full Workspace unavailable states the page shows right now. While one is shown, the
-// shell's banner is a one-line pointer to it rather than a second copy of the same message.
-let unavailableShown = 0
-const unavailableListeners = new Set<() => void>()
-const announceUnavailable = () => { for (const listener of unavailableListeners) listener() }
-const subscribeUnavailable = (listener: () => void) => { unavailableListeners.add(listener); return () => { unavailableListeners.delete(listener) } }
-
-/**
- * Read the workspace again: the mode (and the scope when its read failed), then every read that failed
- * with it. The shell's banner and a page's full Workspace unavailable state retry the same way.
- */
-export function retryWorkspace(client: QueryClient): void {
-  void retryMode(client)
-  void client.invalidateQueries({
-    predicate: (query) => {
-      const head = query.queryKey[0]
-      return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
-    },
-  })
-}
-
-/** Whether the page itself shows a full Workspace unavailable state (its message, incident and Retry). */
-export function useWorkspaceUnavailableShown(): boolean {
-  return useSyncExternalStore(subscribeUnavailable, () => unavailableShown > 0, () => false)
-}
-
-/** Counts this state as shown while it is mounted (before paint, so the banner never flashes a duplicate). */
-function useShownUnavailable() {
-  useLayoutEffect(() => {
-    unavailableShown += 1
-    announceUnavailable()
-    return () => { unavailableShown -= 1; announceUnavailable() }
-  }, [])
-}
-
 /**
  * Honest state for a broken, unopenable, or unreachable workspace cell: names what the server
  * said, shows the incident id when logged, says when the workspace was last reachable, separates
@@ -149,17 +114,9 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
   const reachable = lastReachableAt(scope)
   const reachableLabel = formatLastReachable(reachable)
   const nonRetryable = info.retryable === false
-  useShownUnavailable()
-  // This is the page's one Workspace unavailable state (the banner only points here), so its Retry also
-  // reads the workspace again when the shell's own read of it failed, as the banner's Retry used to.
-  const client = use(QueryClientContext)
-  const retry = onRetry && (() => {
-    if (client?.getQueryCache().findAll({ queryKey: ["studio-mode"] }).some((query) => query.state.status === "error")) retryWorkspace(client)
-    onRetry()
-  })
   return (
-    <div role="alert" tabIndex={-1} data-workspace-unavailable="" data-retryable={nonRetryable ? "false" : "true"}
-      className={`scroll-mt-20 rounded-(--radius-panel) border border-(--panel-border) bg-card text-body shadow-(--panel-shadow) outline-none ${compact ? "p-3.5" : "p-5"}`}>
+    <div role="alert" data-workspace-unavailable="" data-retryable={nonRetryable ? "false" : "true"}
+      className={`rounded-(--radius-panel) border border-(--panel-border) bg-card text-body shadow-(--panel-shadow) ${compact ? "p-3.5" : "p-5"}`}>
       <div className="flex flex-wrap items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-(--radius-well) bg-(--well) text-muted-foreground ring-1 ring-line">
           <CloudOff aria-hidden className="size-4" strokeWidth={1.6} />
@@ -191,8 +148,8 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
             </Disclosure>
           )}
         </div>
-        {retry && (
-          <Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={retry}>
+        {onRetry && (
+          <Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
             <RefreshCw className={isFetching ? "animate-spin" : undefined} />Retry
           </Button>
         )}

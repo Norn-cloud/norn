@@ -445,11 +445,12 @@ export function ViewsPage() {
                   }
                 >
                   <Well className="px-3.5 py-3">
-                    <div className="flex flex-wrap items-center gap-2 text-body text-muted-foreground">
+                    {/* Spaced by the gap alone, so a wrapped line never starts on a stray separator. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-body text-muted-foreground">
                       <Badge variant="secondary">{concept?.title ?? stored.view.objectType}</Badge>
                       {stored.view.space && <Badge variant="outline">Space: {stored.view.space}</Badge>}
                       <span>{filterCount === 0 ? "All records" : `${filterCount} filter${filterCount === 1 ? "" : "s"}`}</span>
-                      <span><span aria-hidden className="text-subtle-foreground">·</span> Version {stored.version}</span>
+                      <span>Version {stored.version}</span>
                     </div>
                     {stored.view.description && <p className="mt-1.5 text-body text-muted-foreground">{stored.view.description}</p>}
                   </Well>
@@ -556,8 +557,9 @@ function ScopedViewDetail({ id, store = views }: {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="min-w-0 flex-1 space-y-1">
+      {/* The title keeps at least 18rem: on a phone the actions move under it instead of squeezing it. */}
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1 basis-72 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-title tracking-tight">{active?.view.title || "View"}</h1>
             {active?.view.space && <Badge variant="outline">Space: {active.view.space}</Badge>}
