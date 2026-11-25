@@ -1335,7 +1335,6 @@
       "crates/norn-api/tests/transform_studio.rs": 1,
       "crates/norn-cell-do/src/dev.rs": 1,
       "crates/norn-cell-do/src/dev/http.rs": 1,
-      "crates/norn-cell-do/src/mcp.rs": 2,
       "crates/norn-cell-do/src/server.rs": 2,
       "crates/norn-cell-do/tests/analytics_records.rs": 1,
       "crates/norn-cell-do/tests/analytics_sources.rs": 1,

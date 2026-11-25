@@ -11,7 +11,7 @@ import { getDisplayedScope, type StudioScope } from "@/lib/definitions"
 import type { ToolHost } from "@/widget/bridge"
 import type { View } from "@/widget/views"
 import type { SidekickSession, ViewDelivery } from "./client.ts"
-import { applyUpdate, promptItem, toolWords, viewItem, type Item, type Transcript } from "./transcript.ts"
+import { applyUpdate, promptItem, toolLabel, viewItem, type Item, type ToolLabels, type Transcript } from "./transcript.ts"
 
 export { useSidekickServed } from "./served.ts"
 
@@ -33,7 +33,9 @@ export const SUGGESTIONS = ["What's our stock worth?", "Where does that number c
 export const sendsOnEnter = (event: { readonly key: string; readonly shiftKey: boolean; readonly nativeEvent: { readonly isComposing?: boolean } }) =>
   event.key === "Enter" && !event.shiftKey && event.nativeEvent.isComposing !== true
 
-function ToolRow({ item }: { readonly item: Extract<Item, { kind: "tool" }> }) {
+const NO_LABELS: ToolLabels = new Map()
+
+function ToolRow({ item, labels }: { readonly item: Extract<Item, { kind: "tool" }>; readonly labels: ToolLabels }) {
   const failed = item.status === "failed"
   const done = item.status === "completed"
   return (
@@ -41,7 +43,7 @@ function ToolRow({ item }: { readonly item: Extract<Item, { kind: "tool" }> }) {
       <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full", done && "bg-success text-background", failed && "bg-destructive text-background")}>
         {done ? <Check className="size-2.5" strokeWidth={3} /> : failed ? <X className="size-2.5" strokeWidth={3} /> : <LoaderCircle className="size-3.5 animate-spin" />}
       </span>
-      <span className={cn(!done && !failed && "text-foreground")}>{toolWords(item.tool)}</span>
+      <span className={cn(!done && !failed && "text-foreground")}>{toolLabel(labels, item.tool)}</span>
       <Badge variant="outline" className="ms-auto font-mono text-meta font-normal">{item.tool}</Badge>
     </div>
   )
@@ -59,10 +61,10 @@ function ViewCard({ delivery, host }: { readonly delivery: ViewDelivery; readonl
   )
 }
 
-function Entry({ item, host }: { readonly item: Item; readonly host: ToolHost }) {
+function Entry({ item, host, labels }: { readonly item: Item; readonly host: ToolHost; readonly labels: ToolLabels }) {
   if (item.kind === "user") return <p className="ms-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-muted px-3 py-2 text-body">{item.text}</p>
   if (item.kind === "text") return <Streamdown className="text-body [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{item.text}</Streamdown>
-  if (item.kind === "tool") return <ToolRow item={item} />
+  if (item.kind === "tool") return <ToolRow item={item} labels={labels} />
   return <ViewCard delivery={item.delivery} host={host} />
 }
 
@@ -71,6 +73,7 @@ type Status = "idle" | "connecting" | "busy"
 /** The chat, held by the shell's slot so closing the panel keeps it, scoped to one user/org/env tuple. */
 export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | null; readonly scopeKey?: string } = {}) {
   const [transcript, setTranscript] = useState<Transcript>([])
+  const [labels, setLabels] = useState<ToolLabels>(NO_LABELS)
   const [input, setInput] = useState("")
   const [status, setStatus] = useState<Status>("idle")
   const [error, setError] = useState<string | null>(null)
@@ -88,6 +91,7 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
     session.current?.close()
     session.current = null
     setTranscript([])
+    setLabels(NO_LABELS)
     setError(null)
     setStatus("idle")
   }, [scopeKey])
@@ -107,6 +111,9 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
         view: (delivery) => {
           if (generation.current !== expectedGeneration) return
           setTranscript((current) => viewItem(current, delivery))
+        },
+        tools: (served) => {
+          if (generation.current === expectedGeneration) setLabels(served)
         },
         closed: () => {
           if (generation.current === expectedGeneration) session.current = null
@@ -162,6 +169,7 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
     session.current?.close()
     session.current = null
     setTranscript([])
+    setLabels(NO_LABELS)
     setError(null)
     setStatus("idle")
   }
@@ -194,7 +202,7 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
               <p className="max-w-xs text-body text-muted-foreground">It answers from your workspace through Norn, as you. What you can't see, it can't see either.</p>
             </div>
           )}
-          {transcript.map((item) => <Entry key={item.id} item={item} host={host} />)}
+          {transcript.map((item) => <Entry key={item.id} item={item} host={host} labels={labels} />)}
           {waiting && <p role="status" className="flex items-center gap-2 text-body text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{status === "connecting" ? "Connecting…" : "Thinking…"}</p>}
           {error !== null && (
             <div role="alert" className="rounded-xl border bg-card p-3 text-body">

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { defaultFetch, setDisplayedScope } from "../src/lib/definitions.ts"
 import { fetchGrant, sidekickServed } from "../src/sidekick/client.ts"
-import { applyUpdate, promptItem, toolWords, viewItem, type Transcript } from "../src/sidekick/transcript.ts"
+import { applyUpdate, promptItem, toolLabel, toolLabels, viewItem, type Transcript } from "../src/sidekick/transcript.ts"
 
 const update = (value: unknown) => ({ sessionId: "s", update: value }) as Parameters<typeof applyUpdate>[1]
 
@@ -26,8 +26,26 @@ test("a turn folds into the person's prompt, the agent's words, each Norn tool c
   expect(transcript.map((item) => item.kind)).toEqual(["user", "text", "tool", "view"])
   expect(transcript[1]).toMatchObject({ text: "Asking Norn." })
   expect(transcript[2]).toMatchObject({ tool: "norn_answer", status: "completed" })
-  expect(toolWords("norn_trace_answer")).toBe("Traced where the number comes from")
-  expect(toolWords("norn_new_thing")).toBe("new thing")
+})
+
+test("a tool row says the server's label for the tool, or the tool's own name, never Studio's words", () => {
+  const labels = toolLabels({
+    tools: [
+      { name: "norn_trace_answer", title: "Trace an answer to its source" },
+      { name: "act_docs_scanned_document_correct", title: "Correct a scanned document" },
+      { name: "norn_untitled", title: " " },
+      { name: 7, title: "not a name" },
+      "malformed",
+      null,
+    ],
+  })
+  expect([...labels.keys()]).toEqual(["norn_trace_answer", "act_docs_scanned_document_correct"])
+  expect(toolLabel(labels, "norn_trace_answer")).toBe("Trace an answer to its source")
+  expect(toolLabel(labels, "act_docs_scanned_document_correct")).toBe("Correct a scanned document")
+  // No label from the server: the name as it is, not prettified.
+  expect(toolLabel(labels, "norn_untitled")).toBe("norn_untitled")
+  expect(toolLabel(toolLabels(null), "norn_new_thing")).toBe("norn_new_thing")
+  expect(toolLabels({ tools: "nope" }).size).toBe(0)
 })
 
 test("fetchGrant sends pinned scope headers via defaultFetch even after displayed scope changes", async () => {

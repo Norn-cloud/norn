@@ -28,5 +28,7 @@ mod lineage_world;
 mod mcp_action_tool;
 #[path = "sqlite_ddl.rs"]
 mod sqlite_ddl;
+#[path = "tool_manifest.rs"]
+mod tool_manifest;
 #[path = "widget_ux.rs"]
 mod widget_ux;
