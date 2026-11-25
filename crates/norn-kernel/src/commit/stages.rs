@@ -12,7 +12,7 @@ use crate::cell_host::{CellCommit, CommitError, CommitVersions, FactKey, LinkKey
 use crate::commit_check::{InvariantAdmissionError, check_invariants, check_link_authority};
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
 use crate::creator_stamp::{KernelTrust as Trust, check_protected};
-use crate::lifecycle_init::check_first_writes;
+use crate::lifecycle_init::check_lifecycle_writes;
 use crate::{CommitModel, CommitView, ObservationAuthorization};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,7 +72,7 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
                     CommitStage::Immutable => check_immutable(commit, model, view),
                     CommitStage::Versions => {
                         check_versions(commit, model, view, authorization)?;
-                        check_first_writes(commit, model, view, authorization, trust)?;
+                        check_lifecycle_writes(commit, model, view, authorization, trust)?;
                         let plan = VersionPlan::checked(&commit.writes, &commit.links)?;
                         self.phase = Phase::Post(PostStages {
                             post: PostState::seal(commit, model, view, plan)?,

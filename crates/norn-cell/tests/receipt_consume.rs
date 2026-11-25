@@ -91,10 +91,11 @@ fn run_types() -> Vec<ObjectTypeDef> {
                 text("outcome", true),
                 text("receipt", true)
             ],
-            "lifecycles": [{ "property": "status", "initial": ["started"], "terminal": ["confirmed"],
+            "lifecycles": [{ "property": "status", "initial": ["started"],
                 "transitions": [
                     { "id": "ask", "from": ["started"], "to": "awaiting_perform_confirm" },
-                    { "id": "confirm", "from": ["awaiting_perform_confirm"], "to": "confirmed" }
+                    { "id": "confirm", "from": ["awaiting_perform_confirm"], "to": "confirmed" },
+                    { "id": "ask_again", "from": ["confirmed"], "to": "awaiting_perform_confirm" }
                 ] }],
             "invariants": [{
                 "id": "never_publish_held",
@@ -634,15 +635,24 @@ fn retained_receipt_commits_its_transition_and_consumption_atomically_across_a_c
         );
         let commits = reopened.commits().unwrap().len();
         assert_eq!(commits, base.saturating_add(1), "one consuming commit");
-        // Put the run back in its waiting state: only the fence stops a replay.
-        let version = reopened.load(&FactKey::new(RUN, "run-1")).unwrap().version;
+        // Put the run back in its waiting state, by the recorded transition
+        // that leads there (GRAPH-STATE-1): only the fence stops a replay.
+        let run = FactKey::new(RUN, "run-1");
+        let version = reopened.load(&run).unwrap().version;
         reopened
             .commit(CellCommit {
                 writes: vec![put(
-                    FactKey::new(RUN, "run-1"),
+                    run.clone(),
                     version,
                     &[("run_id", "run-1"), ("status", "awaiting_perform_confirm")],
                 )],
+                events: vec![FactEvent::Transitioned {
+                    key: run,
+                    lifecycle: PropertyId("status".into()),
+                    transition: TransitionId("ask_again".into()),
+                    from: "confirmed".into(),
+                    to: "awaiting_perform_confirm".into(),
+                }],
                 ..CellCommit::empty()
             })
             .unwrap();

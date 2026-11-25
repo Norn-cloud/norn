@@ -288,8 +288,11 @@ pub fn check_commit_stamped<E: 'static, C, T, V: CommitView + ?Sized>(
 /// whose effective type has protected properties: a delete refuses; a create
 /// may hold a protected value only when it is the declared default or the
 /// kernel's stamp; an update must keep every protected value unchanged, and a
-/// host that cannot prove the stored values refuses. Owned-row and sealed
-/// observation admissions carry their own kernel authority and are exempt.
+/// host that cannot prove the stored values refuses. The owned-row admission
+/// carries its own kernel authority and is exempt, and so is each exact write
+/// a sealed observation's kernel-prepared authorization covers
+/// (`index.authorizes(write)`, as the lifecycle, invariant, law and version
+/// stages exempt it): every other write in an observed commit is checked.
 ///
 /// # Errors
 ///
@@ -305,10 +308,18 @@ pub(crate) fn check_protected<E, C, T, V: CommitView + ?Sized>(
     let stamp = match trust {
         KernelTrust::Stamped(stamp) => Some(stamp),
         KernelTrust::OwnedRows => return Ok(()),
-        KernelTrust::Plain if authorization.is_some() => return Ok(()),
         KernelTrust::Plain => None,
     };
+    let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
+        // Only the exact write a sealed observation prepared is exempt; any
+        // other write in the same commit is an ordinary command mutation.
+        if authorized
+            .as_ref()
+            .is_some_and(|index| index.authorizes(write))
+        {
+            continue;
+        }
         let key = model.canonical(&write.key);
         // A stale write (a concurrent create or update won) is the retryable
         // `Conflict` the version check reports, never a protected refusal.
