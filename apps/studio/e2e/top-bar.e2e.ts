@@ -94,7 +94,9 @@ test("top bar: an exact empty inbox reads 'nothing held back'; a failed inbox sa
   await page.reload()
   await expect(tickBar(page)).toHaveAccessibleName(`Rules: ${total}, what they hold back could not be read`)
   await tickBar(page).click()
-  await expect(page.getByRole("dialog")).toContainText("What the rules hold back could not be read.")
+  // The stub's 500 carries a typed refusal body, so the note says the cell refused the read and quotes it.
+  await expect(page.getByRole("dialog")).toContainText("What the rules hold back could not be read")
+  await expect(page.getByRole("dialog")).toContainText("The inbox could not be read.")
 })
 
 test("top bar: with no laws served there is no tick bar at all", async ({ page }) => {
