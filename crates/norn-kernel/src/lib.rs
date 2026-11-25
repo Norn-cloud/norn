@@ -72,6 +72,7 @@ pub mod flow_turn;
 pub mod governing_laws;
 mod guard_diagnostic;
 mod independence;
+mod lifecycle_init;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
@@ -175,6 +176,7 @@ pub use effect::{
 };
 pub use envelope::{TurnEnvelopeLimits, TurnEnvelopeMeter, TurnEnvelopeUsage};
 pub use independence::{TransitionGuard, transition_guards};
+pub use lifecycle_init::LifecycleInitRefusal;
 pub use limits::{
     EnvelopeLimits, IngressLimit, IngressLimitExceeded, LimitProfileRef, ResourceLimitProfile,
     SliceLimits, SliceMeter, check_envelope_bytes,

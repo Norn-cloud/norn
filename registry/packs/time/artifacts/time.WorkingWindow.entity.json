@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Recurring local wall-clock operating window (HH:MM or HH:MM:SS) materialized to UTC intervals through checked timezone resolution.",
+      "description": "Recurring local wall-clock operating window (HH:MM or HH:MM:SS) materialized to UTC intervals through checked timezone resolution. `weekday` names the civil date the window starts on; `end_day_offset` (0 or 1) names the civil date it ends on, so a window may cross local midnight.",
       "identity": [
         {
           "name": "primary",
@@ -78,6 +78,13 @@
           "type": {
             "kind": "text"
           }
+        },
+        {
+          "default": "0",
+          "id": "end_day_offset",
+          "type": {
+            "kind": "integer"
+          }
         }
       ],
       "role": "thing"
@@ -88,5 +95,5 @@
     "sourcePath": "registry/packs/time/artifacts/time.WorkingWindow.entity.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

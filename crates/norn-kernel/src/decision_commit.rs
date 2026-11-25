@@ -69,13 +69,15 @@ use crate::effect::{
     Command, CommandId, Effect, FreshnessPolicy, Generation, IdempotencyKey, Timer, TimerId,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
+use crate::lifecycle_init::with_initial_states;
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
 
 mod lifecycle_admission;
 
-pub(crate) use lifecycle_admission::fill_lifecycle_defaults;
-use lifecycle_admission::{check_guards, resolve_transition, with_initial_states};
+pub(crate) use lifecycle_admission::{
+    check_guards, fill_lifecycle_defaults, materialize_lifecycle_defaults, resolve_transition,
+};
 
 /// Stable platform rule for an exact retained property-domain declaration.
 pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
@@ -698,7 +700,7 @@ impl<'a> TypeCatalog<'a> {
 
     /// Canonicalize one present temporal property value while preserving
     /// untyped or computed values and invalid temporal source strings.
-    fn canonicalize_working_temporal_value(
+    pub(crate) fn canonicalize_working_temporal_value(
         &self,
         object_type: &ObjectTypeName,
         property_name: &str,
@@ -2329,6 +2331,7 @@ impl<X> DecisionRefusal<X> {
             CommitError::TraversalLimitExceeded { key, reason } => {
                 Self::TraversalLimitExceeded { key, reason }
             }
+            CommitError::LifecycleInitialization { key, refusal } => Self::from_init(key, *refusal),
             CommitError::ObservationAuthorization => Self::InvalidOutput {
                 reason: "observation authorization did not match its prepared commit".to_owned(),
             },
@@ -2403,6 +2406,7 @@ impl<X> DecisionRefusal<X> {
             | CommitError::OwnedRowsProtected { .. }
             | CommitError::IdentifierTooLong { .. }
             | CommitError::ImmutableObject { .. }
+            | CommitError::LifecycleInitialization { .. }
             | CommitError::NotPending { .. }
             | CommitError::ReceiptNotAccepted { .. }
             | CommitError::Conflict { .. }

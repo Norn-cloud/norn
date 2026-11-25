@@ -194,7 +194,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
 impl<E, C, I, S> SqliteCell<E, C, I, S>
 where
     S: SqlEngine,
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {

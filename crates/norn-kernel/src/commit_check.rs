@@ -44,6 +44,7 @@ const MAX_LINK_READ_BYTES: usize = 262_144;
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
 use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
+use crate::lifecycle_init::check_first_writes;
 use crate::snapshot_observe::ObservationAuthorization;
 
 mod laws;
@@ -386,6 +387,7 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
+///    a first write's lifecycles begin initialized (GRAPH-STATE-1);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link
 ///    exist as their named types, and every live link of a deleted object
@@ -405,7 +407,7 @@ pub trait CommitView {
 /// # Errors
 ///
 /// The first failed check, or [`CommitError::Host`] if a lookup failed.
-pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -424,7 +426,7 @@ pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
     clippy::needless_pass_by_value,
     reason = "the authorization is deliberately consumed once at the admission boundary"
 )]
-pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit_owned_rows<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -480,7 +482,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
 ///
 /// Returns the first failed admission check, or [`CommitError::Host`] if a
 /// host lookup failed.
-pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
+pub fn check_commit_observed<E: 'static, C, T: serde::Serialize, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -492,7 +494,7 @@ pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
     check_commit_inner(commit, *model, view, Some(authorization), Trust::Plain)
 }
 
-pub(crate) fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
+pub(crate) fn check_commit_inner<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
@@ -506,7 +508,7 @@ pub(crate) fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     result
 }
 
-fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
+fn check_commit_local<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
@@ -536,7 +538,7 @@ struct LocalStages<'c, 'm, 'a, 'v, E, C, T, V: ?Sized> {
     links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
 }
 
-impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
+impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
     for LocalStages<'_, '_, '_, '_, E, C, T, V>
 {
     fn run(&mut self, stage: CommitStage) -> Result<(), CommitError<V::Error>> {
@@ -549,7 +551,8 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
             CommitStage::Accounting => check_accounting_postings(commit, model, view),
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),
-            CommitStage::Versions => check_versions(commit, model, view, authorization),
+            CommitStage::Versions => check_versions(commit, model, view, authorization)
+                .and_then(|()| check_first_writes(commit, model, view, authorization, self.trust)),
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
                 self.links = live_links_after(commit, model, view)?;

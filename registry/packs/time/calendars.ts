@@ -74,65 +74,123 @@ export const WorkingWindow = Norn.type({
   name: "time.WorkingWindow",
   role: "thing",
   title: "Working window",
-  version: "0.1.0",
-  description: "Recurring local wall-clock operating window (HH:MM or HH:MM:SS) materialized to UTC intervals through checked timezone resolution.",
+  version: "0.2.0",
+  description: "Recurring local wall-clock operating window (HH:MM or HH:MM:SS) materialized to UTC intervals through checked timezone resolution. `weekday` names the civil date the window starts on; `end_day_offset` (0 or 1) names the civil date it ends on, so a window may cross local midnight.",
   properties: Schema.Struct({
     id: Schema.String,
     weekday: Schema.Literals(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]),
     start_local: Schema.String,
     end_local: Schema.String,
+    end_day_offset: Schema.Int,
   }),
   identity: [{ name: "primary", properties: ["id"] }],
+  defaults: {
+    end_day_offset: 0,
+  },
   links: [
     { id: "calendar", description: "Calendar whose timezone resolves this window.", target: Calendar, cardinality: { to: "one", from: "many", required: true } },
   ],
 })
 
+/**
+ * Local shape of a WorkingWindow, checked without a date or timezone. `end_local` is read
+ * on the start date plus `end_day_offset` civil days, so on a fixed UTC reference day the
+ * window is non-empty iff `start < end + (offset = 1 ? 86400 s : 0)`: offset 0 keeps the same-day
+ * `start_local < end_local` rule, offset 1 admits every pair of valid wall times (equal
+ * endpoints span one civil day). Elapsed UTC length, including 23 h and 25 h civil days
+ * across DST, is checked when a window is materialized under its calendar.
+ */
 export const workingWindowValidLocalTimes = Norn.law("valid_local_window", {
   on: WorkingWindow,
   must: (self) =>
     [5, 8].includes(Norn.byteLength(self.start_local)) &&
     [5, 8].includes(Norn.byteLength(self.end_local)) &&
+    [0, 1].includes(self.end_day_offset) &&
     Norn.timestampBefore(
       Norn.resolveLocalTimestamp("2026-01-01T" + Norn.take(Norn.take(self.start_local, 8) + ":00", 8), "UTC", "reject"),
-      Norn.resolveLocalTimestamp("2026-01-01T" + Norn.take(Norn.take(self.end_local, 8) + ":00", 8), "UTC", "reject"),
+      Norn.addSeconds(
+        Norn.resolveLocalTimestamp("2026-01-01T" + Norn.take(Norn.take(self.end_local, 8) + ":00", 8), "UTC", "reject"),
+        self.end_day_offset === 1 ? 86400 : 0,
+      ),
     ),
-  because: "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times with start_local strictly before end_local.",
+  because: "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times and end_day_offset must be 0 or 1; with offset 0 start_local must be strictly before end_local, with offset 1 the window ends on the next civil day.",
 })
 
 export const workingWindowHhMmHolds = Norn.example("working window with HH:MM bounds holds", {
   of: workingWindowValidLocalTimes,
-  given: { id: "ww-1", weekday: "monday", start_local: "09:00", end_local: "17:00" },
+  given: { id: "ww-1", weekday: "monday", start_local: "09:00", end_local: "17:00", end_day_offset: 0 },
   expect: "holds",
 })
 
 export const workingWindowHhMmSsHolds = Norn.example("working window with HH:MM:SS bounds holds", {
   of: workingWindowValidLocalTimes,
-  given: { id: "ww-2", weekday: "tuesday", start_local: "08:30:00", end_local: "16:45:00" },
+  given: { id: "ww-2", weekday: "tuesday", start_local: "08:30:00", end_local: "16:45:00", end_day_offset: 0 },
   expect: "holds",
 })
 
-export const workingWindowReversedViolated = Norn.example("working window with reversed bounds is refused", {
+export const workingWindowReversedViolated = Norn.example("same-day working window with reversed bounds is refused", {
   of: workingWindowValidLocalTimes,
-  given: { id: "ww-3", weekday: "wednesday", start_local: "17:00", end_local: "09:00" },
+  given: { id: "ww-3", weekday: "wednesday", start_local: "17:00", end_local: "09:00", end_day_offset: 0 },
   expect: "violated",
 })
 
-export const workingWindowEqualViolated = Norn.example("working window with equal bounds is refused", {
+export const workingWindowEqualViolated = Norn.example("same-day working window with equal bounds is empty and refused", {
   of: workingWindowValidLocalTimes,
-  given: { id: "ww-4", weekday: "thursday", start_local: "09:00", end_local: "09:00" },
+  given: { id: "ww-4", weekday: "thursday", start_local: "09:00", end_local: "09:00", end_day_offset: 0 },
   expect: "violated",
 })
 
 export const workingWindowMalformedLengthViolated = Norn.example("working window with non-HH:MM format is refused", {
   of: workingWindowValidLocalTimes,
-  given: { id: "ww-5", weekday: "friday", start_local: "9:00", end_local: "17:00" },
+  given: { id: "ww-5", weekday: "friday", start_local: "9:00", end_local: "17:00", end_day_offset: 0 },
   expect: "violated",
 })
 
 export const workingWindowOffsetSuffixViolated = Norn.example("working window with timezone suffix is refused", {
   of: workingWindowValidLocalTimes,
-  given: { id: "ww-6", weekday: "friday", start_local: "09:00:00Z", end_local: "17:00:00" },
+  given: { id: "ww-6", weekday: "friday", start_local: "09:00:00Z", end_local: "17:00:00", end_day_offset: 0 },
+  expect: "violated",
+})
+
+export const workingWindowOvernightHolds = Norn.example("working window crossing local midnight into the next civil day holds", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-7", weekday: "friday", start_local: "22:00", end_local: "06:00", end_day_offset: 1 },
+  expect: "holds",
+})
+
+export const workingWindowWeekRolloverHolds = Norn.example("working window from Sunday night into Monday morning holds", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-8", weekday: "sunday", start_local: "23:30", end_local: "07:30", end_day_offset: 1 },
+  expect: "holds",
+})
+
+export const workingWindowFullCivilDayHolds = Norn.example("working window with equal bounds and next-day end spans one civil day", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-9", weekday: "saturday", start_local: "08:00", end_local: "08:00", end_day_offset: 1 },
+  expect: "holds",
+})
+
+export const workingWindowNextDayLaterEndHolds = Norn.example("working window ending later on the next civil day holds", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-10", weekday: "monday", start_local: "08:00", end_local: "09:30:00", end_day_offset: 1 },
+  expect: "holds",
+})
+
+export const workingWindowNegativeOffsetViolated = Norn.example("working window ending on the previous civil day is refused", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-11", weekday: "tuesday", start_local: "09:00", end_local: "17:00", end_day_offset: -1 },
+  expect: "violated",
+})
+
+export const workingWindowTwoDayOffsetViolated = Norn.example("working window ending two civil days later is refused", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-12", weekday: "tuesday", start_local: "22:00", end_local: "06:00", end_day_offset: 2 },
+  expect: "violated",
+})
+
+export const workingWindowOvernightMalformedViolated = Norn.example("next-day working window with malformed end time is refused", {
+  of: workingWindowValidLocalTimes,
+  given: { id: "ww-13", weekday: "wednesday", start_local: "22:00", end_local: "6:00", end_day_offset: 1 },
   expect: "violated",
 })
 
@@ -239,6 +297,70 @@ export const materializedWindowWrongUtcViolated = Norn.example("materialized win
   expect: "violated",
 })
 
+export const materializedWindowOvernightHolds = Norn.example("materialized window crossing local midnight holds", {
+  of: materializedWindowResolvedBounds,
+  given: {
+    id: "mw-5",
+    calendar_date: "2026-06-12",
+    start_local_at: "2026-06-12T22:00:00",
+    end_local_at: "2026-06-13T06:00:00",
+    starts_at: "2026-06-13T02:00:00Z",
+    ends_at: "2026-06-13T10:00:00Z",
+    timezone: "America/New_York",
+    dst_policy: "reject",
+    tzdb_version: "2025b",
+  },
+  expect: "holds",
+})
+
+export const materializedWindowSpringForwardCivilDayHolds = Norn.example("one civil day across DST spring-forward spans 23 hours", {
+  of: materializedWindowResolvedBounds,
+  given: {
+    id: "mw-6",
+    calendar_date: "2026-03-07",
+    start_local_at: "2026-03-07T08:00:00",
+    end_local_at: "2026-03-08T08:00:00",
+    starts_at: "2026-03-07T13:00:00Z",
+    ends_at: "2026-03-08T12:00:00Z",
+    timezone: "America/New_York",
+    dst_policy: "reject",
+    tzdb_version: "2025b",
+  },
+  expect: "holds",
+})
+
+export const materializedWindowFallBackCivilDayHolds = Norn.example("one civil day across DST fall-back spans 25 hours", {
+  of: materializedWindowResolvedBounds,
+  given: {
+    id: "mw-7",
+    calendar_date: "2026-10-31",
+    start_local_at: "2026-10-31T08:00:00",
+    end_local_at: "2026-11-01T08:00:00",
+    starts_at: "2026-10-31T12:00:00Z",
+    ends_at: "2026-11-01T13:00:00Z",
+    timezone: "America/New_York",
+    dst_policy: "reject",
+    tzdb_version: "2025b",
+  },
+  expect: "holds",
+})
+
+export const materializedWindowFallBackAs24hViolated = Norn.example("one civil day across DST fall-back claimed as 24 hours is refused", {
+  of: materializedWindowResolvedBounds,
+  given: {
+    id: "mw-8",
+    calendar_date: "2026-10-31",
+    start_local_at: "2026-10-31T08:00:00",
+    end_local_at: "2026-11-01T08:00:00",
+    starts_at: "2026-10-31T12:00:00Z",
+    ends_at: "2026-11-01T12:00:00Z",
+    timezone: "America/New_York",
+    dst_policy: "reject",
+    tzdb_version: "2025b",
+  },
+  expect: "violated",
+})
+
 export const MaterializeWindow = Norn.decision({
   id: "time.window.materialize",
   title: "Materialize local working window to canonical UTC interval",
@@ -273,8 +395,8 @@ export const MaterializeWindow = Norn.decision({
 export const MaterializeInterval = Norn.action({
   id: "time.window.materialize_interval",
   title: "Materialize working window into canonical UTC interval",
-  version: "0.1.0",
-  description: "Creates a time.MaterializedWindow bound to its linked Calendar and WorkingWindow, enforcing timezone, DST policy, tzdb 2025b pin, local wall bounds, and checked resolve_local_timestamp UTC resolution.",
+  version: "0.2.0",
+  description: "Creates a time.MaterializedWindow bound to its linked Calendar and WorkingWindow, enforcing timezone, DST policy, tzdb 2025b pin, local wall bounds (start on calendar_date, whose weekday the window names; end on calendar_date + end_day_offset), and a strictly positive checked resolve_local_timestamp UTC interval.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -339,20 +461,24 @@ export const MaterializeInterval = Norn.action({
             : Norn.take(ctx.slice.working_window.start_local, 8)),
       { root: "context" },
     ),
+    // end_local is read on calendar_date + end_day_offset civil days: the end wall time is
+    // the window's end_local and its date lies exactly end_day_offset days after the start date.
     Norn.expression(
       Schema.Struct({
         input: Schema.Struct({ calendar_date: Schema.String, end_local_at: Schema.String }),
         slice: Schema.Struct({
-          working_window: Schema.Struct({ end_local: Schema.String }),
+          working_window: Schema.Struct({ end_local: Schema.String, end_day_offset: Schema.Int }),
         }),
       }),
       (ctx) =>
+        [0, 1].includes(ctx.slice.working_window.end_day_offset) &&
+        Norn.daysBetween(ctx.input.calendar_date, Norn.take(ctx.input.end_local_at, 10)) === ctx.slice.working_window.end_day_offset &&
         ctx.input.end_local_at ===
-        Norn.take(ctx.input.calendar_date, 10) +
-          "T" +
-          (Norn.byteLength(ctx.slice.working_window.end_local) === 5
-            ? Norn.take(ctx.slice.working_window.end_local, 5) + ":00"
-            : Norn.take(ctx.slice.working_window.end_local, 8)),
+          Norn.take(ctx.input.end_local_at, 10) +
+            "T" +
+            (Norn.byteLength(ctx.slice.working_window.end_local) === 5
+              ? Norn.take(ctx.slice.working_window.end_local, 5) + ":00"
+              : Norn.take(ctx.slice.working_window.end_local, 8)),
       { root: "context" },
     ),
     Norn.expression(

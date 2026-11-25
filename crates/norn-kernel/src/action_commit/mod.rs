@@ -821,6 +821,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::ImmutableObject { .. }
+        | CommitError::LifecycleInitialization { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
@@ -863,6 +864,7 @@ fn precondition_read_refusal<X>(
         | CommitError::AtomicBoundary { .. }
         | CommitError::AtomicDeliveryBoundary { .. }
         | CommitError::ImmutableObject { .. }
+        | CommitError::LifecycleInitialization { .. }
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }

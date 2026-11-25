@@ -234,7 +234,7 @@ pub(crate) enum KernelTrust<'a> {
     Stamped(&'a CreatorStamp),
 }
 
-impl KernelTrust<'_> {
+impl<'a> KernelTrust<'a> {
     /// The owned-row admission when its proof matched, else the plain one.
     pub(crate) const fn owned(trusted: bool) -> Self {
         if trusted {
@@ -248,6 +248,14 @@ impl KernelTrust<'_> {
     pub(crate) const fn owned_rows(self) -> bool {
         matches!(self, Self::OwnedRows)
     }
+
+    /// The creator stamp a governed create's admission carries.
+    pub(crate) const fn stamp(self) -> Option<&'a CreatorStamp> {
+        match self {
+            Self::Stamped(stamp) => Some(stamp),
+            Self::Plain | Self::OwnedRows => None,
+        }
+    }
 }
 
 /// Check a kernel-prepared governed create under its creator stamp: the
@@ -259,7 +267,7 @@ impl KernelTrust<'_> {
 /// # Errors
 ///
 /// The first failed check, or [`CommitError::Host`] if a lookup failed.
-pub fn check_commit_stamped<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit_stamped<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,

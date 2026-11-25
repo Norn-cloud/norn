@@ -22,9 +22,9 @@ import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
-import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
-import { readObjectAtScope, retryMode, useMode } from "./lib/live-transport.ts"
-import type { Fetch } from "./lib/cell-read.ts"
+import { useStudioScope } from "./lib/definitions.ts"
+import { retryMode, useMode } from "./lib/live-transport.ts"
+import { recordRead } from "./lib/record-read.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
@@ -36,7 +36,7 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
-import { recordedTransport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
+import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
 import { MaskedValue, RevealScope } from "@/components/masked-value"
@@ -53,21 +53,6 @@ import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources
  * `/sources/$concept/$`: a record, its id the rest of the path. The splat also
  * matches the object type's own URL with an empty id, which is the type's page.
  */
-/**
- * One record's read, keyed by and read at its source workspace when that is known (a live cell);
- * the recording has none. Without a scope it reads only the recording, never the mode-deciding
- * transport, so an unscoped read can never come back live and be cached or revealed without its
- * workspace. Exported for the test that reads the same id in two workspaces.
- */
-export function recordRead(objectType: string, id: string, scope: StudioScope | undefined, fetcher?: Fetch) {
-  return {
-    queryKey: scope === undefined ? ["object", objectType, id] as const : ["object", objectType, id, scope.orgId, scope.environmentId] as const,
-    queryFn: ({ signal }: { readonly signal?: AbortSignal }): Promise<ObjectReads | null> => scope === undefined
-      ? recordedTransport.object(objectType, id)
-      : readObjectAtScope(objectType, id, scope, signal, fetcher),
-  }
-}
-
 export function SourcesItemPage() {
   const { _splat: id = "" } = useParams({ strict: false })
   return id === "" ? <ObjectTypePage /> : <ObjectPage />
@@ -87,6 +72,7 @@ export function ObjectPage() {
   // at (checked before and after the read), cached under it, and its reveals go to it. The same id
   // in another workspace is another record, never this one's cached read. Nothing is read until the
   // mode is decided: a failed mode read waits for Retry rather than reading without a workspace.
+  // Until then the read's key is the recording's, which no live answer reaches (#1740).
   const mode = useMode()
   const sourceScope = mode.data?.kind === "live" ? mode.data.scope : undefined
   const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })

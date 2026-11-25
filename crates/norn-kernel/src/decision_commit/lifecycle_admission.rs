@@ -1,5 +1,6 @@
-//! Lifecycle admission of one decision change: declared defaults and initial
-//! states on create, and the effective transition and its guards on fire.
+//! Lifecycle admission of one decision change: declared defaults on create
+//! (initial states: [`crate::lifecycle_init`]), and the effective transition
+//! and its guards on fire.
 //! Split from `decision_commit` to keep that module within its LOC ceiling.
 
 use std::collections::BTreeMap;
@@ -10,19 +11,10 @@ use norn_ir::{FiringRefusal, PropertyId, Transition, TransitionId};
 use super::{DecisionRefusal, TypeCatalog, expr_value, guard_holds};
 use crate::cell_host::{FactKey, JsonObject, JsonValue};
 
-/// `values` with every effective lifecycle property's default filled in,
-/// after checking each lifecycle property holds an initial state.
-pub(super) fn with_initial_states<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    materialize_lifecycle_defaults(catalog, key, values, true)
-}
-
 /// Fill declared defaults for lifecycle properties without requiring their
 /// final values to already be initial states. Callers that prepare a create
-/// still use [`with_initial_states`] for that full validation.
+/// still use [`crate::lifecycle_init::with_initial_states`] for that full
+/// validation.
 pub(crate) fn fill_lifecycle_defaults<X>(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -31,7 +23,7 @@ pub(crate) fn fill_lifecycle_defaults<X>(
     materialize_lifecycle_defaults(catalog, key, values, false)
 }
 
-fn materialize_lifecycle_defaults<X>(
+pub(crate) fn materialize_lifecycle_defaults<X>(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
@@ -83,7 +75,7 @@ fn materialize_lifecycle_defaults<X>(
 /// from the object's current state under `Lifecycle::fire` — the per-call
 /// semantics `norn-checker` uses for `fire_transition` (same codes).
 /// Returns the transition and the state it leaves.
-pub(super) fn resolve_transition<X>(
+pub(crate) fn resolve_transition<X>(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
@@ -136,7 +128,7 @@ pub(super) fn resolve_transition<X>(
 
 /// Evaluates every guard of `declared` against the object's state before
 /// the change (the checker does not: guards read the object).
-pub(super) fn check_guards<X>(
+pub(crate) fn check_guards<X>(
     key: &FactKey,
     values: &JsonObject,
     declared: &Transition,

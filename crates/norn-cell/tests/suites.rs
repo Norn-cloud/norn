@@ -42,6 +42,8 @@ mod governed_create;
 mod jewelry_pricing;
 #[path = "label_identity.rs"]
 mod label_identity;
+#[path = "lifecycle_initialization.rs"]
+mod lifecycle_initialization;
 #[path = "mapping_links.rs"]
 mod mapping_links;
 #[path = "model_interfaces.rs"]
