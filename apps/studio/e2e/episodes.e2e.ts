@@ -76,7 +76,7 @@ async function open(
   await page.route("**/api/host/v1/actions**", (route) => {
     if (actions.serve === "unserved") return route.fulfill({ status: 404, body: "not found" })
     const request = route.request()
-    if (request.method() === "GET") return route.fulfill({ json: { items: [TRIAGE, RETRACT] } })
+    if (request.method() === "GET") return route.fulfill({ json: { definitionsVersion: 1, items: [TRIAGE, RETRACT] } })
     const actionId = decodeURIComponent(new URL(request.url()).pathname.split("/v1/actions/")[1] ?? "")
     const { input } = JSON.parse(request.postData() ?? "{}") as { input: Record<string, unknown> }
     calls.push({ actionId, input })

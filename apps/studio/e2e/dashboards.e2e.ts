@@ -324,7 +324,7 @@ test("the analytics engine answers one call at a time: Studio never sends a seco
       first = false
       inFlight -= 1
       refusedPending += 1
-      return route.fulfill({ status: 500, json: { format: "norn/refusal@2", code: "sql.engine_busy", message: "sql engine: an analytics engine call is pending" } })
+      return route.fulfill({ status: 500, json: { format: "norn/refusal@2", code: "sql.engine_busy", category: "internal", retryable: true, reason: null, message: "sql engine: an analytics engine call is pending", explanation: "" } })
     }
     await new Promise((resolve) => setTimeout(resolve, 150))
     inFlight -= 1

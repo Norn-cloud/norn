@@ -32,7 +32,7 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   const receipt = { receiptHash: "abc", commitSeq: 7, recordedAtMs: 1 }
   expect(await testDefinitions(answer(200, { installed: true, id: "studio.dashboard.refinery", version: 3, receipt })).install("studio.dashboard.refinery", dashboard, 2)).toEqual({ installed: true, id: "studio.dashboard.refinery", version: 3, receipt })
   expect(calls.at(-1)?.body).toEqual({ kind: "dashboard", id: "studio.dashboard.refinery", payload: dashboard, expectedVersion: 2 })
-  expect(await testDefinitions(answer(422, { format: "norn/refusal@2", code: "definition.refused", diagnostics: [{ code: "d.title", message: "Title", span: { pointer: "/title" } }] })).install("x", dashboard))
+  expect(await testDefinitions(answer(422, { format: "norn/refusal@2", code: "definition.refused", category: "invalid", retryable: false, reason: null, message: "the definition was refused", explanation: "", diagnostics: [{ code: "d.title", message: "Title", span: { pointer: "/title" } }] })).install("x", dashboard))
     .toEqual({ installed: false, findings: [{ code: "d.title", message: "Title", law: null, pointer: "/title" }] })
   expect(await testDefinitions(answer(409, { code: "definition.version_conflict" })).install("x", dashboard, 1)).toEqual({ installed: false, conflict: true })
   await testDefinitions(answer(200, { installed: true, id: "a/b", version: 2, receipt })).retire("a/b", 1)
