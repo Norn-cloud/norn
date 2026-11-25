@@ -163,11 +163,11 @@ pub const CRATES: &[CrateRule] = &[
         ],
         &["serde", "thiserror"],
     ),
-    // geo, geojson and h3o back the deterministic geo functions (GEO-1, #191).
+    // geo and h3o back the deterministic geo functions (GEO-1, #191).
     r0(
         "norn-builtins",
         &["norn-ir", "norn-kernel"],
-        &["serde", "serde_json", "geo", "geojson", "h3o"],
+        &["serde", "serde_json", "geo", "h3o"],
     ),
     rule(
         "norn-ui-checker",

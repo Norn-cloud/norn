@@ -10,6 +10,9 @@ targets = [
   { triple = "x86_64-unknown-linux-gnu" },
   { triple = "aarch64-unknown-linux-gnu" },
   { triple = "aarch64-apple-darwin" },
+  # The cell and the checker ship as wasm32, so a dependency or feature that
+  # only that target pulls in is under the same policy (GEO-1: `h3o/std`).
+  { triple = "wasm32-unknown-unknown" },
 ]
 
 [advisories]

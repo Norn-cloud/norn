@@ -4,32 +4,35 @@
 //! is not a valid WGS84 geometry; [`point_in_shape`] then tests a point
 //! against a validated `Polygon` or `MultiPolygon`.
 //!
-//! Decoding is `geojson`'s, over numbers this module converts itself (see the
-//! parent module). Ring validity, winding and containment are `geo`'s.
+//! The text is read by [`RuntimeValue::from_json_text`] and decoded here, so
+//! every number is an exact decimal until this module converts it (see the
+//! parent module) and every defect has its own refusal. Polygon validity is
+//! the exact pass in `planar`; containment is `geo`'s.
 //!
 //! A shape is planar in longitude and latitude, as RFC 7946 section 3.1.1
 //! defines: an edge is the straight line between two positions in that plane,
 //! not a geodesic. Nothing is wrapped: longitudes `-180` and `180` are
 //! different values, so a shape that crosses the antimeridian must be split
-//! (RFC 7946 section 3.1.9). An optional third position element (altitude)
-//! must be finite and is otherwise ignored, as are `bbox` and foreign
-//! members.
+//! (RFC 7946 section 3.1.9), and a ring edge spanning more than 180 degrees
+//! of longitude is refused as an unsplit crossing. An optional third position
+//! element (altitude) must be a number and is otherwise ignored, as are
+//! `bbox` and foreign members.
 
-use geo::algorithm::validation::{InvalidMultiPolygon, InvalidPolygon};
 use geo::coordinate_position::{CoordPos, CoordinatePosition};
-use geo::winding_order::WindingOrder;
-use geo::{Coord, MultiPolygon, Polygon, Validation, Winding};
-use geojson::{GeometryValue, Position};
-use norn_ir::RuntimeValue;
+use geo::{Coord, LineString, Polygon};
+use norn_ir::{RuntimeObject, RuntimeValue};
 
-use super::{GeoRefusal, Wgs84Point, nearest_binary64};
+use super::{GeoRefusal, Wgs84Point, nearest_binary64, planar};
 
 /// The longest shape text, in bytes: the kernel's caller-input bound.
 pub const MAX_SHAPE_BYTES: usize = 256 * 1024;
-/// The most positions one shape may hold, over all its members. Validating a
-/// ring costs time quadratic in its length (the self-intersection test), so
-/// this bound, not the byte bound, is what limits the work.
+/// The most positions one shape may hold, over all its members. Checking
+/// that no two edges meet costs time quadratic in the positions in the worst
+/// case, so this bound, not the byte bound, is what limits the work.
 pub const MAX_SHAPE_POSITIONS: usize = 4_096;
+/// The most polygon rings one shape may hold, over all its polygons; so also
+/// the most polygons. Each ring is tested against the others.
+pub const MAX_SHAPE_RINGS: usize = 256;
 
 /// The RFC 7946 geometry type of a shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -51,6 +54,17 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
+    /// Every geometry type.
+    pub const ALL: [Self; 7] = [
+        Self::Point,
+        Self::MultiPoint,
+        Self::LineString,
+        Self::MultiLineString,
+        Self::Polygon,
+        Self::MultiPolygon,
+        Self::GeometryCollection,
+    ];
+
     /// The RFC 7946 `type` value.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -65,16 +79,10 @@ impl ShapeKind {
         }
     }
 
-    const fn of(value: &GeometryValue) -> Self {
-        match value {
-            GeometryValue::Point { .. } => Self::Point,
-            GeometryValue::MultiPoint { .. } => Self::MultiPoint,
-            GeometryValue::LineString { .. } => Self::LineString,
-            GeometryValue::MultiLineString { .. } => Self::MultiLineString,
-            GeometryValue::Polygon { .. } => Self::Polygon,
-            GeometryValue::MultiPolygon { .. } => Self::MultiPolygon,
-            GeometryValue::GeometryCollection { .. } => Self::GeometryCollection,
-        }
+    /// The geometry type with this `type` value, matched exactly.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 }
 
@@ -104,20 +112,27 @@ impl Shape {
 ///
 /// Accepted: one RFC 7946 geometry object (`Point`, `MultiPoint`,
 /// `LineString`, `MultiLineString`, `Polygon`, `MultiPolygon` or a flat
-/// `GeometryCollection`) of at most [`MAX_SHAPE_BYTES`] bytes and
-/// [`MAX_SHAPE_POSITIONS`] positions, where:
+/// `GeometryCollection`) of at most [`MAX_SHAPE_BYTES`] bytes,
+/// [`MAX_SHAPE_POSITIONS`] positions and [`MAX_SHAPE_RINGS`] polygon rings,
+/// where:
 ///
-/// - every position is two or three finite numbers, longitude in
-///   `[-180, 180]` then latitude in `[-90, 90]`;
+/// - every position is two or three numbers, longitude in `[-180, 180]` then
+///   latitude in `[-90, 90]`;
 /// - no geometry, multi-geometry or collection is empty, and a `LineString`
 ///   has at least two positions;
 /// - every polygon ring has at least four positions, is closed (first and
-///   last positions identical) and does not cross or touch itself;
-/// - an exterior ring is counterclockwise and a hole clockwise (the RFC 7946
-///   right-hand rule, enforced rather than tolerated);
-/// - a hole lies inside its exterior ring, rings of one polygon do not cross
-///   or share a line, and polygons of one `MultiPolygon` do not overlap or
-///   share a line.
+///   last positions identical), has no edge spanning more than 180 degrees of
+///   longitude, has non-zero area and does not cross or touch itself;
+/// - an exterior ring is counterclockwise and a hole clockwise. RFC 7946
+///   section 3.1.6 asks readers to tolerate the other winding; this one does
+///   not;
+/// - a hole lies strictly inside its exterior ring, and no two rings of the
+///   shape share a point, whether they belong to one polygon or to two
+///   polygons of a `MultiPolygon`. A polygon may lie inside another's hole.
+///
+/// So an accepted polygon is valid in the OGC sense and its interior is
+/// connected. Rings that touch at a single point, which OGC allows, are
+/// refused. A position repeated consecutively is accepted and adds nothing.
 ///
 /// A `Feature` or `FeatureCollection` is not a geometry and is refused.
 ///
@@ -129,13 +144,11 @@ pub fn validate_shape(text: &str) -> Result<Shape, GeoRefusal> {
     }
     let document =
         RuntimeValue::from_json_text(text).map_err(|_json| GeoRefusal::ShapeInvalidJson)?;
-    let geometry: geojson::Geometry = serde_json::from_value(binary_json(&document)?)
-        .map_err(|_shape| GeoRefusal::ShapeNotAGeometry)?;
-    let mut positions = 0;
-    let areas = check_geometry(&geometry.value, &mut positions)?;
+    let mut budget = Budget::default();
+    let (kind, areas) = geometry(&document, false, &mut budget)?;
     Ok(Shape {
-        kind: ShapeKind::of(&geometry.value),
-        positions,
+        kind,
+        positions: budget.positions,
         areas,
     })
 }
@@ -171,193 +184,215 @@ pub fn point_in_shape(point: Wgs84Point, shape: &Shape) -> Result<bool, GeoRefus
     }))
 }
 
-/// The document with every number as its nearest binary64, built directly so
-/// `serde_json`'s text parser never reads a coordinate.
-fn binary_json(value: &RuntimeValue) -> Result<serde_json::Value, GeoRefusal> {
-    Ok(match value {
-        RuntimeValue::Null => serde_json::Value::Null,
-        RuntimeValue::Bool(flag) => serde_json::Value::Bool(*flag),
-        RuntimeValue::Number(decimal) => serde_json::Number::from_f64(nearest_binary64(decimal)?)
-            .map(serde_json::Value::Number)
-            .ok_or(GeoRefusal::CoordinateNotFinite)?,
-        RuntimeValue::String(text) => serde_json::Value::String(text.clone()),
-        RuntimeValue::Array(items) => serde_json::Value::Array(
-            items
-                .iter()
-                .map(binary_json)
-                .collect::<Result<_, GeoRefusal>>()?,
-        ),
-        RuntimeValue::Object(members) => serde_json::Value::Object(
-            members
-                .iter()
-                .map(|(key, member)| Ok((key.clone(), binary_json(member)?)))
-                .collect::<Result<_, GeoRefusal>>()?,
-        ),
-    })
+/// What a shape has used of its bounds so far.
+#[derive(Default)]
+struct Budget {
+    positions: usize,
+    rings: usize,
 }
 
-/// Check one geometry and return its polygons (none unless it is areal).
-fn check_geometry(
-    value: &GeometryValue,
-    positions: &mut usize,
-) -> Result<Vec<Polygon<f64>>, GeoRefusal> {
-    match value {
-        GeometryValue::GeometryCollection { geometries } => {
-            non_empty(geometries)?;
-            for member in geometries {
-                if ShapeKind::of(&member.value) == ShapeKind::GeometryCollection {
-                    return Err(GeoRefusal::NestedCollection);
-                }
-                check_geometry(&member.value, positions)?;
-            }
-            Ok(Vec::new())
-        }
-        GeometryValue::Point { coordinates } => {
-            check_position(coordinates, positions)?;
-            Ok(Vec::new())
-        }
-        GeometryValue::MultiPoint { coordinates } => {
-            non_empty(coordinates)?;
-            check_positions(coordinates, positions)?;
-            Ok(Vec::new())
-        }
-        GeometryValue::LineString { coordinates } => {
-            check_line(coordinates, positions)?;
-            Ok(Vec::new())
-        }
-        GeometryValue::MultiLineString { coordinates } => {
-            non_empty(coordinates)?;
-            for line in coordinates {
-                check_line(line, positions)?;
-            }
-            Ok(Vec::new())
-        }
-        GeometryValue::Polygon { coordinates } => {
-            check_rings(coordinates, positions)?;
-            let polygon = Polygon::<f64>::try_from(value)
-                .map_err(|_convert| GeoRefusal::ShapeNotAGeometry)?;
-            polygon
-                .check_validation()
-                .map_err(|invalid| polygon_refusal(&invalid))?;
-            check_winding(&polygon)?;
-            Ok(vec![polygon])
-        }
-        GeometryValue::MultiPolygon { coordinates } => {
-            non_empty(coordinates)?;
-            for rings in coordinates {
-                check_rings(rings, positions)?;
-            }
-            let polygons = MultiPolygon::<f64>::try_from(value)
-                .map_err(|_convert| GeoRefusal::ShapeNotAGeometry)?;
-            polygons
-                .check_validation()
-                .map_err(|invalid| multi_polygon_refusal(&invalid))?;
-            for polygon in &polygons {
-                check_winding(polygon)?;
-            }
-            Ok(polygons.0)
-        }
-    }
-}
-
-fn non_empty<T>(members: &[T]) -> Result<(), GeoRefusal> {
-    if members.is_empty() {
-        Err(GeoRefusal::ShapeEmpty)
-    } else {
+impl Budget {
+    fn spend(spent: &mut usize, bound: usize, refusal: GeoRefusal) -> Result<(), GeoRefusal> {
+        *spent = spent
+            .checked_add(1)
+            .filter(|count| *count <= bound)
+            .ok_or(refusal)?;
         Ok(())
     }
 }
 
-/// One position: two or three finite numbers, in WGS84 range, within the
-/// shape's position budget.
-fn check_position(position: &Position, positions: &mut usize) -> Result<(), GeoRefusal> {
-    *positions = positions
-        .checked_add(1)
-        .filter(|count| *count <= MAX_SHAPE_POSITIONS)
-        .ok_or(GeoRefusal::ShapeTooManyPositions)?;
-    let (lon, lat) = match position.as_slice() {
-        [lon, lat] => (*lon, *lat),
-        [lon, lat, altitude] if altitude.is_finite() => (*lon, *lat),
-        [_, _, _] => return Err(GeoRefusal::CoordinateNotFinite),
+/// One decoded position. The altitude takes part only in ring closure.
+struct Position {
+    coord: Coord<f64>,
+    altitude: Option<f64>,
+}
+
+impl Position {
+    fn same(&self, other: &Self) -> bool {
+        let same = |left: f64, right: f64| left.total_cmp(&right).is_eq();
+        same(self.coord.x, other.coord.x)
+            && same(self.coord.y, other.coord.y)
+            && match (self.altitude, other.altitude) {
+                (None, None) => true,
+                (Some(left), Some(right)) => same(left, right),
+                (None, Some(_)) | (Some(_), None) => false,
+            }
+    }
+}
+
+/// The members of an array, where the geometry requires one.
+fn list(value: &RuntimeValue) -> Result<&[RuntimeValue], GeoRefusal> {
+    let RuntimeValue::Array(items) = value else {
+        return Err(GeoRefusal::ShapeNotAGeometry);
+    };
+    Ok(items)
+}
+
+/// A non-empty array.
+fn members(value: &RuntimeValue) -> Result<&[RuntimeValue], GeoRefusal> {
+    let items = list(value)?;
+    if items.is_empty() {
+        return Err(GeoRefusal::ShapeEmpty);
+    }
+    Ok(items)
+}
+
+/// One position: an array of two or three numbers, in WGS84 range, within
+/// the shape's position bound.
+fn position(value: &RuntimeValue, budget: &mut Budget) -> Result<Position, GeoRefusal> {
+    Budget::spend(
+        &mut budget.positions,
+        MAX_SHAPE_POSITIONS,
+        GeoRefusal::ShapeTooManyPositions,
+    )?;
+    let number = |item: &RuntimeValue| {
+        let RuntimeValue::Number(decimal) = item else {
+            return Err(GeoRefusal::ShapeNotAGeometry);
+        };
+        nearest_binary64(decimal)
+    };
+    let numbers = list(value)?
+        .iter()
+        .map(number)
+        .collect::<Result<Vec<f64>, GeoRefusal>>()?;
+    let (lon, lat, altitude) = match numbers.as_slice() {
+        [lon, lat] => (*lon, *lat, None),
+        [lon, lat, altitude] => (*lon, *lat, Some(*altitude)),
         _ => return Err(GeoRefusal::PositionArity),
     };
-    Wgs84Point::new(lat, lon).map(|_point| ())
+    let point = Wgs84Point::new(lat, lon)?;
+    Ok(Position {
+        coord: Coord {
+            x: point.lon(),
+            y: point.lat(),
+        },
+        altitude,
+    })
 }
 
-fn check_positions(line: &[Position], positions: &mut usize) -> Result<(), GeoRefusal> {
-    line.iter()
-        .try_for_each(|position| check_position(position, positions))
+fn positions(value: &RuntimeValue, budget: &mut Budget) -> Result<Vec<Position>, GeoRefusal> {
+    list(value)?
+        .iter()
+        .map(|item| position(item, budget))
+        .collect()
 }
 
-fn check_line(line: &[Position], positions: &mut usize) -> Result<(), GeoRefusal> {
-    if line.len() < 2 {
+fn line(value: &RuntimeValue, budget: &mut Budget) -> Result<(), GeoRefusal> {
+    if list(value)?.len() < 2 {
         return Err(GeoRefusal::LineTooShort);
     }
-    check_positions(line, positions)
+    positions(value, budget).map(|_line| ())
 }
 
-/// One polygon's rings, before conversion: `geo` would close an open ring.
-fn check_rings(rings: &[Vec<Position>], positions: &mut usize) -> Result<(), GeoRefusal> {
-    non_empty(rings)?;
-    for ring in rings {
-        let (Some(first), Some(last)) = (ring.first(), ring.last()) else {
-            return Err(GeoRefusal::RingTooShort);
-        };
-        if ring.len() < 4 {
-            return Err(GeoRefusal::RingTooShort);
-        }
-        check_positions(ring, positions)?;
-        if !same_position(first, last) {
-            return Err(GeoRefusal::RingNotClosed);
-        }
+/// One polygon ring, with the checks RFC 7946 puts on a linear ring.
+fn ring(value: &RuntimeValue, budget: &mut Budget) -> Result<LineString<f64>, GeoRefusal> {
+    Budget::spend(
+        &mut budget.rings,
+        MAX_SHAPE_RINGS,
+        GeoRefusal::ShapeTooManyRings,
+    )?;
+    if list(value)?.len() < 4 {
+        return Err(GeoRefusal::RingTooShort);
     }
-    Ok(())
+    let positions = positions(value, budget)?;
+    let (Some(first), Some(last)) = (positions.first(), positions.last()) else {
+        return Err(GeoRefusal::RingTooShort);
+    };
+    if !first.same(last) {
+        return Err(GeoRefusal::RingNotClosed);
+    }
+    let ends = positions.iter().skip(1);
+    if positions
+        .iter()
+        .zip(ends)
+        .any(|(start, end)| (end.coord.x - start.coord.x).abs() > 180.0)
+    {
+        return Err(GeoRefusal::AntimeridianEdge);
+    }
+    Ok(LineString::new(
+        positions.iter().map(|position| position.coord).collect(),
+    ))
 }
 
-/// Whether two positions hold identical values, element for element.
-fn same_position(left: &Position, right: &Position) -> bool {
-    left.len() == right.len()
-        && left
-            .as_slice()
+/// One polygon's rings, exterior first.
+fn polygon(value: &RuntimeValue, budget: &mut Budget) -> Result<Polygon<f64>, GeoRefusal> {
+    let mut rings = members(value)?
+        .iter()
+        .map(|item| ring(item, budget))
+        .collect::<Result<Vec<_>, GeoRefusal>>()?
+        .into_iter();
+    let exterior = rings.next().ok_or(GeoRefusal::ShapeEmpty)?;
+    Ok(Polygon::new(exterior, rings.collect()))
+}
+
+/// The geometry's type, and its `coordinates` or `geometries` member: a
+/// geometry object has the one its type defines and not the other.
+fn parts(object: &RuntimeObject) -> Result<(ShapeKind, &RuntimeValue), GeoRefusal> {
+    let Some(RuntimeValue::String(name)) = object.get("type") else {
+        return Err(GeoRefusal::ShapeNotAGeometry);
+    };
+    let kind = ShapeKind::from_name(name).ok_or(GeoRefusal::ShapeNotAGeometry)?;
+    let (own, other) = match kind {
+        ShapeKind::GeometryCollection => ("geometries", "coordinates"),
+        ShapeKind::Point
+        | ShapeKind::MultiPoint
+        | ShapeKind::LineString
+        | ShapeKind::MultiLineString
+        | ShapeKind::Polygon
+        | ShapeKind::MultiPolygon => ("coordinates", "geometries"),
+    };
+    match (object.get(own), object.get(other)) {
+        (Some(value), None) => Ok((kind, value)),
+        (None | Some(_), Some(_)) | (None, None) => Err(GeoRefusal::ShapeNotAGeometry),
+    }
+}
+
+/// Check one geometry and return its type and polygons (none unless it is a
+/// `Polygon` or `MultiPolygon`).
+fn geometry(
+    value: &RuntimeValue,
+    in_collection: bool,
+    budget: &mut Budget,
+) -> Result<(ShapeKind, Vec<Polygon<f64>>), GeoRefusal> {
+    let RuntimeValue::Object(object) = value else {
+        return Err(GeoRefusal::ShapeNotAGeometry);
+    };
+    let (kind, value) = parts(object)?;
+    let areas = match kind {
+        ShapeKind::GeometryCollection => {
+            if in_collection {
+                return Err(GeoRefusal::NestedCollection);
+            }
+            for member in members(value)? {
+                geometry(member, true, budget)?;
+            }
+            Vec::new()
+        }
+        ShapeKind::Point => {
+            position(value, budget)?;
+            Vec::new()
+        }
+        ShapeKind::MultiPoint => {
+            members(value)?;
+            positions(value, budget)?;
+            Vec::new()
+        }
+        ShapeKind::LineString => {
+            line(value, budget)?;
+            Vec::new()
+        }
+        ShapeKind::MultiLineString => {
+            for item in members(value)? {
+                line(item, budget)?;
+            }
+            Vec::new()
+        }
+        ShapeKind::Polygon => vec![polygon(value, budget)?],
+        ShapeKind::MultiPolygon => members(value)?
             .iter()
-            .zip(right.as_slice())
-            .all(|(a, b)| a.total_cmp(b).is_eq())
-}
-
-/// The RFC 7946 right-hand rule: exterior counterclockwise, holes clockwise.
-fn check_winding(polygon: &Polygon<f64>) -> Result<(), GeoRefusal> {
-    match polygon.exterior().winding_order() {
-        Some(WindingOrder::CounterClockwise) => {}
-        Some(WindingOrder::Clockwise) => return Err(GeoRefusal::ExteriorNotCounterclockwise),
-        None => return Err(GeoRefusal::RingDegenerate),
-    }
-    for hole in polygon.interiors() {
-        match hole.winding_order() {
-            Some(WindingOrder::Clockwise) => {}
-            Some(WindingOrder::CounterClockwise) => return Err(GeoRefusal::HoleNotClockwise),
-            None => return Err(GeoRefusal::RingDegenerate),
-        }
-    }
-    Ok(())
-}
-
-const fn polygon_refusal(invalid: &InvalidPolygon) -> GeoRefusal {
-    match invalid {
-        InvalidPolygon::TooFewPointsInRing(_) => GeoRefusal::RingDegenerate,
-        InvalidPolygon::SelfIntersection(_) => GeoRefusal::RingSelfIntersects,
-        InvalidPolygon::NonFiniteCoord(_, _) => GeoRefusal::CoordinateNotFinite,
-        InvalidPolygon::InteriorRingNotContainedInExteriorRing(_) => {
-            GeoRefusal::HoleOutsideExterior
-        }
-        InvalidPolygon::IntersectingRingsOnALine(_, _)
-        | InvalidPolygon::IntersectingRingsOnAnArea(_, _) => GeoRefusal::RingsIntersect,
-    }
-}
-
-const fn multi_polygon_refusal(invalid: &InvalidMultiPolygon) -> GeoRefusal {
-    match invalid {
-        InvalidMultiPolygon::InvalidPolygon(_, polygon) => polygon_refusal(polygon),
-        InvalidMultiPolygon::ElementsOverlaps(_, _)
-        | InvalidMultiPolygon::ElementsTouchOnALine(_, _) => GeoRefusal::PolygonsOverlap,
-    }
+            .map(|item| polygon(item, budget))
+            .collect::<Result<Vec<_>, GeoRefusal>>()?,
+    };
+    planar::check_polygons(&areas)?;
+    Ok((kind, areas))
 }

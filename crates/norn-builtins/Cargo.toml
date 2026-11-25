@@ -10,14 +10,13 @@ description = "Norn-owned host built-in Functions and their pinned registry (rin
 path = "src/lib.rs"
 
 [dependencies]
-# GEO-1 (Core 07, #191): the three crates the geo functions are built on, each
-# pinned to one exact version so a change of any of them changes this crate's
+# GEO-1 (Core 07, #191): the two crates the geo functions are built on, each
+# pinned to one exact version so a change of either changes this crate's
 # HOST-TREE-1 pin. `h3o` without `std` does its trigonometry in the pure-Rust
-# `libm`, never the host's C library (deny.toml bans its `std` feature); `geo`
-# without its defaults has no rayon, triangulation or PROJ; `geojson` converts
-# to `geo` types and nothing else.
+# `libm`, never the host's C library (deny.toml bans its `std` feature). `geo`
+# without its defaults has no rayon, triangulation or PROJ, and only its
+# exact orientation predicate, winding order and point-in-ring test are used.
 geo = { version = "=0.33.1", default-features = false }
-geojson = { version = "=1.0.0", default-features = false, features = ["geo-types"] }
 h3o = { version = "=0.11.1", default-features = false }
 norn-ir = { path = "../norn-ir" }
 norn-kernel = { path = "../norn-kernel" }

@@ -11,32 +11,35 @@
 //! - **Decode.** A coordinate is a decimal ([`Decimal`], or a number token of
 //!   `GeoJSON` text read by [`RuntimeValue::from_json_text`]). It is used as
 //!   the nearest binary64 to that decimal, ties to even, through the standard
-//!   library's correctly rounded parser. `serde_json`'s own float parser is
-//!   never used: its result depends on a Cargo feature that differs between
-//!   build graphs.
+//!   library's correctly rounded parser. No `serde_json` number is involved:
+//!   its float parser depends on a Cargo feature that differs between build
+//!   graphs.
 //! - **Trigonometry.** Distance and cell indexing come from `h3o`, built
 //!   without its `std` feature, so every `sin`, `cos`, `tan`, `asin`, `acos`
 //!   and `atan2` is the pure-Rust `libm` crate, not the host's C library.
 //!   `deny.toml` bans `h3o`'s `std` feature.
-//! - **Predicates.** Ring validity, winding and containment come from `geo`,
-//!   whose orientation test is the exact adaptive predicate of `robust`.
-//!   Only `+`, `-`, `*`, `/` and `sqrt` are involved, which IEEE 754 defines
-//!   exactly.
+//! - **Predicates.** Shape validity, winding and containment are decided by
+//!   comparisons and by one orientation test, `geo`'s `RobustKernel`, the
+//!   exact adaptive predicate of `robust`. It uses only `+`, `-` and `*`,
+//!   which IEEE 754 defines exactly. `geo`'s `relate`, line intersection and
+//!   `Validation` are not used: they reach the host C library's `hypot`.
 //!
-//! `h3o`, `geo` and `geojson` are pinned to one exact version each in this
-//! crate's `Cargo.toml`, which the HOST-TREE-1 source-tree pin covers; what
-//! they depend on is pinned by `Cargo.lock`.
+//! `h3o` and `geo` are pinned to one exact version each in this crate's
+//! `Cargo.toml`, which the HOST-TREE-1 source-tree pin covers; what they
+//! depend on is pinned by `Cargo.lock`.
 //!
 //! These functions are not registered: [`crate::resolve`] answers nothing for
 //! them, so no flow can `perform` one yet. [`call`] is the argument codec a
 //! mapping-time or host binding uses.
 
+mod planar;
 pub mod shape;
 
 use norn_ir::{Decimal, RuntimeValue};
 
 pub use shape::{
-    MAX_SHAPE_BYTES, MAX_SHAPE_POSITIONS, Shape, ShapeKind, point_in_shape, validate_shape,
+    MAX_SHAPE_BYTES, MAX_SHAPE_POSITIONS, MAX_SHAPE_RINGS, Shape, ShapeKind, point_in_shape,
+    validate_shape,
 };
 
 /// The highest H3 resolution.
@@ -63,14 +66,15 @@ pub enum GeoRefusal {
     ShapeTooLarge,
     /// The shape holds more than [`MAX_SHAPE_POSITIONS`] positions.
     ShapeTooManyPositions,
+    /// The shape holds more than [`MAX_SHAPE_RINGS`] polygon rings.
+    ShapeTooManyRings,
     /// The shape text is not one exact JSON document.
     ShapeInvalidJson,
     /// The document is not an RFC 7946 geometry object.
     ShapeNotAGeometry,
     /// A geometry, a multi-geometry or a collection has no member.
     ShapeEmpty,
-    /// A position has more than three numbers. (Fewer than two is
-    /// [`Self::ShapeNotAGeometry`].)
+    /// A position is not two or three numbers.
     PositionArity,
     /// A `GeometryCollection` holds another `GeometryCollection`.
     NestedCollection,
@@ -80,7 +84,10 @@ pub enum GeoRefusal {
     RingTooShort,
     /// A linear ring's first and last positions differ.
     RingNotClosed,
-    /// A linear ring has fewer than three distinct positions.
+    /// A ring edge spans more than 180 degrees of longitude: a shape that
+    /// crosses the antimeridian and was not split.
+    AntimeridianEdge,
+    /// A linear ring has fewer than three distinct positions, or zero area.
     RingDegenerate,
     /// A linear ring crosses or touches itself.
     RingSelfIntersects,
@@ -90,9 +97,9 @@ pub enum GeoRefusal {
     HoleNotClockwise,
     /// A hole is not inside its polygon's exterior ring.
     HoleOutsideExterior,
-    /// Two rings of one polygon cross or share a line.
+    /// Two rings of one polygon share a point, or one hole is inside another.
     RingsIntersect,
-    /// Two polygons of one `MultiPolygon` overlap or share a line.
+    /// Two polygons of one `MultiPolygon` share a point or overlap.
     PolygonsOverlap,
     /// Point-in-shape was asked of a shape that is not a `Polygon` or
     /// `MultiPolygon`.
@@ -115,6 +122,7 @@ impl GeoRefusal {
             Self::DistanceUnrepresentable => "geo.distance.unrepresentable",
             Self::ShapeTooLarge => "geo.shape.too_large",
             Self::ShapeTooManyPositions => "geo.shape.too_many_positions",
+            Self::ShapeTooManyRings => "geo.shape.too_many_rings",
             Self::ShapeInvalidJson => "geo.shape.invalid_json",
             Self::ShapeNotAGeometry => "geo.shape.not_a_geometry",
             Self::ShapeEmpty => "geo.shape.empty",
@@ -123,6 +131,7 @@ impl GeoRefusal {
             Self::LineTooShort => "geo.shape.line_too_short",
             Self::RingTooShort => "geo.shape.ring_too_short",
             Self::RingNotClosed => "geo.shape.ring_not_closed",
+            Self::AntimeridianEdge => "geo.shape.antimeridian_edge",
             Self::RingDegenerate => "geo.shape.ring_degenerate",
             Self::RingSelfIntersects => "geo.shape.ring_self_intersects",
             Self::ExteriorNotCounterclockwise => "geo.shape.exterior_not_counterclockwise",

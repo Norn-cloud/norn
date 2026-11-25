@@ -7,14 +7,15 @@
 //! cases are small enough to decide by hand.
 
 use norn_builtins::geo::{
-    self, GeoFunction, GeoRefusal, MAX_SHAPE_BYTES, MAX_SHAPE_POSITIONS, ShapeKind, Wgs84Point,
+    self, GeoFunction, GeoRefusal, MAX_SHAPE_BYTES, MAX_SHAPE_POSITIONS, MAX_SHAPE_RINGS,
+    ShapeKind, Wgs84Point,
 };
 use norn_ir::RuntimeValue;
 
 /// A counterclockwise square with a clockwise square hole.
 const DONUT: &str = r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[2,8],[8,8],[8,2],[2,2]]]}"#;
-/// Two squares that share only the vertex `[10,10]`.
-const TOUCHING: &str = r#"{"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]]],[[[10,10],[20,10],[20,20],[10,20],[10,10]]]]}"#;
+/// Two squares that share no point.
+const SEPARATE: &str = r#"{"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]]],[[[12,12],[20,12],[20,20],[12,20],[12,12]]]]}"#;
 /// A square with a square hole, and a smaller square inside that hole.
 const ISLAND: &str = r#"{"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[2,8],[8,8],[8,2],[2,2]]],[[[4,4],[6,4],[6,6],[4,6],[4,4]]]]}"#;
 /// A triangle whose hypotenuse runs along `lat == lon` between inexact decimals.
@@ -171,21 +172,28 @@ fn valid_shapes_are_accepted_with_their_type_and_size() -> Result<(), String> {
             5,
         ),
         (DONUT, ShapeKind::Polygon, 10),
-        (TOUCHING, ShapeKind::MultiPolygon, 10),
+        (SEPARATE, ShapeKind::MultiPolygon, 10),
         (TRIANGLE, ShapeKind::Polygon, 4),
-        // A hole may touch its exterior ring at one point.
+        // A position repeated consecutively is accepted.
         (
-            r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[0,5],[3,8],[6,5],[3,2],[0,5]]]}"#,
+            r#"{"type":"Polygon","coordinates":[[[0,0],[0,0],[10,0],[10,0],[10,10],[0,10],[0,0],[0,0]]]}"#,
             ShapeKind::Polygon,
-            10,
+            8,
+        ),
+        // A vertex on a straight edge is accepted.
+        (
+            r#"{"type":"Polygon","coordinates":[[[0,0],[5,0],[10,0],[10,10],[0,10],[0,0]]]}"#,
+            ShapeKind::Polygon,
+            6,
         ),
         // A polygon may sit in another polygon's hole.
         (ISLAND, ShapeKind::MultiPolygon, 15),
-        // The whole plane of valid coordinates.
+        // The whole plane of valid coordinates: no edge spans more than 180
+        // degrees of longitude.
         (
-            r#"{"type":"Polygon","coordinates":[[[-180,-90],[180,-90],[180,90],[-180,90],[-180,-90]]]}"#,
+            r#"{"type":"Polygon","coordinates":[[[-180,-90],[0,-90],[180,-90],[180,90],[0,90],[-180,90],[-180,-90]]]}"#,
             ShapeKind::Polygon,
-            5,
+            7,
         ),
         (
             r#"{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[1,2]},{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}]}"#,
@@ -245,8 +253,49 @@ const REFUSED: &[(&str, GeoRefusal)] = &[
         GeoRefusal::ShapeNotAGeometry,
     ),
     (
-        r#"{"type":"Point","coordinates":[1]}"#,
+        r#"{"type":"Point","coordinates":[1,2],"geometries":[]}"#,
         GeoRefusal::ShapeNotAGeometry,
+    ),
+    (
+        r#"{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[1,2]}],"coordinates":[1,2]}"#,
+        GeoRefusal::ShapeNotAGeometry,
+    ),
+    (
+        r#"{"type":"point","coordinates":[1,2]}"#,
+        GeoRefusal::ShapeNotAGeometry,
+    ),
+    (
+        r#"{"type":"LineString","coordinates":[[0,0],[1,null]]}"#,
+        GeoRefusal::ShapeNotAGeometry,
+    ),
+    // A position of any other length has one refusal, wherever it sits.
+    (
+        r#"{"type":"Point","coordinates":[]}"#,
+        GeoRefusal::PositionArity,
+    ),
+    (
+        r#"{"type":"Point","coordinates":[1]}"#,
+        GeoRefusal::PositionArity,
+    ),
+    (
+        r#"{"type":"MultiPoint","coordinates":[[]]}"#,
+        GeoRefusal::PositionArity,
+    ),
+    (
+        r#"{"type":"MultiPoint","coordinates":[[0]]}"#,
+        GeoRefusal::PositionArity,
+    ),
+    (
+        r#"{"type":"LineString","coordinates":[[0,0],[1]]}"#,
+        GeoRefusal::PositionArity,
+    ),
+    (
+        r#"{"type":"LineString","coordinates":[[0,0],[]]}"#,
+        GeoRefusal::PositionArity,
+    ),
+    (
+        r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10,1,1],[0,0]]]}"#,
+        GeoRefusal::PositionArity,
     ),
     (
         r#"{"type":"Point","coordinates":[1,2,3,4]}"#,
@@ -335,11 +384,44 @@ const REFUSED: &[(&str, GeoRefusal)] = &[
     ),
     (
         r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[5,5],[5,15],[15,15],[15,5],[5,5]]]}"#,
-        GeoRefusal::HoleOutsideExterior,
+        GeoRefusal::RingsIntersect,
     ),
     (
         r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[2,6],[6,6],[6,2],[2,2]],[[4,4],[4,8],[8,8],[8,4],[4,4]]]}"#,
         GeoRefusal::RingsIntersect,
+    ),
+    // One hole inside another.
+    (
+        r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[2,8],[8,8],[8,2],[2,2]],[[4,4],[4,6],[6,6],[6,4],[4,4]]]}"#,
+        GeoRefusal::RingsIntersect,
+    ),
+    // A hole that touches its exterior ring at one point.
+    (
+        r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[0,5],[3,8],[6,5],[3,2],[0,5]]]}"#,
+        GeoRefusal::RingsIntersect,
+    ),
+    // A ring that passes through one position twice.
+    (
+        r#"{"type":"Polygon","coordinates":[[[0,0],[4,0],[2,2],[4,4],[0,4],[2,2],[0,0]]]}"#,
+        GeoRefusal::RingSelfIntersects,
+    ),
+    // A ring across the antimeridian that was not split, in either winding.
+    (
+        r#"{"type":"Polygon","coordinates":[[[170,0],[-170,0],[-170,10],[170,10],[170,0]]]}"#,
+        GeoRefusal::AntimeridianEdge,
+    ),
+    (
+        r#"{"type":"Polygon","coordinates":[[[170,0],[170,10],[-170,10],[-170,0],[170,0]]]}"#,
+        GeoRefusal::AntimeridianEdge,
+    ),
+    (
+        r#"{"type":"Polygon","coordinates":[[[-180,-90],[180,-90],[180,90],[-180,90],[-180,-90]]]}"#,
+        GeoRefusal::AntimeridianEdge,
+    ),
+    // Two polygons that share only the vertex `[10,10]`.
+    (
+        r#"{"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]]],[[[10,10],[20,10],[20,20],[10,20],[10,10]]]]}"#,
+        GeoRefusal::PolygonsOverlap,
     ),
     (
         r#"{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[0,2],[0,8],[4,8],[4,2],[0,2]]]}"#,
@@ -372,9 +454,27 @@ fn invalid_shapes_are_refused_with_the_defect() {
     }
 }
 
-/// GEO-SHAPE-BOUNDS: the byte and position bounds are exact.
+/// `count` two-degree square rings, four degrees apart on a 16-wide grid.
+fn squares(count: usize, clockwise: bool) -> Vec<String> {
+    (0_u32..17)
+        .flat_map(|row| (0_u32..16).map(move |column| (column, row)))
+        .take(count)
+        .map(|(column, row)| {
+            let (x, y) = (f64::from(column) * 4.0 + 1.0, f64::from(row) * 4.0 + 1.0);
+            let (right, top) = (x + 2.0, y + 2.0);
+            if clockwise {
+                format!("[[{x},{y}],[{x},{top}],[{right},{top}],[{right},{y}],[{x},{y}]]")
+            } else {
+                format!("[[{x},{y}],[{right},{y}],[{right},{top}],[{x},{top}],[{x},{y}]]")
+            }
+        })
+        .collect()
+}
+
+/// GEO-SHAPE-BOUNDS: the byte, position and ring bounds are exact, and the
+/// largest shapes of many holes and of many members are accepted.
 #[test]
-fn a_shape_is_bounded_in_bytes_and_positions() -> Result<(), String> {
+fn a_shape_is_bounded_in_bytes_positions_and_rings() -> Result<(), String> {
     let multi_point = |count: usize| {
         format!(
             r#"{{"type":"MultiPoint","coordinates":[{}]}}"#,
@@ -388,12 +488,53 @@ fn a_shape_is_bounded_in_bytes_and_positions() -> Result<(), String> {
         geo::validate_shape(&multi_point(MAX_SHAPE_POSITIONS + 1)).err(),
         Some(GeoRefusal::ShapeTooManyPositions)
     );
-    let point = r#"{"type":"Point","coordinates":[1,2]}"#;
-    let padded = |length: usize| format!("{point}{}", " ".repeat(length - point.len()));
+    let small = r#"{"type":"Point","coordinates":[1,2]}"#;
+    let padded = |length: usize| format!("{small}{}", " ".repeat(length - small.len()));
     assert!(geo::validate_shape(&padded(MAX_SHAPE_BYTES)).is_ok());
     assert_eq!(
         geo::validate_shape(&padded(MAX_SHAPE_BYTES + 1)).err(),
         Some(GeoRefusal::ShapeTooLarge)
+    );
+
+    let many_holes = |holes: usize| {
+        let holes = squares(holes, true);
+        format!(
+            r#"{{"type":"Polygon","coordinates":[[[0,0],[70,0],[70,70],[0,70],[0,0]],{}]}}"#,
+            holes.join(",")
+        )
+    };
+    let holed = geo::validate_shape(&many_holes(MAX_SHAPE_RINGS - 1))
+        .map_err(|refusal| refusal.to_string())?;
+    assert_eq!(holed.positions(), 5 * MAX_SHAPE_RINGS);
+    assert_eq!(
+        geo::point_in_shape(point(2.0, 2.0)?, &holed),
+        Ok(false),
+        "inside the first hole"
+    );
+    assert_eq!(geo::point_in_shape(point(4.0, 4.0)?, &holed), Ok(true));
+    assert_eq!(
+        geo::validate_shape(&many_holes(MAX_SHAPE_RINGS)).err(),
+        Some(GeoRefusal::ShapeTooManyRings)
+    );
+
+    let many_members = |members: usize| {
+        let members: Vec<String> = squares(members, false)
+            .iter()
+            .map(|ring| format!("[{ring}]"))
+            .collect();
+        format!(
+            r#"{{"type":"MultiPolygon","coordinates":[{}]}}"#,
+            members.join(",")
+        )
+    };
+    let scattered = geo::validate_shape(&many_members(MAX_SHAPE_RINGS))
+        .map_err(|refusal| refusal.to_string())?;
+    assert_eq!(scattered.positions(), 5 * MAX_SHAPE_RINGS);
+    assert_eq!(geo::point_in_shape(point(2.0, 2.0)?, &scattered), Ok(true));
+    assert_eq!(geo::point_in_shape(point(4.0, 4.0)?, &scattered), Ok(false));
+    assert_eq!(
+        geo::validate_shape(&many_members(MAX_SHAPE_RINGS + 1)).err(),
+        Some(GeoRefusal::ShapeTooManyRings)
     );
     Ok(())
 }
@@ -413,10 +554,12 @@ fn point_in_shape_includes_the_boundary() -> Result<(), String> {
         (DONUT, -0.000_001, 5.0, false),
         (DONUT, 5.0, 1.999_999, true),
         (DONUT, 5.0, 2.000_001, false),
-        (TOUCHING, 5.0, 5.0, true),
-        (TOUCHING, 15.0, 15.0, true),
-        (TOUCHING, 10.0, 10.0, true),
-        (TOUCHING, 15.0, 5.0, false),
+        (SEPARATE, 5.0, 5.0, true),
+        (SEPARATE, 15.0, 15.0, true),
+        (SEPARATE, 10.0, 10.0, true),
+        (SEPARATE, 12.0, 12.0, true),
+        (SEPARATE, 11.0, 11.0, false),
+        (SEPARATE, 15.0, 5.0, false),
         (ISLAND, 5.0, 5.0, true),
         (ISLAND, 3.0, 3.0, false),
         (ISLAND, 1.0, 1.0, true),
