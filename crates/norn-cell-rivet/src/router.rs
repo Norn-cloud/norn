@@ -230,6 +230,10 @@ impl Router {
                 && orgs.first() == Some(&synthetic.org_id)
                 && envs.first() == Some(&synthetic.environment_id))
             {
+                tracing::debug!(
+                    scope_named = !orgs.is_empty() || !envs.is_empty(),
+                    "the router refused a request (conformance scope mismatch)"
+                );
                 return Err(Box::new(refuse(
                     StatusCode::FORBIDDEN,
                     "conformance.scope",
@@ -409,6 +413,10 @@ impl Router {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned)
         else {
+            tracing::debug!(
+                scope_named = target.scope.is_some(),
+                "the router refused a WebSocket upgrade (no authorization header)"
+            );
             return refuse(
                 StatusCode::UNAUTHORIZED,
                 "authn.required",
