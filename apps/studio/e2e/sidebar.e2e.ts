@@ -210,7 +210,7 @@ test("sidebar below 640px: the toggle opens a modal 'Navigation' sheet from the 
   const sheet = page.getByRole("dialog", { name: "Navigation" })
   await expect(sheet).toBeVisible()
   // The page behind the modal sheet is inert, so the toggle is read by its slot, not its role.
-  const inert = page.locator('[data-slot="sidebar-trigger"]')
+  const inert = page.locator('button[aria-label="Sidebar"]')
   await expect(inert).toHaveAttribute("aria-expanded", "true")
   await expect(inert).toHaveAttribute("aria-controls", "studio-sidebar-sheet")
   await expect(sheet).toHaveAttribute("id", "studio-sidebar-sheet")

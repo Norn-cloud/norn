@@ -223,8 +223,8 @@ test("picker below 640px: the trigger, Clear, search field and options are at le
   await equipment.click()
   await search.fill("Spare unit 01")
   await expect(list.getByRole("option").first()).toContainText("Spare unit 01")
-  // Every target in the open list is at least 44px tall.
-  expect((await search.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  // Every target in the open list is at least 44px tall, measured once the list has settled from its 95% scale.
+  await expect.poll(async () => (await search.boundingBox())!.height).toBeGreaterThanOrEqual(44)
   for (const option of await list.getByRole("option").all()) expect((await option.boundingBox())!.height).toBeGreaterThanOrEqual(44)
   await page.keyboard.press("Enter")
   await expect(list).toBeHidden()

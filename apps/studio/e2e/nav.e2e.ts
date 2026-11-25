@@ -101,7 +101,9 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
 
   // At 850px with both panels docked, the Sources parent breadcrumb link remains visible and non-overlapping.
+  // Below 1024px the sidebar settles on its 48px rail (a 200ms width change), so the bar is measured after it.
   await page.setViewportSize({ width: 850, height: 900 })
+  await expect.poll(async () => (await page.locator('[data-slot="sidebar"]').boundingBox())?.width).toBe(48)
   const { search: searchAt850 } = await checkHeader()
   const sourcesCrumb = page.getByRole("navigation", { name: "breadcrumb" }).getByRole("link", { name: "Sources" })
   await expect(sourcesCrumb).toBeVisible()

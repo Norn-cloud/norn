@@ -209,7 +209,9 @@ function SidebarTrigger({ className, onClick, ref, ...props }: React.ComponentPr
   }, [ref, triggerRef])
 
   return (
+    // A wrapping tooltip passes its own props (data-slot, handlers) first; the toggle's name, state and slot win.
     <button
+      {...props}
       type="button"
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
@@ -226,7 +228,6 @@ function SidebarTrigger({ className, onClick, ref, ...props }: React.ComponentPr
         onClick?.(event)
         toggleSidebar()
       }}
-      {...props}
     >
       <PanelLeftIcon aria-hidden strokeWidth={1.6} />
     </button>
