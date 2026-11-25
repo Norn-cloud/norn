@@ -33,6 +33,27 @@ per call) pins calls, so a cell that has installed other definitions refuses
 holds the `norn.live.v1` subscription socket. There is no mock mode: `norn dev`
 serves the real routes.
 
+Any other route of the contract is read with `client.get(route, { path, query })`
+and called with `client.post(route, { path, query, body })`, typed by the
+generated `paths`: an unserved route, a missing path parameter or a call-level
+`orgId` is a compile error. Documents are read exactly (`ExactDocument<T>`, every
+number as its source text, as `parseExactJson` reads it). The answer is
+`document | refused`; a 404 Refusal@2 is the route's refusal (a record it does
+not hold), except `route.not_found`, which like any non-refusal 404, and the 503
+a deployment with no host bound answers (`NO_HOST_ERROR`), throws
+`NornUnavailable` with `notServed`. Any other non-refusal answer, a gateway's
+503 included, is `NornUnavailable` without it: the cell did not answer, and a
+read may be repeated. A success that is no JSON document (an empty body, unless
+the route declares that success without content in `EMPTY_SUCCESS`, or a body
+that is no object or array) is `NornUnexpectedResponse`. A route that answers with a file (an export)
+is read with `client.download`, as bytes in a media type the route declares
+(`FILE_MEDIA`), never through the JSON reader. `client.path(route, ...)` is the
+scoped path a live subscription names. `LiveClient` frames are the contract's
+`LiveClientMessage` / `LiveServerMessage`; each snapshot carries its body read
+exactly (`exact`) and, for a failing status, the route's checked `refusal`.
+Once the client stops reconnecting, every subscriber (and any later one) is
+told `LIVE_UNAVAILABLE` through `onRefused`: its answers are no longer followed.
+
 `norn codegen --ts <artifacts> [--base <artifacts>] --out FILE` (in
 `tools/norn-ts`) emits one types-only `.d.ts` with the `ActionMap`, `ObjectMap`
 and `DefinitionsDigest` of an admitted definition set; `--check` fails when the
