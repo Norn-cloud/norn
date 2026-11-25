@@ -64,7 +64,7 @@ impl StepContracts {
                 path: "orderedFold".into(),
                 reason: error.to_string(),
             })?;
-        let (input, output) = self.insert_helper(key, helper)?;
+        let (input, output) = self.insert_with_paths(key, helper, "step.input", "step.output")?;
         if input != expected || output != accumulator {
             return Err(crate::AdmissionError::InvalidSchema {
                 rule_id: helper.rule_id.clone(),
@@ -84,8 +84,18 @@ impl StepContracts {
         key: &str,
         helper: &norn_ir::RuleRoot,
     ) -> Result<(Schema, Schema), crate::AdmissionError> {
-        let input = crate::contract::closed_record(helper, "inputSchema")?;
-        let output = crate::contract::closed_record(helper, "outputSchema")?;
+        self.insert_with_paths(key, helper, "inputSchema", "outputSchema")
+    }
+
+    fn insert_with_paths(
+        &mut self,
+        key: &str,
+        helper: &norn_ir::RuleRoot,
+        input_path: &str,
+        output_path: &str,
+    ) -> Result<(Schema, Schema), crate::AdmissionError> {
+        let input = crate::contract::closed_record(helper, "inputSchema", input_path)?;
+        let output = crate::contract::closed_record(helper, "outputSchema", output_path)?;
         self.schemas
             .insert(key.to_owned(), (input.clone(), output.clone()));
         Ok((input, output))

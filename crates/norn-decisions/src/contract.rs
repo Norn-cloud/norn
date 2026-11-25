@@ -22,22 +22,34 @@ pub(crate) fn invalid_schema(
 }
 
 pub(crate) fn parse_schema(rule: &RuleRoot, member: &str) -> Result<Schema, AdmissionError> {
+    parse_schema_at(rule, member, member)
+}
+
+pub(crate) fn parse_schema_at(
+    rule: &RuleRoot,
+    member: &str,
+    path: &str,
+) -> Result<Schema, AdmissionError> {
     let document = norn_ir::JsonValue::Object(match member {
         "inputSchema" => rule.input_schema.clone(),
         _ => rule.output_schema.clone(),
     });
-    Schema::parse(&document, member)
+    Schema::parse(&document, path)
         .map_err(|violation| invalid_schema(&rule.rule_id, &violation.path, violation.reason))
 }
 
 /// A sub-decision's schema: the closed dialect, rooted at a record.
-pub(crate) fn closed_record(rule: &RuleRoot, member: &str) -> Result<Schema, AdmissionError> {
-    let schema = parse_schema(rule, member)?;
+pub(crate) fn closed_record(
+    rule: &RuleRoot,
+    member: &str,
+    path: &str,
+) -> Result<Schema, AdmissionError> {
+    let schema = parse_schema_at(rule, member, path)?;
     match schema.properties() {
         Some(_) => Ok(schema),
         None => Err(invalid_schema(
             &rule.rule_id,
-            member,
+            path,
             "must be a closed record",
         )),
     }
