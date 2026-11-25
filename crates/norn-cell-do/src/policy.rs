@@ -1151,6 +1151,7 @@ mod caller_slot_tests {
             roles: Vec::new(),
             actor_kind: "user",
             role_table: "test",
+            accountable_person: Some(subject.to_owned()),
         }
     }
 

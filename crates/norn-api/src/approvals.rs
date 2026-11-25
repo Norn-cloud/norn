@@ -1,29 +1,26 @@
 //! APPROVAL-1: a call of an approval-gated action parks as a decision.
 //!
 //! While an active `approval` definition gates an action, the shared action
-//! dispatch runs the kernel's action pipeline against `WouldCommit`, a host
-//! that serves every read but stops at the commit point. Only calls that reach
-//! commit park as one `norn.decision@1` command. Approved calls execute under
+//! dispatch prepares the call without committing it
+//! ([`norn_kernel::prepare_action_intent`]). Only calls that reach commit park
+//! as one `norn.decision@1` command. Approved calls execute under
 //! the requester's own authority, pinned to the action digest
 //! (APPROVAL-REVISION-1) and definitions version (APPROVAL-PIN-1), and recover
 //! only on the requester's own retry (APPROVAL-RECOVERY-1).
 
 use std::collections::BTreeMap;
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http::StatusCode;
+use norn_cell::MAIN_WORLD;
 use norn_cell::decision_ledger::{ApprovalRefused, DecisionRow, Resolution};
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
-use norn_cell::{CellError, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
-use norn_kernel::cell_host::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactMutation,
-    FactState, FactWrite, LinkReadTarget, LinkState, Observed, Performed, PredicateObject,
-    PredicateQuery,
-};
+use norn_kernel::cell_host::{CellCommit, CellHost, FactMutation, FactWrite};
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionCallRecord, Command, CommandId, Effect, FactEvent, FactKey,
-    FreshnessPolicy, Generation, IdempotencyKey, LinkKey, LogicalTime,
+    FreshnessPolicy, Generation, IdempotencyKey, LogicalTime,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -31,9 +28,6 @@ use utoipa::ToSchema;
 
 use crate::host::ActionCell;
 use crate::refusal::Refusal;
-
-/// The sentinel [`WouldCommit`] answers every commit with.
-pub(crate) const WOULD_COMMIT: &str = "approval.would_commit";
 
 /// The step id a parked call's decision carries.
 pub const APPROVAL_STEP: &str = "approval";
@@ -89,6 +83,11 @@ pub(crate) struct ParkedCall {
     pub(crate) attempt: Option<StepAttempt>,
     /// Optional provenance trace context carried by the call when it parked.
     pub(crate) trace: Option<norn_ir::TraceContext>,
+    /// AUTH-INDEPENDENT-PERSON (#618): the prepared-intent digest of the
+    /// commit the call would make when it parked: what its approval is
+    /// granted for. `None` for a call parked before intents were bound,
+    /// whose approval runs nothing ([`approved_intent`]).
+    pub(crate) intent_digest: Option<String>,
 }
 
 /// S6b: one flow step attempt making an action call: its run and its parked
@@ -167,15 +166,22 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             .and_then(RuntimeValue::as_str)
             .map(str::to_owned)
     };
-    let Some(RuntimeValue::Object(input)) = approval.get("input") else {
-        return None;
+    // A call parked before exact spellings were kept has none; one that has
+    // any other `exactInput` than its encoding is no parked call (#618).
+    let input = if let Some(exact) = approval.get("exactInput") {
+        decode_exact(exact.as_str()?)?
+    } else {
+        let Some(RuntimeValue::Object(input)) = approval.get("input") else {
+            return None;
+        };
+        input.clone()
     };
     Some(HeldCall {
         definition: text("definition")?,
         revision: norn_ir::runtime::decode(approval.get("revision")?).ok()?,
         call: ParkedCall {
             action: text("action")?,
-            input: input.clone(),
+            input,
             idempotency_key: text("idempotencyKey")?,
             requester: norn_ir::runtime::decode(approval.get("requester")?).ok()?,
             action_digest: text("actionDigest").unwrap_or_default(),
@@ -195,8 +201,25 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
                     Some(decoded)
                 }
             },
+            intent_digest: text("intentDigest"),
         },
     })
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): the parked input as written. The outbox
+/// keeps a command in Norn1 form, which normalizes text, so the exact spelling
+/// the call's approval is granted for travels encoded beside it.
+fn encode_exact(input: &RuntimeObject) -> Result<String, Refusal> {
+    let exact = norn_ir::canonical::canonical_json_exact_of(input).map_err(Refusal::host)?;
+    Ok(URL_SAFE_NO_PAD.encode(exact))
+}
+
+fn decode_exact(encoded: &str) -> Option<RuntimeObject> {
+    let exact = URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    let RuntimeValue::Object(input) = RuntimeValue::from_json_text(exact).ok()? else {
+        return None;
+    };
+    Some(input)
 }
 
 /// The decision a parked call waits on.
@@ -258,17 +281,6 @@ pub(crate) fn gate<E: SqlEngine>(
         }
         after = page.last().map(|record| record.definition.id.clone());
     }
-}
-
-/// Whether a kernel refusal is [`WouldCommit`]'s sentinel: the call passed
-/// every check and reached the commit point.
-pub(crate) fn would_have_committed(refusal: &norn_kernel::ActionRefusal<CellError>) -> bool {
-    matches!(
-        refusal,
-        norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
-            CellError::DecisionRefused(WOULD_COMMIT)
-        ))
-    )
 }
 
 /// The decision request a parked call carries (`norn.decision@1` input).
@@ -465,13 +477,36 @@ pub(crate) fn attempt_live<E: SqlEngine>(
 
 /// S2: whether `principal`, the authenticated principal of the request
 /// running a call, is the parked call's requester: the same subject, actor
-/// kind and role table. Its roles are the ones verified now.
+/// kind and role table, and never another accountable person than the one
+/// recorded (#618). Its roles are the ones verified now.
 pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarter) -> bool {
     principal.is_some_and(|principal| {
         principal.subject == requester.subject
             && principal.actor_kind == requester.actor_kind
             && principal.role_table == requester.role_table
+            && norn_kernel::retained_person_matches(
+                requester.accountable_person.as_deref(),
+                principal.accountable_person.as_deref(),
+            )
     })
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): the prepared-intent digest the approval
+/// `decision_id` was granted for, which the call's commit must match. A call
+/// parked before intents were bound names none: its approval covers no
+/// commit, and that is recorded as final (call again for a fresh approval).
+///
+/// # Errors
+/// `approval.definition_changed`; a host failure.
+pub(crate) fn approved_intent<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision_id: &str,
+) -> Result<String, Refusal> {
+    let digest = approved_call(cell, decision_id)?.and_then(|(held, _)| held.call.intent_digest);
+    match digest {
+        Some(digest) => Ok(digest),
+        None => Err(refuse(cell, decision_id, definition_changed())?),
+    }
 }
 
 /// S2: the approval `decision_id` is consumed only by its parked
@@ -620,6 +655,10 @@ fn park<E: SqlEngine>(
             RuntimeValue::Object(parked_call.input.clone()),
         ),
         (
+            "exactInput".to_owned(),
+            text(&encode_exact(&parked_call.input)?),
+        ),
+        (
             "idempotencyKey".to_owned(),
             text(&parked_call.idempotency_key),
         ),
@@ -636,6 +675,9 @@ fn park<E: SqlEngine>(
     }
     if let Some(trace) = &parked_call.trace {
         approval.insert("trace".to_owned(), trace.to_runtime_value());
+    }
+    if let Some(digest) = &parked_call.intent_digest {
+        approval.insert("intentDigest".to_owned(), text(digest));
     }
     let payload: RuntimeObject = BTreeMap::from([
         ("kind".to_owned(), text("perform")),
@@ -737,12 +779,15 @@ pub(crate) fn approved_state<E: SqlEngine>(
         format!("{}/{}", held.call.action, held.call.idempotency_key),
     );
     let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
-    // Exactly the approved call: its action, its requester, its input, its trace.
+    // Exactly the approved call: its action, its requester, its input, its
+    // trace. The parked command keeps its input in Norn1 form, as the
+    // command's own identity hashes it; the exact spelling the commit wrote
+    // is bound by the approval's intent digest (#618).
     let exact = recorded.values.as_ref().map(|values| {
         ActionCallRecord::from_values(values).filter(|record| {
             record.action_id == held.call.action
                 && record.actor == held.call.requester.subject
-                && record.input == held.call.input
+                && same_input(&record.input, &held.call.input)
                 && record.trace == held.call.trace
         })
     });
@@ -788,6 +833,13 @@ pub(crate) fn approved_state<E: SqlEngine>(
         (None, Some(None)) => conflict(),
     };
     Ok((held, state))
+}
+
+/// Whether two call inputs are one input under Norn1 equality, the rule the
+/// parked command stores and identifies its call by.
+fn same_input(recorded: &RuntimeObject, parked: &RuntimeObject) -> bool {
+    let norn1 = norn_ir::canonical::canonical_json_of::<RuntimeObject>;
+    matches!((norn1(recorded), norn1(parked)), (Ok(left), Ok(right)) if left == right)
 }
 
 /// The decision that approved the parked call `command`, if one did.
@@ -893,38 +945,6 @@ pub(crate) fn refuse<E: SqlEngine>(
     match cell.commit_approval_refusal(&refused) {
         Ok(_receipt) => Ok(refusal),
         Err(error) => Err(Refusal::from_commit_host_error(&error)),
-    }
-}
-
-/// A host for one dry run of the kernel's action pipeline over `cell`: every
-/// read is the cell's, and every commit stops with [`WOULD_COMMIT`], so
-/// nothing is written. It keeps the object writes the commit carried, so a
-/// gate's `when` reads the record the call would write (APPROVAL-WHEN-1).
-pub(crate) struct WouldCommit<'a, E: SqlEngine> {
-    cell: &'a ActionCell<E>,
-    writes: Vec<FactWrite>,
-}
-
-impl<'a, E: SqlEngine> WouldCommit<'a, E> {
-    /// A dry run over `cell`.
-    pub(crate) const fn new(cell: &'a ActionCell<E>) -> Self {
-        Self {
-            cell,
-            writes: Vec::new(),
-        }
-    }
-
-    /// The object writes of the commit the dry run reached, if any.
-    pub(crate) fn into_writes(self) -> Vec<FactWrite> {
-        self.writes
-    }
-
-    fn stop<T>(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-    ) -> Result<T, CommitError<CellError>> {
-        self.writes = commit.writes;
-        Err(CommitError::Host(CellError::DecisionRefused(WOULD_COMMIT)))
     }
 }
 
@@ -1082,127 +1102,6 @@ fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
     })
 }
 
-impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
-    type Event = FactEvent;
-    type Command = RuntimeObject;
-    type Input = RuntimeObject;
-    type Error = CellError;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
-        self.cell.load(key)
-    }
-    fn supports_reference_reads(&self) -> bool {
-        self.cell.supports_reference_reads()
-    }
-    fn load_reference(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<BoundedFact>, CellError> {
-        self.cell.load_reference(key, max_bytes)
-    }
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<BoundedFact>, CellError> {
-        self.cell.load_bounded(key, max_bytes)
-    }
-    fn resolve_accepted_receipt(
-        &self,
-        reference: &norn_kernel::receipt_binding::ReceiptReference,
-        manifest: &norn_ir::function::Digest,
-    ) -> Result<
-        Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
-        norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
-    > {
-        self.cell.resolve_accepted_receipt(reference, manifest)
-    }
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
-        self.cell.load_link(key)
-    }
-    fn read_link_targets(
-        &self,
-        source: &FactKey,
-        link: &str,
-        max_targets: usize,
-        max_key_bytes: u64,
-    ) -> Result<Option<Vec<LinkReadTarget>>, CellError> {
-        self.cell
-            .read_link_targets(source, link, max_targets, max_key_bytes)
-    }
-    fn read_predicate(
-        &self,
-        predicate: &PredicateQuery,
-        max_members: usize,
-        max_bytes: u64,
-    ) -> Result<Option<Vec<PredicateObject>>, CellError> {
-        self.cell.read_predicate(predicate, max_members, max_bytes)
-    }
-    fn read_predicate_for_action(
-        &self,
-        predicate: &PredicateQuery,
-        max_members: usize,
-        max_bytes: u64,
-        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
-    ) -> Result<norn_kernel::PredicateActionRead, CellError> {
-        self.cell
-            .read_predicate_for_action(predicate, max_members, max_bytes, authorize)
-    }
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_action_quantity(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        _idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_action_references(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _proof: norn_kernel::action_commit::ActionReferenceReads,
-        _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_owned_rows(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _proof: norn_kernel::cell_host::OwnedRowsCommitProof,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_stamped(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _proof: norn_kernel::CreatorStampProof,
-        _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn perform(&mut self) -> Result<Option<Performed<RuntimeObject>>, CellError> {
-        Ok(None)
-    }
-    fn observe(&mut self) -> Result<Option<Observed<RuntimeObject>>, CellError> {
-        Ok(None)
-    }
-    fn clock(&mut self) -> Result<Option<DueTimer<RuntimeObject>>, CellError> {
-        Ok(None)
-    }
-    fn serialize_by(&self, key: &FactKey) -> norn_kernel::cell_host::SerializationLane {
-        self.cell.serialize_by(key)
-    }
-    fn publish(&mut self, _receipt: &CommitReceipt) -> Result<(), CellError> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "fixture values")]
 mod tests {
@@ -1270,6 +1169,29 @@ mod tests {
                 json!({ "amount": amount.clone(), "status": "submitted" }),
             ),
         ]
+    }
+
+    /// #618: a parked call keeps its input's exact spelling, and an
+    /// `exactInput` that is anything but that encoding never falls back to
+    /// the normalized `input`.
+    #[test]
+    fn a_parked_call_reads_back_its_exact_input_or_none() {
+        let parked = |exact: Value| {
+            RuntimeValue::from_json(json!({
+                "definition": "ops.gate", "revision": 1, "action": "ops.act",
+                "input": { "title": "caf\u{e9}" }, "idempotencyKey": "k1",
+                "requester": { "subject": "user:a", "actorKind": "user", "roles": [],
+                    "roleTable": "fixtures/1", "accountablePerson": "a" },
+                "exactInput": exact
+            }))
+            .unwrap()
+        };
+        let decomposed = URL_SAFE_NO_PAD.encode(r#"{"title":"cafe\u0301"}"#);
+        let read = held_call(&parked(json!(decomposed))).map(|held| held.call.input);
+        let title = read.as_ref().and_then(|input| input.get("title"));
+        assert_eq!(title, Some(&RuntimeValue::String("cafe\u{301}".to_owned())));
+        assert_eq!(held_call(&parked(Value::Null)), None);
+        assert_eq!(held_call(&parked(json!(1))), None);
     }
 
     /// #1469 S9: `when` reads the call's target, never whichever write sorts

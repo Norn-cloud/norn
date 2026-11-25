@@ -323,6 +323,7 @@ impl TokenPrincipals {
             roles: principal.roles,
             actor_kind: principal.actor_kind.as_str(),
             role_table: principal.role_table,
+            accountable_person: principal.accountable_person,
         })
     }
 }
@@ -409,6 +410,7 @@ impl PrincipalResolver for FixturePrincipals {
                 roles: roles.iter().map(|role| (*role).to_owned()).collect(),
                 actor_kind: "user",
                 role_table: self.role_table,
+                accountable_person: Some((*name).to_owned()),
             });
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);

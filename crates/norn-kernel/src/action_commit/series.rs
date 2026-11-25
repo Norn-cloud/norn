@@ -5,7 +5,6 @@ use norn_ir::{
 
 use crate::cell_host::{CellHost, FactKey, FactState, JsonObject, JsonValue};
 use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
-use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::{prepare_candidate, scope_from_values};
 
@@ -37,8 +36,7 @@ pub(super) fn commit_upsert_series<H>(
     key_name: &KeyName,
     key_properties: &[PropertyId],
     declaration: &NamingSeriesIR,
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    mut envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -46,11 +44,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    let limits = envelope.limits;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", call.action.action_id, call.idempotency_key),
     );
-    let mut meter = meter;
     for _attempt in 0..MAX_NAMING_SERIES_RETRIES {
         // A replay is resolved before reading the counter or ledger clock. It
         // therefore retains the original generated key after time or counter
@@ -193,7 +191,8 @@ where
             pending,
             EnvelopePolicy {
                 limits,
-                meter: meter.as_deref_mut(),
+                meter: envelope.meter.as_deref_mut(),
+                capture: envelope.capture.as_deref_mut(),
             },
         );
         match outcome {
