@@ -303,9 +303,8 @@ impl Layer<'_> {
                 });
                 continue;
             };
-            let out = way_out(machine, id, escape, &inside, self.held_in, state_id)
-                && (!escape_may_close
-                    || way_out(machine, id, Some(OPEN_CHANGE), &inside, self.held_in, state_id));
+            let out_on = |escape| way_out(machine, id, escape, &inside, self.held_in, state_id);
+            let out = out_on(escape) && (!escape_may_close || out_on(Some(OPEN_CHANGE)));
             let legal = match state.role {
                 WidgetStateRole::Pending => true,
                 WidgetStateRole::Idle => out,
