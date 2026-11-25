@@ -127,6 +127,45 @@ fn a_creation_stays_provable_after_an_install_changes_the_model() {
     assert!(proven.iter().all(Option::is_some), "{proven:?}");
 }
 
+/// A row written before an install that adds a nullable member still reads
+/// as the row its version's proof commits to: quality reads of it answer.
+#[test]
+fn a_row_stays_proven_after_an_install_adds_a_nullable_member() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&[json!({
+        "id": "remark", "type": { "kind": "text" }, "constraints": { "nullable": true }
+    })]));
+
+    let mut store = CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+        .expect("first definitions");
+    store.commit(&create("a", 15)).expect("created");
+    store
+        .install_definitions(second, input(&second_set, 20), Some(1), SCOPE)
+        .expect("second definitions");
+
+    let read = store.read();
+    let row = read
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.values.get("remark"), Some(&Value::Null));
+    assert_eq!(
+        read.observation_findings(MAIN_WORLD, "install.Item", "a")
+            .expect("the row is the one its proof commits to"),
+        []
+    );
+    assert!(
+        !read
+            .observation_is_quarantined(MAIN_WORLD, &row)
+            .expect("quarantine")
+    );
+}
+
 #[derive(Debug, Clone)]
 enum Step {
     /// Create `key`, its payload naming only `code` or every member.

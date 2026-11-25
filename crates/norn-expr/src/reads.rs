@@ -691,14 +691,14 @@ mod tests {
         // root, read nothing of `principal`.
         for source in ["'principal', 'interest'", "> slice.principal_cap", "[1..5]"] {
             assert_eq!(
-                unary_test_reads(source, "principal").expect("a unary test"),
+                super::unary_test_reads(source, "principal").expect("a unary test"),
                 ExpressionReads::default(),
                 "{source}"
             );
             // The same text is not a standard expression.
             assert!(expression_reads("> 5", "principal").is_err());
         }
-        let reads = unary_test_reads("< principal.limit, > principal.floor", "principal")
+        let reads = super::unary_test_reads("< principal.limit, > principal.floor", "principal")
             .expect("a unary test");
         assert_eq!(
             reads.fields,

@@ -19,16 +19,11 @@ use crate::policy::{Caller, DEMO_GRANTS, ReadPolicy};
 const DOCUMENT: &str = "review.Document";
 const APPROVE: &str = "review.document.approve";
 
-fn envelope(
-    kind: &str,
-    artifact_id: &str,
-    dependencies: Value,
-    payload: Value,
-) -> ArtifactEnvelope {
+fn envelope(kind: &str, artifact_id: &str, payload: &Value) -> ArtifactEnvelope {
     serde_json::from_value(json!({
         "irVersion": "0.1", "artifactId": artifact_id, "kind": kind, "namespace": "review",
         "name": artifact_id, "version": "1.0.0", "lifecycle": "active",
-        "scope": {}, "dependencies": dependencies,
+        "scope": {}, "dependencies": [],
         "provenance": {"source": "system", "sourcePath": "test"},
         "payload": payload
     }))
@@ -100,15 +95,10 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
             "lifecycle": "status", "transition": "approve"}
     });
     vec![
-        envelope("entity", "review.Document.entity", json!([]), entity),
-        envelope("policy", "review.access.policy", json!([]), policy),
-        envelope("rule", "review.approval.decide.rule", json!([]), rule),
-        envelope(
-            "action",
-            "review.document.approve.action",
-            json!([]),
-            action,
-        ),
+        envelope("entity", "review.Document.entity", &entity),
+        envelope("policy", "review.access.policy", &policy),
+        envelope("rule", "review.approval.decide.rule", &rule),
+        envelope("action", "review.document.approve.action", &action),
     ]
 }
 
@@ -182,9 +172,9 @@ fn text(value: &str) -> RuntimeValue {
 #[test]
 fn the_verified_caller_resolves_its_own_values_under_a_named_policy_version() {
     let fixture = Fixture::new();
-    let resolver = fixture.policy.principal_resolver();
+    let host = fixture.policy.principal_resolver();
     let admin = caller("user:ada", "admin", "user");
-    let resolved = resolver
+    let resolved = host
         .resolve(&admin, DEMO_GRANTS.version, &fixture.request("user:ada"))
         .expect("resolved");
     assert_eq!(resolved.principal, "user:ada");
@@ -207,7 +197,7 @@ fn the_verified_caller_resolves_its_own_values_under_a_named_policy_version() {
     assert!(catalog.len() >= 32, "{catalog}");
     // A member holds neither the role nor any of the profile's.
     let member = caller("user:mo", "member", "user");
-    let resolved_member = resolver
+    let resolved_member = host
         .resolve(&member, DEMO_GRANTS.version, &fixture.request("user:mo"))
         .expect("resolved");
     assert_eq!(resolved_member.values["isAdmin"], RuntimeValue::Bool(false));
@@ -221,10 +211,10 @@ fn the_verified_caller_resolves_its_own_values_under_a_named_policy_version() {
 #[test]
 fn another_actor_another_scope_or_an_unissued_actor_kind_resolves_nothing() {
     let fixture = Fixture::new();
-    let resolver = fixture.policy.principal_resolver();
+    let host = fixture.policy.principal_resolver();
     let admin = caller("user:ada", "admin", "user");
     // The request names another actor than the verified caller.
-    let other = resolver.resolve(&admin, DEMO_GRANTS.version, &fixture.request("user:eve"));
+    let other = host.resolve(&admin, DEMO_GRANTS.version, &fixture.request("user:eve"));
     assert_eq!(other.expect_err("another actor").input, "isAdmin");
     // The request is for another scope than the cell's.
     let mut foreign = fixture.request("user:ada");
@@ -233,23 +223,14 @@ fn another_actor_another_scope_or_an_unissued_actor_kind_resolves_nothing() {
         ("environmentId".to_owned(), "staging".to_owned()),
     ]);
     foreign.scope = &elsewhere;
-    assert!(
-        resolver
-            .resolve(&admin, DEMO_GRANTS.version, &foreign)
-            .is_err()
-    );
+    assert!(host.resolve(&admin, DEMO_GRANTS.version, &foreign).is_err());
     let no_scope = BTreeMap::new();
     foreign.scope = &no_scope;
-    assert!(
-        resolver
-            .resolve(&admin, DEMO_GRANTS.version, &foreign)
-            .is_err()
-    );
+    assert!(host.resolve(&admin, DEMO_GRANTS.version, &foreign).is_err());
     // This host issues users and services; an agent kind is not acted for.
     let agent = caller("user:ada", "admin", "agent");
     assert!(
-        resolver
-            .resolve(&agent, DEMO_GRANTS.version, &fixture.request("user:ada"))
+        host.resolve(&agent, DEMO_GRANTS.version, &fixture.request("user:ada"))
             .is_err()
     );
 }

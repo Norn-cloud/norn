@@ -864,8 +864,8 @@ fn review_artifact(
     kind: &str,
     id: &str,
     version: &str,
-    dependencies: Value,
-    payload: Value,
+    dependencies: &Value,
+    payload: &Value,
 ) -> Value {
     json!({ "artifactId": id, "dependencies": dependencies, "irVersion": "0.1", "kind": kind,
         "lifecycle": "active", "name": id, "namespace": "review", "payload": payload,
@@ -875,7 +875,7 @@ fn review_artifact(
 
 /// The document type and the access policy, with `catalog` as its principal
 /// attribute catalog, and the action that records a document.
-fn review_base(catalog: Value) -> Vec<Value> {
+fn review_base(catalog: &Value) -> Vec<Value> {
     let entity = json!({ "entityVersion": "2.0", "objectType": {
         "identity": [{ "name": "primary", "properties": ["id"] }],
         "name": DOCUMENT,
@@ -912,16 +912,22 @@ fn review_base(catalog: Value) -> Vec<Value> {
             "entity",
             "review.Document.entity",
             "0.1.0",
-            json!([]),
-            entity,
+            &json!([]),
+            &entity,
         ),
-        review_artifact("policy", "review.access.policy", "0.1.0", json!([]), policy),
+        review_artifact(
+            "policy",
+            "review.access.policy",
+            "0.1.0",
+            &json!([]),
+            &policy,
+        ),
         review_artifact(
             "action",
             "review.document.record.action",
             "0.1.0",
-            json!([]),
-            record,
+            &json!([]),
+            &record,
         ),
     ]
 }
@@ -955,8 +961,8 @@ fn approve_action(version: &str, rule: Option<&str>) -> Value {
         "action",
         "review.document.approve.action",
         version,
-        dependencies,
-        payload,
+        &dependencies,
+        &payload,
     )
 }
 
@@ -1022,8 +1028,8 @@ fn approval_rule(version: &str, principal_inputs: bool) -> Value {
         "rule",
         "review.approval.decide.rule",
         version,
-        json!([]),
-        payload,
+        &json!([]),
+        &payload,
     )
 }
 
@@ -1034,7 +1040,7 @@ impl Cell {
         assert_eq!(self.version(), expected + 1);
     }
 
-    fn act(&mut self, action: &str, role: &str, input: Value, key: &str) -> Response {
+    fn act(&mut self, action: &str, role: &str, input: &Value, key: &str) -> Response {
         let body = json!({ "input": input, "idempotencyKey": key });
         let path = format!("/v1/actions/{action}");
         self.call("POST", &path, Some(&user(role)), &body.to_string())
@@ -1045,11 +1051,11 @@ impl Cell {
         let recorded = self.act(
             "review.document.record",
             "member",
-            json!({ "id": id, "owner": "user:member-of-org_a" }),
+            &json!({ "id": id, "owner": "user:member-of-org_a" }),
             &format!("record-{id}"),
         );
         assert_eq!(recorded.status, 200, "{}", recorded.body);
-        let approved = self.act(APPROVE, role, json!({ "id": id }), key);
+        let approved = self.act(APPROVE, role, &json!({ "id": id }), key);
         assert_eq!(approved.status, 200, "{}", approved.body);
         json_of(&approved)
     }
@@ -1064,7 +1070,7 @@ impl Cell {
             .unwrap()
             .iter()
             .find(|record| record["id"].as_str().is_some_and(|key| key.ends_with(id)))
-            .unwrap_or_else(|| panic!("no {object_type} {id}: {}", page.body))
+            .expect("the stored record")
             .clone()
     }
 }
@@ -1086,7 +1092,7 @@ fn principal_inputs_survive_a_rollback_and_a_restart() {
     let plain = [approval_rule("0.2.0", false), approve_action("0.1.0", None)];
 
     // Without: the approval pins no decision, and a call commits.
-    let mut without = review_base(admin_role());
+    let mut without = review_base(&admin_role());
     without.push(approve_action("0.1.0", None));
     cell.applied(&without, base);
     assert_eq!(cell.approve("r1", "member", "a1")["outcome"], "committed");
@@ -1126,7 +1132,7 @@ fn principal_inputs_survive_a_rollback_and_a_restart() {
     // stored values are kept, and the install is not refused.
     cell.applied(&plain, base + 2);
     assert_eq!(cell.approve("r4", "member", "a4")["outcome"], "committed");
-    let replayed = cell.act(APPROVE, "member", json!({ "id": "r1" }), "a1");
+    let replayed = cell.act(APPROVE, "member", &json!({ "id": "r1" }), "a1");
     assert_eq!(
         json_of(&replayed)["outcome"],
         "replayed",
@@ -1147,7 +1153,7 @@ fn principal_inputs_survive_a_rollback_and_a_restart() {
         cell.stored(calls, "a2")["values"]["principalInputs"],
         recorded
     );
-    let replayed = cell.act(APPROVE, "member", json!({ "id": "r4" }), "a4");
+    let replayed = cell.act(APPROVE, "member", &json!({ "id": "r4" }), "a4");
     assert_eq!(
         json_of(&replayed)["outcome"],
         "replayed",
@@ -1159,7 +1165,7 @@ fn principal_inputs_survive_a_rollback_and_a_restart() {
     // receipts, with nothing resolved again.
     cell.applied(&ruled, base + 3);
     for (id, role, key) in [("r2", "admin", "a2"), ("r3", "member", "a3")] {
-        let replayed = cell.act(APPROVE, role, json!({ "id": id }), key);
+        let replayed = cell.act(APPROVE, role, &json!({ "id": id }), key);
         assert_eq!(
             json_of(&replayed)["outcome"],
             "replayed",
@@ -1181,7 +1187,7 @@ fn a_request_body_carrying_principal_is_refused_on_the_action_and_decide_routes(
     let directory = tempfile::tempdir().unwrap();
     let mut cell = provisioned(&directory.path().join("cell.sqlite"));
     let base = cell.version();
-    let mut pack = review_base(admin_role());
+    let mut pack = review_base(&admin_role());
     pack.extend([
         approval_rule("0.1.0", true),
         approve_action("0.2.0", Some("0.1.0")),
@@ -1252,7 +1258,7 @@ fn a_catalog_that_disagrees_with_the_access_rules_is_refused_before_install() {
         "allOf": [{ "resource": { "name": "owner", "op": "eq",
             "value": { "principalAttribute": "id" } } }] });
     let with_catalog = |catalog: Value| {
-        let mut pack = review_base(catalog);
+        let mut pack = review_base(&catalog);
         pack[1]["payload"]["rules"]
             .as_array_mut()
             .unwrap()
@@ -1281,13 +1287,12 @@ fn a_catalog_that_disagrees_with_the_access_rules_is_refused_before_install() {
             assert_eq!(refused.status, 422, "{route}: {}", refused.body);
             let refusal = json_of(&refused);
             assert_eq!(refusal["code"], "defs.refused", "{refusal}");
-            let codes: Vec<&str> = refusal["diagnostics"]
+            let named = refusal["diagnostics"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .filter_map(|diagnostic| diagnostic["code"].as_str())
-                .collect();
-            assert!(codes.contains(&code), "{route}: {refusal}");
+                .any(|diagnostic| diagnostic["code"] == code);
+            assert!(named, "{route}: {refusal}");
         }
         assert_eq!(cell.version(), base, "nothing was installed");
     }
@@ -1297,7 +1302,7 @@ fn a_catalog_that_disagrees_with_the_access_rules_is_refused_before_install() {
     let recorded = cell.act(
         "review.document.record",
         "member",
-        json!({ "id": "r1", "owner": "user:member-of-org_a" }),
+        &json!({ "id": "r1", "owner": "user:member-of-org_a" }),
         "record-r1",
     );
     assert_eq!(recorded.status, 200, "{}", recorded.body);
