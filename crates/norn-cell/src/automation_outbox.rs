@@ -86,7 +86,9 @@ use crate::error::CellError;
 use crate::read::{ObjectRecord, StoreReader, to_i64};
 use crate::store::{CommitBatch, WrittenRow};
 
-use capture::{ActionCallMeta, action_calls_in_batch, at_or_after, extract_action_call, replay_key};
+use capture::{
+    ActionCallMeta, action_calls_in_batch, at_or_after, extract_action_call, replay_key,
+};
 pub(crate) use capture::{AutomationWatch, capture_before, preimage_limit};
 use continuation::REPLAYABLE_MATCHER_VERSIONS;
 pub use continuation::{

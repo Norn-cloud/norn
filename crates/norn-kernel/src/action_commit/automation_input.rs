@@ -720,8 +720,9 @@ mod tests {
         let mut raw = serde_json::to_value(sample_action()).expect("action JSON");
         raw["inputSchema"]["properties"]["orderId"]["enum"] = serde_json::json!(["", "  "]);
         let action: ActionRoot = serde_json::from_value(raw).expect("enum action");
-        let errors = validate_automation_static_input(&action, Some(&input_with_tag(String::new())))
-            .expect_err("no legal target id");
+        let errors =
+            validate_automation_static_input(&action, Some(&input_with_tag(String::new())))
+                .expect_err("no legal target id");
         assert_eq!(
             errors
                 .iter()
