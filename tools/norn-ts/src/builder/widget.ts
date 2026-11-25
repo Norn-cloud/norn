@@ -195,6 +195,8 @@ export interface WidgetDef {
   readonly pages: ReadonlyArray<Page>
   readonly actionBindings?: ReadonlyArray<ActionBinding>
   readonly contextReads?: ReadonlyArray<ContextRead>
+  /** The catalog components this contract declares, typed (UI-CATALOG-1). */
+  readonly catalog?: ReadonlyArray<CatalogEntry>
   /** The rest of the contract, as the Rust checker reads it (`dataBindings`, `fields`, `forms`, …). */
   readonly contract?: Readonly<{
     dataBindings?: ReadonlyArray<Json>
@@ -235,7 +237,7 @@ export function lowerWidget(def: WidgetDef, options: EnvelopeOptions): Json {
     actionPlacements: contract.actionPlacements ?? [],
     navigationItems: contract.navigationItems ?? [],
     overrides: contract.overrides ?? [],
-    ...(contract.catalog === undefined ? {} : { catalog: contract.catalog }),
+    ...(def.catalog === undefined && contract.catalog === undefined ? {} : { catalog: [...def.catalog ?? [], ...contract.catalog ?? []] }),
     ...(def.contextReads === undefined ? {} : { contextReads: def.contextReads }),
   }
   return envelope(

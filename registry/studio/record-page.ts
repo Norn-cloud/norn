@@ -49,7 +49,7 @@ const island = (nodeId: string, heldIn: ReadonlyArray<string>): W.WidgetNode => 
 })
 
 /** A catalog entry for a Studio island that draws the page's server states. */
-const entry = (entryId: string, label: W.Message, events: ReadonlyArray<string> = []) => ({
+const entry = (entryId: string, label: W.Message, events: ReadonlyArray<string> = []): W.CatalogEntry => ({
   entryId,
   label,
   trust: "contract_checked",
@@ -117,15 +117,13 @@ export const recordPage: W.WidgetDef = W.widget({
     },
   }],
   contextReads: [{ bindingId: "record", pageId: "record", typeParameterId: "objectType", keyParameterId: "id" }],
-  contract: {
-    catalog: [
-      entry("record-reading", msg("Reading the record")),
-      entry("record-failed", msg("The record could not be read"), ["retry"]),
-      entry("record-absent", msg("Record not available"), ["readAgain"]),
-      entry("record-header", msg("The record's name, state and actions"), ["readAgain"]),
-      entry("record-body", msg("The record's facts, story, lineage and rules"), ["readAgain"]),
-    ],
-  },
+  catalog: [
+    entry("record-reading", msg("Reading the record")),
+    entry("record-failed", msg("The record could not be read"), ["retry"]),
+    entry("record-absent", msg("Record not available"), ["readAgain"]),
+    entry("record-header", msg("The record's name, state and actions"), ["readAgain"]),
+    entry("record-body", msg("The record's facts, story, lineage and rules"), ["readAgain"]),
+  ],
 })
 
 /** The page's admitted artifact, as the demo workspace's definitions carry it. */

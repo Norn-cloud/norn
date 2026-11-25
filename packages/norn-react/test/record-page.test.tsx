@@ -14,10 +14,10 @@ import { Node, type PageScope } from "../src/nodes.tsx"
 import type { BindingRead, BindingReadState, WidgetReader } from "../src/reads.ts"
 import { NornAppRenderer } from "../src/renderer.tsx"
 import { createPageRuntime, needsEngine, type MachineRuntime, type RuntimeView } from "../src/runtime.ts"
-import { text, type WidgetUx } from "../src/ux.ts"
+import { text, type Message, type WidgetUx } from "../src/ux.ts"
 import { matrixArtifact } from "./fixtures/matrix-page.ts"
 
-const ux = (recordPageArtifact() as { readonly payload: { readonly ux: WidgetUx } }).payload.ux
+const ux = (recordPageArtifact() as unknown as { readonly payload: { readonly ux: WidgetUx } }).payload.ux
 const page = ux.pages[0]!
 const machine = page.machine as Machine
 const context = { objectType: "canon.Party", id: "demo/party/0001" }
@@ -126,7 +126,8 @@ test("each island is drawn only in the states it is held in, and the page's root
 
 test("a message draws through the host's translations, and its source text when they have none", () => {
   const label = page.root.component.kind === "section" ? page.root.component.section.label : { en: "" }
-  const arabic = (id: string, locale: string) => (locale === "ar" && "msg" in label && id === label.msg.id ? "السجل" : undefined)
+  const { id: recordId } = (label as Message).msg
+  const arabic = (id: string, locale: string) => (locale === "ar" && id === recordId ? "السجل" : undefined)
   expect(text(label, "ar", arabic)).toBe("السجل")
   expect(text(label, "en", arabic)).toBe("Record")
   expect(text(label, "ar")).toBe("Record")

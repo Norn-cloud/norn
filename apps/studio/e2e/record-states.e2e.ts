@@ -183,7 +183,8 @@ test("actions: pending locks the form, accepted shows the receipt and reads the 
   await expect(pageOf(page)).toHaveAttribute("data-state", "showing")
   await expect(page.locator('[data-fact="quantity"]')).toContainText("40")
   // Refused: a retired holding fails the transition's precondition, and the form says the cell's words.
-  objects.rows.find((row) => row.id === RECORD)!.values = { ...objects.rows.find((row) => row.id === RECORD)!.values, retired: "true" }
+  const at = objects.rows.findIndex((row) => row.id === RECORD)
+  objects.rows[at] = { ...objects.rows[at]!, values: { ...objects.rows[at]!.values, retired: "true" } }
   await page.getByRole("button", { name: "Adjust quantity" }).click()
   await sheet.getByLabel("Counted quantity").fill("1.000")
   await sheet.getByLabel("Reason").fill("Late count")
