@@ -379,6 +379,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 | CommitError::AccountingPosting { .. }
                 | CommitError::InvariantBudgetExceeded { .. }
                 | CommitError::InvariantModel { .. }
+                | CommitError::LifecycleInitialization { .. }
                 | CommitError::ObservationAuthorization
                 | CommitError::EventLimitExceeded { .. }
                 | CommitError::Overflow
@@ -833,7 +834,7 @@ fn decode_law_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Option<LawIR> {
 
 impl<E, C, I, S: SqlEngine> CellHost for ObservedSqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {

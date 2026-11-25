@@ -1592,7 +1592,7 @@ where
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -2039,7 +2039,7 @@ where
 
 impl<E, C, I, S: SqlEngine> CellHost for SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {

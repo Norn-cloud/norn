@@ -22,13 +22,15 @@ use norn_kernel::pack_mbt_support::{
 use norn_kernel::{CellCommit, CommitError, CommitReceipt, TypeCatalog};
 
 use super::coverage::DomainCoverage;
-use super::driver::{assert_zero_ledger_writes, with_cov};
-use super::synth::{GuardEval, collect_required_link_graph, evaluate_guards};
+use super::driver::{assert_zero_ledger_writes, bfs_paths_to_states, with_cov};
+use super::synth::{
+    GuardEval, collect_required_link_graph, evaluate_guards, synthesize_guard_satisfying,
+};
 use super::{AdmittedPack, LawExampleCase, PackHost};
 
 pub(crate) fn run_law_example_parity_phase<H, F>(
     pack: &AdmittedPack,
-    _catalog: &TypeCatalog<'_>,
+    catalog: &TypeCatalog<'_>,
     make_host: &mut F,
     coverage: &Arc<Mutex<DomainCoverage>>,
 ) -> Result<usize, String>
@@ -38,7 +40,7 @@ where
 {
     let mut checked = 0usize;
     for (idx, example) in pack.law_examples.iter().enumerate() {
-        verify_single_law_example(pack, example, idx, make_host, coverage)?;
+        verify_single_law_example(pack, catalog, example, idx, make_host, coverage)?;
         checked = checked.saturating_add(1);
     }
     Ok(checked)
@@ -46,6 +48,7 @@ where
 
 fn build_atomic_subject_commit(
     pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
     subject_type: &str,
     key: &FactKey,
     subject_values: norn_kernel::cell_host::JsonObject,
@@ -60,6 +63,7 @@ fn build_atomic_subject_commit(
 > {
     let mut writes = Vec::new();
     let mut links = Vec::new();
+    let mut events = Vec::new();
     if let Some(subject_ty) = pack
         .object_types
         .iter()
@@ -69,6 +73,7 @@ fn build_atomic_subject_commit(
         writes.extend(graph.setup_writes);
         links.extend(graph.setup_links);
         links.extend(graph.direct_links);
+        events = subject_evidence(pack, catalog, subject_ty, key, &subject_values, seed)?;
     }
     writes.push(FactWrite {
         key: key.clone(),
@@ -80,12 +85,155 @@ fn build_atomic_subject_commit(
     Ok(CellCommit {
         writes,
         links,
+        events,
         ..CellCommit::empty()
     })
 }
 
+/// GRAPH-STATE-1 (#1685): a law example's subject is a snapshot, but a cell
+/// admits a first write only in its lifecycles' initial states or as the end
+/// of the transitions the same commit records. The fixture records the legal
+/// sequence that reaches the snapshot: a creation in the initial states, the
+/// shortest declared path to each example state, and, only where a guard on
+/// that path does not hold for the snapshot, a guard-satisfying creation
+/// value that is set back to the snapshot's own value afterwards. The final
+/// row is still exactly the example subject, so the runtime evaluates the
+/// same law on the same values as the checker.
+fn subject_evidence(
+    pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
+    subject_ty: &ObjectTypeDef,
+    key: &FactKey,
+    subject: &JsonObject,
+    seed: u64,
+) -> Result<Vec<norn_kernel::FactEvent>, String> {
+    let unreachable = |why: String| format!("law example subject {key} is unreachable: {why}");
+    let mut created = subject.clone();
+    let steps =
+        lifecycle_steps(catalog, subject_ty, subject, &mut created).map_err(&unreachable)?;
+    if steps.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut current = created.clone();
+    let mut repaired = BTreeSet::new();
+    for (lifecycle, transition, _) in &steps {
+        if evaluate_guards(&transition.guards, &current) != GuardEval::True {
+            let satisfying = synthesize_guard_satisfying(
+                pack,
+                subject_ty,
+                lifecycle,
+                &transition.guards,
+                &key.key,
+                seed,
+            );
+            for property in guard_inputs(&transition.guards) {
+                if let Some(value) = satisfying.get(&property) {
+                    created.insert(property.clone(), value.clone());
+                    current.insert(property.clone(), value.clone());
+                    repaired.insert(property);
+                }
+            }
+            if evaluate_guards(&transition.guards, &current) != GuardEval::True {
+                return Err(unreachable(format!(
+                    "no guard-satisfying values for {}",
+                    transition.id.as_str()
+                )));
+            }
+        }
+        current.insert(
+            lifecycle.property.as_str().to_owned(),
+            JsonValue::String(transition.to.clone()),
+        );
+    }
+    let mut events = vec![norn_kernel::FactEvent::Created {
+        key: key.clone(),
+        values: created,
+    }];
+    for (lifecycle, transition, from) in steps {
+        events.push(norn_kernel::FactEvent::Transitioned {
+            key: key.clone(),
+            lifecycle: lifecycle.property,
+            transition: transition.id,
+            from,
+            to: transition.to,
+        });
+    }
+    for property in repaired {
+        let value = subject.get(&property).cloned().unwrap_or(JsonValue::Null);
+        events.push(norn_kernel::FactEvent::Set {
+            key: key.clone(),
+            property: norn_kernel::pack_mbt_support::PropertyId(property),
+            value,
+        });
+    }
+    Ok(events)
+}
+
+/// One declared transition on the path to a law example's lifecycle state.
+type Step = (
+    norn_kernel::pack_mbt_support::Lifecycle,
+    norn_kernel::pack_mbt_support::Transition,
+    String,
+);
+
+/// The shortest declared path from an initial state to each non-initial
+/// lifecycle state of `subject`, with `created` set to those initial states.
+fn lifecycle_steps(
+    catalog: &TypeCatalog<'_>,
+    subject_ty: &ObjectTypeDef,
+    subject: &JsonObject,
+    created: &mut JsonObject,
+) -> Result<Vec<Step>, String> {
+    let mut steps = Vec::new();
+    for lifecycle in catalog.lifecycles(&subject_ty.name).into_values() {
+        let property = lifecycle.property.as_str().to_owned();
+        let Some(state) = subject.get(&property).and_then(JsonValue::as_str) else {
+            continue;
+        };
+        if lifecycle.initial.iter().any(|initial| initial == state) {
+            continue;
+        }
+        let Some((initial, path)) = bfs_paths_to_states(&lifecycle).remove(state) else {
+            return Err(format!("no declared path reaches {property} {state:?}"));
+        };
+        created.insert(property, JsonValue::String(initial.clone()));
+        let mut from = initial;
+        for id in path {
+            let transition = lifecycle
+                .transitions
+                .iter()
+                .find(|transition| transition.id.as_str() == id)
+                .ok_or_else(|| format!("undeclared transition {id}"))?;
+            let left = std::mem::replace(&mut from, transition.to.clone());
+            steps.push((lifecycle.clone(), transition.clone(), left));
+        }
+    }
+    Ok(steps)
+}
+
+/// The `self.<property>` inputs a guard reads.
+fn guard_inputs(guards: &[ZenExpression]) -> BTreeSet<String> {
+    let mut inputs = BTreeSet::new();
+    for guard in guards {
+        let mut rest = guard.as_str();
+        while let Some(at) = rest.find("self.") {
+            let tail = rest.get(at.saturating_add(5)..).unwrap_or_default();
+            let name: String = tail
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !name.is_empty() {
+                inputs.insert(name);
+            }
+            rest = tail;
+        }
+    }
+    inputs
+}
+
 fn verify_single_law_example<H, F>(
     pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
     example: &LawExampleCase,
     idx: usize,
     make_host: &mut F,
@@ -136,6 +284,7 @@ where
     let seed = u64::try_from(idx).unwrap_or(0).saturating_add(1);
     let commit = build_atomic_subject_commit(
         pack,
+        catalog,
         law.subject.as_str(),
         &key,
         example.subject.clone(),
