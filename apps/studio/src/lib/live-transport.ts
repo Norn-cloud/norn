@@ -6,6 +6,7 @@
 import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readAtScope, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
+import { NO_HOST_ERROR } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./record-name.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -81,8 +82,6 @@ export function publishedQuestionsOf(document: unknown): ReadonlySet<string> {
  * or no host connected (a 503, a 404, or a page that is not a document) Studio shows the recording,
  * and every recorded read says it is one. Any other answer is the cell's and is shown as an error.
  */
-/** What the Studio Worker answers when this deployment has no Norn host configured (worker/index.ts). */
-const NO_HOST = "No Norn host is connected to this deployment."
 
 async function discoverScope(fetcher: Fetch, signal?: AbortSignal): Promise<StudioScope | null> {
   try { return await readStudioScope(fetcher, signal) } catch (error) {
@@ -173,7 +172,7 @@ async function readDefinitions(fetcher: Fetch, scope: StudioScope, signal?: Abor
   let parsed: unknown = null
   let isJson = false
   try { parsed = JSON.parse(text); isJson = true } catch { /* non-JSON body */ }
-  if (response.status === 503 && isJson && (parsed as { error?: unknown } | null)?.error === NO_HOST) {
+  if (response.status === 503 && isJson && (parsed as { error?: unknown } | null)?.error === NO_HOST_ERROR) {
     return { kind: "recorded" }
   }
   if (!response.ok) {
@@ -465,7 +464,7 @@ export async function cellRead<T>(
   try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown; error?: unknown } } catch { /* not a refusal document */ }
   const read = isReadMethod(init.method)
   if (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined)) throw new NotServed(what)
-  if (response.status === 503 && (!read || refusal?.error === NO_HOST)) throw new NotServed(what)
+  if (response.status === 503 && (!read || refusal?.error === NO_HOST_ERROR)) throw new NotServed(what)
   const detail = read ? parseUnavailableDetail(refusal) : undefined
   if (response.status === 503) {
     const message = typeof refusal?.message === "string" && refusal.message !== "" ? refusal.message : undefined

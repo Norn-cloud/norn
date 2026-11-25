@@ -47,6 +47,8 @@ pub mod inbox;
 pub mod jcs;
 /// Admission of a cell's full kernel artifact set.
 pub mod kernel_set;
+/// UI-LIVE-1: the typed frames of the live-read protocol (`norn.live.v1`).
+pub mod live;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
 /// NET-ADDR-1: the shared internal-address rules for every outbound call.

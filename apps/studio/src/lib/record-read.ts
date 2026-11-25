@@ -1,7 +1,9 @@
-import type { StudioScope } from "./definitions.ts"
+import { queryOptions } from "@tanstack/react-query"
+import { StudioScopeError, type StudioScope } from "./definitions.ts"
 import type { Fetch } from "./cell-read.ts"
 import { readObjectAtScope } from "./live-transport.ts"
 import { recordedTransport, type ObjectReads } from "./transport.ts"
+import { readFindings } from "../evidence/review.ts"
 
 /**
  * One record's read, shared by the record page and the grid's drawer. With a scope (a live cell's
@@ -28,4 +30,22 @@ export function recordRead(objectType: string, id: string, scope: StudioScope | 
 export function drawerRead(objectType: string, id: string, scope: StudioScope | undefined, origin: "live" | "recorded" | undefined) {
   if (scope !== undefined) return recordRead(objectType, id, scope)
   return origin === "recorded" ? recordRead(objectType, id, undefined) : null
+}
+
+/**
+ * One record's findings, shared by the record page's header, its Findings panel and a quarantined
+ * record's page: read at the workspace the page's mode was decided in and cached under it, as the
+ * record's own read is. The recording keeps no findings, so with no decided workspace nothing is
+ * read and the key is one no answer reaches: no findings cached in another workspace, or before
+ * the mode failed, can show without one (#1745).
+ */
+export function findingsQuery(objectType: string, id: string, scope: StudioScope | undefined, fetcher?: Fetch) {
+  return queryOptions({
+    queryKey: scope === undefined ? ["findings", "undecided", objectType, id] : ["findings", objectType, id, scope.orgId, scope.environmentId],
+    queryFn: ({ signal }) => scope === undefined
+      ? Promise.reject(new StudioScopeError("No workspace is decided for this record's findings."))
+      : readFindings(objectType, id, scope, signal, fetcher),
+    enabled: scope !== undefined,
+    retry: false,
+  })
 }
