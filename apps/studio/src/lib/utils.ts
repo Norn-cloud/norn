@@ -7,7 +7,18 @@ import { extendTailwindMerge } from "tailwind-merge"
  */
 export const TYPE_SCALE = ["meta", "body", "heading", "title", "figure"] as const
 
-const twMerge = extendTailwindMerge({ extend: { classGroups: { "font-size": [{ text: [...TYPE_SCALE] }] } } })
+/**
+ * The steps are their own class group, which conflicts with Tailwind's font sizes both ways and with
+ * nothing else. Inside `font-size` they would inherit its conflict with `leading-*`, and
+ * `cn("leading-snug", "text-body")` would drop the leading, although CSS keeps a `leading-*` beside a
+ * step in either order.
+ */
+const twMerge = extendTailwindMerge<"type-step">({
+  extend: {
+    classGroups: { "type-step": [{ text: [...TYPE_SCALE] }] },
+    conflictingClassGroups: { "type-step": ["font-size"], "font-size": ["type-step"] },
+  },
+})
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))

@@ -447,8 +447,9 @@ const NavLink = createLink(NavAnchor)
 /** A destination's accessible name: its label, then its state when it has a count ("Inbox, 3 open"). */
 const named = (label: string, count: string | undefined) => count ? `${label}, ${count} open` : label
 
-// One rail button (DESIGN.md 9.1): 32×32, muted at rest, a 50% wash on hover, the neutral pill when current.
-const railButton = "relative flex size-[32px] shrink-0 items-center justify-center rounded-(--radius-row) text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent aria-pressed:text-sidebar-accent-foreground motion-reduce:transition-none [&_svg]:size-4"
+// One rail button (DESIGN.md 9.1): 32×32, muted at rest, a 50% wash on hover or while pressed (the
+// assistant), the neutral pill only when current: one destination holds the pill at a time.
+const railButton = "relative flex size-[32px] shrink-0 items-center justify-center rounded-(--radius-row) text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent/50 motion-reduce:transition-none [&_svg]:size-4"
 /** The attention dot: 6px in `--ring`, which reaches 3:1 on the ground, the wash and the pill; the name carries the state. */
 const attentionDot = "absolute end-[5px] top-[5px] size-[6px] rounded-full bg-ring ring-2 ring-sidebar"
 
@@ -688,7 +689,7 @@ function AssistantRow({ title, rail }: { readonly title: string; readonly rail: 
   }
   return (
     <button type="button" aria-label={title} aria-pressed={open} onClick={toggle}
-      className={cn(row, "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-pressed:bg-sidebar-accent aria-pressed:text-sidebar-accent-foreground")}>
+      className={cn(row, "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-pressed:bg-sidebar-accent/50")}>
       <Sparkles aria-hidden strokeWidth={1.6} /><span className="truncate">{title}</span>
       <Keys className="ms-auto text-meta">⌘J</Keys>
     </button>
@@ -1325,7 +1326,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell={shell} data-density={density} className="bg-canvas">
+      <SidebarProvider shortcut={shell !== "dock"} data-shell={shell} data-density={density} className="bg-canvas">
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
           pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>

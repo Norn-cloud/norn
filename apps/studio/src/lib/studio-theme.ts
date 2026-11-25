@@ -369,6 +369,7 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["sidebar-foreground", "sidebar hover wash", SIDEBAR_HOVER, 4.5],
   ["sidebar-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["sidebar-foreground", "phone sheet", SHEET, 4.5],
+  ["sidebar-foreground", "phone sheet hover wash", SHEET_HOVER, 4.5],
   ["sidebar-accent-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["sidebar-accent-foreground", "phone sheet pill", SHEET_PILL, 4.5],
   // The focus ring and the attention dot (both `--ring`) on the ground, the wash and the pill.

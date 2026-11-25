@@ -274,6 +274,73 @@ test("sidebar below 640px: the toggle opens a modal 'Navigation' sheet from the 
   await expect(sheet).toHaveCount(0)
 })
 
+// Below 640px the workspace switcher and the account menu (the one phone path to Sign out) live only inside the
+// modal sheet: their menus open over it, take focus, close before the sheet on Escape, and Sign out reaches the server.
+test("sidebar below 640px: the workspace switcher and the account menu open from inside the Navigation sheet, take focus, Escape closes the menu before the sheet, and Sign out reaches the server", async ({ page }) => {
+  await recorded(page)
+  const signOuts: string[] = []
+  await page.route("**/api/auth/sign-out", (route) => { signOuts.push(route.request().method()); return route.fulfill({ status: 200, json: {} }) })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/")
+  await settled(page)
+  await toggle(page).click()
+  const sheet = page.getByRole("dialog", { name: "Navigation" })
+  await expect(sheet).toBeVisible()
+  const focusInMenu = () => page.evaluate(() => document.activeElement?.closest('[role="menu"]') !== null)
+
+  // The workspace switcher, by pointer: its menu opens over the sheet with focus inside it.
+  const scope = sheet.locator("[data-scope]")
+  await scope.click()
+  const menu = page.getByRole("menu")
+  await expect(menu).toBeVisible()
+  await expect(menu.getByRole("menuitemradio").first()).toBeVisible()
+  await expect.poll(focusInMenu).toBe(true)
+  // Escape closes the menu only: the sheet stays, and focus is back on the switcher.
+  await page.keyboard.press("Escape")
+  await expect(menu).toHaveCount(0)
+  await expect(sheet).toBeVisible()
+  await expect(scope).toBeFocused()
+
+  // The account menu, by keyboard: Sign out is shown and reachable from inside the sheet.
+  const account = sheet.getByRole("button", { name: "Account" })
+  await account.focus()
+  await page.keyboard.press("Enter")
+  await expect(menu.getByRole("menuitem", { name: "Sign out" })).toBeVisible()
+  await expect.poll(focusInMenu).toBe(true)
+  await page.keyboard.press("Escape")
+  await expect(menu).toHaveCount(0)
+  await expect(sheet).toBeVisible()
+  await expect(account).toBeFocused()
+  // A second Escape closes the sheet itself and returns focus to the toggle.
+  await page.keyboard.press("Escape")
+  await expect(sheet).toHaveCount(0)
+  await expect(toggle(page)).toBeFocused()
+
+  // Sign out, chosen inside the sheet, is sent.
+  await toggle(page).click()
+  await sheet.getByRole("button", { name: "Account" }).click()
+  await menu.getByRole("menuitem", { name: "Sign out" }).click()
+  await expect.poll(() => signOuts).toEqual(["POST"])
+})
+
+test("sidebar: in the dock shell ⌘B stores no sidebar choice and opens nothing", async ({ page }) => {
+  await recorded(page)
+  await page.addInitScript(() => {
+    try { localStorage.setItem("norn.studio.shell", "dock") } catch { /* storage blocked */ }
+    // Proves the key reached the page, so an empty store is the handler's choice, not a missed press.
+    ;(window as unknown as { seenB: number }).seenB = 0
+    addEventListener("keydown", (event) => { if (event.key === "b" && (event.ctrlKey || event.metaKey)) (window as unknown as { seenB: number }).seenB += 1 })
+  })
+  await page.goto("/")
+  await expect(page.locator('[data-slot="floating-dock"]')).toBeVisible()
+  await page.keyboard.press("Control+b")
+  await page.keyboard.press("Meta+b")
+  await expect.poll(() => page.evaluate(() => (window as unknown as { seenB: number }).seenB)).toBe(2)
+  expect(await page.evaluate(() => localStorage.getItem("norn.studio.sidebar"))).toBeNull()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.locator('[data-slot="floating-dock"]')).toBeVisible()
+})
+
 test("sidebar in Arabic: it sits on the right with its hairline on the inline-end edge, the toggle mirrors, and the phone sheet opens from the right", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("norn.studio.locale", "ar"))
   await recorded(page)

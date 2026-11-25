@@ -353,7 +353,8 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className={pill} disabled={!canQuery || filterable(fields).length === 0} title={off}>
                   <Filter /> Filter{filterCount > 0 && <span className="ms-0.5 rounded-full bg-(--well) px-1.5 text-meta tabular-nums text-foreground ring-1 ring-line ring-inset">{filterCount}</span>}
-                  {draftDirty && <span className="size-[6px] rounded-full bg-dot-accent" aria-label="Unapplied changes" />}
+                  {/* A dot with no word beside it: `--ring`, which keeps 3:1 on the button in every skin (DESIGN.md 4.6). */}
+                  {draftDirty && <span className="size-[6px] rounded-full bg-ring" aria-label="Unapplied changes" />}
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-[min(44rem,90vw)] rounded-node border-node-border shadow-float">

@@ -474,7 +474,8 @@ sidebar.
 2. **Navigation** (scrolls): the destinations every perspective shares (Home, Inbox), then the
    groups.
 3. **Footer** (`px-[8px] pb-[8px]`): the assistant row (when the app has an assistant) and the
-   principal's row. The principal's row is a 24px Initials disc and the display name (step 2, 400,
+   principal's row. While the assistant is open its row (or rail button) is pressed and takes the
+   50% wash, never the selection pill: only the current destination holds the pill. The principal's row is a 24px Initials disc and the display name (step 2, 400,
    `--sidebar-foreground`), and its menu holds account actions and sign-out. Collapsed, only the
    icons and the disc show.
 
@@ -570,7 +571,8 @@ sidebar.
   `aria-controls` (the sidebar's id). Below 640px it carries `aria-haspopup="dialog"`, and it sets
   `aria-controls` (the dialog's id) only while the sheet is open, because the closed dialog is not
   in the DOM and `aria-controls` never names a missing id. Its tooltip reads "Hide sidebar ⌘B"
-  or "Show sidebar ⌘B", and `⌘B` / `Ctrl+B` toggles the sidebar (CURRENT).
+  or "Show sidebar ⌘B", and `⌘B` / `Ctrl+B` toggles the sidebar (CURRENT). In the dock shell, which
+  shows no sidebar, the shortcut is off: it stores no choice and opens no sheet.
 - **Focus is never stranded.** If focus was inside the sidebar when it collapses, it moves to the
   current rail icon, or to the toggle when there is none (CURRENT, `WorkbenchFrame`).
 - **RTL.** The sidebar sits on the right, with its hairline on the inline-end edge (`border-e`).
@@ -989,7 +991,7 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
   `--radius-row/sheet/search/dock/popup`.
 - [x] Solid `bg-action` fills (4 uses) put `--action-foreground` on the text-role `--action`: 2.78:1
   on open-dark #6b98ff and 3.62:1 on luma-dark #7c74ff. Solid fills move to `bg-primary`.
-  Closed: no solid `--action` fill carries text (checked in #1753); the unapplied-filter marker is a `--dot-accent` dot.
+  Closed: no solid `--action` fill carries text (checked in #1753); the unapplied-filter marker is a `--ring` dot, since it has no word beside it and `--dot-accent` misses 3:1 in open, luma and glass light.
 - [x] The `polar` default holds only once JS runs. Bare `:root` (`index.css:24`) and the
   `:root:not([data-skin])` rules (`index.css:487-502`) are the `open` palette and geometry.
   `polar` arrives only when `main.tsx:129` calls `applyAppearance`, which sets `data-skin`
@@ -1000,7 +1002,7 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
 - [ ] `--font-sans` has no Arabic pairing (no Cairo; not in `package.json`).
 - [ ] No `minimal` route-level chromeless frame; login and OAuth use shadcn `Card`.
 - [x] Type tokens are 0.8125/0.9375/1.0625/1.75/2rem; body is 0.875rem.
-  Closed in #1753: the five steps of section 8.1 (with line heights and tracking), body at step 2; `--text-panel` and `--text-section` are deleted, and `cn` (tailwind-merge) knows the steps.
+  Closed in #1753: the five steps of section 8.1 (with line heights and tracking), body at step 2; `--text-panel` and `--text-section` are deleted, and `cn` (tailwind-merge) knows the steps as their own class group, which conflicts only with font sizes, so `leading-*` and `tracking-*` survive beside a step.
 
 **Weights and sizes**
 

@@ -53,14 +53,16 @@ function storedSidebar(): boolean | undefined {
 /**
  * Whether the sidebar is expanded, and the phone sheet open. From 1024px it starts expanded, from 640
  * to 1023px it starts as the rail, and the reader's own choice, kept per browser, wins at every width
- * from 640px up. ⌘B / Ctrl+B toggles it.
+ * from 640px up. ⌘B / Ctrl+B toggles it while `shortcut` is on; a shell that shows no sidebar (the
+ * dock) turns it off, so the key neither stores a choice nor opens a sheet nobody sees.
  */
 function SidebarProvider({
+  shortcut = true,
   className,
   style,
   children,
   ...props
-}: React.ComponentProps<"div">) {
+}: React.ComponentProps<"div"> & { readonly shortcut?: boolean }) {
   const isMobile = useIsMobile()
   const wide = useMediaQuery("(min-width: 1024px)", true)
   const [openMobile, setOpenMobile] = React.useState(false)
@@ -91,6 +93,7 @@ function SidebarProvider({
   }, [isMobile, setOpen])
 
   React.useEffect(() => {
+    if (!shortcut) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
@@ -100,7 +103,7 @@ function SidebarProvider({
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [toggleSidebar])
+  }, [shortcut, toggleSidebar])
 
   const state = open ? "expanded" : "collapsed"
 

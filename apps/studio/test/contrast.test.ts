@@ -9,8 +9,8 @@ import { badgeVariants } from "../src/components/ui/badge.tsx"
 import { buttonVariants } from "../src/components/ui/button.tsx"
 import { Tabs, TabsList, TabsTrigger } from "../src/components/ui/tabs.tsx"
 import { KINDS, STATUS, type Kind, type Status } from "../src/lib/kinds.ts"
-import { skinVars, themePalettes } from "../scripts/theme-palettes.ts"
-import { contrastOn, fade, over, parseColor, type Color } from "../src/lib/color.ts"
+import { resolve as resolveToken, skinVars, themePalettes } from "../scripts/theme-palettes.ts"
+import { contrastOn, cssColor, fade, over, parseColor, type Color } from "../src/lib/color.ts"
 
 type Skin = "polar" | "open" | "luma" | "glass"
 
@@ -52,6 +52,32 @@ const OPAQUE_SKINS = ["polar", "open"] as const
 const SKIN_TOKENS = Object.fromEntries(OPAQUE_SKINS.map((skin) => [skin, { light: skinTokens(skin, "light"), dark: skinTokens(skin, "dark") }])) as
   Readonly<Record<(typeof OPAQUE_SKINS)[number], Readonly<Record<Theme, Readonly<Record<string, string>>>>>>
 let THEME_TOKENS: Readonly<Record<Theme, Readonly<Record<string, string>>>> = SKIN_TOKENS.polar
+
+/**
+ * Every skin's tokens as the colours a browser paints over the page: a translucent value (glass's
+ * surfaces, a `color-mix(…, transparent)` dot) is composited over `--canvas` at 8 bits a channel, as
+ * DESIGN.md 4.2 measures. Luma and glass are measured this way where a class list is checked in all four skins.
+ */
+const ALL_SKINS = ["polar", "open", "luma", "glass"] as const
+function flatTokens(skin: Skin, theme: Theme): Readonly<Record<string, string>> {
+  const raw = skinVars(css, skin, theme)
+  const canvas = parseColor(resolveToken(raw["canvas"]!, raw))
+  if (canvas === null || canvas.alpha < 1) throw new Error(`${skin}/${theme} --canvas is not an opaque colour`)
+  const flat: Record<string, string> = {}
+  for (const name of Object.keys(raw)) {
+    let value: string
+    try { value = resolveToken(raw[name]!, raw) } catch { continue }
+    const color = parseColor(value)
+    if (color !== null) flat[name] = cssColor(color.alpha < 1 ? over(color, canvas) : color)
+  }
+  return flat
+}
+/** Polar and open as the opaque tests read them; luma and glass flattened over their canvas. */
+const FLAT_TOKENS: Readonly<Record<Skin, Readonly<Record<Theme, Readonly<Record<string, string>>>>>> = {
+  ...SKIN_TOKENS,
+  luma: { light: flatTokens("luma", "light"), dark: flatTokens("luma", "dark") },
+  glass: { light: flatTokens("glass", "light"), dark: flatTokens("glass", "dark") },
+}
 
 const COLOR_MAP: Readonly<Record<string, string>> = (() => {
   const block = /@theme\s+inline\s*\{([^}]+)\}/.exec(css)?.[1] ?? ""
@@ -286,41 +312,6 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
     }
   })
 
-  test(`${skin}/${theme}: every rendered Chip tone and Badge variant passes 4.5:1 using its actual declared fill and hover classes`, () => {
-    THEME_TOKENS = SKIN_TOKENS[skin]
-    for (const tone of TONES) {
-      const html = renderToStaticMarkup(createElement(Chip, { tone, children: "Label" }))
-      const classes = extractClass(html, /data-slot="chip"[^>]*class="([^"]+)"/)
-      for (const host of ["background", "card", "surface-subtle"] as const) {
-        const pair = resolveClasses(classes, theme, "rest", tokenHex(theme, host))
-        expect(pair.ratio, `${theme} Chip[${tone}] on ${host} (${classes})`).toBeGreaterThanOrEqual(4.5)
-      }
-    }
-    for (const variant of BADGE_VARIANTS) {
-      const classes = badgeVariants({ variant })
-      for (const host of ["background", "card"] as const) {
-        const hostHex = tokenHex(theme, host)
-        const rest = resolveClasses(classes, theme, "rest", hostHex)
-        const hover = resolveClasses(classes, theme, "hover", hostHex)
-        expect(rest.ratio, `${theme} Badge[${variant}] rest on ${host}`).toBeGreaterThanOrEqual(4.5)
-        expect(hover.ratio, `${theme} Badge[${variant}] hover on ${host}`).toBeGreaterThanOrEqual(4.5)
-      }
-    }
-    for (const kind of KIND_KEYS) {
-      const classes = `${KINDS[kind].text} ${KINDS[kind].fill}`
-      for (const host of ["background", "card"] as const) {
-        const hostHex = tokenHex(theme, host)
-        expect(resolveClasses(KINDS[kind].text, theme, "rest", hostHex).ratio, `${theme} KINDS[${kind}] text on ${host}`).toBeGreaterThanOrEqual(4.5)
-        expect(resolveClasses(classes, theme, "rest", hostHex).ratio, `${theme} KINDS[${kind}] tinted on ${host}`).toBeGreaterThanOrEqual(4.5)
-      }
-    }
-    for (const status of STATUS_KEYS) {
-      for (const host of ["background", "card"] as const) {
-        expect(resolveClasses(STATUS[status].text, theme, "rest", tokenHex(theme, host)).ratio, `${theme} STATUS[${status}] on ${host}`).toBeGreaterThanOrEqual(4.5)
-      }
-    }
-  })
-
   test(`${skin}/${theme}: ChoiceColumn stays opaque on enabled unselected options and passes 4.5:1 across resting, selected, unselected and hover states`, () => {
     THEME_TOKENS = SKIN_TOKENS[skin]
     const options = [
@@ -435,6 +426,59 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
     const trackHex = tokenHex(theme, theme === "dark" ? "shell" : "surface-subtle")
     expect(resolveClasses(perspectiveClass!, theme, "selected", trackHex).ratio, `${theme} PerspectiveSwitch selected`).toBeGreaterThanOrEqual(4.5)
     expect(resolveClasses(perspectiveClass!, theme, "rest", trackHex).ratio, `${theme} PerspectiveSwitch resting`).toBeGreaterThanOrEqual(4.5)
+  })
+}
+
+for (const skin of ALL_SKINS) for (const theme of ["light", "dark"] as const) {
+  test(`${skin}/${theme}: every rendered Chip tone and Badge variant passes 4.5:1 using its actual declared fill and hover classes`, () => {
+    THEME_TOKENS = FLAT_TOKENS[skin]
+    for (const tone of TONES) {
+      const html = renderToStaticMarkup(createElement(Chip, { tone, children: "Label" }))
+      const classes = extractClass(html, /data-slot="chip"[^>]*class="([^"]+)"/)
+      for (const host of ["background", "card", "surface-subtle"] as const) {
+        const pair = resolveClasses(classes, theme, "rest", tokenHex(theme, host))
+        expect(pair.ratio, `${theme} Chip[${tone}] on ${host} (${classes})`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+    for (const variant of BADGE_VARIANTS) {
+      const classes = badgeVariants({ variant })
+      for (const host of ["background", "card"] as const) {
+        const hostHex = tokenHex(theme, host)
+        const rest = resolveClasses(classes, theme, "rest", hostHex)
+        const hover = resolveClasses(classes, theme, "hover", hostHex)
+        expect(rest.ratio, `${theme} Badge[${variant}] rest on ${host}`).toBeGreaterThanOrEqual(4.5)
+        expect(hover.ratio, `${theme} Badge[${variant}] hover on ${host}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+    for (const kind of KIND_KEYS) {
+      const classes = `${KINDS[kind].text} ${KINDS[kind].fill}`
+      for (const host of ["background", "card"] as const) {
+        const hostHex = tokenHex(theme, host)
+        expect(resolveClasses(KINDS[kind].text, theme, "rest", hostHex).ratio, `${theme} KINDS[${kind}] text on ${host}`).toBeGreaterThanOrEqual(4.5)
+        expect(resolveClasses(classes, theme, "rest", hostHex).ratio, `${theme} KINDS[${kind}] tinted on ${host}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+    for (const status of STATUS_KEYS) {
+      for (const host of ["background", "card"] as const) {
+        expect(resolveClasses(STATUS[status].text, theme, "rest", tokenHex(theme, host)).ratio, `${theme} STATUS[${status}] on ${host}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+
+  test(`${skin}/${theme}: the records toolbar's "Unapplied changes" dot, which has no word, keeps 3:1 on its button at rest and on hover`, () => {
+    THEME_TOKENS = FLAT_TOKENS[skin]
+    const dot = /\{draftDirty && <span className="([^"]+)" aria-label="Unapplied changes"/.exec(recordsGridSource)?.[1]
+    expect(dot, "Unapplied changes dot in records-grid.tsx").toBeDefined()
+    const fill = dot!.split(/\s+/).map((token) => parseColorUtility(theme, token, "bg")).find((spec) => spec !== undefined && spec !== "transparent")
+    expect(fill, `the dot's fill (${dot})`).toBeDefined()
+    const button = buttonVariants({ variant: "ghost" })
+    for (const host of ["background", "card"] as const) {
+      for (const state of ["rest", "hover"] as const) {
+        const surface = resolveClasses(button, theme, state, tokenHex(theme, host)).bg
+        const ink = mix((fill as ColorSpec).hex, surface, (fill as ColorSpec).alpha)
+        expect(ratio(ink, surface), `${skin}/${theme} dot ${dot} on the ghost button (${state}) over ${host}`).toBeGreaterThanOrEqual(3)
+      }
+    }
   })
 }
 
@@ -563,6 +607,13 @@ test("sidebar rows: a 50% wash on hover with no text change, the neutral pill wi
     expect(cls, `${name} is 32px`).toContain(name === "row" ? "h-[32px]" : "size-[32px]")
     expect(cls, `${name} weight`).not.toMatch(/font-(medium|semibold|bold)/)
   }
+  // A pressed control (the assistant, on the rail and as a row) takes the wash, never the pill: only the current destination holds it.
+  const assistantRow = /aria-pressed=\{open\} onClick=\{toggle\}\s*className=\{cn\(row, "([^"]+)"\)\}/.exec(shellSource)?.[1]
+  expect(assistantRow, "AssistantRow's row classes in shell.tsx").toBeDefined()
+  for (const [name, cls] of [["railButton", rail], ["AssistantRow", assistantRow!]] as const) {
+    const whenPressed = cls.split(/\s+/).filter((token) => token.startsWith("aria-pressed:")).map((token) => token.slice("aria-pressed:".length))
+    expect(whenPressed, `${name} pressed state`).toEqual(["bg-sidebar-accent/50"])
+  }
   expect(row).toContain("text-body")
   expect(row).toContain("max-sm:min-h-[44px]")
   expect(groupHeading).toContain("text-meta")
@@ -578,10 +629,24 @@ test("sidebar rows: a 50% wash on hover with no text change, the neutral pill wi
   }
 })
 
-test("cn keeps a type-scale step beside a text colour, and a later step replaces an earlier one", async () => {
-  const { cn } = await import("../src/lib/utils.ts")
+test("cn keeps a type-scale step beside a text colour, leading and tracking in either order, and a later size replaces an earlier one", async () => {
+  const { cn, TYPE_SCALE } = await import("../src/lib/utils.ts")
   expect(cn("text-meta text-muted-foreground")).toBe("text-meta text-muted-foreground")
   expect(cn("font-heading text-heading font-medium text-foreground", "[overflow-wrap:break-word]")).toContain("text-heading")
+  for (const step of TYPE_SCALE) {
+    const size = `text-${step}`
+    // Colour, leading and tracking are other properties: they survive beside a step, before or after it.
+    for (const other of ["text-foreground", "text-muted-foreground", "leading-snug", "leading-tight", "leading-[1.2]", "tracking-tight", "tracking-[-0.01em]"]) {
+      expect(cn(other, size), `${other} then ${size}`).toBe(`${other} ${size}`)
+      expect(cn(size, other), `${size} then ${other}`).toBe(`${size} ${other}`)
+    }
+    // Sizes conflict both ways: a later step replaces an earlier Tailwind size, and the reverse.
+    expect(cn("text-sm", size)).toBe(size)
+    expect(cn(size, "text-sm")).toBe("text-sm")
+  }
   expect(cn("text-body", "text-meta")).toBe("text-meta")
+  expect(cn("text-figure", "text-title")).toBe("text-title")
   expect(cn("text-muted-foreground", "text-foreground")).toBe("text-foreground")
+  // The live case: the start node's label keeps its leading beside the step.
+  expect(cn("font-medium leading-snug", "text-body")).toBe("font-medium leading-snug text-body")
 })
