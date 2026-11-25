@@ -879,13 +879,18 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 };
             }
             // Bounded literal-table lookup: build table, evaluate key, Fetch (opcode + key size).
+            // Reduce from the first entry so record values retain `fields` for deep copy-out
+            // metering, and clamp `size` to at least 1 so a `null` miss is always covered.
             let key = self.eval(property);
             let mut cost = base.cost.plus(1);
             cost.add(&key.cost);
             cost.add(&key.val.size);
-            let val = fields
+            let mut val = fields
                 .values()
-                .fold(Val::scalar(), |acc, entry| join(&acc, entry));
+                .cloned()
+                .reduce(|acc, entry| join(&acc, &entry))
+                .unwrap_or_else(Val::scalar);
+            val.size = val.size.at_least_one();
             return Out { cost, val };
         }
         let key_charge = match property {

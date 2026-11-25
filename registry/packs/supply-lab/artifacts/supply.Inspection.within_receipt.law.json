@@ -14,6 +14,7 @@
   "name": "An inspection linked to a shipment receipt must use the receipt's unit and inspect no more than was received.",
   "namespace": "supply",
   "payload": {
+    "condition": "self.receipt != null",
     "id": "supply.Inspection.within_receipt",
     "lawVersion": "0.1",
     "modality": {
@@ -26,7 +27,7 @@
     },
     "rationale": "An inspection linked to a shipment receipt must use the receipt's unit and inspect no more than was received.",
     "response": {
-      "expression": "(self.receipt == null) or ((self.inspected_qty <= self.receipt.received_qty) and (self.unit == self.receipt.unit))",
+      "expression": "(self.inspected_qty <= self.receipt.received_qty) and (self.unit == self.receipt.unit)",
       "kind": "predicate"
     },
     "scope": {

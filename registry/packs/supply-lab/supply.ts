@@ -122,6 +122,7 @@ export const InventorySnapshot = Norn.type({
 
 // LAW-LINK-1: a position's unit always matches its catalog SKU's unit of measure.
 export const SnapshotMatchesSkuUnit = Norn.law("matches_sku_unit", {
+  id: "supply.position.matches_sku_unit",
   on: InventorySnapshot,
   must: (self) => self.unit === self.sku.unit_of_measure,
   because: "A stock position must be counted in its catalog SKU's unit of measure.",
@@ -354,7 +355,8 @@ export const ShipmentReceipt = Norn.type({
 // LAW-LINK-1: a linked shipment receipt uses its order line's unit.
 export const ReceiptMatchesOrderLineUnit = Norn.law("matches_order_line_unit", {
   on: ShipmentReceipt,
-  must: (self) => self.order_line === null || self.unit === self.order_line.unit,
+  when: (self): self is typeof self & { readonly order_line: NonNullable<typeof self.order_line> } => self.order_line !== null,
+  must: (self) => self.unit === self.order_line.unit,
   because: "A receipt linked to an order line must use that line's unit of measure.",
 })
 
@@ -394,7 +396,8 @@ export const Inspection = Norn.type({
 // LAW-LINK-1: a linked inspection inspects no more than its receipt received, in the receipt's unit.
 export const InspectionWithinReceipt = Norn.law("within_receipt", {
   on: Inspection,
-  must: (self) => self.receipt === null || (self.inspected_qty <= self.receipt.received_qty && self.unit === self.receipt.unit),
+  when: (self): self is typeof self & { readonly receipt: NonNullable<typeof self.receipt> } => self.receipt !== null,
+  must: (self) => self.inspected_qty <= self.receipt.received_qty && self.unit === self.receipt.unit,
   because: "An inspection linked to a shipment receipt must use the receipt's unit and inspect no more than was received.",
 })
 

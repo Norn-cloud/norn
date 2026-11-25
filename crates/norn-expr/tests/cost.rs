@@ -1113,4 +1113,33 @@ fn literal_table_lookup_stays_within_decide_fuel_and_bounds_runtime() {
             .expect("certified bound covers hit, miss, and long strings");
         assert!(eval.units_used() <= bound);
     }
+
+    // Record-valued lookup tables must retain `fields` so copy-out bounds cover nested strings.
+    let rec_env = ZenTypeEnv::input_only(
+        BTreeMap::from([
+            ("k".to_owned(), Type::text()),
+            ("s".to_owned(), Type::text()),
+        ]),
+        EnvOptions::default(),
+    )
+    .expect("record lookup env");
+    let rec_expr =
+        Expression::compile("({'a': {'x': input.s}}[input.k]) ?? {'x': ''}").expect("compile");
+    let rec_checked = check_expression_with(&rec_expr, &rec_env, &Type::Json, &limits())
+        .expect("record-valued literal-table lookup checks");
+    let rec_bound = rec_checked.cost().units();
+    for (k, s) in [("a", "x".repeat(4096)), ("miss", "x".repeat(4096))] {
+        let ctx = Value::object([(
+            "input",
+            Value::object([("k", Value::String(k.to_owned())), ("s", Value::String(s))]),
+        )]);
+        let eval = rec_expr
+            .evaluate(&ctx, EvaluationBudget::new(rec_bound))
+            .expect("certified bound covers record-valued table hit and miss copy-out");
+        assert!(
+            eval.units_used() <= rec_bound,
+            "metered {}, bound {rec_bound}",
+            eval.units_used()
+        );
+    }
 }

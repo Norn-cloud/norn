@@ -2289,10 +2289,13 @@ class DefinitionCompiler {
         const sourceVersion = this.string(this.member(ref.members, "version", ref.call))
         const linksNode = ref.members.get("links")
         const declared = linksNode
-          ? this.list(linksNode).map((n) => this.link(n)).find((l) => l.inverse === role && l.cardinality.from === "many")
+          ? this.list(linksNode).map((n) => this.link(n)).find((l) => l.inverse === role && l.cardinality.from === "many" && l.target === subject)
           : undefined
         if (!declared) {
-          throw new CompileError("NORN-FLOW-SLICE", `${sourceName} declares no from: "many" link with inverse ${JSON.stringify(role)}`, sourceNode)
+          throw new CompileError("NORN-FLOW-SLICE", `${sourceName} declares no from: "many" link targeting ${subject} with inverse ${JSON.stringify(role)}`, sourceNode)
+        }
+        if (Object.hasOwn(selfProperties, role)) {
+          throw new CompileError("NORN-FLOW-SLICE", `inverse role ${JSON.stringify(role)} collides with an existing member of ${subject}`, sourceNode)
         }
         const sourceSchema = this.subjectSchema(ref.call, ref.members, false, new Set())
         selfProperties[role] = S.array(sourceSchema.schema)

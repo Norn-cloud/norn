@@ -14,6 +14,7 @@
   "name": "A receipt linked to an order line must use that line's unit of measure.",
   "namespace": "supply",
   "payload": {
+    "condition": "self.order_line != null",
     "id": "supply.ShipmentReceipt.matches_order_line_unit",
     "lawVersion": "0.1",
     "modality": {
@@ -26,7 +27,7 @@
     },
     "rationale": "A receipt linked to an order line must use that line's unit of measure.",
     "response": {
-      "expression": "(self.order_line == null) or (self.unit == self.order_line.unit)",
+      "expression": "self.unit == self.order_line.unit",
       "kind": "predicate"
     },
     "scope": {

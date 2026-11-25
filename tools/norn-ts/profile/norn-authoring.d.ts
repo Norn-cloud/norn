@@ -810,11 +810,22 @@ declare module "@norn/authoring" {
       | { readonly never: LawPredicate<D, Inv>; readonly must?: undefined; readonly eventually?: undefined }
       | { readonly eventually: LawPredicate<D, Inv>; readonly must?: undefined; readonly never?: undefined }
     )
+    /** Exactly one of `must` / `never` / `eventually`, with `when` narrowing `self` via a type predicate (matches Rust `guarded_predicate`). */
+    type NarrowedLawSpec<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>>, N extends SelfOf<NoInfer<D>, NoInfer<Inv>>> =
+      Omit<LawSpecBase<D, Inv>, "when" | "unless"> & {
+        readonly when: (self: SelfOf<NoInfer<D>, NoInfer<Inv>>) => self is N
+        readonly unless?: { readonly [label: string]: { readonly when: (self: N) => boolean; readonly because: string; readonly unless?: Exceptions<D, Inv> } }
+      } & (
+        | { readonly must: (self: N) => boolean; readonly never?: undefined; readonly eventually?: undefined }
+        | { readonly never: (self: N) => boolean; readonly must?: undefined; readonly eventually?: undefined }
+        | { readonly eventually: (self: N) => boolean; readonly must?: undefined; readonly never?: undefined }
+      )
     /**
      * A law over a subject type (dx-spec §4.5). Id, scope, `objectTypes`,
      * `lawVersion`, owner, provenance and the entity dependency are inferred;
      * the lambdas compile statically and never run.
      */
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}, N extends SelfOf<NoInfer<D>, NoInfer<Inv>> = SelfOf<NoInfer<D>, NoInfer<Inv>>>(name: string, spec: NarrowedLawSpec<D, Inv, N>): LawDefinition
     function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}>(name: string, spec: LawSpec<D, Inv>): LawDefinition
 
     /** A norm: an obligation, prohibition or permission over one object type (#1176 unit B). */

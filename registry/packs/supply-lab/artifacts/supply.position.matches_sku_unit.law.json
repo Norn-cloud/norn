@@ -1,5 +1,5 @@
 {
-  "artifactId": "supply.InventorySnapshot.matches_sku_unit.law",
+  "artifactId": "supply.position.matches_sku_unit.law",
   "dependencies": [
     {
       "artifactId": "supply.InventorySnapshot.entity",
@@ -14,7 +14,7 @@
   "name": "A stock position must be counted in its catalog SKU's unit of measure.",
   "namespace": "supply",
   "payload": {
-    "id": "supply.InventorySnapshot.matches_sku_unit",
+    "id": "supply.position.matches_sku_unit",
     "lawVersion": "0.1",
     "modality": {
       "kind": "always"
@@ -43,7 +43,7 @@
   },
   "provenance": {
     "source": "system",
-    "sourcePath": "registry/packs/supply-lab/artifacts/supply.InventorySnapshot.matches_sku_unit.law.json"
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.position.matches_sku_unit.law.json"
   },
   "scope": {},
   "version": "0.1.0"

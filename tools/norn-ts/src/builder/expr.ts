@@ -227,17 +227,14 @@ function resolve(binding: Binding | undefined, name: string, path: ReadonlyArray
   let optional = false
   let zenPath = "zen" in binding ? binding.zen : ""
   for (const segment of path) {
-    const isNullableObject = Array.isArray(schema.type) && schema.type[0] === "object" && schema.type[1] === "null"
-    const obj = isNullableObject ? nonNull(schema) : schema
-    if (isNullableObject) optional = true
-    const arrayIndex = obj.type === "array" && /^(0|[1-9][0-9]*)$/.test(segment) && Number.isSafeInteger(Number(segment))
+    const arrayIndex = schema.type === "array" && /^(0|[1-9][0-9]*)$/.test(segment) && Number.isSafeInteger(Number(segment))
     if (arrayIndex && "zen" in binding) {
       throw new ExprError("NORN-FLOW-SLICE", "runtime array indexes are outside the admitted expression profile")
     }
-    if (obj.type === "object" && !obj.required?.includes(segment)) optional = true
-    const member = obj.type === "array" && arrayIndex ? obj.items : obj.type === "object" && Object.hasOwn(obj.properties, segment) ? obj.properties[segment] : undefined
+    if (schema.type === "object" && !schema.required?.includes(segment)) optional = true
+    const member = schema.type === "array" && arrayIndex ? schema.items : schema.type === "object" && Object.hasOwn(schema.properties, segment) ? schema.properties[segment] : undefined
     if (!member) {
-      throw new ExprError("NORN-FLOW-SLICE", `expected a declared field, got ${segment} on ${name}; did you mean ${obj.type === "object" ? Object.keys(obj.properties).join(", ") : "a record field"}?`)
+      throw new ExprError("NORN-FLOW-SLICE", `expected a declared field, got ${segment} on ${name}; did you mean ${schema.type === "object" ? Object.keys(schema.properties).join(", ") : "a record field"}?`)
     }
     zenPath += arrayIndex ? `[${segment}]` : `${zenPath ? "." : ""}${zenKey(segment)}`
     schema = member
@@ -300,44 +297,6 @@ function freshAlias(scope: Scope, binders: Binders, element: ValueSchema): strin
   let i = 0
   while (used.has(`b${i}`)) i++
   return `b${i}`
-}
-
-/** Narrow top-level `binding.field != null` (when `holds`) or `== null` (when `!holds`) guards, mirroring `norn-expr::null_guards`. */
-function narrowScope(condition: Expr, holds: boolean, scope: Scope): Scope {
-  const narrowed = new Map<string, Set<string>>()
-  const collect = (e: Expr, truth: boolean): void => {
-    if (e._tag === "Not") { collect(e.operand, !truth); return }
-    if (e._tag === "Logical" && ((truth && e.op === "and") || (!truth && e.op === "or"))) {
-      collect(e.left, truth)
-      collect(e.right, truth)
-      return
-    }
-    if (e._tag !== "Compare" || (e.op !== "==" && e.op !== "!=")) return
-    const proves = truth === (e.op === "!=")
-    if (!proves) return
-    const check = (candidate: Expr, other: Expr): void => {
-      if (other._tag === "Literal" && other.value === null && candidate._tag === "Input" && candidate.path.length === 1) {
-        let fields = narrowed.get(candidate.name)
-        if (!fields) { fields = new Set(); narrowed.set(candidate.name, fields) }
-        fields.add(candidate.path[0]!)
-      }
-    }
-    check(e.left, e.right)
-    check(e.right, e.left)
-  }
-  collect(condition, holds)
-  if (narrowed.size === 0) return scope
-  const out = new Map(scope)
-  for (const [name, fields] of narrowed) {
-    const binding = out.get(name)
-    if (!binding || binding.schema.type !== "object") continue
-    const properties: Record<string, ValueSchema> = { ...binding.schema.properties }
-    for (const field of fields) {
-      if (Object.hasOwn(properties, field)) properties[field] = nonNull(properties[field]!)
-    }
-    out.set(name, { ...binding, schema: recordSchema(properties) })
-  }
-  return out
 }
 
 /** The closed schema of `expr` in `scope`, or {@link ExprError}. */
@@ -470,11 +429,8 @@ function infer(expr: Expr, scope: Scope, binders: Binders): ValueSchema {
       return boolean
     }
     case "Logical": {
-      const left = infer(expr.left, scope, binders)
-      if (left.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} takes booleans, not ${left.type}`)
-      const rightScope = narrowScope(expr.left, expr.op === "and", scope)
-      const right = infer(expr.right, rightScope, binders)
-      if (right.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} takes booleans, not ${right.type}`)
+      const left = infer(expr.left, scope, binders), right = infer(expr.right, scope, binders)
+      if (left.type !== "boolean" || right.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} takes booleans, not ${left.type} and ${right.type}`)
       return boolean
     }
     case "Not": {
