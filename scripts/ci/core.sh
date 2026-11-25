@@ -637,9 +637,10 @@ PY
 # The hosted plan job has no prebuilt xtask. Keep its packing model in sync
 # with the Rust runner until the planner can use a cached or prebuilt binary.
 hosted_bundle_plan() {
-  python3 - "$1" "$(list_shards)" "${phases[*]}" <<'PY'
+  # The duration table of this script's own tree (the one xtask embeds), whatever the cwd.
+  python3 - "$1" "$(list_shards)" "${phases[*]}" "$(dirname -- "${BASH_SOURCE[0]}")/../../crates/norn-skeleton-guard/src/ci/bundle-durations.json" <<'PY'
 import json, sys
-raw, shards, phases = sys.argv[1:]
+raw, shards, phases, durations = sys.argv[1:]
 plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
@@ -648,7 +649,7 @@ known = {"test/" + shard for shard in shards.split()} | {
 # merge-group bundle logs by crates/norn-skeleton-guard/scripts/bundle_durations.py (never by hand).
 # A test task's seconds are net of the workspace test build (compile_seconds), and a WASM-pkg
 # task's seconds are net of the shared norn-checker-wasm package build (wasm_compile_seconds).
-with open("crates/norn-skeleton-guard/src/ci/bundle-durations.json", encoding="utf-8") as table_file:
+with open(durations, encoding="utf-8") as table_file:
     table = json.load(table_file)
 weights = table["task_seconds"]
 # Shared compile costs amortized once per bundle containing any task in the group:
