@@ -907,6 +907,15 @@ pub enum CommitError<X> {
         /// The unresolved interface name.
         interface: String,
     },
+    /// GRAPH-STATE-1: a first write's lifecycles do not begin in an admitted
+    /// initial state, or its recorded evidence does not replay to its row.
+    #[error("{key}: lifecycle initialization was refused: {refusal}")]
+    LifecycleInitialization {
+        /// The object written for the first time.
+        key: FactKey,
+        /// Why its initialization was refused.
+        refusal: Box<crate::lifecycle_init::LifecycleInitRefusal>,
+    },
     /// An observed write did not match its opaque prepared authorization, or
     /// its findings differed from the shared final-state evaluation.
     #[error("observation authorization did not match its prepared commit")]
@@ -926,55 +935,6 @@ pub enum CommitError<X> {
     /// The host failed; nothing was applied.
     #[error("cell host failure")]
     Host(#[source] X),
-}
-
-impl<X> CommitError<X> {
-    /// Stable machine-readable code of the refusal.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
-            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
-            Self::ImmutableObject { .. } => "commit.immutable_object",
-            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
-                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
-            }
-            Self::DuplicateKey { .. } => "commit.duplicate_key",
-            Self::NotPending { .. } => "commit.not_pending",
-            Self::ReceiptNotAccepted { .. } => {
-                crate::receipt_binding::ReceiptRefusal::NotAccepted.code()
-            }
-            Self::Conflict { .. } => "commit.conflict",
-            Self::DuplicateLink { .. } => "commit.duplicate_link",
-            Self::IdentifierTooLong { .. } => "commit.identifier_too_long",
-            Self::LinkConflict { .. } => "commit.link_conflict",
-            Self::LinkReadConflict { .. } => "commit.link_read_conflict",
-            Self::UnsupportedLinkRead { .. } => "commit.unsupported_link_read",
-            Self::DuplicateLinkRead { .. } => "commit.duplicate_link_read",
-            Self::LinkReadTooLarge { .. } => "commit.link_read_too_large",
-            Self::InvalidLinkRead { .. } => "commit.invalid_link_read",
-            Self::PredicateReadConflict { .. } => "commit.predicate_read_conflict",
-            Self::UnsupportedPredicateRead { .. } => "commit.unsupported_predicate_read",
-            Self::InvalidPredicateRead { .. } => "commit.invalid_predicate_read",
-            Self::DanglingLink { .. } => "commit.dangling_link",
-            Self::LinkTarget { .. } => "commit.link_target",
-            Self::LinkCardinality { .. } => "commit.link_cardinality",
-            Self::LinkRequired { .. } => "commit.link_required",
-            Self::OwnedRowsProtected { .. } => "commit.owned_rows_protected",
-            Self::TypeMismatch { .. } => "commit.type_mismatch",
-            Self::EffectiveValues { .. } => "commit.effective_values",
-            Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
-            Self::AccountingPosting { reason, .. } => reason.code(),
-            Self::Law { reason, .. } => reason.code(),
-            Self::InvariantViolation { .. } => "commit.invariant_violation",
-            Self::InvariantBudgetExceeded { .. } => "commit.invariant_budget_exceeded",
-            Self::InvariantModel { .. } => "commit.invariant_model",
-            Self::ObservationAuthorization => "commit.observation_authorization",
-            Self::EventLimitExceeded { .. } => "commit.event_limit",
-            Self::Overflow => "commit.overflow",
-            Self::Host(_) => "commit.host",
-        }
-    }
 }
 
 pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commit_owned_rows};
@@ -1052,7 +1012,7 @@ impl<'c, E, C, T> Proposed<'c, E, C, T> {
     }
 }
 
-impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
+impl<'c, E: 'static, C, T: Serialize> Authorized<'c, E, C, T> {
     /// Run the shared admission check for this commit's admission.
     ///
     /// # Errors

@@ -1,8 +1,10 @@
 //! NET-ADDR-1: the one set of address rules for every outbound call a cell
 //! makes. A source base URL is checked by its literal host (SYNC-URL-1,
-//! [`crate::sources`]); a connection's egress client checks every address a
-//! name resolves to, after resolution, and connects only to an address it
-//! checked (`norn_cell_do::connections::egress`, EGRESS-PIN-1).
+//! [`crate::sources`]); a connection's egress client, and the native host's
+//! source sync client (#1710), check every address a name resolves to, after
+//! resolution, and connect only to an address they checked
+//! (`norn_cell_do::connections::egress`, `norn_cell_rivet::egress`,
+//! EGRESS-PIN-1).
 
 /// Whether `ip` is internal by [`internal_ipv4`] or [`internal_ipv6`].
 #[must_use]

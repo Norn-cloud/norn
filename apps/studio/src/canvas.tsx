@@ -21,15 +21,15 @@ import { STATE_SPACING, tidyLifecycle } from "./lib/canvas/layout.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
-import type { Envelope } from "./lib/transport.ts"
+import { transport, type Envelope } from "./lib/transport.ts"
 import { EditorShortcuts } from "@/components/keys"
 
 export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
 
 type StateNode = Node<{ label: string; flags: string; issues: readonly Issue[] }, "state">
 
-/** The definitions, from the connected cell or else the recording, loaded with the query so importing this page needs no Vite (the transport finds recordings with import.meta.glob). */
-const recordedDefinitions = async () => (await import("./lib/transport.ts")).transport.definitions()
+/** The definitions, from the connected cell or else the lazily loaded recording. */
+const recordedDefinitions = () => transport.definitions()
 
 export function StateBox({ data, selected }: NodeProps<StateNode>) {
   return (

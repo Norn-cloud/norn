@@ -13,8 +13,7 @@ import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
 import { transport } from "./lib/transport.ts"
 import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
-import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
-import type { MenuEntry } from "./shell.tsx"
+import { guardedFields, workflowAnchor as anchor, workflows, workflowTitle as titleOf, type Workflow } from "./lib/workflows.ts"
 import { Automations } from "./automations.tsx"
 import { flowName, useRunTypeFlows, type RunFlow } from "./lib/flows.ts"
 import { useView } from "@/lib/view"
@@ -338,18 +337,7 @@ function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonl
   )
 }
 
-const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
-
-/** A workflow's name: the title of the flow whose runs it is, or its object type in words. */
-const titleOf = (workflow: Workflow, flows: ReadonlyMap<string, RunFlow>) => flows.get(workflow.objectType)?.title ?? words(workflow.objectType)
-
-/** The admitted lifecycles, for the submenu island. */
-export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
-  const flows = useRunTypeFlows()
-  return definitions.data && workflows(definitions.data.map(({ document }) => document))
-    .map((workflow) => ({ href: `#${anchor(workflow)}`, label: titleOf(workflow, flows) }))
-}
+export { useWorkflowsMenu } from "./lib/nav-menus.ts"
 
 export function WorkflowsPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })

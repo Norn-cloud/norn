@@ -189,8 +189,11 @@ export function usePinnedScope(key: unknown = true): StudioScope | null | undefi
   return pinnedRef.current
 }
 
-async function call(path: string, body: Record<string, string>): Promise<void> {
-  const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+/** The header carrying a sign-up invitation (worker/auth.ts SIGNUP_INVITE_HEADER). */
+export const SIGNUP_INVITE_HEADER = "x-norn-signup-invite"
+
+async function call(path: string, body: Record<string, string>, headers: Record<string, string> = {}): Promise<void> {
+  const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) })
   if (response.ok) return
   const reason = await response.json().catch(() => null) as { message?: string; error?: string } | null
   throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? reason?.error ?? `Sign-in failed (${response.status}).`)
@@ -198,7 +201,8 @@ async function call(path: string, body: Record<string, string>): Promise<void> {
 
 export const authApi = {
   signIn: (email: string, password: string) => call("/sign-in/email", { email, password }),
-  signUp: (name: string, email: string, password: string) => call("/sign-up/email", { name, email, password }),
+  signUp: (name: string, email: string, password: string, invite = "") =>
+    call("/sign-up/email", { name, email, password }, invite.trim() === "" ? {} : { [SIGNUP_INVITE_HEADER]: invite.trim() }),
   emailLink: (email: string) => call("/sign-in/magic-link", { email, callbackURL: "/" }),
   signOut: () => call("/sign-out", {}),
 }

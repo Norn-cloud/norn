@@ -36,7 +36,8 @@ async function signedOut(page: Page, config: { magicLink: boolean; inviteOnly: b
   await page.route("**/api/auth/sign-up/email", async (route) => {
     const body = JSON.parse(route.request().postData() ?? "{}") as { email?: string; name?: string }
     const email = (body.email ?? "").trim().toLowerCase()
-    if (config.inviteOnly && !(options.allowlist ?? []).includes(email)) {
+    // Invite-only: an invited address with an invitation (the worker verifies it; here any non-empty one stands in).
+    if (config.inviteOnly && (!(options.allowlist ?? []).includes(email) || !route.request().headers()["x-norn-signup-invite"])) {
       return route.fulfill({ status: 403, json: { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE } })
     }
     const existing = registered.has(email)
@@ -61,6 +62,7 @@ test("#1412: invite-only deployment hides Email link tab, refuses non-allowliste
 
   // Non-allowlisted sign-up: renders server's refusal and never shows sign-up confirmation copy.
   await page.getByLabel("Name").fill("New Customer")
+  await page.getByLabel("Invitation").fill("v1.invitation")
   await page.getByLabel("Email").fill("stranger@example.com")
   await page.getByLabel("Password").fill("a-very-long-password-1234")
   await page.getByRole("button", { name: "Create account" }).click()
@@ -79,6 +81,7 @@ test("#1412: invite-only deployment hides Email link tab, refuses non-allowliste
   // Accepted-duplicate sign-up for the same allowlisted address shows the same conditional copy, never claiming a new account was created.
   await page.getByRole("tab", { name: "Create account" }).click()
   await page.getByLabel("Name").fill("Duplicate Attempt")
+  await page.getByLabel("Invitation").fill("v1.invitation")
   await page.getByLabel("Email").fill("invited@example.com")
   await page.getByLabel("Password").fill("a-second-long-password-5678")
   await page.getByRole("button", { name: "Create account" }).click()

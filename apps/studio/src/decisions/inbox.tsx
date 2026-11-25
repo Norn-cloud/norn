@@ -10,7 +10,7 @@ import type { CellResult, Refusal as CellReadRefusal } from "../lib/cell-read.ts
 import { CellUnavailable, NO_DATA_CELL } from "../lib/definitions.ts"
 import { CellRefusal } from "../lib/live-transport.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
-import { badgeText, cellNow, countDecisions, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, listRequested, parkedFrom, remaining, requestedAction, requestedPath, requestedWords, stepTitle, type Decision, type DecisionsPage, type RequestedDecision, type RequestedPage } from "../lib/decisions.ts"
+import { badgeText, cellNow, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, listRequested, parkedFrom, remaining, requestedAction, requestedPath, requestedWords, stepTitle, type Decision, type DecisionsPage, type RequestedDecision, type RequestedPage } from "../lib/decisions.ts"
 import { listActions } from "../lib/actions.ts"
 import { ActionSheet, type OpenAction } from "../actions/action-sheet.tsx"
 import { heldCountText, useHeldBack } from "../laws.tsx"
@@ -31,13 +31,7 @@ function useCellClock(serverNowMs: number | undefined, receivedAt: number | unde
   return serverNowMs === undefined || receivedAt === undefined ? undefined : cellNow(serverNowMs, receivedAt, tick)
 }
 
-/** The shell's badge: how many decisions wait on this actor, as the cell counts them ("500+" when capped). */
-export function useDecisionBadge(): string | undefined {
-  const count = useQuery({ queryKey: ["decisions", "count"], queryFn: () => countDecisions(), retry: false })
-  // The cell says when the count changes (UI-LIVE-1); nothing polls.
-  useLiveRefresh("/v1/decisions?state=pending&limit=0", ["decisions", "count"])
-  return count.data?.kind === "ok" && count.data.value.total > 0 ? badgeText(count.data.value) : undefined
-}
+export { useDecisionBadge } from "../lib/nav-menus.ts"
 
 function inboxRefusalError(refusal: CellReadRefusal): Error {
   const body = refusal.body

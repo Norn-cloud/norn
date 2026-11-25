@@ -14,16 +14,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useView } from "@/lib/view"
 import { conceptTitle, type Concept } from "./lib/catalog.ts"
-import { cases, field, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "./lib/guarantees.ts"
+import { cases, field, GUARANTEE_TITLES as TITLE, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
-import type { MenuEntry } from "./shell.tsx"
 import { ENFORCED, HeldRuleRow, heldCountText, heldGroupKey, LawsPanel, useHeldBack } from "./laws.tsx"
 import { RECORDED_HINT, useCatalog } from "./sources.tsx"
-
-const TITLE: Readonly<Record<string, string>> = {
-  original: "As declared",
-  mutant: "With the loss rule removed (a deliberately broken copy)",
-}
 
 /** The colour a verdict reads in: refuted red, holding green, unknown muted. */
 const tone = (verdict: Guarantees["verdict"]) => verdict.kind === "refuted" ? "text-destructive" : verdict.kind === "bounded-pass" ? "text-success" : "text-muted-foreground"
@@ -197,12 +191,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
   )
 }
 
-/** The recorded proof documents, for the sidebar submenu when no cell is connected. */
-export function useRulesMenu(): readonly MenuEntry[] | undefined {
-  const recorded = useMode().data?.kind === "recorded"
-  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees, enabled: recorded })
-  return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
-}
+export { useRulesMenu } from "./lib/nav-menus.ts"
 
 /** A type heading linking to its Workspace records view, with its technical id under Technical view. */
 function TypeHeading({ concept, technical }: { readonly concept: Concept; readonly technical: boolean }) {

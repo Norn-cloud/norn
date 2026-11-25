@@ -1,28 +1,25 @@
-import { useQuery } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
-import { Box, Database, Layers, Plus, Search, Shapes } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { Database, Plus, Search, Shapes } from "lucide-react"
+import { useState, type ReactNode } from "react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { cn } from "@/lib/utils"
 import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
-import { refreshMode } from "./lib/live-transport.ts"
+import { refreshMode, useMode } from "./lib/live-transport.ts"
+import { studioScopeKey } from "./lib/definitions.ts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useView, type View } from "@/lib/view"
-import { catalogOf, cellOwned, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
-import { transport } from "./lib/transport.ts"
-import type { Total } from "./lib/records-query.ts"
+import { cellOwned, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { LawsPanel } from "./laws.tsx"
 import { SourceConnections } from "./source-connections.tsx"
 import { ModelGraph } from "./model-graph.tsx"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import { useCatalog } from "./lib/use-catalog.ts"
-import type { MenuEntry } from "./shell.tsx"
 import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
 
@@ -254,6 +251,11 @@ export function ObjectTypePage() {
   const { concept: type = "" } = useParams({ strict: false })
   const { read, catalog } = useCatalog()
   const concept = catalog?.byName.get(type)
+  // The records are bound to the workspace the decided mode was read at, as the record page's are
+  // (#1740). The grid waits while the mode is being read, so it opens bound to that workspace; after a
+  // failed mode read it shows, and a live row's drawer reads nothing until the mode is decided.
+  const mode = useMode()
+  const scope = mode.data?.kind === "live" ? mode.data.scope : undefined
   return (
     <div className="space-y-6">
       <LoadState
@@ -270,7 +272,7 @@ export function ObjectTypePage() {
             {concept
               ? <ObjectTypeDetail catalog={loaded} concept={concept} recorded={read.data?.origin === "recorded"} />
               : <EmptyState icon={Shapes} title="Type not found" next={<Button asChild size="sm" variant="outline"><Link to="/sources">See all sources and types</Link></Button>}>No object type named {type} is installed.</EmptyState>}
-            {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
+            {concept?.definition === "object type" && !mode.isPending && <RecordsGrid key={`${concept.name}:${studioScopeKey(scope)}`} concept={concept} scope={scope} mode={mode} />}
           </>
         )}
       </LoadState>
@@ -285,28 +287,7 @@ const OVERVIEW_GROUPS: readonly { readonly label: string; readonly has: (concept
   { label: "Shared interfaces", has: (concept) => concept.definition === "interface" },
 ]
 
-/** The object types and shared interfaces, for the submenu island. */
-export function useSourcesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const { locale } = useLocale()
-  const catalog = useMemo(() => read.data && catalogOf(read.data.document, locale), [read.data, locale])
-  // The cell counts each type for this caller; a type it may not list has no count, and the recording has none.
-  const counts = useQuery({ queryKey: ["catalog", "counts"], queryFn: transport.objectCounts }).data
-  return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
-    .map((concept): MenuEntry => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType", count: menuCount(counts?.[concept.name]) })))
-}
-
-/** The operator's view of the same model: each object type's records (its grid), with the count the cell gave this caller. */
-export function useRecordsMenu(): readonly MenuEntry[] | undefined {
-  const { catalog } = useCatalog()
-  const counts = useQuery({ queryKey: ["catalog", "counts"], queryFn: transport.objectCounts }).data
-  return catalog?.concepts.filter((concept) => concept.definition === "object type")
-    .map((concept): MenuEntry => ({ href: `/objects/${concept.name}`, also: `/sources/${concept.name}`, label: concept.title, kind: "objectType", count: menuCount(counts?.[concept.name]) }))
-}
-
-/** A menu entry's count: exact, or the server's lower bound as text ("500+"); none when the cell sent none. */
-export const menuCount = (total: Total | undefined): number | string | undefined =>
-  total === undefined ? undefined : total.approximate ? `${total.count.toLocaleString("en-US")}+` : total.count
+export { menuCount, useRecordsMenu, useSourcesMenu } from "./lib/nav-menus.ts"
 
 /** The admitted catalog, indexed once per read. */
 export { useCatalog }

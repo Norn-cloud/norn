@@ -9,7 +9,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { conceptTitle } from "./lib/catalog.ts"
 import { heldRuleTitle } from "./lib/guarantees.ts"
 import { cellRead, useMode } from "./lib/live-transport.ts"
-import { recordName } from "./lib/objects.ts"
+import { recordName } from "./lib/record-name.ts"
 import type { Schemas } from "./lib/transport.ts"
 
 export type Inbox = Schemas["NornInbox"]

@@ -15,7 +15,6 @@ import { openedQuery } from "./grid/views-bar.tsx"
 import type { Concept } from "./lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
 import type { Issue } from "./lib/editor.ts"
-import { useMode } from "./lib/live-transport.ts"
 import { readerKeyIn, useReaderKey } from "./lib/session.ts"
 import { recordName } from "./lib/objects.ts"
 import { LIMITS, propertyWithheld, recordsQueryPrefix, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
@@ -39,7 +38,6 @@ import {
   type ViewSaved,
   type ViewsClient,
 } from "./lib/views.ts"
-import type { MenuEntry } from "./shell.tsx"
 import { useCatalog } from "./sources.tsx"
 
 const views = cellViews()
@@ -301,30 +299,7 @@ function RenamePopover({ current, onRename }: {
   )
 }
 
-/**
- * Saved views for the Workspace sidebar. Pinned views carry `group: space`, so the shell places
- * them directly inside their Space; unpinned views sit under the Views destination.
- */
-export function useViewsMenu(): readonly MenuEntry[] {
-  const live = useMode().data?.kind === "live"
-  const scope = useStudioScope()
-  const enabled = live && scope.isSuccess && scope.data !== null
-  const activeScope = scope.data ?? null
-  const list = useQuery({
-    queryKey: ["views", "all", activeScope?.orgId, activeScope?.environmentId],
-    queryFn: () => views.listAll(activeScope),
-    enabled,
-    retry: false,
-    staleTime: 30_000,
-  })
-  if (!enabled || !list.data) return []
-  return list.data.map((stored) => ({
-    href: `/views/${encodeURIComponent(stored.id)}`,
-    label: stored.view.title || stored.id,
-    icon: Bookmark,
-    ...(stored.view.space ? { group: stored.view.space } : {}),
-  }))
-}
+export { useViewsMenu } from "./lib/nav-menus.ts"
 
 /** `/views`: all saved operator views, grouped by Space, with create, edit, rename, duplicate, delete and undo. */
 export function ViewsPage() {
