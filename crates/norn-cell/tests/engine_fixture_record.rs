@@ -18,8 +18,10 @@
 //! 3931329a9a, the last storage-version-3 engine, `engine-storage-v4.json`
 //! at e09c0f2e25, the last storage-version-4 engine, and
 //! `engine-storage-v5.json` on `main` at 919482b548, the last
-//! storage-version-5 engine, and `engine-storage-v6.json` on `main` at
-//! 3a8dea5338, the OPEN-CHECKPOINT-1 storage-version-6 engine.
+//! storage-version-5 engine, `engine-storage-v6.json` on `main` at
+//! 3a8dea5338, the OPEN-CHECKPOINT-1 storage-version-6 engine, and
+//! `engine-storage-v7.json` on `main` at 39e0c3e6ce, the last
+//! storage-version-7 engine.
 #![cfg(feature = "native")]
 #![allow(clippy::expect_used, missing_docs, reason = "fixture recorder")]
 
