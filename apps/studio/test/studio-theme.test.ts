@@ -339,3 +339,44 @@ test("parseColor refuses input culori throws on and reads an explicit none alpha
   expect(bad.ok).toBe(false)
   if (!bad.ok) expect(bad.issues.map((i) => i.path)).toEqual(["colors.foreground"])
 })
+
+// #1724 (Fable r2): composited layers are measured as a browser paints them, 8 bits per channel per layer.
+test("over rounds every composited layer to 8 bits, and an upper-case NONE alpha is refused, not read", async () => {
+  const { over, parseColor, cssColor } = await import("../src/lib/color.ts")
+  const white = parseColor("#ffffff")!
+  // Half black over white is 127.5 per channel in floats; a browser paints 128 (0x80).
+  const half = over(parseColor("rgb(0 0 0 / 0.5)")!, white)
+  expect(cssColor(half)).toBe("#808080")
+  for (const channel of [half.r, half.g, half.b]) expect(Number.isInteger(channel * 255)).toBe(true)
+  // Two layers round after each one: 0.1 black over white is 229.5 → 230, then 0.1 black over that is
+  // 207.0 → 207. The intermediate surface is what a hovered row sits on, so it is 8-bit already.
+  const tenth = parseColor("rgb(0 0 0 / 0.1)")!
+  const once = over(tenth, white)
+  expect(once.r * 255).toBeCloseTo(230, 9)
+  expect(over(tenth, once).r * 255).toBeCloseTo(207, 9)
+  expect(parseColor("rgb(0 0 0 / NONE)")).toBeNull()
+})
+
+// DESIGN.md 4.6 / section 18: the validator checks the sidebar's hover wash and the ring (focus ring and
+// attention dot) on the ground, the wash and the pill, not only muted text on the ground.
+test("a custom theme whose sidebar hover wash or ring fails is refused with the pair named", () => {
+  const wash = parseStudioTheme({ version: 1, name: "Dark wash", baseSkin: "polar", appearance: "light", colors: { "sidebar-accent": "#444448", "sidebar-accent-foreground": "#ffffff" } })
+  expect(wash.ok).toBe(false)
+  if (!wash.ok) {
+    const paths = wash.issues.map((i) => i.path)
+    expect(paths).toContain("contrast.light.muted-foreground (on sidebar hover wash)")
+    // The pill carries its own ink, so the pill itself passes.
+    expect(paths).not.toContain("contrast.light.sidebar-accent-foreground (on sidebar-accent)")
+  }
+  const ring = parseStudioTheme({ version: 1, name: "Pale ring", baseSkin: "polar", appearance: "light", colors: { ring: "#d4d4d8" } })
+  expect(ring.ok).toBe(false)
+  if (!ring.ok) {
+    const paths = ring.issues.map((i) => i.path)
+    for (const on of ["sidebar", "sidebar hover wash", "sidebar-accent", "canvas"]) expect(paths).toContain(`contrast.light.ring (on ${on})`)
+  }
+  // Every built-in skin passes the same pairs.
+  for (const baseSkin of ["polar", "open", "luma", "glass"] as const) {
+    const plain = parseStudioTheme({ version: 1, name: `Plain ${baseSkin}`, baseSkin })
+    expect(plain.ok, baseSkin).toBe(true)
+  }
+})

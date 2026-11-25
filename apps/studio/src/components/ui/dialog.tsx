@@ -99,14 +99,14 @@ function DialogContent({
       ref={attach}
       data-slot="dialog-content"
       className={cn(
-        "fixed top-1/2 left-1/2 z-50 m-0 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-2xl bg-popover p-6 text-sm text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-100 sm:max-w-md data-starting-style:scale-95 data-starting-style:opacity-0 data-closed:transition-none data-closed:**:transition-none backdrop:bg-black/35 supports-backdrop-filter:backdrop:backdrop-blur-xs",
+        "fixed top-1/2 left-1/2 z-50 m-0 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-2xl bg-popover p-6 text-body text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-100 sm:max-w-md data-starting-style:scale-95 data-starting-style:opacity-0 data-closed:transition-none data-closed:**:transition-none backdrop:bg-black/35 supports-backdrop-filter:backdrop:backdrop-blur-xs",
         className
       )}
       {...props}
     >
       <LayerProvider layer={layer}>{children}</LayerProvider>
       {showCloseButton && (
-        <Close data-slot="dialog-close" aria-label="Close" render={<Button variant="ghost" className="absolute top-4 right-4 bg-secondary" size="icon-sm" />}>
+        <Close data-slot="dialog-close" aria-label="Close" render={<Button variant="ghost" className="absolute top-4 end-4 bg-secondary" size="icon-sm" />}>
           <XIcon />
         </Close>
       )}
@@ -151,7 +151,7 @@ function DialogTitle({ className, asChild, children, ...props }: SlotProps<typeo
   return (
     <Title
       data-slot="dialog-title"
-      className={cn("font-heading text-base leading-none font-medium", className)}
+      className={cn("font-heading text-heading font-medium", className)}
       {...props}
       {...slot(asChild, children)}
     />
@@ -163,7 +163,7 @@ function DialogDescription({ className, asChild, children, ...props }: SlotProps
     <Description
       data-slot="dialog-description"
       className={cn(
-        "text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
+        "text-body text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
         className
       )}
       {...props}

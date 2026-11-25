@@ -315,6 +315,29 @@ pub fn kernel_record_types() -> Vec<ObjectTypeDef> {
         .collect()
 }
 
+/// The call record's property that keeps the principal inputs a pinned
+/// decision resolved (PRINCIPAL-INPUT-1, #1091).
+pub const PRINCIPAL_INPUTS_PROPERTY: &str = "principalInputs";
+
+/// [`kernel_record_types`] for a cell that records principal inputs: the
+/// call record also keeps [`PRINCIPAL_INPUTS_PROPERTY`]. A cell gains it with
+/// the first installed set that declares principal inputs and keeps it under
+/// every later revision. It is the only other form a cell model may carry.
+#[must_use]
+pub fn kernel_record_types_recording_principal_inputs() -> Vec<ObjectTypeDef> {
+    let mut types = kernel_record_types();
+    if let Some(call) = types
+        .iter_mut()
+        .find(|def| def.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+    {
+        call.properties.push(nullable(
+            PRINCIPAL_INPUTS_PROPERTY,
+            PropertyType::JsonExt { schema: None },
+        ));
+    }
+    types
+}
+
 fn nullable(id: &str, property_type: PropertyType) -> Property {
     Property {
         protected: false,
@@ -333,7 +356,9 @@ fn nullable(id: &str, property_type: PropertyType) -> Property {
 
 /// Refuse a `model` whose definitions are not those `artifacts` declare: the
 /// same object types and interfaces, besides only the exact
-/// [`kernel_record_types`] a host adds, and only shared property types the
+/// [`kernel_record_types`] a host adds (or, for a cell that records principal
+/// inputs, [`kernel_record_types_recording_principal_inputs`]), and only
+/// shared property types the
 /// set declares identically. As at provisioning, a set may declare neither a
 /// reserved kernel name nor an object type extension, which a cell model
 /// does not project.
@@ -383,9 +408,10 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
         }
     }
     let kernel = kernel_record_types();
+    let recording = kernel_record_types_recording_principal_inputs();
     let modelled: BTreeMap<_, _> = model
         .object_types()
-        .filter(|def| !kernel.contains(def))
+        .filter(|def| !kernel.contains(def) && !recording.contains(def))
         .map(|def| (def.name.0.clone(), def.clone()))
         .collect();
     let model_interfaces: BTreeMap<_, _> = model

@@ -114,7 +114,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
       <figcaption className="space-y-2 text-meta text-muted-foreground">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="sr-only">Read as</span>
-          <span className="font-mono text-section font-semibold text-foreground tabular-nums">{evidence.text}</span>
+          <span className="font-mono text-heading font-semibold text-foreground tabular-nums">{evidence.text}</span>
           <Chip tone="blue" icon={ScanText}>{evidence.subjectProperty.replaceAll("_", " ")}</Chip>
           {scan.data && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
         </div>

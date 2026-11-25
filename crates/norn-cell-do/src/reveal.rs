@@ -104,6 +104,7 @@ impl RevealPolicy {
             policy_id: REVEAL_POLICY_ID.into(),
             rules,
             generic_rules: vec![],
+            principal_catalog: vec![],
             extensions: None,
         };
         let compiled = authz::compile(&schema, &policy)

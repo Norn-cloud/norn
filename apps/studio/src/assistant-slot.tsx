@@ -3,6 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { useIsMobile } from "@/hooks/use-mobile"
 
+/** The docked panel becomes a sheet below 768px: beside a 48px rail it would leave the page too narrow. */
+const PANEL_BREAKPOINT = 768
+
 /**
  * The assistant's place in the shell: a full-height panel docked beside the page, which stays
  * visible. The shell renders whatever `content` its caller mounts (the in-app agent); this module
@@ -90,7 +93,7 @@ export function useAssistant(): AssistantState {
  */
 export function AssistantPanel({ assistant }: { readonly assistant?: AssistantContent }) {
   const { open, setOpen } = useAssistant()
-  const mobile = useIsMobile()
+  const mobile = useIsMobile(PANEL_BREAKPOINT)
   if (assistant === undefined) return null
   const header = (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/80 px-4">

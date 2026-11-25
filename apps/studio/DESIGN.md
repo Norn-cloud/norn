@@ -105,7 +105,9 @@ on skin, shell or scheme.
 the thin source list described in section 9.1, and it is always the default, in Studio and in every
 app. `dock` is never a default: an app may opt into it only as a non-default mode for kiosk or
 mobile-first surfaces, chosen explicitly by the app (section 9.2). A reader's stored choice wins
-over the default. A view never branches on the shell.
+over the default, including an app's dock opt-in: that is only the surface's default, so a reader's
+stored `sidebar` choice still wins there (CURRENT: `storedShellChrome(surfaceDefault)`; lead ruling,
+2026-11-25). A view never branches on the shell.
 
 **StudioTheme JSON (CURRENT, `src/lib/studio-theme.ts`).** Operators and tenants may supply a
 declarative theme (`version: 1`, `baseSkin`, `appearance`, `accent`, `canvas`, `colors`,
@@ -341,8 +343,8 @@ Radii are **pixel** values, not rem: geometry must not change with the 90% root 
 | `--radius-chip` | 5px | 5px | 5px | 5px | SourceTag. |
 | pills | full | full | full | full | Top-bar controls, every button, segmented controls. |
 
-Radii, geometry tokens and every value in sections 5, 9 and 11 written in px are TARGET until the
-restyle lane lands (section 18); today's radii are rem.
+Radii, geometry tokens and the px values in sections 5, 9 and 11 are CURRENT in `index.css` since
+the Studio restyle (#1753), in every skin.
 
 **Concentric rule:** `radius-panel = radius-well + panel-inset + 1px border`. 15 + 4 + 1 = 20;
 11 + 4 + 1 = 16. A skin that changes one changes the other. Every skin keeps the double shell; no
@@ -393,7 +395,7 @@ Fonts: `--font-sans: "Geist Variable", "Cairo Variable", ui-sans-serif, system-u
 `--font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace`. Body:
 `letter-spacing: -0.003em`, `font-variant-numeric: tabular-nums`, antialiased.
 
-### 8.1 The locked five-step scale (TARGET tokens)
+### 8.1 The locked five-step scale (CURRENT tokens)
 
 | Step | Token | Size | px @ 90% | Line height | Tracking | Weight | Used for |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -429,7 +431,8 @@ Shells own frame chrome and navigation only. A view never knows which shell it i
 
 The sidebar is a thin source list on the start side, like the macOS sidebars in Finder, Notes and
 Mail. It is quiet, compact and one column wide, and it stays out of the content's way. The default
-itself is CURRENT. The geometry below is TARGET until the restyle lane lands it (section 18).
+itself is CURRENT, and so is the geometry below since the Studio restyle (#1753), except where an
+item is marked TARGET.
 
 **Frame**
 
@@ -455,7 +458,8 @@ itself is CURRENT. The geometry below is TARGET until the restyle lane lands it 
 the `--canvas` ground. On the start side: the sidebar toggle, then the breadcrumbs (breadcrumbs live
 in the bar, never in the page). On the end side, in order: search (`⌘K`), the perspective switch
 when the app has perspectives, page tools, the guarantee tick bar pill (section 12.4), the language
-toggle pill and the scheme toggle. The workspace switcher and the principal's avatar live in the
+toggle pill and the scheme toggle (the tick bar, language pill and scheme toggle are TARGET in
+Studio's sidebar shell; section 18). The workspace switcher and the principal's avatar live in the
 sidebar.
 
 **Anatomy, top to bottom**
@@ -464,11 +468,14 @@ sidebar.
    org disc (avatar tokens, hashed by id), the workspace name (step 2, 400,
    `--sidebar-foreground`) and a chevron (`--subtle-foreground`, decorative). Its menu holds the
    workspace, the access preview (where the server grants it) and the skin. Collapsed, only the
-   disc shows.
+   disc shows. Under the name, a step-1 muted line carries the workspace's connection state (Live,
+   Connecting…, Workspace unavailable), so that state is never only in a tooltip (section 12.2).
+   Until the avatar tokens land (TARGET, section 4.4) the disc is neutral: `--card` with a `--line` ring.
 2. **Navigation** (scrolls): the destinations every perspective shares (Home, Inbox), then the
    groups.
 3. **Footer** (`px-[8px] pb-[8px]`): the assistant row (when the app has an assistant) and the
-   principal's row. The principal's row is a 24px Initials disc and the display name (step 2, 400,
+   principal's row. While the assistant is open its row (or rail button) is pressed and takes the
+   50% wash, never the selection pill: only the current destination holds the pill. The principal's row is a 24px Initials disc and the display name (step 2, 400,
    `--sidebar-foreground`), and its menu holds account actions and sign-out. Collapsed, only the
    icons and the disc show.
 
@@ -564,7 +571,8 @@ sidebar.
   `aria-controls` (the sidebar's id). Below 640px it carries `aria-haspopup="dialog"`, and it sets
   `aria-controls` (the dialog's id) only while the sheet is open, because the closed dialog is not
   in the DOM and `aria-controls` never names a missing id. Its tooltip reads "Hide sidebar ⌘B"
-  or "Show sidebar ⌘B", and `⌘B` / `Ctrl+B` toggles the sidebar (CURRENT).
+  or "Show sidebar ⌘B", and `⌘B` / `Ctrl+B` toggles the sidebar (CURRENT). In the dock shell, which
+  shows no sidebar, the shortcut is off: it stores no choice and opens no sheet.
 - **Focus is never stranded.** If focus was inside the sidebar when it collapses, it moves to the
   current rail icon, or to the toggle when there is none (CURRENT, `WorkbenchFrame`).
 - **RTL.** The sidebar sits on the right, with its hairline on the inline-end edge (`border-e`).
@@ -602,7 +610,7 @@ accessibility rules.
     is at least **44 × 44 CSS px** (written in px, since `size-10` is only 36px at the 90% root).
     The dock may scroll horizontally on its toolbar axis; it never wraps.
 - `prefers-reduced-transparency` or `glass` fallbacks keep the dock opaque enough for 4.5:1 labels; with
-  `--dock-muted` #b4b4bc the glass-light composite (#3f414a) holds 4.93:1 (TARGET until `index.css` adopts it).
+  `--dock-muted` #b4b4bc the glass-light composite (#3f414a) holds 4.93:1 (CURRENT in `index.css`).
 
 ### 9.3 `minimal` (route-level, TARGET)
 
@@ -968,28 +976,33 @@ Same token, different values. "Pick" is what this spec adopts.
 ## 18. Conformance gaps in Studio today
 
 Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which were measured at
-`39e0c3e6ce`. **None are fixed here**; the restyle lane owns them. Counts are `grep` occurrences in
+`39e0c3e6ce`. A checked item was closed by the Studio restyle (#1753); an open item that it narrowed says what remains. Counts are `grep` occurrences in
 `apps/studio/src`, and `file:line` references are relative to `apps/studio/src` at the stated sha.
 
 **Tokens and theming (`src/index.css`, `src/lib/appearance.tsx`, `src/lib/studio-theme.ts`)**
 
-- [ ] Radii in rem (scale with the 90% root); `polar`, `luma`, `glass` radii break the concentric
+- [x] Radii in rem (scale with the 90% root); `polar`, `luma`, `glass` radii break the concentric
   rule; `[data-skin="polar"] [data-slot="panel"] { padding: 0 }` and the polar KPI well override
   flatten the double shell.
-- [ ] Missing tokens: `--subtle-foreground`, `--line`, `--action-dot`, `--action-soft`,
-  `--dot-*`, `--avatar-*`, `--popup-shadow`, `--sheet-shadow`, `--panel-inset`,
-  `--radius-row/sheet/search/dock/popup`; StudioTheme allowlist needs the new colour tokens.
-- [ ] Solid `bg-action` fills (4 uses) put `--action-foreground` on the text-role `--action`: 2.78:1
+  Closed in #1753: px radii in every skin, and the 4px inset double shell in every skin.
+- [ ] Missing tokens: `--avatar-*`; and the StudioTheme allowlist does not yet carry the colour
+  tokens #1753 added (`--subtle-foreground`, `--line`, `--action-dot`, `--action-soft`, `--dot-*`).
+  #1753 added those and `--popup-shadow`, `--sheet-shadow`, `--panel-inset` and
+  `--radius-row/sheet/search/dock/popup`.
+- [x] Solid `bg-action` fills (4 uses) put `--action-foreground` on the text-role `--action`: 2.78:1
   on open-dark #6b98ff and 3.62:1 on luma-dark #7c74ff. Solid fills move to `bg-primary`.
-- [ ] The `polar` default holds only once JS runs. Bare `:root` (`index.css:24`) and the
+  Closed: no solid `--action` fill carries text (checked in #1753); the unapplied-filter marker is a `--ring` dot, since it has no word beside it and `--dot-accent` misses 3:1 in open, luma and glass light.
+- [x] The `polar` default holds only once JS runs. Bare `:root` (`index.css:24`) and the
   `:root:not([data-skin])` rules (`index.css:487-502`) are the `open` palette and geometry.
   `polar` arrives only when `main.tsx:129` calls `applyAppearance`, which sets `data-skin`
   (`lib/appearance.tsx:88`), and `index.html` has no pre-paint script. So the first paint, and any
   page that loads `index.css` without that call, renders `open`. Spec: the bare-root palette is
   `polar`, so the default holds without JS.
+  Closed in #1753: bare `:root` and `.dark` are the `polar` palette and geometry; `open` is `:root[data-skin="open"]`.
 - [ ] `--font-sans` has no Arabic pairing (no Cairo; not in `package.json`).
 - [ ] No `minimal` route-level chromeless frame; login and OAuth use shadcn `Card`.
-- [ ] Type tokens are 0.8125/0.9375/1.0625/1.75/2rem; body is 0.875rem.
+- [x] Type tokens are 0.8125/0.9375/1.0625/1.75/2rem; body is 0.875rem.
+  Closed in #1753: the five steps of section 8.1 (with line heights and tracking), body at step 2; `--text-panel` and `--text-section` are deleted, and `cn` (tailwind-merge) knows the steps as their own class group, which conflicts only with font sizes, so `leading-*` and `tracking-*` survive beside a step.
 
 **Weights and sizes**
 
@@ -997,35 +1010,44 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
   `decision-tree.tsx` (5), `imports/split-pane-review.tsx` (3), `components/canvas/node-card.tsx`
   (3), `views.tsx`, `sources.tsx`, `dashboards.tsx`, `canvas.tsx` (2 each), and
   `components/panel.tsx` (`EmptyState` title).
+  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
 - [ ] `font-medium`: 346 uses; most are outside the allowed four. Heaviest:
   `imports/split-pane-review.tsx` (20), `shell.tsx` (18), `imports/supersession-diff.tsx` (18),
   `semantic-map.tsx` (17), `sources.tsx`, `objects.tsx`, `guarantees.tsx` (10 each);
   `components/chip.tsx` sets 500 on every chip.
+  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
 - [ ] Arbitrary `text-[…]` sizes: 81 uses (`text-[0.6875rem]` ×42, `text-[11px]` ×14, `text-[10px]`,
   `text-[0.625rem]`, display sizes 2.75–4rem). Heaviest: `imports/split-pane-review.tsx` (14),
   `shell.tsx` (12), `semantic-map.tsx` (7), `imports/alias-matcher.tsx` (6),
   `imports/supersession-diff.tsx`, `decision-tree.tsx`, `components/canvas/node-card.tsx` (5 each).
+  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
 - [ ] Uppercase chrome: `semantic-map.tsx` (5), `views.tsx`, `shell.tsx`, `guarantees.tsx`.
+  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
 
 **Status and colour**
 
-- [ ] Filled tinted status pills: `components/chip.tsx` (`Chip` fills every tone) used in 21 files;
+- [x] Filled tinted status pills: `components/chip.tsx` (`Chip` fills every tone) used in 21 files;
   heaviest `widget/views.tsx` (18), `learning/proposals-page.tsx` (15), `laws.tsx` (9),
   `imports/split-pane-review.tsx` (9), `learning/cases-page.tsx` (8), `learning/misfit-page.tsx`,
   `objects.tsx`, `learning/episodes-page.tsx`, `imports/supersession-diff.tsx`,
   `evidence/evidence-crop.tsx`. Status → `StatusDot`; kinds and sources → outline `SourceTag`.
-- [ ] `components/fact-status-badge.tsx` renders the honesty states as filled chips; needs dot-first
+  Closed in #1753: `Chip` renders a state as a 6px dot and its word, and a neutral chip as an outline SourceTag, in every file that uses it.
+- [x] `components/fact-status-badge.tsx` renders the honesty states as filled chips; needs dot-first
   with the same precedence.
-- [ ] shadcn `Badge` as status/kind: `transforms.tsx` (8), `sheet.tsx` (8), `views.tsx` (6),
+  Closed in #1753: dot-first, same precedence.
+- [x] shadcn `Badge` as status/kind: `transforms.tsx` (8), `sheet.tsx` (8), `views.tsx` (6),
   `semantic-map.tsx` (6), `workflows.tsx` (5), `sources.tsx` (4), `dashboards.tsx` (3).
+  Closed in #1753: `Badge` variants are outline tags or dot-and-word states; none fills.
 
 **Nesting and primitives**
 
-- [ ] `components/panel.tsx`: `Well` is a flush `border-t` body, not an inset well; nested panels
+- [x] `components/panel.tsx`: `Well` is a flush `border-t` body, not an inset well; nested panels
   turn into ruled sections. Align to ShellCard (one inset well).
+  Closed in #1753: every Panel is the rim around one inset well.
 - [ ] `components/table-card.tsx`: adds its own rim + well when not inside a Panel (a second
   nesting pattern).
-- [ ] `components/kpi-tile.tsx`: close to StatWell; label uses `text-sm`, no unit slot.
+- [x] `components/kpi-tile.tsx`: close to StatWell; label uses `text-sm`, no unit slot.
+  Closed in #1753: a StatWell with a step-2 label and a unit slot.
 - [ ] shadcn `Card` instead of ShellCard: `login.tsx`, `oauth.tsx`, `restatement.tsx`,
   `widget/views.tsx`.
 - [ ] No shared `ListRow`, `StatusDot`, `SourceTag`, `Initials`, `Props`, `Section` primitives; lists
@@ -1033,80 +1055,97 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
 
 **Sheets**
 
-- [ ] `components/ui/sheet.tsx` is edge-attached, full height, `w-3/4`, physical
+- [x] `components/ui/sheet.tsx` is edge-attached, full height, `w-3/4`, physical
   `left/right/border-l/border-r`; no 12px inset, no 24px radius, no single-CTA footer. Used by
   `answer-view.tsx`, `assistant-slot.tsx`, `dashboards.tsx`, `actions/action-sheet.tsx`,
   `decisions/decision-sheet.tsx`, `components/provenance.tsx`, `questions.tsx`,
   `dashboards/tile-view.tsx`, `objects.tsx`, `grid/records-grid.tsx`, `learning/cases-page.tsx`,
   `lib/inspector.tsx`. Widths vary (`sm:max-w-lg` to `sm:max-w-4xl`). Replace with one DetailSheet.
+  Closed in #1753: `SheetContent` is the floating inset DetailSheet (12px inset, 24px radius, `--sheet-shadow`, logical sides) with `SheetBody`, `SheetSection` and a footer for one primary action; callers no longer set their own widths except the wide answer and dashboard sheets.
 
 **Sidebar shell, the default (`shell.tsx`, `components/ui/sidebar.tsx`; section 9.1)**
 
-- [ ] The sidebar has two columns instead of one source list. A permanent 3rem rail (`Rail`,
+- [x] The sidebar has two columns instead of one source list. A permanent 3rem rail (`Rail`,
   `shell.tsx:471-505`) sits beside the spaces panel (`shell.tsx:1169-1179`), and collapsing hides
   only the panel (`shell.tsx:1174`). Spec: one 232px column that collapses to a 48px rail.
-- [ ] Widths are in rem: `--sidebar-width: 17rem` and `--sidebar-width-icon: 3rem`, which are
+  Closed in #1753.
+- [x] Widths are in rem: `--sidebar-width: 17rem` and `--sidebar-width-icon: 3rem`, which are
   244.8px and 43.2px at the 90% root (`shell.tsx:1252`). The primitive's defaults are 16rem, 18rem
   on mobile and 3rem (`components/ui/sidebar.tsx:29-31`). Spec: 232px and 48px.
-- [ ] Rows are `h-7.5` (27px) at `text-sm`, under the 32px target, with labels at
+  Closed in #1753.
+- [x] Rows are `h-7.5` (27px) at `text-sm`, under the 32px target, with labels at
   `text-sidebar-foreground/80` (`shell.tsx:509`). Rail buttons are `size-8`, which is 28.8px
   (`shell.tsx:417`).
-- [ ] The current row uses `bg-background`, `ring-1`, `shadow-control`, `font-medium`, a 2.5px
+  Closed in #1753.
+- [x] The current row uses `bg-background`, `ring-1`, `shadow-control`, `font-medium`, a 2.5px
   `--action` start bar and an `--action` icon (`shell.tsx:509`). The current rail icon uses an
   accent wash and ring (`bg-action/12 text-action ring-1 ring-action/20`, `shell.tsx:418` and
   `:446`). Spec: the neutral `--sidebar-accent` pill with `--sidebar-accent-foreground` ink at
   weight 400, with no ring, bar or accent colour.
-- [ ] Hover is full strength and changes the text colour. Rows hover at `hover:bg-sidebar-accent
+  Closed in #1753.
+- [x] Hover is full strength and changes the text colour. Rows hover at `hover:bg-sidebar-accent
   hover:text-sidebar-foreground` (`shell.tsx:509`) and rail buttons at `hover:bg-sidebar-accent
   hover:text-foreground` (`shell.tsx:417`). Full `--sidebar-accent` is the new selection pill, so
   once the pill lands a hovered row would look selected. Spec: a 50% `--sidebar-accent` wash with
   no text change.
-- [ ] Group headers are uppercase, `font-semibold` and tracked, at `text-[0.6875rem]`, with an
+  Closed in #1753.
+- [x] Group headers are uppercase, `font-semibold` and tracked, at `text-[0.6875rem]`, with an
   `h-6` (21.6px) disclosure target (`shell.tsx:613`). Sub-headings are also `h-6`
   (`shell.tsx:647`). Spec: step 1, weight 400, sentence case, 32px hit area.
-- [ ] Counts are filled red badges in `font-semibold` at arbitrary sizes, on the rail
+  Closed in #1753.
+- [x] Counts are filled red badges in `font-semibold` at arbitrary sizes, on the rail
   (`shell.tsx:427`) and on rows (`shell.tsx:659`). Spec: a muted step-1 count or a 6px `--ring`
   dot, never a filled badge.
-- [ ] The workspace switcher's disc and name are `font-semibold`, and the disc is
+  Closed in #1753.
+- [x] The workspace switcher's disc and name are `font-semibold`, and the disc is
   `text-[0.6875rem]` (`shell.tsx:186` and `:188`).
-- [ ] There are two navigation regions. The rail is a `Toolbar` labelled "Studio" outside any
+  Closed in #1753.
+- [x] There are two navigation regions. The rail is a `Toolbar` labelled "Studio" outside any
   landmark (`shell.tsx:483`), and the panel is a separate `<nav>` named after the perspective
   (`shell.tsx:583`). Spec: one `<nav aria-label="<app> navigation">` around every destination,
   whether the sidebar is expanded or collapsed.
-- [ ] The content is framed. In sidebar mode, `SidebarInset` adds `md:my-2 md:me-2 md:rounded-shell
+  Closed in #1753.
+- [x] The content is framed. In sidebar mode, `SidebarInset` adds `md:my-2 md:me-2 md:rounded-shell
   md:border md:shadow-shell` on `bg-background` (`shell.tsx:1181-1184`). That puts the ShellCards
   inside a card, and in `polar` it paints the ground #ffffff (`--background`) instead of #f6f6f8
   (`--canvas`), so white cards lose their contrast against the ground. Spec: an unframed `--canvas`
   content area.
-- [ ] The sidebar-mode top bar is `h-12` (43.2px) with a `border-b` on `bg-background/95`
-  (`shell.tsx:1210`). It has no guarantee tick bar, language pill or scheme toggle. Spec: 52px,
-  borderless, on `--canvas`.
-- [ ] Sidebar-mode content uses `max-w-7xl px-5 py-7`, which is 1152px at the 90% root
+  Closed in #1753.
+- [ ] The sidebar-mode top bar has no guarantee tick bar, language pill or scheme toggle. Since
+  #1753 it is 52px, borderless, on `--canvas`.
+- [x] Sidebar-mode content uses `max-w-7xl px-5 py-7`, which is 1152px at the 90% root
   (`shell.tsx:1223`). Spec: the 1220px column of section 7.
-- [ ] The toggle, `SidebarTrigger`, is `size-8` (28.8px) (`shell.tsx:1212`). It is named "Toggle
+  Closed in #1753.
+- [x] The toggle, `SidebarTrigger`, is `size-8` (28.8px) (`shell.tsx:1212`). It is named "Toggle
   Sidebar" by an `sr-only` span and has no `aria-expanded` or `aria-controls`
   (`components/ui/sidebar.tsx:253-276`).
-- [ ] The collapse state does not survive a reload. `SidebarProvider` writes the `sidebar_state`
+  Closed in #1753.
+- [x] The collapse state does not survive a reload. `SidebarProvider` writes the `sidebar_state`
   cookie (`components/ui/sidebar.tsx:85`) but never reads it, and `defaultOpen` is hard-coded to
   `true` (`:56`). There is also no width-based default that collapses to the rail from 640 to
   1023px.
-- [ ] Mobile switches at 768px (`hooks/use-mobile.ts:3`), not 640px. The mobile sidebar is the
+  Closed in #1753.
+- [x] Mobile switches at 768px (`hooks/use-mobile.ts:3`), not 640px. The mobile sidebar is the
   edge-attached `Sheet` (`components/ui/sidebar.tsx:181-202`), which has physical `left/right`,
   `w-3/4`, and no inset or radius (`components/ui/sheet.tsx:53`). Its close button is hidden
   (`[&>button]:hidden`, `components/ui/sidebar.tsx:189`), and its rows stay at 27px, under 44px.
-- [ ] Vendored parts are unused. Nothing outside `components/ui/sidebar.tsx` imports
+  Closed in #1753.
+- [x] Vendored parts are unused. Nothing outside `components/ui/sidebar.tsx` imports
   `SidebarRail`, `SidebarInput`, `SidebarHeader`, `SidebarFooter`, `SidebarSeparator`,
   `SidebarContent`, `SidebarGroup*` or `SidebarMenu*` (`:279-302` and `:317-712`; `SidebarInset`
   at `:304` is in use). These parts carry
   `font-medium`, `text-xs` and `ring-sidebar-ring`. Delete them rather than restyle them.
-- [ ] The contrast gate checks today's row and rail classes (`test/contrast.test.ts:385`). It has
+  Closed in #1753.
+- [x] The contrast gate checks today's row and rail classes (`test/contrast.test.ts:385`). It has
   to move to the section 4.6 pairs when the rows change: muted text on the 50% `--sidebar-accent`
   hover wash, and `--ring` on `--sidebar` and on the pill, plus on the hover wash for the attention
   dot, including `glass`, whose `--sidebar` is translucent. The StudioTheme validator checks muted
   text on `sidebar` and ink on `sidebar-accent` (`lib/studio-theme.ts:553-566`), but it does not
   check the hover wash or the ring (and so the dot) on the sidebar.
-- [ ] The top-bar Notifications popover renders a hard-coded "Nothing yet." in both shells
+  Closed in #1753.
+- [x] The top-bar Notifications popover renders a hard-coded "Nothing yet." in both shells
   (`shell.tsx:922` and `:1202`), instead of a server-backed list or an honest unavailable state.
+  Closed in #1753.
 
 **Dock shell, opt-in (`shell.tsx`; section 9.2)**
 
@@ -1115,18 +1154,21 @@ whenever it is on.
 
 - [ ] `FloatingDock` is icon-only at every width, with no labels below 640px. Its buttons are
   `size-10` (36px at the 90% root), under the 44px target.
-- [ ] The dock's attention dot uses physical `right-[7px]` and is colour-only, with no accessible
+- [x] The dock's attention dot uses physical `right-[7px]` and is colour-only, with no accessible
   text.
+  Closed in #1753: `end-[7px]`, and the destination's name carries its count.
 - [ ] The dock-mode top bar (`data-slot="dock-topbar"`) is borderless, but it is `h-[4.4rem]` on
   `bg-background` and has no guarantee tick bar, language pill or scheme toggle.
-- [ ] `index.css` `--dock-muted` is #a5a5ad (4.15:1 on the glass-light dock composite #3f414a);
+- [x] `index.css` `--dock-muted` is #a5a5ad (4.15:1 on the glass-light dock composite #3f414a);
   the spec value is #b4b4bc (4.93:1) (section 4.5).
+  Closed in #1753.
 
 **RTL**
 
 - [ ] Physical spacing in first-party code: `actions/action-form.tsx` (3),
   `learning/episodes-page.tsx`, `learning/episode-page.tsx`; vendored `components/ui/*`
   (`dropdown-menu`, `button`, `toggle`, `input-group`, `sidebar`, `sheet`) when touched.
+  Narrowed by #1753: the episode pages, the records grid, linked records and the touched primitives are logical; `actions/action-form.tsx` remains.
 - [ ] No Arabic font; no `<bdi>` discipline for ids and money.
 
 **Refusals and call outcomes (`src/lib/actions.ts`, `src/lib/screen/call.ts`)**
@@ -1150,5 +1192,7 @@ whenever it is on.
 - [ ] Contrast gate does not yet cover the new tokens (subtle, avatars, action-foreground on
   action in dark, muted on `--well-hover`), and nothing checks that every dot is paired with a
   text label.
+  Narrowed by #1753: the section 4.6 sidebar pairs (ground, 50% wash, pill, ring and dot, phone sheet) gate every skin in the test and in the StudioTheme validator; subtle and avatar pairs remain.
 - [ ] No 44px mobile minimum on rows, pills or buttons (`h-9` is 32.4px at the 90% root).
+  Narrowed by #1753: buttons (default, sm, lg), the sidebar sheet, the sheet close and the record picker are 44px below 640px; rows, pills and inputs elsewhere remain.
 - [ ] No lint for arbitrary type sizes, banned weights or physical spacing.

@@ -177,6 +177,22 @@ pub enum DecisionError {
         /// What is wrong.
         reason: String,
     },
+    /// PRINCIPAL-INPUT-1: the decision declares principal inputs and the host
+    /// bound none. There is no default.
+    #[error(
+        "decision.principal_input_unavailable: decision `{decision}` declares principal inputs the host did not resolve"
+    )]
+    PrincipalInputUnavailable {
+        /// The evaluated decision's rule id.
+        decision: String,
+    },
+    /// PRINCIPAL-INPUT-1: a resolved principal input does not conform to its
+    /// declared column, or the decision declares none. Never carries a value.
+    #[error("principal input `{path}` does not conform to its declared column")]
+    PrincipalInputType {
+        /// The column's path (`principal.<name>`).
+        path: String,
+    },
     /// A number has no exact engine representation (never rounded).
     #[error("number `{input}` is not an exact Norn decimal: {reason}")]
     InvalidNumber {

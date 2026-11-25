@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
-import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react"
+import { Inbox, Play, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader } from "@/components/panel"
@@ -46,6 +46,26 @@ function inboxRefusalError(refusal: CellReadRefusal): Error {
   return new CellRefusal(refusal.status, refusal.code, refusal.message, { explanation, incidentId, retryable, category, decidedAt })
 }
 
+/**
+ * A requested call's status dot: held while it waits; live once approved and run (or approved with
+ * nothing left to run); the accent while an approval waits for the reader to run it; bad when the
+ * decider rejected it or the cell refused the approved call; quiet when it expired or was withdrawn.
+ */
+export function requestDot(item: Pick<RequestedDecision, "status" | "canRun" | "call">): string {
+  switch (item.status) {
+    case "pending": return "bg-dot-held"
+    case "rejected": return "bg-dot-bad"
+    case "expired":
+    case "withdrawn": return "bg-dot-quiet"
+    case "approved": {
+      const state = item.call.state?.state
+      if (state === "refused") return "bg-dot-bad"
+      if (state === "committed") return "bg-dot-live"
+      return item.canRun ? "bg-dot-accent" : "bg-dot-live"
+    }
+  }
+}
+
 /** `/decisions`: what waits on you, soonest deadline first, in the cell's order. */
 export function DecisionsPage() {
   const client = useQueryClient()
@@ -84,14 +104,15 @@ export function DecisionsPage() {
     if (result?.kind === "refused") return <LoadState status="error" error={inboxRefusalError(result.refusal)} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>
     if (open.length === 0) return <EmptyState icon={Inbox} title="Nothing waits on you" next={<Button asChild size="sm" variant="outline"><Link to="/workflows"><Workflow />View workflows</Link></Button>}>When a flow asks you to decide, it shows here.</EmptyState>
     return (
-      // One ruled list, not a stack of cards: the question leads, its deadline sits at the end, the rest is one quiet line.
-      <ol className="divide-y overflow-hidden rounded-lg border bg-card" aria-label="Decisions waiting on you">
+      // One list in a ShellCard well, not a stack of cards: the question leads, its deadline sits at the end, the rest is one quiet line.
+      <div data-slot="panel" className="rounded-(--radius-panel) border border-(--panel-border) bg-card shadow-(--panel-shadow)">
+      <ol data-slot="well" className="grid gap-px p-1.5" aria-label="Decisions waiting on you">
         {open.map((d) => (
           <li key={d.id}>
             <button type="button" onClick={() => choose(d.id)} aria-current={selected?.id === d.id ? "true" : undefined}
-              className="grid w-full gap-1 px-4 py-3 text-start transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-current:bg-muted">
+              className="grid min-h-12 w-full gap-1 rounded-(--radius-row) px-3 py-2.5 text-start transition-colors outline-none hover:bg-(--well-hover) focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring aria-current:bg-card aria-current:ring-1 aria-current:ring-panel-border motion-reduce:transition-none">
               <span className="flex items-baseline gap-3">
-                <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium">{d.question}</span>
+                <span className="line-clamp-2 min-w-0 flex-1 text-body">{d.question}</span>
                 <span className="shrink-0 text-meta"><Countdown expiresAtMs={d.expiresAtMs} now={now} /></span>
               </span>
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
@@ -104,6 +125,7 @@ export function DecisionsPage() {
           </li>
         ))}
       </ol>
+      </div>
     )
   })()
 
@@ -121,7 +143,7 @@ export function DecisionsPage() {
           </Button>
           <Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>
         </>} />
-      {missing && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
+      {missing && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-body">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
       {body}
       <RequestedCalls />
       <DecisionSheet decision={selected} now={now} onClose={() => choose(undefined)} onSettled={refresh} />
@@ -152,19 +174,19 @@ function RequestedCalls() {
   return (
     <>
     {items.length > 0 && <section aria-labelledby="requested-heading" className="grid gap-2">
-      <h2 id="requested-heading" className="text-section font-medium">Your requests</h2>
-      <ol className="divide-y overflow-hidden rounded-lg border bg-card" aria-label="Your requests">
+      <h2 id="requested-heading" className="text-heading">Your requests</h2>
+      <div data-slot="panel" className="rounded-(--radius-panel) border border-(--panel-border) bg-card shadow-(--panel-shadow)">
+      <ol data-slot="well" className="grid gap-px p-1.5" aria-label="Your requests">
         {items.map((item) => (
-          <li key={item.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-            {item.status === "approved"
-              ? <CheckCircle2 className="size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
-              : <Hourglass className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
-            <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none rounded-sm">
+          <li key={item.id} className="flex min-h-12 flex-wrap items-center gap-3 rounded-(--radius-row) px-3 py-2.5">
+            {/* Dot-first (DESIGN.md 4.3, 12): one dot per outcome; the words below say which. */}
+            <span aria-hidden data-status={item.status} className={`size-[6px] shrink-0 rounded-full ${requestDot(item)}`} />
+            <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
               <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                 <span>{requestedAction(actions, item).title}</span>
                 {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
               </span>
-              <span className="line-clamp-2 text-sm font-medium">{item.question}</span>
+              <span className="line-clamp-2 text-body">{item.question}</span>
               <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
             </button>
             <RiskChip risk={item.risk} />
@@ -172,6 +194,7 @@ function RequestedCalls() {
           </li>
         ))}
       </ol>
+      </div>
     </section>}
     <ActionSheet open={acting} onClose={() => setActing(null)} />
     </>

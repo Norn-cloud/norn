@@ -718,9 +718,9 @@ impl<X> ActionRefusal<X> {
             Self::Decision(refusal) => refusal.category(),
             Self::TargetNotFound | Self::SliceObjectMissing { .. } => RefusalCategory::Visibility,
             Self::PermissionDenied { .. } => RefusalCategory::Permission,
-            Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
-                RefusalCategory::Precondition
-            }
+            Self::PreconditionFailed { .. }
+            | Self::WriteModeFailed { .. }
+            | Self::PrincipalInputUnavailable { .. } => RefusalCategory::Precondition,
             Self::ParameterRefused { error, .. } => match error {
                 norn_checker::parameter::ParameterError::Ambiguous => RefusalCategory::Conflict,
                 norn_checker::parameter::ParameterError::Missing => RefusalCategory::Precondition,
