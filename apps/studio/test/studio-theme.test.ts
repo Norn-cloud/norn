@@ -322,6 +322,10 @@ test("the gate composites a translucent well-hover over the well and checks mute
     expect(paths).toContain("contrast.light.muted-foreground (on well-hover)")
     expect(paths).not.toContain("contrast.light.foreground (on well-hover)")
   }
+  // The map's node cards swap `bg-card` for the hover, so a translucent hover is also read over the page.
+  const page = parseStudioTheme({ version: 1, name: "Page hover", baseSkin: "polar", appearance: "light", colors: { background: "#777777", "well-hover": "rgba(0, 0, 0, 0.25)", "muted-foreground": "#000000", foreground: "#000000" } })
+  expect(page.ok).toBe(false)
+  if (!page.ok) expect(page.issues.map((i) => i.path)).toContain("contrast.light.foreground (on well-hover over background)")
 })
 
 // #1724 (CodeRabbit): culori throwing on malformed input is a refusal, and an explicit `/ none` alpha is transparent.

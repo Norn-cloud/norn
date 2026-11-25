@@ -320,6 +320,8 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["foreground", "card", CARD, 4.5],
   ["foreground", "well", [...CARD, "well"], 4.5],
   ["foreground", "well-hover", [...CARD, "well-hover"], 4.5],
+  // The map's node cards: `hover:bg-well-hover` replaces their `bg-card`, so the hover lies on the page.
+  ["foreground", "well-hover over background", [...BG, "well-hover"], 4.5],
   // A hovered row inside a well: a translucent `well-hover` lies over the well, not the card.
   ["foreground", "well-hover over well", [...CARD, "well", "well-hover"], 4.5],
   ["foreground", "muted", [...CARD, "muted"], 4.5],
@@ -335,6 +337,7 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["muted-foreground", "card", CARD, 4.5],
   ["muted-foreground", "well", [...CARD, "well"], 4.5],
   ["muted-foreground", "well-hover", [...CARD, "well-hover"], 4.5],
+  ["muted-foreground", "well-hover over background", [...BG, "well-hover"], 4.5],
   ["muted-foreground", "well-hover over well", [...CARD, "well", "well-hover"], 4.5],
   ["muted-foreground", "muted", [...CARD, "muted"], 4.5],
   ["muted-foreground", "popover", POPOVER, 4.5],
