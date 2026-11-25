@@ -37,8 +37,8 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join, posix, resolve, sep } from "node:path"
-import { gunzipSync, inflateRawSync } from "node:zlib"
+import { join, posix } from "node:path"
+import { gunzipSync } from "node:zlib"
 import {
   RUNTIME_MANIFEST_FORMAT,
   defaultCacheRoot,
@@ -100,9 +100,6 @@ export interface SetupResult {
 }
 
 const VALID_PLATFORMS = new Set(["linux-x64", "linux-arm64", "macos-arm64", "macos-x64"])
-
-/** Map Node/Bun `process.platform` + `process.arch` to the release platform key. */
-export const detectReleasePlatform = detectPlatform
 
 /**
  * Strip/redact URL userinfo (`username` and `password`) before formatting a
@@ -593,313 +590,6 @@ export function inspectTarGzArchive(
   return { entries: entryCount, totalBytes }
 }
 
-const CRC32_TABLE = (() => {
-  const table = new Uint32Array(256)
-  for (let i = 0; i < 256; i++) {
-    let c = i
-    for (let k = 0; k < 8; k++) {
-      c = (c & 1) !== 0 ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1)
-    }
-    table[i] = c >>> 0
-  }
-  return table
-})()
-
-export function crc32(data: Uint8Array): number {
-  let c = 0xffffffff
-  for (let i = 0; i < data.length; i++) {
-    c = CRC32_TABLE[(c ^ data[i]!) & 0xff]! ^ (c >>> 8)
-  }
-  return (c ^ 0xffffffff) >>> 0
-}
-
-interface VerifiedZipEntry {
-  readonly name: string
-  readonly isDir: boolean
-  readonly data: Uint8Array
-  readonly unixPerm: number
-}
-
-function parseAndVerifyZipArchive(
-  archivePath: string,
-  assetName: string,
-  limits: ArchiveLimits = {},
-): { readonly entries: ReadonlyArray<VerifiedZipEntry>; readonly totalBytes: number } {
-  const maxExtractedBytes = limits.maxExtractedBytes ?? MAX_EXTRACTED_BYTES
-  const maxEntries = limits.maxEntries ?? MAX_ARCHIVE_ENTRIES
-  const buf = readFileSync(archivePath)
-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
-
-  if (buf.length < 22) {
-    throw new Error(`invalid zip archive ${assetName}: file too small`)
-  }
-
-  // Locate End of Central Directory (EOCD) record (signature 0x06054b50).
-  const minEocdOffset = Math.max(0, buf.length - 22 - 65535)
-  let eocdOffset = -1
-  for (let i = buf.length - 22; i >= minEocdOffset; i--) {
-    if (view.getUint32(i, true) === 0x06054b50) {
-      const commentLen = view.getUint16(i + 20, true)
-      if (i + 22 + commentLen === buf.length) {
-        eocdOffset = i
-        break
-      }
-    }
-  }
-  if (eocdOffset < 0) {
-    throw new Error(`invalid zip archive ${assetName}: missing end-of-central-directory record`)
-  }
-
-  let expectedEntries = view.getUint16(eocdOffset + 10, true)
-  let cdSize = view.getUint32(eocdOffset + 12, true)
-  let cdOffset = view.getUint32(eocdOffset + 16, true)
-
-  // Handle ZIP64 EOCD when sentinel values are present.
-  if (expectedEntries === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
-    const locatorOffset = eocdOffset - 20
-    if (locatorOffset < 0 || view.getUint32(locatorOffset, true) !== 0x07064b50) {
-      throw new Error(`invalid zip64 archive ${assetName}: missing ZIP64 locator`)
-    }
-    const zip64EocdOffset = Number(view.getBigUint64(locatorOffset + 8, true))
-    if (
-      !Number.isSafeInteger(zip64EocdOffset)
-      || zip64EocdOffset < 0
-      || zip64EocdOffset + 56 > buf.length
-      || view.getUint32(zip64EocdOffset, true) !== 0x06064b50
-    ) {
-      throw new Error(`invalid zip64 archive ${assetName}: missing ZIP64 EOCD`)
-    }
-    expectedEntries = Number(view.getBigUint64(zip64EocdOffset + 32, true))
-    cdSize = Number(view.getBigUint64(zip64EocdOffset + 40, true))
-    cdOffset = Number(view.getBigUint64(zip64EocdOffset + 48, true))
-  }
-
-  if (expectedEntries > maxEntries) {
-    throw new Error(`archive ${assetName} exceeds maximum entry count (${maxEntries})`)
-  }
-  if (cdOffset < 0 || cdSize < 0 || cdOffset + cdSize > buf.length) {
-    throw new Error(`invalid zip archive ${assetName}: central directory out of bounds`)
-  }
-
-  const decoder = new TextDecoder()
-  let offset = cdOffset
-  const cdEnd = cdOffset + cdSize
-  const verified: VerifiedZipEntry[] = []
-  let totalBytes = 0
-
-  while (offset < cdEnd) {
-    if (offset + 46 > cdEnd || view.getUint32(offset, true) !== 0x02014b50) {
-      throw new Error(`invalid zip archive ${assetName}: corrupt central directory header`)
-    }
-    const flags = view.getUint16(offset + 8, true)
-    const method = view.getUint16(offset + 10, true)
-    const expectedCrc = view.getUint32(offset + 16, true)
-    const compressedSize32 = view.getUint32(offset + 20, true)
-    const uncompressedSize32 = view.getUint32(offset + 24, true)
-    const fileNameLen = view.getUint16(offset + 28, true)
-    const extraLen = view.getUint16(offset + 30, true)
-    const commentLen = view.getUint16(offset + 32, true)
-    const externalAttr = view.getUint32(offset + 38, true)
-    const localHeaderOffset32 = view.getUint32(offset + 42, true)
-
-    const headerEnd = offset + 46 + fileNameLen + extraLen + commentLen
-    if (headerEnd > cdEnd) {
-      throw new Error(`invalid zip archive ${assetName}: truncated central directory entry`)
-    }
-
-    const fileName = decoder.decode(buf.subarray(offset + 46, offset + 46 + fileNameLen))
-
-    if ((flags & 0x1) !== 0) {
-      throw new Error(`refusing encrypted zip entry '${fileName}' in ${assetName}`)
-    }
-    if (method !== 0 && method !== 8) {
-      throw new Error(`refusing unsupported zip compression method ${method} for '${fileName}' in ${assetName}`)
-    }
-
-    let compressedSize = compressedSize32
-    let uncompressedSize = uncompressedSize32
-    let localHeaderOffset = localHeaderOffset32
-    if (
-      uncompressedSize32 === 0xffffffff
-      || compressedSize32 === 0xffffffff
-      || localHeaderOffset32 === 0xffffffff
-    ) {
-      let ex = offset + 46 + fileNameLen
-      const exEnd = ex + extraLen
-      let foundZip64 = false
-      while (ex + 4 <= exEnd) {
-        const tag = view.getUint16(ex, true)
-        const size = view.getUint16(ex + 2, true)
-        if (ex + 4 + size > exEnd) break
-        if (tag === 0x0001) {
-          let cursor = ex + 4
-          if (uncompressedSize32 === 0xffffffff) {
-            if (cursor + 8 > ex + 4 + size) throw new Error(`truncated zip64 extra field in ${assetName}`)
-            const v = view.getBigUint64(cursor, true)
-            if (v > BigInt(Number.MAX_SAFE_INTEGER)) {
-              throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
-            }
-            uncompressedSize = Number(v)
-            cursor += 8
-          }
-          if (compressedSize32 === 0xffffffff) {
-            if (cursor + 8 > ex + 4 + size) throw new Error(`truncated zip64 extra field in ${assetName}`)
-            const v = view.getBigUint64(cursor, true)
-            if (v > BigInt(Number.MAX_SAFE_INTEGER)) {
-              throw new Error(`archive ${assetName} exceeds maximum compressed size in ${assetName}`)
-            }
-            compressedSize = Number(v)
-            cursor += 8
-          }
-          if (localHeaderOffset32 === 0xffffffff) {
-            if (cursor + 8 > ex + 4 + size) throw new Error(`truncated zip64 extra field in ${assetName}`)
-            localHeaderOffset = Number(view.getBigUint64(cursor, true))
-          }
-          foundZip64 = true
-          break
-        }
-        ex += 4 + size
-      }
-      if (!foundZip64) {
-        throw new Error(`invalid zip64 archive ${assetName}: missing zip64 extra field for '${fileName}'`)
-      }
-    }
-
-    // Reject symlinks and special file type bits regardless of `versionMadeBy` OS byte.
-    const upperMode = externalAttr >>> 16
-    const fileType = upperMode & 0o170000
-    let isDir = fileName.endsWith("/")
-    if (fileType === 0o120000) {
-      throw new Error(`refusing symlink '${fileName}' in ${assetName}`)
-    }
-    if (fileType === 0o040000) {
-      isDir = true
-    } else if (fileType !== 0 && fileType !== 0o100000) {
-      throw new Error(`refusing special file '${fileName}' (mode 0o${fileType.toString(8)}) in ${assetName}`)
-    }
-
-    assertSafeArchiveEntryPath(fileName, isDir, assetName)
-
-    if (verified.length + 1 > maxEntries) {
-      throw new Error(`archive ${assetName} exceeds maximum entry count (${maxEntries})`)
-    }
-
-    // Verify local file header signature, compression method, and filename match.
-    if (localHeaderOffset + 30 > buf.length || view.getUint32(localHeaderOffset, true) !== 0x04034b50) {
-      throw new Error(`invalid zip archive ${assetName}: missing local header for '${fileName}'`)
-    }
-    const localMethod = view.getUint16(localHeaderOffset + 8, true)
-    if (localMethod !== method) {
-      throw new Error(`refusing zip compression method mismatch for '${fileName}' in ${assetName}`)
-    }
-    const localNameLen = view.getUint16(localHeaderOffset + 26, true)
-    const localExtraLen = view.getUint16(localHeaderOffset + 28, true)
-    const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen
-    const dataEnd = dataStart + compressedSize
-    if (localHeaderOffset + 30 + localNameLen > buf.length || dataEnd > buf.length) {
-      throw new Error(`invalid zip archive ${assetName}: truncated local entry data for '${fileName}'`)
-    }
-    const localName = decoder.decode(buf.subarray(localHeaderOffset + 30, localHeaderOffset + 30 + localNameLen))
-    if (localName !== fileName) {
-      throw new Error(`refusing zip filename mismatch ('${localName}' != '${fileName}') in ${assetName}`)
-    }
-
-    const remainingBudget = maxExtractedBytes - totalBytes
-    if (uncompressedSize > remainingBudget) {
-      throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
-    }
-
-    // Decompress with a strict byte budget instead of trusting the declared uncompressed size.
-    const compressedSlice = buf.subarray(dataStart, dataEnd)
-    let expanded: Uint8Array
-    if (method === 0) {
-      if (compressedSlice.byteLength > remainingBudget) {
-        throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
-      }
-      expanded = compressedSlice
-    } else {
-      try {
-        expanded = inflateRawSync(compressedSlice, { maxOutputLength: Math.max(remainingBudget, 1) })
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException | undefined)?.code
-        if (code === "ERR_BUFFER_TOO_LARGE") {
-          throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
-        }
-        throw new Error(
-          `failed to inflate zip entry '${fileName}' in ${assetName}: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
-      if (expanded.byteLength > remainingBudget) {
-        throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
-      }
-    }
-
-    if (expanded.byteLength !== uncompressedSize) {
-      throw new Error(
-        `zip entry '${fileName}' expanded size (${expanded.byteLength}) does not match declared size (${uncompressedSize}) in ${assetName}`,
-      )
-    }
-    if (isDir && expanded.byteLength !== 0) {
-      throw new Error(`refusing directory '${fileName}' with non-zero size in ${assetName}`)
-    }
-    const actualCrc = crc32(expanded)
-    if (actualCrc !== expectedCrc) {
-      throw new Error(
-        `zip entry '${fileName}' CRC-32 mismatch (expected ${expectedCrc.toString(16)}, got ${actualCrc.toString(16)}) in ${assetName}`,
-      )
-    }
-
-    totalBytes += expanded.byteLength
-    if (totalBytes > maxExtractedBytes) {
-      throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
-    }
-
-    verified.push({
-      name: fileName,
-      isDir,
-      data: expanded,
-      unixPerm: upperMode & 0o777,
-    })
-
-    offset = headerEnd
-  }
-
-  if (verified.length === 0) {
-    throw new Error(`archive ${assetName} contains no entries`)
-  }
-  return { entries: verified, totalBytes }
-}
-
-/**
- * Inspect EVERY entry of a `.zip` archive via its Central Directory, Local File
- * Headers, and bounded raw decompression BEFORE extraction:
- * - rejects symlinks and special POSIX file modes regardless of `versionMadeBy` OS byte;
- * - rejects absolute paths, backslashes, drive prefixes, `..` traversal, and
- *   LFH-vs-CD filename/method mismatches;
- * - inflates every entry with a strict remaining byte budget (`maxOutputLength`)
- *   and checks actual expanded byte length + CRC-32 instead of trusting headers.
- */
-export function inspectZipArchive(
-  archivePath: string,
-  assetName: string,
-  limits: ArchiveLimits = {},
-): ArchiveSummary {
-  const { entries, totalBytes } = parseAndVerifyZipArchive(archivePath, assetName, limits)
-  return { entries: entries.length, totalBytes }
-}
-
-/** Dispatch preflight inspection for `.tar.gz` / `.tgz` or `.zip` archives. */
-export function inspectArchive(
-  archivePath: string,
-  assetName: string,
-  limits: ArchiveLimits = {},
-): ArchiveSummary {
-  const isZip = assetName.endsWith(".zip") || archivePath.endsWith(".zip")
-  return isZip
-    ? inspectZipArchive(archivePath, assetName, limits)
-    : inspectTarGzArchive(archivePath, assetName, limits)
-}
-
 /** Post-extraction defense-in-depth verification of extracted filesystem tree. */
 function assertSafeExtractedTree(
   dir: string,
@@ -940,46 +630,17 @@ function assertSafeExtractedTree(
   walk(dir)
 }
 
-/**
- * Inspect an archive BEFORE creating `destDir` or extracting, extract it
- * safely (writing verified `.zip` entries directly via bounded `inflateRawSync`
- * with no `unzip` subprocess), and run post-extraction tree verification as
- * defense-in-depth.
- */
 export function extractArchive(
   archivePath: string,
   destDir: string,
   assetName: string,
   limits: ArchiveLimits = {},
 ): void {
-  const isZip = assetName.endsWith(".zip") || archivePath.endsWith(".zip")
-  if (isZip) {
-    const { entries } = parseAndVerifyZipArchive(archivePath, assetName, limits)
-    mkdirSync(destDir, { recursive: true })
-    const rootResolved = resolve(destDir)
-    for (const entry of entries) {
-      const rel = posix.normalize(entry.name)
-      const target = rel === "." ? rootResolved : resolve(rootResolved, ...rel.split("/").filter(Boolean))
-      if (target !== rootResolved && !target.startsWith(`${rootResolved}${sep}`)) {
-        throw new Error(`refusing unsafe archive entry '${entry.name}' in ${assetName}`)
-      }
-      if (entry.isDir) {
-        mkdirSync(target, { recursive: true })
-      } else {
-        mkdirSync(dirname(target), { recursive: true })
-        writeFileSync(target, entry.data)
-        if ((entry.unixPerm & 0o111) !== 0) {
-          chmodSync(target, 0o755)
-        }
-      }
-    }
-  } else {
-    inspectTarGzArchive(archivePath, assetName, limits)
-    mkdirSync(destDir, { recursive: true })
-    const run = spawnSync("tar", ["-xzf", archivePath, "-C", destDir], { encoding: "utf8" })
-    if (run.status !== 0) {
-      throw new Error(`failed to extract ${assetName}: ${run.stderr.trim() || "tar exited non-zero"}`)
-    }
+  inspectTarGzArchive(archivePath, assetName, limits)
+  mkdirSync(destDir, { recursive: true })
+  const run = spawnSync("tar", ["-xzf", archivePath, "-C", destDir], { encoding: "utf8" })
+  if (run.status !== 0) {
+    throw new Error(`failed to extract ${assetName}: ${run.stderr.trim() || "tar exited non-zero"}`)
   }
   assertSafeExtractedTree(destDir, assetName, limits)
 }
@@ -1210,7 +871,7 @@ export async function setupLocalRuntime(options: SetupOptions = {}): Promise<Set
 
     // Phase 2a: Preflight-inspect ALL verified archives BEFORE extracting ANY onto disk.
     for (const asset of assets) {
-      inspectArchive(downloaded.get(asset)!, asset)
+      inspectTarGzArchive(downloaded.get(asset)!, asset)
     }
 
     // Phase 2b: Extract verified & preflighted archives in temp dir and check required payloads.

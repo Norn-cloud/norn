@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import ts from "typescript"
 import { TOOL_ROOT } from "./profile.ts"
 

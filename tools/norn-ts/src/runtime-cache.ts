@@ -118,13 +118,11 @@ export function defaultCacheRoot(env: Readonly<Record<string, string | undefined
   return nornCacheRoot(env) ?? join(homedir(), ".cache", "norn")
 }
 
-/** `<cacheRoot>/runtime`, or `undefined` when `nornCacheRoot(env)` is unset. */
 export function runtimeCacheDir(env: Readonly<Record<string, string | undefined>> = process.env): string | undefined {
   const root = nornCacheRoot(env)
   return root ? join(root, "runtime") : undefined
 }
 
-/** Read the active generation ID from `<cacheDir>/runtime/current`, if valid. */
 export function readActiveGenerationId(cacheDir: string): string | undefined {
   const pointerPath = join(cacheDir, "runtime", "current")
   if (!isRegularFileNoFollow(pointerPath)) return undefined
@@ -139,12 +137,6 @@ export function readActiveGenerationId(cacheDir: string): string | undefined {
   return isDirectory(genDir) ? raw : undefined
 }
 
-/**
- * Snapshot the active runtime root under `<cacheDir>/runtime`:
- * - `{ dir: <cacheDir>/runtime/generations/<genId>, isGeneration: true, generationId }`
- *   when `<cacheDir>/runtime/current` names an existing generation directory;
- * - `{ dir: <cacheDir>/runtime, isGeneration: false }` otherwise (legacy direct layout or empty cache).
- */
 export function activeRuntimeDir(cacheDir: string): ActiveRuntimeRoot {
   const genId = readActiveGenerationId(cacheDir)
   if (genId) {
@@ -160,23 +152,11 @@ export function activeRuntimeDir(cacheDir: string): ActiveRuntimeRoot {
   }
 }
 
-/** `<activeRuntimeDir>/checker-wasm`, or `undefined` when no cache root applies. */
 export function cachedCheckerWasmDir(env: Readonly<Record<string, string | undefined>> = process.env): string | undefined {
   const root = nornCacheRoot(env)
   return root ? join(activeRuntimeDir(root).dir, "checker-wasm") : undefined
 }
 
-/** `<activeRuntimeDir>/bin/norn-dev-host`. */
-export function cachedDevHostPath(cacheDir: string): string {
-  return join(activeRuntimeDir(cacheDir).dir, "bin", "norn-dev-host")
-}
-
-/** `<activeRuntimeDir>/bin/norn`. */
-export function cachedCliPath(cacheDir: string): string {
-  return join(activeRuntimeDir(cacheDir).dir, "bin", "norn")
-}
-
-/** `<activeRuntimeDir>/manifest.json`. */
 export function cachedRuntimeManifestPath(cacheDir: string): string {
   return join(activeRuntimeDir(cacheDir).dir, "manifest.json")
 }

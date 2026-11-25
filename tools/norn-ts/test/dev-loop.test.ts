@@ -86,8 +86,7 @@ export const Customer = Norn.type({
 })
 `
 
-test("developer_loop_roundtrip: author, observe, break, repair and restart through norn dev", async () => {
-  if (!native) return
+test.skipIf(!native)("developer_loop_roundtrip: author, observe, break, repair and restart through norn dev", async () => {
   const root = mkdtempSync(join(tmpdir(), "norn-dev-loop-"))
   const dir = join(root, "shop")
   let dev: Dev | undefined
@@ -168,8 +167,7 @@ test("developer_loop_roundtrip: author, observe, break, repair and restart throu
   }
 }, 240_000)
 
-test("three_systems_dev_load: the packs' synthetic exports load whole, at startup and over observations:load, and a refused load exits with its reason", async () => {
-  if (!native) return
+test.skipIf(!native)("three_systems_dev_load: the packs' synthetic exports load whole, at startup and over observations:load, and a refused load exits with its reason", async () => {
   const root = mkdtempSync(join(tmpdir(), "norn-dev-packs-"))
   const dir = join(root, "packs")
   let dev: Dev | undefined
