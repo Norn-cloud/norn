@@ -4,11 +4,10 @@
     clippy::integer_division,
     clippy::modulo_arithmetic
 )]
-// TODO(rust-safety): staged downgrades from the workspace lint law
-// (docs/platform/rust-safety-baseline.md). norn-ir is the kernel crate and is
-// clean at the deny tier; these warn-tier downgrades remain. Counts as of
-// 2026-08-19: missing_docs 183, clippy::pedantic ~44 (doc_markdown 9,
-// too_many_lines 7, must_use_candidate 5, misc). Burn down, then delete.
+// TODO(rust-safety): staged warn-tier downgrades from the workspace lint law
+// (docs/platform/rust-safety-baseline.md); norn-ir is clean at the deny tier. Counts as of
+// 2026-08-19: missing_docs 183, clippy::pedantic ~44 (doc_markdown 9, too_many_lines 7,
+// must_use_candidate 5, misc). Burn down, then delete.
 #![allow(
     missing_docs,
     reason = "TODO(rust-safety): 183 undocumented public items; document then remove"

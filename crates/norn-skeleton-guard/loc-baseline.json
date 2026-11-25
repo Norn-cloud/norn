@@ -79,7 +79,6 @@
     "crates/norn-kernel/src/result_reconciliation.rs": 1177,
     "crates/norn-kernel/src/snapshot_observe.rs": 2835,
     "crates/norn-projections/src/cedar.rs": 1169,
-    "crates/norn-skeleton-guard/src/ci/mod.rs": 1042,
     "crates/norn-skeleton-guard/src/ci/provenance.rs": 1055,
     "crates/norn-skeleton-guard/src/lib.rs": 1835,
     "crates/norn-testkit/src/cell_host.rs": 3723
