@@ -48,6 +48,7 @@ pub mod export;
 mod export_journal;
 pub mod flow_run;
 pub mod fork;
+pub mod function_receipt;
 mod history;
 mod history_selection;
 pub mod host;
@@ -72,6 +73,7 @@ pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
 mod payload_storage;
+mod predicate_scan;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;
@@ -112,6 +114,7 @@ pub use coverage_observer::{
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};
+pub use function_receipt::ResultAuthority;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use mapping_process::{MappingOutcome, QuarantineReason};

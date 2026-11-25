@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { instantText, isDiagnosticPlaced, offsetSuffix, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
-import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { CALL_OUTCOME_UNKNOWN, callAction, decimalExample, itemNoun, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { createIntentKey } from "../../../packages/norn-sdk/src/index.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -126,7 +127,8 @@ function cell(host: (url: URL, init?: RequestInit) => Response, me: unknown = ME
 }
 
 test("the catalog is read scoped, filtered by kind on the server, and absent routes read as unavailable", async () => {
-  const live = cell(() => Response.json({ items: [{ actionId: "a" }] }))
+  const summary = { actionId: "a", title: "A", objectKind: "canon.Holding", effect: "upsert_input_object", objectIdField: "id", inputSchema: {}, uiEffects: { irreversible: false, destructive: false, money: [] } }
+  const live = cell(() => Response.json({ definitionsVersion: 1, items: [summary] }))
   expect(await listActions("canon.Holding", live.fetcher)).toMatchObject({ kind: "catalog", items: [{ actionId: "a" }] })
   expect(live.calls[0]?.url.pathname).toBe("/api/host/v1/actions")
   expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "canon.Holding", orgId: "org_demo", environmentId: "analytics" })
@@ -142,7 +144,7 @@ test("a call sends the encoded input and its key; a refusal keeps every diagnost
   expect(await callAction("constitution.melt.convert", '{"input_fine_g":12.000}', "k1", ok.fetcher)).toEqual({ kind: "receipt", receipt: receipt as never })
   expect(ok.calls[0]?.url.pathname).toBe("/api/host/v1/actions/constitution.melt.convert")
   expect(ok.calls[0]?.body).toBe('{"input":{"input_fine_g":12.000},"idempotencyKey":"k1"}')
-  const refused = cell(() => Response.json({ code: "action.input_invalid", message: "The input does not fit.", diagnostics: [{ code: "x", message: "m", pointer: "/input/a" }, { code: "y", message: "n", pointer: "/input/b" }] }, { status: 422 }))
+  const refused = cell(() => Response.json({ format: "norn/refusal@2", code: "action.input_invalid", category: "invalid", retryable: false, reason: null, message: "The input does not fit.", explanation: "the input does not satisfy the declared schema", diagnostics: [{ code: "x", severity: "error", message: "m", span: { pointer: "/input/a" } }, { code: "y", severity: "error", message: "n", span: { pointer: "/input/b" } }] }, { status: 422 }))
   const result = await callAction("a", "{}", "k", refused.fetcher)
   expect(result).toMatchObject({ kind: "refused", status: 422, code: "action.input_invalid" })
   expect(result.kind === "refused" && result.diagnostics.map((d) => d.pointer)).toEqual(["/input/a", "/input/b"])
@@ -168,6 +170,8 @@ test("the cell's own receipt and refusal documents read as Studio's receipt and 
     code: "action.idempotency_conflict",
     message: "the request conflicts with current state",
     diagnostics: [],
+    category: "conflict",
+    retryable: false,
     explanation: conflictDoc.explanation,
     ...conflictDoc.decidedAt ? { decidedAt: conflictDoc.decidedAt } : {},
   })
@@ -218,11 +222,20 @@ test("a draft is read and written by pointer, nested records included", () => {
   expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":"10.500","location":{"site":"vault-a"}}')
 })
 
-test("contract v1 as CELL-DO approved it: any 404 or 503 is not served, whatever its body", async () => {
+test("a 404, whatever its body, or a 503 that is not a Refusal@2, is not served; a 503 refusal is that refusal", async () => {
   const notFound = () => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 })
   expect(await listActions(undefined, cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
+  // A write a gateway answered 503 may have been applied: an error saying so, never "not served".
+  const gateway = await callAction("a", "{}", "k", cell(() => new Response("", { status: 503 })).fetcher).then(() => null, (error: unknown) => error as Error)
+  expect(gateway?.message).toBe(CALL_OUTCOME_UNKNOWN)
+  // A read gets Studio's own words, never the SDK's developer copy.
+  const read = await listActions(undefined, cell(() => new Response("<html>bad gateway</html>", { status: 502 })).fetcher).then(() => null, (error: unknown) => error as Error)
+  expect(read?.message).toBe("The cell did not answer (502); nothing was read or saved.")
+  expect(read?.message).not.toContain("idempotency")
   expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
+  const unconfigured = { format: "norn/refusal@2", code: "action.receipts_unconfigured", category: "internal", retryable: true, message: "this cell cannot commit governed actions now", explanation: "no lineage key", reason: null }
+  expect(await callAction("a", "{}", "k", cell(() => Response.json(unconfigured, { status: 503 })).fetcher)).toMatchObject({ kind: "refused", status: 503, code: "action.receipts_unconfigured", retryable: true })
 })
 
 test("a parent with owned rows is offered as a whole-record write, like an upsert; a transition is not", () => {
@@ -233,7 +246,7 @@ test("a parent with owned rows is offered as a whole-record write, like an upser
 })
 
 test("idempotency keys are ASCII UUIDs, far inside the cell's 256-byte bound, and new each draft", () => {
-  const [a, b] = [newIdempotencyKey(), newIdempotencyKey()]
+  const [a, b] = [createIntentKey(), createIntentKey()]
   expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
   expect(new TextEncoder().encode(a).length).toBeLessThanOrEqual(256)
   expect(a).not.toBe(b)
@@ -254,7 +267,7 @@ test("a list names its entries: the items' own title, else its label made singul
 })
 
 test("a record's catalog is narrowed by the cell to what its state can take", async () => {
-  const live = cell(() => Response.json({ items: [] }))
+  const live = cell(() => Response.json({ definitionsVersion: 1, items: [] }))
   await listActions("purchasing.PurchaseRequest", live.fetcher, "PR-1")
   expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "purchasing.PurchaseRequest", objectId: "PR-1", orgId: "org_demo", environmentId: "analytics" })
 })
@@ -469,7 +482,7 @@ test("callAction pins submissions to the bound scope without re-reading /api/me 
     }
     sentUrl = url
     sentHeaders = new Headers(init?.headers)
-    return Response.json({ code: "workspace.changed", message: "Your active workspace changed. Reload the page before submitting." }, { status: 409 })
+    return Response.json({ format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: "Your active workspace changed. Reload the page before submitting.", explanation: "" }, { status: 409 })
   }
   const result = await callAction("canon.holding.adjust", '{"id":"h1","quantity":"1.000"}', "k-stale", fetcher, { orgId: "org_original", environmentId: "env_original" })
   expect(meReads).toBe(0)
@@ -481,6 +494,9 @@ test("callAction pins submissions to the bound scope without re-reading /api/me 
     status: 409,
     code: "workspace.changed",
     message: "Your active workspace changed. Reload the page before submitting.",
+    category: "conflict",
+    retryable: false,
+    explanation: "",
     diagnostics: [],
   })
 })
@@ -507,7 +523,7 @@ test("callAction preserves an explicit null scope pin and notifies onScopeMismat
       return Response.json({ organization: { id: "org_new" }, environmentId: "env_new" })
     }
     writes += 1
-    return Response.json({ code: "workspace.changed", message: "Workspace changed" }, { status: 409 })
+    return Response.json({ format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: "Workspace changed", explanation: "" }, { status: 409 })
   }
   const refused = await callAction("canon.holding.adjust", "{}", "k-learning", mismatchFetcher, {
     scope: { orgId: "org_old", environmentId: "env_old" },
@@ -523,7 +539,7 @@ test("callAction preserves an explicit null scope pin and notifies onScopeMismat
   const outageFetcher = async (input: string) => {
     const url = new URL(input, "https://studio.test")
     if (url.pathname === "/api/me") return new Response("unavailable", { status: 503 })
-    return Response.json({ code: "workspace.changed", message: "Workspace changed" }, { status: 409 })
+    return Response.json({ format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: "Workspace changed", explanation: "" }, { status: 409 })
   }
   const outageRefused = await callAction("canon.holding.adjust", "{}", "k-outage", outageFetcher, {
     scope: { orgId: "org_old", environmentId: "env_old" },

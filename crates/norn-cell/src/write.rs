@@ -2299,7 +2299,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 || object_type == "norn.ConnectorPollApplyCursor"
                 || object_type == "norn.ConnectorPollConflict"
                 || object_type == "norn.ScimResource"
-                || object_type == "norn.FunctionCommand"
+                || object_type == crate::function_receipt::FUNCTION_COMMAND_TYPE
                 || object_type == "norn.SweepCursor"
                 || object_type == "norn.PendingLinks"
                 || object_type == norn_kernel::NAMING_SERIES_COUNTER_TYPE)
@@ -2324,7 +2324,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 // A trigger/read set authenticates its own inputs, not arbitrary
                 // caller-supplied siblings in the complete RuleRun detail.
                 "norn.RuleRun" => unknown_lineage(),
-                "norn.FunctionCommand" => {
+                crate::function_receipt::FUNCTION_COMMAND_TYPE => {
                     // Reconciliation state contains only typed generation,
                     // count and receipt metadata. Dispatch and result inputs
                     // have already classified it in this transaction.
@@ -2350,7 +2350,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                                     .get("payload")
                                     .and_then(|payload| payload.get("type"))
                                     .and_then(Value::as_str)
-                                    == Some("norn.function/v1")
+                                    == Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
                         })
                     });
                     if state.is_some()

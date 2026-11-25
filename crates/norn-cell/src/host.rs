@@ -47,6 +47,7 @@ use crate::engine::NativeEngine;
 use crate::engine::{DefaultEngine, SqlEngine};
 use crate::error::CellError;
 use crate::model::Model;
+use crate::predicate_scan::{self, predicate_objects};
 use crate::reactive::{BudgetedRead, DecodeBudget, ReactiveLimits};
 use crate::read::{PendingTimer, StoreReader};
 #[cfg(feature = "native")]
@@ -56,6 +57,19 @@ use crate::store::{
     InstalledDefinitionInput, InstalledDefinitionSet, LinkChange, MAIN_WORLD,
     MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
 };
+
+/// The admission inputs beyond the commit, its authorization and quantity:
+/// derived properties, reference and property reads, mapping bundles, a
+/// bookkeeping event, the receipt mode, and an ACTOR-STAMP-1 creator stamp.
+pub(crate) type AdmissionArgs<'a> = (
+    &'a [(FactKey, Vec<String>)],
+    &'a [norn_kernel::FactExpectation],
+    &'a [(norn_kernel::FactExpectation, Vec<String>)],
+    &'a [crate::mapping_bundle::MappingBundle],
+    Option<norn_ir::RuntimeValue>,
+    crate::function_receipt::ReceiptCommitMode,
+    Option<norn_kernel::CreatorStampProof>,
+);
 
 /// The simulated outside world: maps a performed command to the kernel input
 /// its result becomes. `Send`, so a driver can be shared behind a mutex by a
@@ -82,13 +96,15 @@ pub enum PerformClaim<C, I> {
 /// A `CellHost` over a [`CellStore`], using its selected SQL engine.
 pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     store: CellStore<S>,
-    scope: String,
+    pub(crate) scope: String,
     now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
     /// S6c, S5a: the bookkeeping events the next commit carries, set only
     /// for the span of [`Self::attributed`].
     attached: Vec<norn_ir::RuntimeValue>,
+    /// RECEIPT-CONSUME-1: the host's Function receipt authority state.
+    pub(crate) receipts: crate::function_receipt::ReceiptHost,
     events: PhantomData<fn() -> E>,
 }
 
@@ -130,6 +146,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: Box::new(responder),
             published: Vec::new(),
             attached: Vec::new(),
+            receipts: crate::function_receipt::ReceiptHost::default(),
             events: PhantomData,
         })
     }
@@ -160,6 +177,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: self.responder,
             published: self.published,
             attached: self.attached,
+            receipts: self.receipts,
             events: PhantomData,
         }
     }
@@ -704,79 +722,6 @@ fn version_of<S: SqlEngine>(
         .map(FactVersion)
 }
 
-/// The slice profile's canonical byte ceiling, the read bound for a predicate
-/// no caller narrowed.
-fn slice_bytes() -> u64 {
-    norn_ir::ResourceLimitProfile::norn_limits_v1()
-        .slice
-        .max_canonical_bytes
-}
-
-/// The live objects of `predicate`'s type that match it, in key order, at
-/// most `limit` ([`norn_kernel::predicate_read`]). The cell has no property
-/// index for arbitrary predicates, so it examines at most the slice
-/// profile's record count of objects of the type, and at most `max_bytes`
-/// of stored candidate bytes; a larger type is an incomplete enumeration
-/// (`None`), which fails the read closed.
-fn predicate_objects<S: SqlEngine>(
-    reader: &StoreReader<'_, S>,
-    predicate: &PredicateQuery,
-    limit: usize,
-    max_bytes: u64,
-) -> Result<Option<Vec<PredicateObject>>, CellError> {
-    reader.check_live()?;
-    let scan_cap = usize::try_from(
-        norn_ir::ResourceLimitProfile::norn_limits_v1()
-            .slice
-            .max_records,
-    )
-    .unwrap_or(usize::MAX);
-    // Interfaces have no stored table chain; a predicate over one is
-    // unsupported on every host.
-    if !reader
-        .model()
-        .object_types()
-        .any(|defined| defined.name == predicate.object_type)
-    {
-        return Ok(None);
-    }
-    // Candidate bytes are charged before each object is decoded, matching
-    // or not: the scan stops at the byte bound instead of loading every
-    // candidate first.
-    let mut limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-    limits.max_candidate_bytes_per_commit = max_bytes;
-    let mut budget = DecodeBudget::new(&limits);
-    let Some(records) = reader.list_after_with_budget(
-        MAIN_WORLD,
-        predicate.object_type.as_str(),
-        scan_cap.saturating_add(1),
-        &mut budget,
-    )?
-    else {
-        return Ok(None);
-    };
-    if records.len() > scan_cap {
-        return Ok(None);
-    }
-    let candidates: Vec<(FactKey, FactVersion, JsonObject)> = records
-        .into_iter()
-        .map(|record| {
-            (
-                FactKey::new(record.object_type, record.id),
-                FactVersion(record.version),
-                record.values,
-            )
-        })
-        .collect();
-    Ok(Some(norn_kernel::predicate_read::select_members(
-        predicate,
-        candidates
-            .iter()
-            .map(|(key, version, values)| (key, *version, values)),
-        limit,
-    )))
-}
-
 /// The committed state of link `key` as the kernel sees it.
 fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
@@ -865,7 +810,9 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         predicate: &PredicateQuery,
         limit: usize,
     ) -> Result<Option<Vec<PredicateReadMember>>, CellError> {
-        let Some(objects) = predicate_objects(self.0, predicate, limit, slice_bytes())? else {
+        let Some(objects) =
+            predicate_objects(self.0, predicate, limit, predicate_scan::slice_bytes())?
+        else {
             return Ok(None);
         };
         // OBS-EVIDENCE-1: a governed read never consumes a disputed source
@@ -1060,7 +1007,7 @@ where
                 .get("payload")
                 .and_then(|payload| payload.get("type"))
                 .and_then(Value::as_str)
-                == Some("norn.function/v1")
+                == Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
         {
             self.dispatch_lineage(&pending, &mut marking_historical_reads, &mut marking_events)?;
         }
@@ -1130,7 +1077,10 @@ where
         // generation state). Its immutable classification freezes exactly
         // the visibility admitted then: a pre-dispatch declassification is
         // respected, and a later one cannot declassify in-flight inputs.
-        let state_key = FactKey::new("norn.FunctionCommand", pending.command.command_id.as_str());
+        let state_key = FactKey::new(
+            crate::function_receipt::FUNCTION_COMMAND_TYPE,
+            pending.command.command_id.as_str(),
+        );
         let state = batch.writes.iter().find_map(|write| match write {
             FactWriteRow::Put {
                 object_type,
@@ -1185,7 +1135,9 @@ where
         let Some(payload) = command.get("payload") else {
             return;
         };
-        if payload.get("type").and_then(Value::as_str) != Some("norn.function/v1") {
+        if payload.get("type").and_then(Value::as_str)
+            != Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
+        {
             return;
         }
         let invocation = payload.get("invocation").and_then(|value| {
@@ -1635,7 +1587,6 @@ where
             &[],
             &[],
             None,
-            None,
         )
     }
 
@@ -1652,7 +1603,7 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None, None)
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None)
     }
 
     /// Commit a kernel-prepared turn that creates a flow's run object, and
@@ -1670,18 +1621,7 @@ where
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = start.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(
-            commit,
-            None,
-            None,
-            None,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(event),
-            None,
-        )
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
     }
 
     /// Commit a kernel-prepared turn that consumes a parked decision's
@@ -1699,18 +1639,7 @@ where
         resolved: &crate::decision_ledger::DecisionResolved,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(
-            commit,
-            None,
-            None,
-            None,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(event),
-            None,
-        )
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
     }
 
     /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
@@ -1750,7 +1679,6 @@ where
             &[],
             &[],
             Some(event),
-            None,
         )
     }
 
@@ -1778,18 +1706,16 @@ where
             &[],
             mapped,
             None,
-            None,
         )
     }
 
     #[allow(
-        clippy::too_many_lines,
         clippy::too_many_arguments,
-        reason = "shared admission and optional quantity data join one guarded transaction"
+        reason = "every ordinary commit is a normal receipt-mode admission"
     )]
     fn commit_with_authorization(
         &mut self,
-        mut commit: CellCommit<E, C, I>,
+        commit: CellCommit<E, C, I>,
         authorization: Option<&ObservationAuthorization>,
         owned_rows: Option<OwnedRowsCommitProof>,
         quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
@@ -1798,7 +1724,33 @@ where
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped: &[crate::mapping_bundle::MappingBundle],
         bookkeeping: Option<norn_ir::RuntimeValue>,
-        stamp: Option<norn_kernel::CreatorStampProof>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
+        let args = (
+            derived,
+            references,
+            property_reads,
+            mapped,
+            bookkeeping,
+            mode,
+            None,
+        );
+        self.commit_admitted(commit, authorization, owned_rows, quantity, args)
+    }
+
+    /// Admit one commit in `mode`: [`crate::function_receipt::ReceiptCommitMode`]
+    /// decides how a consumed Function delivery is rechecked.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "shared admission and optional quantity data join one guarded transaction"
+    )]
+    pub(crate) fn commit_admitted(
+        &mut self,
+        mut commit: CellCommit<E, C, I>,
+        authorization: Option<&ObservationAuthorization>,
+        owned_rows: Option<OwnedRowsCommitProof>,
+        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
+        (derived, references, property_reads, mapped, bookkeeping, mode, stamp): AdmissionArgs<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1968,6 +1920,10 @@ where
                 .authorize_with(authorization, owned_rows, stamp)?
                 .check(&model, &GuardView(reader))
                 .map(Checked::into_versions)?;
+            // RECEIPT-CONSUME-1: command authority and the deadline are
+            // rechecked at the commit's own clock, under its write lock.
+            let receipts = (&self.receipts, self.scope.as_str(), self.now, mode);
+            crate::function_receipt::check_consumption(reader, &commit, &batch, receipts)?;
             Ok((versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(
@@ -2126,6 +2082,20 @@ where
         Ok(Some(state))
     }
 
+    /// RECEIPT-CONSUME-1: retained Function evidence, re-reconciled under
+    /// this cell's scope, `main`, current clock and installed command
+    /// authority ([`crate::function_receipt`]); unsupported without one.
+    fn resolve_accepted_receipt(
+        &self,
+        reference: &norn_kernel::receipt_binding::ReceiptReference,
+        manifest: &norn_ir::function::Digest,
+    ) -> Result<
+        Option<norn_kernel::receipt_binding::ReceiptBinding<JsonObject>>,
+        norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
+    > {
+        crate::function_receipt::resolve(self, reference, manifest)
+    }
+
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
         self.store.read().refuse_disputed_subject(&key.source)?;
         self.store.read().refuse_disputed_subject(&key.target)?;
@@ -2211,7 +2181,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None, None)
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None)
     }
 
     fn commit_action_references(
@@ -2233,7 +2203,6 @@ where
             proof.property_reads(),
             &[],
             None,
-            None,
         )
     }
 
@@ -2244,6 +2213,19 @@ where
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.commit_with_partition_postings(commit, requests, idempotency_key)
+    }
+
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        proof: norn_kernel::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        // An ordinary (Normal receipt-mode) admission carrying the stamp proof.
+        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
+        let args: AdmissionArgs<'_> = (&[], &[], &[], &[], None, mode, Some(proof));
+        let quantity = quantity.map(|(request, key)| (std::slice::from_ref(request), key));
+        self.commit_admitted(commit, None, None, quantity, args)
     }
 
     fn commit_owned_rows(
@@ -2266,27 +2248,6 @@ where
             &[],
             &[],
             None,
-            None,
-        )
-    }
-
-    fn commit_stamped(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        proof: norn_kernel::CreatorStampProof,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(
-            commit,
-            None,
-            None,
-            quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            Some(proof),
         )
     }
 
