@@ -3040,7 +3040,7 @@ fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> 
     Ok(rehost!(error;
         IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed }, ImmutableObject { key },
         Law { key, reason }, IdentityCollision { owner, key, conflicts },
-        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed },
+        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed }, ReceiptNotAccepted { consumed },
         Conflict { key, expected, current }, DuplicateLink { key },
         IdentifierTooLong { field, actual_bytes, max_bytes },
         LinkConflict { key, expected, current }, LinkReadConflict { source_key, link },

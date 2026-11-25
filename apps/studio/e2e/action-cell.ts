@@ -5,7 +5,7 @@ import type { ObjectCell } from "./object-cell.ts"
 
 /**
  * A stand-in for CELL-DO's action routes (`GET /v1/actions`, `POST /v1/actions/{id}`) that
- * implements the served contract (apps/studio/src/lib/actions.ts, norn_api::actions) over the
+ * implements the served contract (packages/norn-sdk/src/client.ts, norn_api::actions) over the
  * object stand-in's canon.Holding population: closed-schema validation, exact decimals only as
  * their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md), idempotent replay, and commits that
  * move the read snapshot. Every refusal it serves on `POST` is the served route's own document and
@@ -115,10 +115,10 @@ export async function actionCell(page: Page, objects: ObjectCell, options: Actio
     const request = route.request()
     const url = new URL(request.url())
     // A foreign scope: the call route's opaque denial; the catalog has no served route to follow.
-    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return request.method() === "GET" ? route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } }) : refuse(route, "denied")
+    if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return request.method() === "GET" ? route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "scope.denied", category: "permission", retryable: false, reason: null, message: "Not your workspace.", explanation: "" } }) : refuse(route, "denied")
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
-      return route.fulfill({ json: { items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""
