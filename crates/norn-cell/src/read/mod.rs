@@ -41,7 +41,9 @@ pub use objects::{MarkedQuestionPath, ObjectRecord};
 pub use pagination::{
     BindingRootCandidate, BindingSortValue, BindingSortedCandidate, BindingSortedPosition,
 };
-pub use queue::{PendingCommand, PendingObservation, PendingTimer, RunRecord, is_parked};
+pub use queue::{
+    ParkedPage, PendingCommand, PendingObservation, PendingTimer, RunRecord, is_parked,
+};
 
 /// Decode receipt rows, checking each row's lookup columns against its
 /// hashed body: they drive idempotent replay and commit numbering.
