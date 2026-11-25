@@ -106,7 +106,7 @@
       "type": "object"
     },
     "preconditions": [
-      "slice.calendar.id in map(slice.window_calendar as cal, cal.id)",
+      "slice.calendar.id in map(slice.window_calendar as b0, b0.id)",
       "((input.timezone == slice.calendar.iana_timezone) and (input.dst_policy == slice.calendar.dst_policy)) and (input.tzdb_version == slice.calendar.tzdb_version)",
       "input.start_local_at == ((take(input.calendar_date, 10) + 'T') + ((len(slice.working_window.start_local) == 5) ? (take(slice.working_window.start_local, 5) + ':00') : take(slice.working_window.start_local, 8)))",
       "((slice.working_window.end_day_offset in [0, 1]) and (days_between(date(input.calendar_date), date(take(input.end_local_at, 10))) == slice.working_window.end_day_offset)) and (input.end_local_at == ((take(input.end_local_at, 10) + 'T') + ((len(slice.working_window.end_local) == 5) ? (take(slice.working_window.end_local, 5) + ':00') : take(slice.working_window.end_local, 8))))",

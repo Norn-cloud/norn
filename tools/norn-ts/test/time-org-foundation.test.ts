@@ -208,7 +208,7 @@ describe("time & org foundation packs", () => {
     })
     expect(action.preconditions).toHaveLength(6)
     const pre = (action.preconditions as string[]).join(" && ")
-    expect(pre).toContain("slice.calendar.id in map(slice.window_calendar as cal, cal.id)")
+    expect(pre).toContain("slice.calendar.id in map(slice.window_calendar as b0, b0.id)")
     expect(pre).toContain("input.timezone == slice.calendar.iana_timezone")
     expect(pre).toContain("input.dst_policy == slice.calendar.dst_policy")
     expect(pre).toContain("input.tzdb_version == slice.calendar.tzdb_version")

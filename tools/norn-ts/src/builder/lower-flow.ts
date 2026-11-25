@@ -43,7 +43,7 @@ import { type Json, toJson } from "../canonical.ts"
 import { FLOW_SOURCE_MAP_DRAFT_FORMAT, flowSourceMapGraph, type FlowSourceMapDraft, type FlowSourceMapGraph } from "../flow-source-map.ts"
 import { Diagnostics, type BuildDiagnostic, type SourceLocation } from "./diagnostics.ts"
 import { type EnvelopeOptions, envelope } from "./envelope.ts"
-import { type Binding, type Expr, ExprError, type Scope, render, typeOf, zenJson, zenString } from "./expr.ts"
+import { type Binding, type Expr, assignmentError, ExprError, type Scope, render, typeOf, zenJson, zenString } from "./expr.ts"
 import { BudgetExceeded, ExpansionBudget, type ExpansionLimits } from "./budget.ts"
 import type { All, CatchTag, FlowDef, FnRef, Perform, RetryPolicy, Step, TaggedErrorDecl } from "./flow.ts"
 import {
@@ -212,6 +212,9 @@ class FlowLowering {
     }
     const dot = id.lastIndexOf(".")
     this.namespace = id.slice(0, Math.max(dot, 0))
+    if (!/^[a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)*$/.test(id.slice(dot + 1))) {
+      this.report("NORN-FLOW-LITERAL", "the flow name must use nonempty, letter-led words separated by single underscores", def.at)
+    }
     this.runType = `${this.namespace}.${pascal(id.slice(dot + 1))}Run`
   }
 
@@ -265,6 +268,7 @@ class FlowLowering {
     }
     if (!this.diagnostics.empty) return { ok: false, diagnostics: this.diagnostics.items }
     const artifacts = [this.entity(), this.rule()]
+    if (!this.diagnostics.empty) return { ok: false, diagnostics: this.diagnostics.items }
     const sourceMap = this.sourceMap()
     const flowSourceMap = this.flowSourceMap()
     const { id, version, title } = this.def.meta
@@ -383,8 +387,16 @@ class FlowLowering {
     for (const e of handle.errors) this.registerError(e)
   }
 
+  private readonly tagStates = new Map<string, string>()
+
   private registerError(decl: TaggedErrorDecl): void {
     if (!TAG.test(decl.tag)) this.report("NORN-FLOW-LITERAL", `error tag ${JSON.stringify(decl.tag)} must be PascalCase`, decl.at)
+    const state = snake(decl.tag)
+    const owner = this.tagStates.get(state)
+    if (owner && owner !== decl.tag) {
+      this.report("NORN-FLOW-TAG", `tags ${[owner, decl.tag].sort().join(" and ")} both lower to failed_${state}`, decl.at)
+    }
+    this.tagStates.set(state, decl.tag)
     const seen = this.errors.get(decl.tag)
     if (seen && JSON.stringify(toJson(seen.fields)) !== JSON.stringify(toJson(decl.fields))) {
       this.report("NORN-FLOW-TAG", `error tag ${decl.tag} is registered twice with different fields`, decl.at)
@@ -482,10 +494,10 @@ class FlowLowering {
           return
         }
         const schema = this.expr(step.at, () => {
-          const actual = this.typed(step.value, path.scope)
-          const problem = conforms(actual, frame.schema)
+          this.budget.assertExpression(step.value, path.scope)
+          const problem = assignmentError(step.value, frame.schema, path.scope)
           if (problem) throw new ExprError("NORN-FLOW-VALUE", problem)
-          return actual
+          return frame.schema
         })
         if (!schema) return
         const scope = new Map([...path.scope].filter(([name]) => frame.outer.has(name)))
@@ -543,7 +555,8 @@ class FlowLowering {
         const tagField: readonly [string, Expr] = ["_tag", { _tag: "Literal", value: step.error.tag }]
         const failure: Expr = { _tag: "Record", fields: [tagField, ...fields.fields] }
         const ok = this.expr(step.at, () => {
-          const problem = conforms(this.typed(fields, path.scope), step.error.fields)
+          this.budget.assertExpression(fields, path.scope)
+          const problem = assignmentError(fields, step.error.fields, path.scope)
           if (problem) throw new ExprError("NORN-FLOW-VALUE", `fields of ${step.error.tag}: ${problem}`)
           return true
         })
@@ -605,7 +618,8 @@ class FlowLowering {
   /** Emit the perform command of `node` and wait for its result. */
   private wait(path: Path, node: Perform, next: Cont, policy: RetryPolicy | undefined, owners = node.sourceMap?.id ? [node.sourceMap.id] : []): void {
     const input = this.expr(node.at, () => {
-      const problem = conforms(this.typed(node.input, path.scope), node.fn.input)
+      this.budget.assertExpression(node.input, path.scope)
+      const problem = assignmentError(node.input, node.fn.input, path.scope)
       if (problem) throw new ExprError("NORN-FLOW-VALUE", `input of ${node.fn.id}: ${problem}`)
       return this.rendered(node.input, path.scope)
     })
@@ -953,10 +967,10 @@ class FlowLowering {
   private failureSchema(): ObjectSchema {
     const tags = [...new Set([...this.performs.values()].flatMap((p) => p.fn.errors.map((e) => e.tag)))]
     let fields: Record<string, ValueSchema> = {}
-    for (const tag of tags) {
+    for (const tag of [...tags].sort()) {
       const decl = this.errors.get(tag)!
       for (const [name, schema] of Object.entries(decl.fields.properties)) {
-        const seen = fields[name]
+        const seen = Object.hasOwn(fields, name) ? fields[name] : undefined
         this.budget.assert(schema)
         if (seen) this.budget.assert(seen)
         const merged = seen ? mergeSchemas(seen, schema) : schema
@@ -1115,25 +1129,6 @@ export function retryDelay(policy: RetryPolicy, attempt: number): number {
   if (delay.kind === "spaced") return delay.millis
   if (delay.kind === "max") return Math.max(...delay.delays.map((item) => retryDelay({ delay: item }, attempt)))
   return delay.baseMillis * delay.factor ** (attempt - 1)
-}
-
-/** Why `actual` does not conform to the closed `expected` schema, or undefined. */
-export function conforms(actual: ValueSchema, expected: ValueSchema, path = "$"): string | undefined {
-  if (expected.type === "number" && (actual.type === "integer" || actual.type === "number")) return undefined
-  if (expected.type !== actual.type) return `${path} is ${actual.type}, expected ${expected.type}`
-  if (expected.type === "array" && actual.type === "array") return conforms(actual.items, expected.items, `${path}[]`)
-  if (expected.type === "object" && actual.type === "object") {
-    for (const [name, schema] of Object.entries(actual.properties)) {
-      const want = expected.properties[name]
-      if (!want) return `${path}.${name} is not declared`
-      const problem = conforms(schema, want, `${path}.${name}`)
-      if (problem) return problem
-    }
-    for (const name of expected.required ?? []) {
-      if (!(name in actual.properties)) return `${path}.${name} is required`
-    }
-  }
-  return undefined
 }
 
 /** Render a JSON value as ZEN (re-exported for builder clients). */

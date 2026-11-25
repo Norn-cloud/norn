@@ -2,8 +2,9 @@
 import { readFileSync, statSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { relative, resolve, sep } from "node:path"
+import { assertNever, flowStatement, returns, switchClauses } from "./cfg.ts"
 import ts from "typescript"
-import { COMPILER_OPTIONS, ProfileChecker, RESERVED_CLOSURE_NAMES, createHost, type Diagnostic } from "../check.ts"
+import { COMPILER_OPTIONS, ProfileChecker, createHost, type Diagnostic } from "../check.ts"
 import { INTRINSICS_PATH, TOOL_ROOT, dependencyDir } from "../profile.ts"
 
 // The pinned declaration trees, wherever the package manager installed them.
@@ -275,6 +276,7 @@ export class SyntaxCompiler {
     private readonly sourceRoot: string,
     private readonly subDecision?: (call: ts.CallExpression, input: Expr) => Expr,
     private readonly forbidUnsafeZen = false,
+    private readonly decisionEscape?: (text: string, schema: B.S.ValueSchema) => Expr,
   ) {
     this.checker = program.getTypeChecker()
     this.schemaBudget = new SchemaBudget(expansion)
@@ -459,13 +461,13 @@ export class SyntaxCompiler {
           if (this.checker.isArrayType(t) || this.checker.isTupleType(t)) {
             const list = this.data(e.expression, env)
             // `xs.filter(f).length` counts without building the filtered list.
-            return list._tag === "Closure" && list.fn === "filter" ? B.X.closure("count", list.list, list.alias, list.body) : B.X.call("len", list)
+            return list._tag === "Closure" && list.fn === "filter" ? { ...list, fn: "count" } : B.X.call("len", list)
           }
           if ((t.flags & ts.TypeFlags.StringLike) !== 0) throw new CompileError("NORN-FLOW-EXPRESSION", "string.length counts UTF-16 units in JavaScript; use Norn.byteLength(text) for the canonical UTF-8 byte count", e)
         }
         const base = this.data(e.expression, env)
         const key = ts.isPropertyAccessExpression(e) ? e.name.text : String(this.scalar(e.argumentExpression!))
-        if (base._tag === "Ref") return B.X.ref(base.name, ...base.path, key)
+        if (base._tag === "Input" || base._tag === "Bound") return B.X.field(base, key)
         if (base._tag === "Record") { const field = base.fields.find(([name]) => name === key); if (field) return field[1] }
         if (base._tag === "List" && /^\d+$/.test(key) && base.items[Number(key)]) return base.items[Number(key)]!
         throw new CompileError("NORN-FLOW-SLICE", "property is not present in compiled data", e)
@@ -493,8 +495,10 @@ export class SyntaxCompiler {
           const text = this.scalar(e.arguments[0]!)
           if (typeof text !== "string" || !e.typeArguments?.[0]) throw new CompileError("NORN-FLOW-TYPE", "unsafeZen<T> requires its declared result type and literal ZEN text", e)
           if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with typed TypeScript authoring", e)
+          if ([...env.values()].some(binding => binding._tag === "Bound")) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "a raw decision escape cannot refer to lexical closure bindings", e)
+          if (!this.decisionEscape) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "raw ZEN cannot be embedded in typed expressions", e)
           this.warnings.push(diagnostic(e, "NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen bypasses typed authoring; replace it with plain TypeScript"))
-          return B.X.unsafeZen(text, valueSchema(this.checker, this.checker.getTypeFromTypeNode(e.typeArguments[0]), e, new Set(), this.schemaBudget))
+          return this.decisionEscape(text, valueSchema(this.checker, this.checker.getTypeFromTypeNode(e.typeArguments[0]), e, new Set(), this.schemaBudget))
         }
         if (id === "@norn/authoring#Norn.byteLength") return B.X.call("len", this.data(e.arguments[0]!, env))
         if (id === "@norn/authoring#Norn.take") {
@@ -558,14 +562,9 @@ export class SyntaxCompiler {
             if (fn.parameters.length !== 1 || !param || !ts.isIdentifier(param.name) || param.initializer || param.dotDotDotToken || ts.isBlock(fn.body)) {
               throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", `a .${name} callback takes one plain parameter and an expression body`, fn)
             }
-            const alias = param.name.text
-            if (RESERVED_CLOSURE_NAMES.has(alias)) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${alias}\` names a Norn expression binding; call the element something else`, param)
-            const inner = new Map(env)
-            inner.set(this.symbol(param.name), B.X.ref(alias))
-            try { return B.X.closure(closure, receiver, alias, this.data(fn.body, inner)) } catch (error) {
-              if (error instanceof B.X.ExprError) throw new CompileError(error.code, error.message, param)
-              throw error
-            }
+            const symbol = this.symbol(param.name)
+            const body = fn.body
+            return B.X.closure(closure, receiver, element => this.data(body, new Map(env).set(symbol, element)))
           }
           const args = e.arguments.map((a) => this.data(a, env))
           if (name === "concat") return B.X.call("concat", receiver, ...args)
@@ -836,41 +835,62 @@ export class SyntaxCompiler {
 
   private statements(statements: ReadonlyArray<ts.Statement>, initial: Env, root: boolean, effectReturn: boolean): ReadonlyArray<Step> {
     const env = new Map(initial), steps: Step[] = []
-    for (const s of statements) {
-      this.checkBudget(s)
-      if (ts.isVariableStatement(s)) {
-        for (const d of s.declarationList.declarations) {
-          if (!ts.isIdentifier(d.name) || !d.initializer) throw new CompileError("NORN-FLOW-CAPTURE", "const binding needs an identifier and value", d)
-          const init = this.unwrap(d.initializer)
-          const plan = ts.isYieldExpression(init) ? this.effect(init.expression!, env, d.name.text) : { steps: [], value: this.data(init, env) }
-          steps.push(...plan.steps); env.set(this.symbol(d.name), plan.value)
+    for (const statement of statements) {
+      this.checkBudget(statement)
+      const s = flowStatement(statement)
+      switch (s.kind) {
+        case ts.SyntaxKind.VariableStatement: {
+          for (const d of s.declarationList.declarations) {
+            if (!ts.isIdentifier(d.name) || !d.initializer) throw new CompileError("NORN-FLOW-CAPTURE", "const binding needs an identifier and value", d)
+            const init = this.unwrap(d.initializer)
+            const plan = ts.isYieldExpression(init) ? this.effect(init.expression!, env, d.name.text) : { steps: [], value: this.data(init, env) }
+            steps.push(...plan.steps); env.set(this.symbol(d.name), plan.value)
+          }
+          break
         }
-      } else if (ts.isExpressionStatement(s) && ts.isYieldExpression(s.expression)) {
-        steps.push(...this.effect(s.expression.expression!, env, null).steps)
-      } else if (ts.isReturnStatement(s)) {
-        const e = s.expression!
-        if (effectReturn) {
-          if (root) steps.push(...this.root(e, env))
-          else { const plan = this.effect(e, env); steps.push(...plan.steps, this.returned(plan.value, s, false)) }
-        } else if (ts.isYieldExpression(e)) { const plan = this.effect(e.expression!, env); steps.push(...plan.steps, this.returned(plan.value, s, root)) }
-        else steps.push(this.returned(this.data(e, env), s, root))
-        break
-      } else if (ts.isIfStatement(s)) {
-        const then = this.statementBody(s.thenStatement, env, root, effectReturn)
-        const otherwise = s.elseStatement ? this.statementBody(s.elseStatement, env, root, effectReturn) : []
-        steps.push(this.annotate(B.route([{ when: this.data(s.expression, env), then }], otherwise, { at: this.at(s) }), s, "if", undefined, ["then"], "else"))
-      } else if (ts.isSwitchStatement(s)) {
-        const branches: Array<{ when: Expr; then: ReadonlyArray<Step> }> = [], value = this.data(s.expression, env)
-        let otherwise: ReadonlyArray<Step> = []
-        let defaultPresent = false
-        for (const clause of s.caseBlock.clauses) {
-          const body = this.statements(clause.statements.filter((x) => !ts.isBreakStatement(x)), env, root, effectReturn)
-          if (ts.isCaseClause(clause) && body.length > 0) branches.push({ when: B.X.eq(value, this.data(clause.expression, env)), then: body })
-          else if (ts.isDefaultClause(clause)) { otherwise = body; defaultPresent = true }
+        case ts.SyntaxKind.ExpressionStatement: {
+          if (!ts.isYieldExpression(s.expression) || !s.expression.expression) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", "expected a yielded effect", s)
+          steps.push(...this.effect(s.expression.expression!, env, null).steps)
+          break
         }
-        steps.push(this.annotate(B.route(branches, otherwise, { at: this.at(s) }), s, "switch", undefined, branches.map((_, index) => `case-${index + 1}`), defaultPresent ? "default" : "otherwise"))
-      } else if (ts.isBlock(s)) steps.push(...this.statements(s.statements, env, root, effectReturn))
-      else if (!ts.isEmptyStatement(s) && !ts.isBreakStatement(s)) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", "statement has no lowering", s)
+        case ts.SyntaxKind.ReturnStatement: {
+          const e = s.expression
+          if (!e) throw new CompileError("NORN-FLOW-RESULT", "return an explicit JSON result", s)
+          if (effectReturn) {
+            if (root) steps.push(...this.root(e, env))
+            else { const plan = this.effect(e, env); steps.push(...plan.steps, this.returned(plan.value, s, false)) }
+          } else if (ts.isYieldExpression(e)) { const plan = this.effect(e.expression!, env); steps.push(...plan.steps, this.returned(plan.value, s, root)) }
+          else steps.push(this.returned(this.data(e, env), s, root))
+          break
+        }
+        case ts.SyntaxKind.IfStatement: {
+          const then = this.statementBody(s.thenStatement, env, root, effectReturn)
+          const otherwise = s.elseStatement ? this.statementBody(s.elseStatement, env, root, effectReturn) : []
+          steps.push(this.annotate(B.route([{ when: this.data(s.expression, env), then }], otherwise, { at: this.at(s) }), s, "if", undefined, ["then"], "else"))
+          break
+        }
+        case ts.SyntaxKind.SwitchStatement: {
+          const branches: Array<{ when: Expr; then: ReadonlyArray<Step> }> = [], value = this.data(s.expression, env)
+          let otherwise: ReadonlyArray<Step> = []
+          let defaultPresent = false
+          const clauses = switchClauses(s)
+          const lastIsFallback = !clauses.some(c => c.fallback) && clauses.every(c => c.terminator === "return")
+          for (const clause of clauses) {
+            const body = this.statements(clause.body, env, root, effectReturn)
+            if (clause.fallback || (lastIsFallback && clause === clauses.at(-1))) { otherwise = body; defaultPresent = clause.fallback }
+            else {
+              const conditions = clause.labels.map(label => B.X.eq(value, this.data(label, env)))
+              branches.push({ when: conditions.reduce(B.X.or), then: body })
+            }
+          }
+          steps.push(this.annotate(B.route(branches, otherwise, { at: this.at(s) }), s, "switch", undefined, branches.map((_, index) => `case-${index + 1}`), defaultPresent ? "default" : "otherwise"))
+          break
+        }
+        case ts.SyntaxKind.Block: steps.push(...this.statements(s.statements, env, root, effectReturn)); break
+        case ts.SyntaxKind.EmptyStatement: break
+        default: assertNever(s)
+      }
+      if (returns(s)) break
     }
     return steps
   }

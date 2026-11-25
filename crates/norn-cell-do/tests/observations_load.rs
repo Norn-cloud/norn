@@ -25,7 +25,8 @@ fn connect() -> Connect {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    Connect::new("[]", &vars.to_string()).expect("configuration")
+    Connect::new(&seed::demo_scope(), "[]", &vars.to_string())
+        .unwrap_or_else(|error| unreachable!("the configuration is well formed: {error}"))
 }
 
 fn load(

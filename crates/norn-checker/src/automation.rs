@@ -479,6 +479,14 @@ fn check_when_event(
                         format!("trigger action {action_id:?} is not admitted in this cell"),
                         "/when/actionId",
                     )),
+                    // #1704: a trigger action must be callable, as
+                    // `then.actionId` must: an action with no effect program
+                    // never commits, so the automation could never fire.
+                    Some(action) if action.effect_program.is_none() => issues.push(issue(
+                        AutomationIssueKind::ActionTargetMismatch,
+                        format!("trigger action {action_id:?} has no executable effect program"),
+                        "/when/actionId",
+                    )),
                     Some(action) => {
                         if let Some((object_type, _)) = resolved_type
                             && let Some(program) = &action.effect_program
@@ -1066,5 +1074,47 @@ mod tests {
                 "{guard}: {issues:?}"
             );
         }
+    }
+
+    /// #1704: an `event:action` trigger names an action that can commit, as
+    /// `then.actionId` must; an action with no effect program never fires it.
+    #[test]
+    fn refuses_a_trigger_action_without_an_effect_program() {
+        let (object_types, mut actions) = sample_model();
+        let mut inert = actions[0].clone();
+        inert.action_id = "demo.app.note".to_owned();
+        inert.effect_program = None;
+        actions.push(inert);
+        let ctx = AutomationCheckContext {
+            object_types: &object_types,
+            interfaces: &[],
+            property_types: &[],
+            actions: &actions,
+            roles: &["admin"],
+        };
+        let on = |trigger: &str| {
+            json!({
+                "title": "Follow an action",
+                "enabled": true,
+                "objectType": "demo.Application",
+                "when": { "kind": "event", "event": "action", "actionId": trigger },
+                "then": { "actionId": "demo.app.offerAssistance", "mode": "auto" }
+            })
+        };
+        let (issues, _) = check_automation(&on("demo.app.note"), &ctx);
+        assert_eq!(
+            issues
+                .iter()
+                .filter(|item| item.pointer == "/when/actionId")
+                .map(|item| (item.kind, item.message.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(
+                AutomationIssueKind::ActionTargetMismatch,
+                "trigger action \"demo.app.note\" has no executable effect program"
+            )],
+            "{issues:?}"
+        );
+        let (issues, _) = check_automation(&on("demo.app.offerAssistance"), &ctx);
+        assert_eq!(issues, vec![]);
     }
 }
