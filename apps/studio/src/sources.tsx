@@ -6,7 +6,7 @@ import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { cn } from "@/lib/utils"
 import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
-import { refreshMode, useMode } from "./lib/live-transport.ts"
+import { refreshMode } from "./lib/live-transport.ts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -250,10 +250,7 @@ export function ObjectTypePage() {
   const { concept: type = "" } = useParams({ strict: false })
   const { read, catalog } = useCatalog()
   const concept = catalog?.byName.get(type)
-  // The records are bound to the workspace the decided mode was read at, as the record page's are
-  // (#1740). Until the mode is decided the grid is not shown at all: its skeleton while the mode is
-  // read, Workspace unavailable after a failed read, never rows read without a workspace (#1745).
-  const mode = useMode()
+  // The records are bound to the workspace the page's mode decided (DecidedRecordsGrid, #1740, #1745, #1754).
   return (
     <div className="space-y-6">
       <LoadState
@@ -270,7 +267,7 @@ export function ObjectTypePage() {
             {concept
               ? <ObjectTypeDetail catalog={loaded} concept={concept} recorded={read.data?.origin === "recorded"} />
               : <EmptyState icon={Shapes} title="Type not found" next={<Button asChild size="sm" variant="outline"><Link to="/sources">See all sources and types</Link></Button>}>No object type named {type} is installed.</EmptyState>}
-            {concept?.definition === "object type" && <DecidedRecordsGrid concept={concept} mode={mode} />}
+            {concept?.definition === "object type" && <DecidedRecordsGrid concept={concept} />}
           </>
         )}
       </LoadState>

@@ -41,7 +41,11 @@ export interface Restatement extends QuestionAnswer {
   readonly asOf: Read<HistoricalAnswer>
 }
 
-/** The app's only way to read server documents. Live HTTP joins once the host's read API lands. */
+/**
+ * The model documents the pages read: the connected cell's, or the recording when no cell is connected.
+ * Records are not read here: a page reads them through its decided workspace's reader
+ * (`lib/workspace.tsx`), so no record is read without a decided workspace (#1762).
+ */
 export interface Transport {
   readonly questionBoard: () => Promise<readonly QuestionAnswer[]>
   /** The admitted core definitions: object types, actions, laws and the rest, as artifact envelopes. */
@@ -53,38 +57,22 @@ export interface Transport {
   readonly objectCounts: () => Promise<ObjectCounts>
   /** The guarantees the model checker recorded for a law, one document per checked definition, keyed by recording name. */
   readonly guarantees: () => Promise<readonly { readonly name: string; readonly read: Read<Guarantees> }[]>
-  /** One page of a concept's authoritative objects after `after`; `null` when the server has no such read yet. */
-  readonly objectPage: (objectType: string, after?: string) => Promise<Read<ObjectPage> | null>
-  /** One object with its links and source lineage; `null` when it is not readable. */
-  readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
 
 let recordedPromise: Promise<Transport> | null = null
 const loadRecorded = (): Promise<Transport> =>
-  (recordedPromise ??= import("./recorded-transport.ts")
+  (recordedPromise ??= import("./raw/recorded-transport.ts")
     .then((module) => module.recordedTransportImpl)
     .catch((error) => {
       recordedPromise = null
       throw error
     }))
 
-/** Documents the engine produced for the synthetic recorded question and three-systems worlds, loaded lazily only outside live cells. */
-export const recordedTransport: Transport = {
-  definitions: async () => (await loadRecorded()).definitions(),
-  questionBoard: async () => (await loadRecorded()).questionBoard(),
-  restatement: async () => (await loadRecorded()).restatement(),
-  catalog: async () => (await loadRecorded()).catalog(),
-  objectCounts: async () => (await loadRecorded()).objectCounts(),
-  guarantees: async () => (await loadRecorded()).guarantees(),
-  objectPage: async (objectType, after) => (await loadRecorded()).objectPage(objectType, after),
-  object: async (objectType, id) => (await loadRecorded()).object(objectType, id),
-}
-
 const through = (pick: (transport: Transport) => (...args: never[]) => Promise<unknown>) =>
   async (...args: never[]) => {
     const active = await currentMode()
     const chosen = active.kind === "live"
-      ? liveTransport(active.catalog, (input, init) => fetch(input, init), active.counts, active.scope)
+      ? liveTransport(active.catalog, active.counts)
       : await loadRecorded()
     return pick(chosen)(...args)
   }
@@ -100,7 +88,5 @@ export const transport: Transport = {
   catalog: through((t) => t.catalog) as Transport["catalog"],
   objectCounts: through((t) => t.objectCounts) as Transport["objectCounts"],
   guarantees: through((t) => t.guarantees) as Transport["guarantees"],
-  objectPage: through((t) => t.objectPage) as Transport["objectPage"],
-  object: through((t) => t.object) as Transport["object"],
 }
 
