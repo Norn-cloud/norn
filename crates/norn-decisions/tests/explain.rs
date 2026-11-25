@@ -122,3 +122,91 @@ fn plain_evaluation_is_unchanged_and_reports_no_rows() {
     assert_eq!(plain.matched_rows, []);
     assert_eq!(plain.output, explained.output);
 }
+
+/// A decide graph whose `collect` table runs in loop mode over `slice.items`.
+fn looped_collect() -> Result<AdmittedDecision, Box<dyn std::error::Error>> {
+    let command = closed(json!({ "actionId": { "type": "string" } }));
+    let record = closed(json!({ "id": { "type": "string" } }));
+    let item = closed(json!({ "n": { "type": "integer" } }));
+    let rule: norn_ir::RuleRoot = serde_json::from_value(json!({
+        "ruleId": "test.rule.explain_loop",
+        "ruleVersion": "2.0",
+        "contract": "decide",
+        "inputSchema": closed(json!({
+            "slice": closed(json!({ "items": { "type": "array", "items": item } })),
+            "event": closed(json!({ "kind": { "type": "string" } }))
+        })),
+        "outputSchema": closed(json!({
+            "facts": { "type": "array", "items": record },
+            "commands": { "type": "array", "items": command },
+            "timers": { "type": "array", "items": record }
+        })),
+        "defaults": { "facts": [], "timers": [] },
+        "scopeRequired": [],
+        "graph": {
+            "nodes": [
+                { "id": "in", "name": "in", "type": "inputNode" },
+                { "id": "hits", "name": "hits", "type": "decisionTableNode", "content": {
+                    "hitPolicy": "collect",
+                    "executionMode": "loop",
+                    "inputField": "slice.items",
+                    "outputPath": "hits",
+                    "inputs": [{ "id": "c", "name": "Size", "type": "expression" }],
+                    "outputs": [{ "id": "o", "name": "Tag", "field": "tag" }],
+                    "rules": [
+                        { "_id": "positive", "c": "n > 0", "o": "'positive'" },
+                        { "_id": "big", "c": "n > 10", "o": "'big'" },
+                        { "_id": "any", "c": "", "o": "'any'" }
+                    ]
+                } },
+                { "id": "x", "name": "x", "type": "expressionNode", "content": {
+                    "expressions": [{ "id": "c", "key": "commands", "value": "[]" }]
+                } },
+                { "id": "out", "name": "out", "type": "outputNode" }
+            ],
+            "edges": [
+                { "id": "e1", "sourceId": "in", "targetId": "hits" },
+                { "id": "e2", "sourceId": "hits", "targetId": "x" },
+                { "id": "e3", "sourceId": "x", "targetId": "out" }
+            ]
+        }
+    }))?;
+    let binding = DecisionBinding {
+        profile_id: "norn-zen/7".to_owned(),
+        environment_hash: "sha256:test".to_owned(),
+    };
+    Ok(AdmittedDecision::admit(&rule, &BTreeMap::new(), binding)?)
+}
+
+/// #1708: a looped `collect` table traces one list of matched rows per
+/// iteration; the explanation reports every matched row, in iteration and
+/// then row order.
+#[test]
+fn looped_collect_tables_report_every_matched_row_in_order()
+-> Result<(), Box<dyn std::error::Error>> {
+    let decision = looped_collect()?;
+    let items = [20_i64, 5]
+        .into_iter()
+        .map(|n| Value::object([("n", Value::Number(Number::from(n)))]))
+        .collect();
+    let slice = decision.validate_slice(Value::object([("items", Value::Array(items))]))?;
+    let event = decision.type_event(Value::object([("kind", Value::from("check"))]))?;
+    let explained = evaluate_explained(&decision, &slice, &event, EvaluationBudget::default())?;
+    let hit = |index: u64, id: &str| MatchedRow {
+        node_id: "hits".to_owned(),
+        node_name: "hits".to_owned(),
+        index,
+        row_id: Some(id.to_owned()),
+    };
+    assert_eq!(
+        explained.matched_rows,
+        [
+            hit(0, "positive"),
+            hit(1, "big"),
+            hit(2, "any"),
+            hit(0, "positive"),
+            hit(2, "any"),
+        ]
+    );
+    Ok(())
+}
