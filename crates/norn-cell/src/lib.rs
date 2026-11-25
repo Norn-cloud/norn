@@ -86,6 +86,7 @@ pub mod restore;
 pub mod retained;
 mod scrub;
 pub use scrub::ScrubStatus;
+pub mod snapshot;
 pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
@@ -122,7 +123,7 @@ pub use error::CellError;
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use function_receipt::ResultAuthority;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
-pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
+pub use host::{ClaimOutcome, CommitRecord, Responder, SqliteCell};
 pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
