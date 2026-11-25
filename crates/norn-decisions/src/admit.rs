@@ -77,6 +77,7 @@ pub struct AdmittedDecision {
     decision: Decision,
     slice_schema: Arc<Schema>,
     event_schema: Arc<Schema>,
+    principal: Option<crate::principal::PrincipalContract>,
     output_schema: Schema,
     defaults: BTreeMap<String, Value>,
 }
@@ -135,9 +136,7 @@ impl AdmittedDecision {
                     });
                 }
                 if loaded_keys.insert(key) {
-                    closed_record(sub, "inputSchema")?;
-                    closed_record(sub, "outputSchema")?;
-
+                    contracts.insert_helper(key, sub)?;
                     if loaded_keys.len() > MAX_SUB_DECISION_CLOSURE {
                         return Err(AdmissionError::SubDecisionBound {
                             depth: child_depth,
@@ -170,7 +169,8 @@ impl AdmittedDecision {
         let loader = Arc::new(loader);
         let assignment_fuel = contracts.assignment_fuel.clone();
         let policies = fold_policies(root, sub_decisions, &loader, contracts)?;
-        let (slice_schema, event_schema) = decide_input(root)?;
+        let (slice_schema, event_schema, principal_schema) = decide_input(root)?;
+        let principal = crate::principal::PrincipalContract::admit(root, principal_schema)?;
         let output_schema = decide_output(root)?;
         let defaults = defaults(root, &output_schema, exact_defaults)?;
         Ok(Self {
@@ -183,6 +183,7 @@ impl AdmittedDecision {
                 .with_contracts(policies),
             slice_schema: Arc::new(slice_schema),
             event_schema: Arc::new(event_schema),
+            principal,
             output_schema,
             defaults,
         })
@@ -239,7 +240,13 @@ impl AdmittedDecision {
             rule_id: self.rule_id.clone(),
             schema: Arc::clone(&self.event_schema),
             value: event,
+            principal: None,
         })
+    }
+
+    /// PRINCIPAL-INPUT-1: the declared principal inputs and their record.
+    pub(crate) const fn principal_contract(&self) -> Option<&crate::principal::PrincipalContract> {
+        self.principal.as_ref()
     }
 
     /// Whether `slice` and `event` were validated for this decision: the same
@@ -690,7 +697,7 @@ fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent 
     }
 }
 
-use crate::contract::{closed_record, decide_input, decide_output, invalid_schema};
+use crate::contract::{decide_input, decide_output, invalid_schema};
 
 fn defaults(
     rule: &RuleRoot,
@@ -909,4 +916,25 @@ fn validate_call_sources(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use norn_ir::ResourceLimitProfile;
+
+    use crate::AdmissionError;
+
+    /// #1711: the deterministic VM has no RNG, so decision admission refuses `rand`
+    /// as a standard expression and as a unary cell.
+    #[test]
+    fn rand_is_refused_by_decision_admission() {
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        for (source, unary) in [("rand(1)", false), ("rand(1)", true), ("< rand(1)", true)] {
+            let result = super::validate_source("t.rule", "cell", source, unary, &limits);
+            assert!(
+                matches!(result, Err(AdmissionError::InvalidExpression { .. })),
+                "{source} (unary {unary}): {result:?}"
+            );
+        }
+    }
 }

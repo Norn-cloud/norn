@@ -118,6 +118,7 @@ const WORDS = {
     noCell: "No live cell is connected; showing the declared lifecycle.",
     liveOff: "Live updates are off; counts show the last read.",
     refresh: "Refresh",
+    transitions: "Transitions", or: " or ", move: (transition: string, from: string, to: string) => `${transition}: from ${from} to ${to}`,
     unlisted: "Not listed",
     unlistedHint: "Omitted by the cell's value limit; may have records in unlisted values",
     withheld: (n: string) => `${n} withheld from you`, quarantined: (n: string) => `${n} held in quarantine`, unset: (n: string) => `${n} without a state`,
@@ -140,6 +141,7 @@ const WORDS = {
     noCell: "لا توجد خلية متصلة؛ تُعرض دورة الحياة المُعلنة.",
     liveOff: "التحديثات المباشرة متوقفة؛ الأعداد تعكس آخر قراءة.",
     refresh: "تحديث",
+    transitions: "الانتقالات", or: " أو ", move: (transition: string, from: string, to: string) => `${transition}: من ${from} إلى ${to}`,
     unlisted: "غير مدرجة",
     unlistedHint: "حُذفت بسبب حد قيم الخلية؛ قد توجد سجلات في القيم غير المدرجة",
     withheld: (n: string) => `${n} محجوبة عنك`, quarantined: (n: string) => `${n} في الحجر`, unset: (n: string) => `${n} بلا حالة`,
@@ -641,6 +643,11 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   }
   svg.append(defs)
   stageEl.append(svg)
+  // The arrows are drawn for sight only (aria-hidden); a screen reader reads the same transitions here.
+  const transitionList = el("ul", { class: "norn-life-sr", "data-region": "transitions", "aria-label": w.transitions })
+  for (const transition of lifecycle.transitions) {
+    transitionList.append(el("li", { "data-transition": transition.id }, w.move(label(transition.id), transition.from.map(label).join(w.or), label(transition.to))))
+  }
 
   for (const columnStates of columns) {
     const col = el("ol", { class: "norn-life-col" })
@@ -656,7 +663,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     }
     stageEl.append(col)
   }
-  boardEl.append(stageEl)
+  boardEl.append(stageEl, transitionList)
 
   const notesEl = el("p", { class: "norn-life-foot", "data-region": "notes" })
   notesEl.hidden = true

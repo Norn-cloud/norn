@@ -13,8 +13,7 @@ import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
 import { transport } from "./lib/transport.ts"
 import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
-import { guardedFields, workflows, type Workflow } from "./lib/workflows.ts"
-import type { MenuEntry } from "./shell.tsx"
+import { guardedFields, workflowAnchor as anchor, workflows, workflowTitle as titleOf, type Workflow } from "./lib/workflows.ts"
 import { Automations } from "./automations.tsx"
 import { flowName, useRunTypeFlows, type RunFlow } from "./lib/flows.ts"
 import { useView } from "@/lib/view"
@@ -65,7 +64,7 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
         <div className="flex items-start gap-2">
           {dot(data.start, data.terminal)}
           <div className="min-w-0">
-            <div className={cn("font-medium leading-snug", data.start ? "text-panel" : "text-sm")}>{data.label}</div>
+            <div className={cn("font-medium leading-snug", data.start ? "text-body" : "text-sm")}>{data.label}</div>
           </div>
         </div>
       </button>
@@ -241,7 +240,7 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
   return (
     <div className="grid gap-4 p-4 text-sm md:grid-cols-[1fr_1fr_1.4fr] 2xl:grid-cols-1">
       <div className="md:col-span-3 2xl:col-span-1">
-        <div className="text-panel font-medium">{state(transition.id)}</div>
+        <div className="text-body font-medium">{state(transition.id)}</div>
         <div className="text-muted-foreground">{transition.from.map(state).join(" or ")} → {state(transition.to)}</div>
       </div>
       <div className="space-y-1">
@@ -292,7 +291,7 @@ function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: 
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-section font-medium">{title}: {words(lifecycle.property).toLowerCase()}</h2>
+          <h2 className="text-heading font-medium">{title}: {words(lifecycle.property).toLowerCase()}</h2>
           {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <p className="max-w-[80ch] text-meta text-muted-foreground">
@@ -330,7 +329,7 @@ function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonl
   const out = workflow.steps.filter(({ transition }) => transition.from.includes(name)).map(({ transition }) => `${state(transition.id)} → ${state(transition.to)}`)
   return (
     <div className="space-y-2 p-4 text-sm">
-      <div className="text-panel font-medium">{state(name)}</div>
+      <div className="text-body font-medium">{state(name)}</div>
       <div><span className="text-muted-foreground">Reached by: </span>{into.join(", ") || "nothing; it is where records start"}</div>
       <div><span className="text-muted-foreground">Leads to: </span>{out.join(", ") || "nothing; it ends here"}</div>
       {workflow.lifecycle.immutable?.includes(name) && <div className="text-muted-foreground">Its details are locked here.</div>}
@@ -338,18 +337,7 @@ function StateSummary({ workflow, name }: { readonly workflow: Workflow; readonl
   )
 }
 
-const anchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
-
-/** A workflow's name: the title of the flow whose runs it is, or its object type in words. */
-const titleOf = (workflow: Workflow, flows: ReadonlyMap<string, RunFlow>) => flows.get(workflow.objectType)?.title ?? words(workflow.objectType)
-
-/** The admitted lifecycles, for the submenu island. */
-export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
-  const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
-  const flows = useRunTypeFlows()
-  return definitions.data && workflows(definitions.data.map(({ document }) => document))
-    .map((workflow) => ({ href: `#${anchor(workflow)}`, label: titleOf(workflow, flows) }))
-}
+export { useWorkflowsMenu } from "./lib/nav-menus.ts"
 
 export function WorkflowsPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })

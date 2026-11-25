@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { ArrowLeft, ArrowRight, Database, ExternalLink, Map as MapIcon, Search, ShieldAlert, Waypoints, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { LoadState } from "@/components/load-state"
 import { PageHeader, Panel, Well } from "@/components/panel"
 import { StatStrip, KpiTile } from "@/components/kpi-tile"
@@ -45,18 +45,34 @@ function AttentionDot({ tone, label }: { readonly tone: MapAttentionTone; readon
   )
 }
 
+/** A count as the inbox reported it: `20+` when the inbox capped or bounded what it returned. */
+const atLeast = (count: number, approximate: boolean): string => `${count}${approximate ? "+" : ""}`
+
+/** A node's or island's attention in words, for when no count badge says it. */
+function attentionWords(tone: MapAttentionTone): string {
+  return tone === "none" ? "No open alerts" : tone === "unknown" ? "Alerts not known" : "Has alerts"
+}
+
+/** The cards outside the active lens or search: only their frame fades, never their text, ids or focus rings. */
+const OUTSIDE_LENS = "border-dashed bg-transparent shadow-none"
+
+/** Arrows that point along the reading direction flip in right-to-left text. */
+const FLOW_ARROW = "rtl:-scale-x-100"
+
 function islandStatusLabel(island: SemanticIsland, attentionStatus: SemanticMapAttentionInput["kind"]): string {
   if (attentionStatus === "recorded") return "Recorded schema"
   if (attentionStatus === "loading") return "Loading alerts…"
   if (attentionStatus === "unavailable") return "Alerts unavailable"
+  const holdings = atLeast(island.ruleHoldings, island.ruleHoldingsApproximate)
+  const sync = atLeast(island.sourceErrors, island.sourceErrorsApproximate)
   if (island.ruleHoldings > 0 && island.sourceErrors > 0) {
-    return `${island.ruleHoldings}${island.ruleHoldingsApproximate ? "+" : ""} rule holdings · ${island.sourceErrors} sync`
+    return `${holdings} rule holdings · ${sync} sync`
   }
   if (island.ruleHoldings > 0) {
-    return `${island.ruleHoldings}${island.ruleHoldingsApproximate ? "+" : ""} rule ${island.ruleHoldings === 1 ? "holding" : "holdings"}`
+    return `${holdings} rule ${island.ruleHoldings === 1 ? "holding" : "holdings"}`
   }
   if (island.sourceErrors > 0) {
-    return `${island.sourceErrors} sync ${island.sourceErrors === 1 ? "error" : "errors"}`
+    return `${sync} sync ${island.sourceErrors === 1 && !island.sourceErrorsApproximate ? "error" : "errors"}`
   }
   if (island.attention === "unknown") return "None in returned slice"
   return "No open alerts"
@@ -86,15 +102,17 @@ function IslandCard({
     <article
       data-slot="semantic-island"
       data-island-id={island.id}
+      data-outside-lens={dimmed || undefined}
       className={cn(
         "flex flex-col rounded-xl border border-panel-border bg-card transition-colors",
-        dimmed && "opacity-55",
+        dimmed && OUTSIDE_LENS,
       )}
     >
       <div className="flex items-start justify-between gap-3 border-b border-border/80 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-panel font-medium text-foreground">{island.title}</h3>
+            <h3 className="truncate text-body font-medium text-foreground">{island.title}</h3>
+            {dimmed && <span className="sr-only">(outside the current lens)</span>}
             <span className="rounded-md bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground tabular-nums">
               {island.nodes.length}
             </span>
@@ -132,7 +150,7 @@ function IslandCard({
             )}
             {node.ruleHoldings > 0 && (
               <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-[0.6875rem] tabular-nums">
-                {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""}
+                {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)}
               </Badge>
             )}
           </button>
@@ -144,7 +162,7 @@ function IslandCard({
             className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
             <span>+{overflow} more object {overflow === 1 ? "type" : "types"}</span>
-            <ArrowRight aria-hidden className="size-3.5" />
+            <ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />
           </button>
         )}
       </div>
@@ -153,8 +171,8 @@ function IslandCard({
         <span className="tabular-nums">
           {island.lawCount} {island.lawCount === 1 ? "law" : "laws"} · {bridgeCount} {bridgeCount === 1 ? "bridge" : "bridges"}
         </span>
-        <Button type="button" variant="ghost" size="xs" onClick={onOpen}>
-          Expand island<ArrowRight aria-hidden className="size-3.5" />
+        <Button type="button" variant="ghost" size="xs" onClick={onOpen} data-island-trigger="">
+          Expand island<ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />
         </Button>
       </footer>
     </article>
@@ -183,6 +201,10 @@ function IslandExpansion({
   readonly onSelectNode: (nodeId: string) => void
   readonly onJumpIsland: (islandId: string) => void
 }) {
+  const heading = useRef<HTMLHeadingElement>(null)
+  // Drilling in (or jumping to a neighbour) moves focus to the island's heading, so keyboard and
+  // screen-reader users land on what just opened instead of on a control that is gone.
+  useEffect(() => { heading.current?.focus() }, [island.id])
   const connectedBridges = bridges.filter((bridge) => bridge.fromIsland === island.id || bridge.toIsland === island.id)
   const ghostNeighbors = new Map<string, { island: SemanticIsland; linkCount: number; labels: string[] }>()
   for (const bridge of connectedBridges) {
@@ -199,10 +221,10 @@ function IslandExpansion({
     <div data-slot="island-expansion" data-island-id={island.id} className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" onClick={onBack}>
-          <ArrowLeft aria-hidden className="size-3.5" />All islands
+          <ArrowLeft aria-hidden className={cn("size-3.5", FLOW_ARROW)} />All islands
         </Button>
         <div className="min-w-0">
-          <h2 className="text-section font-medium text-foreground">{island.title}</h2>
+          <h2 ref={heading} tabIndex={-1} className="text-heading font-medium text-foreground outline-none">{island.title}</h2>
           <p className="text-xs text-muted-foreground">
             {island.subtitle} · {island.nodes.length} object {island.nodes.length === 1 ? "type" : "types"} · {island.lawCount} {island.lawCount === 1 ? "law" : "laws"}
           </p>
@@ -212,7 +234,7 @@ function IslandExpansion({
       {island.sourceErrors > 0 && (
         <div role="status" className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive-text">
           <ShieldAlert aria-hidden className="size-4 shrink-0" />
-          <span>{island.sourceErrors} source sync {island.sourceErrors === 1 ? "error reported" : "errors reported"} for this island.</span>
+          <span>{atLeast(island.sourceErrors, island.sourceErrorsApproximate)} source sync {island.sourceErrors === 1 && !island.sourceErrorsApproximate ? "error reported" : "errors reported"} for this island.</span>
         </div>
       )}
 
@@ -227,17 +249,19 @@ function IslandExpansion({
               data-slot="semantic-node"
               data-node-id={node.id}
               aria-pressed={active}
+              data-outside-lens={!matched || undefined}
               onClick={() => onSelectNode(node.id)}
               className={cn(
                 "flex flex-col gap-2 rounded-xl border bg-card p-4 text-start transition-colors outline-none hover:bg-well-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
                 active ? "border-action ring-1 ring-action/25" : "border-border",
-                !matched && "opacity-45",
+                !matched && OUTSIDE_LENS,
               )}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-foreground" lang={node.titleLang}>{node.title}</div>
                   <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{node.id}</div>
+                  {!matched && <span className="sr-only">Outside the current lens.</span>}
                 </div>
                 {node.ruleHoldings > 0 || node.sourceErrors > 0 ? (
                   <div className="flex shrink-0 items-center gap-1">
@@ -248,18 +272,14 @@ function IslandExpansion({
                     )}
                     {node.sourceErrors > 0 && (
                       <Badge variant="destructive" className="tabular-nums">
-                        {node.sourceErrors} sync
+                        {atLeast(node.sourceErrors, node.sourceErrorsApproximate)} sync
                       </Badge>
                     )}
                   </div>
                 ) : (
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "mt-1 size-2 shrink-0 rounded-full",
-                      node.attention === "none" ? "bg-success" : "bg-muted-foreground/45",
-                    )}
-                  />
+                  <span data-slot="node-status" className="mt-0.5 shrink-0">
+                    <AttentionDot tone={node.attention} label={attentionWords(node.attention)} />
+                  </span>
                 )}
               </div>
               {node.summary && (
@@ -293,7 +313,7 @@ function IslandExpansion({
                     {linkCount} {linkCount === 1 ? "link" : "links"} · {labels.slice(0, 2).join(", ")}
                   </div>
                 </div>
-                <ArrowRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                <ArrowRight aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", FLOW_ARROW)} />
               </button>
             ))}
           </div>
@@ -331,7 +351,7 @@ function ProvenanceSideSheet({
             <span className="truncate">{node.artifactId}</span>
             <ExternalLink aria-hidden className="size-3 shrink-0" />
           </Link>
-          <h2 className="mt-1.5 truncate text-section font-medium text-foreground" lang={node.titleLang}>{node.title}</h2>
+          <h2 className="mt-1.5 truncate text-heading font-medium text-foreground" lang={node.titleLang}>{node.title}</h2>
           <p className="text-xs text-muted-foreground">Island: {island.title}</p>
         </div>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="Close provenance sheet" onClick={onClose}>
@@ -358,7 +378,7 @@ function ProvenanceSideSheet({
         <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive-text">
           <ShieldAlert aria-hidden className="size-4 shrink-0" />
           <span>
-            {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} rule {node.ruleHoldings === 1 ? "holding" : "holdings"} reported in inbox.
+            {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)} rule {node.ruleHoldings === 1 && !node.ruleHoldingsApproximate ? "holding" : "holdings"} reported in inbox.
           </span>
         </div>
       )}
@@ -452,6 +472,13 @@ function ProvenanceSideSheet({
   )
 }
 
+/** What opened an island: its own "Expand island" trigger, or one end of a bridge in the bridges list. */
+type Opener = { readonly kind: "island"; readonly id: string } | { readonly kind: "bridge"; readonly id: string; readonly end: "from" | "to" }
+
+const openerSelector = (opener: Opener): string => opener.kind === "island"
+  ? `[data-slot="semantic-island"][data-island-id="${CSS.escape(opener.id)}"] [data-island-trigger]`
+  : `[data-bridge-id="${CSS.escape(opener.id)}"][data-bridge-end="${opener.end}"]`
+
 /** `/map`: Read-only Catalog Ontology Map (Phase 1, #1664) — Monochrome Islands, Bundled Bridges, Lenses & Schema Dossier. */
 export function SemanticMapPage() {
   const { read, catalog } = useCatalog()
@@ -461,6 +488,17 @@ export function SemanticMapPage() {
   const [query, setQuery] = useState("")
   const [openIslandId, setOpenIslandId] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  // What opened the island (its own trigger, or a bridge's end in the bridges list): Back returns
+  // focus there on the overview. A jump to another island from inside opens that island in its own
+  // right, so Back then returns to that island's trigger.
+  const [opener, setOpener] = useState<Opener | null>(null)
+  const [returnTo, setReturnTo] = useState<Opener | null>(null)
+  const openIsland = (id: string, from: Opener = { kind: "island", id }) => { setOpenIslandId(id); setOpener(from) }
+  useEffect(() => {
+    if (openIslandId !== null || returnTo === null) return
+    document.querySelector<HTMLElement>(openerSelector(returnTo))?.focus()
+    setReturnTo(null)
+  }, [openIslandId, returnTo])
 
   const attentionInput: SemanticMapAttentionInput = useMemo(() => {
     if (mode.data?.kind !== "live") return { kind: "recorded" }
@@ -480,9 +518,7 @@ export function SemanticMapPage() {
   const selectNode = (nodeId: string) => {
     setSelectedNodeId(nodeId)
     const node = projection?.nodesById.get(nodeId)
-    if (node && openIslandId && node.islandId !== openIslandId) {
-      setOpenIslandId(node.islandId)
-    }
+    if (node && openIslandId && node.islandId !== openIslandId) openIsland(node.islandId)
   }
 
   return (
@@ -577,9 +613,9 @@ export function SemanticMapPage() {
                       lens={lens}
                       query={query}
                       selectedNodeId={selectedNodeId}
-                      onBack={() => setOpenIslandId(null)}
+                      onBack={() => { setReturnTo(opener ?? { kind: "island", id: activeIsland.id }); setOpenIslandId(null) }}
                       onSelectNode={selectNode}
-                      onJumpIsland={(id) => { setOpenIslandId(id); setSelectedNodeId(null) }}
+                      onJumpIsland={(id) => { openIsland(id); setSelectedNodeId(null) }}
                     />
                   ) : (
                     <>
@@ -594,7 +630,7 @@ export function SemanticMapPage() {
                               attentionStatus={map.attentionStatus}
                               bridgeCount={bridgeCount}
                               dimmed={dimmed}
-                              onOpen={() => setOpenIslandId(island.id)}
+                              onOpen={() => openIsland(island.id)}
                               onSelectNode={selectNode}
                             />
                           )
@@ -611,15 +647,19 @@ export function SemanticMapPage() {
                                 <div key={bridge.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
                                   <button
                                     type="button"
-                                    onClick={() => setOpenIslandId(bridge.fromIsland)}
+                                    data-bridge-id={bridge.id}
+                                    data-bridge-end="from"
+                                    onClick={() => openIsland(bridge.fromIsland, { kind: "bridge", id: bridge.id, end: "from" })}
                                     className="font-medium text-foreground underline-offset-4 hover:underline"
                                   >
                                     {from?.title ?? bridge.fromIsland}
                                   </button>
-                                  <ArrowRight aria-hidden className="size-3.5 text-muted-foreground" />
+                                  <ArrowRight aria-hidden className={cn("size-3.5 text-muted-foreground", FLOW_ARROW)} />
                                   <button
                                     type="button"
-                                    onClick={() => setOpenIslandId(bridge.toIsland)}
+                                    data-bridge-id={bridge.id}
+                                    data-bridge-end="to"
+                                    onClick={() => openIsland(bridge.toIsland, { kind: "bridge", id: bridge.id, end: "to" })}
                                     className="font-medium text-foreground underline-offset-4 hover:underline"
                                   >
                                     {to?.title ?? bridge.toIsland}

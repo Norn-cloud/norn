@@ -39,8 +39,8 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
-    RUN, STORE_FORMAT, ensure_marking_subject, marking_subject,
+    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, OUTBOX, RUN,
+    STORE_FORMAT, ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
 };
 use crate::write::Writer;
 
@@ -305,24 +305,8 @@ fn apply_marking_definition_changes<E: SqlEngine>(
     // readable under the new catalog. The bounded scan refuses the whole
     // install before publishing an incomplete classification update.
     for ((object_type, property), added) in additions {
-        backfill_marking_table(
-            engine,
-            MARKING_SNAPSHOT,
-            MARKING_CURRENT,
-            &object_type,
-            &property,
-            &added,
-            true,
-        )?;
-        backfill_marking_table(
-            engine,
-            MARKING_SNAPSHOT,
-            MARKING_VERSION,
-            &object_type,
-            &property,
-            &added,
-            false,
-        )?;
+        backfill_marking_table(engine, &object_type, &property, &added, true)?;
+        backfill_marking_table(engine, &object_type, &property, &added, false)?;
     }
     for object_type in changed_types {
         backfill_computed_markings(engine, candidate, &object_type)?;
@@ -368,20 +352,22 @@ fn backfill_computed_markings<E: SqlEngine>(
             .map(|(property, labels)| (property, labels.into_iter().collect::<BTreeSet<_>>()))
             .collect::<BTreeMap<_, _>>();
         let changed = candidate.close_computed_markings(object_type, &mut effective)?;
-        let table = if current {
-            MARKING_CURRENT
-        } else {
-            MARKING_VERSION
-        };
         for property in changed {
             let labels = effective.get(&property).ok_or_else(|| {
                 CellError::Engine("computed classification target is missing".to_owned())
             })?;
+            if labels.is_empty() {
+                continue;
+            }
+            let subject = ensure_marking_subject(engine, &world, object_type, &id)?;
             let encoded = serde_json::to_string(labels).map_err(CellError::Json)?;
-            engine.execute(
-                &format!("UPDATE \"{table}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"),
-                params![encoded, &world, object_type, marking_subject(engine, &world, object_type, &id)?, property, version],
-            )?;
+            let target = MarkingTarget {
+                world: &world,
+                object_type,
+                key: &id,
+                version,
+            };
+            write_nonempty_marking_slot(engine, current, &target, subject, &property, &encoded)?;
         }
     }
     Ok(())
@@ -389,17 +375,18 @@ fn backfill_computed_markings<E: SqlEngine>(
 
 fn backfill_marking_table<E: SqlEngine>(
     engine: &E,
-    snapshots: &str,
-    values: &str,
     object_type: &str,
     property: &str,
     additions: &[String],
     current: bool,
 ) -> Result<(), CellError> {
+    if additions.is_empty() {
+        return Ok(());
+    }
     let is_current = i64::from(current);
     let rows = engine.query(
         &format!(
-            "SELECT \"world\", \"id\", \"version\" FROM \"{snapshots}\" WHERE \"object_type\" = ?1 AND \"is_current\" = ?2 ORDER BY \"world\", \"id\" LIMIT ?3"
+            "SELECT \"world\", \"id\", \"version\" FROM \"{MARKING_SNAPSHOT}\" WHERE \"object_type\" = ?1 AND \"is_current\" = ?2 ORDER BY \"world\", \"id\" LIMIT ?3"
         ),
         params![object_type, is_current, i64::try_from(MARKING_INSTALL_BACKFILL_LIMIT + 1).map_err(|_conversion_error| CellError::OutOfRange("marking backfill limit"))?],
     )?;
@@ -414,14 +401,14 @@ fn backfill_marking_table<E: SqlEngine>(
         let id: String = row.get(1)?;
         let version: i64 = row.get(2)?;
         let subject = ensure_marking_subject(engine, &world, object_type, &id)?;
-        let existing = engine.query_optional(
-            &format!(
-                "SELECT \"markings\" FROM \"{values}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
-            ),
-            params![&world, object_type, subject, property, version],
-            |row| row.get::<String>(0),
-        )?;
-        let mut markings = existing
+        let slot = MarkingSlot {
+            world: &world,
+            object_type,
+            subject,
+            property,
+            version,
+        };
+        let mut markings = query_marking_slot(engine, current, &slot)?
             .map(|encoded| serde_json::from_str::<Vec<String>>(&encoded).map_err(CellError::Json))
             .transpose()?
             .unwrap_or_default();
@@ -432,19 +419,13 @@ fn backfill_marking_table<E: SqlEngine>(
         }
         markings.sort();
         let encoded = serde_json::to_string(&markings).map_err(CellError::Json)?;
-        let sql = if current {
-            format!(
-                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
-            )
-        } else {
-            format!(
-                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
-            )
+        let target = MarkingTarget {
+            world: &world,
+            object_type,
+            key: &id,
+            version,
         };
-        engine.execute(
-            &sql,
-            params![&world, object_type, subject, property, version, encoded],
-        )?;
+        write_nonempty_marking_slot(engine, current, &target, subject, property, &encoded)?;
     }
     Ok(())
 }
@@ -1963,6 +1944,7 @@ fn preflight_definition_install<E: SqlEngine>(
     install: &DefinitionInstallContext<'_>,
     actual_version: Option<u64>,
     retained: Option<&crate::export::ExportRecord>,
+    cell_scope: Option<&str>,
 ) -> Result<DefinitionPreflight, CellError> {
     if install
         .expected_version
@@ -2003,33 +1985,30 @@ fn preflight_definition_install<E: SqlEngine>(
     } else if let Some(receipt) = &install.input.admission_receipt {
         verify_admission_receipt(receipt, &install.input.receipt_sha256)?;
     }
+    let scope_ref = crate::definition_scope::preflight_candidate(
+        engine,
+        &install.input.canonical_set,
+        install.candidate_model,
+        cell_scope,
+    )?;
     install
         .candidate_model
         .check_governing_laws(&install.input.canonical_set)?;
+    let prev_set = previous
+        .as_ref()
+        .map(|installed| installed.canonical_set.as_str());
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,
         install.candidate_model,
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
+        prev_set,
         &install.input.canonical_set,
         retained,
+        &scope_ref,
     )?;
     preflight_marking_definition_changes(engine, previous_model, install.candidate_model)?;
-    preflight_mask_policy_changes(
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
-        &install.input.canonical_set,
-    )?;
-    preflight_source_marking_changes(
-        engine,
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
-        &install.input.canonical_set,
-    )?;
+    preflight_mask_policy_changes(prev_set, &install.input.canonical_set)?;
+    preflight_source_marking_changes(engine, prev_set, &install.input.canonical_set)?;
     let version = actual_version
         .unwrap_or(0)
         .checked_add(1)
@@ -2516,13 +2495,8 @@ impl<E: SqlEngine> CellStore<E> {
                 });
             }
         }
-        if let Some(active) = Self::read_active_definitions(conn)?
-            && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
-        {
-            return Err(CellError::SchemaMismatch {
-                expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
-                found: format!("{} {}", active.ddl_hash, active.model_hash),
-            });
+        if let Some(active) = Self::read_active_definitions(conn)? {
+            crate::definition_scope::check_active_model(model, &active)?;
         }
         Ok(())
     }
@@ -2573,6 +2547,9 @@ impl<E: SqlEngine> CellStore<E> {
                 store.require_cell_id(expected)?;
             }
             let verified = store.verify_history(&pass)?;
+            if let Some(active) = Self::read_active_definitions(&store.conn)? {
+                crate::definition_scope::verify_active(&store.conn, &store.model, &active)?;
+            }
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), verified.head.commits)?;
             // An upgrading open verified from genesis, so record its checkpoint inside this tx.
@@ -3108,17 +3085,12 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    /// Check a definition candidate against the current version and live
-    /// values, returning the exact version/layout preview installation would
-    /// retain. This performs SQL reads only and does not enter a transaction.
-    ///
-    /// # Errors
-    /// A version conflict, unsafe live-data migration, or store error.
-    pub fn check_definitions(
+    pub(crate) fn check_definitions_inner(
         &self,
         candidate_model: &Model,
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
+        scope: Option<&str>,
     ) -> Result<InstalledDefinitionSet, CellError> {
         self.read().check_live()?;
         let install = DefinitionInstallContext {
@@ -3130,8 +3102,14 @@ impl<E: SqlEngine> CellStore<E> {
             committed: None,
         };
         let actual_version = active_definition_version(&self.conn)?;
-        let preflight =
-            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?;
+        let preflight = preflight_definition_install(
+            &self.conn,
+            &self.model,
+            &install,
+            actual_version,
+            None,
+            scope,
+        )?;
         self.law_checked.set(preflight.migration.law_checked);
         Ok(preflight.installed)
     }
@@ -3206,14 +3184,17 @@ impl<E: SqlEngine> CellStore<E> {
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),
                     );
-                    let active = Self::read_active_definitions(&self.conn)?;
-                    if binding("binding:provision")?.as_deref() != Some(identity)
-                        || binding("binding:scope")?.as_deref() != Some(batch.scope.as_str())
-                        || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
+                    let active = Self::read_active_definitions(&self.conn)?.filter(|set| {
+                        set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()
+                    });
+                    let (Some(active), true) = (active, binding("binding:provision")?.as_deref() == Some(identity)
+                        && binding("binding:scope")?.as_deref() == Some(batch.scope.as_str()))
+                    else {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
-                    }
+                    };
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
+                    crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
                     self.finish_open_scrub(upgrading, &verified)?;
                     self.transparency.replace(verified.transparency);
@@ -3237,7 +3218,9 @@ impl<E: SqlEngine> CellStore<E> {
                     install,
                     actual_version,
                     retained,
+                    Some(batch.scope.as_str()),
                 )?;
+                crate::definition_scope::bind_cell_scope(&self.conn, batch.scope.as_str())?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
                     &self.conn,
@@ -3283,9 +3266,13 @@ impl<E: SqlEngine> CellStore<E> {
             if prior_receipt.is_none() && effective_batch.idempotency_key.is_some() {
                 self.scrub.borrow().refuse_unproven_miss()?;
             }
-            crate::quantity::clock_floor(&self.conn)?;
+            let floor = crate::quantity::clock_floor(&self.conn)?;
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
+            // RECEIPT-CONSUME-1: a host commit consuming a Function result follows the floor.
+            if matches!(origin, CommitOrigin::Host) && prior_receipt.is_none() && crate::function_receipt::follows_floor(&self.conn, &reconciled)? {
+                reconciled.logical_time = reconciled.logical_time.max(floor);
+            }
             if let Some(prior) = &prior_receipt
                 && prior.body.quantity.is_some() != reconciled.quantity.is_some()
             {
@@ -3459,11 +3446,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
-            let watch = automation_outbox::capture_before(&writer.reader(), effective_batch)?;
+            let watch = automation_outbox::capture_before(
+                &writer.reader(), effective_batch, automation_outbox::preimage_limit(retained),
+            )?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            let automation_continuation = automation_outbox::record(
+            let automation = automation_outbox::record(
                 &writer.reader(), effective_batch, &written, commit_seq, version, &watch, retained,
             )?;
             let quantity_result = writer.apply_quantity()?;
@@ -3560,7 +3549,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
-                automation_continuation,
+                automation,
                 entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;
@@ -3864,11 +3853,7 @@ mod identity_history_tests {
             name: "Legacy".into(),
             version: "0.1.0".into(),
             lifecycle: norn_ir::ArtifactLifecycle::Draft,
-            scope: norn_ir::ScopeRef {
-                org_id: Some("org_demo".into()),
-                environment_id: Some("dev".into()),
-                ..Default::default()
-            },
+            scope: norn_ir::ScopeRef::default(),
             dependencies: vec![],
             provenance: norn_ir::ArtifactProvenance {
                 source: norn_ir::ProvenanceSource::AuthoringSdk,

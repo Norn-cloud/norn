@@ -114,12 +114,229 @@ test("markings: a reveal answered after the cell withdrew the reveal is never sh
   await page.getByRole("button", { name: "Read again" }).click()
   await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
   // The late answer lands; the page waits past it and still shows only the projection.
-  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
-  release()
-  await answered
-  await page.waitForTimeout(300)
+  await revealSettled(page, release)
   await expect(name.locator("[data-revealed]")).toHaveCount(0)
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+})
+
+/**
+ * Release a held reveal and wait until the page has read its answer to the end and painted twice
+ * since: whatever the page does with a late answer, it has done by then.
+ */
+async function revealSettled(page: Page, release: () => void) {
+  const finished = page.waitForEvent("requestfinished", (request) => new URL(request.url()).pathname.endsWith("/reveal"))
+  release()
+  await finished
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+}
+
+const refocus = (page: Page) => page.evaluate(() => {
+  for (const visibility of ["hidden", "visible"]) {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: visibility })
+    window.dispatchEvent(new Event("visibilitychange"))
+  }
+})
+
+// #1700 R3: the record page's read and its reveals go to the workspace the record was read from.
+test("markings: a record-page reveal is sent to the workspace the record was read from", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const name = await askReveal(page)
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  expect(new Set(cell.readScopes)).toEqual(new Set(["org_demo/analytics"]))
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
+// #1700 R3: a reveal still out when the session moves to another workspace is never shown; the page reads the record there.
+test("markings: a reveal answered after a workspace switch is never shown, and the record is read in the new workspace", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  let environmentId = "analytics"
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId } }))
+  await page.goto(PARTY)
+  const release = cell.holdReveal()
+  const name = await askReveal(page)
+  await expect.poll(() => cell.reveals.length).toBe(1)
+  environmentId = "staging"
+  await refocus(page)
+  await expect.poll(() => cell.readScopes.includes("org_demo/staging")).toBe(true)
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  await revealSettled(page, release)
+  await expect(name.locator("[data-revealed]")).toHaveCount(0)
+  await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
+// #1720 R3: a record page whose mode read failed reads nothing until the mode is decided; its Retry
+// decides the mode again, and the record is then read and revealed at the workspace it came from.
+test("markings: after a failed mode read, the page's Retry reads and reveals the record at its source workspace", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  let down = true
+  await page.route("**/api/host/v1/definitions**", (route) => down
+    ? route.fulfill({ status: 503, json: { code: "cell.unopenable", message: "The workspace cell could not be opened.", retryable: false } })
+    : route.fallback())
+  await page.goto(PARTY)
+  const unavailable = page.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  await shoot(page, "party-mode-unavailable")
+  // Nothing was read while no mode was decided: no read without a workspace.
+  expect(cell.readScopes).toEqual([])
+  // The cell recovers; the page's own Retry decides the mode and then reads the record at its scope.
+  down = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  const name = fact(page, "display_name")
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  await expect(page.locator('[data-connection="unavailable"]')).toHaveCount(0)
+  await expect(page.locator("#record-history")).toBeVisible()
+  await askReveal(page)
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  expect(new Set(cell.readScopes)).toEqual(new Set(["org_demo/analytics"]))
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
+// #1740: the type page's grid drawer once read a live row through the mode-deciding transport and cached
+// it under the key the record page read while its mode was undecided, so the full record could show it
+// with no workspace. First load during a cell outage, the cell recovers, the type page's Retry, a drawer,
+// then "Open full record" just as the session's workspace read fails: no live record shows and no reveal
+// fires until the mode is decided again, and the reveal then goes to the workspace it was read from.
+test("markings: a drawer's record opened in full while the workspace read fails shows and reveals nothing until the mode is decided", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  let cellDown = true
+  let sessionDown = false
+  await page.route("**/api/host/v1/definitions**", (route) => cellDown
+    ? route.fulfill({ status: 503, json: { code: "cell.unopenable", message: "The workspace cell could not be opened.", retryable: false } })
+    : route.fallback())
+  await page.route("**/api/me", (route) => sessionDown
+    ? route.fulfill({ status: 503, json: { error: "The workspace host is unavailable.", retryable: false } })
+    : route.fallback())
+  await page.goto("/sources/canon.Party")
+  const typeUnavailable = page.locator("[data-workspace-unavailable]")
+  await expect(typeUnavailable).toBeVisible()
+  // The cell recovers; the type page's own Retry reads the catalog again, and its grid shows the live records.
+  cellDown = false
+  await typeUnavailable.getByRole("button", { name: "Retry" }).click()
+  const grid = page.getByRole("grid")
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  await grid.focus()
+  await page.keyboard.press("Enter")
+  const drawer = page.getByRole("dialog")
+  await expect(drawer.getByRole("heading", { name: "Linked records" })).toBeVisible()
+  await expect.poll(() => cell.readScopes).toEqual(["org_demo/analytics"])
+  // The session's workspace read fails as the full record opens: the page's mode is undecided.
+  sessionDown = true
+  await drawer.getByRole("link", { name: "Open full record" }).click()
+  await expect(page).toHaveURL(/\/sources\/canon\.Party\/demo\/party\/0001$/)
+  await expect(page.locator('[data-connection="unavailable"]')).toBeVisible()
+  // Nothing the drawer read shows here without a workspace, and nothing can be revealed: only the page's
+  // Workspace unavailable state, with its Retry.
+  await expect(page.locator("[data-fact]")).toHaveCount(0)
+  await expect(page.locator("[data-reveal]")).toHaveCount(0)
+  const unavailable = page.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  await shoot(page, "party-full-record-mode-unavailable")
+  expect(cell.reveals).toEqual([])
+  // The session recovers; the page's Retry decides the mode, and the record is read and revealed at its workspace.
+  sessionDown = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  const name = fact(page, "display_name")
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  await askReveal(page)
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  expect(new Set(cell.readScopes)).toEqual(new Set(["org_demo/analytics"]))
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
+const SESSION_DOWN = { status: 503, json: { error: "The workspace host is unavailable.", retryable: false } }
+const scopeOf = (url: URL) => `${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`
+
+// #1745: the record page read a record's findings under one key for every workspace and showed its
+// Held back and rules-broken chips whatever its mode, so findings read before the session's workspace
+// read failed stayed beside Workspace unavailable. They show only under a decided mode, read at its workspace.
+test("findings: a held record's chips leave with the mode when the workspace read fails, and come back read at its workspace", async ({ page }) => {
+  await recordCell(page, "admin")
+  const findingsScopes: string[] = []
+  let sessionDown = false
+  await page.route((url) => url.pathname.endsWith("/findings"), (route) => {
+    const url = new URL(route.request().url())
+    findingsScopes.push(scopeOf(url))
+    return route.fulfill({ json: { objectType: "canon.Party", id: "demo/party/0001", quarantined: true, evidence: [],
+      findings: [{ id: "f-1", ruleRef: { kind: "builtin", id: "core.required", version: "1" }, severity: "error", message: "A required value is missing.", status: "open", firstSeen: "2026-11-18T09:12:00Z", lastSeen: "2026-11-18T09:12:00Z" }] } })
+  })
+  await page.route("**/api/me", (route) => sessionDown ? route.fulfill(SESSION_DOWN) : route.fallback())
+  await page.goto(PARTY)
+  const chips = page.locator("div:has(> h1)")
+  await expect(chips.getByText("Held back", { exact: true })).toBeVisible()
+  await expect(chips.getByText("1 rule broken", { exact: true })).toBeVisible()
+  // The session's workspace read fails: the page's mode is undecided, and nothing it read shows as current.
+  sessionDown = true
+  await refocus(page)
+  const unavailable = page.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  await expect(chips.getByText("Held back", { exact: true })).toHaveCount(0)
+  await expect(chips.getByText("1 rule broken", { exact: true })).toHaveCount(0)
+  await expect(page.getByText("Held out of authoritative reads")).toHaveCount(0)
+  await shoot(page, "party-findings-mode-unavailable")
+  // The session recovers; the page's Retry decides the mode, and the chips come back, read at the record's workspace.
+  sessionDown = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  await expect(chips.getByText("Held back", { exact: true })).toBeVisible()
+  await expect(chips.getByText("1 rule broken", { exact: true })).toBeVisible()
+  expect(new Set(findingsScopes)).toEqual(new Set(["org_demo/analytics"]))
+})
+
+// #1745: the type page showed its grid whenever the mode was not pending, so after a failed mode read it
+// mounted a grid with no workspace, which reads the records at whatever workspace the session reports when
+// it answers: rows the page's mode never decided, with Reveal pinned to the session. The session's
+// workspace read fails while the type page is open; its definition stays, and its records wait for the mode.
+test("records: a type page whose mode read fails shows Workspace unavailable for its records, never a grid without a workspace", async ({ page }) => {
+  await recordCell(page, "admin")
+  const pageReads: string[] = []
+  page.on("request", (request) => {
+    const url = new URL(request.url())
+    if (url.pathname.endsWith("/v1/objects/canon.Party")) pageReads.push(scopeOf(url))
+  })
+  let sessionDown = false
+  await page.route("**/api/me", (route) => sessionDown ? route.fulfill(SESSION_DOWN) : route.fallback())
+  await page.goto("/sources/canon.Party")
+  const grid = page.getByRole("grid")
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
+  // The session's workspace read fails: the page's mode is undecided. The type's definition stays; its
+  // records show Workspace unavailable with the mode's Retry, and no grid is mounted to read them.
+  const readsBefore = pageReads.length
+  sessionDown = true
+  await refocus(page)
+  const records = page.getByRole("region", { name: "Records" })
+  const unavailable = records.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  await expect(grid).toHaveCount(0)
+  await expect(records.getByText("not served by this cell")).toHaveCount(0)
+  await expect(page.locator("[data-reveal]")).toHaveCount(0)
+  expect(pageReads).toHaveLength(readsBefore)
+  await shoot(page, "party-type-records-mode-unavailable")
+  // The session recovers; the Records section's Retry decides the mode, and the grid reads at that workspace.
+  sessionDown = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
+})
+
+// #1745 (from #1742): the drawer's state for a live row the grid has no decided workspace for. A cell that
+// serves records but no definitions decides the recording, so the grid has no workspace: the row's links
+// are not read, and the drawer says so in words that do not read as "read-only".
+test("records: a live row's drawer in a grid with no decided workspace reads nothing and says why", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } }))
+  await page.goto("/sources/canon.Party")
+  const grid = page.getByRole("grid")
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  await grid.focus()
+  await page.keyboard.press("Enter")
+  const drawer = page.getByRole("dialog")
+  await expect(drawer.getByRole("heading", { name: "Linked records" })).toBeVisible()
+  await expect(drawer.getByText("This record's links show once its workspace is confirmed.")).toBeVisible()
+  await expect(drawer.getByText(/read only/)).toHaveCount(0)
+  await shoot(page, "party-drawer-undecided-workspace")
+  expect(cell.readScopes).toEqual([])
 })
 
 test("markings: a reveal asked under a projection, answered after it changed and changed back, is never shown", async ({ page }) => {
@@ -138,10 +355,7 @@ test("markings: a reveal asked under a projection, answered after it changed and
   await page.getByRole("button", { name: "Read again" }).click()
   await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
   // The answer to the first ask lands: it belonged to the discarded instance, and is not shown.
-  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
-  release()
-  await answered
-  await page.waitForTimeout(300)
+  await revealSettled(page, release)
   await expect(name.locator("[data-revealed]")).toHaveCount(0)
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
 })

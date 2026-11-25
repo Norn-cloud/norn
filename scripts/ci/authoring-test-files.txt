@@ -3,10 +3,12 @@ test/action-input-labels.test.ts
 test/action-nullable.test.ts
 test/apply.test.ts
 test/authoring-sdk.test.ts
+test/binders-cfg-assignability.test.ts
 test/builder-browser.test.ts
 test/builtins.test.ts
 test/cli-code-registry.test.ts
 test/cli-setup.test.ts
+test/codegen.test.ts
 test/compiler.test.ts
 test/connector.test.ts
 test/constitution.test.ts
@@ -23,6 +25,7 @@ test/expansion-budget.test.ts
 test/explain.test.ts
 test/flow-builder.test.ts
 test/fmt.test.ts
+test/governed-create.test.ts
 test/init.test.ts
 test/interface-inheritance.test.ts
 test/interface-links.test.ts
@@ -38,6 +41,7 @@ test/ontology-pack.test.ts
 test/pack-link.test.ts
 test/packaging.test.ts
 test/predicate-slice-and-owned-collections.test.ts
+test/principal-inputs.test.ts
 test/profile-corpus.test.ts
 test/purchase-requests.test.ts
 test/question.test.ts

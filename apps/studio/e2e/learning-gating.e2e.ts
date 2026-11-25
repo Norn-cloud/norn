@@ -71,13 +71,13 @@ test("gating (negative): signed-in cell advertising no learning resources hides 
       leakedDataCalls.push(route.request().url())
       return route.fulfill({ status: 500, body: "unexpected learning action fetch" })
     }
-    return route.fulfill({ json: { items: [] } })
+    return route.fulfill({ json: { definitionsVersion: 1, items: [] } })
   })
 
   await page.goto("/")
   await expect(page.getByText("Connecting…")).toHaveCount(0)
 
-  const nav = page.getByRole("navigation", { name: "Workspace" })
+  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
   await expect(nav).toBeVisible()
   await expect(nav).not.toContainText("Learning")
   for (const label of ["Episodes", "Cases & eval sets", "Misfit board", "Proposals"]) {
@@ -117,7 +117,7 @@ test("gating (failed read): when /v1/definitions fails, Learning stays hidden an
   await expect(gate).toBeVisible()
   await expect(page.getByText("Unavailable in this workspace")).toBeVisible()
   await expect(gate.getByRole("button", { name: "Retry", exact: true })).toBeVisible()
-  const nav = page.getByRole("navigation", { name: "Workspace" })
+  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
   await expect(nav).not.toContainText("Learning")
   expect(leakedDataCalls).toEqual([])
 })
@@ -144,10 +144,10 @@ test("gating (positive & partial): cell advertising all learning resources shows
   await page.route("**/api/host/v1/objects/learning.GapProposal**", (route) =>
     route.fulfill({ json: { objectType: "learning.GapProposal", records: proposalsFixture.records, query: { sort: [], filter: null }, total: { count: 4, approximate: false }, next: null, quarantineCount: 0 } }),
   )
-  await page.route("**/api/host/v1/actions**", (route) => route.fulfill({ json: { items: [] } }))
+  await page.route("**/api/host/v1/actions**", (route) => route.fulfill({ json: { definitionsVersion: 1, items: [] } }))
 
   await page.goto("/")
-  const nav = page.getByRole("navigation", { name: "Workspace" })
+  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
   await expect(nav).toContainText("Learning")
   for (const label of ["Episodes", "Cases & eval sets", "Misfit board", "Proposals"]) {
     await expect(nav.getByRole("link", { name: label })).toBeVisible()
@@ -285,12 +285,12 @@ test("gating (same-tab environment switch): invalidates cached catalog, unmounts
       ;(learningRequestsByEnv[env] ??= []).push(url.toString())
       if (env !== "env-a" && env !== "env-c") return route.fulfill({ status: 500, body: `unexpected Learning action fetch to ${env}` })
     }
-    return route.fulfill({ json: { items: [] } })
+    return route.fulfill({ json: { definitionsVersion: 1, items: [] } })
   })
 
   // 1. Mount /learning/episodes in org_demo / env-a (advertises all Learning resources).
   await page.goto("/learning/episodes")
-  const nav = page.getByRole("navigation", { name: "Workspace" })
+  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
   await expect(page.getByText("Cell A episode")).toBeVisible()
   await expect(nav.getByRole("link", { name: "Episodes" })).toBeVisible()
   expect(learningRequestsByEnv["env-a"]!.length).toBeGreaterThan(0)

@@ -75,12 +75,19 @@ impl SynchronousRule {
         .map_err(|error| refused(error.to_string()))
     }
 
-    /// TXN-RULE-1: evaluate only the captured action slice and trusted actor.
+    /// PRINCIPAL-INPUT-1: the principal inputs the pinned decision declares.
+    pub(crate) fn principal_inputs(&self) -> &[norn_ir::rule::PrincipalInputDeclaration] {
+        self.decision.principal_inputs()
+    }
+
+    /// TXN-RULE-1: evaluate only the captured action slice, the trusted actor
+    /// and the host-resolved principal inputs (PRINCIPAL-INPUT-1).
     pub(crate) fn evaluate<X>(
         &self,
         call: &ActionCall<'_>,
         input: &JsonObject,
         slice: &JsonObject,
+        principal: Option<&crate::principal_inputs::ActionPrincipalInputs>,
         fuel: &mut u64,
     ) -> Result<DecisionOutput, ActionRefusal<X>> {
         if self.scopes.iter().any(|scope| {
@@ -105,10 +112,18 @@ impl SynchronousRule {
             .decision
             .validate_slice(values)
             .map_err(ActionRefusal::from)?;
-        let event = self
+        let mut event = self
             .decision
             .type_event(event)
             .map_err(ActionRefusal::from)?;
+        if let Some(principal) = principal {
+            let values = RuntimeValue::Object(principal.values.clone());
+            let values = crate::decision_commit::expr_value(&values).map_err(refused)?;
+            event = self
+                .decision
+                .bind_principal(event, values)
+                .map_err(ActionRefusal::from)?;
+        }
         let evaluated = norn_decisions::evaluate(
             &self.decision,
             &slice,
@@ -130,11 +145,23 @@ impl SynchronousRule {
 
 impl<X> From<norn_decisions::DecisionError> for ActionRefusal<X> {
     fn from(error: norn_decisions::DecisionError) -> Self {
-        if let norn_decisions::DecisionError::BudgetExhausted { .. } = error {
+        use norn_decisions::DecisionError;
+        if let DecisionError::BudgetExhausted { .. } = error {
             return Self::ExpressionBudgetExceeded {
                 limit: crate::limits::ResourceLimitProfile::norn_limits_v1()
                     .turn
                     .fuel_units,
+            };
+        }
+        // PRINCIPAL-INPUT-1: the column's path, never a value.
+        if let DecisionError::PrincipalInputType { path } = &error {
+            return Self::PrincipalInputUnavailable {
+                input: path.clone(),
+            };
+        }
+        if let DecisionError::PrincipalInputUnavailable { .. } = error {
+            return Self::PrincipalInputUnavailable {
+                input: norn_ir::rule::DECIDE_PRINCIPAL_MEMBER.to_owned(),
             };
         }
         refused(error.to_string())
@@ -159,12 +186,21 @@ pub(crate) fn resolve<'a, X>(
     let Some(pin) = &call.action.synchronous_rule else {
         return Ok(None);
     };
+    // CREATE-WRITER-1 (#1101): a writer composes with a transition of an
+    // existing target or with the create of a new one; never an upsert that
+    // could silently update, a draft patch, or an owned-row mutation.
     if !matches!(
         call.action.effect_program,
-        Some(norn_ir::ActionEffectProgram::FireTransition { .. })
+        Some(
+            norn_ir::ActionEffectProgram::FireTransition { .. }
+                | norn_ir::ActionEffectProgram::UpsertInputObject {
+                    write_mode: norn_ir::UpsertWriteMode::CreateOnly,
+                    ..
+                }
+        )
     ) {
         return Err(refused(
-            "only transition actions admit a synchronous writer",
+            "only transition and create-only actions admit a synchronous writer",
         ));
     }
     let mut matching = catalog

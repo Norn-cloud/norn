@@ -23,24 +23,24 @@ import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
-import { useMode } from "./lib/live-transport.ts"
+import { retryMode, useMode } from "./lib/live-transport.ts"
+import { findingsQuery, recordRead } from "./lib/record-read.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { historyQueryKey, historyQueryPrefix, readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
+import { historyQueryKey, historyQueryPrefix, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
-import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
+import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
-import { MaskedValue } from "@/components/masked-value"
+import { MaskedValue, RevealScope } from "@/components/masked-value"
 import { LoadState } from "@/components/load-state"
-import { refreshMode } from "./lib/live-transport.ts"
 import { SourceChip } from "@/components/source-chip"
 import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "./record-rail.tsx"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -68,17 +68,38 @@ export function ObjectPage() {
   const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
+  // The record's source workspace: a live record is read at the scope its decided mode was read
+  // at (checked before and after the read), cached under it, and its reveals go to it. The same id
+  // in another workspace is another record, never this one's cached read. Nothing is read until the
+  // mode is decided: a failed mode read waits for Retry rather than reading without a workspace.
+  // Until then the read's key is the recording's, which no live answer reaches (#1740). Only a
+  // decided mode binds the page: after a failed refetch TanStack keeps the last answer, which is
+  // no longer current (#1745).
+  const mode = useMode()
+  const decided = mode.isSuccess ? mode.data : undefined
+  const sourceScope = decided?.kind === "live" ? decided.scope : undefined
+  const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })
+  const modeError = mode.isError ? mode.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
   // read again reads both, so neither is left from an earlier read.
   const queries = useQueryClient()
   const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
-  const live = useMode().data?.kind === "live"
+  // Retry decides the mode again (the shell's own retry); the record is read once it is decided,
+  // at that mode's scope. An errored read under a decided mode is read again here.
+  const retry = () => {
+    void retryMode(queries)
+    void catalogRead.refetch()
+    if (mode.isSuccess) void reads.refetch()
+  }
+  const live = decided?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
-  const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
-  const evidence = review.data?.document.evidence ?? []
-  const broken = review.data?.document.findings.filter(({ status }) => status === "open") ?? []
-  const heldBack = review.data?.document.quarantined === true
+  // Read and cached at the record's source workspace, and shown only while the mode is decided: no
+  // findings from another workspace, or from before the mode failed, show beside Workspace unavailable (#1745).
+  const review = useQuery(findingsQuery(name, id, sourceScope))
+  const reviewed = mode.isSuccess ? review.data?.document : undefined
+  const evidence = reviewed?.evidence ?? []
+  const broken = reviewed?.findings.filter(({ status }) => status === "open") ?? []
+  const heldBack = reviewed?.quarantined === true
   const corrections = useEvidenceActions(name, id)
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
@@ -86,7 +107,9 @@ export function ObjectPage() {
   const { locale } = useLocale()
   const data = reads.data
   const lineage = data?.source?.document
-  const problem = readProblem(catalogRead, reads)
+  // A failed mode read is the workspace's state, not this read's: it shows Workspace unavailable
+  // with the page's Retry (below) instead of a bare message.
+  const problem = mode.isError ? undefined : readProblem(catalogRead, reads)
   const { icon: TypeIcon, text } = KINDS.objectType
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
@@ -104,12 +127,13 @@ export function ObjectPage() {
     })
     : null
   return (
+    <RevealScope.Provider value={sourceScope}>
     <section className="space-y-6">
       {/* One header: the record's name with its state beside it, one quiet line of facts under it, the record's actions at the end. */}
       <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 flex-1 basis-96 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="min-w-0 text-title leading-tight font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
+            <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
             {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
@@ -137,10 +161,10 @@ export function ObjectPage() {
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending || reads.isError || catalogRead.isError) && (
         <LoadState
-          status={reads.isError || catalogRead.isError ? "error" : "pending"}
-          error={reads.error ?? catalogRead.error}
-          isFetching={reads.isFetching || catalogRead.isFetching}
-          onRetry={() => { refreshMode(); void catalogRead.refetch(); void reads.refetch() }}
+          status={reads.isError || catalogRead.isError || modeError !== null ? "error" : "pending"}
+          error={modeError ?? reads.error ?? catalogRead.error}
+          isFetching={reads.isFetching || catalogRead.isFetching || mode.isFetching}
+          onRetry={retry}
           skeleton="detail"
           loadingLabel="Reading the record"
         >
@@ -148,7 +172,7 @@ export function ObjectPage() {
         </LoadState>
       )}
       {reads.isSuccess && data === null && (live
-        ? <QuarantinedRecord objectType={name} id={id} onDone={readAgain} />
+        ? <QuarantinedRecord objectType={name} id={id} scope={sourceScope} onDone={readAgain} />
         : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
@@ -169,7 +193,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
+                {live && <Findings objectType={name} id={id} scope={sourceScope} actionFor={corrections.actionFor} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}
@@ -197,15 +221,15 @@ export function ObjectPage() {
                     {concept.laws.map((law) => {
                       const headline = lawHeadline(law)
                       return (
-                        <div key={law.id} data-law={law.id} className="flex gap-3 px-4 py-3 text-sm">
+                        <div key={law.id} data-law={law.id} className="flex gap-3 px-4 py-3 text-body">
                           <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
                           <div className="min-w-0 flex-1 space-y-1">
-                            <p lang={law.titleLang} className="font-medium text-pretty">{headline}</p>
+                            <p lang={law.titleLang} className="text-pretty">{headline}</p>
                             {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
                             {view === "technical" && (
                               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                                 <Chip tone="violet" title="The pack or module that owns this rule">{law.owner}</Chip>
-                                <code className="font-mono text-xs text-muted-foreground">{law.id}</code>
+                                <code className="font-mono text-meta text-muted-foreground">{law.id}</code>
                               </div>
                             )}
                           </div>
@@ -213,9 +237,9 @@ export function ObjectPage() {
                       )
                     })}
                     {concept.rules.filter((rule) => !concept.laws.some(({ rationale }) => rationale === rule)).map((rule) => (
-                      <div key={rule} className="flex gap-3 px-4 py-3 text-sm">
+                      <div key={rule} className="flex gap-3 px-4 py-3 text-body">
                         <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
-                        <p className="min-w-0 flex-1 font-medium text-pretty">{rule}</p>
+                        <p className="min-w-0 flex-1 text-pretty">{rule}</p>
                       </div>
                     ))}
                   </>}
@@ -226,6 +250,7 @@ export function ObjectPage() {
       )}
       {corrections.sheet(() => { readAgain(); void review.refetch() })}
     </section>
+    </RevealScope.Provider>
   )
 }
 
@@ -277,19 +302,19 @@ function Broken({ concept, reads, finding, heldBack }: { readonly concept: Conce
     ? (fields as readonly Concept["fields"][number][]).map((field) => ({ key: field.id, label: label(field), text: factDisplay(field, reads.object.document, reads.object.numbers, "", view), parts: undefined }))
     : undefined)
   return (
-    <section aria-label="The rule this record breaks" className="rounded-lg border border-tone-red/25 bg-card p-5 sm:px-6">
+    <section aria-label="The rule this record breaks" className="rounded-(--radius-panel) border border-(--panel-border) bg-card p-5 shadow-(--panel-shadow) sm:px-6">
       {pair ? (
         <div className="grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-6">
           {pair.map((side, index) => <Fragment key={side.key}>
-            {index === 1 && <span aria-label="does not equal" className="flex size-11 items-center justify-center rounded-full bg-tone-red/12 text-xl text-tone-red">≠</span>}
+            {index === 1 && <span aria-label="does not equal" className="flex size-11 items-center justify-center rounded-full bg-(--well) text-heading text-destructive-text ring-1 ring-line">≠</span>}
             <div className="min-w-0">
               <div className="text-meta text-muted-foreground">{side.label}</div>
-              <div className={cn("truncate pt-2 text-[2.75rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[3.25rem]", index === 0 && "text-tone-red")}>{side.text}</div>
+              <div className={cn("truncate pt-2 text-figure tabular-nums", index === 0 && "text-destructive-text")}>{side.text}</div>
               {side.parts && side.parts.length > 1 && <div className="truncate pt-1.5 text-meta text-muted-foreground tabular-nums" aria-label="The lines it summed">{side.parts.join(" + ")}</div>}
             </div>
           </Fragment>)}
         </div>
-      ) : <p className="text-section font-medium text-pretty">{law?.rationale ?? finding.message}</p>}
+      ) : <p className="text-heading text-pretty">{law?.rationale ?? finding.message}</p>}
       <div className="mt-5 flex flex-wrap items-start gap-x-3 gap-y-2 border-t border-border pt-4">
         <Chip tone="red" icon={ShieldX}>{heldBack ? "Kept out of answers" : "Rule broken"}</Chip>
         <p className="min-w-0 flex-1 text-pretty">{pair && law ? law.rationale : finding.message}{pair && <span className="block pt-1 text-meta text-muted-foreground">{finding.message}</span>}</p>
@@ -313,7 +338,7 @@ function FactValue({ field, reads, onLineage }: { readonly field: Concept["field
   const label = field.label ?? field.id.replaceAll("_", " ")
   return (
     <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={text} lineage={reads.source?.document ?? null} live={reads.object.origin === "live"}
-      trace={<button type="button" className="text-sm font-medium underline-offset-4 hover:underline" onClick={onLineage}>Open the record's lineage</button>}>
+      trace={<button type="button" className="text-body underline-offset-4 hover:underline" onClick={onLineage}>Open the record's lineage</button>}>
       {text}
     </FactProvenance>
   )
@@ -337,21 +362,21 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
     <Panel icon={Link2} label="Links" action={links.counts ? (links.counts.complete ? "Counted by the cell" : `Counted to ${links.counts.bound.toLocaleString("en")}`) : undefined}>
       <Well className="p-1.5">
         {declared.length === 0 || (groups.length === 0 && links.counts?.complete === true && !links.hasMore)
-          ? <p className="p-2 text-sm text-muted-foreground">{declared.length > 0 || links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
+          ? <p className="p-2 text-body text-muted-foreground">{declared.length > 0 || links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
           : <ul className="divide-y divide-border/70">
             {groups.map((group) => {
               const all = expanded.has(group.key)
               const shown = all ? group.ids : group.ids.slice(0, LINKS_SHOWN)
               return (
                 <li key={group.key} className="space-y-1 px-2 py-2">
-                  <div className="flex min-w-0 items-center gap-2 text-sm">
+                  <div className="flex min-w-0 items-center gap-2 text-body">
                     <span className="text-muted-foreground" aria-hidden>{group.direction === "out" ? "→" : "←"}</span>
-                    <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+                    <span className="min-w-0 flex-1 truncate">{group.label}</span>
                     {group.count !== null && <span className="shrink-0 rounded-md bg-muted px-1.5 text-meta tabular-nums text-muted-foreground" title={group.atLeast ? "At least this many: the cell stopped counting" : "Counted by the cell"}>{countText(group)}</span>}
                   </div>
                   {shown.length === 0
                     ? <p className="ps-5 text-meta text-muted-foreground">{none}</p>
-                    : <ul className="space-y-0.5 ps-5 text-sm">{shown.map((other) => <li key={other} className="truncate"><Link to="/sources/$concept/$" params={{ concept: group.otherType, _splat: other }} className="underline-offset-4 hover:underline">{other}</Link></li>)}</ul>}
+                    : <ul className="space-y-0.5 ps-5 text-body">{shown.map((other) => <li key={other} className="truncate"><Link to="/sources/$concept/$" params={{ concept: group.otherType, _splat: other }} className="underline-offset-4 hover:underline">{other}</Link></li>)}</ul>}
                   <div className="flex flex-wrap items-center gap-x-3 ps-5 text-meta text-muted-foreground">
                     {group.ids.length > LINKS_SHOWN && <button type="button" className="underline-offset-4 hover:underline" onClick={() => setExpanded((current) => { const next = new Set(current); if (all) next.delete(group.key); else next.add(group.key); return next })}>{all ? "Show fewer" : `Show all ${group.ids.length} on this page`}</button>}
                     {group.count !== null && group.ids.length < group.count && <span>{group.ids.length} of {countText(group)} on the first page</span>}
@@ -364,7 +389,7 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
           </ul>}
       </Well>
       <Sheet open={table !== null} onOpenChange={(next) => { if (!next) setTable(null) }}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
+        <SheetContent className="overflow-y-auto data-[side=right]:w-[48rem]">
           <SheetHeader><SheetTitle>{table?.label}</SheetTitle><SheetDescription>The records on the first page the cell returned, read one by one.</SheetDescription></SheetHeader>
           <div className="px-4 pb-6">{table && from && <LinkedRecords from={from} ids={table.ids} parent={id} />}</div>
         </SheetContent>
@@ -378,7 +403,7 @@ function Empty({ icon: Icon, action, children }: { readonly icon: LucideIcon; re
   return (
     <div className="flex flex-col items-center gap-3 px-6 py-10 text-center">
       <span className="flex size-12 items-center justify-center rounded-full bg-muted"><Icon aria-hidden className="size-6 text-muted-foreground" /></span>
-      <p className="max-w-sm text-sm text-muted-foreground">{children}</p>
+      <p className="max-w-sm text-body text-muted-foreground">{children}</p>
       {action}
     </div>
   )
@@ -395,15 +420,15 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
       {!lineage && <EmptyState icon={Database}>No source record is retained for this record.</EmptyState>}
       {lineage && <>
         <div>
-          <div className="text-panel font-medium">{systemName(lineage.sourceRecordRef.system)}</div>
+          <div className="text-body">{systemName(lineage.sourceRecordRef.system)}</div>
           <p className="text-meta text-muted-foreground">Source record <code>{lineage.documentRef.record}</code>, mapped by <code>{lineage.mappingPin.artifactId}</code> version {lineage.mappingPin.version}</p>
         </div>
         <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Read from</TableHead><TableHead>Rule</TableHead><TableHead>Recorded</TableHead></TableRow>}>
           {Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => (
             <TableRow key={fact}>
-              <TableCell className="font-medium"><button type="button" className="underline decoration-dotted underline-offset-4" onClick={() => inspect({ title: fact.replaceAll("_", " "), body: <ProvenanceChain lineage={lineage} fact={fact} /> })}>{fact.replaceAll("_", " ")}</button></TableCell>
-              <TableCell><code className="text-xs">{(provenance.sourceFields ?? []).join(", ") || "—"}</code></TableCell>
-              <TableCell><code className="text-xs">{provenance.transform}</code></TableCell>
+              <TableCell><button type="button" className="underline decoration-dotted underline-offset-4" onClick={() => inspect({ title: fact.replaceAll("_", " "), body: <ProvenanceChain lineage={lineage} fact={fact} /> })}>{fact.replaceAll("_", " ")}</button></TableCell>
+              <TableCell><code className="text-meta">{(provenance.sourceFields ?? []).join(", ") || "—"}</code></TableCell>
+              <TableCell><code className="text-meta">{provenance.transform}</code></TableCell>
               <TableCell>{provenance.recordedAt}</TableCell>
             </TableRow>
           ))}
@@ -412,7 +437,7 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
           const fields = provenance.sourceFields ?? []
           return (
             <div key={`evidence-${fact}`} className="space-y-2 pt-2">
-              <div className="text-sm font-medium">{fact.replaceAll("_", " ")}, as read from the scan</div>
+              <div className="text-body">{fact.replaceAll("_", " ")}, as read from the scan</div>
               <EvidenceList refs={evidence} {...actionFor ? { actionFor } : {}} filter={(item) => fields.includes(item.subjectProperty) || fields.some((field) => item.subjectProperty.startsWith(`${field}.`))} />
             </div>
           )
@@ -454,7 +479,7 @@ function Facts({ concept, reads, onLineage, sources }: {
   return (
     <Panel icon={Rows3} label="Facts" action={systems.length > 0 ? <span className="flex flex-wrap items-center gap-1.5" aria-label="Read from">{systems.map((system) => <SourceChip key={system} system={system} />)}</span> : undefined}>
       <Well className="px-1.5 pb-1.5">
-        <dl className="divide-y divide-border/60 text-sm" aria-label="Facts">
+        <dl className="divide-y divide-border/60 text-body" aria-label="Facts">
           {fields.map((field) => {
             const masked = maskedOf(reads.object.document, field.id)
             const system = systemOf(field.id)
@@ -462,7 +487,7 @@ function Facts({ concept, reads, onLineage, sources }: {
               <div key={field.id} data-fact={field.id} className="grid min-h-row-read grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_auto]">
                 <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={field.id}><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
                 <dd className={cn("col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 sm:col-span-1", field.decimal && "tabular-nums")}>
-                  <span className={cn("min-w-0 font-medium", masked === null ? "truncate" : "max-w-full")}><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
+                  <span className={cn("min-w-0", masked === null ? "truncate" : "max-w-full")}><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
                   {masked !== null && <HiddenTag revealable={masked.revealable} />}
                 </dd>
                 <dd className="col-start-2 row-start-1 flex justify-end sm:col-start-3 sm:row-start-auto">{system !== undefined && <SourceChip system={system} />}</dd>
@@ -479,7 +504,7 @@ function Facts({ concept, reads, onLineage, sources }: {
 /** A marked fact's tag: hidden from this reader's role, or masked with a reveal the server allows. */
 function HiddenTag({ revealable }: { readonly revealable: boolean }) {
   return (
-    <span data-hidden-tag="" className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-foreground/[0.06] px-2 text-xs font-medium text-muted-foreground"
+    <span data-hidden-tag="" className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-foreground/[0.06] px-2 text-meta text-muted-foreground"
       title={revealable ? "Masked for everyone; your role may reveal it, and the cell records a receipt" : "The server never sent this value to your role"}>
       <EyeOff aria-hidden className="size-3.5" />{revealable ? "Masked · you may reveal" : "Hidden from your role"}
     </span>
@@ -519,7 +544,7 @@ function Technical({ name, lineage }: { readonly name: string; readonly lineage:
         </dl>
         <DenseTable head={<TableRow><TableHead>Property</TableHead><TableHead>Rule</TableHead><TableHead>Source fields</TableHead></TableRow>}>
           {Object.entries(lineage.fieldProvenance).map(([fact, provenance]) => (
-            <TableRow key={fact}><TableCell className="font-mono text-xs">{fact}</TableCell><TableCell className="font-mono text-xs">{provenance.transform}</TableCell><TableCell className="font-mono text-xs">{(provenance.sourceFields ?? []).join(", ")}</TableCell></TableRow>
+            <TableRow key={fact}><TableCell className="font-mono text-meta">{fact}</TableCell><TableCell className="font-mono text-meta">{provenance.transform}</TableCell><TableCell className="font-mono text-meta">{(provenance.sourceFields ?? []).join(", ")}</TableCell></TableRow>
           ))}
         </DenseTable>
       </Well></Panel>
@@ -564,17 +589,17 @@ function DecisionAndReceipt() {
   return (
     <Panel icon={KINDS.policy.icon} label="Decision and receipt"><Well className="space-y-3 p-3">
       {data?.kind === "read"
-        ? <p className="text-sm">The access decision is read live from the cell for your account.</p>
-        : <p className="text-sm">This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.</p>}
+        ? <p className="text-body">The access decision is read live from the cell for your account.</p>
+        : <p className="text-body">This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.</p>}
       {data?.kind === "refused" && <RefusedNote refusal={data.refusal} />}
-      <dl className="space-y-1 text-sm">
+      <dl className="space-y-1 text-body">
         {data?.kind === "read"
           ? <>
             {row("Principal", <span><CopyId value={data.read.document.principal.subjectId} /> <span className="text-muted-foreground">· {data.read.document.principal.roles.join(", ")} ({data.read.document.principal.roleTable})</span></span>)}
-            {row("Policy", <span className="font-mono text-xs">{data.read.document.policy} · {data.read.document.grantTable}</span>)}
+            {row("Policy", <span className="font-mono text-meta">{data.read.document.policy} · {data.read.document.grantTable}</span>)}
             {CAPABILITIES.map(([capability, label]) => {
               const { decision, rule } = data.read.document.capabilities[capability]
-              return <div key={capability}>{row(label, <span className="flex flex-wrap items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", decision === "permit" ? STATUS.held.dot : STATUS.refused.dot)} />{decision === "permit" ? "Permit" : "Deny"}<span className="font-mono text-xs text-muted-foreground">{rule ?? "no rule grants it"}</span></span>)}</div>
+              return <div key={capability}>{row(label, <span className="flex flex-wrap items-center gap-2"><span className={cn("size-2 shrink-0 rounded-full", decision === "permit" ? STATUS.held.dot : STATUS.refused.dot)} />{decision === "permit" ? "Permit" : "Deny"}<span className="font-mono text-meta text-muted-foreground">{rule ?? "no rule grants it"}</span></span>)}</div>
             })}
           </>
           : <>

@@ -510,7 +510,7 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
     }
 }
 
-impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
+impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
     #[allow(
         clippy::too_many_lines,
         reason = "one atomic commit materializes object and link values before applying any effects"
@@ -634,7 +634,7 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
     }
 }
 
-impl<E, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, C, I> {
+impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for MemoryCell<E, C, I> {
     type Event = E;
     type Command = C;
     type Input = I;
@@ -3039,8 +3039,9 @@ macro_rules! rehost {
 fn without_host<X>(error: CommitError<X>) -> Result<CommitError<Infallible>, X> {
     Ok(rehost!(error;
         IdentityReuse, AtomicBoundary { key }, AtomicDeliveryBoundary { consumed }, ImmutableObject { key },
+        LifecycleInitialization { key, refusal },
         Law { key, reason }, IdentityCollision { owner, key, conflicts },
-        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed },
+        OwnedRowsProtected { key }, DuplicateKey { key }, NotPending { consumed }, ReceiptNotAccepted { consumed },
         Conflict { key, expected, current }, DuplicateLink { key },
         IdentifierTooLong { field, actual_bytes, max_bytes },
         LinkConflict { key, expected, current }, LinkReadConflict { source_key, link },

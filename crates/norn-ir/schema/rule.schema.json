@@ -43,6 +43,12 @@
         "$ref": "#/$defs/JsonValue"
       }
     },
+    "principalInputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PrincipalInputDeclaration"
+      }
+    },
     "requiredServices": {
       "type": "array",
       "maxItems": 0
@@ -157,6 +163,20 @@
         "endInclusive"
       ]
     },
+    "AttributeInput": {
+      "description": "`attribute { name }`.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A scoped attribute the principal attribute catalog declares.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
     "FoldArithmetic": {
       "description": "Arithmetic policy is part of declaration/evidence identity. Ordinary ZEN\ndivision and implicit rounding do not implement this contract.",
       "type": "object",
@@ -199,6 +219,41 @@
       "enum": [
         "string",
         "integer"
+      ]
+    },
+    "HoldsRoleAt": {
+      "description": "Where a [`HoldsRoleInput`] is evaluated: `\"resource\"`, or a list of scope\ndimensions.",
+      "anyOf": [
+        {
+          "description": "The scope of the decision's subject (the object the call targets).",
+          "$ref": "#/$defs/SubjectScope"
+        },
+        {
+          "description": "The request scope, which must carry exactly these dimensions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScopeDimension"
+          }
+        }
+      ]
+    },
+    "HoldsRoleInput": {
+      "description": "`holdsRole { role, at }`.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "The scope the PDP evaluates membership at.",
+          "$ref": "#/$defs/HoldsRoleAt"
+        },
+        "role": {
+          "description": "A role the principal attribute catalog declares.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "at"
       ]
     },
     "JdmCustomNodeContent": {
@@ -1015,10 +1070,87 @@
         "arithmetic"
       ]
     },
+    "PrincipalInputDeclaration": {
+      "description": "One declared principal input of a `decide` rule (PRINCIPAL-INPUT-1,\n#1091): the typed column `principal.<name>` and where its value comes\nfrom. The value is resolved by the host; a request never supplies it.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "What the host resolves the column from.",
+          "$ref": "#/$defs/PrincipalInputKind"
+        },
+        "name": {
+          "description": "The column name under the reserved `principal.` namespace.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "kind"
+      ]
+    },
+    "PrincipalInputKind": {
+      "description": "What a [`PrincipalInputDeclaration`] reads. Externally tagged and closed.",
+      "oneOf": [
+        {
+          "description": "Whether the PDP finds the principal holding a role at a scope: a\nboolean. The decision never sees role lists or scope keys.",
+          "type": "object",
+          "properties": {
+            "holdsRole": {
+              "$ref": "#/$defs/HoldsRoleInput"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "holdsRole"
+          ]
+        },
+        {
+          "description": "The roles of a declared role profile the principal holds: a set of\nstrings.",
+          "type": "object",
+          "properties": {
+            "roleProfile": {
+              "$ref": "#/$defs/RoleProfileInput"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "roleProfile"
+          ]
+        },
+        {
+          "description": "A declared scoped attribute, with the catalog's type.",
+          "type": "object",
+          "properties": {
+            "attribute": {
+              "$ref": "#/$defs/AttributeInput"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "attribute"
+          ]
+        }
+      ]
+    },
     "PropertyId": {
       "description": "Id of a property within its object type (`sku_code`), unique there.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "RoleProfileInput": {
+      "description": "`roleProfile { profile }`.",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "description": "A role profile the principal attribute catalog declares.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile"
+      ]
     },
     "Rounding": {
       "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
@@ -1576,6 +1708,17 @@
         "json"
       ]
     },
+    "ScopeDimension": {
+      "description": "A structural scope dimension (the kernel's five-dimension scope key).",
+      "type": "string",
+      "enum": [
+        "org",
+        "tenant",
+        "workspace",
+        "environment",
+        "businessUnit"
+      ]
+    },
     "SliceDeclaration": {
       "description": "One entry of a `decide` rule's declared read slice: one object, or (a\n[`SliceKey::Link`] key) the bounded list of objects a link reaches\n(#3079).",
       "type": "object",
@@ -1796,6 +1939,16 @@
           "required": [
             "predicate"
           ]
+        }
+      ]
+    },
+    "SubjectScope": {
+      "description": "The literal `\"resource\"` of [`HoldsRoleAt::Subject`].",
+      "oneOf": [
+        {
+          "description": "The decision subject's scope.",
+          "type": "string",
+          "const": "resource"
         }
       ]
     },

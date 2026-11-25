@@ -122,6 +122,8 @@ fn admit_with(
     if !checked.receipt.admitted {
         return Err(KernelRefusal::Refused(checked.diagnostics));
     }
+    let model = kernel_model(artifacts)?;
+    check_principal_catalog(artifacts, &model)?;
     let receipt = checked
         .receipt
         .canonical_json()
@@ -131,7 +133,7 @@ fn admit_with(
         .canonical_json()
         .map_err(|e| invalid("canonical set")(&e))?;
     Ok(AdmittedSet {
-        model: kernel_model(artifacts)?,
+        model,
         canonical_set: String::from_utf8(canonical_set).map_err(|e| invalid("set")(&e))?,
         receipt_sha256: checked
             .receipt
@@ -141,12 +143,79 @@ fn admit_with(
     })
 }
 
+/// PRINCIPAL-INPUT-1 (#1091): a set that declares a principal attribute
+/// catalog is admitted only when the catalog agrees with what the set's own
+/// access rules use each principal attribute at
+/// ([`norn_kernel::authz::admit_principal_catalog`]). A host compiles its
+/// action policy from the installed set; a catalog that cannot compile there
+/// would leave the cell serving no action, so it is refused here, before
+/// anything is installed. A set that declares no catalog is not checked.
+/// `model` is the set's model before the kernel's own types are added.
+///
+/// # Errors
+/// The catalog disagrees with the access rules, as one
+/// `artifact_set.policy.principal_catalog_conflict` finding.
+pub fn check_principal_catalog(
+    artifacts: &[ArtifactEnvelope],
+    model: &Model,
+) -> Result<(), KernelRefusal> {
+    fn payload<T: serde::de::DeserializeOwned>(artifact: &ArtifactEnvelope) -> Option<T> {
+        serde_json::to_value(artifact.payload.to_json_value())
+            .and_then(serde_json::from_value)
+            .ok()
+    }
+    let mut policies = Vec::new();
+    let mut declaring = None;
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Policy)
+    {
+        if let Some(norn_ir::access::PolicyRoot::Access(access)) = payload(artifact) {
+            if declaring.is_none() && !access.principal_catalog.is_empty() {
+                declaring = Some(artifact.artifact_id.clone());
+            }
+            policies.push(access);
+        }
+    }
+    let Some(artifact_id) = declaring else {
+        return Ok(());
+    };
+    let actions: Vec<norn_ir::ActionRoot> = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() == ArtifactKind::Action)
+        .filter_map(payload)
+        .collect();
+    let object_types: Vec<_> = model.object_types().cloned().collect();
+    let interfaces: Vec<_> = model.interfaces().cloned().collect();
+    norn_kernel::authz::admit_principal_catalog(&policies, &object_types, &interfaces, &actions)
+        .map(|_catalog| ())
+        .map_err(|error| {
+            KernelRefusal::Refused(vec![norn_checker::Diagnostic {
+                code: norn_checker::DiagnosticCode::new(
+                    norn_checker::principal_inputs::codes::PRINCIPAL_CATALOG_CONFLICT,
+                ),
+                severity: norn_ir::DiagnosticSeverity::Error,
+                message: format!(
+                    "the principal catalog does not agree with the set's access rules: {error}"
+                ),
+                span: Some(norn_checker::Span::pointer("/payload/principalCatalog")),
+                artifact_id: Some(artifact_id),
+                remediation: Some(norn_ir::DiagnosticRemediation::FixDefinition),
+                witness: None,
+            }])
+        })
+}
+
 /// The normalized model of the set's entity roots and their governing laws.
 ///
 /// # Errors
 /// An entity root outside the supported profile, or a model that does not
 /// project.
 pub fn kernel_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, KernelRefusal> {
+    let scope_findings = norn_checker::entity_scopes::check_entity_reference_scopes_all(artifacts);
+    if !scope_findings.is_empty() {
+        return Err(KernelRefusal::Refused(scope_findings));
+    }
     let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
     for artifact in artifacts
         .iter()
@@ -186,6 +255,18 @@ pub fn kernel_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, KernelRefus
 /// # Errors
 /// The set's model does not project, or declares a kernel-reserved name.
 pub fn serving_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> {
+    serving_model_keeping(artifacts, false)
+}
+
+/// [`serving_model`], keeping the call record's `principalInputs` column when
+/// the cell already records it ([`crate::action_admission::Serving`]).
+///
+/// # Errors
+/// As [`serving_model`].
+pub fn serving_model_keeping(
+    artifacts: &[ArtifactEnvelope],
+    keep_principal_inputs: bool,
+) -> Result<Model, String> {
     let model = kernel_model(artifacts).map_err(|refusal| match refusal {
         KernelRefusal::Refused(findings) => findings
             .iter()
@@ -194,7 +275,31 @@ pub fn serving_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> {
             .join("; "),
         KernelRefusal::Invalid(detail) => detail,
     })?;
-    crate::action_admission::prepare_action_model(&model).map_err(|refusal| refusal.message)
+    crate::action_admission::prepare_action_model_keeping(&model, artifacts, keep_principal_inputs)
+        .map_err(|refusal| refusal.message)
+}
+
+/// HOST-REOPEN-1 for a restarted host: the serving model of the installed
+/// revision whose recorded model hash is `model_hash`. That is
+/// [`serving_model`], unless the revision was installed keeping the call
+/// record's `principalInputs` column: the recorded hash says which.
+///
+/// # Errors
+/// As [`serving_model`].
+pub fn serving_model_installed(
+    artifacts: &[ArtifactEnvelope],
+    model_hash: &str,
+) -> Result<Model, String> {
+    let model = serving_model(artifacts)?;
+    if model.model_hash() == model_hash {
+        return Ok(model);
+    }
+    let kept = serving_model_keeping(artifacts, true)?;
+    Ok(if kept.model_hash() == model_hash {
+        kept
+    } else {
+        model
+    })
 }
 
 /// Admit `added` over an installed set, as installing it would: the retained

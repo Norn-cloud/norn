@@ -105,6 +105,7 @@ fn access(scope: &ScopeKey, capabilities: Vec<String>) -> DemoResult<(Pdp, Acces
             })
             .collect(),
         generic_rules: vec![],
+        principal_catalog: vec![],
         extensions: None,
     };
     let pdp = Pdp::new(

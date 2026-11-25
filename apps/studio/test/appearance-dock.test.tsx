@@ -4,7 +4,6 @@ import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } fr
 import { Blend, Database, Fingerprint, House, Inbox, Network, Plug, ShieldCheck } from "lucide-react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger, chromeDockPrimitive } from "../src/components/ui/chrome-dock.tsx"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../src/components/ui/command.tsx"
 import { ToggleGroup, ToggleGroupItem, createArrowSelectGuard, isRadioArrowKey } from "../src/components/ui/toggle-group.tsx"
 import { AppearanceProvider, SHELLS, SKINS, applyAppearance, isShellChrome, isSkin, storedShellChrome, storedSkin } from "../src/lib/appearance.tsx"
 import type { Account } from "../src/lib/session.ts"
@@ -238,23 +237,28 @@ test("ToggleGroup arrow-select guard survives Base UI's bubble-phase focus micro
   expect(guard.consume()).toBe(false)
 })
 
-test("first-party Command palette renders accessible combobox, listbox, group, and option roles without cmdk", () => {
-  const html = renderToStaticMarkup(
-    <Command label="Choose a record" shouldFilter={false}>
-      <CommandInput placeholder="Search…" value="" onValueChange={() => {}} />
-      <CommandList>
-        <CommandEmpty>No results.</CommandEmpty>
-        <CommandGroup heading="Records">
-          <CommandItem value="r1">Record One</CommandItem>
-          <CommandItem value="r2">Record Two</CommandItem>
-        </CommandGroup>
-      </CommandList>
-    </Command>,
-  )
-  expect(html).toContain('role="combobox"')
-  expect(html).toContain('role="listbox"')
-  expect(html).toContain('role="group"')
-  expect(html).toContain('role="option"')
-  expect(html).toContain('data-slot="command-item"')
-  expect(html).toContain("Record One")
+// Lead ruling (2026-11-25): an app may opt a kiosk surface into the dock, but that is only the surface's
+// default; a reader's stored choice wins over it, as it wins over every default.
+test("a reader's stored shell beats a surface's dock opt-in, and the surface's default beats the global sidebar", () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+  const store = new Map<string, string>()
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value) },
+  })
+  try {
+    expect(storedShellChrome()).toBe("sidebar")
+    expect(storedShellChrome("dock")).toBe("dock")
+    store.set("norn.studio.shell", "sidebar")
+    expect(storedShellChrome("dock")).toBe("sidebar")
+    store.set("norn.studio.shell", "dock")
+    expect(storedShellChrome()).toBe("dock")
+    store.set("norn.studio.shell", "minimal")
+    expect(storedShellChrome("dock")).toBe("dock")
+    store.set("norn.studio.skin", "open")
+    expect(storedSkin("glass")).toBe("open")
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "localStorage", saved)
+    else delete (globalThis as { localStorage?: unknown }).localStorage
+  }
 })

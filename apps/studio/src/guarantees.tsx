@@ -14,16 +14,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useView } from "@/lib/view"
 import { conceptTitle, type Concept } from "./lib/catalog.ts"
-import { cases, field, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "./lib/guarantees.ts"
+import { cases, field, GUARANTEE_TITLES as TITLE, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
-import type { MenuEntry } from "./shell.tsx"
 import { ENFORCED, HeldRuleRow, heldCountText, heldGroupKey, LawsPanel, useHeldBack } from "./laws.tsx"
 import { RECORDED_HINT, useCatalog } from "./sources.tsx"
-
-const TITLE: Readonly<Record<string, string>> = {
-  original: "As declared",
-  mutant: "With the loss rule removed (a deliberately broken copy)",
-}
 
 /** The colour a verdict reads in: refuted red, holding green, unknown muted. */
 const tone = (verdict: Guarantees["verdict"]) => verdict.kind === "refuted" ? "text-destructive" : verdict.kind === "bounded-pass" ? "text-success" : "text-muted-foreground"
@@ -79,7 +73,7 @@ function Document({ name, document }: { readonly name: string; readonly document
     <section id={`guarantee-${name}`} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-section font-medium">{TITLE[name] ?? name}</h2>
+          <h2 className="text-heading font-medium">{TITLE[name] ?? name}</h2>
           <Badge variant="outline" title="A document the model checker produced, replayed exactly. Not a live connection.">Recorded</Badge>
         </div>
         <p className="text-meta text-muted-foreground">Rule {document.lawId} {document.lawVersion} · <Verdict verdict={document.verdict} /></p>
@@ -187,7 +181,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
       {broken && counterexample && (
         <Panel icon={CircleX} label="A deliberately broken copy is caught">
           <Well className="flex flex-col gap-4 px-5 py-5">
-            <p className="text-panel text-pretty">With the loss rule removed, the model checker finds a case that breaks the rule:</p>
+            <p className="text-body text-pretty">With the loss rule removed, the model checker finds a case that breaks the rule:</p>
             <BeforeAfter scenario={counterexample} />
             <p className="text-meta text-muted-foreground"><Verdict verdict={broken.verdict} /> · {broken.discharged} of {broken.eligible} supported checks proven · written by <code>{counterexample.writerArtifactId}</code></p>
           </Well>
@@ -197,12 +191,7 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
   )
 }
 
-/** The recorded proof documents, for the sidebar submenu when no cell is connected. */
-export function useRulesMenu(): readonly MenuEntry[] | undefined {
-  const recorded = useMode().data?.kind === "recorded"
-  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees, enabled: recorded })
-  return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
-}
+export { useRulesMenu } from "./lib/nav-menus.ts"
 
 /** A type heading linking to its Workspace records view, with its technical id under Technical view. */
 function TypeHeading({ concept, technical }: { readonly concept: Concept; readonly technical: boolean }) {

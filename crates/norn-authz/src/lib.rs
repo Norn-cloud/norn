@@ -36,10 +36,19 @@ mod entitlement;
 mod grants;
 mod lower;
 mod pdp;
+mod principal_inputs;
 mod request;
 
 /// The `AccessIR` input types of [`compile`], re-exported from `norn-ir`.
 pub use norn_ir::access;
+
+#[doc(hidden)]
+pub mod cedar_projection {
+    pub use norn_projections::{
+        CedarAttribute, CedarPrincipalAttribute, project_cedar_schema_with_catalog,
+        project_cedar_schema_with_catalog_and_principal_attributes, project_host_access_schema,
+    };
+}
 
 pub use admit::ValidatedPolicySet;
 pub use base::{AuthzSchema, NORN_BASE_SCHEMA};
@@ -55,11 +64,18 @@ pub use lower::{
     compile_all_projected_with_entitlements, infer_principal_attributes,
 };
 pub use pdp::{ConjunctOutcome, DenyReason, DeterminingPolicy, Pdp, PdpDecision, PdpExplanation};
+pub use principal_inputs::{
+    HOLDS_ROLE_ACTION, HOLDS_ROLE_POLICY_ID, HoldsRoleKey, HoldsRolePdp, HoldsRolePolicy,
+    PRINCIPAL_ROLE_RESOURCE, PrincipalContext, PrincipalInputUnavailable, admit_principal_catalog,
+    holds_role_keys, principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
+};
 pub use request::{
     AccessRequest, ActorKind, AttrValue, CapabilityGrant, CommitBinding, Delegation,
     EntitlementCatalog, EntitlementInput, EntityRef, PrincipalInput, ResourceInput, ScopeKey,
 };
 
+#[cfg(test)]
+mod principal_inputs_tests;
 #[cfg(test)]
 mod projected_tests;
 #[cfg(test)]

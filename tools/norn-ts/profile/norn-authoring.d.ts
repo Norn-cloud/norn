@@ -399,6 +399,12 @@ declare module "@norn/authoring" {
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
       readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<E, I, S["Type"]>>>
+      /**
+       * FA-PROTECT-1 / ACTOR-STAMP-1: properties no caller, import, update or
+       * bulk write may set. A governed create stamps one from the verified
+       * principal through `fromCaller`; it is immutable afterwards.
+       */
+      readonly protected?: ReadonlyArray<keyof S["Type"] & string>
     }
 
     /** An EntityIR v2 object type. */
@@ -555,6 +561,15 @@ declare module "@norn/authoring" {
        * supplied value is refused.
        */
       readonly fromCaller?: ReadonlyArray<keyof I["Type"] & string>
+      /**
+       * ACTOR-INDEPENDENT-1: protected actor properties of the effect target
+       * (a server-stamped creator) whose recorded principal must differ from
+       * the verified caller. Checked against the committed target at commit.
+       * Property ids of the effect's target type: that type is not a type
+       * parameter of the action, so the names are checked at admission
+       * (`artifact_set.action.independent_actor`), not by TypeScript.
+       */
+      readonly independentOf?: ReadonlyArray<string>
     }
 
     /** An ActionIR action. */
@@ -605,6 +620,11 @@ declare module "@norn/authoring" {
       readonly title: string
       readonly version: string
       readonly rules: ReadonlyArray<AccessRuleSpec>
+      /**
+       * The principal attribute catalog (#1091): the roles (`bool`), role profiles (`stringSet`)
+       * and scoped attributes a decision may declare as typed principal inputs.
+       */
+      readonly principalCatalog?: ReadonlyArray<import("../src/builder/access.ts").PrincipalCatalogEntry>
     }): AccessDefinition
 
     /** One type's labels in a standalone catalog. */
@@ -876,6 +896,12 @@ declare module "@norn/authoring" {
       readonly dependencies?: ReadonlyArray<DecisionDefinition | import("../src/builder/envelope.ts").DependencyPin>
       readonly triggers?: ReadonlyArray<RuleTriggerSpec>
       readonly slice?: ReadonlyArray<SliceSpec>
+      /**
+       * PRINCIPAL-INPUT-1 (#1091): the acting principal's attributes a `decide` rule reads. Each
+       * is the column `input.principal.<name>` (declare it in `input`); the host resolves it from
+       * the verified principal and the PDP, and a request never supplies it.
+       */
+      readonly principalInputs?: ReadonlyArray<import("../src/builder/rule.ts").PrincipalInputDecl>
       /** The decision's input and output contracts: Effect Schema structs, lowered to closed schemas. */
       readonly input: I
       readonly output: O

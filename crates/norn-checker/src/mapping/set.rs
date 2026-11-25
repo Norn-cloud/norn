@@ -10,6 +10,7 @@ use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
 
 use super::{CompiledMapping, MappingModel, check_mapping_local, codes, compile_mapping};
+use crate::entity_scopes::ScopedView;
 use crate::lint::mapping::codes as lint_codes;
 use crate::lint::{LintInput, lint_artifact_set};
 use crate::property_types::error;
@@ -56,7 +57,7 @@ pub fn check_mapping_artifacts(
                     .and_then(serde_json::from_value::<MappingDocument>)
         {
             out.extend(interpretation_endpoints(artifact, &document, base));
-            if !interpretation_members(&document, base) {
+            if !interpretation_members(artifact, &document, base) {
                 out.push(in_payload(error(
                     "core.composition.mapping_gap",
                     "interpretation must cover the retained source contract exactly with unique compatible target members".to_owned(),
@@ -89,16 +90,15 @@ pub fn check_mapping_artifacts(
     if mappings.is_empty() {
         return out;
     }
-    let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base));
     let mut path_refused = false;
     for (artifact, mapping) in &mappings {
+        let view = ScopedView::of(artifact, artifacts, base, &BTreeSet::new());
+        let model = MappingModel::of(&view);
         if let Ok(model) = &model {
-            out.extend(missing_path_bindings(
-                artifact, mapping, model, artifacts, base,
-            ));
+            out.extend(missing_path_bindings(artifact, mapping, model, &view));
         }
         if !path_refused {
-            let findings = path_findings(artifact, mapping, artifacts, base, registry, &work);
+            let findings = path_findings(artifact, mapping, &view, registry, &work);
             path_refused = findings
                 .iter()
                 .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
@@ -108,8 +108,8 @@ pub fn check_mapping_artifacts(
         out.extend(dependency_findings(artifact, mapping));
         let findings = match (&model, resolve_source(mapping, artifacts, base)) {
             (Ok(model), Ok(source)) => {
-                match compile_checked(artifact, mapping, &source, model, artifacts, base) {
-                    Ok(compiled) => coverage_findings(artifact, &compiled, artifacts, base),
+                match compile_checked(artifact, mapping, &source, model, &view) {
+                    Ok(compiled) => coverage_findings(artifact, &compiled, &view),
                     Err(findings) => findings,
                 }
             }
@@ -139,8 +139,7 @@ fn missing_path_bindings(
     artifact: &ArtifactEnvelope,
     mapping: &MappingIr,
     model: &MappingModel,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
 ) -> Vec<Diagnostic> {
     use crate::entity_artifacts::{Decoded, decode_v2};
     let mut out = Vec::new();
@@ -153,7 +152,7 @@ fn missing_path_bindings(
         };
         let mut equations = Vec::new();
         let mut owners = BTreeSet::new();
-        for declaration in artifacts.iter().chain(base) {
+        for declaration in view.pool() {
             let Decoded::Root(root) = decode_v2(declaration) else {
                 continue;
             };
@@ -210,8 +209,7 @@ fn missing_path_bindings(
 fn path_findings(
     artifact: &ArtifactEnvelope,
     mapping: &MappingIr,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
     work: &crate::consistency::chase::AdmissionWork,
 ) -> Vec<Diagnostic> {
@@ -223,9 +221,9 @@ fn path_findings(
     let resolve = |ids: &[String]| -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
         ids.iter()
             .map(|id| {
-                let entity = artifacts
+                let entity = view
+                    .pool()
                     .iter()
-                    .chain(base)
                     .find(|a| {
                         a.artifact_id == *id
                             && matches!(a.payload, ArtifactPayload::Entity(_))
@@ -322,7 +320,11 @@ fn path_pin(artifact: &ArtifactEnvelope) -> Result<ArtifactRef, Vec<Diagnostic>>
 
 /// MAP-TOTAL-1: totality comes from retained definitions, never a supplied list.
 /// This cut checks identity bindings; transformations remain unsupported.
-fn interpretation_members(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+fn interpretation_members(
+    owner: &ArtifactEnvelope,
+    document: &LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> bool {
     let Some(source) = layer_members(&document.source_layer, base) else {
         return false;
     };
@@ -340,14 +342,18 @@ fn interpretation_members(document: &LawInterpretationIr, base: &[ArtifactEnvelo
             && seen.insert(binding.source.clone())
             && images.insert(binding.target.clone())
     }) && seen == source
-        && interpretation_contracts(document, base)
+        && interpretation_contracts(owner, document, base)
 }
 
 /// MAP-UNITS / EVENT-MULTI: member owners, scalar units and relation roles
 /// come from resolved contracts. This identity profile never invents conversions.
-fn interpretation_contracts(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+fn interpretation_contracts(
+    owner: &ArtifactEnvelope,
+    document: &LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> bool {
     use norn_ir::definition_catalog::Member;
-    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    let catalog = ScopedView::of(owner, &[], base, &BTreeSet::new()).into_catalog();
     document.members.iter().all(|binding| {
         let (Some(source_owner), Some(target_owner)) = (member_owner(&binding.source), member_owner(&binding.target)) else { return false; };
         if !document.members.iter().any(|b| b.source == source_owner && b.target == target_owner) { return false; }
@@ -490,7 +496,7 @@ fn layer_members(
     let BusinessPackRoot::Composition(pack) = root else {
         return None;
     };
-    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    let catalog = ScopedView::of(layer, &[], base, &BTreeSet::new()).into_catalog();
     let mut members = BTreeSet::new();
     for reference in pack.artifacts {
         // Nested pack/extension contracts need retained closure, not guessed scope.
@@ -669,10 +675,11 @@ pub fn compile_mapping_artifact(
             Span::pointer(""),
         )]));
     };
-    let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base)).map_err(locate)?;
+    let view = ScopedView::of(mapping, artifacts, base, &BTreeSet::new());
+    let model = MappingModel::of(&view).map_err(locate)?;
     let source =
         resolve_source(&document, artifacts, base).map_err(|finding| locate(vec![*finding]))?;
-    compile_checked(mapping, &document, &source, &model, artifacts, base).map_err(locate)
+    compile_checked(mapping, &document, &source, &model, &view).map_err(locate)
 }
 
 /// Reuse T2/T3 admission for the generated actions. Only entity artifacts
@@ -682,8 +689,7 @@ fn compile_checked(
     mapping: &MappingIr,
     source: &SourceSchemaIr,
     model: &MappingModel,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
 ) -> Result<CompiledMapping, Vec<Diagnostic>> {
     if artifact.provenance.source_path.as_deref() == Some(super::evidence::CORE_MAPPING_GENERATOR)
         && !matches!(super::evidence::read_evidence(mapping), Ok(Some(_)))
@@ -694,8 +700,7 @@ fn compile_checked(
             Span::pointer("/extensions"),
         )]);
     }
-    let complete: Vec<_> = artifacts.iter().chain(base).cloned().collect();
-    match super::evidence::evidence_impacts(mapping, &complete) {
+    match super::evidence::evidence_impacts(mapping, view.pool()) {
         Ok(impacted) if impacted.is_empty() => {}
         result => {
             return Err(vec![error(
@@ -706,7 +711,12 @@ fn compile_checked(
         }
     }
     let compiled = compile_mapping(artifact, mapping, source, model)?;
-    let entities = entity_artifacts(artifacts, base);
+    let entities: Vec<_> = view
+        .pool()
+        .iter()
+        .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Entity(_)))
+        .cloned()
+        .collect();
     let findings = crate::check_artifact_set(
         compiled.action_artifacts(),
         &crate::EntityArtifactSetContext {
@@ -742,12 +752,12 @@ fn compile_checked(
 fn coverage_findings(
     artifact: &ArtifactEnvelope,
     compiled: &CompiledMapping,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
 ) -> Vec<Diagnostic> {
+    let owned = |set: &[&ArtifactEnvelope]| set.iter().map(|a| (*a).clone()).collect::<Vec<_>>();
     lint_artifact_set(&LintInput {
-        artifacts,
-        base,
+        artifacts: &owned(view.candidates()),
+        base: &owned(view.installed()),
         coverage: compiled.coverage(),
     })
     .into_iter()
@@ -761,18 +771,6 @@ fn coverage_findings(
             .contains(&finding.code.as_str())
     })
     .collect()
-}
-
-/// Every `entity` artifact of the base and the set.
-fn entity_artifacts(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-) -> Vec<ArtifactEnvelope> {
-    base.iter()
-        .chain(artifacts)
-        .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Entity(_)))
-        .cloned()
-        .collect()
 }
 
 /// The strict root of a `source_schema` artifact's payload.

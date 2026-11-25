@@ -88,9 +88,9 @@ use norn_ir::{
 };
 
 use crate::action_set::Model;
-use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::EffectiveLifecycle;
+use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::{Diagnostic, DiagnosticCode, LifecycleWrite, Span, check_lifecycle_writes};
 
@@ -361,96 +361,109 @@ pub fn check_lifecycle_write_set(
     if decisions.is_empty() {
         return Vec::new();
     }
-    let model = Model::new(artifacts, context.base, context.registry, true);
+    let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut findings = Vec::new();
     for (artifact, output) in &decisions {
         let Some(schema) = FactSchema::of(output) else {
             continue;
         };
-        let ops = schema.ops();
-        let mut resolved: Vec<fact_literals::Resolved<'_>> = Vec::new();
-        for (index, kind) in schema
-            .values("objectType")
-            .unwrap_or_default()
-            .into_iter()
-            .enumerate()
-        {
-            let pointer = enum_pointer("objectType", index);
-            let Some(defined) = model.object_type(kind) else {
+        let model = views.of(artifact).model();
+        check_decision_lifecycle_writes(artifact, &schema, model, &mut findings);
+    }
+    findings
+}
+
+fn check_decision_lifecycle_writes(
+    artifact: &ArtifactEnvelope,
+    schema: &FactSchema<'_>,
+    model: &Model<'_>,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let ops = schema.ops();
+    let mut resolved: Vec<fact_literals::Resolved<'_>> = Vec::new();
+    for (index, kind) in schema
+        .values("objectType")
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+    {
+        let pointer = enum_pointer("objectType", index);
+        let unknown = || {
+            finding(
+                codes::UNKNOWN_FACT_OBJECT_TYPE,
+                format!(
+                    "the decision writes {kind:?}, which is not an object type of the artifact set or the installed base"
+                ),
+                artifact,
+                &pointer,
+            )
+        };
+        let defined = match model.resolve(artifact, kind, &pointer, unknown) {
+            Ok(defined) => defined,
+            Err(refusal) => {
+                findings.push(*refusal);
+                continue;
+            }
+        };
+        let lifecycles = match &defined.lifecycles {
+            Ok(lifecycles) => lifecycles.as_slice(),
+            Err(reason) => {
                 findings.push(finding(
-                    codes::UNKNOWN_FACT_OBJECT_TYPE,
+                    codes::UNRESOLVED_LIFECYCLES,
                     format!(
-                        "the decision writes {kind:?}, which is not an object type of the artifact set or the installed base"
+                        "the decision writes {kind:?}, whose lifecycles cannot be resolved ({reason}); its status writes cannot be checked, so they fail closed"
                     ),
                     artifact,
                     &pointer,
                 ));
                 continue;
-            };
-            findings.extend(scope_finding(artifact, defined.artifact, &pointer));
-            let lifecycles = match &defined.lifecycles {
-                Ok(lifecycles) => lifecycles.as_slice(),
-                Err(reason) => {
-                    findings.push(finding(
-                        codes::UNRESOLVED_LIFECYCLES,
-                        format!(
-                            "the decision writes {kind:?}, whose lifecycles cannot be resolved ({reason}); its status writes cannot be checked, so they fail closed"
-                        ),
-                        artifact,
-                        &pointer,
-                    ));
-                    continue;
-                }
-            };
-            let effective_object_type = match defined.effective_object_type.as_ref() {
-                Some(Ok(effective)) => effective,
-                unresolved => {
-                    let reason = unresolved
-                        .and_then(|contract| contract.as_ref().err())
-                        .map_or("the effective catalog does not define it", String::as_str);
-                    findings.push(finding(
-                        codes::UNRESOLVED_STORED_PROPERTY_CONTRACT,
-                        format!(
-                            "the decision writes {kind:?}, whose effective stored-property contracts cannot be resolved ({reason}); its property writes cannot be checked, so they fail closed"
-                        ),
-                        artifact,
-                        &pointer,
-                    ));
-                    continue;
-                }
-            };
-            resolved.push(fact_literals::Resolved {
-                kind,
-                lifecycles,
-                effective_object_type,
-            });
-            let target = Target {
-                artifact,
-                schema: &schema,
-                kind,
-                lifecycles,
-            };
-            if ops.contains(&FactChangeOp::Delete) {
-                findings.extend(target.delete_findings());
             }
-            if ops.contains(&FactChangeOp::Set) {
-                findings.extend(target.set_findings());
+        };
+        let effective_object_type = match defined.effective_object_type.as_ref() {
+            Some(Ok(effective)) => effective,
+            unresolved => {
+                let reason = unresolved
+                    .and_then(|contract| contract.as_ref().err())
+                    .map_or("the effective catalog does not define it", String::as_str);
+                findings.push(finding(
+                    codes::UNRESOLVED_STORED_PROPERTY_CONTRACT,
+                    format!(
+                        "the decision writes {kind:?}, whose effective stored-property contracts cannot be resolved ({reason}); its property writes cannot be checked, so they fail closed"
+                    ),
+                    artifact,
+                    &pointer,
+                ));
+                continue;
             }
-            if ops.contains(&FactChangeOp::Patch) {
-                findings.extend(target.patch_findings());
-            }
-            if ops.contains(&FactChangeOp::Create) {
-                findings.extend(target.create_findings());
-            }
+        };
+        resolved.push(fact_literals::Resolved {
+            kind,
+            lifecycles,
+            effective_object_type,
+        });
+        let target = Target {
+            artifact,
+            schema,
+            kind,
+            lifecycles,
+        };
+        if ops.contains(&FactChangeOp::Delete) {
+            findings.extend(target.delete_findings());
         }
-        if ops.contains(&FactChangeOp::Transition) {
-            findings.extend(transition_findings(artifact, &schema, &resolved));
+        if ops.contains(&FactChangeOp::Set) {
+            findings.extend(target.set_findings());
         }
-        findings.extend(fact_literals::literal_findings(
-            artifact, &schema, &resolved,
-        ));
+        if ops.contains(&FactChangeOp::Patch) {
+            findings.extend(target.patch_findings());
+        }
+        if ops.contains(&FactChangeOp::Create) {
+            findings.extend(target.create_findings());
+        }
     }
-    findings
+    if ops.contains(&FactChangeOp::Transition) {
+        findings.extend(transition_findings(artifact, schema, &resolved));
+    }
+    findings.extend(fact_literals::literal_findings(artifact, schema, &resolved));
 }
 
 /// Every decide graph of `artifacts` whose output schema declares a `facts`

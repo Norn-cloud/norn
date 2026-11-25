@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Page, type Route } from "@playwright/test"
 import { workspaceCell } from "./workspace-cell.ts"
 
 const shots = process.env.SHOTS
@@ -56,7 +56,7 @@ test("views: create 'Applications needing help' in Operations Space, keep column
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page).toHaveURL(/\/views\/studio\.view\./)
   await expect(page.getByRole("heading", { name: "Applications needing help" })).toBeVisible()
-  await expect(page.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: "Applications needing help" })).toBeVisible()
+  await expect(page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" }).getByRole("link", { name: "Applications needing help" })).toBeVisible()
 
   // 3. List -> saved column order puts `score` before `stage`, and row actions run through RecordDrawer's per-record /v1/actions read.
   const grid = page.getByRole("grid", { name: "Application records" })
@@ -444,7 +444,7 @@ test("views (second domain): create and open an Equipment Fleet Tickets view in 
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Urgent fleet tickets" })).toBeVisible()
   // Custom Space appears in Workspace sidebar with the pinned view.
-  const nav = page.getByRole("navigation", { name: "Workspace" })
+  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
   await expect(nav.getByText("Fleet Ops")).toBeVisible()
   await expect(nav.getByRole("link", { name: "Urgent fleet tickets" })).toBeVisible()
 
@@ -461,4 +461,198 @@ test("views (second domain): create and open an Equipment Fleet Tickets view in 
   await sheet.getByRole("button", { name: "Escalate ticket" }).click()
   await expect(sheet.getByRole("status")).toContainText("tkt-1")
   await sheet.getByRole("button", { name: "Done" }).click()
+})
+
+const refocus = (page: Page) => page.evaluate(() => {
+  for (const visibility of ["hidden", "visible"]) {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: visibility })
+    window.dispatchEvent(new Event("visibilitychange"))
+  }
+})
+
+const savedView = (title: string) => ({
+  kind: "view" as const, version: 1, retired: false, updatedAtMs: Date.now(),
+  payload: { title, objectType: "funnel.Application", columns: ["applicant_name", "stage", "score"] },
+})
+
+// #1700 B2: the drawer shows the record as the latest read serves it, and closes when that read drops it.
+test("views: an open record drawer follows the latest read and closes when the record is no longer served", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.drawer"
+  cell.defs.set(id, savedView("Drawer view"))
+  await page.goto(`/views/${id}`)
+  const grid = page.getByRole("grid", { name: "Application records" })
+  await grid.getByText("Ben Park").click()
+  const drawer = page.getByRole("dialog", { name: "app-2" })
+  await expect(drawer).toContainText("Ben Park")
+
+  const ben = cell.records.find((record) => record.id === "app-2")!
+  ben.values.applicant_name = "Ben Parker"
+  await Promise.all([page.waitForResponse(/\/v1\/objects\/funnel\.Application\?/), refocus(page)])
+  await expect(drawer).toContainText("Ben Parker")
+  await shoot(page, "views-drawer-follows-read")
+
+  cell.records.splice(cell.records.indexOf(ben), 1)
+  await Promise.all([page.waitForResponse(/\/v1\/objects\/funnel\.Application\?/), refocus(page)])
+  await expect(grid).not.toContainText("Ben Parker")
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+})
+
+// #1700 B1: an action opened from a saved view commits only in the view's workspace.
+test("views: an action opened from a saved view is sent to its workspace and refused after a session switch", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.act"
+  cell.defs.set(id, savedView("Action view"))
+  await page.goto(`/views/${id}`)
+  await page.getByRole("grid", { name: "Application records" }).getByText("Ben Park").click()
+  await page.getByRole("dialog", { name: "app-2" }).getByRole("button", { name: "Offer assistance" }).click()
+  const sheet = page.getByRole("dialog", { name: "Offer assistance" })
+  await sheet.getByLabel("Outreach note").fill("Called applicant")
+
+  // Another tab moves the session to another workspace just before submit.
+  cell.switchScope("org_other", "prod")
+  await sheet.getByRole("button", { name: "Offer assistance" }).click()
+  await expect(sheet.getByRole("alert").or(sheet.getByRole("status")).first()).toBeVisible()
+  expect(cell.actionCalls).toHaveLength(1)
+  expect(cell.actionCalls[0]).toMatchObject({ orgId: "org_demo", expectedOrg: "org_demo", workspaceChanged: true })
+  expect(cell.records.find((record) => record.id === "app-2")?.values.stage).not.toBe("assisted")
+  await shoot(page, "views-action-workspace-changed")
+})
+
+// #1700 S6: only a `view` definition opens as a view.
+test("views: a definition of another kind never opens as a view or offers Delete", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const id = "ops.automation.restock"
+  cell.defs.set(id, { kind: "automation", version: 1, retired: false, updatedAtMs: Date.now(), payload: { title: "Restock", objectType: "funnel.Application" } })
+  await page.goto(`/views/${id}`)
+  await expect(page.getByText(`No view ${id} is saved.`)).toBeVisible()
+  await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0)
+})
+
+// #1700 S7: each deletion keeps its own Undo, across navigation.
+test("views: two deletions keep two Undos across navigation, and undoing one leaves the other", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  cell.defs.set("studio.view.funnel_application.first", savedView("First view"))
+  cell.defs.set("studio.view.funnel_application.second", savedView("Second view"))
+  await page.goto("/views")
+  const panel = (title: string) => page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: title, exact: true }) })
+  await panel("First view").getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
+  await panel("Second view").getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
+  await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
+
+  await page.getByRole("button", { name: "New view" }).first().click()
+  await expect(page).toHaveURL(/\/views\/new$/)
+  await page.goBack()
+  await expect(page.getByText(/Deleted “First view”/)).toBeVisible()
+  await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
+  await shoot(page, "views-two-deletion-receipts")
+
+  await page.getByRole("status").filter({ hasText: "Deleted “First view”" }).getByRole("button", { name: "Undo" }).click()
+  await expect(page.getByText(/Deleted “First view”/)).toHaveCount(0)
+  await expect(page.getByText(/Deleted “Second view”/)).toBeVisible()
+  await expect(page.getByRole("heading", { name: "First view", exact: true })).toBeVisible()
+})
+
+// #1700 R1: a refetch refused for this reader wins over the cached page: the rows and the drawer
+// go, and the next successful read does not reopen the drawer.
+test("views: a refused refetch hides the cached rows and closes the drawer; the next read keeps it closed", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.refused"
+  cell.defs.set(id, savedView("Refused view"))
+  await page.goto(`/views/${id}`)
+  const grid = page.getByRole("grid", { name: "Application records" })
+  await grid.getByText("Ben Park").click()
+  await expect(page.getByRole("dialog", { name: "app-2" })).toContainText("Ben Park")
+
+  // The cell now refuses this reader (a bare 403, as a proxy or a revoked session answers).
+  const list = /\/api\/host\/v1\/objects\/funnel\.Application\?/
+  const refuse = (route: Route) => route.fulfill({ status: 403, contentType: "text/plain", body: "Forbidden" })
+  await page.route(list, refuse)
+  await Promise.all([page.waitForResponse(list), refocus(page)])
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByText("Ben Park")).toHaveCount(0)
+  await shoot(page, "views-refused-refetch")
+
+  await page.unroute(list, refuse)
+  await Promise.all([page.waitForResponse(list), refocus(page)])
+  await expect(grid.getByText("Ben Park")).toBeVisible()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+})
+
+// #1700 R2: a deletion's receipt and Undo belong to the reader who pressed Delete; a role change
+// while the deletion is pending leaves the new role neither.
+test("views: a deletion answered after a role change leaves no receipt or Undo for the new role", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.clock.install()
+  const cell = await workspaceCell(page)
+  let role = "admin"
+  let sessionReads = 0
+  await page.route("**/api/me", (route) => {
+    sessionReads += 1
+    return route.fulfill({ json: { user: { id: "u_ops", name: "Operator Admin", email: "ops@example.com" }, organization: { id: "org_demo", name: "Workspace Demo", role }, environmentId: "prod" } })
+  })
+  let release = () => {}
+  const held = new Promise<void>((resolve) => { release = resolve })
+  await page.route(/\/v1\/definitions\/.+:retire/, async (route) => { await held; await route.fallback() })
+  cell.defs.set("studio.view.funnel_application.held", savedView("Held view"))
+  await page.goto("/views")
+  const panel = page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Held view", exact: true }) })
+  const retire = page.waitForRequest(/:retire/)
+  await panel.getByRole("button", { name: "Delete" }).click()
+  await retire
+
+  // The same person's role drops in this workspace while the deletion is out; the session is read again.
+  role = "viewer"
+  const before = sessionReads
+  await page.clock.setSystemTime(Date.now() + 120_000)
+  await refocus(page)
+  await expect.poll(() => sessionReads - before).toBeGreaterThanOrEqual(2)
+  release()
+  await expect(page.getByRole("heading", { name: "Held view", exact: true })).toHaveCount(0)
+  await expect(page.getByText(/Deleted “Held view”/)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0)
+  expect(cell.defs.get("studio.view.funnel_application.held")?.retired).toBe(true)
+})
+
+// #1700 R4: a view restored elsewhere after this reader deleted it opens as the cell serves it.
+test("views: a view restored elsewhere drops the stale Deleted notice on the list and the view", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.restored"
+  cell.defs.set(id, savedView("Restored view"))
+  await page.goto(`/views/${id}`)
+  await page.getByRole("button", { name: "Delete" }).click()
+  await expect(page.getByText(/Deleted “Restored view”/)).toBeVisible()
+
+  // Someone else restores it: a newer active revision.
+  const stored = cell.defs.get(id)!
+  stored.retired = false
+  stored.version += 1
+  stored.updatedAtMs = Date.now()
+  await page.getByRole("link", { name: "Back to views" }).click()
+  await expect(page.getByRole("heading", { name: "Restored view", exact: true })).toBeVisible()
+  await expect(page.getByText(/Deleted “Restored view”/)).toHaveCount(0)
+  await page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Restored view", exact: true }) }).getByRole("link", { name: "Open" }).click()
+  await expect(page).toHaveURL(new RegExp(`/views/${id.replaceAll(".", "\\.")}$`))
+  await expect(page.getByRole("grid", { name: "Application records" })).toBeVisible()
+  await expect(page.getByText(/Deleted “Restored view”/)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0)
+})
+
+// #1700 R7: a 200 the cell sent without a readable definition is an unavailable read, not "No view".
+test("views: an unreadable definition answer says so and never shows No view", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.garbled"
+  cell.defs.set(id, savedView("Garbled view"))
+  await page.route(new RegExp(`/v1/definitions/${id.replaceAll(".", "\\.")}(\\?|$)`), (route) => route.fulfill({ status: 200, contentType: "application/json", body: "" }))
+  await page.goto(`/views/${id}`)
+  await expect(page.getByText("The cell's answer for this view could not be read; nothing was opened.")).toBeVisible()
+  await expect(page.getByText(`No view ${id} is saved.`)).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0)
 })

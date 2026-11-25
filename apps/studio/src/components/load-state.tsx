@@ -113,13 +113,13 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
   const nonRetryable = info.retryable === false
   return (
     <div role="alert" data-workspace-unavailable="" data-retryable={nonRetryable ? "false" : "true"}
-      className={`rounded-xl border border-destructive/30 bg-card text-sm shadow-elevation ${compact ? "p-3.5" : "p-5"}`}>
+      className={`rounded-(--radius-panel) border border-(--panel-border) bg-card text-body shadow-(--panel-shadow) ${compact ? "p-3.5" : "p-5"}`}>
       <div className="flex flex-wrap items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10 text-destructive">
-          <CloudOff aria-hidden className="size-4" />
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-(--radius-well) bg-(--well) text-muted-foreground ring-1 ring-line">
+          <CloudOff aria-hidden className="size-4" strokeWidth={1.6} />
         </span>
         <div className="min-w-0 flex-1 space-y-1.5">
-          <div className="font-medium text-foreground">Workspace unavailable</div>
+          <div className="text-foreground">Workspace unavailable</div>
           <p className="text-pretty text-muted-foreground">{info.headline}</p>
           {info.detail && <p className="text-meta text-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
           {nonRetryable && (
@@ -138,7 +138,7 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
           {(info.code || info.status || info.raw) && (
             <details open={view === "technical"} className="pt-1 text-meta text-muted-foreground">
               <summary className="cursor-pointer select-none">Technical</summary>
-              <div className="mt-1 grid gap-0.5 font-mono text-xs [overflow-wrap:anywhere]">
+              <div className="mt-1 grid gap-0.5 font-mono text-meta [overflow-wrap:anywhere]">
                 {(info.status || info.code) && <span>{[info.status ? `HTTP ${info.status}` : null, info.code].filter(Boolean).join(" · ")}</span>}
                 {info.raw && <span>{info.raw}</span>}
               </div>
@@ -169,17 +169,17 @@ export function ReadErrorState({ error, onRetry, isFetching = false }: {
   const { view } = useView()
   const info = explainError(error, locale, view)
   return (
-    <div role="alert" data-load-state="error" className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm">
+    <div role="alert" data-load-state="error" className="rounded-(--radius-panel) border border-(--panel-border) bg-card p-4 text-body shadow-(--panel-shadow)">
       <div className="flex flex-wrap items-start gap-3">
-        <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-destructive" />
+        <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="font-medium text-foreground">{info.headline}</p>
+          <p className="text-foreground">{info.headline}</p>
           {info.detail && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
           {info.incidentId && <p className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">Incident <CopyId value={info.incidentId} /></p>}
           {(info.code || info.raw) && (
             <details open={view === "technical"} className="pt-0.5 text-meta text-muted-foreground">
               <summary className="cursor-pointer select-none">Technical</summary>
-              <div className="mt-1 grid gap-0.5 font-mono text-xs [overflow-wrap:anywhere]">
+              <div className="mt-1 grid gap-0.5 font-mono text-meta [overflow-wrap:anywhere]">
                 {info.code && <span>{info.code}</span>}
                 {info.raw && <span>{info.raw}</span>}
               </div>
@@ -211,7 +211,7 @@ export interface LoadStateProps<T> {
   readonly onRetry?: () => void
   /** Named boneyard-js UI-shape skeleton capture from `src/bones/registry.ts`. */
   readonly bone?: StudioBoneName
-  /** Skeleton shape while loading (or fallback when `bone` is unregistered), or a custom ReactNode. */
+  /** Skeleton shape while loading when no `bone` is named, or a custom ReactNode. */
   readonly skeleton?: SkeletonKind | ReactNode
   /** Accessible label for the skeleton region. */
   readonly loadingLabel?: string
@@ -260,13 +260,13 @@ export function LoadState<T>({
       const reachable = lastReachableAt(scope)
       const reachableLabel = formatLastReachable(reachable)
       return (
-        <div role="status" data-load-state="timed-out" className="rounded-xl border border-node-border bg-card p-5 text-sm shadow-elevation">
+        <div role="status" data-load-state="timed-out" className="rounded-xl border border-node-border bg-card p-5 text-body shadow-elevation">
           <div className="flex flex-wrap items-start gap-3">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
               <Clock aria-hidden className="size-4" />
             </span>
             <div className="min-w-0 flex-1 space-y-1">
-              <p className="font-medium text-foreground">Taking too long to respond</p>
+              <p className="text-foreground">Taking too long to respond</p>
               <p className="text-meta text-muted-foreground">
                 The workspace hasn't finished answering this request yet. It may be busy or unreachable.
               </p>
@@ -285,14 +285,14 @@ export function LoadState<T>({
         </div>
       )
     }
-    const fallbackSkeleton = typeof skeleton === "string"
+    const skeletonBlock = typeof skeleton === "string"
       ? <SkeletonBlock kind={skeleton as SkeletonKind} label={loadingLabel} />
       : skeleton
     return (
       <div className="space-y-2.5" data-load-state={wait === "slow" ? "slow" : "loading"}>
         {bone
-          ? <BoneSkeleton name={bone} loading label={loadingLabel} fallback={fallbackSkeleton} />
-          : fallbackSkeleton}
+          ? <BoneSkeleton name={bone} loading label={loadingLabel} />
+          : skeletonBlock}
         {wait === "slow" && (
           <div role="status" className="flex flex-wrap items-center gap-2 px-1 text-meta text-muted-foreground">
             <Clock aria-hidden className="size-3.5 shrink-0" />

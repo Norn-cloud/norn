@@ -769,7 +769,6 @@ fn check_profile_constructs(root: &Node<'_>, metadata: &AstMetadata) -> Vec<Diag
                         | F::Avg
                         | F::Min
                         | F::Max
-                        | F::Rand
                         | F::Median
                         | F::Mode
                         | F::IsNumeric
@@ -3234,7 +3233,6 @@ impl<'a> Checker<'a> {
             | F::Avg
             | F::Min
             | F::Max
-            | F::Rand
             | F::Median
             | F::Mode
             | F::IsNumeric

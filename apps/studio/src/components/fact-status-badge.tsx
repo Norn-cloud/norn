@@ -70,9 +70,10 @@ export function deriveFactStatus(input: {
 }
 
 /**
- * Persistent honest status badge distinguishing Imported (unverified), Quarantined, Withheld, and
- * Verified fact. Pairs a restrained semantic tone with a distinct icon so status never relies on
- * colour alone.
+ * Persistent honest status distinguishing Imported (unverified), Quarantined, Withheld, and Verified
+ * fact, dot-first (DESIGN.md 12): the state's dot (`--dot-bad`, `--dot-quiet`, `--dot-held`,
+ * `--dot-live`) and its plain label, with the description in the tooltip. The word always says the
+ * state, so colour is never its only carrier.
  */
 export function FactStatusBadge({ status, compact = false, className, title }: {
   readonly status: FactStatus
@@ -84,7 +85,7 @@ export function FactStatusBadge({ status, compact = false, className, title }: {
   return (
     <Chip
       tone={meta.tone}
-      icon={meta.icon}
+      dot
       data-fact-status={status}
       title={title ?? meta.description}
       className={className}

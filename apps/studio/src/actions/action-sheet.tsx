@@ -7,7 +7,8 @@ import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
 import { labelIndex, pick } from "../lib/labels.ts"
-import { listActions, callAction, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { listActions, callAction, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { type ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import { scopeFromAccount, studioScopeKey, type StudioScope } from "../lib/definitions.ts"
 import { profileQueryPrefix } from "../lib/profile.ts"
 import { recordsQueryPrefix } from "../lib/records-query.ts"
@@ -157,7 +158,7 @@ export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: 
   return (
     <>
       <Sheet open={open !== null} onOpenChange={(next) => { if (!next) request() }}>
-        <SheetContent className="w-[min(36rem,100vw)] gap-0 overflow-y-auto border-node-border shadow-float sm:max-w-xl"
+        <SheetContent className="gap-0 overflow-y-auto"
           onOpenAutoFocus={(event) => {
             // Start in the first field to fill, not on the close button or the wizard's step bar.
             const first = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("form input:not([readonly]), form select, form textarea")
@@ -167,12 +168,12 @@ export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: 
             <SheetHeader className="px-6 pt-6 pb-4">
               <SheetTitle>{open.action.title}</SheetTitle>
               {technical
-                ? <SheetDescription className="font-mono text-xs">{open.action.actionId}</SheetDescription>
+                ? <SheetDescription className="font-mono text-meta">{open.action.actionId}</SheetDescription>
                 : <SheetDescription className="sr-only">{open.action.title}</SheetDescription>}
             </SheetHeader>
             <div className="px-6">
               {banner && parked === undefined && (
-                <p role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">
+                <p role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-body">
                   Restored your draft from earlier in this session.
                   <span className="flex-1" />
                   <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => { kept.delete(draftKey(open)); latest.current = null; setRestored(undefined); setBanner(false); setDirty(false); setGeneration((g) => g + 1) }}>Start over</Button>

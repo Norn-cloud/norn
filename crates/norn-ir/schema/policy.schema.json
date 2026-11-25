@@ -123,6 +123,13 @@
           "description": "Identity of the policy artifact; prefixes every compiled Cedar policy id.",
           "type": "string"
         },
+        "principalCatalog": {
+          "description": "Declared entries of the principal attribute catalog (#1091): the\nroles, role profiles and scoped attributes a decision may read as\ntyped principal inputs. A scoped attribute's type must agree with\nevery `principalAttribute` use `norn-authz` infers for it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrincipalCatalogEntry"
+          }
+        },
         "rules": {
           "description": "Permit rules. Authorization is default-deny: no rule, no permit.",
           "type": "array",
@@ -564,6 +571,103 @@
       "additionalProperties": false,
       "required": [
         "principalAttribute"
+      ]
+    },
+    "PrincipalAttributeSource": {
+      "description": "Where a catalog entry's value comes from.",
+      "oneOf": [
+        {
+          "description": "A role, named by the entry: a boolean the PDP evaluates.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "role"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A named role bundle: the set of its roles the principal holds.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "roleProfile"
+            },
+            "roles": {
+              "description": "The bundled role ids; at least one.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "roles"
+          ]
+        },
+        {
+          "description": "A scoped attribute supplied by the trusted resolver.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "attribute"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "PrincipalAttributeType": {
+      "description": "The closed set of principal attribute types.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "bool",
+            "long",
+            "string"
+          ]
+        },
+        {
+          "description": "`set<string>`.",
+          "type": "string",
+          "const": "stringSet"
+        }
+      ]
+    },
+    "PrincipalCatalogEntry": {
+      "description": "One declared entry of the principal attribute catalog (#1091): a name, a\ntype and a source.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The role id, role profile name or scoped attribute name.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the trusted resolver takes the value from.",
+          "$ref": "#/$defs/PrincipalAttributeSource"
+        },
+        "type": {
+          "description": "The type a decision reads the entry at.",
+          "$ref": "#/$defs/PrincipalAttributeType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "source"
       ]
     },
     "RelCondition": {

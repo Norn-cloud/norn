@@ -10,19 +10,13 @@
     {
       "code": "NORN-FLOW-ROUTE",
       "start": "10:7",
-      "end": "10:20",
-      "construct": "case \"draft\":"
+      "end": "11:76",
+      "construct": "case \"draft\": yield* Norn.perform(\"first\", chargeCard, { invoiceId: invoice.i..."
     },
     {
       "code": "NORN-FLOW-ROUTE",
-      "start": "11:7",
-      "end": "12:77",
-      "construct": "case \"open\": yield* Norn.perform(\"charge\", chargeCard, { invoiceId: invoice.i..."
-    },
-    {
-      "code": "NORN-FLOW-ROUTE",
-      "start": "14:13",
-      "end": "14:23",
+      "start": "15:13",
+      "end": "15:23",
       "construct": "invoice.id"
     }
   ]

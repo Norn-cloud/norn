@@ -1,9 +1,11 @@
-import { useContext, useRef } from "react"
+import { useContext, useRef, useSyncExternalStore } from "react"
 import { type QueryClient, QueryClientContext, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
 import {
+  CELL_FETCH_TIMEOUT_MS,
   defaultFetch,
+  fetchWithTimeout,
   getDisplayedScope,
   getDisplayedWorkspaceScope,
   sameStudioScope,
@@ -38,8 +40,9 @@ export class AuthRefusal extends Error {}
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
-async function readAccount(fetcher: Fetch): Promise<Account | null> {
-  const response = await fetcher("/api/me", { headers: { accept: "application/json" } })
+/** Read who is signed in, bounded: a server that never answers is a failed check the root can retry, never a blank Studio. */
+async function readAccount(fetcher: Fetch, timeoutMs = CELL_FETCH_TIMEOUT_MS): Promise<Account | null> {
+  const response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" } }, timeoutMs)
   if (response.status === 401) return null
   if (!response.ok) throw new Error(`The session check failed (${response.status}).`)
   return (await response.json()) as Account
@@ -91,20 +94,23 @@ function accountScopeOf(account: Account | null): StudioScope | null | undefined
  * parked calls are forgotten before the new answer is shown, the way a sign-out forgets them.
  * Hygiene only: every read is the server's decision for whoever asks.
  */
-export function accountQuery(client: QueryClient, fetcher: Fetch = defaultFetch) {
+export function accountQuery(client: QueryClient, fetcher: Fetch = defaultFetch, timeoutMs = CELL_FETCH_TIMEOUT_MS) {
   return queryOptions({
     queryKey: SESSION,
     queryFn: async () => {
-      const account = await readAccount(fetcher)
+      const account = await readAccount(fetcher, timeoutMs)
       if (fetcher === defaultFetch) setDisplayedWorkspaceScope(workspaceScopeFromAccount(account))
       const previous = client.getQueryData<Account | null>(SESSION)
       if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
         // A parked call's exact input and key are the previous reader/scope's: never kept for the
         // next, nor for the same reader coming back after a tenant/environment switch or expiry.
         forgetParkedCalls()
+        // A role change (a downgrade above all) is a different reader: the previous role's catalog,
+        // counts and offered actions are forgotten even when the workspace scope stayed the same.
         const sameReader = previous !== null && account !== null
           && previous.user.id === account.user.id
           && (previous.organization?.id ?? null) === (account.organization?.id ?? null)
+          && (previous.organization?.role ?? null) === (account.organization?.role ?? null)
         const nextScope = accountScopeOf(account)
         const cachedScope = client.getQueryData<StudioScope | null>(["studio-scope"])
         // If only the environment changed and `useStudioScope` / `syncStudioScopeChange` already
@@ -119,6 +125,23 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = defaultFetch)
     staleTime: 60_000,
     retry: false,
   })
+}
+
+const noSubscription = () => () => {}
+
+/** Who reads now, from the cached session answer (no `/api/me` read): a callback's view of the reader, never a render's. */
+export function readerKeyIn(client: QueryClient | undefined): string {
+  return sessionKey(client?.getQueryData<Account | null>(SESSION))
+}
+
+/**
+ * Who reads (`sessionKey` of the cached session), re-rendered whenever the session answer changes.
+ * Reads only the cache: it never asks `/api/me`, and works without a QueryClientProvider.
+ */
+export function useReaderKey(): string {
+  const client = useContext(QueryClientContext)
+  const read = () => readerKeyIn(client)
+  return useSyncExternalStore(client === undefined ? noSubscription : (notify) => client.getQueryCache().subscribe(notify), read, read)
 }
 
 /** The current account: undefined while loading, null when signed out. */
@@ -166,8 +189,11 @@ export function usePinnedScope(key: unknown = true): StudioScope | null | undefi
   return pinnedRef.current
 }
 
-async function call(path: string, body: Record<string, string>): Promise<void> {
-  const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+/** The header carrying a sign-up invitation (worker/auth.ts SIGNUP_INVITE_HEADER). */
+export const SIGNUP_INVITE_HEADER = "x-norn-signup-invite"
+
+async function call(path: string, body: Record<string, string>, headers: Record<string, string> = {}): Promise<void> {
+  const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) })
   if (response.ok) return
   const reason = await response.json().catch(() => null) as { message?: string; error?: string } | null
   throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? reason?.error ?? `Sign-in failed (${response.status}).`)
@@ -175,7 +201,8 @@ async function call(path: string, body: Record<string, string>): Promise<void> {
 
 export const authApi = {
   signIn: (email: string, password: string) => call("/sign-in/email", { email, password }),
-  signUp: (name: string, email: string, password: string) => call("/sign-up/email", { name, email, password }),
+  signUp: (name: string, email: string, password: string, invite = "") =>
+    call("/sign-up/email", { name, email, password }, invite.trim() === "" ? {} : { [SIGNUP_INVITE_HEADER]: invite.trim() }),
   emailLink: (email: string) => call("/sign-in/magic-link", { email, callbackURL: "/" }),
   signOut: () => call("/sign-out", {}),
 }

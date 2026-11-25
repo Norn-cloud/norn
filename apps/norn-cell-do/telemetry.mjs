@@ -80,7 +80,8 @@ const REFUSAL_CODES = new Set(Object.entries({
     "envelope_exceeded expired guard_error guard_false host idempotency_conflict invalid_output " +
     "invariant_budget_exceeded invariant_violation law_not_satisfied not_found not_in_slice " +
     "not_pending note_too_long object_exists object_missing overflow perform_outside_main " +
-    "read_only_world resolution_invalid resolved source_owned_target stale_state " +
+    "principal_input_unavailable read_only_world resolution_invalid resolved source_owned_target " +
+    "stale_state " +
     "turn_envelope_exceeded unknown_choice unknown_type unresolved_lifecycle",
   defs:
     "dev_sources_only live_data_refused live_data_unbounded live_data_unchecked live_data_violation " +
@@ -124,8 +125,8 @@ const REFUSAL_CODES = new Set(Object.entries({
   scope: "denied missing",
   source:
     "auth_unsupported bound cell_busy connector_missing http_status ingest no_cell not_running " +
-    "profile_invalid profile_missing response_shape seal secret_missing sqlite sync_running " +
-    "token_refused unknown",
+    "profile_invalid profile_missing response_shape scope_mismatch seal secret_missing " +
+    "secret_unbound sqlite sync_running token_refused unknown",
   subscription: "empty_bound over_profile unknown_type",
   transform: "not_found row_not_found snapshot_moved",
   upload:

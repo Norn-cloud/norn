@@ -44,6 +44,9 @@ impl JsonAt for serde_json::Value {
     }
 }
 
+#[path = "extension_scope.rs"]
+mod extension_scope;
+
 #[path = "ui_interaction.rs"]
 mod ui_interaction;
 

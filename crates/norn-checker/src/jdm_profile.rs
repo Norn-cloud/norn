@@ -1152,6 +1152,7 @@ pub(crate) fn validate_rule_contract(
     artifact_id: Option<&str>,
 ) {
     check_unique_tables(payload, diagnostics, artifact_id);
+    crate::principal_inputs::validate(payload, diagnostics, artifact_id);
     for (member, path) in [
         ("inputSchema", "payload.inputSchema"),
         ("outputSchema", "payload.outputSchema"),
@@ -1220,7 +1221,7 @@ pub(crate) fn validate_rule_contract(
             payload.get("inputSchema"),
             "payload.inputSchema",
             &DECIDE_INPUT_MEMBERS,
-            &[],
+            &norn_ir::rule::DECIDE_OPTIONAL_INPUT_MEMBERS,
             false,
             sink.diagnostics,
             artifact_id,
@@ -1831,6 +1832,31 @@ mod tests {
             edges.clear();
         }
         assert_eq!(unique_codes(&detached), [codes::JDM_UNIQUE_UNPROVED]);
+    }
+
+    /// #1711: the deterministic VM has no RNG, so `rand` is refused as a
+    /// standard expression, as a unary cell, and before any finite analysis.
+    #[test]
+    fn rand_is_refused_by_standard_unary_and_unique_admission() {
+        let mut diagnostics = Vec::new();
+        let mut sink = super::Sink {
+            diagnostics: &mut diagnostics,
+            artifact_id: Some("t.rule"),
+        };
+        super::check_standard("rand(1)", "standard".to_owned(), &mut sink);
+        super::check_unary("rand(1)", "unary".to_owned(), &mut sink);
+        super::check_unary("< rand(1)", "unary_compare".to_owned(), &mut sink);
+        let found: Vec<(String, String)> = diagnostics
+            .into_iter()
+            .map(|d| (d.code, d.path.unwrap_or_default()))
+            .collect();
+        let expected = ["standard", "unary", "unary_compare"]
+            .map(|path| (codes::JDM_INVALID_EXPRESSION.to_owned(), path.to_owned()));
+        assert_eq!(found, expected);
+        assert!(norn_expr::Expression::compile("rand(1)").is_err());
+        assert!(norn_expr::check_unary_syntax("rand(1)").is_err());
+        let random = unique_payload(&["rand(1) == 0", "rand(1) == 1"], &finite());
+        assert_eq!(unique_codes(&random), [codes::JDM_UNIQUE_UNPROVED]);
     }
 
     #[test]

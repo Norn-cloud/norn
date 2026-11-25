@@ -3,14 +3,14 @@ mod value_types;
 
 use std::collections::BTreeSet;
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::receipt::{
     ReceiptSources, admission_receipt_sha256, check_artifact_set_with_receipt,
     recover_legacy_admission_receipt, verify_admission_receipt,
 };
 use norn_checker::{
     ArtifactValidation, EntityArtifactSetContext, EntityContext, EntityModel, check_artifact_set,
-    check_entity_model, check_property_type_defs, derive_type_env,
-    entity_instance::EffectiveProperty,
+    check_entity_model, check_property_type_defs, entity_instance::EffectiveProperty,
 };
 use norn_expr::env::TypeEnvVersion;
 use norn_ir::{
@@ -430,8 +430,9 @@ fn retained_env_v2_decimal_binding_receipt_verifies_and_relabelling_to_v3_refuse
 
     // Historical main-era norn.expr.env/2 receipt pinned to origin/main's literal
     // digest (without decimalBindingOwners) must verify and recover by hash.
-    let derived =
-        derive_type_env(&artifacts, &[], &limits).map_err(|err| format!("derive env: {err:?}"))?;
+    let derived = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .receipt_env(&limits)
+        .map_err(|err| format!("derive env: {err:?}"))?;
     let v2_bytes = String::from_utf8(derived.canonical_json_at_version(TypeEnvVersion::V2)?)?;
     let v3_bytes = String::from_utf8(derived.canonical_json_at_version(TypeEnvVersion::V3)?)?;
     assert!(!v2_bytes.contains("decimalBindingOwners"));
@@ -540,10 +541,12 @@ fn new_env_v3_receipts_distinguish_inherited_vs_redeclared_decimal_binding_owner
         "norn.expr.env/3 receipts must distinguish inherited vs redeclared DecimalBinding owners"
     );
 
-    let inherited_v2 = derive_type_env(&set_inherited, &[], &limits)
+    let inherited_v2 = ScopedView::uniform(&set_inherited, &BTreeSet::new())
+        .receipt_env(&limits)
         .map_err(|err| format!("derive inherited: {err:?}"))?
         .reference_at_version(TypeEnvVersion::V2)?;
-    let redeclared_v2 = derive_type_env(&set_redeclared, &[], &limits)
+    let redeclared_v2 = ScopedView::uniform(&set_redeclared, &BTreeSet::new())
+        .receipt_env(&limits)
         .map_err(|err| format!("derive redeclared: {err:?}"))?
         .reference_at_version(TypeEnvVersion::V2)?;
     assert_eq!(

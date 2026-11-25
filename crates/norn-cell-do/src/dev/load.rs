@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn the_synthetic_exports_load_whole_snapshot_and_incremental() {
-        let admitted = crate::dev::admit::admit(&artifacts(), 1_000)
+        let admitted = crate::dev::admit::admit(&artifacts(), 1_000, false)
             .unwrap_or_else(|refused| panic!("{:#?}", refused.diagnostics));
         let scope = "local/dev";
         let directory = tempfile::tempdir().unwrap();

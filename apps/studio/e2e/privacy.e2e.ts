@@ -23,12 +23,18 @@ const recorded = (name: string): string =>
   readFileSync(new URL(`../../../fixtures/privacy/${name}`, import.meta.url), "utf8")
 
 /** Serve the server's Party page for `reader`, and its reveal reply; record what the browser asked. */
-async function partyCell(page: Page, reader: "viewer" | "auditor") {
+async function partyCell(page: Page, reader: "viewer" | "auditor", options: { readonly failFirstReveal?: boolean } = {}) {
   const reveals: unknown[] = []
+  const revealScopes: { readonly orgId: string | null; readonly environmentId: string | null; readonly expectedOrg: string | null; readonly expectedEnv: string | null }[] = []
+  let failNext = options.failFirstReveal === true
   await page.route("**/api/host/v1/objects/**", async (route) => {
     const url = new URL(route.request().url())
     if (route.request().method() === "POST" && url.pathname.endsWith("/reveal")) {
       reveals.push(JSON.parse(route.request().postData() ?? "null"))
+      const headers = route.request().headers()
+      revealScopes.push({ orgId: url.searchParams.get("orgId"), environmentId: url.searchParams.get("environmentId"), expectedOrg: headers["x-norn-expected-org"] ?? null, expectedEnv: headers["x-norn-expected-env"] ?? null })
+      // The connection drops before the cell answers: nothing was recorded, and a retry is the same request.
+      if (failNext) { failNext = false; return route.abort("connectionreset") }
       if (reader !== "auditor") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The reveal is not authorized." } })
       return route.fulfill({ status: 200, contentType: "application/json", body: recorded("canon.Party.reveal.json") })
     }
@@ -53,7 +59,7 @@ async function partyCell(page: Page, reader: "viewer" | "auditor") {
     }
     return route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } })
   })
-  return { reveals }
+  return { reveals, revealScopes }
 }
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: replays recorded cell documents`) })
@@ -91,4 +97,51 @@ test("a reader allowed to reveal sees a blurred chip; Reveal records a receipt, 
   expect(cell.reveals).toHaveLength(1)
   expect(cell.reveals[0]).toMatchObject({ property: "display_name", purpose: "KYC review for refund #4471" })
   await shoot(page, "revealed")
+})
+
+// #1700 B5: the reveal goes to the workspace the row was read from, with its expected-scope headers.
+// #1700 S12: a dropped connection leaves a retryable state, and the retry reuses the idempotency key.
+test("a reveal is bound to the row's workspace; a dropped connection can be retried with the same key", async ({ page }) => {
+  await session(page)
+  const cell = await partyCell(page, "auditor", { failFirstReveal: true })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto("/objects/canon.Party")
+  await page.locator("[data-reveal]").first().click()
+  await page.getByLabel("Purpose").fill("KYC review for refund #4471")
+  await page.locator("[data-confirm-reveal]").click()
+  await expect(page.getByRole("alert").filter({ hasText: "The cell is not reachable. Try again." })).toBeVisible()
+  await expect(page.locator("[data-confirm-reveal]")).toBeEnabled()
+  await shoot(page, "reveal-retry")
+  await page.locator("[data-confirm-reveal]").click()
+  await expect(page.locator("[data-revealed]").first()).toContainText("Amira Haddad")
+  expect(cell.reveals).toHaveLength(2)
+  const [first, second] = cell.reveals as { idempotencyKey: string }[]
+  expect(second!.idempotencyKey).toBe(first!.idempotencyKey)
+  for (const sent of cell.revealScopes) expect(sent).toEqual({ orgId: "org_demo", environmentId: "analytics", expectedOrg: "org_demo", expectedEnv: "analytics" })
+})
+
+// #1700 B5: a workspace switch discards a revealed value and an open reveal; nothing is sent to either workspace.
+test("a workspace switch forgets a revealed value and closes an open reveal without sending it", async ({ page }) => {
+  let environmentId = "analytics"
+  await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId } }))
+  const cell = await partyCell(page, "auditor")
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto("/objects/canon.Party")
+  await page.locator("[data-reveal]").first().click()
+  await page.locator("[data-confirm-reveal]").click()
+  await expect(page.locator("[data-revealed]").first()).toContainText("Amira Haddad")
+  await page.locator("[data-reveal]").first().click()
+  await expect(page.getByLabel("Purpose")).toBeVisible()
+
+  environmentId = "staging"
+  await page.evaluate(() => {
+    for (const visibility of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: visibility })
+      window.dispatchEvent(new Event("visibilitychange"))
+    }
+  })
+  await expect(page.getByLabel("Purpose")).toHaveCount(0)
+  await expect(page.locator("[data-revealed]")).toHaveCount(0)
+  await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+  expect(cell.reveals).toHaveLength(1)
 })

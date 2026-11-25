@@ -1,5 +1,6 @@
 use crate::lexer::Bracket;
 use crate::variable::DynamicVariable;
+use crate::vm::error::{VMError, VMResult};
 use crate::vm::VmDate;
 use crate::Variable;
 use anyhow::anyhow;
@@ -31,37 +32,75 @@ impl DynamicVariable for VmInterval {
     }
 }
 
+/// Norn (#1711): the most elements an interval may materialize, on every target.
+/// `Begin` charges the full logical count first, so a metered run that cannot pay for
+/// it is `BudgetExhausted` identically natively and on wasm32; a run that can (or an
+/// unmetered one) past this ceiling is `IntervalTooLarge`, before any allocation.
+const MAX_INTERVAL_ELEMENTS: u64 = 1_000_000;
+
 impl VmInterval {
-    pub fn to_array(&self) -> Option<Vec<Variable>> {
-        let (start, end) = self.bounds()?;
-        let list = (start..=end)
-            .map(|n| Variable::Number(Decimal::from(n)))
-            .collect::<Vec<_>>();
-
-        Some(list)
+    /// Norn (#1711): the number of integers the interval enumerates, independent of
+    /// the target's `usize` and saturating at `u64::MAX`; `None` if the interval does
+    /// not enumerate integers (a date interval, a bound beyond `i64`). This is the
+    /// count `Begin` is charged.
+    pub fn element_count(&self) -> Option<u64> {
+        self.range().map(|(_, count)| count)
     }
 
-    /// Norn `metering`: number of elements `to_array` would produce, without allocating.
-    pub fn array_len(&self) -> Option<u64> {
-        let (start, end) = self.bounds()?;
-        Some(u64::try_from(i128::from(end) - i128::from(start) + 1).unwrap_or(0))
+    /// Norn (#1711): the integers of the interval, materialized at exactly
+    /// [`Self::element_count`] elements, or `IntervalTooLarge` past
+    /// `MAX_INTERVAL_ELEMENTS` or when the allocation fails.
+    pub fn to_array(&self) -> Option<VMResult<Vec<Variable>>> {
+        let (start, count) = self.range()?;
+        Some(self.materialize(start, count))
     }
 
-    fn bounds(&self) -> Option<(i64, i64)> {
+    fn materialize(&self, start: i128, count: u64) -> VMResult<Vec<Variable>> {
+        let len = usize::try_from(count)
+            .ok()
+            .filter(|_| count <= MAX_INTERVAL_ELEMENTS)
+            .ok_or_else(|| self.too_large())?;
+        let mut list = Vec::new();
+        list.try_reserve_exact(len).map_err(|_| self.too_large())?;
+        for n in (start..).take(len) {
+            let n = i64::try_from(n).map_err(|_| self.too_large())?;
+            list.push(Variable::Number(Decimal::from(n)));
+        }
+
+        Ok(list)
+    }
+
+    /// The first integer and the element count, computed once from the widened
+    /// bounds (an empty interval counts zero).
+    fn range(&self) -> Option<(i128, u64)> {
+        let (start, end) = self.bounds()?;
+        let span = end.saturating_sub(start).saturating_add(1).max(0);
+        Some((start, u64::try_from(span).unwrap_or(u64::MAX)))
+    }
+
+    fn too_large(&self) -> VMError {
+        VMError::IntervalTooLarge {
+            interval: self.to_string(),
+        }
+    }
+
+    /// The first and last integers, widened to `i128` so an open bound at `i64::MIN`
+    /// or `i64::MAX` cannot overflow.
+    fn bounds(&self) -> Option<(i128, i128)> {
         let (left, right) = match (&self.left, &self.right) {
             (VmIntervalData::Number(l), VmIntervalData::Number(r)) => (*l, *r),
             _ => return None,
         };
 
         let start = match &self.left_bracket {
-            Bracket::LeftParenthesis => left.to_i64()? + 1,
-            Bracket::LeftSquareBracket => left.to_i64()?,
+            Bracket::LeftParenthesis => i128::from(left.to_i64()?) + 1,
+            Bracket::LeftSquareBracket => i128::from(left.to_i64()?),
             _ => return None,
         };
 
         let end = match &self.right_bracket {
-            Bracket::RightParenthesis => right.to_i64()? - 1,
-            Bracket::RightSquareBracket => right.to_i64()?,
+            Bracket::RightParenthesis => i128::from(right.to_i64()?) - 1,
+            Bracket::RightSquareBracket => i128::from(right.to_i64()?),
             _ => return None,
         };
 

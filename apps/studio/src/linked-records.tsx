@@ -25,8 +25,8 @@ export function LinkedRecords({ from, ids, parent }: { readonly from: Concept; r
     queryFn: () => Promise.all(shown.map((id) => cellRead<ObjectRecord>(`/v1/objects/${encodeURIComponent(from.name)}/${encodeURIComponent(id)}`, "Records are"))),
     retry: false,
   })
-  if (records.isPending) return <p className="text-sm text-muted-foreground">Reading {ids.length} {from.title.toLowerCase()} records…</p>
-  if (records.isError) return <p role="alert" className="text-sm text-destructive">{records.error.message}</p>
+  if (records.isPending) return <p className="text-body text-muted-foreground">Reading {ids.length} {from.title.toLowerCase()} records…</p>
+  if (records.isError) return <p role="alert" className="text-body text-destructive">{records.error.message}</p>
   // A fact that only repeats each row's own identity, or names the record they all link to, says
   // nothing the table does not already say: it is left out so the facts that differ fit.
   const fields = from.fields.filter((field) => !records.data.every(({ document }) =>
@@ -41,10 +41,10 @@ export function LinkedRecords({ from, ids, parent }: { readonly from: Concept; r
         <TableBody>
           {records.data.map((read: Read<ObjectRecord>) => (
             <TableRow key={read.document.id}>
-              <TableCell className="font-mono text-xs"><Link to="/sources/$concept/$" params={{ concept: from.name, _splat: read.document.id }} className="underline-offset-4 hover:underline">{read.document.id}</Link></TableCell>
+              <TableCell className="font-mono text-meta"><Link to="/sources/$concept/$" params={{ concept: from.name, _splat: read.document.id }} className="underline-offset-4 hover:underline">{read.document.id}</Link></TableCell>
               {fields.map((field) => {
                 const text = factText(field, read.document, read.numbers, "")
-                return <TableCell key={field.id} className={field.decimal ? "text-right tabular-nums" : "text-sm"}>
+                return <TableCell key={field.id} className={field.decimal ? "text-end tabular-nums" : "text-body"}>
                   {field.scalar.kind === "enum" && text !== "—" ? <Badge variant="outline">{field.valueLabels?.get(text) ?? text}</Badge> : text}
                 </TableCell>
               })}

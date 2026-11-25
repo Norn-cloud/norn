@@ -24,8 +24,8 @@ import {
  * learning-pack lane pins them with route-produced fixtures.
  */
 
-export const CURATED_CASE_TYPE = "learning.CuratedCase"
-export const EVAL_SET_TYPE = "learning.EvalSet"
+import { CURATED_CASE_TYPE, EVAL_SET_TYPE } from "./resource-names.ts"
+export { CURATED_CASE_TYPE, EVAL_SET_TYPE }
 
 export const CASES_UNAVAILABLE = "This cell doesn't serve curated cases yet."
 export const EVAL_SETS_UNAVAILABLE = "This cell doesn't serve eval sets yet."

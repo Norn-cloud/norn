@@ -1,4 +1,7 @@
 {
   "contracts": "generated-openapi",
-  "scope": "explicit-org-and-environment"
+  "scope": "explicit-org-and-environment",
+  "runtime": "fetch-and-websocket-client",
+  "authority": "server",
+  "dependencies": "none"
 }
