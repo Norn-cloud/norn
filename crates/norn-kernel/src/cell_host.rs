@@ -687,6 +687,13 @@ pub enum CommitError<X> {
         /// The reference the commit named.
         consumed: Consumed,
     },
+    /// RECEIPT-CONSUME-1: inside the commit, the host refuses to accept the
+    /// consumed Function result (authority, deadline, or no recheck).
+    #[error("action.receipt_not_accepted: {consumed} is no longer accepted")]
+    ReceiptNotAccepted {
+        /// The delivery the commit named.
+        consumed: Consumed,
+    },
     /// Compare-and-swap failed: the object changed since the turn read it.
     #[error("fact {key} version conflict: expected {expected}, current {current}")]
     Conflict {
@@ -928,53 +935,6 @@ pub enum CommitError<X> {
     /// The host failed; nothing was applied.
     #[error("cell host failure")]
     Host(#[source] X),
-}
-
-impl<X> CommitError<X> {
-    /// Stable machine-readable code of the refusal.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
-            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
-            Self::ImmutableObject { .. } => "commit.immutable_object",
-            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
-                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
-            }
-            Self::DuplicateKey { .. } => "commit.duplicate_key",
-            Self::NotPending { .. } => "commit.not_pending",
-            Self::Conflict { .. } => "commit.conflict",
-            Self::DuplicateLink { .. } => "commit.duplicate_link",
-            Self::IdentifierTooLong { .. } => "commit.identifier_too_long",
-            Self::LinkConflict { .. } => "commit.link_conflict",
-            Self::LinkReadConflict { .. } => "commit.link_read_conflict",
-            Self::UnsupportedLinkRead { .. } => "commit.unsupported_link_read",
-            Self::DuplicateLinkRead { .. } => "commit.duplicate_link_read",
-            Self::LinkReadTooLarge { .. } => "commit.link_read_too_large",
-            Self::InvalidLinkRead { .. } => "commit.invalid_link_read",
-            Self::PredicateReadConflict { .. } => "commit.predicate_read_conflict",
-            Self::UnsupportedPredicateRead { .. } => "commit.unsupported_predicate_read",
-            Self::InvalidPredicateRead { .. } => "commit.invalid_predicate_read",
-            Self::DanglingLink { .. } => "commit.dangling_link",
-            Self::LinkTarget { .. } => "commit.link_target",
-            Self::LinkCardinality { .. } => "commit.link_cardinality",
-            Self::LinkRequired { .. } => "commit.link_required",
-            Self::OwnedRowsProtected { .. } => "commit.owned_rows_protected",
-            Self::TypeMismatch { .. } => "commit.type_mismatch",
-            Self::EffectiveValues { .. } => "commit.effective_values",
-            Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
-            Self::AccountingPosting { reason, .. } => reason.code(),
-            Self::Law { reason, .. } => reason.code(),
-            Self::InvariantViolation { .. } => "commit.invariant_violation",
-            Self::InvariantBudgetExceeded { .. } => "commit.invariant_budget_exceeded",
-            Self::InvariantModel { .. } => "commit.invariant_model",
-            Self::LifecycleInitialization { .. } => norn_ir::lifecycle_codes::UNDECLARED_WRITE,
-            Self::ObservationAuthorization => "commit.observation_authorization",
-            Self::EventLimitExceeded { .. } => "commit.event_limit",
-            Self::Overflow => "commit.overflow",
-            Self::Host(_) => "commit.host",
-        }
-    }
 }
 
 pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commit_owned_rows};

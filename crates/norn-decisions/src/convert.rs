@@ -23,6 +23,20 @@ use crate::DecisionError;
 /// Objects are inserted in key order, and the vendored engine's ordered maps
 /// keep that order at every size.
 pub(crate) fn to_variable(value: &Value) -> Result<Variable, DecisionError> {
+    convert_to_variable(value, nfc)
+}
+
+/// [`to_variable`] keeping every string and key exactly as spelled: the
+/// representation a sub-decision boundary checked is the one that crosses it,
+/// so no key is renamed and no two checked keys collapse into one (#1708).
+pub(crate) fn to_variable_exact(value: &Value) -> Result<Variable, DecisionError> {
+    convert_to_variable(value, str::to_owned)
+}
+
+fn convert_to_variable(
+    value: &Value,
+    spell: fn(&str) -> String,
+) -> Result<Variable, DecisionError> {
     Ok(match value {
         Value::Null => Variable::Null,
         Value::Bool(flag) => Variable::Bool(*flag),
@@ -32,11 +46,11 @@ pub(crate) fn to_variable(value: &Value) -> Result<Variable, DecisionError> {
                 reason: format!("{err}"),
             }
         })?),
-        Value::String(text) => Variable::String(Variable::key(&nfc(text))),
+        Value::String(text) => Variable::String(Variable::key(&spell(text))),
         Value::Array(items) => Variable::from_array(
             items
                 .iter()
-                .map(to_variable)
+                .map(|item| convert_to_variable(item, spell))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         Value::Object(entries) => {
@@ -45,7 +59,10 @@ pub(crate) fn to_variable(value: &Value) -> Result<Variable, DecisionError> {
             if let Variable::Object(map) = &object {
                 let mut map = map.borrow_mut();
                 for (key, item) in entries {
-                    map.insert(Variable::key(&nfc(key)), to_variable(item)?);
+                    map.insert(
+                        Variable::key(&spell(key)),
+                        convert_to_variable(item, spell)?,
+                    );
                 }
             }
             object

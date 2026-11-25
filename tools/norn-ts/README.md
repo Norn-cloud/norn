@@ -37,6 +37,15 @@ this one as `bun src/cli.ts`; in a project made by `norn init`, as `bunx norn`.
 - `profile <file.ts>` reports whether a file stays inside the supported syntax.
 - `question <file.ts>` and `dashboard <file.ts>` emit candidate `QuestionIR` and
   dashboard values.
+- `codegen --ts <artifacts.json|artifact-dir|pack-dir|project-dir> [--base <artifacts>]... [--out FILE.d.ts] [--check]`
+  emits one deterministic, types-only `.d.ts` for an admitted set: `ActionMap`
+  (action id → the input a caller sends, without actor-derived `fromCaller`
+  fields, and the declared output; exact decimals as `string`), `ObjectMap` and
+  `DefinitionsDigest`, for the `@norn/sdk` client. `--base` resolves shared value
+  types and supertypes (`--base registry/core/artifacts` for registry packs)
+  without typing them. A compiled set is read as admitted; a pack or project is
+  admitted first. Shapes outside the closed dialect fail the run; `--check`
+  fails on drift.
 - `plan|apply <pack-dir|file.ts> --url URL --org ID --env ID` sends a pack to a
   running hosted cell's `definitions:plan` / `:apply`; the cell decides and installs
   only for an owner or admin. Credentials come from the environment

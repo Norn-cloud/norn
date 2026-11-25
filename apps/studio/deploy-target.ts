@@ -340,6 +340,25 @@ export const CELL_HOSTS: Readonly<Record<string, string>> = { preview: "norn-cel
 export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS[target.stage]
 
 /**
+ * The self-hosted cell host each stage's Studio reaches over HTTPS as `NORN_HOST_URL`
+ * (worker/http-host.ts): the alpha's Rivet runners (D131, norn-ops infra/rivet-alpha). A stage has
+ * a service binding (CELL_HOSTS) or an origin here, never both.
+ */
+export const CELL_HOST_URLS: Readonly<Record<string, string>> = { alpha: "https://alpha-cells.norn.cloud" }
+
+/**
+ * The cell environment a stage's new workspaces are provisioned for (STUDIO_DEFAULT_ENVIRONMENT_ID):
+ * without one a new workspace has no cell. Each must be one of the host's NORN_TENANT_ENVIRONMENTS.
+ */
+export const DEFAULT_ENVIRONMENTS: Readonly<Record<string, string>> = { alpha: "dev" }
+
+export function cellHostUrl(target: DeployTarget): string | undefined {
+  const url = CELL_HOST_URLS[target.stage]
+  if (url !== undefined && CELL_HOSTS[target.stage] !== undefined) throw new Error(`Stage ${target.stage} names both a cell Worker and a cell host URL`)
+  return url
+}
+
+/**
  * Fail the deploy, naming the script, unless the cell Worker the stage binds to
  * already exists on the account: a binding to a missing script must not deploy.
  */

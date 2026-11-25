@@ -17,7 +17,8 @@ use crate::cell_host::{
     CellCommit, CommitError, CommitModel, CommitView, FactKey, FactMutation, JsonObject, JsonValue,
 };
 use crate::decision_commit::{
-    DecisionRefusal, FactEvent, TypeCatalog, check_guards, resolve_transition, with_initial_states,
+    DecisionRefusal, FactEvent, TypeCatalog, check_guards, materialize_lifecycle_defaults,
+    resolve_transition,
 };
 use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 
@@ -220,6 +221,17 @@ fn recorded_fact_events<'c, E: 'static, C, T>(
             .push(fact);
     }
     recorded
+}
+
+/// `values` with every effective lifecycle property's default filled in,
+/// after checking each lifecycle property holds an initial state: the
+/// decision `create` rule, shared with the commit boundary below.
+pub(crate) fn with_initial_states<X>(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+) -> Result<JsonObject, DecisionRefusal<X>> {
+    materialize_lifecycle_defaults(catalog, key, values, true)
 }
 
 /// GRAPH-STATE-1 at the shared commit boundary: the first write of `key`

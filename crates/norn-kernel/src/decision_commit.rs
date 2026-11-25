@@ -68,6 +68,7 @@ use crate::effect::{
     Command, CommandId, Effect, FreshnessPolicy, Generation, IdempotencyKey, Timer, TimerId,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
+use crate::lifecycle_init::with_initial_states;
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
 
@@ -2244,7 +2245,10 @@ impl<X> DecisionRefusal<X> {
             CommitError::ImmutableObject { key } => Self::InvalidOutput {
                 reason: format!("{key} is immutable"),
             },
-            CommitError::NotPending { consumed } => Self::NotPending { consumed },
+            // Outside the action path, an unaccepted Function result is unconsumable.
+            CommitError::NotPending { consumed } | CommitError::ReceiptNotAccepted { consumed } => {
+                Self::NotPending { consumed }
+            }
             CommitError::Conflict {
                 key,
                 expected,
@@ -2372,6 +2376,7 @@ impl<X> DecisionRefusal<X> {
             | CommitError::ImmutableObject { .. }
             | CommitError::LifecycleInitialization { .. }
             | CommitError::NotPending { .. }
+            | CommitError::ReceiptNotAccepted { .. }
             | CommitError::Conflict { .. }
             | CommitError::TypeMismatch { .. }
             | CommitError::AccountingPosting { .. }
@@ -3151,16 +3156,6 @@ fn apply_change<X>(
     Ok(event)
 }
 
-/// `values` with every effective lifecycle property's default filled in,
-/// after checking each lifecycle property holds an initial state.
-pub(crate) fn with_initial_states<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    materialize_lifecycle_defaults(catalog, key, values, true)
-}
-
 /// Fill declared defaults for lifecycle properties without requiring their
 /// final values to already be initial states. Callers that prepare a create
 /// still use [`with_initial_states`] for that full validation.
@@ -3172,7 +3167,7 @@ pub(crate) fn fill_lifecycle_defaults<X>(
     materialize_lifecycle_defaults(catalog, key, values, false)
 }
 
-fn materialize_lifecycle_defaults<X>(
+pub(crate) fn materialize_lifecycle_defaults<X>(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,

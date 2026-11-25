@@ -356,6 +356,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 | CommitError::OwnedRowsProtected { .. }
                 | CommitError::DuplicateKey { .. }
                 | CommitError::NotPending { .. }
+                | CommitError::ReceiptNotAccepted { .. }
                 | CommitError::Conflict { .. }
                 | CommitError::DuplicateLink { .. }
                 | CommitError::IdentifierTooLong { .. }
@@ -864,6 +865,17 @@ where
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
         self.inner.load_bounded(key, max_bytes)
+    }
+
+    fn resolve_accepted_receipt(
+        &self,
+        reference: &norn_kernel::receipt_binding::ReceiptReference,
+        manifest: &norn_ir::function::Digest,
+    ) -> Result<
+        Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
+        norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
+    > {
+        self.inner.resolve_accepted_receipt(reference, manifest)
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
