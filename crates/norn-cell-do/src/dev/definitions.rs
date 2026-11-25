@@ -128,11 +128,14 @@ fn declared(value: &Value) -> Result<(String, String, Box<RawValue>), Value> {
     }
 }
 
+/// One declared definition: its kind, id and payload.
+type Declared = (String, String, Box<RawValue>);
+
 /// Every declared definition, or the findings of the malformed and the
 /// duplicated ones.
-fn declarations(definitions: &[Value]) -> Result<Vec<(String, String, Box<RawValue>)>, Vec<Value>> {
+fn declarations(definitions: &[Value]) -> Result<Vec<Declared>, Vec<Value>> {
     let mut refused = Vec::new();
-    let mut declarations: Vec<(String, String, Box<RawValue>)> = Vec::new();
+    let mut declarations: Vec<Declared> = Vec::new();
     for value in definitions {
         match declared(value) {
             Ok((_, id, _)) if declarations.iter().any(|(_, other, _)| *other == id) => {
@@ -180,143 +183,185 @@ pub(crate) fn sync_reads<E: SqlEngine>(
             return synced;
         }
     };
-    let scope = ScopeQuery {
-        org_id: Some(host.scope().org_id.clone()),
-        environment_id: Some(host.scope().environment_id.clone()),
+    let reads = Reads {
+        host,
+        actor,
+        kinds,
+        questions,
+        now_ms,
+        scope: ScopeQuery {
+            org_id: Some(host.scope().org_id.clone()),
+            environment_id: Some(host.scope().environment_id.clone()),
+        },
     };
-    let read = GetDefinitionQuery {
-        org_id: scope.org_id.clone(),
-        environment_id: scope.environment_id.clone(),
-        version: None,
-    };
-    let event = |kind: &str, id: &str, version: u64, lifecycle: &str| json!({ "event": "definition", "kind": kind, "id": id, "version": version, "lifecycle": lifecycle });
     for kind in READ_KINDS {
         for (_, id, payload) in declared.iter().filter(|(declared, _, _)| declared == kind) {
-            let current = get_definition(host, &read, Some(actor), kinds, questions, id).ok();
-            if let Some(current) = &current {
-                if current.kind != kind {
-                    synced.refused.push(finding(
-                        id,
-                        "norn.dev.definition_kind",
-                        format!("{id} is already a {} definition", current.kind),
-                    ));
-                    continue;
-                }
-                let same = serde_json::from_str::<Value>(current.payload.get()).ok()
-                    == serde_json::from_str::<Value>(payload.get()).ok();
-                if current.lifecycle == "active" && same {
-                    continue;
-                }
-            }
-            let admitted = admit_definition(
-                host,
-                &scope,
-                Some(actor),
-                kinds,
-                questions,
-                &AdmitDefinitionRequest {
-                    kind: kind.to_owned(),
-                    id: id.clone(),
-                    payload: payload.clone(),
-                },
-            );
-            let admitted = match admitted {
-                Ok(admitted) if admitted.admitted => admitted,
-                Ok(admitted) => {
-                    synced
-                        .refused
-                        .extend(admitted.diagnostics.iter().filter_map(|diagnostic| {
-                            let mut value = serde_json::to_value(diagnostic).ok()?;
-                            value
-                                .as_object_mut()?
-                                .insert("definitionId".to_owned(), json!(id));
-                            Some(value)
-                        }));
-                    continue;
-                }
-                Err(refusal) => {
-                    synced.refused.extend(from_refusal(id, &refusal));
-                    continue;
-                }
-            };
-            let installed = install_definition(
-                host,
-                &scope,
-                Some(actor),
-                kinds,
-                questions,
-                &InstallDefinitionRequest {
-                    kind: kind.to_owned(),
-                    id: id.clone(),
-                    payload: payload.clone(),
-                    expected_version: current.as_ref().map(|current| current.version),
-                    signoff: admitted
-                        .restatement_sha256
-                        .map(|restatement_sha256| SignoffRequest { restatement_sha256 }),
-                },
-                now_ms,
-            );
-            match installed {
-                Ok(installed) => synced
-                    .events
-                    .push(event(kind, id, installed.version, "active")),
-                Err(refusal) => synced.refused.extend(from_refusal(id, &refusal)),
-            }
+            reads.install(&mut synced, kind, id, payload);
         }
     }
     for kind in READ_KINDS.iter().rev() {
+        reads.retire_undeclared(&mut synced, kind, &declared);
+    }
+    synced
+}
+
+/// The serving host and the actor a read-definition sync installs as.
+struct Reads<'a, E: SqlEngine> {
+    host: &'a DevHost<E>,
+    actor: &'a str,
+    kinds: &'a DefinitionKinds,
+    questions: Option<&'a dyn AdHocQuestions<E>>,
+    now_ms: u64,
+    scope: ScopeQuery,
+}
+
+fn definition_event(kind: &str, id: &str, version: u64, lifecycle: &str) -> Value {
+    json!({ "event": "definition", "kind": kind, "id": id, "version": version, "lifecycle": lifecycle })
+}
+
+impl<E: SqlEngine> Reads<'_, E> {
+    /// Install `payload` as `id` unless its active revision already is it.
+    fn install(&self, synced: &mut Synced, kind: &str, id: &str, payload: &RawValue) {
+        let read = GetDefinitionQuery {
+            org_id: self.scope.org_id.clone(),
+            environment_id: self.scope.environment_id.clone(),
+            version: None,
+        };
+        let current = get_definition(
+            self.host,
+            &read,
+            Some(self.actor),
+            self.kinds,
+            self.questions,
+            id,
+        )
+        .ok();
+        if let Some(current) = &current {
+            if current.kind != kind {
+                synced.refused.push(finding(
+                    id,
+                    "norn.dev.definition_kind",
+                    format!("{id} is already a {} definition", current.kind),
+                ));
+                return;
+            }
+            let same = serde_json::from_str::<Value>(current.payload.get()).ok()
+                == serde_json::from_str::<Value>(payload.get()).ok();
+            if current.lifecycle == "active" && same {
+                return;
+            }
+        }
+        let request = AdmitDefinitionRequest {
+            kind: kind.to_owned(),
+            id: id.to_owned(),
+            payload: payload.to_owned(),
+        };
+        let admitted = match admit_definition(
+            self.host,
+            &self.scope,
+            Some(self.actor),
+            self.kinds,
+            self.questions,
+            &request,
+        ) {
+            Ok(admitted) if admitted.admitted => admitted,
+            Ok(admitted) => {
+                synced
+                    .refused
+                    .extend(admitted.diagnostics.iter().filter_map(|diagnostic| {
+                        let mut value = serde_json::to_value(diagnostic).ok()?;
+                        value
+                            .as_object_mut()?
+                            .insert("definitionId".to_owned(), json!(id));
+                        Some(value)
+                    }));
+                return;
+            }
+            Err(refusal) => {
+                synced.refused.extend(from_refusal(id, &refusal));
+                return;
+            }
+        };
+        let install = InstallDefinitionRequest {
+            kind: kind.to_owned(),
+            id: id.to_owned(),
+            payload: payload.to_owned(),
+            expected_version: current.as_ref().map(|current| current.version),
+            signoff: admitted
+                .restatement_sha256
+                .map(|restatement_sha256| SignoffRequest { restatement_sha256 }),
+        };
+        match install_definition(
+            self.host,
+            &self.scope,
+            Some(self.actor),
+            self.kinds,
+            self.questions,
+            &install,
+            self.now_ms,
+        ) {
+            Ok(installed) => {
+                synced
+                    .events
+                    .push(definition_event(kind, id, installed.version, "active"));
+            }
+            Err(refusal) => synced.refused.extend(from_refusal(id, &refusal)),
+        }
+    }
+
+    /// Retire every active `kind` definition `declared` does not name.
+    fn retire_undeclared(&self, synced: &mut Synced, kind: &str, declared: &[Declared]) {
         let mut cursor = None;
         loop {
-            let page = list_definitions(
-                host,
-                &ListDefinitionsQuery {
-                    org_id: scope.org_id.clone(),
-                    environment_id: scope.environment_id.clone(),
-                    kind: Some((*kind).to_owned()),
-                    include: None,
-                    limit: Some(MAX_LIST_LIMIT),
-                    cursor: cursor.take(),
-                    uses: None,
-                },
-                Some(actor),
-            );
-            let page = match page {
+            let query = ListDefinitionsQuery {
+                org_id: self.scope.org_id.clone(),
+                environment_id: self.scope.environment_id.clone(),
+                kind: Some(kind.to_owned()),
+                include: None,
+                limit: Some(MAX_LIST_LIMIT),
+                cursor: cursor.take(),
+                uses: None,
+            };
+            let page = match list_definitions(self.host, &query, Some(self.actor)) {
                 Ok(page) => page,
                 Err(refusal) => {
                     synced.refused.extend(from_refusal(kind, &refusal));
-                    break;
+                    return;
                 }
             };
             for summary in page.items.iter().filter(|summary| {
                 summary.lifecycle == "active"
                     && !declared.iter().any(|(_, id, _)| *id == summary.id)
             }) {
+                let request = RetireDefinitionRequest {
+                    expected_version: summary.version,
+                };
                 match retire_definition(
-                    host,
-                    &scope,
-                    Some(actor),
-                    questions,
+                    self.host,
+                    &self.scope,
+                    Some(self.actor),
+                    self.questions,
                     &summary.id,
-                    &RetireDefinitionRequest {
-                        expected_version: summary.version,
-                    },
-                    now_ms,
+                    &request,
+                    self.now_ms,
                 ) {
                     Ok(retired) => {
-                        synced
-                            .events
-                            .push(event(kind, &summary.id, retired.version, "retired"))
+                        synced.events.push(definition_event(
+                            kind,
+                            &summary.id,
+                            retired.version,
+                            "retired",
+                        ));
                     }
                     Err(refusal) => synced.refused.extend(from_refusal(&summary.id, &refusal)),
                 }
             }
             match page.cursor {
                 Some(next) => cursor = Some(next),
-                None => break,
+                None => return,
             }
         }
     }
-    synced
 }
 
 /// Parse `definitions` and admit, restate and sign each approval against

@@ -820,8 +820,7 @@ impl Session<'_> {
                     &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
                     "· unchanged (same definitions)",
                 );
-                self.access(out, serving);
-                self.sync_reads(out, serving, &definitions);
+                self.served(out, serving, &definitions);
                 Ok(None)
             }
             Ok(definitions::Committed::Installed(installed, events)) => {
@@ -832,8 +831,7 @@ impl Session<'_> {
                     );
                 }
                 Self::definitions(out, &events);
-                self.access(out, serving);
-                self.sync_reads(out, serving, &definitions);
+                self.served(out, serving, &definitions);
                 Ok(Some(*installed))
             }
             Err(definitions::Rejected { phase, diagnostics }) => {
@@ -873,6 +871,13 @@ impl Session<'_> {
         }
     }
 
+    /// A revision serves: report its access, then sync the sources'
+    /// questions and dashboards over it.
+    fn served(&self, out: &mut Events, serving: &http::Serving, definitions: &[Value]) {
+        self.access(out, serving);
+        self.sync_reads(out, serving, definitions);
+    }
+
     /// DEV-READ-DEFINITIONS-1: install the sources' changed questions and
     /// dashboards over the serving revision, retire the dropped ones, and
     /// report both; a refused one is reported and changes nothing.
@@ -885,9 +890,11 @@ impl Session<'_> {
                 return;
             };
             let runtime = self.metrics.questions(host);
-            let questions = runtime.as_ref().ok().map(|runtime| {
-                runtime as &dyn norn_api::question_routes::AdHocQuestions<NativeEngine>
-            });
+            let questions: Option<&dyn norn_api::question_routes::AdHocQuestions<NativeEngine>> =
+                match &runtime {
+                    Ok(runtime) => Some(runtime),
+                    Err(_unavailable) => None,
+                };
             definitions::sync_reads(
                 host,
                 &self.manifest.dev.actor,
