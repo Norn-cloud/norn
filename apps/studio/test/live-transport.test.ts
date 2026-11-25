@@ -692,6 +692,51 @@ test("a settled session outage clears once /api/me answers for the page: the wor
   }
 })
 
+test("a recovery read that outlives Retry and then succeeds never clears the newer settled refusal for its workspace", async () => {
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  const definitionReads: string[] = []
+  let releaseStale = () => {}
+  const stale = new Promise<void>((resolve) => { releaseStale = resolve })
+  let markStaleStarted = () => {}
+  const staleStarted = new Promise<void>((resolve) => { markStaleStarted = resolve })
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") return Response.json(ME)
+    definitionReads.push(url)
+    if (definitionReads.length === 1) {
+      markStaleStarted()
+      await stale
+      return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+    }
+    return Response.json(
+      { code: "cell.unopenable", retryable: false, incidentId: "inc-newer", explanation: "the cell cannot open" },
+      { status: 503 },
+    )
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  const client = new QueryClient()
+  try {
+    // 1. Outage recovery reads A's definitions, and that read stalls.
+    const recovery = client.fetchQuery(modeQuery(undefined, true, client))
+    await staleStarted
+
+    // 2. Retry (a new generation), then A's own mode query settles on A's refusal.
+    refreshMode()
+    await expect(client.fetchQuery(modeQuery(scopeA))).rejects.toMatchObject({ incidentId: "inc-newer" })
+    expect(definitionReads).toHaveLength(2)
+
+    // 3. The older recovery read now succeeds. It is from before Retry, so A's newer settle stays:
+    //    a page read reuses it with no definitions read.
+    releaseStale()
+    await expect(recovery).resolves.toMatchObject({ kind: "live" })
+    await expect(currentMode()).rejects.toMatchObject({ incidentId: "inc-newer" })
+    expect(definitionReads).toHaveLength(2)
+  } finally {
+    fetch.mockRestore()
+    client.clear()
+  }
+})
+
 test("syncStudioScopeChange(client, undefined) immediately flips mounted scope observers to pending without writing null", () => {
   const client = new QueryClient()
   const scopeA = { orgId: "org_a", environmentId: "env_a" }

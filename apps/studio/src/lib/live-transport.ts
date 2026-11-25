@@ -96,8 +96,9 @@ async function discoverScope(fetcher: Fetch, signal?: AbortSignal): Promise<Stud
 
 /**
  * Where the read behind a mode or error actually went, fixed when the request goes out: the scope
- * (`studioScopeKey`) its `/v1/definitions` read was sent to, or `null` for the session server's own
- * `/api/me` discovery that failed before any workspace was known, plus the mode generation it ran in.
+ * (`studioScopeKey`) its `/v1/definitions` read was sent to, or `null` when the session server's own
+ * `/api/me` discovery was all it reached (it failed, or named no workspace), plus the mode generation
+ * it ran in.
  * Each mode and each error `readMode` produces carries it, so whatever later records that outcome (the
  * mode query's settled failure) binds it to what answered, never to whichever scope happens to be
  * active when it is stored. A read aborted by its caller carries none.
@@ -120,17 +121,21 @@ export async function readMode(
   signal?: AbortSignal,
 ): Promise<Mode> {
   signal?.throwIfAborted()
-  let scope: StudioScope | null
-  if (knownScope !== undefined) scope = knownScope
-  else {
-    const session: DefinitionsTarget = { scopeKey: null, generation: modeGeneration }
+  let scope: StudioScope | null = knownScope ?? null
+  let session: DefinitionsTarget | undefined
+  if (knownScope === undefined) {
+    session = { scopeKey: null, generation: modeGeneration }
     try { scope = await discoverScope(fetcher, signal) } catch (error) {
       bindTarget(error, session, signal)
       throw error
     }
   }
   signal?.throwIfAborted()
-  if (scope === null) return { kind: "recorded" }
+  if (scope === null) {
+    const recorded: Mode = { kind: "recorded" }
+    if (session !== undefined) bindTarget(recorded, session)
+    return recorded
+  }
   const target: DefinitionsTarget = { scopeKey: studioScopeKey(scope), generation: modeGeneration }
   try {
     const mode = await readDefinitions(fetcher, scope, signal)
@@ -571,10 +576,17 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
     enabled,
     queryFn: async ({ signal }) => {
       const mode = await (recoveryClient === undefined ? currentMode(browserFetch, scope, signal) : readMode(browserFetch, undefined, signal))
-      // A mode read succeeded: forget the failure settled for the workspace it read, and any settled
-      // session outage (the session server answered this read).
+      // A mode read succeeded: forget the failure settled in this read's own generation for the workspace
+      // it read, or a settled session outage (the session server answered this read). A success from an
+      // older generation (a recovery read that outlived `refreshMode`) never clears a newer settle.
       const settled = settledModeFailure
-      if (settled !== undefined && (settled.scopeKey === null || settled.scopeKey === definitionsTargetOf(mode)?.scopeKey)) {
+      const target = definitionsTargetOf(mode)
+      if (
+        settled !== undefined
+        && target !== undefined
+        && target.generation === settled.generation
+        && (settled.scopeKey === null || settled.scopeKey === target.scopeKey)
+      ) {
         settledModeFailure = undefined
       }
       if (recoveryClient !== undefined) recoveryClient.setQueryData(["studio-scope"], mode.kind === "live" ? mode.scope : null)
