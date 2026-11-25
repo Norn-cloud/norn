@@ -15,13 +15,14 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { NO_DATA_CELL, readAtScope, readStudioScope, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, readAtScope, readStudioScope, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, readRecordsAtScope, type RecordsRead } from "../lib/records-source.ts"
 import { readObjectAtScope } from "../lib/live-transport.ts"
 import { transport } from "../lib/transport.ts"
-import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
+import { ACTIONS_UNAVAILABLE, writesWhole } from "../lib/actions.ts"
+import { type ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import { ActionSheet, useActions, type ActionScopeBinding, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
@@ -29,6 +30,7 @@ import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 import { RecordsTimeline } from "./records-timeline.tsx"
 import { LifecycleView } from "@/components/lifecycle-view"
+import { RevealScope } from "@/components/masked-value"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Zoom } from "../lib/timeline.ts"
 
@@ -79,8 +81,24 @@ export interface GridQuery { readonly filter: Predicate | null; readonly sort: r
 
 export type DisplayedGridQuery = GridQuery & { readonly initialColumns: readonly string[]; readonly scope?: StudioScope }
 
-export function visibleDrawerRow(row: GridRow | null, error: Error | null, scopeRefused = false): GridRow | null {
-  return error instanceof StudioScopeError || scopeRefused ? null : row
+/**
+ * Whether the latest read withdrew this reader's view of the records: the workspace changed, or
+ * the session or the cell refused the reader (401 or 403, from the scope probe or the records
+ * read). It wins over any cached page: TanStack keeps the last page on a failed refetch, and that
+ * page must not stay on screen once the reader may no longer see it.
+ */
+export function readWithdrawn(error: Error | null): boolean {
+  return error instanceof StudioScopeError || (error instanceof CellUnavailable && (error.status === 401 || error.status === 403))
+}
+
+/**
+ * The drawer's row: the opened record's id resolved against the latest page the cell served, so a
+ * later read that withholds, changes or drops the record shows that, never the row as first
+ * opened. A refused, withdrawn or workspace-changed read, or a page without the record, closes the drawer.
+ */
+export function visibleDrawerRow(openedId: string | null, rows: readonly GridRow[], error: Error | null, refused = false): GridRow | null {
+  if (openedId === null || readWithdrawn(error) || refused) return null
+  return rows.find(({ record }) => record.id === openedId) ?? null
 }
 
 export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline = false }: {
@@ -121,7 +139,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
   const reported = JSON.stringify({ filter, sort, shownList, orgId: scope?.orgId, environmentId: scope?.environmentId })
   useEffect(() => { onQuery?.({ filter, sort, columns: shownList, initialColumns, ...(scope === undefined ? {} : { scope }) }) }, [reported])
   const [active, setActive] = useState(0)
-  const [opened, setOpened] = useState<GridRow | null>(null)
+  const [openedId, setOpenedId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [acting, setActing] = useState<OpenAction | null>(null)
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
@@ -176,8 +194,9 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
   }, [data, client, name, scope?.orgId, scope?.environmentId])
 
   // Controls are on only when the last page says the cell applied the query.
-  const scopeChanged = result.isError && result.error instanceof StudioScopeError
-  const page = !scopeChanged && data?.kind === "page" ? data : undefined
+  // A workspace change or an authorization refusal hides the cached page (and with it the drawer).
+  const withdrawn = result.isError && readWithdrawn(result.error)
+  const page = !withdrawn && data?.kind === "page" ? data : undefined
   // While a refused or restarting read is shown, keep what the last page said.
   const lastServed = useRef(false)
   if (page !== undefined) lastServed.current = page.served !== null
@@ -188,12 +207,15 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
     // Only a page read after the commit can hold the record as committed.
     if (viewing === null || result.isFetching || page === undefined || result.dataUpdatedAt < viewing.since) return
     const row = page.read.document.records.findIndex((record) => record.id === viewing.id)
-    if (row >= 0) setOpened({ record: page.read.document.records[row]!, at: `/records/${row}`, numbers: page.read.numbers })
+    if (row >= 0) setOpenedId(viewing.id)
     else void navigate({ to: "/sources/$concept/$", params: { concept: name, _splat: viewing.id } })
     setViewing(null)
   }, [viewing, result.isFetching, result.dataUpdatedAt, page, name, navigate])
 
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
+  const drawerRow = visibleDrawerRow(openedId, rows, result.error, data?.kind === "refused")
+  // A record the latest read no longer serves stays closed: it never reopens on a later page.
+  useEffect(() => { if (openedId !== null && drawerRow === null) setOpenedId(null) }, [openedId, drawerRow])
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
   // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
   const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)").join(" ")}`
@@ -238,7 +260,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
     if (event.key in steps) { event.preventDefault(); move(active + (steps[event.key] ?? 0)) }
     else if (event.key === "Home") { event.preventDefault(); move(0) }
     else if (event.key === "End") { event.preventDefault(); move(rows.length - 1) }
-    else if ((event.key === "Enter" || event.key === " ") && rows[active]) { event.preventDefault(); setOpened(rows[active] ?? null) }
+    else if ((event.key === "Enter" || event.key === " ") && rows[active]) { event.preventDefault(); setOpenedId(rows[active]?.record.id ?? null) }
   }
 
   const gridWait = useBoundedWait(result.isPending)
@@ -255,6 +277,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
 
   const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} scope={scope} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
+    <RevealScope.Provider value={scope}>
     <Shell>
       <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
       {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
@@ -355,7 +378,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
               onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
               onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
               onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}
-              onOpen={(row) => setOpened(row)} />
+              onOpen={(row) => setOpenedId(row.record.id)} />
           )
         })()}
         {shownLifecycle && (
@@ -420,7 +443,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
                       data-withheld={withheld || undefined}
                       className={cn("group absolute inset-x-0 grid cursor-pointer items-center border-b border-node-border/70", current ? "bg-[color-mix(in_oklab,var(--accent)_75%,var(--card))]" : "bg-card hover:bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]")}
                       style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
-                      onClick={() => { setActive(item.index); setOpened(row) }}>
+                      onClick={() => { setActive(item.index); setOpenedId(row.record.id) }}>
                       <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}><RecordName row={row} fallback={nameOf(row)} /></div>
                       {withheld
                         ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
@@ -444,10 +467,11 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
         )}
       </div>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={visibleDrawerRow(opened, result.error, data?.kind === "refused" && data.code === "workspace.changed")} origin={page?.origin} scope={scope} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
-        onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
+      <RecordDrawer concept={concept} fields={fields} row={drawerRow} origin={page?.origin} scope={scope} actions={actions} actionsOff={actionsOff} onClose={() => setOpenedId(null)}
+        onAction={(action, id) => { setOpenedId(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} scopeBinding={actionScope} />
     </Shell>
+    </RevealScope.Provider>
   )
 }
 

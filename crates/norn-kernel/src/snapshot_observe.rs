@@ -34,6 +34,9 @@ use crate::envelope::{EnvelopeCounts, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 use norn_expr::EvaluationBudget;
 
+mod read_findings;
+use read_findings::AuthorizedObservedReadFinding;
+
 /// Why a declared observed transition was synthesized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -326,19 +329,6 @@ impl<'a> AuthorizedWrites<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct AuthorizedObservedReadFinding {
-    pub(crate) key: FactKey,
-    pub(crate) expected: FactVersion,
-    pub(crate) values: JsonObject,
-    pub(crate) provenance: InstanceProvenance,
-    pub(crate) observation_id: String,
-    pub(crate) findings: Vec<DataQualityFinding>,
-    /// LAW-LINK-1: a linked subject re-checked because its target changed
-    /// files findings only for the link laws the change broke.
-    pub(crate) laws: Option<Vec<DataQualityRuleRef>>,
-}
-
 impl ObservationAuthorization {
     /// An empty authorization with no prepared writes or read-bound findings.
     #[must_use]
@@ -404,41 +394,6 @@ impl ObservationAuthorization {
         Ok(())
     }
 
-    fn authorize_read_findings(
-        &mut self,
-        catalog: &TypeCatalog<'_>,
-        expectation: &FactExpectation,
-        values: &JsonObject,
-        provenance: &InstanceProvenance,
-        observation_id: &str,
-        failures: &[InvariantFailure],
-    ) -> Result<(), ObservationRefusal> {
-        let findings = findings_for(
-            catalog,
-            &expectation.key,
-            values,
-            provenance,
-            observation_id,
-            failures,
-            &mut crate::governing_laws::DeferLinkLaws,
-        )?;
-        // Claim authority retains the checked values even when no finding is emitted.
-        if !findings.is_empty()
-            || expectation.key.object_type.as_str() == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
-        {
-            self.read_findings.push(AuthorizedObservedReadFinding {
-                key: expectation.key.clone(),
-                expected: expectation.expected,
-                values: values.clone(),
-                provenance: provenance.clone(),
-                observation_id: observation_id.to_owned(),
-                findings,
-                laws: None,
-            });
-        }
-        Ok(())
-    }
-
     /// Combine authorities produced by independent prepared source snapshots.
     /// Duplicate writes are rejected later when the complete commit is bound.
     pub fn merge(&mut self, other: Self) {
@@ -487,7 +442,7 @@ impl ObservationAuthorization {
                     && !self
                         .read_findings
                         .iter()
-                        .any(|finding| finding.key == read.key)
+                        .any(|finding| finding.read_key == read.key)
                     && !commit.writes.iter().any(|write| write.key == read.key)
             })
             .cloned()
@@ -567,9 +522,9 @@ impl ObservationAuthorization {
     ) {
         self.read_findings.retain(|authorized| {
             !writes.iter().any(|write| write.key == authorized.key)
-                && reads
-                    .iter()
-                    .any(|read| read.key == authorized.key && read.expected == authorized.expected)
+                && reads.iter().any(|read| {
+                    read.key == authorized.read_key && read.expected == authorized.expected
+                })
                 && final_slice.get(&authorized.key).is_some_and(|state| {
                     state.version == authorized.expected
                         && state.values.as_ref() == Some(&authorized.values)
@@ -1169,7 +1124,7 @@ impl ObservationAuthorization {
             let earlier = findings_by_key.entry(&authorized.key).or_default();
             if earlier.contains(&authorized)
                 || reads
-                    .get(&(&authorized.key, authorized.expected.0))
+                    .get(&(&authorized.read_key, authorized.expected.0))
                     .copied()
                     .unwrap_or_default()
                     != 1
@@ -1441,15 +1396,21 @@ impl ObservationAuthorization {
             if findings.is_empty() {
                 continue;
             }
-            let read = FactExpectation {
-                key: subject.clone(),
-                expected,
-            };
-            if !commit.reads.contains(&read) {
-                commit.reads.push(read);
+            // One canonical object, one read: bind to a pin already there.
+            let pinned = commit
+                .reads
+                .iter()
+                .find(|read| model.canonical(&read.key) == canonical);
+            let read_key = pinned.map_or_else(|| subject.clone(), |read| read.key.clone());
+            if pinned.is_none() {
+                commit.reads.push(FactExpectation {
+                    key: subject.clone(),
+                    expected,
+                });
             }
             self.read_findings.push(AuthorizedObservedReadFinding {
                 key: subject,
+                read_key,
                 expected,
                 values,
                 provenance,

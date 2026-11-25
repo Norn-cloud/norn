@@ -1087,42 +1087,59 @@ pub(crate) fn check_invariants<E, C, T, V: CommitView + ?Sized>(
         }
     }
     if let Some(authorization) = authorization {
-        type CachedReadInvariantStates = Vec<(crate::cell_host::JsonObject, Vec<InvariantFailure>)>;
-        let mut read_invariant_cache: BTreeMap<(FactKey, FactVersion), CachedReadInvariantStates> =
-            BTreeMap::new();
-        for authorized in authorization.read_findings() {
-            let cache_key = (authorized.key.clone(), authorized.expected);
-            let cached_failures = read_invariant_cache.get(&cache_key).and_then(|states| {
-                states
-                    .iter()
-                    .find(|(values, _)| values == &authorized.values)
-                    .map(|(_, failures)| failures.clone())
-            });
-            let failures = if let Some(failures) = cached_failures {
-                failures
-            } else {
-                let failures = evaluate_commit_invariants(
-                    catalog,
-                    &authorized.key,
-                    &authorized.values,
-                    &mut remaining,
-                    true,
-                )?;
-                read_invariant_cache
-                    .entry(cache_key)
-                    .or_default()
-                    .push((authorized.values.clone(), failures.clone()));
-                failures
-            };
-            let mut links = CommitLinks::new(post, &authorized.key);
-            if !ObservationAuthorization::findings_for_read(
-                catalog, authorized, &failures, &mut links,
-            )
+        check_read_findings(post, authorization, &mut remaining)?;
+    }
+    Ok(())
+}
+
+/// The read-bound findings `authorization` seals, recomputed over the state
+/// the commit leaves; each must match exactly and be guarded by a read of its
+/// own object.
+fn check_read_findings<V: CommitView + ?Sized>(
+    post: &PostState<'_, '_, V>,
+    authorization: &ObservationAuthorization,
+    remaining: &mut u64,
+) -> Result<(), InvariantAdmissionError> {
+    type CachedReadInvariantStates = Vec<(crate::cell_host::JsonObject, Vec<InvariantFailure>)>;
+    let model = post.model();
+    let catalog = model.catalog;
+    let mut read_invariant_cache: BTreeMap<(FactKey, FactVersion), CachedReadInvariantStates> =
+        BTreeMap::new();
+    for authorized in authorization.read_findings() {
+        // #1701: the sealed subject and the read that guards it must be one
+        // object under this catalog, or the read guards another object.
+        if model.canonical(&authorized.key) != model.canonical(&authorized.read_key) {
+            return Err(InvariantAdmissionError::ObservationAuthorization);
+        }
+        let cache_key = (authorized.key.clone(), authorized.expected);
+        let cached_failures = read_invariant_cache.get(&cache_key).and_then(|states| {
+            states
+                .iter()
+                .find(|(values, _)| values == &authorized.values)
+                .map(|(_, failures)| failures.clone())
+        });
+        let failures = if let Some(failures) = cached_failures {
+            failures
+        } else {
+            let failures = evaluate_commit_invariants(
+                catalog,
+                &authorized.key,
+                &authorized.values,
+                remaining,
+                true,
+            )?;
+            read_invariant_cache
+                .entry(cache_key)
+                .or_default()
+                .push((authorized.values.clone(), failures.clone()));
+            failures
+        };
+        let mut links = CommitLinks::new(post, &authorized.key);
+        if !ObservationAuthorization::findings_for_read(catalog, authorized, &failures, &mut links)
             .is_ok_and(|actual| actual.as_slice() == authorized.findings.as_slice())
-                || links.take_host_error().is_some()
-            {
-                return Err(InvariantAdmissionError::ObservationAuthorization);
-            }
+            || links.take_host_error().is_some()
+        {
+            return Err(InvariantAdmissionError::ObservationAuthorization);
         }
     }
     Ok(())
