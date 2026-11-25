@@ -232,9 +232,9 @@ test("picker below 640px: the trigger, Clear, search field and options are at le
   expect(trigger!.height).toBeGreaterThanOrEqual(44)
   expect(clear!.width).toBeGreaterThanOrEqual(44)
   expect(clear!.height).toBeGreaterThanOrEqual(44)
-  // Back on the trigger from the keyboard (Escape closes the list): a solid 2px ring in --ring.
-  await equipment.click()
-  await page.keyboard.press("Escape")
+  // Onto the trigger from the keyboard: a solid 2px ring in --ring.
+  await form.getByRole("button", { name: "Clear selection" }).focus()
+  await page.keyboard.press("Shift+Tab")
   await expect(equipment).toBeFocused()
   await expect(equipment).toHaveCSS("outline-style", "solid")
   await expect(equipment).toHaveCSS("outline-width", "2px")

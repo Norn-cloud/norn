@@ -166,7 +166,9 @@ test("sidebar: the source list is a keyboard tree (arrows, Right/Left, Home/End)
   const label = page.locator(':focus > [data-slot="tree-label"]')
   expect(await style(label, "outline-style")).toBe("solid")
   expect(await style(label, "outline-width")).toBe("2px")
-  expect(await style(label, "outline-color")).toBe(await painted(page, await token(page, "ring")))
+  // The ring fades in with the row's colour transition, so it is read once settled.
+  const ring = await painted(page, await token(page, "ring"))
+  await expect.poll(() => style(label, "outline-color").then((color) => painted(page, color))).toBe(ring)
   // The ring (2px at a 1px offset) stays inside the list's 8px gutter, so the scroller never clips it.
   const [row, list] = await Promise.all([label.boundingBox(), nav(page).boundingBox()])
   expect(row!.x - 3).toBeGreaterThanOrEqual(list!.x)
@@ -207,8 +209,10 @@ test("sidebar below 640px: the toggle opens a modal 'Navigation' sheet from the 
   await toggle(page).click()
   const sheet = page.getByRole("dialog", { name: "Navigation" })
   await expect(sheet).toBeVisible()
-  await expect(toggle(page)).toHaveAttribute("aria-expanded", "true")
-  await expect(toggle(page)).toHaveAttribute("aria-controls", "studio-sidebar-sheet")
+  // The page behind the modal sheet is inert, so the toggle is read by its slot, not its role.
+  const inert = page.locator('[data-slot="sidebar-trigger"]')
+  await expect(inert).toHaveAttribute("aria-expanded", "true")
+  await expect(inert).toHaveAttribute("aria-controls", "studio-sidebar-sheet")
   await expect(sheet).toHaveAttribute("id", "studio-sidebar-sheet")
   // Inset 8px from the start edge, a strip of the page left visible.
   await expect.poll(async () => { const b = await sheet.boundingBox(); return [Math.round(b!.x), Math.round(b!.y), Math.round(b!.width)] }).toEqual([8, 8, 320])

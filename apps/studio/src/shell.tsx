@@ -1269,7 +1269,8 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
                     <Hint side="bottom" label={<>{collapsed ? "Show sidebar" : "Hide sidebar"} <Keys className="opacity-70">⌘B</Keys></>}>
                       <SidebarTrigger ref={triggerRef} className="-ms-1" />
                     </Hint>
-                    <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+                    {/* The crumbs collapse by the room they have beside the bar's controls, not by the page's width. */}
+                    <div className="hidden min-w-0 flex-1 overflow-hidden @[17rem]:block"><div className="@container min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div></div>
                   </div>
                   <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
                   <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">

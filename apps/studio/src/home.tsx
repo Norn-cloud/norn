@@ -96,7 +96,7 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-12 rounded-(--radius-search) border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
+      <InputGroup className="h-12 rounded-(--radius-search) max-sm:h-[52px] border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
         <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">

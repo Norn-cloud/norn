@@ -577,3 +577,11 @@ test("sidebar rows: a 50% wash on hover with no text change, the neutral pill wi
     }
   }
 })
+
+test("cn keeps a type-scale step beside a text colour, and a later step replaces an earlier one", async () => {
+  const { cn } = await import("../src/lib/utils.ts")
+  expect(cn("text-meta text-muted-foreground")).toBe("text-meta text-muted-foreground")
+  expect(cn("font-heading text-heading font-medium text-foreground", "[overflow-wrap:break-word]")).toContain("text-heading")
+  expect(cn("text-body", "text-meta")).toBe("text-meta")
+  expect(cn("text-muted-foreground", "text-foreground")).toBe("text-foreground")
+})

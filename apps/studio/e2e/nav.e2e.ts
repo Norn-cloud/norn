@@ -128,17 +128,18 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   expect(renderedCrumbLinks[0]!.width).toBeGreaterThanOrEqual(48)
   expect(renderedCrumbLinks[0]!.right).toBeLessThanOrEqual(searchAt830.x + 1)
 
-  // At 768px with both panels docked, <header> drops back to compact flex spacing, hides breadcrumbs so no link
-  // is crushed to 0px, and controls still never overlap.
+  // At 768px with both panels docked (the sidebar is the 48px rail from 640 to 1023px), <header> drops back to
+  // compact flex spacing, and the crumbs collapse to what fits: no link is crushed, and controls never overlap.
   await page.setViewportSize({ width: 768, height: 900 })
   const compactStyle = await headerStyle()
   expect(compactStyle.display).toBe("flex")
   expect(desktopStyle.paddingLeft).toBeGreaterThan(compactStyle.paddingLeft)
   expect(desktopStyle.columnGap).toBeGreaterThan(compactStyle.columnGap)
   const visibleAt768 = await page.getByRole("navigation", { name: "breadcrumb" }).locator("a").evaluateAll((links) =>
-    links.filter((link) => link.getClientRects().length > 0).length,
+    links.filter((link) => link.getClientRects().length > 0).map((link) => link.getBoundingClientRect().width),
   )
-  expect(visibleAt768).toBe(0)
+  expect(visibleAt768.length).toBeLessThanOrEqual(1)
+  for (const width of visibleAt768) expect(width).toBeGreaterThanOrEqual(48)
   await checkHeader()
 })
 
