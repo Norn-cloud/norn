@@ -124,12 +124,14 @@ fn write_typed(sink: &mut Sink, table: &TableSchema, rows: &[TypedRow]) -> Outco
 
 /// A held row's text bytes.
 pub(super) fn held_bytes(row: &HeldRow) -> usize {
+    let base = row
+        .reason
+        .len()
+        .saturating_add(row.rule.as_deref().map_or(0, str::len));
     row.values
         .iter()
         .flatten()
-        .fold(row.reason.len(), |total, text| {
-            total.saturating_add(text.len())
-        })
+        .fold(base, |total, text| total.saturating_add(text.len()))
 }
 
 /// Append held rows to a held-set sink. NB3 (#1765): in slices of at most

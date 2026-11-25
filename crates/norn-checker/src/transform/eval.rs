@@ -686,13 +686,20 @@ fn bucket_start(days: i64, grain: TimeGrain) -> Option<(i64, i64, i64)> {
 /// # Errors
 /// A value that is not a valid date or timestamp, or a year outside 0–9999.
 pub fn bucket(value: &Value, ty: &Type, grain: TimeGrain) -> Result<Value, EvalError> {
-    let text = match value {
-        Value::String(text) => text,
-        Value::Null => return Ok(Value::Null),
+    match value {
+        Value::String(text) => bucket_text(text, ty, grain).map(Value::String),
+        Value::Null => Ok(Value::Null),
         Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {
-            return Err(EvalError::Input(format!("{value:?} is not temporal")));
+            Err(EvalError::Input(format!("{value:?} is not temporal")))
         }
-    };
+    }
+}
+
+/// [`bucket`] of a date's or timestamp's text (`YYYY-MM-DD`).
+///
+/// # Errors
+/// As [`bucket`].
+pub fn bucket_text(text: &str, ty: &Type, grain: TimeGrain) -> Result<String, EvalError> {
     let invalid = || EvalError::Input(format!("{text:?} is not a valid date or timestamp"));
     let days = if matches!(strip(ty), Type::Timestamp { .. }) {
         let (seconds, _) =
@@ -712,23 +719,7 @@ pub fn bucket(value: &Value, ty: &Type, grain: TimeGrain) -> Result<Value, EvalE
     if !(0..=9999).contains(&year) {
         return Err(invalid());
     }
-    Ok(Value::String(format!("{year:04}-{month:02}-{day:02}")))
-}
-
-/// [`bucket`] of a date's or timestamp's text: the first day of its
-/// bucket, `YYYY-MM-DD`, for engines that bucket outside this interpreter.
-///
-/// # Errors
-/// As [`bucket`].
-pub fn bucket_text(text: &str, ty: &Type, grain: TimeGrain) -> Result<String, EvalError> {
-    match bucket(&Value::String(text.to_owned()), ty, grain)? {
-        Value::String(day) => Ok(day),
-        other @ (Value::Null
-        | Value::Bool(_)
-        | Value::Number(_)
-        | Value::Array(_)
-        | Value::Object(_)) => Err(EvalError::Input(format!("{other:?} is not a date"))),
-    }
+    Ok(format!("{year:04}-{month:02}-{day:02}"))
 }
 
 type GroupSpec = (String, Option<TimeGrain>, Type);

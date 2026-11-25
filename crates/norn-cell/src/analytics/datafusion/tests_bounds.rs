@@ -302,11 +302,13 @@ fn held(row: u64, bytes: usize) -> HeldRow {
 /// the memory bound is.
 #[test]
 fn held_rows_and_chunks_stay_within_the_batch_bound() {
-    let rows = [held(1, 40), held(2, 40), held(3, 40), held(4, 100)];
+    // Each `held(row, n)` carries a 1-byte rule id plus `n` value bytes.
+    let rows = [held(1, 40), held(2, 40), held(3, 40), held(4, 99)];
     let slices = held_slices(&rows, 100).expect("slices");
     assert_eq!(slices, vec![0..2, 2..3, 3..4]);
     assert_eq!(held_slices(&[], 100).expect("none").len(), 0);
-    let refused = held_slices(&[held(1, 101)], 100).expect_err("one row past the bound");
+    // 1 byte for rule + 100 value bytes = 101 > 100 refuses.
+    let refused = held_slices(&[held(1, 100)], 100).expect_err("one row past the bound");
     assert_eq!(refused.code, EXHAUSTED);
     assert_eq!(Caps::of(64 << 30).flush, MAX_BATCH_BYTES);
     assert_eq!(Caps::of(1 << 20).flush, 128 << 10);

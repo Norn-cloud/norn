@@ -267,6 +267,7 @@ impl Keyring {
     pub fn verify_head(&self, credential: &str, op: &str, now_ms: u64) -> Result<Verified, Denied> {
         let claims = Claims::parse(credential)?;
         let key = self.keys.get(claims.kid).ok_or(Denied::UnknownKey)?;
+        claims.live_at(now_ms)?;
         key.verify_strict(
             &signed_bytes(
                 claims.kid,
@@ -278,7 +279,6 @@ impl Keyring {
             &Signature::from_bytes(&claims.signature),
         )
         .map_err(|_e| Denied::BadSignature)?;
-        claims.live_at(now_ms)?;
         Ok(Verified {
             tenant: claims.tenant,
             digest: claims.digest.to_owned(),

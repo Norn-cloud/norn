@@ -190,6 +190,8 @@ impl<R: Read> Thrift<R> {
             compressed: -1,
             rows: None,
         };
+        let mut v1_rows = None;
+        let mut v2_rows = None;
         self.walk(0, &mut |thrift, id, kind, depth| match id {
             1 => {
                 header.kind = i32::try_from(thrift.i32_field(kind)?).map_err(|_e| malformed())?;
@@ -203,12 +205,13 @@ impl<R: Read> Thrift<R> {
                 header.compressed = thrift.i32_field(kind)?;
                 Ok(())
             }
-            // DataPageHeader.num_values, DataPageHeaderV2.num_rows.
+            // DataPageHeader.num_values (field 5), DataPageHeaderV2.num_rows (field 8).
             5 | 8 if kind == 12 => {
                 let wanted = if id == 5 { 1 } else { 3 };
+                let target = if id == 5 { &mut v1_rows } else { &mut v2_rows };
                 thrift.walk(depth, &mut |inner, field, kind, depth| {
                     if field == wanted {
-                        header.rows = Some(inner.i32_field(kind)?);
+                        *target = Some(inner.i32_field(kind)?);
                         Ok(())
                     } else {
                         inner.skip_value(kind, depth)
@@ -217,6 +220,11 @@ impl<R: Read> Thrift<R> {
             }
             _ => thrift.skip_value(kind, depth),
         })?;
+        header.rows = match header.kind {
+            DATA_PAGE => v1_rows,
+            DATA_PAGE_V2 => v2_rows,
+            _ => None,
+        };
         if header.uncompressed < 0 || header.compressed < 0 || header.rows.is_some_and(|r| r < 0) {
             return Err(malformed());
         }
@@ -259,6 +267,12 @@ fn chunk_pages(
     // bytes are counted with that page (or the last, at the chunk's end).
     let mut carried = 0_u64;
     while thrift.left > 0 {
+        *budget = budget.checked_sub(1).ok_or_else(|| {
+            refusal(
+                "bulk.unsupported_encoding",
+                "the file declares too much structure",
+            )
+        })?;
         let header = thrift.page_header()?;
         let bytes = u64::try_from(header.uncompressed).map_err(|_e| malformed())?;
         if bytes > bound {
@@ -270,12 +284,6 @@ fn chunk_pages(
         match header.kind {
             DICTIONARY_PAGE => chunk.dictionary = chunk.dictionary.saturating_add(bytes),
             DATA_PAGE | DATA_PAGE_V2 => {
-                *budget = budget.checked_sub(1).ok_or_else(|| {
-                    refusal(
-                        "bulk.unsupported_encoding",
-                        "the file declares too much structure",
-                    )
-                })?;
                 let rows =
                     u64::try_from(header.rows.ok_or_else(malformed)?).map_err(|_e| malformed())?;
                 if rows == 0 {

@@ -205,12 +205,20 @@ pub(super) fn array(kind: Kind, texts: &[Option<String>]) -> Result<ArrayRef, Ce
                 .collect::<Result<Vec<_>, _>>()?;
             Arc::new(Decimal128Array::from(values).with_data_type(decimal(scale)))
         }
-        None if kind == Kind::Bool => Arc::new(BooleanArray::from(
-            texts
+        None if kind == Kind::Bool => {
+            let values = texts
                 .iter()
-                .map(|text| text.as_deref().map(|text| text == "true"))
-                .collect::<Vec<_>>(),
-        )),
+                .map(|text| match text.as_deref() {
+                    None => Ok(None),
+                    Some("true") => Ok(Some(true)),
+                    Some("false") => Ok(Some(false)),
+                    Some(other) => Err(CellError::Engine(format!(
+                        "invalid boolean value {other:?}"
+                    ))),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Arc::new(BooleanArray::from(values))
+        }
         None => Arc::new(StringArray::from(texts.to_vec())),
     })
 }
