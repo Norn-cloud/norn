@@ -234,6 +234,83 @@ pub fn checkpoint_fixture_options() -> StoreOptions {
     }
 }
 
+/// Model for the storage-version-7 fixture (#1533 Part 1): carries both
+/// unmarked objects and a marked object type so v7 → v8 upgrade tests prove
+/// exact `nonempty_slots` backfill across unmarked, marked, and declassified
+/// snapshots.
+pub fn v7_marked_model() -> Result<Model, norn_cell::CellError> {
+    let marked: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "fixture.MarkedItem",
+        "properties": [
+            {"id": "secret", "type": {"kind": "text"}, "markings": ["pii.contact"]},
+            {"id": "label", "type": {"kind": "text"}, "default": "public"}
+        ]
+    }))?;
+    Model::from_definitions(&[object_type(), marked], &[])
+}
+
+/// Write a committed cell exercising unmarked rows, a marked row (`m2`), and
+/// a marked-then-declassified row (`m1`, where current is `∅` and historical
+/// version 1 retains `["pii.contact"]`). Used both by the v7 → v8 upgrade test
+/// and by `engine_fixture_record::record_engine_storage_v7_fixture` on `main`.
+pub fn write_v7_marked_cell(path: &Path) -> Result<(), norn_cell::CellError> {
+    let engine = NativeEngine::open(path, StoreOptions::default())?;
+    let cell_id = CellId::try_from(CELL_ID.to_owned())
+        .map_err(|error| norn_cell::CellError::Encoding(error.to_string()))?;
+    let mut store =
+        CellStore::from_engine_with_identity_source(engine, v7_marked_model()?, |_| {
+            Ok(cell_id.clone())
+        })?;
+    store.bind("scope", SCOPE)?;
+    for batch in batches() {
+        store.commit(&batch)?;
+    }
+    store.commit(&CommitBatch {
+        world: MAIN_WORLD.to_owned(),
+        scope: SCOPE.to_owned(),
+        logical_time: 4_000,
+        idempotency_key: Some("marked-create".to_owned()),
+        writes: vec![
+            FactWriteRow::Put {
+                object_type: "fixture.MarkedItem".to_owned(),
+                key: "m1".to_owned(),
+                values: BTreeMap::from([
+                    ("secret".to_owned(), text_value("s1")),
+                    ("label".to_owned(), text_value("one")),
+                ]),
+            },
+            FactWriteRow::Put {
+                object_type: "fixture.MarkedItem".to_owned(),
+                key: "m2".to_owned(),
+                values: BTreeMap::from([
+                    ("secret".to_owned(), text_value("s2")),
+                    ("label".to_owned(), text_value("two")),
+                ]),
+            },
+        ],
+        ..CommitBatch::default()
+    })?;
+    let change = norn_cell::MarkingDeclassification {
+        object_type: "fixture.MarkedItem".to_owned(),
+        key: "m1".to_owned(),
+        property: "secret".to_owned(),
+        expected_version: 1,
+        markings: vec!["pii.contact".to_owned()],
+        actor: "officer".to_owned(),
+        reason: "fixture declassification".to_owned(),
+    };
+    store.commit(&CommitBatch {
+        world: MAIN_WORLD.to_owned(),
+        scope: SCOPE.to_owned(),
+        logical_time: 5_000,
+        idempotency_key: Some("marked-declassify".to_owned()),
+        events: vec![change.ledger_event()?],
+        marking_declassifications: vec![change],
+        ..CommitBatch::default()
+    })?;
+    Ok(())
+}
+
 fn encode(value: &SqlValue) -> Value {
     match value {
         SqlValue::Null => Value::Null,

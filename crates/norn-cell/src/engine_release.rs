@@ -82,10 +82,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 7,
         change: "#1424 U1: transactional automation trigger outbox (_norn_automation_outbox), lossless outbox continuation (_norn_automation_outbox_continuation), indexed trigger projection (_norn_retained_automation_trigger), and server-bound retained definition authority (_norn_retained_authority). The definitions.installed diff carries an optional retained.authority audit object for automation installs only.",
     },
+    StorageVersion {
+        version: 8,
+        change: "#1533 Part 1: sparse markings omit empty '[]' rows from _norn_marking_current and _norn_marking_version (and omit _norn_marking_subject rows when no non-empty markings exist), pin each snapshot's non-empty slot count in _norn_marking_snapshot.nonempty_slots for fail-closed tamper detection, and drop the strictly redundant _norn_link_version/source and _norn_link_version/target prefix indexes",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 7;
+pub const STORAGE_VERSION: u32 = 8;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -327,7 +331,7 @@ fn run_chain(
 }
 
 /// The one migration step that brings a cell from `to - 1` to `to`.
-fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
+fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
     match to {
         // Version 2 adds the stamp alone, which `upgrade` writes after the chain.
         // Version 3 adds the approval recovery tables. They derive from the
@@ -347,13 +351,99 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // Version 7 (#1424 U1) adds the automation outbox, continuation,
         // trigger projection, and retained authority tables through the schema
         // statements that follow the chain. Previously committed rows are unchanged.
-        2..=STORAGE_VERSION => Ok(()),
+        2..=7 => Ok(()),
+        // Version 8 (#1533 Part 1): sparse markings are backward-compatible with
+        // legacy stored `'[]'` rows (no marking row is rewritten); add and
+        // backfill `_norn_marking_snapshot.nonempty_slots`, and drop the two
+        // strict-prefix indexes on `_norn_link_version` so upgraded cells shed
+        // their write amplification too.
+        8 => migrate_v8_sparse_markings(engine),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,
             reason: format!("no migration to storage version {to}"),
         }),
     }
+}
+
+fn migrate_v8_sparse_markings<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    engine.execute_batch(
+        "DROP INDEX IF EXISTS \"_norn_link_version/source\";\n\
+         DROP INDEX IF EXISTS \"_norn_link_version/target\";",
+    )?;
+    let has_snapshot = engine
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_marking_snapshot'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_snapshot {
+        return Ok(());
+    }
+    let has_column = engine
+        .query_optional(
+            "SELECT 1 FROM pragma_table_info('_norn_marking_snapshot') WHERE \"name\" = 'nonempty_slots'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_column {
+        engine.execute_batch(
+            "ALTER TABLE \"_norn_marking_snapshot\" ADD COLUMN \"nonempty_slots\" INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    backfill_snapshot_nonempty_slots(engine)
+}
+
+fn backfill_snapshot_nonempty_slots<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    let interned = engine
+        .query_optional(
+            "SELECT 1 FROM pragma_table_info('_norn_marking_current') WHERE \"name\" = 'subject'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    engine.execute(
+        "UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = 0 WHERE \"nonempty_slots\" IS NOT 0",
+        params![],
+    )?;
+    for (table, is_current) in [
+        ("_norn_marking_current", 1_i64),
+        ("_norn_marking_version", 0_i64),
+    ] {
+        let counts = if interned {
+            format!(
+                "SELECT s.\"world\", s.\"object_type\", s.\"id\", m.\"version\", COUNT(*) AS \"cnt\" \
+                 FROM \"{table}\" AS m \
+                 JOIN \"_norn_marking_subject\" AS s \
+                   ON s.\"subject\" = m.\"subject\" AND s.\"world\" = m.\"world\" AND s.\"object_type\" = m.\"object_type\" \
+                 WHERE m.\"markings\" != '[]' \
+                 GROUP BY s.\"world\", s.\"object_type\", s.\"id\", m.\"version\""
+            )
+        } else {
+            format!(
+                "SELECT m.\"world\", m.\"object_type\", m.\"id\", m.\"version\", COUNT(*) AS \"cnt\" \
+                 FROM \"{table}\" AS m \
+                 WHERE m.\"markings\" != '[]' \
+                 GROUP BY m.\"world\", m.\"object_type\", m.\"id\", m.\"version\""
+            )
+        };
+        engine.execute(
+            &format!(
+                "UPDATE \"_norn_marking_snapshot\" \
+                 SET \"nonempty_slots\" = counts.\"cnt\" \
+                 FROM ({counts}) AS counts \
+                 WHERE \"_norn_marking_snapshot\".\"world\" = counts.\"world\" \
+                   AND \"_norn_marking_snapshot\".\"object_type\" = counts.\"object_type\" \
+                   AND \"_norn_marking_snapshot\".\"id\" = counts.\"id\" \
+                   AND \"_norn_marking_snapshot\".\"version\" = counts.\"version\" \
+                   AND \"_norn_marking_snapshot\".\"is_current\" = ?1"
+            ),
+            params![is_current],
+        )?;
+    }
+    Ok(())
 }
 
 /// Bring `engine`'s cell to this engine's storage version: the ordered
