@@ -1905,6 +1905,8 @@ fn a_cell_that_does_not_open_is_refused_never_retried_or_exposed() {
 /// cause, and the cause never reaches the caller.
 #[test]
 fn an_internal_failure_is_logged_with_an_incident_id_the_caller_gets() {
+    // #1710: this thread opts in to keeping its incident lines.
+    norn_cell_do::incident::capture();
     let directory = tempfile::tempdir().unwrap();
     let scope = scope("org_a", "prod");
     let path = file(&directory, "incident");
