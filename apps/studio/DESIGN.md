@@ -115,8 +115,10 @@ declarative theme (`version: 1`, `baseSkin`, `appearance`, `accent`, `canvas`, `
 (`STUDIO_THEME_TOKENS`). Themes carry zero logic: no queries, permission checks or layout forks, and
 never geometry, z-index or arbitrary CSS. Every theme is sanitized against CSS injection and must
 pass the contrast gate (section 16) before it applies. New tokens this spec adds that are colours
-(`subtle-foreground`, `line`, `action-dot`, `action-soft`, the dot and avatar tokens) join the
-allowlist (TARGET); geometry tokens never do.
+(`subtle-foreground`, `line`, `action-dot`, `action-soft`, the dot and avatar tokens) are in the
+allowlist, each with validator pairs (CURRENT since restyle 2: subtle glyphs 3:1 on canvas, card and
+well; `line` a visible hairline, 1.1:1, on card and well; ink 4.5:1 on `action-soft`; each dot a
+visible 1.5:1 mark beside its word; avatar ink 4.5:1 on its disc); geometry tokens never do.
 
 ---
 
@@ -244,20 +246,24 @@ page-head live line).
   `polar`); 2–5 are Studio's AA-tuned categorical set (#0f726a, #b45309, #9a1ca6, #7d8494 light).
 - `--kind-*`, `--tint-*`, `--tone-*`: Studio's detail colours for artefact kinds and canvas node
   tints. They colour icons, dots, edges and chart marks, never surfaces or label fills.
-- **Avatar palette (TARGET tokens).** Six disc pairs, `--avatar-1…6-bg` / `--avatar-1…6-fg`:
+- **Avatar palette (CURRENT tokens, restyle 2).** Six disc pairs, `--avatar-1…6-bg` / `--avatar-1…6-fg`,
+  the same in every skin:
 
   | n | light bg / fg | dark bg / fg |
   | --- | --- | --- |
-  | 1 | #fde4e1 / #9a3b2e | `color-mix(in oklab, #9a3b2e 30%, var(--card))` / #fde4e1 |
-  | 2 | #e3ecff / #2d4fa8 | mix of #2d4fa8 @ 30% / #e3ecff |
-  | 3 | #e2f5ea / #23744a | mix of #23744a @ 30% / #e2f5ea |
-  | 4 | #fdf0d8 / #8a5a12 | mix of #8a5a12 @ 30% / #fdf0d8 |
-  | 5 | #efe6fd / #6b3fae | mix of #6b3fae @ 30% / #efe6fd |
-  | 6 | #dff3f6 / #1f6f7a | mix of #1f6f7a @ 30% / #dff3f6 |
+  | 1 | #fde4e1 / #9a3b2e | #3d201e / #fde4e1 |
+  | 2 | #e3ecff / #2d4fa8 | #1c2642 / #e3ecff |
+  | 3 | #e2f5ea / #23744a | #193226 / #e2f5ea |
+  | 4 | #fdf0d8 / #8a5a12 | #382a15 / #fdf0d8 |
+  | 5 | #efe6fd / #6b3fae | #2f2244 / #efe6fd |
+  | 6 | #dff3f6 / #1f6f7a | #183035 / #dff3f6 |
 
-  Every light pair measures ≥ 5.0:1. The disc index is a stable hash of the **principal or record
-  id**, never the display name, so a rename or a switch between Arabic and English keeps the colour.
-  Hard-coded hex in components (the first-party app's `DISC_BG`/`DISC_FG`) is replaced by these tokens.
+  The dark fills are the light ink at 30% over the dark card (#151517), precomputed in sRGB so the
+  palette generator and the validator read plain hex. Every light pair measures ≥ 5.0:1 and every
+  dark pair ≥ 12:1 (`test/system-primitives.test.tsx`, the StudioTheme validator). The disc index is
+  a stable FNV-1a hash of the **principal, workspace or record id**, never the display name
+  (`avatarIndex`, `components/system/list-row.tsx`), so a rename or a switch between Arabic and
+  English keeps the colour. Components never hard-code disc hex.
 
 ### 4.5 Dock (opt-in shell)
 
@@ -458,8 +464,10 @@ item is marked TARGET.
 the `--canvas` ground. On the start side: the sidebar toggle, then the breadcrumbs (breadcrumbs live
 in the bar, never in the page). On the end side, in order: search (`⌘K`), the perspective switch
 when the app has perspectives, page tools, the guarantee tick bar pill (section 12.4), the language
-toggle pill and the scheme toggle (the tick bar, language pill and scheme toggle are TARGET in
-Studio's sidebar shell; section 18). The workspace switcher and the principal's avatar live in the
+toggle pill and the scheme toggle (CURRENT since restyle 2, `TopBarExtras` in `shell.tsx`; they
+give way as the bar narrows: the scheme toggle below a 36rem bar, the language pill below 64rem, the
+tick bar below 72rem, and on a phone the "Language and view" menu holds the language and the
+scheme). The workspace switcher and the principal's avatar live in the
 sidebar.
 
 **Anatomy, top to bottom**
@@ -470,7 +478,7 @@ sidebar.
    workspace, the access preview (where the server grants it) and the skin. Collapsed, only the
    disc shows. Under the name, a step-1 muted line carries the workspace's connection state (Live,
    Connecting…, Workspace unavailable), so that state is never only in a tooltip (section 12.2).
-   Until the avatar tokens land (TARGET, section 4.4) the disc is neutral: `--card` with a `--line` ring.
+   The disc is an `Initials` disc hashed by the workspace's id (CURRENT, section 4.4).
 2. **Navigation** (scrolls): the destinations every perspective shares (Home, Inbox), then the
    groups.
 3. **Footer** (`px-[8px] pb-[8px]`): the assistant row (when the app has an assistant) and the
@@ -608,7 +616,8 @@ accessibility rules.
   - ≥ 640px: icon-only with a top tooltip carrying the label.
   - **< 640px: every destination shows its label** under the icon (`--text-meta`) and every target
     is at least **44 × 44 CSS px** (written in px, since `size-10` is only 36px at the 90% root).
-    The dock may scroll horizontally on its toolbar axis; it never wraps.
+    The dock may scroll horizontally on its toolbar axis; it never wraps. (CURRENT since restyle 2:
+    `DOCK_BUTTON` and `DockLabel` in `shell.tsx`; the label is the start of each tile's name.)
 - `prefers-reduced-transparency` or `glass` fallbacks keep the dock opaque enough for 4.5:1 labels; with
   `--dock-muted` #b4b4bc the glass-light composite (#3f414a) holds 4.93:1 (CURRENT in `index.css`).
 
@@ -623,8 +632,13 @@ sidebar; the page still has a title and an honest exit.
 
 ## 10. Canonical primitives
 
-One shared implementation each, in `@norn/ui` (TARGET) or Studio's `src/components/` today. Screens
-compose these; they do not restyle them with ad-hoc classes.
+One shared implementation each, in `@norn/ui` (TARGET) or Studio's `src/components/system/` today
+(CURRENT since restyle 2: `ListRow`, `RowList`, `Initials`, `TypeDisc`, `StatusDot`, `Dot`,
+`SourceTag`, `Chip`, `Panel`/`Well`/`EmptyState`, `KpiTile`/`StatStrip`, `TableCard`, `TickBar`,
+`LanguagePill`, `SchemeToggle` and the UI SDK kit). That folder imports only tokens, `cn`, Base UI,
+the UI SDK and its own files, and takes every value through props, so it moves into `@norn/ui` as
+it is (`test/system-boundary.test.ts`). Screens compose these; they do not restyle them with ad-hoc
+classes.
 
 | Primitive | Anatomy | Do | Don't |
 | --- | --- | --- | --- |
@@ -790,9 +804,17 @@ reduced by `src/lib/screen/call.ts`). Each arm has one rendering:
 - After commit the sheet shows the receipt, the Before → After that actually happened (when the
   server returns it), and a link to lineage.
 
-The top bar's **guarantee tick bar** (TARGET: 10 hairline ticks, filled `--dot-live` per satisfied
-guarantee, `n/m` count, popover listing each guarantee in plain words and the current receipt) shows
-the workspace's live laws. Its contents come from the server; the UI hard-codes none.
+The top bar's **rules tick bar** (CURRENT since restyle 2, `TickBar` + `RulesTickBar`) shows the
+workspace's live laws, from two server reads only: the laws the catalog lists, and the held-back
+groups `GET /v1/inbox` returns. Ten hairline ticks fill in `--dot-held` for the share of rules the
+inbox lists as holding records back (at least one tick for any share, never all ten while one rule is
+not), with an `n/m` count and a popover that lists every rule in plain words with a held StatusDot and
+its count where the inbox names it. A rule the inbox does not list makes no claim; "nothing held back"
+appears only when the inbox's held-back section counted zero, exactly; a scan bound or a capped group
+list reads as a lower bound ("at least", `+`). With no live cell or no laws it renders nothing.
+**Server gaps (TARGET):** the cell serves no per-guarantee "satisfied" verdict and no current receipt
+for a live workspace, so the bar never fills `--dot-live` and shows no receipt; both wait on a server
+read, never a client inference.
 
 ### 12.5 Empty
 
@@ -897,8 +919,12 @@ the principal may take it.
    toggle, dock, ListRow, pills, buttons, sheet close, form inputs), written in px; ≥ 32px
    elsewhere.
 5. **Focus:** every control shows `focus-visible` outline 2px in `--ring` (dock: `--dock-ring`).
-6. **Type lock (TARGET lint):** no arbitrary `text-[…]` sizes and no `font-semibold`/`font-bold` in
-   first-party screens; `font-medium` only on the allowed elements.
+6. **Type lock (CURRENT lint, `test/type-lock.test.ts`):** across every file in `src/`: no Tailwind
+   or arbitrary `text-[…]` sizes, no weight but 400 and 500, a bare `font-medium` only beside a step-3
+   or step-4 title or on the primary fill (state variants such as `aria-pressed:font-medium` mark the
+   active segment), no uppercase or tracked chrome, logical inline properties only (section 14), no
+   translucent focus ring, and a `--dot-*` fill only inside the dot primitives, so every dot sits
+   beside its word. `b`, `strong` and `th` inherit their weight (`index.css`).
 7. **Browser proof on Boat** (CURRENT): Playwright rows (`bun run e2e`) for every visual or
    interaction change, plus rendered screenshots in light, dark, the active skin and RTL. Static
    markup tests never substitute for rendered proof. Every primitive state also renders on the
@@ -976,7 +1002,7 @@ Same token, different values. "Pick" is what this spec adopts.
 ## 18. Conformance gaps in Studio today
 
 Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which were measured at
-`39e0c3e6ce`. A checked item was closed by the Studio restyle (#1753); an open item that it narrowed says what remains. Counts are `grep` occurrences in
+`39e0c3e6ce`. A checked item was closed by the Studio restyle (#1753) or restyle 2 (Part of #1705); an open item that one narrowed says what remains. Counts are `grep` occurrences in
 `apps/studio/src`, and `file:line` references are relative to `apps/studio/src` at the stated sha.
 
 **Tokens and theming (`src/index.css`, `src/lib/appearance.tsx`, `src/lib/studio-theme.ts`)**
@@ -985,10 +1011,11 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
   rule; `[data-skin="polar"] [data-slot="panel"] { padding: 0 }` and the polar KPI well override
   flatten the double shell.
   Closed in #1753: px radii in every skin, and the 4px inset double shell in every skin.
-- [ ] Missing tokens: `--avatar-*`; and the StudioTheme allowlist does not yet carry the colour
+- [x] Missing tokens: `--avatar-*`; and the StudioTheme allowlist does not yet carry the colour
   tokens #1753 added (`--subtle-foreground`, `--line`, `--action-dot`, `--action-soft`, `--dot-*`).
   #1753 added those and `--popup-shadow`, `--sheet-shadow`, `--panel-inset` and
   `--radius-row/sheet/search/dock/popup`.
+  Closed in restyle 2 (Part of #1705): `--avatar-1…6-bg/fg` (section 4.4), and every new colour token in the allowlist with its validator pairs (section 3); the "Paper Editorial" preset gained its own `line` and `subtle-foreground`, which the new pairs caught.
 - [x] Solid `bg-action` fills (4 uses) put `--action-foreground` on the text-role `--action`: 2.78:1
   on open-dark #6b98ff and 3.62:1 on luma-dark #7c74ff. Solid fills move to `bg-primary`.
   Closed: no solid `--action` fill carries text (checked in #1753); the unapplied-filter marker is a `--ring` dot, since it has no word beside it and `--dot-accent` misses 3:1 in open, luma and glass light.
@@ -1001,28 +1028,29 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
   Closed in #1753: bare `:root` and `.dark` are the `polar` palette and geometry; `open` is `:root[data-skin="open"]`.
 - [ ] `--font-sans` has no Arabic pairing (no Cairo; not in `package.json`).
 - [ ] No `minimal` route-level chromeless frame; login and OAuth use shadcn `Card`.
+  Narrowed in restyle 2: `Card` is the ShellCard shape (rim, `--panel-inset`, one inset well), so login, OAuth, the restatement card and the widget cards follow it; login's mode switch is a segmented control. The route-level `minimal` frame itself remains.
 - [x] Type tokens are 0.8125/0.9375/1.0625/1.75/2rem; body is 0.875rem.
   Closed in #1753: the five steps of section 8.1 (with line heights and tracking), body at step 2; `--text-panel` and `--text-section` are deleted, and `cn` (tailwind-merge) knows the steps as their own class group, which conflicts only with font sizes, so `leading-*` and `tracking-*` survive beside a step.
 
 **Weights and sizes**
 
-- [ ] `font-semibold`/`font-bold`: 41 uses in 23 files. Most: `shell.tsx` (7),
+- [x] `font-semibold`/`font-bold`: 41 uses in 23 files. Most: `shell.tsx` (7),
   `decision-tree.tsx` (5), `imports/split-pane-review.tsx` (3), `components/canvas/node-card.tsx`
   (3), `views.tsx`, `sources.tsx`, `dashboards.tsx`, `canvas.tsx` (2 each), and
   `components/panel.tsx` (`EmptyState` title).
-  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
-- [ ] `font-medium`: 346 uses; most are outside the allowed four. Heaviest:
+  Closed in restyle 2 (Part of #1705): none remain anywhere in `src/` (`test/type-lock.test.ts` enforces it).
+- [x] `font-medium`: 346 uses; most are outside the allowed four. Heaviest:
   `imports/split-pane-review.tsx` (20), `shell.tsx` (18), `imports/supersession-diff.tsx` (18),
   `semantic-map.tsx` (17), `sources.tsx`, `objects.tsx`, `guarantees.tsx` (10 each);
   `components/chip.tsx` sets 500 on every chip.
-  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
-- [ ] Arbitrary `text-[…]` sizes: 81 uses (`text-[0.6875rem]` ×42, `text-[11px]` ×14, `text-[10px]`,
+  Closed in restyle 2 (Part of #1705): none remain anywhere in `src/` (`test/type-lock.test.ts` enforces it).
+- [x] Arbitrary `text-[…]` sizes: 81 uses (`text-[0.6875rem]` ×42, `text-[11px]` ×14, `text-[10px]`,
   `text-[0.625rem]`, display sizes 2.75–4rem). Heaviest: `imports/split-pane-review.tsx` (14),
   `shell.tsx` (12), `semantic-map.tsx` (7), `imports/alias-matcher.tsx` (6),
   `imports/supersession-diff.tsx`, `decision-tree.tsx`, `components/canvas/node-card.tsx` (5 each).
-  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
-- [ ] Uppercase chrome: `semantic-map.tsx` (5), `views.tsx`, `shell.tsx`, `guarantees.tsx`.
-  Narrowed by #1753: none remain in the shell, the shared primitives or the core surfaces (home, records, the record sheet, views, the inbox, episodes); the builder screens remain.
+  Closed in restyle 2 (Part of #1705): none remain anywhere in `src/` (`test/type-lock.test.ts` enforces it).
+- [x] Uppercase chrome: `semantic-map.tsx` (5), `views.tsx`, `shell.tsx`, `guarantees.tsx`.
+  Closed in restyle 2 (Part of #1705): none remain anywhere in `src/` (`test/type-lock.test.ts` enforces it).
 
 **Status and colour**
 
@@ -1044,14 +1072,17 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
 - [x] `components/panel.tsx`: `Well` is a flush `border-t` body, not an inset well; nested panels
   turn into ruled sections. Align to ShellCard (one inset well).
   Closed in #1753: every Panel is the rim around one inset well.
-- [ ] `components/table-card.tsx`: adds its own rim + well when not inside a Panel (a second
+- [x] `components/table-card.tsx`: adds its own rim + well when not inside a Panel (a second
   nesting pattern).
+  Closed in restyle 2 (Part of #1705): a `TableCard` is always a Panel's well; outside one it brings its own `Panel` (with a header when given a label), and inside a well it is a ruled part of it.
 - [x] `components/kpi-tile.tsx`: close to StatWell; label uses `text-sm`, no unit slot.
   Closed in #1753: a StatWell with a step-2 label and a unit slot.
-- [ ] shadcn `Card` instead of ShellCard: `login.tsx`, `oauth.tsx`, `restatement.tsx`,
+- [x] shadcn `Card` instead of ShellCard: `login.tsx`, `oauth.tsx`, `restatement.tsx`,
   `widget/views.tsx`.
+  Closed in restyle 2 (Part of #1705): the `Card` primitive is the ShellCard shape for all four.
 - [ ] No shared `ListRow`, `StatusDot`, `SourceTag`, `Initials`, `Props`, `Section` primitives; lists
   are built per screen.
+  Narrowed in restyle 2: `ListRow`, `RowList`, `StatusDot`, `SourceTag`, `Initials` and `TypeDisc` are shared (`components/system/`), and the builder lists (imports, semantic map, laws, transforms, sources, the canvas problems list, saved questions) and Home's checklist use them; `SheetSection` is the sheet's Section. A shared `Props` remains.
 
 **Sheets**
 
@@ -1111,8 +1142,9 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
   (`--canvas`), so white cards lose their contrast against the ground. Spec: an unframed `--canvas`
   content area.
   Closed in #1753.
-- [ ] The sidebar-mode top bar has no guarantee tick bar, language pill or scheme toggle. Since
+- [x] The sidebar-mode top bar has no guarantee tick bar, language pill or scheme toggle. Since
   #1753 it is 52px, borderless, on `--canvas`.
+  Closed in restyle 2 (Part of #1705): all three, from real state (section 12.4 for the tick bar's server gaps).
 - [x] Sidebar-mode content uses `max-w-7xl px-5 py-7`, which is 1152px at the 90% root
   (`shell.tsx:1223`). Spec: the 1220px column of section 7.
   Closed in #1753.
@@ -1152,24 +1184,28 @@ Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which 
 These gaps apply only when an app or a reader opts into the dock, and the dock's rules still bind
 whenever it is on.
 
-- [ ] `FloatingDock` is icon-only at every width, with no labels below 640px. Its buttons are
+- [x] `FloatingDock` is icon-only at every width, with no labels below 640px. Its buttons are
   `size-10` (36px at the 90% root), under the 44px target.
+  Closed in restyle 2 (Part of #1705): 40px buttons, and below 640px labelled tiles of at least 44 × 44px.
 - [x] The dock's attention dot uses physical `right-[7px]` and is colour-only, with no accessible
   text.
   Closed in #1753: `end-[7px]`, and the destination's name carries its count.
-- [ ] The dock-mode top bar (`data-slot="dock-topbar"`) is borderless, but it is `h-[4.4rem]` on
+- [x] The dock-mode top bar (`data-slot="dock-topbar"`) is borderless, but it is `h-[4.4rem]` on
   `bg-background` and has no guarantee tick bar, language pill or scheme toggle.
+  Closed in restyle 2 (Part of #1705): `h-[4.5rem]` on `--canvas`, with the three extras before the principal's 36px disc.
 - [x] `index.css` `--dock-muted` is #a5a5ad (4.15:1 on the glass-light dock composite #3f414a);
   the spec value is #b4b4bc (4.93:1) (section 4.5).
   Closed in #1753.
 
 **RTL**
 
-- [ ] Physical spacing in first-party code: `actions/action-form.tsx` (3),
+- [x] Physical spacing in first-party code: `actions/action-form.tsx` (3),
   `learning/episodes-page.tsx`, `learning/episode-page.tsx`; vendored `components/ui/*`
   (`dropdown-menu`, `button`, `toggle`, `input-group`, `sidebar`, `sheet`) when touched.
   Narrowed by #1753: the episode pages, the records grid, linked records and the touched primitives are logical; `actions/action-form.tsx` remains.
+  Closed in restyle 2 (Part of #1705): every file in `src/`, vendored primitives included, is logical, and the type-lock lint keeps it so (centring with `left-1/2 -translate-x-1/2` is the one allowed physical pair).
 - [ ] No Arabic font; no `<bdi>` discipline for ids and money.
+  Narrowed in restyle 2: `SourceTag` and `ListRow`'s code are `<bdi>`. Cairo and a `<bdi>` rule for money remain.
 
 **Refusals and call outcomes (`src/lib/actions.ts`, `src/lib/screen/call.ts`)**
 
@@ -1186,13 +1222,17 @@ whenever it is on.
 
 - [ ] No UI SDK `createAgent` wiring; the Sidekick (`sidekick/client.ts`) does not drive named
   controls. List rows have no `data-slot`.
+  Narrowed in restyle 2: every `ListRow` is `data-slot="list-row"` in a `data-slot="row-list"`; `createAgent` remains.
 
 **Gates**
 
-- [ ] Contrast gate does not yet cover the new tokens (subtle, avatars, action-foreground on
+- [x] Contrast gate does not yet cover the new tokens (subtle, avatars, action-foreground on
   action in dark, muted on `--well-hover`), and nothing checks that every dot is paired with a
   text label.
+  Closed in restyle 2 (Part of #1705): subtle and avatar pairs gate in the validator and the tests; a `--dot-*` fill may live only in `StatusDot`/`Dot` (whose word is required) and the dot-first `Badge`, so a dot cannot appear without its word (`test/type-lock.test.ts`).
   Narrowed by #1753: the section 4.6 sidebar pairs (ground, 50% wash, pill, ring and dot, phone sheet) gate every skin in the test and in the StudioTheme validator; subtle and avatar pairs remain.
-- [ ] No 44px mobile minimum on rows, pills or buttons (`h-9` is 32.4px at the 90% root).
+- [x] No 44px mobile minimum on rows, pills or buttons (`h-9` is 32.4px at the 90% root).
   Narrowed by #1753: buttons (default, sm, lg), the sidebar sheet, the sheet close and the record picker are 44px below 640px; rows, pills and inputs elsewhere remain.
-- [ ] No lint for arbitrary type sizes, banned weights or physical spacing.
+  Closed in restyle 2 (Part of #1705): `ListRow`, `Input`, `Toggle`/`ToggleGroup` segments, the top-bar pills, the dock and the builder screens' rows, segments and icon buttons are 44px below 640px.
+- [x] No lint for arbitrary type sizes, banned weights or physical spacing.
+  Closed in restyle 2 (Part of #1705): `test/type-lock.test.ts` (gate 6).

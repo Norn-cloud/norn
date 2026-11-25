@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
-import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, Panel as FlowPanel, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
+import { Background, BackgroundVariant, Controls, MarkerType, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type EdgeTypes, type Node, type NodeTypes } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import { CircleAlert, Copy, LayoutGrid, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
+import { Copy, LayoutGrid, Map as MapIcon, Redo2, Save, Undo2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
+import { ListRow, RowList } from "@/components/system/list-row"
+import { Dot, StatusDot, type DotTone } from "@/components/system/status-dot"
 import { cn } from "@/lib/utils"
 import * as g from "./lib/canvas/graph.ts"
 import { CodedMessage } from "@/components/coded-message"
 import { Iso } from "@/components/iso"
 import { keysText } from "@/components/keys"
+import { useView } from "@/lib/view"
 import { focusCss, type Bundle } from "./lib/canvas/focus.ts"
-import { INSET, MINIMAP, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, type Viewport } from "./lib/canvas/viewport.ts"
+import { INSET, MINIMAP, PLACE_MARGIN, READABLE, WITH_MINIMAP, clearOfMinimap, fitsReadable, openingViewport, placeInView, type Insets, type Viewport } from "./lib/canvas/viewport.ts"
 
 /** A finding shown on the canvas, from the canvas itself, from lowering, or from the checker. */
 export interface Issue {
@@ -19,6 +22,8 @@ export interface Issue {
   readonly message: string
   readonly node?: string
   readonly edge?: string
+  /** The checker's severity when it gave one; a finding without one is a problem. */
+  readonly severity?: string
 }
 
 export interface Selection {
@@ -34,12 +39,15 @@ export interface Editing {
   readonly selection: Selection
   readonly edit: (next: g.Graph | g.Refusal) => void
   readonly select: (selection: Selection) => void
+  /** Where a new node lands: wholly inside the part of the canvas in view, clear of the nodes there. */
+  readonly spot?: (node: g.CanvasNode) => { readonly x: number; readonly y: number }
 }
 
 export interface CanvasFrameProps {
   /** Names the draft kept in this browser: `<surface>:<definition>`. */
   readonly draftKey: string
-  readonly label: string
+  /** The canvas's name: the definition's own title, or its id as a code when the server sent no title. */
+  readonly label: ReactNode
   readonly initial: g.Graph
   readonly kinds: g.Kinds
   readonly nodeTypes: NodeTypes
@@ -125,6 +133,7 @@ function Frame(props: CanvasFrameProps) {
   const [drawer, setDrawer] = useState(false)
   const closeDrawer = useCallback(() => setDrawer(false), [])
   const surface = useRef<HTMLDivElement>(null)
+  const toolbar = useRef<HTMLDivElement>(null)
   // Whether the canvas is in use: the last pointer-down landed on it, or keyboard focus moved into it
   // (React Flow nodes take focus and selection from the keyboard). Its shortcuts apply only then.
   const canvasActive = useRef(false)
@@ -226,7 +235,23 @@ function Frame(props: CanvasFrameProps) {
       if (edge) void flow.fitView({ nodes: [{ id: edge.source }, { id: edge.target }], duration: 300, maxZoom: 1.2, minZoom: READABLE })
     }
   }
-  const editing: Editing = { graph, selection, edit, select: setSelection }
+  // The band the floating toolbar covers at the top of the canvas (it wraps on a narrow canvas), and the
+  // margins on the other sides: a new node and the opening view stay clear of them.
+  const insetsFor = (minimap: boolean): Insets => {
+    const box = surface.current?.getBoundingClientRect()
+    const bar = toolbar.current?.getBoundingClientRect()
+    const top = box && bar ? Math.ceil(bar.bottom - box.top) + 12 : 0
+    return { ...minimap ? WITH_MINIMAP : INSET, top: Math.max(INSET.top, top) }
+  }
+  const sizeOf = (node: g.CanvasNode) => props.nodeSize?.(node) ?? DEFAULT_SIZE
+  const spot = (node: g.CanvasNode) => {
+    const box = surface.current?.getBoundingClientRect()
+    const size = sizeOf(node)
+    // A new node usually has a finding (nothing leads to it yet), drawn as one more line on its card.
+    return placeInView(flow.getViewport(), { width: box?.width ?? 0, height: box?.height ?? 0 }, { width: size.width, height: size.height + PROBLEM_LINE },
+      graph.nodes.map((one) => ({ ...one.position, ...sizeOf(one) })), { ...insetsFor(map), side: PLACE_MARGIN, bottom: map ? WITH_MINIMAP.bottom : PLACE_MARGIN })
+  }
+  const editing: Editing = { graph, selection, edit, select: setSelection, spot }
   // Tidy up only on request, as one step: a single undo puts back the person's own layout.
   const tidyUp = () => {
     if (!props.tidy) return
@@ -236,21 +261,45 @@ function Frame(props: CanvasFrameProps) {
   // Below the rail width the inspector is a drawer: selecting something opens it, clearing the selection closes it.
   const selected = selection.nodes.length + selection.edges.length > 0
   useEffect(() => { setDrawer(selected) }, [selected, selection])
-  // Where the canvas opens, from the layout and the container's size: no measurement, so nothing is hidden or reframed.
+  // Where the canvas opens, from the layout, the container's size and the band the toolbar covers (it is drawn
+  // before the canvas), so the first frame is already the right one.
   const [opening, setOpening] = useState<Viewport | null>(null)
-  useLayoutEffect(() => {
+  const frameView = (drawn: g.Graph) => {
     const box = surface.current?.getBoundingClientRect()
-    const boxes = graph.nodes.map((node) => ({ ...node.position, ...(props.nodeSize?.(node) ?? DEFAULT_SIZE) }))
+    const boxes = drawn.nodes.map((node) => ({ ...node.position, ...sizeOf(node) }))
     // Framed on where it starts: an automation's start, else a lifecycle's initial state.
-    const start = graph.nodes.findIndex(({ kind }) => kind === "start")
-    const at = start >= 0 ? start : graph.nodes.findIndex(({ config }) => config.initial === "yes")
+    const start = drawn.nodes.findIndex(({ kind }) => kind === "start")
+    const at = start >= 0 ? start : drawn.nodes.findIndex(({ config }) => config.initial === "yes")
     const container = { width: box?.width ?? 0, height: box?.height ?? 0 }
-    const fits = fitsReadable(boxes, container)
-    const view = openingViewport(boxes, container, boxes[at], fits ? INSET : WITH_MINIMAP)
+    const fits = fitsReadable(boxes, container, insetsFor(false))
+    const view = openingViewport(boxes, container, boxes[at], insetsFor(!fits))
+    return { view, minimap: !fits && clearOfMinimap(boxes, view, container) }
+  }
+  useLayoutEffect(() => {
+    const { view, minimap } = frameView(graph)
     // Shown only when there is more than the view holds and its corner is clear; otherwise it starts hidden.
-    setMap(!fits && clearOfMinimap(boxes, view, container))
+    setMap(minimap)
     setOpening(view)
   }, []) // Once, for the graph the canvas opened with.
+  // When the canvas itself changes size (the window, the inspector rail coming or going), it is framed again
+  // for its new size: the whole graph when it fits readable, else its start; a pan inside the canvas never does this.
+  const reframe = useRef(() => {})
+  useLayoutEffect(() => { reframe.current = () => void flow.setViewport(frameView(current.current.graph).view) })
+  const opened = opening !== null
+  useEffect(() => {
+    const element = surface.current
+    if (!opened || !element || typeof ResizeObserver === "undefined") return
+    // A page scrollbar coming or going is not a new size: only a change larger than one reframes.
+    let size = { width: element.clientWidth, height: element.clientHeight }
+    const observer = new ResizeObserver(() => {
+      const next = { width: element.clientWidth, height: element.clientHeight }
+      if (Math.abs(next.width - size.width) < RESIZE_MIN && Math.abs(next.height - size.height) < RESIZE_MIN) return
+      size = next
+      reframe.current()
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [opened])
   // The path in focus: selected connections and every connection of a selected node; a finding outranks it.
   const look = (edge: g.CanvasEdge): Edge => {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
@@ -290,26 +339,49 @@ function Frame(props: CanvasFrameProps) {
   const inspector = props.inspector(editing, issues)
   const problems = (
     <Panel label="Problems" action={issues.length === 0 ? "None" : `${issues.length}`}>
-      <Well className="space-y-2 p-3" >
-        {issues.length === 0 && <p className="text-meta text-muted-foreground">No problems in this definition.</p>}
-        {issues.map((issue, index) => (
-          <button key={index} type="button" data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
-            className="block w-full space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-start text-meta enabled:hover:bg-muted">
-            <span className="flex items-center gap-1 font-mono text-meta text-destructive"><CircleAlert className="size-3" /><Iso>{issue.code}</Iso></span>
-            <CodedMessage code={issue.code} message={issue.message} block />
-            <span className="block text-muted-foreground">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span>
-          </button>
-        ))}
+      <Well>
+        {issues.length === 0 && <p className="px-3.5 py-3 text-meta text-muted-foreground">No problems in this definition.</p>}
+        {issues.length > 0 && (
+          <RowList>
+            {issues.map((issue, index) => (
+              <li key={index}>
+                {/* A finding is dot first: the code and its words in neutral text, where it is on the line under them. */}
+                <ListRow data-testid="problem" onClick={() => jump(issue)} disabled={!issue.node && !issue.edge}
+                  className="items-start disabled:cursor-default disabled:hover:bg-transparent" lead={<Dot tone="bad" className="mt-[8px]" />}
+                  title={<Iso className="font-mono text-meta tracking-[-0.01em]">{issue.code}</Iso>}
+                  description={<><span className="block text-foreground"><CodedMessage code={issue.code} message={issue.message} block /></span>
+                    <span className="block">{issue.node ? `On ${issue.node}` : issue.edge ? `On step ${issue.edge}` : "On the whole definition"}</span></>} />
+              </li>
+            ))}
+          </RowList>
+        )}
       </Well>
     </Panel>
   )
   return (
     <div className={cn("grid gap-3", wide && "grid-cols-[minmax(0,1fr)_20rem]")}>
       <Panel label={<span className="flex items-center gap-2">{props.label}{dirty && <Badge variant="outline" data-testid="dirty">Unsaved changes{draftAt ? " · draft kept" : ""}</Badge>}</span>} action={status}>
-        {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "px-3 pb-2 text-meta text-destructive" : "px-3 pb-2 text-meta text-muted-foreground"}>{notice.text}</p>}
+        {notice && <p role={notice.tone === "refusal" ? "alert" : "status"} className={notice.tone === "refusal" ? "flex items-start gap-1.5 px-3.5 pb-2 text-meta text-foreground" : "px-3.5 pb-2 text-meta text-muted-foreground"}>{notice.tone === "refusal" && <Dot tone="bad" className="mt-[6px]" />}{notice.text}</p>}
         <Well>
-          <div ref={surface} data-canvas-surface data-canvas-id={canvasId} className="relative h-[38rem] w-full">
+          {/* Clipped, not hidden: a clip is no scroll container, so focusing a node never scrolls the canvas or the page. */}
+          <div ref={surface} data-canvas-surface data-canvas-id={canvasId} className="relative h-[38rem] w-full overflow-clip">
             <style ref={focusSheet} />
+            {/* The floating toolbar wraps onto a second row on a narrow canvas instead of running past its edge. */}
+            <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex">
+              <div ref={toolbar} role="toolbar" aria-label="Canvas actions" className="pointer-events-auto flex max-w-full flex-wrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
+                {props.palette(editing)}
+                <Sep />
+                <Button size="sm" variant="ghost" aria-label="Duplicate" title={`Duplicate (${keysText("⌘D")})`} disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
+                <Button size="sm" variant="ghost" aria-label="Undo" title={`Undo (${keysText("⌘Z")})`} disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
+                <Button size="sm" variant="ghost" aria-label="Redo" title={`Redo (${keysText("⌘⇧Z")})`} disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
+                {props.tidy && <Button size="sm" variant="ghost" aria-label="Tidy up" title={`Tidy up: lay the whole graph out again (${keysText("⇧⌘L")})`} onClick={tidyUp}><LayoutGrid /></Button>}
+                <Button size="sm" variant="ghost" aria-label="Minimap" aria-pressed={map} title={map ? "Hide the minimap" : "Show the minimap"} className={cn(map && "bg-muted")} onClick={() => setMap((on) => !on)}><MapIcon /></Button>
+                <Sep />
+                <Button size="sm" variant="ghost" title={`Save a draft (${keysText("⌘S")})`} onClick={saveDraft}><Save />Save draft</Button>
+                {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
+                <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
+              </div>
+            </div>
             {graph.nodes.length === 0 && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6 text-center text-body text-muted-foreground">{props.empty}</div>}
             {opening && <ReactFlow defaultViewport={opening}
               nodes={graph.nodes.map((node) => {
@@ -317,7 +389,7 @@ function Frame(props: CanvasFrameProps) {
                 const size = props.nodeSize?.(node) ?? DEFAULT_SIZE
                 return { ...props.toNode(node, on("node", node.id), selection.nodes.includes(node.id)), initialWidth: size.width, initialHeight: size.height }
               })}
-              edges={props.draw ? props.draw(graph.edges.map(look), graph, selection) : graph.edges.map(look)} className="bg-canvas-surface"
+              edges={props.draw ? props.draw(graph.edges.map(look), graph, selection) : graph.edges.map(look)} className="bg-canvas-surface" minZoom={MIN_ZOOM}
               nodeTypes={props.nodeTypes} {...props.edgeTypes ? { edgeTypes: props.edgeTypes } : {}} proOptions={{ hideAttribution: true }}
               multiSelectionKeyCode={["Shift", "Meta", "Control"]} selectionKeyCode="Shift" deleteKeyCode={["Backspace", "Delete"]} edgesReconnectable
               isValidConnection={(connection) => !g.isRefusal(g.connect(graph, kinds, { ...props.newEdge(connection as Connection, graph), id: "probe" }))}
@@ -348,23 +420,9 @@ function Frame(props: CanvasFrameProps) {
                 edit(g.remove(graph, removable(nodes.map(({ id }) => id)), cut)); setSelection(NONE)
               }}>
               <Background variant={BackgroundVariant.Dots} gap={18} size={1.25} color="var(--canvas-dot)" />
-              <Controls showInteractive={false} className="canvas-controls" fitViewOptions={{ padding: PADDING, minZoom: READABLE, maxZoom: 1 }} />
+              {/* Fit view shows every node, however small that makes them; the opening view keeps them readable. */}
+              <Controls showInteractive={false} className="canvas-controls" fitViewOptions={{ padding: PADDING, minZoom: MIN_ZOOM, maxZoom: 1 }} />
               {map && <MiniMap pannable zoomable position="bottom-right" className="canvas-minimap" style={{ width: MINIMAP.width, height: MINIMAP.height }} nodeBorderRadius={6} ariaLabel="Where you are on the canvas" />}
-              <FlowPanel position="top-left" className="!m-3">
-                <div role="toolbar" aria-label="Canvas actions" className="flex w-max flex-nowrap items-center gap-1 rounded-xl border border-node-border bg-card/95 p-1 shadow-float backdrop-blur-sm">
-                  {props.palette(editing)}
-                  <Sep />
-                  <Button size="sm" variant="ghost" aria-label="Duplicate" title={`Duplicate (${keysText("⌘D")})`} disabled={copyable(selection.nodes).length === 0} onClick={() => duplicate(g.subgraph(graph, copyable(selection.nodes)))}><Copy /></Button>
-                  <Button size="sm" variant="ghost" aria-label="Undo" title={`Undo (${keysText("⌘Z")})`} disabled={state.past.length === 0} onClick={() => setState(g.undo)}><Undo2 /></Button>
-                  <Button size="sm" variant="ghost" aria-label="Redo" title={`Redo (${keysText("⌘⇧Z")})`} disabled={state.future.length === 0} onClick={() => setState(g.redo)}><Redo2 /></Button>
-                  {props.tidy && <Button size="sm" variant="ghost" aria-label="Tidy up" title={`Tidy up: lay the whole graph out again (${keysText("⇧⌘L")})`} onClick={tidyUp}><LayoutGrid /></Button>}
-                  <Button size="sm" variant="ghost" aria-label="Minimap" aria-pressed={map} title={map ? "Hide the minimap" : "Show the minimap"} className={cn(map && "bg-muted")} onClick={() => setMap((on) => !on)}><MapIcon /></Button>
-                  <Sep />
-                  <Button size="sm" variant="ghost" title={`Save a draft (${keysText("⌘S")})`} onClick={saveDraft}><Save />Save draft</Button>
-                  {dirty && <Button size="sm" variant="ghost" onClick={discard}>Discard draft</Button>}
-                  <Unavailable reason={props.saveBlocked}>Save to server</Unavailable>
-                </div>
-              </FlowPanel>
             </ReactFlow>}
           </div>
         </Well>
@@ -386,6 +444,12 @@ export function CanvasFrame(props: CanvasFrameProps) {
  * hover (on the wrapper, because a disabled button takes no pointer events) and in its accessible name.
  */
 const PADDING = 0.14
+/** The farthest the canvas zooms out, so fit view can always hold the whole graph. */
+const MIN_ZOOM = 0.2
+/** The "1 problem" line a card with a finding draws under its title. */
+const PROBLEM_LINE = 20
+/** A canvas size change smaller than this (a page scrollbar) keeps the view where it is. */
+const RESIZE_MIN = 32
 /** A node's size on the canvas when a surface does not say: an automation step card. */
 const DEFAULT_SIZE = { width: 208, height: 74 }
 /** At this width and wider the inspector is a rail beside the canvas; narrower, it is a drawer. */
@@ -410,8 +474,8 @@ function InspectorDrawer({ open, onClose, children }: { readonly open: boolean; 
       className={cn("fixed inset-y-3 end-3 z-40 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col rounded-node border border-node-border bg-card shadow-float transition-transform duration-200 ease-out motion-reduce:transition-none",
         open ? "translate-x-0" : "translate-x-[calc(100%+1.5rem)]")}>
       <header className="flex items-center justify-between border-b border-node-border px-4 py-3">
-        <h2 className="text-body">Inspector</h2>
-        <Button size="icon" variant="ghost" aria-label="Close inspector" title="Close (Esc)" onClick={onClose}><X /></Button>
+        <h2 className="text-heading font-medium">Inspector</h2>
+        <Button size="icon" variant="ghost" aria-label="Close inspector" title="Close (Esc)" className="max-sm:size-[44px]" onClick={onClose}><X /></Button>
       </header>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-body">{children}</div>
     </aside>
@@ -426,12 +490,24 @@ export function Unavailable({ reason, children, className }: { readonly reason: 
   )
 }
 
-/** A finding in a side panel. */
+/** A finding's severity as a word beside its dot: the checker's error is a problem, a warning is held, a note is quiet. */
+const SEVERITY: Readonly<Record<string, { readonly tone: DotTone; readonly word: string }>> = {
+  warning: { tone: "held", word: "Warning" },
+  info: { tone: "quiet", word: "Note" },
+}
+
+/**
+ * A finding in a side panel, on the panel's own neutral well (no frame, no tint): its severity dot first with the
+ * word beside it, then the message in plain words; the code behind it is shown only in the Technical view.
+ */
 export function IssueCard({ issue }: { readonly issue: Issue }) {
+  const { view } = useView()
+  const severity = SEVERITY[issue.severity ?? ""] ?? { tone: "bad" as const, word: "Problem" }
   return (
-    <div className="space-y-0.5 rounded-md border border-destructive/40 bg-background p-2 text-meta">
-      <div className="font-mono text-meta text-destructive"><Iso>{issue.code}</Iso></div>
-      <CodedMessage code={issue.code} message={issue.message} block />
+    <div data-issue={issue.code} className="space-y-0.5 text-meta">
+      <StatusDot tone={severity.tone}>{severity.word}</StatusDot>
+      <div className="text-foreground"><CodedMessage code={issue.code} message={issue.message} block /></div>
+      {view === "technical" && <div className="font-mono text-meta tracking-[-0.01em] text-muted-foreground"><Iso>{issue.code}</Iso></div>}
     </div>
   )
 }

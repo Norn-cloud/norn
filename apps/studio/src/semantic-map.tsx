@@ -1,10 +1,13 @@
 import { Link } from "@tanstack/react-router"
-import { ArrowLeft, ArrowRight, Database, ExternalLink, Map as MapIcon, Search, ShieldAlert, Waypoints, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Database, ExternalLink, Map as MapIcon, Search, Waypoints, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { LoadState } from "@/components/load-state"
-import { PageHeader, Panel, Well } from "@/components/panel"
-import { StatStrip, KpiTile } from "@/components/kpi-tile"
-import { Badge } from "@/components/ui/badge"
+import { PageHeader } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
+import { StatStrip, KpiTile } from "@/components/system/kpi-tile"
+import { Dot, StatusDot, type DotTone } from "@/components/system/status-dot"
+import { ListRow, RowList } from "@/components/system/list-row"
+import { SourceTag } from "@/components/system/source-tag"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -28,21 +31,12 @@ import {
 } from "./lib/semantic-map.ts"
 import { useInbox } from "./inbox.tsx"
 
+/** The dot a map attention takes: colour only for live attention (DESIGN.md 17); unknown or recorded stays quiet. */
+const ATTENTION_DOT: Readonly<Record<MapAttentionTone, DotTone>> = { critical: "bad", warning: "held", none: "live", unknown: "quiet" }
+
 /** Colour strictly reserved for verified live attention status dots — unknown/recorded stays monochrome. */
 function AttentionDot({ tone, label }: { readonly tone: MapAttentionTone; readonly label: string }) {
-  const dotClass = tone === "critical"
-    ? "bg-destructive"
-    : tone === "warning"
-      ? "bg-warning"
-      : tone === "none"
-        ? "bg-success"
-        : "bg-muted-foreground/45"
-  return (
-    <span className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">
-      <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dotClass)} />
-      <span>{label}</span>
-    </span>
-  )
+  return <StatusDot tone={ATTENTION_DOT[tone]}>{label}</StatusDot>
 }
 
 /** A count as the inbox reported it: `20+` when the inbox capped or bounded what it returned. */
@@ -56,8 +50,20 @@ function attentionWords(tone: MapAttentionTone): string {
 /** The cards outside the active lens or search: only their frame fades, never their text, ids or focus rings. */
 const OUTSIDE_LENS = "border-dashed bg-transparent shadow-none"
 
+/** A row outside the active lens or search: a dashed hairline around it, its text and focus ring untouched. */
+const OUTSIDE_LENS_ROW = "rounded-(--radius-row) outline-1 outline-dashed -outline-offset-1 outline-line"
+
 /** Arrows that point along the reading direction flip in right-to-left text. */
 const FLOW_ARROW = "rtl:-scale-x-100"
+
+/** A quiet section label (step 2, muted, sentence case) with its count as a muted metric. */
+function SectionLabel({ children, count }: { readonly children: string; readonly count?: number }) {
+  return (
+    <h3 className="flex items-baseline gap-1.5 text-body text-muted-foreground">
+      {children}{count !== undefined && <span className="text-meta tabular-nums">{count}</span>}
+    </h3>
+  )
+}
 
 function islandStatusLabel(island: SemanticIsland, attentionStatus: SemanticMapAttentionInput["kind"]): string {
   if (attentionStatus === "recorded") return "Recorded schema"
@@ -78,7 +84,7 @@ function islandStatusLabel(island: SemanticIsland, attentionStatus: SemanticMapA
   return "No open alerts"
 }
 
-/** Zoom 0 — Monochrome structural Island card with honest attention badges and bridge count. */
+/** Zoom 0 — Monochrome structural Island card (a ShellCard) with honest attention words and bridge count. */
 function IslandCard({
   island,
   attentionStatus,
@@ -104,16 +110,16 @@ function IslandCard({
       data-island-id={island.id}
       data-outside-lens={dimmed || undefined}
       className={cn(
-        "flex flex-col rounded-xl border border-panel-border bg-card transition-colors",
+        "flex flex-col rounded-(--radius-panel) border border-(--panel-border) bg-card p-(--panel-inset) shadow-(--panel-shadow) transition-colors",
         dimmed && OUTSIDE_LENS,
       )}
     >
-      <div className="flex items-start justify-between gap-3 border-b border-border/80 px-4 py-3">
+      <div className="flex items-start justify-between gap-3 px-3 pt-1.5 pb-2.5">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-baseline gap-2">
             <h3 className="truncate text-body text-foreground">{island.title}</h3>
             {dimmed && <span className="sr-only">(outside the current lens)</span>}
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground tabular-nums">
+            <span className="text-meta text-muted-foreground tabular-nums" title={`${island.nodes.length} object ${island.nodes.length === 1 ? "type" : "types"}`}>
               {island.nodes.length}
             </span>
           </div>
@@ -122,64 +128,49 @@ function IslandCard({
         <AttentionDot tone={island.attention} label={statusText} />
       </div>
 
-      <div className="flex-1 divide-y divide-border/60 px-2 py-1">
-        {preview.map((node) => (
-          <button
-            key={node.id}
-            type="button"
-            onClick={() => onSelectNode(node.id)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-start text-body transition-colors outline-none hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring"
-          >
-            <span
-              aria-hidden
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                node.attention === "critical" ? "bg-destructive" : "bg-foreground/35",
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate text-foreground" lang={node.titleLang}>
-              {node.title}
-            </span>
-            <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-              {node.fieldCount} facts
-            </span>
-            {node.lawCount > 0 && (
-              <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-                · {node.lawCount} {node.lawCount === 1 ? "law" : "laws"}
-              </span>
-            )}
-            {node.ruleHoldings > 0 && (
-              <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-meta tabular-nums">
-                {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)}
-              </Badge>
-            )}
-          </button>
-        ))}
-        {overflow > 0 && (
-          <button
-            type="button"
-            onClick={onOpen}
-            className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-meta text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <span>+{overflow} more object {overflow === 1 ? "type" : "types"}</span>
-            <ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />
-          </button>
-        )}
-      </div>
+      <Well className="flex flex-1 flex-col rounded-(--radius-well) border">
+        <RowList className="flex-1">
+          {preview.map((node) => (
+            <li key={node.id}>
+              <ListRow
+                onClick={() => onSelectNode(node.id)}
+                lead={<Dot tone={node.attention === "critical" ? "bad" : "quiet"} />}
+                title={node.title}
+                titleLang={node.titleLang}
+                end={(
+                  <>
+                    <span className="text-meta">{node.fieldCount} facts{node.lawCount > 0 ? ` · ${node.lawCount} ${node.lawCount === 1 ? "law" : "laws"}` : ""}</span>
+                    {node.ruleHoldings > 0 && <StatusDot tone="bad">{atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)}</StatusDot>}
+                  </>
+                )}
+              />
+            </li>
+          ))}
+          {overflow > 0 && (
+            <li>
+              <ListRow
+                onClick={onOpen}
+                title={<span className="text-meta text-muted-foreground">+{overflow} more object {overflow === 1 ? "type" : "types"}</span>}
+                end={<ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />}
+              />
+            </li>
+          )}
+        </RowList>
 
-      <footer className="flex items-center justify-between gap-2 border-t border-border/80 px-4 py-2.5 text-meta text-muted-foreground">
-        <span className="tabular-nums">
-          {island.lawCount} {island.lawCount === 1 ? "law" : "laws"} · {bridgeCount} {bridgeCount === 1 ? "bridge" : "bridges"}
-        </span>
-        <Button type="button" variant="ghost" size="xs" onClick={onOpen} data-island-trigger="">
-          Expand island<ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />
-        </Button>
-      </footer>
+        <footer className="flex items-center justify-between gap-2 border-t border-(--well-border) py-1.5 ps-4 pe-2 text-meta text-muted-foreground">
+          <span className="tabular-nums">
+            {island.lawCount} {island.lawCount === 1 ? "law" : "laws"} · {bridgeCount} {bridgeCount === 1 ? "bridge" : "bridges"}
+          </span>
+          <Button type="button" variant="ghost" size="xs" onClick={onOpen} data-island-trigger="" className="max-sm:min-h-[44px]">
+            Expand island<ArrowRight aria-hidden className={cn("size-3.5", FLOW_ARROW)} />
+          </Button>
+        </footer>
+      </Well>
     </article>
   )
 }
 
-/** Zoom 1 — Expanded Island view with object cards and compact ghost stubs for cross-island neighbors. */
+/** Zoom 1 — Expanded Island view with its object types as rows and compact stubs for cross-island neighbors. */
 function IslandExpansion({
   island,
   bridges,
@@ -220,7 +211,7 @@ function IslandExpansion({
   return (
     <div data-slot="island-expansion" data-island-id={island.id} className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={onBack}>
+        <Button type="button" variant="outline" size="sm" onClick={onBack} className="max-sm:min-h-[44px]">
           <ArrowLeft aria-hidden className={cn("size-3.5", FLOW_ARROW)} />All islands
         </Button>
         <div className="min-w-0">
@@ -232,92 +223,91 @@ function IslandExpansion({
       </div>
 
       {island.sourceErrors > 0 && (
-        <div role="status" className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-meta text-destructive-text">
-          <ShieldAlert aria-hidden className="size-4 shrink-0" />
-          <span>{atLeast(island.sourceErrors, island.sourceErrorsApproximate)} source sync {island.sourceErrors === 1 && !island.sourceErrorsApproximate ? "error reported" : "errors reported"} for this island.</span>
-        </div>
+        <p role="status" className="text-body">
+          <StatusDot tone="bad" className="text-body whitespace-normal">
+            {atLeast(island.sourceErrors, island.sourceErrorsApproximate)} source sync {island.sourceErrors === 1 && !island.sourceErrorsApproximate ? "error reported" : "errors reported"} for this island.
+          </StatusDot>
+        </p>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {island.nodes.map((node) => {
-          const active = selectedNodeId === node.id
-          const matched = nodeMatchesLens(node, lens) && nodeMatchesQuery(node, query)
-          return (
-            <button
-              key={node.id}
-              type="button"
-              data-slot="semantic-node"
-              data-node-id={node.id}
-              aria-pressed={active}
-              data-outside-lens={!matched || undefined}
-              onClick={() => onSelectNode(node.id)}
-              className={cn(
-                "flex flex-col gap-2 rounded-xl border bg-card p-4 text-start transition-colors outline-none hover:bg-well-hover focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
-                active ? "border-action ring-1 ring-action/25" : "border-border",
-                !matched && OUTSIDE_LENS,
-              )}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate text-body text-foreground" lang={node.titleLang}>{node.title}</div>
-                  <div className="truncate font-mono text-meta text-muted-foreground">{node.id}</div>
-                  {!matched && <span className="sr-only">Outside the current lens.</span>}
-                </div>
-                {node.ruleHoldings > 0 || node.sourceErrors > 0 ? (
-                  <div className="flex shrink-0 items-center gap-1">
-                    {node.ruleHoldings > 0 && (
-                      <Badge variant="destructive" className="tabular-nums">
-                        {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} {node.ruleHoldings === 1 ? "holding" : "holdings"}
-                      </Badge>
+      <Panel icon={MapIcon} label="Object types" action={`${island.nodes.length}`}>
+        <Well>
+          <RowList>
+            {island.nodes.map((node) => {
+              const active = selectedNodeId === node.id
+              const matched = nodeMatchesLens(node, lens) && nodeMatchesQuery(node, query)
+              const facts = [
+                `${node.fieldCount} facts`,
+                `${node.relationshipCount} links`,
+                ...(node.lawCount > 0 ? [`${node.lawCount} ${node.lawCount === 1 ? "law" : "laws"}`] : []),
+                ...(node.markingCount > 0 ? [`${node.markingCount} ${node.markingCount === 1 ? "marking" : "markings"}`] : []),
+              ].join(" · ")
+              return (
+                <li
+                  key={node.id}
+                  data-slot="semantic-node"
+                  data-node-id={node.id}
+                  data-outside-lens={!matched || undefined}
+                  className={cn(!matched && OUTSIDE_LENS_ROW)}
+                >
+                  <ListRow
+                    aria-pressed={active}
+                    selected={active}
+                    onClick={() => onSelectNode(node.id)}
+                    lead={<Dot tone={node.ruleHoldings > 0 || node.sourceErrors > 0 ? "bad" : "quiet"} />}
+                    title={node.title}
+                    titleLang={node.titleLang}
+                    code={node.id}
+                    description={(
+                      <>
+                        {node.summary && <span className="line-clamp-2">{node.summary}</span>}
+                        <span className="block tabular-nums">{facts}</span>
+                        {!matched && <span className="sr-only">Outside the current lens.</span>}
+                      </>
                     )}
-                    {node.sourceErrors > 0 && (
-                      <Badge variant="destructive" className="tabular-nums">
-                        {atLeast(node.sourceErrors, node.sourceErrorsApproximate)} sync
-                      </Badge>
+                    end={node.ruleHoldings > 0 || node.sourceErrors > 0 ? (
+                      <>
+                        {node.ruleHoldings > 0 && (
+                          <StatusDot tone="bad" className="tabular-nums">
+                            {node.ruleHoldings}{node.ruleHoldingsApproximate ? "+" : ""} {node.ruleHoldings === 1 ? "holding" : "holdings"}
+                          </StatusDot>
+                        )}
+                        {node.sourceErrors > 0 && (
+                          <StatusDot tone="bad" className="tabular-nums">
+                            {atLeast(node.sourceErrors, node.sourceErrorsApproximate)} sync
+                          </StatusDot>
+                        )}
+                      </>
+                    ) : (
+                      <span data-slot="node-status">
+                        <AttentionDot tone={node.attention} label={attentionWords(node.attention)} />
+                      </span>
                     )}
-                  </div>
-                ) : (
-                  <span data-slot="node-status" className="mt-0.5 shrink-0">
-                    <AttentionDot tone={node.attention} label={attentionWords(node.attention)} />
-                  </span>
-                )}
-              </div>
-              {node.summary && (
-                <p className="line-clamp-2 text-meta text-muted-foreground">{node.summary}</p>
-              )}
-              <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-meta text-muted-foreground tabular-nums">
-                <span>{node.fieldCount} facts</span>
-                <span>{node.relationshipCount} links</span>
-                {node.lawCount > 0 && <span>{node.lawCount} {node.lawCount === 1 ? "law" : "laws"}</span>}
-                {node.markingCount > 0 && <span>{node.markingCount} {node.markingCount === 1 ? "marking" : "markings"}</span>}
-              </div>
-            </button>
-          )
-        })}
-      </div>
+                  />
+                </li>
+              )
+            })}
+          </RowList>
+        </Well>
+      </Panel>
 
       {ghostNeighbors.size > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-meta text-muted-foreground">Cross-island neighbors</h3>
-          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {[...ghostNeighbors.values()].map(({ island: other, linkCount, labels }) => (
-              <button
-                key={other.id}
-                type="button"
-                onClick={() => onJumpIsland(other.id)}
-                className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-surface-subtle/60 px-3.5 py-2.5 text-start transition-colors hover:border-foreground/30 hover:bg-muted/60"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-body text-foreground">{other.title}</div>
-                  <div className="truncate text-meta text-muted-foreground">
-                    {linkCount} {linkCount === 1 ? "link" : "links"} · {labels.slice(0, 2).join(", ")}
-                  </div>
-                </div>
-                <ArrowRight aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", FLOW_ARROW)} />
-              </button>
-            ))}
-          </div>
-        </div>
+        <Panel icon={Waypoints} label="Cross-island neighbors" action={`${ghostNeighbors.size}`}>
+          <Well>
+            <RowList>
+              {[...ghostNeighbors.values()].map(({ island: other, linkCount, labels }) => (
+                <li key={other.id}>
+                  <ListRow
+                    onClick={() => onJumpIsland(other.id)}
+                    title={other.title}
+                    description={<span className="block truncate">{linkCount} {linkCount === 1 ? "link" : "links"} · {labels.slice(0, 2).join(", ")}</span>}
+                    end={<ArrowRight aria-hidden className={cn("size-4", FLOW_ARROW)} />}
+                  />
+                </li>
+              ))}
+            </RowList>
+          </Well>
+        </Panel>
       )}
     </div>
   )
@@ -334,27 +324,29 @@ function ProvenanceSideSheet({
   readonly onSelectNode: (nodeId: string) => void
 }) {
   const { node, island, incoming, outgoing, laws, sourceFeeds } = dossier
+  // Each section: a quiet label, then one well of rows (DESIGN.md 10, Section).
+  const well = "rounded-(--radius-well) border"
   return (
     <aside
       data-slot="provenance-sheet"
       aria-label={`Provenance for ${node.title}`}
-      className="flex flex-col gap-4 rounded-xl border border-panel-border bg-card p-4"
+      className="flex flex-col gap-4 rounded-(--radius-panel) border border-(--panel-border) bg-card p-4 shadow-(--panel-shadow)"
     >
-      <div className="flex items-start justify-between gap-2 border-b border-border/80 pb-3">
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <Link
             to="/sources/$concept"
             params={{ concept: node.id }}
-            className="inline-flex max-w-full items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 font-mono text-meta text-muted-foreground hover:text-foreground"
+            className="inline-flex max-w-full items-center gap-1.5 rounded-(--radius-chip) px-1.5 py-0.5 font-mono text-meta text-muted-foreground ring-1 ring-line ring-inset hover:text-foreground max-sm:min-h-[44px]"
             title="Inspect admitted definition artifact"
           >
-            <span className="truncate">{node.artifactId}</span>
+            <bdi className="truncate">{node.artifactId}</bdi>
             <ExternalLink aria-hidden className="size-3 shrink-0" />
           </Link>
           <h2 className="mt-1.5 truncate text-heading font-medium text-foreground" lang={node.titleLang}>{node.title}</h2>
           <p className="text-meta text-muted-foreground">Island: {island.title}</p>
         </div>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close provenance sheet" onClick={onClose}>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close provenance sheet" onClick={onClose} className="max-sm:size-[44px]">
           <X aria-hidden className="size-4" />
         </Button>
       </div>
@@ -362,12 +354,12 @@ function ProvenanceSideSheet({
       {node.summary && <p className="text-body text-muted-foreground">{node.summary}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button asChild size="sm" variant="default">
+        <Button asChild size="sm" variant="default" className="max-sm:min-h-[44px]">
           <Link to="/objects/$type" params={{ type: node.id }}>
             Open records<ExternalLink aria-hidden className="size-3.5" />
           </Link>
         </Button>
-        <Button asChild size="sm" variant="outline">
+        <Button asChild size="sm" variant="outline" className="max-sm:min-h-[44px]">
           <Link to="/sources/$concept" params={{ concept: node.id }}>
             Definition
           </Link>
@@ -375,97 +367,80 @@ function ProvenanceSideSheet({
       </div>
 
       {node.ruleHoldings > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-meta text-destructive-text">
-          <ShieldAlert aria-hidden className="size-4 shrink-0" />
-          <span>
+        <p className="text-body">
+          <StatusDot tone="bad" className="text-body whitespace-normal">
             {atLeast(node.ruleHoldings, node.ruleHoldingsApproximate)} rule {node.ruleHoldings === 1 && !node.ruleHoldingsApproximate ? "holding" : "holdings"} reported in inbox.
-          </span>
-        </div>
+          </StatusDot>
+        </p>
       )}
 
       <section className="space-y-1.5">
-        <h3 className="text-meta text-muted-foreground">Source feeds ({sourceFeeds.length})</h3>
+        <SectionLabel count={sourceFeeds.length}>Source feeds</SectionLabel>
         {sourceFeeds.length === 0 ? (
           <p className="text-meta text-muted-foreground">No external source feed mapped.</p>
         ) : (
-          <ul className="space-y-1">
-            {sourceFeeds.map((feed) => (
-              <li key={`${feed.mappingId ?? feed.system}:${feed.dataset}`} className="flex items-center justify-between gap-2 rounded-lg bg-well px-2.5 py-1.5 text-meta">
-                <span className="truncate text-foreground">{feed.system} · {feed.dataset}</span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">
-                  {feed.mappedFields} mapped{feed.gapCount > 0 ? ` · ${feed.gapCount} ${feed.gapCount === 1 ? "gap" : "gaps"}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <Well className={well}>
+            <RowList>
+              {sourceFeeds.map((feed) => (
+                <li key={`${feed.mappingId ?? feed.system}:${feed.dataset}`}>
+                  <ListRow passive title={`${feed.system} · ${feed.dataset}`}
+                    end={<span className="text-meta">{feed.mappedFields} mapped{feed.gapCount > 0 ? ` · ${feed.gapCount} ${feed.gapCount === 1 ? "gap" : "gaps"}` : ""}</span>} />
+                </li>
+              ))}
+            </RowList>
+          </Well>
         )}
       </section>
 
       <section className="space-y-1.5">
-        <h3 className="text-meta text-muted-foreground">Governing laws ({laws.length})</h3>
+        <SectionLabel count={laws.length}>Governing laws</SectionLabel>
         {laws.length === 0 ? (
           <p className="text-meta text-muted-foreground">No admitted laws scoped to this type.</p>
         ) : (
-          <ul className="space-y-1.5">
-            {laws.slice(0, 6).map((law) => (
-              <li key={law.id} className="rounded-lg border border-border/80 bg-well px-2.5 py-2 text-meta">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-foreground">{lawHeadline(law)}</span>
-                  <Badge variant={law.severity === "error" ? "destructive" : "outline"} className="shrink-0 text-meta">
-                    {law.severity}
-                  </Badge>
-                </div>
-                {law.inheritedFrom && (
-                  <p className="mt-0.5 text-meta text-muted-foreground">Inherited from {law.inheritedFrom}</p>
-                )}
-              </li>
-            ))}
-          </ul>
+          <Well className={well}>
+            <RowList>
+              {laws.slice(0, 6).map((law) => (
+                <li key={law.id}>
+                  <ListRow passive title={<span className="whitespace-normal">{lawHeadline(law)}</span>}
+                    description={law.inheritedFrom ? `Inherited from ${law.inheritedFrom}` : undefined}
+                    end={<StatusDot tone={law.severity === "error" ? "bad" : "held"}>{law.severity}</StatusDot>} />
+                </li>
+              ))}
+            </RowList>
+          </Well>
         )}
       </section>
 
       {node.markings.length > 0 && (
         <section className="space-y-1.5">
-          <h3 className="text-meta text-muted-foreground">Markings</h3>
+          <SectionLabel>Markings</SectionLabel>
           <div className="flex flex-wrap gap-1.5">
-            {node.markings.map((marking) => (
-              <Badge key={marking} variant="outline" className="font-mono text-meta">{marking}</Badge>
-            ))}
+            {node.markings.map((marking) => <SourceTag key={marking}>{marking}</SourceTag>)}
           </div>
         </section>
       )}
 
       <section className="space-y-1.5">
-        <h3 className="text-meta text-muted-foreground">Connected types ({incoming.length + outgoing.length})</h3>
+        <SectionLabel count={incoming.length + outgoing.length}>Connected types</SectionLabel>
         {incoming.length + outgoing.length === 0 ? (
           <p className="text-meta text-muted-foreground">No declared relationships.</p>
         ) : (
-          <ul className="space-y-1">
-            {outgoing.map((edge) => (
-              <li key={edge.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelectNode(edge.targetConcept)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-start text-meta transition-colors hover:bg-muted"
-                >
-                  <span className="truncate text-muted-foreground">→ {edge.relationshipId.replaceAll("_", " ")}</span>
-                  <span className="truncate text-foreground">{edge.targetTitle}</span>
-                </button>
-              </li>
-            ))}
-            {incoming.map((edge) => (
-              <li key={`in:${edge.id}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelectNode(edge.sourceConcept)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-start text-meta transition-colors hover:bg-muted"
-                >
-                  <span className="truncate text-foreground">{edge.sourceTitle}</span>
-                  <span className="truncate text-muted-foreground">← {edge.relationshipId.replaceAll("_", " ")}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <Well className={well}>
+            <RowList>
+              {outgoing.map((edge) => (
+                <li key={edge.id}>
+                  <ListRow onClick={() => onSelectNode(edge.targetConcept)} title={edge.targetTitle}
+                    description={`→ ${edge.relationshipId.replaceAll("_", " ")}`} />
+                </li>
+              ))}
+              {incoming.map((edge) => (
+                <li key={`in:${edge.id}`}>
+                  <ListRow onClick={() => onSelectNode(edge.sourceConcept)} title={edge.sourceTitle}
+                    description={`← ${edge.relationshipId.replaceAll("_", " ")}`} />
+                </li>
+              ))}
+            </RowList>
+          </Well>
         )}
       </section>
     </aside>
@@ -527,7 +502,7 @@ export function SemanticMapPage() {
         title="Semantic map"
         description="Admitted workspace definitions grouped into monochrome structural islands with bundled cross-island bridges and schema provenance."
         actions={
-          <Button asChild variant="outline" size="sm">
+          <Button asChild variant="outline" size="sm" className="max-sm:min-h-[44px]">
             <Link to="/sources"><Database aria-hidden className="size-3.5" />Sources & types</Link>
           </Button>
         }
@@ -598,7 +573,7 @@ export function SemanticMapPage() {
                     placeholder="Find object types, feeds, markings…"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    className="h-8 ps-8"
+                    className="h-8 ps-8 max-sm:min-h-[44px]"
                   />
                 </label>
               </div>
@@ -639,18 +614,20 @@ export function SemanticMapPage() {
 
                       {map.bridges.length > 0 && (
                         <Panel icon={Waypoints} label="Bundled cross-island bridges" action={`${map.bridges.length} total`}>
-                          <Well className="divide-y divide-border/70">
+                          <Well>
+                            <RowList>
                             {map.bridges.map((bridge) => {
                               const from = map.islandsById.get(bridge.fromIsland)
                               const to = map.islandsById.get(bridge.toIsland)
+                              // A row shaped like a ListRow, but a plain one: each end of the bridge is its own button.
                               return (
-                                <div key={bridge.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-body">
+                                <li key={bridge.id} className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 rounded-(--radius-row) px-3 py-1.5 text-body max-sm:min-h-[44px]">
                                   <button
                                     type="button"
                                     data-bridge-id={bridge.id}
                                     data-bridge-end="from"
                                     onClick={() => openIsland(bridge.fromIsland, { kind: "bridge", id: bridge.id, end: "from" })}
-                                    className="text-foreground underline-offset-4 hover:underline"
+                                    className="rounded-sm text-foreground underline-offset-4 outline-none hover:underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring max-sm:min-h-[44px]"
                                   >
                                     {from?.title ?? bridge.fromIsland}
                                   </button>
@@ -660,7 +637,7 @@ export function SemanticMapPage() {
                                     data-bridge-id={bridge.id}
                                     data-bridge-end="to"
                                     onClick={() => openIsland(bridge.toIsland, { kind: "bridge", id: bridge.id, end: "to" })}
-                                    className="text-foreground underline-offset-4 hover:underline"
+                                    className="rounded-sm text-foreground underline-offset-4 outline-none hover:underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring max-sm:min-h-[44px]"
                                   >
                                     {to?.title ?? bridge.toIsland}
                                   </button>
@@ -668,12 +645,13 @@ export function SemanticMapPage() {
                                     {bridge.edges.slice(0, 3).map((edge) => edge.relationshipId.replaceAll("_", " ")).join(", ")}
                                     {bridge.edges.length > 3 ? ` +${bridge.edges.length - 3}` : ""}
                                   </span>
-                                  <Badge variant="outline" className="ms-auto tabular-nums">
+                                  <span className="ms-auto text-body text-muted-foreground tabular-nums">
                                     {bridge.count} {bridge.count === 1 ? "link" : "links"}
-                                  </Badge>
-                                </div>
+                                  </span>
+                                </li>
                               )
                             })}
+                            </RowList>
                           </Well>
                         </Panel>
                       )}

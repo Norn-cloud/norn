@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Hand, ShieldCheck, ShieldX, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
-import { Chip, FactChip } from "@/components/chip"
+import { Chip, FactChip } from "@/components/system/chip"
 import { liveAccess } from "@/lib/live"
 import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"

@@ -1,6 +1,6 @@
 import { ShieldX } from "lucide-react"
 import { refusedGuardWords } from "../lib/guard-words.ts"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Play, Plus, Undo2, X } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"

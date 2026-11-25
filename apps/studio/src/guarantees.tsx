@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { Link, useNavigate, useRouterState, useSearch } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldAlert, ShieldCheck } from "lucide-react"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { NotServed, useMode } from "@/lib/live-transport"
-import { TableCard } from "@/components/table-card"
+import { TableCard } from "@/components/system/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -298,7 +299,7 @@ function LiveRules() {
                 })}
                 {system.length > 0 && (
                   <details className="group/system">
-                    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+                    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
                       <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />
                       System rules ({systemRuleCount}): how the platform keeps its own records
                     </summary>
@@ -393,7 +394,7 @@ function RecordedRules() {
       {declared && <Hero declared={declared} broken={document("mutant")} />}
       {read.data && (
         <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/details">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-body text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
             <ChevronRight aria-hidden className="size-4 transition-transform group-open/details:rotate-90" />Technical details: each goal, the bounds and the tools
           </summary>
           <div className="space-y-8 pt-6">

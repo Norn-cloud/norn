@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Workflow } from "lucide-react"
 import { LoadState } from "@/components/load-state"
-import { Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
 import { CellRefusal, NotServed, useMode } from "@/lib/live-transport"
 import { readFlows } from "@/lib/flows"
 import { RunButton } from "./runs/run-page.tsx"

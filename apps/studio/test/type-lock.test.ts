@@ -62,8 +62,12 @@ test("inline spacing, borders, radii and alignment are logical (DESIGN.md 14)", 
   expect(offenders(physical, (body) => /left-1\/2/.test(body) && /-translate-x-1\/2/.test(body))).toEqual([])
 })
 
+test("focus is the 2px --ring outline, never a translucent ring that misses 3:1 (DESIGN.md 16.2, gate 5)", () => {
+  expect(offenders(/(?<![\w-])(?:[^\s"'`]*:)?(?:focus-visible|focus):ring-ring\/\d+/)).toEqual([])
+})
+
 test("a status dot fill lives only in the dot primitives, so it always sits beside its word", () => {
-  const owners = new Set(["components/status-dot.tsx", "components/ui/badge.tsx", "components/rules-tick-bar.tsx"])
+  const owners = new Set(["components/system/status-dot.tsx", "components/ui/badge.tsx"])
   const found = FILES.filter(({ file, text }) => !owners.has(file) && /(?<![\w-])(?:[^\s"'`]*:)?bg-dot-/.test(text)).map(({ file }) => file)
   expect(found).toEqual([])
 })

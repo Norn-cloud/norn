@@ -6,14 +6,17 @@ import { createContext, use, useEffect, useMemo, useRef, useState, type Keyboard
 import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { LoadState } from "@/components/load-state"
-import { Badge } from "@/components/ui/badge"
+import { SourceTag } from "@/components/system/source-tag"
+import { StatusDot } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
-import { PageHeader, Panel, Well } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
 import { cn } from "@/lib/utils"
 import { words } from "./lib/format.ts"
 import { transport } from "./lib/transport.ts"
 import { anchorOf, backOf, pathTo, stepId, treeOf, visibleOf, type Tree } from "./lib/tree.ts"
-import { guardedFields, workflowAnchor as anchor, workflows, workflowTitle as titleOf, type Workflow } from "./lib/workflows.ts"
+import { guardedFields, workflowAnchor as anchor, workflowHeading, workflows, type Workflow, type WorkflowHeading } from "./lib/workflows.ts"
+import { useCatalog } from "./lib/use-catalog.ts"
 import { Automations } from "./automations.tsx"
 import { flowName, useRunTypeFlows, type RunFlow } from "./lib/flows.ts"
 import { useView } from "@/lib/view"
@@ -32,12 +35,15 @@ type MoreData = { count: number; onExpand: () => void }
 
 /** Every card on the chart floats with the shared node depth; the lit path takes the accent ring, the rest fades. */
 const tile = (faded: boolean, lit: boolean) => cn("canvas-node rounded-node border border-node-border bg-card text-card-foreground transition-opacity duration-200", faded && "opacity-35", lit && "canvas-node-selected")
-/** A state's kind, as a tinted dot: where records start, where they end, or a stop on the way. */
-const dot = (start: boolean, terminal: boolean) => <span aria-hidden className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: start ? "var(--tint-start)" : terminal ? "var(--tint-outcome)" : "var(--tint-state)" }} />
+/** A state's kind, as a 6px tinted dot before its name: where records start, where they end, or a stop on the way. */
+const dot = (start: boolean, terminal: boolean) => <span aria-hidden className="mt-[8px] size-[6px] shrink-0 rounded-full" style={{ background: start ? "var(--tint-start)" : terminal ? "var(--tint-outcome)" : "var(--tint-state)" }} />
 const hidden = "!opacity-0 !border-0 !bg-transparent"
 
+/** A served description in prose: a `code` span (an id the definition names) reads as mono code, never as literal backticks. */
+const prose = (text: string) => text.split(/`([^`]+)`/).map((part, index) => index % 2 === 1 ? <code key={index} className="font-mono text-meta">{part}</code> : part)
+
 /**
- * One size for every card, one gap between layers and rows: the tree's own layers (a state, then the
+ * One width for every card, one gap between layers and rows: the tree's own layers (a state, then the
  * steps out of it) are the layout, so nothing overlaps and every edge runs the same way. The whole
  * tree is fitted to the panel's width, never cut off at the right.
  */
@@ -45,6 +51,13 @@ const CARD_W = 232
 const CARD_H = 92
 const GAP_X = 40
 const GAP_Y = 44
+/**
+ * A state with nothing but its name is one line tall; a state with its start, end, law or step-back
+ * marks takes a second line. Each layer is as tall as its tallest card, so no card reserves empty space.
+ */
+const STATE_H = 44
+const STATE_MARKED_H = 76
+const STATE_LINE_H = 26
 
 /**
  * Activate on pointer down for a mouse (hover re-renders the cards, which can swallow a later click)
@@ -57,49 +70,52 @@ const activate = (run: () => void) => ({
 
 function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
   return (
-    <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "px-3.5 py-2.5")}>
+    <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W }} className={cn(tile(data.faded, data.lit), "px-3.5 py-2.5")}>
       <Handle type="target" position={Position.Top} className={hidden} />
       <Handle type="source" position={Position.Bottom} className={hidden} />
-      <button type="button" aria-pressed={data.pinned === id} {...activate(() => data.onPick(id))} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+      <button type="button" aria-pressed={data.pinned === id} {...activate(() => data.onPick(id))} className="block w-full rounded-md text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
         <div className="flex items-start gap-2">
           {dot(data.start, data.terminal)}
           <div className="min-w-0">
-            <div className={cn("leading-snug", data.start ? "text-body" : "text-body")}>{data.label}</div>
+            <div className="text-body leading-snug text-foreground">{data.label}</div>
           </div>
         </div>
       </button>
-      <div className={cn("flex flex-wrap gap-1 ps-4", (data.start || data.terminal || data.backs.length > 0) && "mt-2")}>
-        {data.start && <Badge variant="secondary">Starts here</Badge>}
-        {data.terminal && <Badge variant="outline">Ends here</Badge>}
-        {data.start && data.laws > 0 && <Badge variant="outline">{data.laws} {data.laws === 1 ? "law" : "laws"}</Badge>}
+      {marked(data) && <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 ps-3.5">
+        {data.start && <span className="text-meta text-muted-foreground">Starts here</span>}
+        {data.terminal && <span className="text-meta text-muted-foreground">Ends here</span>}
+        {data.start && data.laws > 0 && <SourceTag mono={false}>{data.laws} {data.laws === 1 ? "law" : "laws"}</SourceTag>}
         {/* A step back: the chip opens the step itself; the arrow goes to the state it returns to. */}
         {data.backs.map((back) => (
           <span key={back.id} className="inline-flex items-center rounded-full border text-meta text-muted-foreground">
-            <button type="button" aria-pressed={data.pinned === back.id} {...activate(() => data.onPick(back.id))} className="rounded-s-full px-2 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">↺ {back.label}</button>
-            <button type="button" aria-label={`Go to ${back.toLabel}`} title={`Go to ${back.toLabel}`} {...activate(() => data.onPick(back.to))} className="rounded-e-full border-s px-1.5 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50">→</button>
+            <button type="button" aria-pressed={data.pinned === back.id} {...activate(() => data.onPick(back.id))} className="rounded-s-full px-2 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">↺ {back.label}</button>
+            <button type="button" aria-label={`Go to ${back.toLabel}`} title={`Go to ${back.toLabel}`} {...activate(() => data.onPick(back.to))} className="rounded-e-full border-s px-1.5 py-0.5 hover:bg-muted hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">→</button>
           </span>
         ))}
-      </div>
+      </div>}
     </div>
   )
 }
 
+/** Whether a state card shows a second line: where records start or end, or a step back. The law count shows only at the start. */
+const marked = (data: { readonly start: boolean; readonly terminal: boolean; readonly backs: readonly unknown[] }) => data.start || data.terminal || data.backs.length > 0
+
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
-    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "block px-3.5 py-2.5 text-start text-body outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
+    <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "block px-3.5 py-2.5 text-start text-body outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring")}>
       <Handle type="target" position={Position.Top} className={hidden} />
       <Handle type="source" position={Position.Bottom} className={hidden} />
       <div className="flex items-start gap-2 leading-snug">
-        <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-meta tabular-nums" style={{ background: "color-mix(in oklab, var(--tint-route) 14%, transparent)", color: "var(--tint-route)" }}>{data.order}</span>
-        <span className="line-clamp-2">{data.label}</span>
+        <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-meta text-muted-foreground tabular-nums ring-1 ring-node-border ring-inset">{data.order}</span>
+        <span className="line-clamp-2 text-foreground">{data.label}</span>
       </div>
-      <div className="line-clamp-2 ps-7 pt-0.5 text-meta text-muted-foreground">{data.sub}</div>
+      <div className="line-clamp-3 ps-7 pt-0.5 text-meta text-muted-foreground">{prose(data.sub)}</div>
     </button>
   )
 }
 
 function More({ data }: NodeProps<Node<MoreData, "more">>) {
-  return <Button size="sm" variant="outline" className="rounded-full" onClick={data.onExpand}>+{data.count} more states</Button>
+  return <Button size="sm" variant="outline" onClick={data.onExpand}>+{data.count} more states</Button>
 }
 
 const NODE_TYPES = { state: StateCard, step: StepCard_, more: More }
@@ -143,13 +159,27 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const route = active === undefined ? undefined : pathTo(tree, back?.from ?? active)
   const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
-  const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
-    // Top to bottom: each layer (a state, then the steps out of it) is a row; its branches sit side by side.
-    const position = { x: node.row * (CARD_W + GAP_X), y: node.column * (CARD_H + GAP_Y) }
+  const visible = tree.nodes.filter(({ id }) => shown.has(id))
+  const backsOf = (name: string) => tree.backs.get(name) ?? []
+  // Top to bottom: each layer (a state, then the steps out of it) is a row, as tall as its tallest card.
+  const heightOf = (node: Tree["nodes"][number]) => node.kind === "step" ? CARD_H
+    : !marked({ start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, backs: backsOf(node.state) }) ? STATE_H
+    // Step-back chips wrap one per line at this width; the layer grows with them, so nothing overlaps.
+    : STATE_MARKED_H + Math.max(0, backsOf(node.state).length - 1) * STATE_LINE_H
+  const layers = [...new Set(visible.map(({ column }) => column))].sort((a, b) => a - b)
+  const tops = new Map<number, number>()
+  let top = 0
+  for (const layer of layers) {
+    tops.set(layer, top)
+    top += Math.max(...visible.filter(({ column }) => column === layer).map(heightOf)) + GAP_Y
+  }
+  const nodes: Node[] = visible.map((node) => {
+    // Its branches sit side by side.
+    const position = { x: node.row * (CARD_W + GAP_X), y: tops.get(node.column) ?? 0 }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
     if (node.kind === "state") {
       return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, laws: workflow.laws.length,
-        backs: (tree.backs.get(node.state) ?? []).map(({ transition, to }) => ({ id: stepId(transition, node.state), label: `${state(transition.id)} → ${state(to)}`, to, toLabel: state(to) })) } }
+        backs: backsOf(node.state).map(({ transition, to }) => ({ id: stepId(transition, node.state), label: `${state(transition.id)} → ${state(to)}`, to, toLabel: state(to) })) } }
     }
     const guards = node.transition.guards ?? []
     const fields = guardedFields(guards)
@@ -157,7 +187,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${plain ?? fields.join(", ")}`) } }
   })
   if (folded > 0) {
-    const below = Math.max(...nodes.map(({ position }) => position.y)) + CARD_H + GAP_Y
+    const below = top
     nodes.push({ id: "more", type: "more", position: { x: 0, y: below }, data: { count: folded, onExpand: () => setExpanded(true) } })
   }
   const edges: Edge[] = tree.edges.filter(({ source, target }) => shown.has(source) && shown.has(target)).map(({ source, target }) => ({
@@ -178,7 +208,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   }
   // Fitted to the panel: refit when the panel or the tree changes size, so the last layer is never cut off.
   const flow = useRef<ReactFlowInstance | null>(null)
-  const rows = Math.max(...nodes.map(({ position }) => position.y)) + CARD_H
+  const rows = Math.max(top - GAP_Y, ...nodes.filter(({ id }) => id === "more").map(({ position }) => position.y + 36))
   useEffect(() => {
     const element = frame.current
     const fit = () => void flow.current?.fitView({ padding: 0.04, maxZoom: 1, minZoom: 0.6 })
@@ -188,7 +218,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     return () => observer?.disconnect()
   }, [nodes.length, rows])
   return (
-    <div ref={frame} role="group" className="w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
+    <div ref={frame} role="group" className="w-full rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
       <div style={{ height: rows + 48 }}>
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
           // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
@@ -224,7 +254,7 @@ function Condition({ transition }: { readonly transition: Workflow["steps"][numb
   const fields = guardedFields(guards)
   return (
     <div className="space-y-1">
-      <div>{transition.description ?? (guardsWords(guards) !== null ? `Requires: ${guardsWords(guards)}` : fields.length > 0 ? `Requires: ${fields.join(", ")}` : "A declared condition")}</div>
+      <div>{transition.description !== undefined ? prose(transition.description) : (guardsWords(guards) !== null ? `Requires: ${guardsWords(guards)}` : fields.length > 0 ? `Requires: ${fields.join(", ")}` : "A declared condition")}</div>
       <details className="text-meta text-muted-foreground">
         <summary className="cursor-pointer select-none">Declared rule</summary>
         <code className="block pt-1 font-mono text-meta break-words whitespace-normal">{guards.join(" and ")}</code>
@@ -260,21 +290,26 @@ function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly st
       <div className="space-y-1">
         <div className="text-meta text-muted-foreground">Laws that govern it</div>
         {workflow.laws.length === 0 && <div className="text-muted-foreground">None declared on {words(workflow.objectType)}</div>}
-        {workflow.laws.map((law) => (
-          <div key={law.id} className="space-y-1 rounded-md border bg-background p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-meta">{law.id}</span>
-              <Badge variant={law.severity === "error" ? "secondary" : "outline"}>{law.severity === "error" ? "Must hold" : "Warning"}</Badge>
-            </div>
-            <p className="text-meta text-muted-foreground">{law.rationale}</p>
-          </div>
-        ))}
+        {workflow.laws.length > 0 && (
+          <ul className="space-y-3">
+            {/* One law per item, no frame inside the well: its id, its strength dot first, then why it holds. */}
+            {workflow.laws.map((law) => (
+              <li key={law.id} className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <bdi className="font-mono text-meta tracking-[-0.01em] text-foreground">{law.id}</bdi>
+                  <StatusDot tone={law.severity === "error" ? "accent" : "held"}>{law.severity === "error" ? "Must hold" : "Warning"}</StatusDot>
+                </div>
+                <p className="text-meta text-muted-foreground">{law.rationale}</p>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   )
 }
 
-function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: Workflow; readonly title: string; readonly flow: RunFlow | undefined; readonly recorded: boolean }) {
+function WorkflowCard({ workflow, heading, flow, recorded }: { readonly workflow: Workflow; readonly heading: WorkflowHeading; readonly flow: RunFlow | undefined; readonly recorded: boolean }) {
   const { lifecycle } = workflow
   const { view } = useView()
   const state = useMemo(() => (name: string) => (view !== "technical" && flow ? flowName(flow, name) : undefined) ?? words(name), [flow, view])
@@ -291,12 +326,17 @@ function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: 
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-heading font-medium">{title}: {words(lifecycle.property).toLowerCase()}</h2>
-          {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
+          {/* The served names; a part the server names nowhere shows as its id, as code. */}
+          <h2 className="text-heading font-medium">
+            {heading.title === undefined ? <code className="font-mono">{workflow.objectType}</code> : <span lang={heading.titleLang}>{heading.title}</span>}
+            {": "}
+            {heading.property === undefined ? <code className="font-mono">{lifecycle.property}</code> : <span lang={heading.propertyLang}>{heading.property}</span>}
+          </h2>
+          {recorded && <SourceTag mono={false} title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</SourceTag>}
         </div>
         <p className="max-w-[80ch] text-meta text-muted-foreground">
-          {[about,
-            `Starts as ${lifecycle.initial.map(state).join(" or ")}.`,
+          {about && <>{prose(about)} </>}
+          {[`Starts as ${lifecycle.initial.map(state).join(" or ")}.`,
             lifecycle.terminal?.length ? `Ends as ${lifecycle.terminal.map(state).join(" or ")}.` : undefined,
             lifecycle.immutable?.length ? `Its details are locked while ${lifecycle.immutable.map(state).join(" or ")}.` : undefined,
           ].filter(Boolean).join(" ")}
@@ -309,7 +349,7 @@ function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: 
           <Well className="bg-canvas-surface"><Chart workflow={workflow} pinned={pinned} onPin={setPinned} /></Well>
         </Panel>
         {pinned !== undefined && (
-          <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"} action={<Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPinned(undefined)}>Clear</Button>}>
+          <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"} action={<Button type="button" size="sm" variant="ghost" className="h-7 px-2.5" onClick={() => setPinned(undefined)}>Clear</Button>}>
             <Well>
               {step && <StepCard workflow={workflow} step={step} />}
               {node?.kind === "state" && <StateSummary workflow={workflow} name={node.state} />}
@@ -342,6 +382,7 @@ export { useWorkflowsMenu } from "./lib/nav-menus.ts"
 export function WorkflowsPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: transport.definitions })
   const flows = useRunTypeFlows()
+  const { catalog } = useCatalog()
   return (
     <section className="space-y-6">
       <PageHeader title="Workflows" description="How each business process moves: its states, the steps between them, the condition each step requires, and the laws that govern it." />
@@ -365,7 +406,7 @@ export function WorkflowsPage() {
         {(docs) => (
           <div className="space-y-6">
             {workflows(docs.map(({ document }) => document)).map((workflow) => (
-              <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} title={titleOf(workflow, flows)} flow={flows.get(workflow.objectType)} recorded={docs.some(({ origin }) => origin === "recorded")} />
+              <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} heading={workflowHeading(workflow, flows, catalog)} flow={flows.get(workflow.objectType)} recorded={docs.some(({ origin }) => origin === "recorded")} />
             ))}
           </div>
         )}

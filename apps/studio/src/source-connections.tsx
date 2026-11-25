@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Cable, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
@@ -101,7 +101,7 @@ export function SourceConnections() {
         ))}
       {connections.data && (connections.data.document.records.length === 0
         ? <Well><EmptyState icon={Cable} title="No connections" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>
-        : <div className="p-1"><TableCard><Table>
+        : <TableCard><Table>
           <TableHeader><TableRow>
             <TableHead>Connection</TableHead><TableHead>Status</TableHead><TableHead>Last sync</TableHead><TableHead>Up to</TableHead>
             <TableHead className="text-end">Read</TableHead><TableHead className="text-end">Landed</TableHead><TableHead className="text-end">Quarantined</TableHead><TableHead />
@@ -128,7 +128,7 @@ export function SourceConnections() {
               )
             })}
           </TableBody>
-        </Table></TableCard></div>)}
+        </Table></TableCard>)}
     </Panel>
   )
 }

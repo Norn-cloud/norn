@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { CellUnavailable, scopeFromAccount, type StudioScope } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
-import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
+import { applyAppearance, applyScheme, storedScheme, storedShellChrome, storedSkin } from "@/lib/appearance"
 import { storedCustomTheme } from "@/lib/studio-theme"
 import "./bones/registry.ts"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
@@ -154,16 +154,10 @@ const router = createRouter({
   defaultPendingMinMs: 0,
 })
 
-// Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
-const dark = window.matchMedia("(prefers-color-scheme: dark)")
-const applyScheme = () => {
-  const forced = document.documentElement.dataset.forcedAppearance
-  if (forced === "dark" || forced === "light") return
-  document.documentElement.classList.toggle("dark", dark.matches)
-}
-applyScheme()
+// Dark and light are peers: the reader's pinned scheme, else the system's, unless a custom theme pins an appearance.
+applyScheme(storedScheme())
 applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
-dark.addEventListener("change", applyScheme)
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyScheme(storedScheme()))
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.
 const OAuthPage = oauthPage(window.location.pathname)

@@ -1,4 +1,4 @@
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { useView } from "@/lib/view"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"

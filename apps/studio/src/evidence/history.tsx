@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChevronRight, History as HistoryIcon, PencilLine, Workflow, Wrench, type LucideIcon } from "lucide-react"
 import { useState } from "react"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { CopyId } from "@/components/copy-id"
 import { HiddenWriter } from "@/components/hidden-writer"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -116,7 +116,7 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
   const writer = version.writer
   return (
     <li>
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-start gap-2.5 px-3 py-2 text-start text-body outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40">
+      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-start gap-2.5 px-3 py-2 text-start text-body outline-none hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
         <ChevronRight aria-hidden className={cn("mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1">

@@ -30,7 +30,7 @@ export function CopyId({ value, short, className }: { readonly value: string; re
   return (
     <span className={cn("inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-meta", className)}>
       <span className="truncate" title={value}>{short !== undefined && value.length > short ? `${value.slice(0, short)}…` : value}</span>
-      <button type="button" onClick={copy} className={cn("shrink-0 rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40", state === "failed" && "text-destructive")}>
+      <button type="button" onClick={copy} className={cn("shrink-0 rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring", state === "failed" && "text-destructive")}>
         <Icon className="size-3" /><span className="sr-only">{state === "copied" ? "Copied" : state === "failed" ? `Could not copy ${value}` : `Copy ${value}`}</span>
       </button>
     </span>

@@ -3,7 +3,7 @@ import { ChartLine, CircleCheck, Play, Plus } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { LoadState } from "@/components/load-state"
-import { EmptyState, Panel } from "@/components/panel"
+import { EmptyState, Panel } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CellUnavailable, defaultFetch, fetchWithTimeout, getDisplayedScope, parseUnavailableDetail, scopeHeaders, useStudioScope, type StudioScope } from "@/lib/definitions"
@@ -142,7 +142,7 @@ async function checkQuestion(question: unknown, boundScope?: StudioScope | null)
   return verdict
 }
 
-const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-body outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive"
+const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-body outline-none focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-invalid:border-destructive"
 
 function Field({ label, field, invalid, children }: { readonly label: string; readonly field?: string; readonly invalid?: boolean; readonly children: ReactNode }) {
   return <label className="grid gap-1.5 text-body" data-field={field} data-invalid={invalid || undefined}><span className={invalid ? "text-destructive" : "text-muted-foreground"}>{label}</span>{children}</label>

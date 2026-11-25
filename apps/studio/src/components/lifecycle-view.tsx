@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { GitBranch } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { defineLifecycleView, type LifecycleFinding, type LifecycleViewDocument, type LifecycleViewOptions, type NornLifecycleView } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"

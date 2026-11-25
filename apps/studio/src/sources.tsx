@@ -2,10 +2,11 @@ import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { Database, Plus, Search, Shapes } from "lucide-react"
 import { useState, type ReactNode } from "react"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { cn } from "@/lib/utils"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
+import { Initials, ListRow, RowList } from "@/components/system/list-row"
 import { LoadState } from "@/components/load-state"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { refreshMode, useMode } from "./lib/live-transport.ts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -22,10 +23,14 @@ import { useCatalog } from "./lib/use-catalog.ts"
 import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
 
-/** The "dense, crisp" tier for data tables: one hairline frame, 13px tabular figures, a quiet header, no zebra. */
+/**
+ * The "dense, crisp" tier for data tables: one hairline frame, step-1 tabular figures, a quiet header,
+ * no zebra. Inside a well it is a ruled section of it, never a box in the well: no side frame or radius,
+ * and no frame at all when it fills the well.
+ */
 export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div data-slot="dense-table" className="overflow-hidden rounded-lg border [[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]>&]:border-y-0">
       <Table className="text-meta tabular-nums">
         <TableHeader>{head}</TableHeader>
         <TableBody>{children}</TableBody>
@@ -49,38 +54,33 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
         <KpiTile label="Links between them" value={relationships} sub="declared once, read the same from every system" />
       </StatStrip>
       <Panel icon={Database} label="Connected systems">
-        <Well className="divide-y divide-border/70">
+        <Well>
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
-          {outside.map((system, index) => (
-            <div key={system.id} className="flex items-center gap-3 px-4 py-2.5">
-              <span aria-hidden className={cn("flex size-7 shrink-0 items-center justify-center rounded-md text-meta", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
-              <span className="min-w-0 flex-1">
-                <span className="block">{system.name}</span>
-                {system.schema && <span className="block truncate text-meta text-muted-foreground">
-                  {[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}
-                </span>}
-              </span>
-              <span className="shrink-0 text-meta text-muted-foreground tabular-nums" title={`${system.datasets.length} kinds of record · feeds ${system.feeds.length} object types`}>
-                {system.datasets.length} kinds of record <span aria-hidden>→</span> {system.feeds.length} object types
-              </span>
-            </div>
-          ))}
+          {outside.length > 0 && (
+            <RowList>
+              {outside.map((system) => (
+                <li key={system.id}>
+                  <ListRow passive lead={<Initials id={system.id} name={system.name} />} title={system.name}
+                    description={system.schema ? <span className="block truncate">{[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}</span> : undefined}
+                    end={(
+                      <span className="text-meta" title={`${system.datasets.length} kinds of record · feeds ${system.feeds.length} object types`}>
+                        {system.datasets.length} kinds of record <span aria-hidden>→</span> {system.feeds.length} object types
+                      </span>
+                    )} />
+                </li>
+              ))}
+            </RowList>
+          )}
+          {own.length > 0 && (
+            <p className="border-t border-(--well-border) px-4 py-2.5 text-meta text-muted-foreground">
+              Kept by Norn: {own.map((system) => `${system.datasets.length} kinds of record about its own syncs (${system.feeds.length} object types)`).join("; ")}. Not a connected system.
+            </p>
+          )}
         </Well>
-        {own.length > 0 && (
-          <p className="border-t border-border/70 px-4 py-2 text-meta text-muted-foreground">
-            Kept by Norn: {own.map((system) => `${system.datasets.length} kinds of record about its own syncs (${system.feeds.length} object types)`).join("; ")}. Not a connected system.
-          </p>
-        )}
       </Panel>
     </div>
   )
 }
-
-/** One tone per connected system's monogram, in the order the catalog lists them. */
-const MONOGRAM = [
-  "bg-tone-blue/12 text-tone-blue", "bg-tone-green/12 text-tone-green", "bg-tone-violet/12 text-tone-violet",
-  "bg-tone-orange/12 text-tone-orange", "bg-tone-teal/12 text-tone-teal", "bg-tone-pink/12 text-tone-pink",
-] as const
 
 /** Business shows a type's plain one-line summary; Technical shows the registry's own description and the type's id. */
 const about = (concept: Concept, view: View): { readonly text: string; readonly lang: string } | undefined => {
@@ -135,7 +135,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
     gaps.set(key, gap)
   }
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 pb-3">
       <DenseTable head={
         <TableRow>
           <TableHead>Fact</TableHead>
@@ -150,12 +150,12 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
           </TableRow>
         ))}
       </DenseTable>
-      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-body text-muted-foreground"><b className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
+      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="px-4 text-body text-muted-foreground"><span className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</span> {note}</p>)}
       {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
-        <div className="space-y-1">
+        <div className="space-y-1 px-4">
           <h3 className="text-meta text-muted-foreground">Left out of the mapping, on purpose</h3>
           {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
-            <p key={`${system}/${dataset}/${field}`} className="text-body text-muted-foreground"><b className="text-foreground">{system} {dataset}, <code className="font-mono text-meta">{field}</code>:</b> {reason}</p>
+            <p key={`${system}/${dataset}/${field}`} className="text-body text-muted-foreground"><span className="text-foreground">{system} {dataset}, <code className="font-mono text-meta">{field}</code>:</span> {reason}</p>
           )))}
         </div>
       )}
@@ -213,7 +213,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
   return (
     <article className="space-y-6">
       <header className="space-y-2">
-        <h1 lang={concept.titleLang} className="text-title tracking-tight">{concept.title}</h1>
+        <h1 lang={concept.titleLang} className="text-title font-medium tracking-tight">{concept.title}</h1>
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
           {recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
@@ -223,23 +223,25 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
         {concept.parents.length > 0 && <p className="text-body">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
       </header>
       <Panel icon={Shapes} label="Facts recorded">
-        <div className="p-1"><FactsTable concept={concept} technical={view === "technical"} /></div>
+        <Well><FactsTable concept={concept} technical={view === "technical"} /></Well>
       </Panel>
       {concept.relationships.length > 0 && (
         <Panel icon={Shapes} label="Links">
-          <Well className="divide-y">
-            {concept.relationships.map((relationship) => (
-              <div key={relationship.id} className="px-4 py-2.5 text-body">
-                <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.count} {link(relationship.target)}
-                {relationship.description && <p className="text-meta text-muted-foreground">{relationship.description}</p>}
-              </div>
-            ))}
+          <Well>
+            <RowList>
+              {concept.relationships.map((relationship) => (
+                <li key={relationship.id}>
+                  <ListRow passive title={<><span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.count} {link(relationship.target)}</>}
+                    description={relationship.description} />
+                </li>
+              ))}
+            </RowList>
           </Well>
         </Panel>
       )}
       <LawsPanel concept={concept} />
       <Panel icon={Database} label="Where its records come from">
-        <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-body text-muted-foreground">No connected system maps records into it directly.</p>}</div>
+        <Well>{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-4 py-3 text-body text-muted-foreground">No connected system maps records into it directly.</p>}</Well>
       </Panel>
     </article>
   )

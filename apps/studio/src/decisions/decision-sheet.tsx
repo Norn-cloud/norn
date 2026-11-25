@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { StatusDot, type DotTone } from "@/components/status-dot"
+import { StatusDot, type DotTone } from "@/components/system/status-dot"
 import { useQuery } from "@tanstack/react-query"
 import { Clock } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"

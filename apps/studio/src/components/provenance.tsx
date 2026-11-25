@@ -129,7 +129,7 @@ function useNarrow(): boolean {
 /** Clicks and keys inside the card stay in it: a grid row or table row under it must not take them. */
 const keep = (event: SyntheticEvent) => event.stopPropagation()
 
-const TRIGGER = "rounded-sm text-start underline decoration-dotted decoration-muted-foreground/60 underline-offset-4 outline-none hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+const TRIGGER = "rounded-sm text-start underline decoration-dotted decoration-muted-foreground/60 underline-offset-4 outline-none hover:decoration-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
 
 /**
  * A value that opens its card. `inline` underlines the value; `glyph` puts a small button beside it

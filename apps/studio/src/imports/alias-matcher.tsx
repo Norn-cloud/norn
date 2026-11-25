@@ -1,8 +1,12 @@
-import { Check, ChevronsUpDown, Link2, Plus, Search, Sparkles, UserX, X } from "lucide-react"
+import { Check, ChevronsUpDown, Link2, Plus, Search, UserX, X } from "lucide-react"
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { CopyId } from "@/components/copy-id"
 import { FactStatusBadge } from "@/components/fact-status-badge"
+import { Initials, ListRow } from "@/components/system/list-row"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { SourceTag } from "@/components/system/source-tag"
+import { Dot } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -95,7 +99,7 @@ function SearchableRecordPicker({
           aria-controls={open ? listboxId : undefined}
           aria-label={ariaLabel}
           disabled={disabled}
-          className="h-8 w-full justify-between rounded-md border-border bg-background px-2.5 text-meta font-normal shadow-none"
+          className="h-9 w-full justify-between rounded-lg px-3 font-normal shadow-none max-sm:min-h-[44px]"
         >
           <span className={cn("truncate", !selected && "text-muted-foreground")}>
             {selected ? <><bdi>{selected.label}</bdi> (<bdi>{selected.id}</bdi>)</> : "Search existing records…"}
@@ -103,9 +107,9 @@ function SearchableRecordPicker({
           <ChevronsUpDown aria-hidden className="ms-1.5 size-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 rounded-lg border border-border bg-popover p-0 shadow-float">
-        <div className="flex items-center gap-1.5 border-b border-border px-2.5 py-2">
-          <Search aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <PopoverContent align="start" className="w-80 gap-0 p-0">
+        <div className="flex items-center gap-1.5 border-b border-line px-3 py-1.5">
+          <Search aria-hidden className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.6} />
           <input
             type="text"
             role="combobox"
@@ -118,18 +122,18 @@ function SearchableRecordPicker({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
-            className="w-full bg-transparent text-meta outline-none placeholder:text-muted-foreground"
+            className="h-9 w-full bg-transparent text-body outline-none placeholder:text-muted-foreground max-sm:min-h-[44px]"
             autoFocus
           />
           {query !== "" && (
-            <button type="button" aria-label="Clear filter" onClick={() => setQuery("")} className="text-muted-foreground hover:text-foreground">
-              <X className="size-3" />
+            <button type="button" aria-label="Clear filter" onClick={() => setQuery("")} className="grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground outline-none hover:bg-(--well-hover) hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring max-sm:size-[44px]">
+              <X aria-hidden className="size-3.5" />
             </button>
           )}
         </div>
-        <ul id={listboxId} role="listbox" aria-label={ariaLabel} className="max-h-56 overflow-y-auto p-1">
+        <ul id={listboxId} role="listbox" aria-label={ariaLabel} data-slot="row-list" className="flex max-h-64 flex-col overflow-y-auto p-1.5">
           {filtered.length === 0 && (
-            <li className="px-2.5 py-4 text-center text-meta text-muted-foreground">No matching records.</li>
+            <li className="px-3 py-4 text-center text-meta text-muted-foreground">No matching records.</li>
           )}
           {filtered.map((entity, index) => {
             const isSelected = entity.id === value
@@ -143,28 +147,23 @@ function SearchableRecordPicker({
                 aria-selected={isSelected}
                 data-highlighted={isHighlighted ? "true" : undefined}
               >
-                <button
-                  type="button"
+                <ListRow
                   tabIndex={-1}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => pick(entity.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-meta outline-none hover:bg-muted",
-                    (isHighlighted || isSelected) && "bg-muted",
-                    isSelected && "",
-                  )}
-                >
-                  <Check aria-hidden className={cn("size-3.5 shrink-0", isSelected ? "opacity-100 text-tone-green" : "opacity-0")} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-foreground"><bdi>{entity.label}</bdi></span>
-                    <span className="block truncate font-mono text-meta text-muted-foreground">
-                      <bdi>{entity.id}</bdi>{entity.subtitle ? <> · <bdi>{entity.subtitle}</bdi></> : null}
-                    </span>
-                  </span>
-                  {isSuggested && (
-                    <Chip tone="amber" className="text-meta">Suggested</Chip>
-                  )}
-                </button>
+                  selected={isSelected}
+                  className={cn(isHighlighted && !isSelected && "bg-(--well-hover)")}
+                  lead={<Initials id={entity.id} name={entity.label} />}
+                  title={<bdi>{entity.label}</bdi>}
+                  code={entity.id}
+                  description={entity.subtitle ? <bdi>{entity.subtitle}</bdi> : undefined}
+                  end={(isSuggested || isSelected) ? (
+                    <>
+                      {isSuggested && <Chip tone="amber">Suggested</Chip>}
+                      {isSelected && <Check aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+                    </>
+                  ) : undefined}
+                />
               </li>
             )
           })}
@@ -218,307 +217,294 @@ export function AliasMatcher({
 
   const unresolvedCount = aliases.filter((alias) => alias.resolution === null).length
 
+  // A segment of a rounded-full track: the pressed one is the card at 500 (DESIGN.md 8.2, SegmentedControl).
+  const segment = "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-body text-muted-foreground transition-colors duration-150 outline-none hover:bg-(--well-hover) hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-45 motion-reduce:transition-none max-sm:min-h-[44px] aria-pressed:bg-card aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-(--panel-border) aria-pressed:hover:bg-card"
+
   return (
-    <section aria-label="Match aliases and entities" className="overflow-hidden rounded-lg border border-border bg-background">
-      {/* Flat toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
-        <div className="relative min-w-52 flex-1 sm:max-w-xs">
-          <Search aria-hidden className="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Filter external handles"
-            placeholder="Filter handles, channels, excerpts…"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            className="h-8 bg-background ps-8 text-meta shadow-none"
-          />
-        </div>
-        <div role="group" aria-label="Alias status filter" className="inline-flex rounded-md border border-border bg-background p-0.5 text-meta">
-          {([
-            ["all", `All (${aliases.length})`],
-            ["unresolved", `Unresolved (${unresolvedCount})`],
-            ["resolved", `Resolved (${aliases.length - unresolvedCount})`],
-          ] as const).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={statusFilter === key}
-              onClick={() => setStatusFilter(key)}
-              className={cn(
-                "rounded px-2.5 py-1 transition-colors",
-                statusFilter === key ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <span className="ms-auto text-meta text-muted-foreground">
-          Suggestions never auto-link — every alias binding commits as a governed action.
-        </span>
-      </div>
-
-      {/* Alias rows */}
-      {visible.length === 0 ? (
-        <div className="px-4 py-10 text-center text-body text-muted-foreground">
-          No external handles match this filter.
-        </div>
-      ) : (
-        <ul className="divide-y divide-border" aria-label="External alias candidates">
-          {visible.map((alias) => {
-            const state = stateOf(alias)
-            const resolved = alias.resolution
-            return (
-              <li
-                key={alias.id}
-                data-alias-row={alias.id}
-                className="grid gap-3 px-4 py-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:items-start"
+    <Panel icon={Link2} label="Match aliases and entities" action={`${unresolvedCount} unresolved`}>
+      <Well>
+        {/* Toolbar: one ruled row at the top of the well */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-(--well-border) px-3.5 py-2.5">
+          <div className="relative min-w-52 flex-1 sm:max-w-xs">
+            <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" strokeWidth={1.6} />
+            <Input
+              aria-label="Filter external handles"
+              placeholder="Filter handles, channels, excerpts…"
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              className="bg-card ps-8 max-sm:min-h-[44px]"
+            />
+          </div>
+          <div role="group" aria-label="Alias status filter" className="inline-flex flex-wrap rounded-full bg-(--well) p-0.5 ring-1 ring-line">
+            {([
+              ["all", `All (${aliases.length})`],
+              ["unresolved", `Unresolved (${unresolvedCount})`],
+              ["resolved", `Resolved (${aliases.length - unresolvedCount})`],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={statusFilter === key}
+                onClick={() => setStatusFilter(key)}
+                className={cn(segment, "tabular-nums")}
               >
-                {/* Left: raw handle, source context, advisory suggestion */}
-                <div className="min-w-0 space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <code className="rounded border border-border bg-surface-subtle px-1.5 py-0.5 font-mono text-meta text-foreground">
-                      <bdi>{alias.externalHandle}</bdi>
-                    </code>
-                    {resolved === null ? (
-                      <FactStatusBadge status="imported_unverified" />
-                    ) : resolved.kind === "ignored" ? (
-                      <Chip tone="gray" icon={UserX} data-alias-status="ignored" title="Handle explicitly ignored through a governed action; not linked to a canonical record.">
-                        Ignored
-                      </Chip>
-                    ) : (
-                      <FactStatusBadge status="verified_fact" />
-                    )}
-                    <Chip tone="gray"><bdi>{alias.sourceChannel}</bdi></Chip>
-                    <span className="text-meta text-muted-foreground tabular-nums">
-                      {alias.occurrences} {alias.occurrences === 1 ? "occurrence" : "occurrences"} · first seen {readableTime(alias.firstObservedAt)}
-                    </span>
-                  </div>
-                  <p className="text-meta text-muted-foreground">
-                    Context: <span dir="auto" className="text-foreground">“<bdi>{alias.sampleExcerpt}</bdi>”</span>
-                  </p>
-                  {resolved === null && alias.suggestedTargetId !== null && (
-                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                      <Chip
-                        tone="amber"
-                        icon={Sparkles}
-                        data-advisory-badge=""
-                        title="Advisory extraction hint only. Never auto-linked — you decide."
-                      >
-                        Suggested — you decide
-                      </Chip>
-                      <span className="text-meta text-muted-foreground">
-                        Candidate: <span className="text-foreground"><bdi>{alias.suggestedTargetLabel ?? alias.suggestedTargetId}</bdi></span>
-                        {" "}
-                        <span className="font-mono text-meta">(<bdi>{alias.suggestedTargetId}</bdi>)</span>
-                        {alias.suggestionConfidenceBps !== null && (
-                          <span className="ms-1 tabular-nums text-tone-amber">· {formatConfidence(alias.suggestionConfidenceBps)}</span>
-                        )}
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="ms-auto text-meta text-muted-foreground">
+            Suggestions never auto-link — every alias binding commits as a governed action.
+          </span>
+        </div>
+
+        {/* Alias rows: hairline-ruled rows in the well, no frames inside */}
+        {visible.length === 0 ? (
+          <EmptyState icon={Search} title="No matching handles">
+            No external handles match this filter.
+          </EmptyState>
+        ) : (
+          <ul className="divide-y divide-(--well-border)" aria-label="External alias candidates">
+            {visible.map((alias) => {
+              const state = stateOf(alias)
+              const resolved = alias.resolution
+              return (
+                <li
+                  key={alias.id}
+                  data-alias-row={alias.id}
+                  className="grid gap-3 px-3.5 py-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:items-start"
+                >
+                  {/* Left: raw handle, source context, advisory suggestion */}
+                  <div className="min-w-0 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <code className="min-w-0 font-mono text-body tracking-[-0.01em] text-foreground [overflow-wrap:anywhere]">
+                        <bdi>{alias.externalHandle}</bdi>
+                      </code>
+                      {resolved === null ? (
+                        <FactStatusBadge status="imported_unverified" />
+                      ) : resolved.kind === "ignored" ? (
+                        <Chip tone="gray" dot data-alias-status="ignored" title="Handle explicitly ignored through a governed action; not linked to a canonical record.">
+                          Ignored
+                        </Chip>
+                      ) : (
+                        <FactStatusBadge status="verified_fact" />
+                      )}
+                      <SourceTag mono={false}><bdi>{alias.sourceChannel}</bdi></SourceTag>
+                      <span className="text-meta text-muted-foreground tabular-nums">
+                        {alias.occurrences} {alias.occurrences === 1 ? "occurrence" : "occurrences"} · first seen {readableTime(alias.firstObservedAt)}
                       </span>
-                      {state.mode === "match" && state.selectedTargetId !== alias.suggestedTargetId && (
-                        <button
-                          type="button"
-                          onClick={() => patch(alias, { selectedTargetId: alias.suggestedTargetId ?? "", notice: null })}
-                          className="text-meta underline decoration-border underline-offset-4 hover:decoration-foreground"
+                    </div>
+                    <p className="text-meta text-muted-foreground">
+                      Context: <span dir="auto" className="text-foreground">“<bdi>{alias.sampleExcerpt}</bdi>”</span>
+                    </p>
+                    {resolved === null && alias.suggestedTargetId !== null && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+                        <Chip
+                          tone="amber"
+                          data-advisory-badge=""
+                          title="Advisory extraction hint only. Never auto-linked — you decide."
                         >
-                          Select suggestion
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Right: governed resolution controls or committed receipt */}
-                <div className="min-w-0">
-                  {resolved !== null ? (
-                    <div
-                      role="status"
-                      data-alias-resolved={resolved.kind}
-                      className={cn(
-                        "space-y-1.5 rounded-md border px-3 py-2 text-meta",
-                        resolved.kind === "ignored"
-                          ? "border-border bg-surface-subtle"
-                          : "border-tone-green/30 bg-tone-green/5",
-                      )}
-                    >
-                      <div className="flex flex-wrap items-center gap-2 text-foreground">
-                        {resolved.kind === "bound" && (
-                          <>
-                            <Link2 aria-hidden className="size-3.5 text-tone-green" />
-                            <span>Bound to <bdi>{resolved.targetLabel}</bdi></span>
-                            <code className="font-mono text-meta text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
-                          </>
-                        )}
-                        {resolved.kind === "created" && (
-                          <>
-                            <Plus aria-hidden className="size-3.5 text-tone-green" />
-                            <span>Created &amp; bound <bdi>{resolved.targetLabel}</bdi></span>
-                            <code className="font-mono text-meta text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
-                          </>
-                        )}
-                        {resolved.kind === "ignored" && (
-                          <>
-                            <UserX aria-hidden className="size-3.5 text-muted-foreground" />
-                            <span>Ignored handle</span>
-                            {resolved.note && <span dir="auto" className="font-normal text-muted-foreground">· <bdi>{resolved.note}</bdi></span>}
-                          </>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground tabular-nums">
-                        <span>commit {resolved.receipt.receipt.commitSeq}</span>
-                        <span>·</span>
-                        <span>receipt</span>
-                        <CopyId value={resolved.receipt.receipt.receiptHash} short={12} />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 rounded-md border border-border bg-surface-subtle p-2.5">
-                      {/* Action mode bar: Match | Create | Ignore */}
-                      <div className="flex items-center gap-1" role="group" aria-label={`Resolution mode for ${alias.externalHandle}`}>
-                        {([
-                          ["match", "Match record", Link2],
-                          ["create", "Create", Plus],
-                          ["ignore", "Ignore", UserX],
-                        ] as const).map(([mode, label, Icon]) => (
+                          Suggested — you decide
+                        </Chip>
+                        <span className="text-meta text-muted-foreground">
+                          Candidate: <span className="text-foreground"><bdi>{alias.suggestedTargetLabel ?? alias.suggestedTargetId}</bdi></span>
+                          {" "}
+                          <span className="font-mono">(<bdi>{alias.suggestedTargetId}</bdi>)</span>
+                          {alias.suggestionConfidenceBps !== null && (
+                            <span className="ms-1 tabular-nums">· {formatConfidence(alias.suggestionConfidenceBps)}</span>
+                          )}
+                        </span>
+                        {state.mode === "match" && state.selectedTargetId !== alias.suggestedTargetId && (
                           <button
-                            key={mode}
                             type="button"
-                            aria-pressed={state.mode === mode}
-                            disabled={state.pending}
-                            onClick={() => {
-                              if (state.mode === mode) return
-                              patch(alias, { mode, notice: null })
-                            }}
-                            className={cn(
-                              "inline-flex h-7 items-center gap-1 rounded border px-2 text-meta transition-colors",
-                              state.mode === mode
-                                ? "border-foreground/25 bg-background text-foreground"
-                                : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
-                            )}
+                            onClick={() => patch(alias, { selectedTargetId: alias.suggestedTargetId ?? "", notice: null })}
+                            className="inline-flex items-center rounded-sm text-meta text-foreground underline decoration-border underline-offset-4 outline-none hover:decoration-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring max-sm:min-h-[44px]"
                           >
-                            <Icon aria-hidden className="size-3" />
-                            {label}
+                            Select suggestion
                           </button>
-                        ))}
+                        )}
                       </div>
+                    )}
+                  </div>
 
-                      {state.mode === "match" && (
-                        <div className="flex items-center gap-2">
-                          <div className="min-w-0 flex-1">
-                            <SearchableRecordPicker
-                              entities={entities}
-                              value={state.selectedTargetId}
-                              suggestedId={alias.suggestedTargetId}
-                              disabled={state.pending}
-                              ariaLabel={`Pick canonical record for ${alias.externalHandle}`}
-                              onSelect={(id) => patch(alias, { selectedTargetId: id, notice: null })}
-                            />
-                          </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={state.pending || state.selectedTargetId === ""}
-                            onClick={() => void onCommitAlias(batchId, alias)}
-                            className="h-8 shrink-0 px-3 text-meta"
-                          >
-                            {state.pending ? "Binding…" : "Bind alias"}
-                          </Button>
+                  {/* Right: governed resolution controls or committed receipt (no frame: the row is the unit) */}
+                  <div className="min-w-0">
+                    {resolved !== null ? (
+                      <div
+                        role="status"
+                        data-alias-resolved={resolved.kind}
+                        className="space-y-1 text-body"
+                      >
+                        <div className="flex flex-wrap items-center gap-2 text-foreground">
+                          {resolved.kind === "bound" && (
+                            <>
+                              <Link2 aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.6} />
+                              <span>Bound to <bdi>{resolved.targetLabel}</bdi></span>
+                              <code className="font-mono text-meta text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
+                            </>
+                          )}
+                          {resolved.kind === "created" && (
+                            <>
+                              <Plus aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.6} />
+                              <span>Created &amp; bound <bdi>{resolved.targetLabel}</bdi></span>
+                              <code className="font-mono text-meta text-muted-foreground">(<bdi>{resolved.targetId}</bdi>)</code>
+                            </>
+                          )}
+                          {resolved.kind === "ignored" && (
+                            <>
+                              <UserX aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.6} />
+                              <span>Ignored handle</span>
+                              {resolved.note && <span dir="auto" className="text-muted-foreground">· <bdi>{resolved.note}</bdi></span>}
+                            </>
+                          )}
                         </div>
-                      )}
+                        <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground tabular-nums">
+                          <span>commit {resolved.receipt.receipt.commitSeq}</span>
+                          <span aria-hidden>·</span>
+                          <span>receipt</span>
+                          <CopyId value={resolved.receipt.receipt.receiptHash} short={12} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* Action mode bar: Match | Create | Ignore */}
+                        <div className="inline-flex flex-wrap items-center rounded-full bg-(--well) p-0.5 ring-1 ring-line" role="group" aria-label={`Resolution mode for ${alias.externalHandle}`}>
+                          {([
+                            ["match", "Match record", Link2],
+                            ["create", "Create", Plus],
+                            ["ignore", "Ignore", UserX],
+                          ] as const).map(([mode, label, Icon]) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              aria-pressed={state.mode === mode}
+                              disabled={state.pending}
+                              onClick={() => {
+                                if (state.mode === mode) return
+                                patch(alias, { mode, notice: null })
+                              }}
+                              className={segment}
+                            >
+                              <Icon aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.6} />
+                              {label}
+                            </button>
+                          ))}
+                        </div>
 
-                      {state.mode === "create" && (
-                        <div className="grid gap-2">
-                          <div className="grid gap-1.5 sm:grid-cols-2">
-                            <Input
-                              dir="auto"
-                              aria-label={`New record label for ${alias.externalHandle}`}
-                              placeholder="Canonical record label"
-                              value={state.createLabel}
-                              disabled={state.pending}
-                              onChange={(event) => patch(alias, { createLabel: event.target.value, notice: null })}
-                              className="h-8 bg-background text-meta shadow-none"
-                            />
-                            <Input
-                              dir="auto"
-                              aria-label={`External key for ${alias.externalHandle}`}
-                              placeholder="External key (optional)"
-                              value={state.createExternalKey}
-                              disabled={state.pending}
-                              onChange={(event) => patch(alias, { createExternalKey: event.target.value, notice: null })}
-                              className="h-8 bg-background font-mono text-meta shadow-none"
-                            />
-                          </div>
-                          <div className="flex justify-end">
+                        {state.mode === "match" && (
+                          <div className="flex items-center gap-2">
+                            <div className="min-w-0 flex-1">
+                              <SearchableRecordPicker
+                                entities={entities}
+                                value={state.selectedTargetId}
+                                suggestedId={alias.suggestedTargetId}
+                                disabled={state.pending}
+                                ariaLabel={`Pick canonical record for ${alias.externalHandle}`}
+                                onSelect={(id) => patch(alias, { selectedTargetId: id, notice: null })}
+                              />
+                            </div>
                             <Button
                               type="button"
                               size="sm"
-                              disabled={state.pending || state.createLabel.trim() === ""}
+                              disabled={state.pending || state.selectedTargetId === ""}
                               onClick={() => void onCommitAlias(batchId, alias)}
-                              className="h-8 px-3 text-meta"
+                              className="h-9"
                             >
-                              {state.pending ? "Creating…" : "Create & bind"}
+                              {state.pending ? "Binding…" : "Bind alias"}
                             </Button>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {state.mode === "ignore" && (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            dir="auto"
-                            aria-label={`Reason to ignore ${alias.externalHandle}`}
-                            placeholder="Reason (optional, recorded in receipt)"
-                            value={state.ignoreNote}
-                            disabled={state.pending}
-                            onChange={(event) => patch(alias, { ignoreNote: event.target.value, notice: null })}
-                            className="h-8 flex-1 bg-background text-meta shadow-none"
-                          />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={state.pending}
-                            onClick={() => void onCommitAlias(batchId, alias)}
-                            className="h-8 shrink-0 px-3 text-meta"
-                          >
-                            {state.pending ? "Saving…" : "Confirm ignore"}
-                          </Button>
-                        </div>
-                      )}
+                        {state.mode === "create" && (
+                          <div className="grid gap-2">
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <Input
+                                dir="auto"
+                                aria-label={`New record label for ${alias.externalHandle}`}
+                                placeholder="Canonical record label"
+                                value={state.createLabel}
+                                disabled={state.pending}
+                                onChange={(event) => patch(alias, { createLabel: event.target.value, notice: null })}
+                                className="bg-card max-sm:min-h-[44px]"
+                              />
+                              <Input
+                                dir="auto"
+                                aria-label={`External key for ${alias.externalHandle}`}
+                                placeholder="External key (optional)"
+                                value={state.createExternalKey}
+                                disabled={state.pending}
+                                onChange={(event) => patch(alias, { createExternalKey: event.target.value, notice: null })}
+                                className="bg-card font-mono tracking-[-0.01em] max-sm:min-h-[44px]"
+                              />
+                            </div>
+                            <div className="flex justify-end">
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={state.pending || state.createLabel.trim() === ""}
+                                onClick={() => void onCommitAlias(batchId, alias)}
+                                className="h-9"
+                              >
+                                {state.pending ? "Creating…" : "Create & bind"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
 
-                      {state.notice !== null && (
-                        <div
-                          role={state.notice.kind === "pending" ? "status" : "alert"}
-                          data-alias-notice={state.notice.kind}
-                          className={cn(
-                            "flex flex-wrap items-center gap-2 rounded border px-2 py-1 text-meta",
-                            state.notice.kind === "pending"
-                              ? "border-tone-amber/40 bg-tone-amber/8 text-tone-amber"
-                              : "border-destructive/30 bg-destructive/5 text-destructive",
-                          )}
-                        >
-                          <span className="min-w-0 flex-1">{state.notice.message}</span>
-                          {state.notice.kind === "error" && (
+                        {state.mode === "ignore" && (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              dir="auto"
+                              aria-label={`Reason to ignore ${alias.externalHandle}`}
+                              placeholder="Reason (optional, recorded in receipt)"
+                              value={state.ignoreNote}
+                              disabled={state.pending}
+                              onChange={(event) => patch(alias, { ignoreNote: event.target.value, notice: null })}
+                              className="flex-1 bg-card max-sm:min-h-[44px]"
+                            />
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
                               disabled={state.pending}
                               onClick={() => void onCommitAlias(batchId, alias)}
-                              className="h-6 shrink-0 border-border bg-background px-2 text-meta text-foreground shadow-none"
+                              className="h-9"
                             >
-                              Retry
+                              {state.pending ? "Saving…" : "Confirm ignore"}
                             </Button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </section>
+                          </div>
+                        )}
+
+                        {state.notice !== null && (
+                          <div
+                            role={state.notice.kind === "pending" ? "status" : "alert"}
+                            data-alias-notice={state.notice.kind}
+                            className="flex flex-wrap items-center gap-2 text-meta text-foreground"
+                          >
+                            <Dot tone={state.notice.kind === "pending" ? "held" : "bad"} />
+                            <span className="min-w-0 flex-1">{state.notice.message}</span>
+                            {state.notice.kind === "error" && (
+                              <Button
+                                type="button"
+                                size="xs"
+                                variant="outline"
+                                disabled={state.pending}
+                                onClick={() => void onCommitAlias(batchId, alias)}
+                                className="max-sm:min-h-[44px]"
+                              >
+                                Retry
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Well>
+    </Panel>
   )
 }

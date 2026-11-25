@@ -3,7 +3,7 @@ import { NO_DATA_CELL, type StudioScope } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState, type ReactNode } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { cn } from "@/lib/utils"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
@@ -12,8 +12,8 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { chartEmpty, chartFrame } from "./lib/chart.ts"
@@ -295,7 +295,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
             <div className="min-w-0 space-y-2">
               <div className="text-meta text-muted-foreground">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</div>
               {lead.bucket.suppressed ? <span className="block text-figure leading-none tracking-[-0.045em] text-muted-foreground">—</span> : (
-                <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+                <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
                   label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
                   <span className="block text-figure leading-none tracking-[-0.045em] tabular-nums sm:text-figure">{figure(lead.bucket, unit)}</span>
                 </AnswerProvenance>

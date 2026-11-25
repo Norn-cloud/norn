@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ShieldAlert } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { NotServed, cellRead } from "@/lib/live-transport"
 
 /** `GET /v1/objects/{type}:quarantined`: the rows the cell holds back that this reader may read. */

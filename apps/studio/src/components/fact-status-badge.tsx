@@ -1,5 +1,5 @@
 import { Clock, EyeOff, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react"
-import { Chip, type Tone } from "@/components/chip"
+import { Chip, type Tone } from "@/components/system/chip"
 
 /**
  * Honest verification state of a record or staged candidate row across progressive go-live:

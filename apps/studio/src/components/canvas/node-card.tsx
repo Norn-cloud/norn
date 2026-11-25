@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react"
 import { Bot, ChartLine, Circle, CirclePlay, CircleStop, Flag, GitFork, Hourglass, Play, Scale, Table2, UserRound, Wrench, type LucideIcon } from "lucide-react"
+import { StatusDot } from "@/components/system/status-dot"
 import { cn } from "@/lib/utils"
 import { CARD } from "@/lib/canvas/viewport"
 
@@ -29,13 +30,13 @@ export const cardHeight = ({ kindLine = true, subtitle = false }: { readonly kin
 /** An edge's label: a small pill on the canvas surface, the same on every canvas (exits, lifecycle steps). */
 export const EDGE_PILL = "nodrag nopan pointer-events-auto absolute truncate rounded-full border border-node-border bg-card px-2 py-0 text-meta leading-4 text-muted-foreground shadow-node"
 
-/** A small tinted icon chip for a kind; the tint is mixed into a pale fill so it reads as a hint. */
+/** A small icon chip for a kind: a neutral card surface with a hairline; the kind's tint colours the icon only (DESIGN.md 13). */
 export function KindChip({ kind, className }: { readonly kind: string; readonly className?: string }) {
   const entry = NODE_KINDS[kind] ?? NODE_KINDS.state!
   const Icon = entry.icon
   return (
     <span aria-hidden style={{ "--tint": `var(${entry.tint})` } as CSSProperties}
-      className={cn("inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] text-[var(--tint)] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset", className)}>
+      className={cn("inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-card text-[var(--tint)] ring-1 ring-node-border ring-inset", className)}>
       <Icon className="size-3.5" strokeWidth={2} />
     </span>
   )
@@ -73,9 +74,7 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
           <div data-node-title className="text-body leading-5 tracking-[-0.01em] break-words text-foreground">{title}</div>
           {subtitle && <div className="truncate text-meta leading-4 text-muted-foreground">{subtitle}</div>}
           {problems > 0 && (
-            <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 text-meta leading-4 text-destructive-text">
-              <span className="size-1.5 rounded-full bg-destructive" />{problems} {problems === 1 ? "problem" : "problems"}
-            </div>
+            <StatusDot tone="bad" className="mt-1 leading-4">{problems} {problems === 1 ? "problem" : "problems"}</StatusDot>
           )}
         </div>
       </div>
@@ -90,7 +89,7 @@ export function InspectorHead({ kind, kindLabel, id }: { readonly kind: string; 
       <KindChip kind={kind} />
       {/* One heading names what the inspector edits, written once: the separator is read, not drawn. */}
       <h3 className="min-w-0">
-        <span className="block text-meta leading-5">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</span>
+        <span className="block text-body leading-5 font-normal text-foreground">{kindLabel ?? NODE_KINDS[kind]?.label ?? kind}</span>
         <span className="sr-only"> · </span>
         <span className="block truncate font-mono text-meta leading-4 font-normal text-muted-foreground">{id}</span>
       </h3>

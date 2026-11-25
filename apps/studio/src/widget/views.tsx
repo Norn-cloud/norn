@@ -150,7 +150,7 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
     <Card size="sm">
       <CardHeader>
         <CardDescription>{title}{latest && buckets.length === 1 ? `, ${latest.label}` : ""}</CardDescription>
-        <CardTitle className="text-title font-medium tracking-tight tabular-nums">{latest ? (latest.suppressed ? SUPPRESSED : grouped(latest.value)) : "—"}</CardTitle>
+        <CardTitle className="text-figure tabular-nums">{latest ? (latest.suppressed ? SUPPRESSED : grouped(latest.value)) : "—"}</CardTitle>
         <CardAction className="flex flex-wrap justify-end gap-1">
           <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "ok" : "warn"} title={freshness.meaning}>{answer.freshness}</Chip>
           {typeof engine === "string" && <Chip>{engine}</Chip>}
