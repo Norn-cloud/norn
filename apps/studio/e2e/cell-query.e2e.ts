@@ -31,8 +31,11 @@ const ME = { user: { id: "u_e2e", name: "Reader", email: "reader@example.com" },
 type ObjectAnswer = (route: Route, path: string, count: number) => Promise<void>
 const answerRecord: ObjectAnswer = (route, path) => route.fulfill({ status: 200, contentType: "application/json", body: record(1, FIRST, idOf(path)) })
 
-/** The stand-in cell; `me` answers the n-th scope discovery (`/api/me`), `objects` the n-th record read. */
-async function standIn(page: Page, me: (route: Route, count: number) => Promise<void> = (route) => route.fulfill({ json: ME }), objects: ObjectAnswer = answerRecord): Promise<StandIn> {
+/**
+ * The stand-in cell; `me` answers the n-th scope discovery (`/api/me`), `objects` the n-th record
+ * read, and `answers()` says whether the socket answers a new subscription (with the GET's answer).
+ */
+async function standIn(page: Page, me: (route: Route, count: number) => Promise<void> = (route) => route.fulfill({ json: ME }), objects: ObjectAnswer = answerRecord, answers: () => boolean = () => true): Promise<StandIn> {
   const reads: string[] = []
   const frames: Frame[] = []
   const sockets = new Map<string, WebSocketRoute>()
@@ -53,6 +56,7 @@ async function standIn(page: Page, me: (route: Route, count: number) => Promise<
       frames.push(message)
       if (message.type !== "subscribe") return
       sockets.set(message.id, socket)
+      if (!answers()) return
       // The cell answers a new subscription with the GET's own answer.
       socket.send(`{"type":"snapshot","id":"${message.id}","status":200,"digest":"d1","body":${record(1, FIRST, idOf(message.path))}}`)
       subscribe({ socket, id: message.id, path: message.path })
@@ -171,10 +175,11 @@ for (const scheme of ["light", "dark"] as const) {
   test(`cell query (${scheme}): a read a gateway answers 503 is Workspace unavailable with Retry, never "not served", and Retry reads it`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme })
     let up = false
-    // A proxy's HTML 503 while the host restarts: no refusal, and not the deployment's no-host answer.
+    // A proxy's HTML 503 while the host restarts: no refusal, and not the deployment's no-host
+    // answer. The socket goes through the same proxy, so nothing is pushed while it is down.
     const cell = await standIn(page, undefined, (route, path) => up
       ? answerRecord(route, path, 0)
-      : route.fulfill({ status: 503, contentType: "text/html", body: "<html><body><h1>503 Service Unavailable</h1></body></html>" }))
+      : route.fulfill({ status: 503, contentType: "text/html", body: "<html><body><h1>503 Service Unavailable</h1></body></html>" }), () => up)
     await page.goto("/harness.html?type=demo.Item&id=i1")
     const view = page.getByTestId("record-read")
     const unavailable = view.locator("[data-workspace-unavailable]")
@@ -190,6 +195,8 @@ for (const scheme of ["light", "dark"] as const) {
     await unavailable.getByRole("button", { name: "Retry" }).click()
     await expect(view.getByTestId("record-version")).toHaveText("1")
     await expect(view.getByTestId("record-value-amount")).toHaveText(FIRST)
+    // The record is the read Retry made, not a push.
+    await expect(view.getByTestId("record-source")).toHaveText("read")
     await expect(unavailable).toHaveCount(0)
     expect(cell.reads).toHaveLength(5)
     await page.screenshot({ path: `test-results/cell-query/unavailable-retried-${scheme}.png` })
