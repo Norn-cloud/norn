@@ -413,6 +413,10 @@ run_gate fast assurance-specialisation-lean \
   "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean" \
   command \
   lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean
+run_gate fast owl-time-allen-lean \
+  "lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean" \
+  command \
+  lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \
@@ -671,6 +675,13 @@ run_gate full quantity-kani \
     KANI_HOME=target/verification-tools/kani-home \
     kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
     verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs
+run_gate full owl-time-allen-kani \
+  "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/owl-time-v1/allen_kani.rs" \
+  command \
+  env RUSTUP_HOME=target/verification-tools/rustup \
+    KANI_HOME=target/verification-tools/kani-home \
+    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
+    verification/owl-time-v1/allen_kani.rs
 
 run_gate full ontology-runtime-rust \
   "cargo test --locked -p norn-checker --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::" \
