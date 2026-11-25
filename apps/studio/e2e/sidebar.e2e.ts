@@ -329,7 +329,7 @@ test("sidebar: in the dock shell ⌘B stores no sidebar choice and opens nothing
     try { localStorage.setItem("norn.studio.shell", "dock") } catch { /* storage blocked */ }
     // Proves the key reached the page, so an empty store is the handler's choice, not a missed press.
     ;(window as unknown as { seenB: number }).seenB = 0
-    addEventListener("keydown", (event) => { if (event.key === "b" && (event.ctrlKey || event.metaKey)) (window as unknown as { seenB: number }).seenB += 1 })
+    window.addEventListener("keydown", (event: KeyboardEvent) => { if (event.key === "b" && (event.ctrlKey || event.metaKey)) (window as unknown as { seenB: number }).seenB += 1 })
   })
   await page.goto("/")
   await expect(page.locator('[data-slot="floating-dock"]')).toBeVisible()
