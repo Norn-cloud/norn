@@ -21,8 +21,9 @@ log line. The table is the median over those runs of:
   first of a bundle's package tasks builds it; the later ones reuse it and log no report;
 - `task_seconds`: each task's own time, net of the shared builds above (a Test-group task net
   of its measured build; the first WASM-package task of a bundle net of its measured build,
-  or of the median package build for `phase/integration-authoring`, which overlaps it with
-  native builds; a later WASM-package task, which reuses the package, as measured).
+  or of the median package build for `phase/integration-authoring`, which builds it after its
+  native binaries, so its log marks no start for the package build; a later WASM-package task,
+  which reuses the package, as measured).
 
 The packer (bundle.rs, and the hosted planner in scripts/ci/core.sh) charges each shared
 build once per bundle that holds a task of its group, so a cold bundle costs exactly what
@@ -49,7 +50,7 @@ TEST_BUILT = re.compile(r"^\s*Finished `test` profile ")
 WASM_BUILT = re.compile(r"^@norn/checker-wasm \S+ size report ")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 WASM_FIRST = ("phase/browser", "phase/integration-wasm")
-WASM_OVERLAPPED = ("phase/integration-authoring",)
+WASM_AFTER_NATIVE = ("phase/integration-authoring",)
 
 
 def gh(*args: str) -> str:
@@ -99,7 +100,7 @@ def elapsed(lines: list[tuple[float, str]], pattern: re.Pattern[str]) -> float |
 
 def table(runs: list[int]) -> dict[str, object]:
     net: dict[str, list[float]] = {}
-    cold_tests, warm_rebuilds, wasm_builds, overlapped = [], [], [], []
+    cold_tests, warm_rebuilds, wasm_builds, after_native = [], [], [], []
     for run in runs:
         for log in bundle_logs(run):
             # bundle.rs runs a bundle's WASM-package tasks back to back without pruning, so
@@ -115,10 +116,10 @@ def table(runs: list[int]) -> dict[str, object]:
                     continue
                 if task.startswith("test/"):
                     warm_rebuilds.append(elapsed(lines, TEST_BUILT) or 0.0)
-                if task in WASM_FIRST + WASM_OVERLAPPED and not wasm_built:
+                if task in WASM_FIRST + WASM_AFTER_NATIVE and not wasm_built:
                     wasm_built = True
-                    if task in WASM_OVERLAPPED:
-                        overlapped.append((task, own))
+                    if task in WASM_AFTER_NATIVE:
+                        after_native.append((task, own))
                         continue
                     build = elapsed(lines, WASM_BUILT)
                     if build is None:
@@ -133,7 +134,7 @@ def table(runs: list[int]) -> dict[str, object]:
     for task, own, build in cold_tests:
         net.setdefault(task, []).append(own - max(0.0, build - rebuild))
     wasm = statistics.median(wasm_builds)
-    for task, own in overlapped:
+    for task, own in after_native:
         net.setdefault(task, []).append(own - wasm)
     counts = {len(samples) for samples in net.values()}
     if len(counts) != 1:

@@ -202,32 +202,7 @@ timed_phase() {
   run_phase "$@"
   span_end 0
 }
-# A phase's background job (integration-authoring's checker WASM build) runs in a process group
-# of its own, led by $background, so the whole tree (build-pkg.sh, cargo, rustc, wasm-bindgen,
-# wasm-opt, a `cargo install`) can be signalled at once. The phase clears $background once it
-# has waited for the job; until then the EXIT trap stops and reaps the group before it removes
-# $upstream, so a failed or interrupted run leaves nothing writing into target/ or $upstream.
-background=''
-start_background() {
-  set -m
-  ( set +m; "$@" ) < /dev/null &
-  background=$!
-  set +m
-}
-stop_background() {
-  local group=$background tries
-  [[ -n $group ]] || return 0
-  background=''
-  kill -TERM -- "-$group" 2> /dev/null || true
-  wait "$group" 2> /dev/null || true
-  for tries in {1..100}; do
-    kill -0 -- "-$group" 2> /dev/null || return 0
-    (( tries != 50 )) || kill -KILL -- "-$group" 2> /dev/null || true
-    sleep 0.1
-  done
-  printf 'core.sh: background job %s outlived SIGKILL\n' "$group" >&2
-}
-trap 'status=$?; stop_background; span_end "$status"; rm -rf -- "$upstream"' EXIT
+trap 'status=$?; span_end "$status"; rm -rf -- "$upstream"' EXIT
 export NORN_CHECKER_WASM_PARITY_OUT="$upstream/native-parity"
 # Every phase but `cheap` runs over these generated inputs.
 prepared=''
@@ -506,17 +481,12 @@ PY
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
     integration-authoring)
-      # The checker WASM package (a wasm-release LTO link, then wasm-opt: mostly one core) builds
-      # in the background while the native binaries and the runnable-docs tests build in the
-      # foreground; its target triple and profile keep Cargo's build directories apart. The
-      # phase waits for it, and fails with its log, before it publishes the package
-      # (NORN_CHECKER_WASM_PKG) and the authoring tests read it.
-      local wasm_pkg_log="$upstream/checker-wasm-pkg.log"
-      start_background ensure_checker_wasm_pkg > "$wasm_pkg_log" 2>&1
       cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host
+      ensure_checker_wasm_pkg
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
       export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
+      export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
@@ -550,10 +520,6 @@ PY
       )
       mapfile -t runnable_docs_args <<< "$runnable_docs_raw"
       cargo test --locked --no-run "${runnable_docs_args[@]}"
-      wait "$background" || { cat "$wasm_pkg_log"; printf 'integration-authoring: the checker WASM package build failed\n' >&2; exit 1; }
-      background=''
-      export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
-      cat "$wasm_pkg_log"
       run_authoring_tests
       ;;
     integration-wasm)

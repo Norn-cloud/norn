@@ -960,104 +960,6 @@ def studio_browser_phase_canaries() -> None:
                 raise AssertionError(f"browser phase must name the pinned toolchain when wasm32 is missing: {result.stderr[-300:]}")
 
 
-def integration_authoring_background_canaries() -> None:
-    """integration-authoring's background checker WASM build: a run that fails (at the native
-    build or at the runnable-docs build) or is terminated while it runs leaves none of its
-    processes alive, because the EXIT trap stops and reaps that whole process tree before it
-    removes $upstream; the run keeps its own exit status; and the package is published
-    (NORN_CHECKER_WASM_PKG) only once its build has been waited for."""
-    with tempfile.TemporaryDirectory() as directory:
-        tree, bin_dir, scratch = Path(directory) / "tree", Path(directory) / "bin", Path(directory) / "tmp"
-        for path in (tree / "crates/norn-checker-wasm/scripts", tree / "scripts/importers", tree / "tools/norn-ts",
-                     tree / "docs/authoring/runnable", bin_dir, scratch):
-            path.mkdir(parents=True)
-        (tree / "scripts/importers/erpnext_runtime.py").write_text("")
-        (tree / "tools/norn-ts/.keep").write_text("")
-        (tree / "docs/authoring/runnable/status.md").write_text(
-            "`cargo test --locked -p canary --lib canary::case -- --exact`\n")
-        # The background build: a script with a child of its own, both recorded, both left
-        # running until something stops them.
-        build = tree / "crates/norn-checker-wasm/scripts/build-pkg.sh"
-        build.write_text('#!/bin/sh\nsleep 300 &\necho "$!" >> "$CANARY_PIDS"\necho "$$" >> "$CANARY_PIDS"\nsleep 300\n')
-        build.chmod(0o755)
-        tools = {
-            # The foreground builds start once the background build is running. `build` fails,
-            # or (no-run) builds a `norn` that passes its check; `test --no-run` exits 4 when the
-            # package is already published, else fails; under a signal, `build` outlives core.sh.
-            "cargo": 'case "$1" in build|test) ;; *) exit 0 ;; esac\n'
-                     'tries=0\n'
-                     'until [ -f "$CANARY_PIDS" ] && [ "$(wc -l < "$CANARY_PIDS")" -ge 2 ]; do\n'
-                     '  tries=$((tries + 1)); [ "$tries" -le 400 ] || exit 3; sleep 0.05\n'
-                     'done\n'
-                     'if [ "$1" = test ]; then [ -z "${NORN_CHECKER_WASM_PKG+set}" ] || exit 4; exit 1; fi\n'
-                     'if [ "$CANARY_MODE" = no-run ]; then\n'
-                     '  mkdir -p "$CARGO_TARGET_DIR/debug"\n'
-                     '  printf "#!/bin/sh\\nexit 0\\n" > "$CARGO_TARGET_DIR/debug/norn"\n'
-                     '  chmod +x "$CARGO_TARGET_DIR/debug/norn"\n'
-                     '  exit 0\n'
-                     'fi\n'
-                     'if [ "$CANARY_MODE" = signal ]; then\n'
-                     '  exec > /dev/null 2>&1\n'
-                     '  : > "$CANARY_READY"\n'
-                     # Until core.sh is gone (a zombie counts as gone), at most 20 s.
-                     '  tries=0\n'
-                     '  while state=$(sed "s/.*) //" "/proc/$PPID/stat") && [ "${state%% *}" != Z ]; do\n'
-                     '    tries=$((tries + 1)); [ "$tries" -le 400 ] || exit 3; sleep 0.05\n'
-                     '  done\n'
-                     'fi\n'
-                     'exit 1',
-            "bun": "exit 0",
-            "wasm-bindgen": "echo 'wasm-bindgen 0.2.129'",
-        }
-        for name, body in tools.items():
-            (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
-            (bin_dir / name).chmod(0o755)
-        git = ["git", "-c", "user.email=canary@example.invalid", "-c", "user.name=canary", "-c", "commit.gpgsign=false"]
-        for argv in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "sandbox"]):
-            subprocess.run([*git, *argv], cwd=tree, check=True, capture_output=True, timeout=30,
-                           env={"PATH": os.environ.get("PATH", ""), "HOME": directory})
-
-        def alive(pid: int) -> bool:
-            try:
-                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-            except (FileNotFoundError, ProcessLookupError):
-                return False
-            return state != "Z"
-
-        for mode, expected in (("build", 1), ("no-run", 1), ("signal", -15)):
-            pids, ready = Path(directory) / f"{mode}.pids", Path(directory) / f"{mode}.ready"
-            env = {"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}", "CARGO_HOME": str(Path(directory) / "cargo-home"),
-                   "HOME": directory, "TMPDIR": str(scratch), "CANARY_PIDS": str(pids), "CANARY_READY": str(ready),
-                   "CANARY_MODE": mode}
-            core = subprocess.Popen(["bash", str(ROOT / "scripts/ci/core.sh"), "integration-authoring"], cwd=tree,
-                                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            try:
-                if mode == "signal":
-                    for _ in range(400):
-                        if ready.exists() or core.poll() is not None:
-                            break
-                        subprocess.run(["sleep", "0.05"], check=True)
-                    core.terminate()
-                stdout, stderr = core.communicate(timeout=60)
-            finally:
-                if core.poll() is None:
-                    core.kill()
-                    core.communicate()
-            recorded = [int(line) for line in pids.read_text().split()] if pids.exists() else []
-            survivors = [pid for pid in recorded if alive(pid)]
-            for pid in survivors:
-                os.kill(pid, 9)
-            if core.returncode == 4:
-                raise AssertionError("integration-authoring published NORN_CHECKER_WASM_PKG before its build was waited for")
-            if len(recorded) != 2 or core.returncode != expected:
-                raise AssertionError(f"integration-authoring background canary ({mode}) drift: exit {core.returncode}, "
-                                     f"recorded {recorded}: {stdout[-300:]} {stderr[-600:]}")
-            if survivors:
-                raise AssertionError(f"integration-authoring ({mode}) left its background WASM build running: {survivors}")
-            if list(scratch.glob("norn-upstream.*")):
-                raise AssertionError(f"integration-authoring ({mode}) left $upstream behind")
-
-
 def workflow_expression_cap_canaries() -> None:
     """An interpolated script over the expression cap is refused before GitHub silently rejects it."""
     validator = load_module("norn_expression_cap_canaries", VALIDATOR)
@@ -2722,7 +2624,6 @@ def main() -> int:
         workflow_concurrency_parity()
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
-        integration_authoring_background_canaries()
         studio_browser_pin_canaries()
         integration_partition_canaries()
         rust_parity_evidence_canaries()
