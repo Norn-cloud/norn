@@ -127,8 +127,19 @@ export function projectArtifacts(root: string, manifest: Project): unknown[] {
   })
 }
 
-/** The retained kinds a project's JSON sources may declare. */
-const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval"])
+/**
+ * The retained kinds a project's JSON sources may declare: approvals, which
+ * ride the set, and questions and dashboards, which the dev host installs once
+ * the set serves (DEV-READ-DEFINITIONS-1).
+ */
+const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval", "question", "dashboard"])
+
+/** A retained definition a JSON source declares. */
+export interface SourceDefinitionDoc {
+  readonly kind: "approval" | "question" | "dashboard"
+  readonly id: string
+  readonly payload: Json
+}
 
 /** A JSON source that names a retained kind but is not a definition of it. */
 export class DefinitionSourceError extends Error {
@@ -152,7 +163,8 @@ function exactNumbers(inexact: string[]): (key: string, value: unknown, context?
 }
 
 /**
- * Retained definitions (`{ kind, id, payload }`, kind `approval`) carried as
+ * Retained definitions (`{ kind, id, payload }`, kind `approval`, `question`
+ * or `dashboard`) carried as
  * JSON files at the top level of each source directory, read exactly as
  * `projectArtifacts` reads artifact envelopes. A document whose `kind` is a
  * retained kind but whose `id` or `payload` is malformed, or whose `id`
@@ -160,7 +172,7 @@ function exactNumbers(inexact: string[]): (key: string, value: unknown, context?
  * author declared is never silently dropped. Other JSON documents are not
  * definitions and are skipped.
  */
-export function projectDefinitions(root: string, manifest: Project): RetainedDefinitionDoc[] {
+export function projectDefinitions(root: string, manifest: Project): SourceDefinitionDoc[] {
   const realRoot = realpathSync(root)
   const seen = new Set<string>()
   return sourceDirs(root, manifest).flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => join(dir, f))).flatMap((file) => {
@@ -175,11 +187,11 @@ export function projectDefinitions(root: string, manifest: Project): RetainedDef
       throw new DefinitionSourceError(path, `${path} writes the number ${inexact[0]}, which JSON cannot carry exactly: write an integer such as 1000, or the exact decimal as text, such as "1000.10"`)
     }
     if (typeof value.id !== "string" || value.id === "" || typeof value.payload !== "object" || value.payload === null || Array.isArray(value.payload)) {
-      throw new DefinitionSourceError(path, `${path} declares an ${String(value.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
+      throw new DefinitionSourceError(path, `${path} declares ${value.kind === "approval" ? "an" : "a"} ${String(value.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
     }
     if (seen.has(value.id)) throw new DefinitionSourceError(value.id, `definition ${value.id} is declared by more than one JSON source`)
     seen.add(value.id)
-    return [{ kind: "approval" as const, id: value.id, payload: value.payload as Json }]
+    return [{ kind: value.kind as SourceDefinitionDoc["kind"], id: value.id, payload: value.payload as Json }]
   })
 }
 
@@ -225,7 +237,7 @@ export function compileProjectPack(root: string, manifest: Project, options: { r
     sources.set(id, "json")
   }
   for (const artifact of owned) sources.set(artifactId(artifact), "registry/core")
-  let definitions: RetainedDefinitionDoc[]
+  let definitions: SourceDefinitionDoc[]
   try { definitions = projectDefinitions(root, manifest) }
   catch (error) {
     if (error instanceof DefinitionSourceError) return refused(error.construct, error.message)
@@ -234,7 +246,19 @@ export function compileProjectPack(root: string, manifest: Project, options: { r
   const ids = new Set(pack.retained.map((definition) => definition.id))
   const duplicate = definitions.find((definition) => ids.has(definition.id))
   if (duplicate) return refused(duplicate.id, `definition ${duplicate.id} is declared by a JSON source and by a module`)
-  return { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...definitions] }
+  // Approvals ride the set wherever it is applied; questions and dashboards are
+  // the dev host's to install once it serves (`readDefinitions`).
+  const approvals = definitions.filter((definition): definition is RetainedDefinitionDoc => definition.kind === "approval")
+  return { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...approvals] }
+}
+
+/**
+ * The sources' questions and dashboards (DEV-READ-DEFINITIONS-1): the dev
+ * host installs them once a revision serves. `compileProjectPack` has already
+ * refused a malformed or duplicated one.
+ */
+function readDefinitions(root: string, manifest: Project): SourceDefinitionDoc[] {
+  return projectDefinitions(root, manifest).filter((definition) => definition.kind !== "approval")
 }
 
 /** Compile every top-level module of every source directory as one set. */
@@ -250,7 +274,7 @@ export function compileProject(root: string, manifest: Project, gen: number): Co
   }
   return {
     event: "compiled", gen, sourceDigest: digest, ok: true,
-    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: pack.retained, sourceMap: pack.sourceMap, warnings: pack.warnings,
+    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: [...pack.retained, ...readDefinitions(root, manifest)], sourceMap: pack.sourceMap, warnings: pack.warnings,
   }
 }
 

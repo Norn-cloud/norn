@@ -44,13 +44,15 @@ interface PackProfile {
   readonly data?: readonly string[]
   /** Named local principals of `norn dev` (DEV-PRINCIPALS-1). */
   readonly principals?: readonly DevPrincipal[]
-  /** What `norn seed` sends to a running `norn dev`: registry-relative files. */
-  readonly seed?: {
-    /** A `norn-calls/1` document of governed calls, each sent as its actor. */
-    readonly calls?: string
-    /** Retained definitions: each question of a question file (by name), or the one dashboard of a dashboard file (by `id`). */
-    readonly definitions?: ReadonlyArray<{ readonly kind: "question" | "dashboard"; readonly from: string; readonly id?: string }>
-  }
+  /** A `norn-calls/1` document (registry-relative) of governed calls `norn seed` sends, each as its actor. */
+  readonly seed?: string
+  /**
+   * Questions and dashboards (registry-relative files) the project declares as
+   * sources (`definitions/questions/<id>.json`), which `norn dev` installs once
+   * the packs serve: each question of a question file by its name, the one
+   * dashboard of a dashboard file by the template's `id`.
+   */
+  readonly definitions?: ReadonlyArray<{ readonly kind: "question" | "dashboard"; readonly from: string; readonly id?: string }>
 }
 
 interface PackLayout {
@@ -67,7 +69,8 @@ interface PackLayout {
  * (`templates/<name>/template.json` names the parts): the host's trusted base
  * from `registry/core`, each pack's generated artifacts, the packs' committed
  * synthetic exports for `norn dev --load`, the named local principals the
- * packs' access policies need, and the seed `norn seed` replays (`seed/`).
+ * packs' access policies need, their questions and dashboards as sources, and
+ * the seed `norn seed` replays (`seed/calls.json`).
  * `norn dev` admits artifact envelopes found in source directories, so the
  * project compiles them with its own `src`.
  */
@@ -85,18 +88,18 @@ function packTemplate(name: PackTemplateName): PackLayout {
   const systems = profile.data ?? []
   const data = systems.map((system) => `data/${system}.json`)
   for (const system of systems) files[`data/${system}.json`] = readFileSync(join(registry, "packs", system, "synthetic.json"), "utf8")
-  if (profile.seed?.calls !== undefined) files["seed/calls.json"] = readFileSync(join(registry, profile.seed.calls), "utf8")
-  for (const { kind, from, id } of profile.seed?.definitions ?? []) {
+  if (profile.seed !== undefined) files["seed/calls.json"] = readFileSync(join(registry, profile.seed), "utf8")
+  for (const { kind, from, id } of profile.definitions ?? []) {
     const documents = JSON.parse(readFileSync(join(registry, from), "utf8")) as Array<Record<string, unknown>>
     if (kind === "dashboard" && (documents.length !== 1 || id === undefined)) throw new Error(`${from}: a seeded dashboard file holds one dashboard and the template names its id`)
     for (const payload of documents) {
       const named = kind === "question" ? payload["name"] : id
       if (typeof named !== "string" || named === "") throw new Error(`${from}: a seeded ${kind} has no id`)
-      files[`seed/definitions/${named}.json`] = json({ kind, id: named, payload })
+      files[`definitions/questions/${named}.json`] = json({ kind, id: named, payload })
     }
   }
   return {
-    sources: ["definitions/core", ...profile.packs.map((pack) => `definitions/packs/${pack}`)],
+    sources: ["definitions/core", ...profile.packs.map((pack) => `definitions/packs/${pack}`), ...(profile.definitions?.length ? ["definitions/questions"] : [])],
     files, data,
     ...(profile.principals === undefined ? {} : { principals: profile.principals }),
     seeded: profile.seed !== undefined,
@@ -152,7 +155,7 @@ async function initProject(args: readonly string[]): Promise<void> {
     if (await install.exited !== 0) throw new ProjectError("cli.project.install", "Dependency installation failed; retry bun install in the project directory.", 3)
   }
   const load = packs ? packs.data.map((path) => ` --load ${path}`).join("") : ""
-  const seed = packs?.seeded ? " (then, while it serves, bunx norn seed)" : ""
+  const seed = packs?.seeded ? " (then, while it serves: bunx norn seed)" : ""
   const result = { created: directory, manifest, files: Object.keys(files), next: `cd ${directory} && bunx norn dev${load}${seed}` }
-  process.stdout.write(flags.includes("--json") ? json(result) : `created ${directory}/ (norn-project/1, scope org=${manifest.scope.orgId} env=${manifest.scope.environmentId})\n${template === "starter" ? `  src/product.ts   ${namespace}.Product, ${namespace}.product.add\n` : ""}${packs ? `  definitions/     the packs (${packs.sources.length} sources)\n${packs.data.length > 0 ? "  data/            their synthetic exports, snapshot and incremental rows\n" : ""}${packs.seeded ? "  seed/            the calls and definitions norn seed replays\n" : ""}` : ""}next: ${result.next}\n`)
+  process.stdout.write(flags.includes("--json") ? json(result) : `created ${directory}/ (norn-project/1, scope org=${manifest.scope.orgId} env=${manifest.scope.environmentId})\n${template === "starter" ? `  src/product.ts   ${namespace}.Product, ${namespace}.product.add\n` : ""}${packs ? `  definitions/     the packs (${packs.sources.length} sources)\n${packs.data.length > 0 ? "  data/            their synthetic exports, snapshot and incremental rows\n" : ""}${packs.seeded ? "  seed/            the calls norn seed replays\n" : ""}` : ""}next: ${result.next}\n`)
 }

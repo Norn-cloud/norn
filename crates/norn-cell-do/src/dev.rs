@@ -37,6 +37,10 @@
 //! - DEV-ACCESS-1: an action whose `access` names a policy is decided by that
 //!   policy for every local principal, as on a hosted cell
 //!   (`dev/policy.rs`).
+//! - DEV-READ-DEFINITIONS-1: the sources' questions and dashboards are
+//!   installed once a revision serves, in process, as the manifest's actor,
+//!   through the hosted admit, sign-off and install path; those the sources
+//!   drop retire (`dev/definitions.rs`).
 //! - DEV-PRINCIPALS-1: the manifest's `dev.principals` are more local
 //!   principals, each holding exactly its declared roles, with its own
 //!   session token (`.norn/dev.principal.<n>.token`); the descriptor lists
@@ -443,6 +447,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         root: &root,
         manifest: &manifest,
         named: Arc::clone(&named),
+        metrics: DevMetrics::new(token.handle_key, scope.clone()),
         scope: &scope,
         url: &url,
         started_at: now_ms(),
@@ -594,6 +599,9 @@ struct Session<'a> {
     manifest: &'a Manifest,
     /// The named principals and their roles (DEV-PRINCIPALS-1).
     named: policy::NamedPrincipals,
+    /// The serving revision's metrics, which the sources' questions and
+    /// dashboards are admitted against (DEV-READ-DEFINITIONS-1).
+    metrics: DevMetrics,
     scope: &'a CellScope,
     url: &'a str,
     started_at: u64,
@@ -813,6 +821,7 @@ impl Session<'_> {
                     "· unchanged (same definitions)",
                 );
                 self.access(out, serving);
+                self.sync_reads(out, serving, &definitions);
                 Ok(None)
             }
             Ok(definitions::Committed::Installed(installed, events)) => {
@@ -824,6 +833,7 @@ impl Session<'_> {
                 }
                 Self::definitions(out, &events);
                 self.access(out, serving);
+                self.sync_reads(out, serving, &definitions);
                 Ok(Some(*installed))
             }
             Err(definitions::Rejected { phase, diagnostics }) => {
@@ -858,6 +868,42 @@ impl Session<'_> {
                     text("id"),
                     event.get("version").and_then(Value::as_u64).unwrap_or(0),
                     text("lifecycle"),
+                ),
+            );
+        }
+    }
+
+    /// DEV-READ-DEFINITIONS-1: install the sources' changed questions and
+    /// dashboards over the serving revision, retire the dropped ones, and
+    /// report both; a refused one is reported and changes nothing.
+    fn sync_reads(&self, out: &mut Events, serving: &http::Serving, definitions: &[Value]) {
+        let synced = {
+            let Ok(guard) = serving.read() else {
+                return;
+            };
+            let Some(host) = guard.as_ref() else {
+                return;
+            };
+            let runtime = self.metrics.questions(host);
+            let questions = runtime.as_ref().ok().map(|runtime| {
+                runtime as &dyn norn_api::question_routes::AdHocQuestions<NativeEngine>
+            });
+            definitions::sync_reads(
+                host,
+                &self.manifest.dev.actor,
+                &policy::dev_kinds(),
+                questions,
+                definitions,
+                now_ms(),
+            )
+        };
+        Self::definitions(out, &synced.events);
+        if !synced.refused.is_empty() {
+            let count = synced.refused.len();
+            out.emit(
+                &json!({ "event": "definitions_refused", "diagnostics": synced.refused }),
+                &format!(
+                    "✗ {count} question or dashboard finding(s); the installed ones keep serving"
                 ),
             );
         }

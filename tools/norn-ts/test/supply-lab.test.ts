@@ -91,11 +91,16 @@ test("supply_lab_workspace: init, dev and seed admit the pack, seed the referenc
       await Bun.sleep(250)
     }
     expect(ready.principals.map((principal: { actor: string; roles: string[] }) => ({ actor: principal.actor, roles: principal.roles }))).toEqual(profile.principals)
+    // DEV-READ-DEFINITIONS-1: the bundled questions and dashboard are sources, installed by norn dev itself.
+    const bundled = [...JSON.parse(readFileSync(join(DIR, "supply.questions.json"), "utf8")).map((q: { name: string }) => q.name), "supply.dashboard.supply_lab"].sort()
+    const installed = () => events.filter((event) => event.event === "definition" && event.lifecycle === "active" && event.kind !== "approval").map((event) => event.id).sort()
+    const settle = Date.now() + 60_000
+    while (installed().length < bundled.length && Date.now() < settle && !events.some((event) => event.event === "definitions_refused")) await Bun.sleep(250)
+    expect({ installed: installed(), refused: events.filter((event) => event.event === "definitions_refused") }).toEqual({ installed: bundled, refused: [] })
     const seeded = spawnSync(process.execPath, [CLI, "seed", "--json"], { cwd: dir, env, encoding: "utf8", timeout: 300_000 })
     expect({ status: seeded.status, out: seeded.stdout }).toMatchObject({ status: 0 })
     const result = JSON.parse(seeded.stdout)
     expect(result).toMatchObject({ ok: true, calls: calls.length })
-    expect(result.definitions.installed.sort()).toEqual([...JSON.parse(readFileSync(join(DIR, "supply.questions.json"), "utf8")).map((q: { name: string }) => q.name), "supply.dashboard.supply_lab"].sort())
 
     const scope = `orgId=${created.manifest.scope.orgId}&environmentId=${created.manifest.scope.environmentId}`
     const token = (actor: string) => {
@@ -124,10 +129,20 @@ test("supply_lab_workspace: init, dev and seed admit the pack, seed the referenc
     expect((await http(ready.actor, "POST", "/v1/actions/supply.po.create", { input: order, idempotencyKey: "live-3" })).status).toBe(403)
     expect((await http("planner:amal", "POST", "/v1/actions/supply.po.create", { input: order, idempotencyKey: "live-4" })).status).toBe(200)
 
-    // Seeding again commits nothing new and keeps the installed definitions.
+    // The questions answer over the seeded data, through the cell's own question route.
+    const answer = await http("clerk:hana", "GET", "/v1/questions/supply.movement_volume_weekly/answer")
+    expect(answer.status).toBe(200)
+    // Seeding again commits nothing new.
     const again = JSON.parse(spawnSync(process.execPath, [CLI, "seed", "--json"], { cwd: dir, env, encoding: "utf8", timeout: 300_000 }).stdout)
-    expect(again).toMatchObject({ ok: true, definitions: { installed: [] } })
+    expect(again).toMatchObject({ ok: true, calls: calls.length })
     expect(await total("supply.StockMovement")).toBe(created_("supply.movement.record") + 1)
+    // Dropping a question from the sources retires it.
+    const { unlinkSync } = await import("node:fs")
+    const from = events.length
+    unlinkSync(join(dir, "definitions/questions/supply.received_weekly.json"))
+    const retireBy = Date.now() + 60_000
+    while (!events.slice(from).some((event) => event.event === "definition" && event.id === "supply.received_weekly" && event.lifecycle === "retired") && Date.now() < retireBy) await Bun.sleep(250)
+    expect(events.slice(from).some((event) => event.event === "definition" && event.id === "supply.received_weekly" && event.lifecycle === "retired")).toBe(true)
   } finally {
     child.kill("SIGTERM")
     await exited
