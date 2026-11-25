@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button"
 import { CellUnavailable, scopeFromAccount, type StudioScope } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
-import { applyAppearance, applyScheme, storedScheme, storedShellChrome, storedSkin } from "@/lib/appearance"
+import { WorkspaceProvider } from "@/lib/workspace"
+import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
 import { storedCustomTheme } from "@/lib/studio-theme"
 import "./bones/registry.ts"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
@@ -39,7 +40,7 @@ function DeferredSidekick({ scope, scopeKey }: { readonly scope?: StudioScope | 
   useEffect(() => { if (open) setActivated(true) }, [open])
   if (!activated) return null
   return (
-    <Suspense fallback={<p role="status" className="p-4 text-body text-muted-foreground">Loading Sidekick…</p>}>
+    <Suspense fallback={<p role="status" className="p-4 text-sm text-muted-foreground">Loading Sidekick…</p>}>
       <LazySidekick scope={scope} scopeKey={scopeKey} />
     </Suspense>
   )
@@ -83,13 +84,16 @@ function SignedInShell({ account, sidekick }: { readonly account: Account; reado
   const sections = useMemo(() => SECTIONS.filter((section) => isSectionVisible(section.path, learning)), [learning])
   const sidekickScopeKey = `${account.user.id}:${account.organization?.id ?? ""}:${account.environmentId ?? ""}`
   const sidekickScope = scopeFromAccount(account)
+  // The workspace is decided once, here, from the server's mode answer; every page reads in it (#1762).
   return (
-    <Shell
-      sections={sections}
-      assistant={sidekick ? { title: "Sidekick", content: <DeferredSidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
-      account={account}
-      onSignOut={() => void signOut()}
-    />
+    <WorkspaceProvider>
+      <Shell
+        sections={sections}
+        assistant={sidekick ? { title: "Sidekick", content: <DeferredSidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+        account={account}
+        onSignOut={() => void signOut()}
+      />
+    </WorkspaceProvider>
   )
 }
 
@@ -143,7 +147,7 @@ const queryClient = new QueryClient({
   },
 })
 function RoutePending() {
-  return <div role="status" aria-label="Loading page" className="min-h-40 py-8 text-body text-muted-foreground">Loading…</div>
+  return <div role="status" aria-label="Loading page" className="min-h-40 py-8 text-sm text-muted-foreground">Loading…</div>
 }
 
 const root = createRootRoute({ component: Root })
@@ -154,10 +158,16 @@ const router = createRouter({
   defaultPendingMinMs: 0,
 })
 
-// Dark and light are peers: the reader's pinned scheme, else the system's, unless a custom theme pins an appearance.
-applyScheme(storedScheme())
+// Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
+const dark = window.matchMedia("(prefers-color-scheme: dark)")
+const applyScheme = () => {
+  const forced = document.documentElement.dataset.forcedAppearance
+  if (forced === "dark" || forced === "light") return
+  document.documentElement.classList.toggle("dark", dark.matches)
+}
+applyScheme()
 applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyScheme(storedScheme()))
+dark.addEventListener("change", applyScheme)
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.
 const OAuthPage = oauthPage(window.location.pathname)

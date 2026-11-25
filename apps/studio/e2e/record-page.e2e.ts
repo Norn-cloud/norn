@@ -320,23 +320,103 @@ test("records: a type page whose mode read fails shows Workspace unavailable for
   expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
 })
 
-// #1745 (from #1742): the drawer's state for a live row the grid has no decided workspace for. A cell that
-// serves records but no definitions decides the recording, so the grid has no workspace: the row's links
-// are not read, and the drawer says so in words that do not read as "read-only".
-test("records: a live row's drawer in a grid with no decided workspace reads nothing and says why", async ({ page }) => {
+// #1754 (replaces #1749's pin of the drawer's "links show once its workspace is confirmed"): a cell that
+// serves records but no definitions decides the recording, and a decided recorded mode reads only the
+// recording. The grid once read the session's live rows here, cached them with no workspace, and pinned
+// Reveal to none. Both type pages now show the recorded rows; no live row is read, cached or revealed, and
+// a row's drawer reads the recording's links.
+test("records: a decided recorded mode reads only the recording, even from a cell that serves records", async ({ page }) => {
   const cell = await recordCell(page, "admin")
+  // Every read of the type's records, one record, or the actions its rows offer.
+  const liveReads: string[] = []
+  page.on("request", (request) => {
+    const url = new URL(request.url())
+    if (url.pathname.startsWith("/api/host/v1/objects") || (url.pathname === "/api/host/v1/actions" && url.searchParams.get("objectKind") === "canon.Party")) liveReads.push(`${url.pathname}${url.search}`)
+  })
   await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } }))
-  await page.goto("/sources/canon.Party")
+  for (const path of ["/sources/canon.Party", "/objects/canon.Party"]) {
+    await page.goto(path)
+    const records = page.getByRole("region", { name: "Records" })
+    const grid = records.getByRole("grid")
+    await expect(grid.getByText("Custodian", { exact: true }).first()).toBeVisible()
+    await expect(records.getByText("Recorded", { exact: true })).toBeVisible()
+    await expect(grid.getByText(/Customer #/)).toHaveCount(0)
+    await grid.focus()
+    await page.keyboard.press("Enter")
+    const drawer = page.getByRole("dialog")
+    await expect(drawer.getByRole("heading", { name: "Linked records" })).toBeVisible()
+    await expect(drawer.getByRole("link", { name: "demo/holding/owner/north/gold" })).toBeVisible()
+    await expect(drawer.getByText(/once its workspace is confirmed/)).toHaveCount(0)
+    await expect(drawer.locator("[data-reveal]")).toHaveCount(0)
+    await expect(drawer.getByText("Recorded records take no actions.")).toBeVisible()
+    if (path === "/objects/canon.Party") await shoot(page, "party-recorded-mode-drawer")
+    await page.keyboard.press("Escape")
+  }
+  expect(liveReads).toEqual([])
+  expect(cell.readScopes).toEqual([])
+  expect(cell.reveals).toEqual([])
+})
+
+// #1754: `/objects/$type` bound its records, profile and quarantine to the session's scope, so after a failed
+// mode read it kept the cached live rows beside the shell's Workspace unavailable. It binds the workspace
+// the mode decided, as `/sources/$type` does: its Records section shows Workspace unavailable with the
+// mode's Retry, no tab bound to the session is left, and nothing is read until Retry decides the mode.
+test("records: /objects/$type whose mode read fails shows Workspace unavailable for its records, never the session's cached rows", async ({ page }) => {
+  await recordCell(page, "admin")
+  const pageReads: string[] = []
+  page.on("request", (request) => {
+    const url = new URL(request.url())
+    if (url.pathname.endsWith("/v1/objects/canon.Party")) pageReads.push(scopeOf(url))
+  })
+  let sessionDown = false
+  await page.route("**/api/me", (route) => sessionDown ? route.fulfill(SESSION_DOWN) : route.fallback())
+  await page.goto("/objects/canon.Party")
+  const records = page.getByRole("region", { name: "Records" })
   const grid = page.getByRole("grid")
   await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
-  await grid.focus()
-  await page.keyboard.press("Enter")
-  const drawer = page.getByRole("dialog")
-  await expect(drawer.getByRole("heading", { name: "Linked records" })).toBeVisible()
-  await expect(drawer.getByText("This record's links show once its workspace is confirmed.")).toBeVisible()
-  await expect(drawer.getByText(/read only/)).toHaveCount(0)
-  await shoot(page, "party-drawer-undecided-workspace")
-  expect(cell.readScopes).toEqual([])
+  await expect(grid.getByText(/Customer #/).first()).toBeVisible()
+  await expect(page.getByRole("tab", { name: "Profile" })).toBeVisible()
+  expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
+  const readsBefore = pageReads.length
+  sessionDown = true
+  await refocus(page)
+  const unavailable = records.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  await expect(grid).toHaveCount(0)
+  await expect(page.getByText(/Customer #/)).toHaveCount(0)
+  await expect(page.getByRole("tab", { name: "Profile" })).toHaveCount(0)
+  await expect(page.locator("[data-reveal]")).toHaveCount(0)
+  expect(pageReads).toHaveLength(readsBefore)
+  await shoot(page, "party-objects-records-mode-unavailable")
+  // The session recovers; the Records section's Retry decides the mode, and the tabs read at that workspace.
+  sessionDown = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  await expect(page.getByRole("tab", { name: "Profile" })).toBeVisible()
+  expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
+})
+
+// #1754 item 4: each findings read is three requests (`/api/me` before and after the findings route). The
+// record page's header and its Findings panel share one read; the panel mounting again (the Overview tab
+// shown again) does not read it again while it is fresh. Read again still reads it.
+test("findings: the record page reads a record's findings once, and showing the Overview again reads nothing", async ({ page }) => {
+  await recordCell(page, "admin")
+  const findingsReads: string[] = []
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/findings")) findingsReads.push(request.url())
+  })
+  await page.goto(PARTY)
+  await expect(page.getByText("No findings", { exact: true })).toBeVisible()
+  await expect.poll(() => findingsReads.length).toBe(1)
+  const onLoad = findingsReads.length
+  for (const _ of [1, 2]) {
+    await page.getByRole("tab", { name: "Lineage" }).click()
+    await page.getByRole("tab", { name: "Overview" }).click()
+    await expect(page.getByText("No findings", { exact: true })).toBeVisible()
+  }
+  await page.waitForLoadState("networkidle")
+  test.info().annotations.push({ type: "findings reads", description: `load ${onLoad}, after two Overview remounts ${findingsReads.length}` })
+  expect(findingsReads).toHaveLength(1)
 })
 
 test("markings: a reveal asked under a projection, answered after it changed and changed back, is never shown", async ({ page }) => {

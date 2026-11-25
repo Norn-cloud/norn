@@ -9,7 +9,9 @@ import { cn } from "@/lib/utils"
 import type { Concept } from "../lib/catalog.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
 import { DATA_CHANGED, type RecordsQuery } from "../lib/records-query.ts"
-import { readRecords, type RecordsRead } from "../lib/records-source.ts"
+import type { PageRead, RecordsRead } from "../lib/records-source.ts"
+import { studioScopeKey } from "../lib/definitions.ts"
+import { readPage, useWorkspace } from "../lib/workspace.tsx"
 
 /** Attributes a form field passes to its control (id, aria-*). */
 export type Aria = Record<string, string | boolean | undefined>
@@ -93,7 +95,7 @@ export function pickerPageError(read: RecordsRead): string | null {
  * surfaces an inline error with Retry.
  */
 export async function fetchPickerPage(
-  read: typeof readRecords,
+  read: PageRead,
   objectKind: string,
   search: string,
   property: string | undefined,
@@ -161,10 +163,14 @@ const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-
  * Base UI's Combobox (input inside the popup) owns the keyboard, focus, highlight and ARIA wiring;
  * the cell lists and narrows the records, so the combobox never filters them itself.
  */
-export function RecordPicker({ objectKind, value, onPick, aria, read = readRecords }: {
+export function RecordPicker({ objectKind, value, onPick, aria }: {
   readonly objectKind: string; readonly value: string; readonly onPick: (id: string) => void; readonly aria: Aria
-  readonly read?: typeof readRecords
 }) {
+  // The records are read through the page's decided workspace (`lib/workspace.tsx`): a live cell's at
+  // its scope, the recording's otherwise, and nothing until the workspace is decided (#1762).
+  const workspace = useWorkspace()
+  const decided = workspace.kind === "live" || workspace.kind === "recorded" ? workspace : undefined
+  const where = decided === undefined ? "undecided" : decided.kind === "live" ? studioScopeKey(decided.scope) : "recorded"
   const { catalog } = useCatalog()
   const client = useQueryClient()
   const layer = useLayer()
@@ -174,11 +180,14 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
   const [search, setSearch] = useState("")
   // Titles seen in any page, so the chosen record keeps its title once the search moves on.
   const [titles, setTitles] = useState<ReadonlyMap<string, string>>(new Map())
-  const queryKey = ["picker", objectKind, property ?? null, search.trim()] as const
+  const queryKey = ["picker", objectKind, where, property ?? null, search.trim()] as const
   const pages = useInfiniteQuery({
     queryKey,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => fetchPickerPage(read, objectKind, search, property, pageParam),
+    queryFn: ({ pageParam }) => decided === undefined
+      ? Promise.reject(new Error("No workspace is decided for these records."))
+      : fetchPickerPage(readPage(decided.reader), objectKind, search, property, pageParam),
+    enabled: decided !== undefined,
     getNextPageParam: (last) => last?.snapshotMoved ? undefined : last?.next,
     retry: false, staleTime: 30_000,
   })

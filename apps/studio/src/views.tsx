@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Dot } from "@/components/system/status-dot"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
@@ -16,10 +16,12 @@ import { RecordsGrid } from "./grid/records-grid.tsx"
 import { openedQuery } from "./grid/views-bar.tsx"
 import type { Concept } from "./lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
+import { useWorkspace, type DecidedScope } from "./lib/workspace.tsx"
+import { WorkspaceUndecided } from "@/components/load-state"
 import type { Issue } from "./lib/editor.ts"
 import { readerKeyIn, useReaderKey } from "./lib/session.ts"
 import { recordName } from "./lib/objects.ts"
-import { LIMITS, propertyWithheld, recordsQueryPrefix, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
+import { LIMITS, propertyWithheld, recordsQueryPrefix, sortable, totalText, type SortKey } from "./lib/records-query.ts"
 import { offersTimeline } from "./lib/timeline.ts"
 import {
   cellViews,
@@ -511,13 +513,10 @@ function ScopedViewDetail({ id, store = views }: {
       void client.cancelQueries({ queryKey: recordsQueryPrefix(loaded.view.objectType, loaded.scope) })
     }
   }, [client, detailScopeMismatch, loaded])
-  const detailRead = useCallback(
-    (objectType: string, query: RecordsQuery, signal?: AbortSignal) =>
-      active != null
-        ? store.preview(objectType, query, active.scope, signal)
-        : Promise.resolve({ kind: "no-cell" as const }),
-    [active, store],
-  )
+  // The view's records are read through the workspace the page's mode decided, and only when that is
+  // the workspace the view was read from: never at a workspace the mode did not decide (#1762).
+  const workspace = useWorkspace()
+  const viewReader = active != null && workspace.kind === "live" && sameScope(workspace.scope, active.scope) ? workspace.reader : undefined
   const concept = active ? catalog?.byName.get(active.view.objectType) : undefined
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
 
@@ -556,16 +555,19 @@ function ScopedViewDetail({ id, store = views }: {
       {active && concept === undefined && catalog && (
         <EmptyState icon={Shapes}>Record type {active.view.objectType} is not installed in this cell.</EmptyState>
       )}
-      {active && concept !== undefined && (
-        <RecordsGrid
-          key={`${active.scope.orgId}:${active.scope.environmentId}:${active.id}:${active.version}`}
-          concept={concept}
-          scope={active.scope}
-          read={detailRead}
-          initial={openedQuery(active)}
-          timeline={timeline}
-        />
-      )}
+      {active && concept !== undefined && (viewReader !== undefined
+        ? (
+          <RecordsGrid
+            key={`${active.scope.orgId}:${active.scope.environmentId}:${active.id}:${active.version}`}
+            concept={concept}
+            reader={viewReader}
+            initial={openedQuery(active)}
+            timeline={timeline}
+          />
+        )
+        : workspace.kind === "deciding" || workspace.kind === "unavailable"
+          ? <WorkspaceUndecided workspace={workspace} bone="records-table" loadingLabel="Reading the records" />
+          : <p role="alert" className="text-destructive">{workspace.kind === "recorded" ? NO_DATA_CELL : WORKSPACE_CHANGED_MESSAGE}</p>)}
     </section>
   )
 }
@@ -602,6 +604,7 @@ export function ViewEditor({
   concepts,
   stored,
   activeScope,
+  decided,
   cellAvailable,
   onSaved,
   onReload,
@@ -612,6 +615,11 @@ export function ViewEditor({
   readonly concepts: readonly Concept[]
   readonly stored?: StoredView
   readonly activeScope: StudioScope | null
+  /**
+   * The workspace the page's mode decided (`lib/workspace.tsx`), `null` until one is: the live preview
+   * reads only there, and only while the draft is bound to it (#1762).
+   */
+  readonly decided: DecidedScope | null
   readonly cellAvailable: boolean
   readonly onSaved: (saved: { readonly id: string; readonly version: number }) => void
   readonly onReload?: () => Promise<ReloadViewOutcome>
@@ -809,14 +817,16 @@ export function ViewEditor({
   const sort = sortKeys(view.sort)
   const columns = view.columns ?? fields.slice(0, 6).map(({ id }) => id)
 
-  // Live bounded preview of matching records, bound explicitly to `draftScope`.
+  // Live bounded preview of matching records, bound explicitly to `draftScope` and read only when that
+  // is the workspace the page's mode decided.
+  const previewScope = decided !== null && sameScope(decided, draftScope) ? decided : null
   const previewQuery = useQuery({
     queryKey: viewPreviewQueryKey(draftScope, view),
     queryFn: ({ signal }) => {
-      if (draftScope === null) throw new StudioScopeError(NO_DATA_CELL)
-      return store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, draftScope, signal)
+      if (previewScope === null) throw new StudioScopeError(NO_DATA_CELL)
+      return store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, previewScope, signal)
     },
-    enabled: cellAvailable && draftScope !== null && !scopeMismatch && scopeError === null && view.objectType !== "",
+    enabled: cellAvailable && previewScope !== null && !scopeMismatch && scopeError === null && view.objectType !== "",
     retry: false,
   })
   useEffect(() => {
@@ -1114,6 +1124,7 @@ export function ViewEditor({
 
 /** `/views/new` and `/views/$id/edit`: build or update a server-admitted view. */
 export function ViewEditorPage() {
+  const workspace = useWorkspace()
   const scope = useStudioScope()
   const activeScope = scope.data ?? null
   const cellAvailable = scope.isSuccess && activeScope !== null
@@ -1171,6 +1182,7 @@ export function ViewEditorPage() {
           concepts={concepts}
           stored={editorStored ?? undefined}
           activeScope={activeScope}
+          decided={workspace.kind === "live" ? workspace.scope : null}
           cellAvailable={cellAvailable}
           onReload={() => reloadConflictingView(
             () => stored.refetch(),

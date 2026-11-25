@@ -123,7 +123,7 @@ test("the rules summary reads only the server: a rule the inbox lists is holding
 
 test("every avatar pair reads at 4.5:1 or more in both schemes (DESIGN.md 4.4, 16.2)", () => {
   const css = readFileSync(join(import.meta.dir, "../src/index.css"), "utf8")
-  for (const skin of ["polar", "open"] as const) {
+  for (const skin of ["polar", "open", "luma", "glass"] as const) {
     for (const scheme of ["light", "dark"] as const) {
       const vars = skinVars(css, skin, scheme)
       for (let n = 1; n <= 6; n++) {

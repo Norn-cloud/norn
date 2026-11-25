@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
@@ -6,10 +7,11 @@ import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"
-import { NotServed } from "@/lib/live-transport"
+import { NotServed, retryMode, useMode } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
+import type { Workspace } from "@/lib/workspace"
 
 /** Wait before showing a quiet "Taking longer than usual…" hint beneath a skeleton. */
 export const SLOW_WAIT_MS = 4_000
@@ -331,4 +333,31 @@ export function LoadState<T>({
     )
   }
   return <>{children(data)}</>
+}
+
+/**
+ * A section before its workspace is decided (`lib/workspace.tsx`): its skeleton while the mode is read,
+ * and Workspace unavailable with the mode's own Retry once the read failed. It reads nothing itself.
+ */
+export function WorkspaceUndecided({ workspace, bone, skeleton, loadingLabel }: {
+  readonly workspace: Extract<Workspace, { readonly kind: "deciding" | "unavailable" }>
+  readonly bone?: StudioBoneName
+  readonly skeleton?: SkeletonKind
+  readonly loadingLabel?: string
+}) {
+  const queries = useQueryClient()
+  const mode = useMode()
+  return (
+    <LoadState
+      status={workspace.kind === "deciding" ? "pending" : "error"}
+      error={workspace.kind === "unavailable" ? workspace.error : null}
+      isFetching={mode.isFetching}
+      onRetry={() => void retryMode(queries)}
+      {...bone === undefined ? {} : { bone }}
+      {...skeleton === undefined ? {} : { skeleton }}
+      {...loadingLabel === undefined ? {} : { loadingLabel }}
+    >
+      {() => null}
+    </LoadState>
+  )
 }

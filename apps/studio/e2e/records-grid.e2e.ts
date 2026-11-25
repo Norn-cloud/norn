@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
-import { objectCell, population, session } from "./object-cell.ts"
+import { objectCell, population, servedDefinitions, session } from "./object-cell.ts"
 
 // One test per row of the records grid's verb matrix (see the PR), plus each state the grid shows.
 // They use a stand-in for CELL-DO's object route, so they skip on a deployed stage until it serves one.
@@ -283,6 +283,7 @@ test("a workspace with no data cell says so and calls nothing", async ({ page })
 
 test("loading shows placeholder rows, and an empty type says nothing is stored yet", async ({ page }) => {
   await session(page)
+  await servedDefinitions(page)
   let release: () => void = () => {}
   const held = new Promise<void>((resolve) => { release = resolve })
   await page.route("**/api/host/v1/objects/**", async (route) => {

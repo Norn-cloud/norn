@@ -14,9 +14,8 @@ import { Suspense, lazy, useEffect, useRef, useState, type ComponentProps, type 
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
-import { AppearanceProvider, SCHEMES, SHELLS, SKINS, isScheme, isShellChrome, isSkin, useAppearance, usePaintedScheme, type ShellChrome, type Skin } from "@/lib/appearance"
-import { LanguagePill, SchemeToggle } from "@/components/system/top-bar-controls"
-import { RulesTickBar } from "@/rules-bar"
+import { AppearanceProvider, SCHEMES, SHELLS, SKINS, isScheme, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
+import { TopBarExtras } from "@/top-bar-extras"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -981,25 +980,6 @@ function Notifications() {
       </KitPopoverContent>
     </Popover>
   )
-}
-
-/**
- * The top bar's extras (DESIGN.md 9.1), in the spec's order: the rules tick bar (server state only),
- * the language pill and the scheme toggle. Each gives way as the bar narrows; on a phone the
- * "Language and view" menu holds the language and the scheme instead.
- */
-function TopBarExtras({ tickBar, language, scheme: schemeClass }: { readonly tickBar: string; readonly language: string; readonly scheme: string }) {
-  const { locale, setLocale } = useLocale()
-  const { setScheme, customTheme } = useAppearance()
-  const painted = usePaintedScheme()
-  const current = LOCALES.find(({ tag }) => tag === locale) ?? LOCALES[0]!
-  const next = LOCALES.find(({ tag }) => tag !== locale) ?? LOCALES[0]!
-  return <>
-    <RulesTickBar className={tickBar} />
-    <LanguagePill className={language} current={current} next={next} onSwitch={(tag) => { if (isLocale(tag)) setLocale(tag) }} />
-    <SchemeToggle className={schemeClass} painted={painted} pinnedBy={customTheme?.appearance === undefined ? undefined : customTheme.name}
-      onToggle={() => setScheme(painted === "dark" ? "light" : "dark")} />
-  </>
 }
 
 /** The page bar's end-side buttons: the page's own tools, then appearance, shortcuts and notifications. */

@@ -4,6 +4,7 @@ import { ShieldAlert } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { NotServed, cellRead } from "@/lib/live-transport"
+import type { DecidedScope } from "@/lib/workspace"
 
 /** `GET /v1/objects/{type}:quarantined`: the rows the cell holds back that this reader may read. */
 interface Quarantined {
@@ -18,10 +19,14 @@ interface Quarantined {
  * findings, opening to the record and why it is held. Only rows whose values this reader may
  * read are named; the cell decides which.
  */
-export function QuarantinePanel({ objectType }: { readonly objectType: string }) {
+export function QuarantinePanel({ objectType, scope }: {
+  readonly objectType: string
+  /** The workspace the page's mode decided: the held rows are read and cached there (#1754). */
+  readonly scope: DecidedScope
+}) {
   const held = useQuery({
-    queryKey: ["quarantined", objectType],
-    queryFn: () => cellRead<Quarantined>(`/v1/objects/${encodeURIComponent(objectType)}:quarantined`, "Quarantined records are"),
+    queryKey: ["quarantined", objectType, scope.orgId, scope.environmentId],
+    queryFn: () => cellRead<Quarantined>(`/v1/objects/${encodeURIComponent(objectType)}:quarantined`, "Quarantined records are", {}, undefined, scope),
     retry: false,
   })
   if (held.isPending) return <p className="text-body text-muted-foreground">Reading what the cell holds back…</p>
