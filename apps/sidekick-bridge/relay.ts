@@ -680,9 +680,11 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     }
     if (params === null) return send(connection.ws, rpcError(message.id, -32602, "Send text only."), secrets(connection))
     if (method === "_norn/call_tool") {
-      // A view's follow-up read: one Norn tool, as the person.
+      // A view's follow-up read: one tool the cell marks read-only, as the person. Anything else
+      // would run without the person's answer, so it goes through the agent and its question.
       const name = message.params?.name
       if (typeof name !== "string" || !name.startsWith("norn_")) return send(connection.ws, rpcError(message.id, -32602, "Only Norn tools."), secrets(connection))
+      if (!connection.readOnly.has(name)) return send(connection.ws, rpcError(message.id, -32602, "Only read-only Norn tools."), secrets(connection))
       // Runs beside the inbox: a slow read never holds up the person's answers or Stop.
       void (async () => {
         const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: message.params?.arguments ?? {} } }), { "mcp-protocol-version": "2025-06-18" })
