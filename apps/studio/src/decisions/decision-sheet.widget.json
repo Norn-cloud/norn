@@ -247,7 +247,7 @@
                 },
                 "children": [],
                 "behaviors": [
-                  "live_region"
+                  "platform/announce"
                 ]
               }
             ]
@@ -446,6 +446,13 @@
                   "kind": "outcome",
                   "outcome": "refused",
                   "category": "precondition"
+                }
+              },
+              {
+                "eventId": "not-served",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "not_served"
                 }
               }
             ],
@@ -803,6 +810,12 @@
                 "from": "leaving",
                 "on": "leave",
                 "target": "closed"
+              },
+              {
+                "transitionId": "sending--not-served",
+                "from": "sending",
+                "on": "not-served",
+                "target": "failed"
               }
             ]
           }

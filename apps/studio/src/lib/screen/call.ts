@@ -1,6 +1,6 @@
 import type { CallAnswer, CatalogRead } from "../actions.ts"
 import type { ActionReceipt, ActionSummary, Diagnostic, PendingDecision, RefusalReason } from "../../../../../packages/norn-sdk/src/index.ts"
-import type { ActionCallState, SentCall } from "../state/index.ts"
+import type { ActionCallState, SentCall } from "../../../../../packages/norn-react/src/state.ts"
 
 /**
  * The renderer core for one governed call, framework-neutral (#1220, L-0):
@@ -34,7 +34,7 @@ export interface Target { readonly actionId: string; readonly risky: boolean }
 /** The fields of the cell's refusal of a call, as the form shows them. */
 export interface CallRefusal { readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason; readonly decidedAt?: string; readonly incidentId?: string }
 
-/** One governed call's state (`lib/state`'s {@link ActionCallState}): a draft, a call out, its answer, its undo. */
+/** One governed call's state (`@norn/react`'s {@link ActionCallState}): a draft, a call out, its answer, its undo. */
 export type Phase = ActionCallState<ActionReceipt, UndoOffer, PendingDecision, CallRefusal>
 
 /**

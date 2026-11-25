@@ -31,7 +31,7 @@ is scrap yield; inventory is post-demo under the ruling on #213.
 
 ## G2 arithmetic and projection
 
-COMPUTE-DETERMINISTIC-1 and QUERY-GRAIN-1 use scale-six coefficients: per input ≤9e18, per sum ≤9e21, at most 1,000 objects. Sums never round; ratios round once, midpoint away from zero. Zero divisors refuse in the kernel; analytical zero-input ratios must be unavailable. No fold contract changes.
+COMPUTE-DETERMINISTIC-1 and QUERY-GRAIN-1 use scale-six coefficients: each input has magnitude ≤9e18, and each completed operand has sum of magnitudes ≤9e21. An accumulator holds at most `u32::MAX` terms and a bucket at most `u32::MAX` members; more refuses (`core.compute.bound_exceeded`), as a larger sum of magnitudes does. The admitted plan bounds the population independently. Sums never round; ratios round once, midpoint away from zero. Zero divisors refuse in the kernel; analytical zero-input ratios must be unavailable. No fold contract changes.
 The shared pure projector checks effective stored types, half-open time windows, Monday ISO-UTC buckets and each operand's own predicates. Missing/computed values and unsupported precision refuse. Timestamp equality uses instants; ordered predicates remain unsupported. Rows matching no operand contribute no membership.
 The immutable plan retains effective properties and canonically ordered declarations for store binding and content identity. These primitives alone do not qualify storage/frontier execution or authenticated receipt evidence.
 Native scenarios cover 98%/97.5%, signed ties, zero/range refusals, weekly buckets, cutoff exclusion and invalid values. Proptests cover sum commutativity, ratio error/sign and weekly projection.

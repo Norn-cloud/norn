@@ -5225,6 +5225,30 @@
       "no_fix": null
     },
     {
+      "code": "widget.authority.action_outside_binding",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page reaches a Norn action outside its action binding: {detail}",
+      "fix": "Declare an action binding for the action and start it with a call of kind \"action\"; never call the action or MCP route as a host operation.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.binding.exact_value_unhandled",
+      "tier": "T2",
+      "severity": "error",
+      "message": "an exact decimal property is rendered by a catalog component that does not declare it handles exact values: {detail}",
+      "fix": "Declare handles: [\"exact\"] on the catalog entry that renders numbers, once it never rounds through a binary float, or render the property natively.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.binding.marked_value_unhandled",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a marked property is rendered by a catalog component that does not declare it handles masked values: {detail}",
+      "fix": "Declare handles: [\"masked\"] on the catalog entry that renders the field type, once it shows a masked or withheld value as such, or render the property natively.",
+      "no_fix": null
+    },
+    {
       "code": "widget.catalog.duplicate_entry",
       "tier": "T2",
       "severity": "error",
@@ -5369,6 +5393,22 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "widget.layer.dismissal_refused_without_cause",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a UI SDK layer refuses dismissal where nothing justifies it: {detail}",
+      "fix": "Hold a layer that refuses a dismissal only in pending states, or in idle states with a way out: Escape (onOpenChange where Escape closes the layer, onDismissAttempt where it refuses Escape, and each where a computed dismissible decides which) or a control inside the layer, reaching a state the layer is not held in without starting a call or entering a pending state. Give a layer that refuses nothing the same way out of every state it is held in that is not pending. Say when a layer is open with heldIn, never with open; use defaultOpen only on a layer that refuses no dismissal and names no heldIn.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.layer.notification_intrusive",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a notification surface holds the page: {detail}",
+      "fix": "Keep toasts and live regions non-modal, never held open and never trapping focus, and let them expire or be dismissed.",
+      "no_fix": null
+    },
+    {
       "code": "widget.lifecycle.assumption_violated",
       "tier": "T2",
       "severity": "error",
@@ -5492,8 +5532,16 @@
       "code": "widget.machine.error_without_recovery",
       "tier": "T2",
       "severity": "error",
-      "message": "a page machine error state has no transition a person or a timer drives: {detail}",
-      "fix": "Add a retry, edit or dismiss transition on a user event, or a timed recovery.",
+      "message": "a page machine error state offers no Retry or Close a person drives: {detail}",
+      "fix": "Add an unguarded Retry or Close transition on a user event; a timer alone is no recovery.",
+      "no_fix": null
+    },
+    {
+      "code": "widget.machine.failure_without_retry_or_close",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine state a failed call enters offers no Retry or Close a person drives: {detail}",
+      "fix": "Give the state an unguarded transition on a user event (Retry or Close), make it an error state with one, or end the page in a terminal state.",
       "no_fix": null
     },
     {
@@ -5545,11 +5593,19 @@
       "no_fix": null
     },
     {
+      "code": "widget.machine.outcome_code_undeclared",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a page machine handles a refusal code the awaited call cannot produce: {detail}",
+      "fix": "Name only an error code the bound action declares in uiEffects.errorCodes, or handle the refusal by its category.",
+      "no_fix": null
+    },
+    {
       "code": "widget.machine.outcome_impossible",
       "tier": "T2",
       "severity": "error",
       "message": "a page machine handles an outcome the awaited call cannot have: {detail}",
-      "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, and cancelled only where the state offers a cancel.",
+      "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, stale and subscription_refused only for reads of a binding the machine subscribes to, and cancelled only where the state offers a cancel.",
       "no_fix": null
     },
     {

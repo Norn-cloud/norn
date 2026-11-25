@@ -56,7 +56,7 @@ fn machine(lifecycle: &Value) -> Value {
         "events": [
             { "eventId": "submit", "source": { "kind": "user", "nodeId": "invoke" } },
             outcome("accepted"), outcome("refused"), outcome("pending_approval"),
-            outcome("network_failure"), outcome("timeout")
+            outcome("network_failure"), outcome("not_served"), outcome("timeout")
         ],
         "states": [
             { "stateId": "open", "role": "idle" },
@@ -67,7 +67,8 @@ fn machine(lifecycle: &Value) -> Value {
             { "transitionId": "submit", "from": "open", "on": "submit", "target": "submitting",
               "effects": [{ "kind": "start", "call": { "kind": "action", "bindingId": "invoke" } }] },
             { "transitionId": "on-accepted", "from": "submitting", "on": "accepted", "target": "done" },
-            back("refused"), back("pending_approval"), back("network_failure"), back("timeout")
+            back("refused"), back("pending_approval"), back("network_failure"), back("not_served"),
+            back("timeout")
         ],
         "lifecycle": lifecycle
     })

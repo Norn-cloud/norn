@@ -1157,7 +1157,7 @@ mod ontology_derived_measures {
             100,
         )
         .expect("existing plan");
-        let mut showcase = [0i128; 2];
+        let mut showcase = [norn_ir::ExactSum::ZERO; 2];
         let mut count = 0;
         for line in include_str!("../../../../fixtures/demo/scrap-yield-k1.csv")
             .lines()
@@ -1195,6 +1195,8 @@ mod ontology_derived_measures {
             count += 1;
         }
         assert_eq!(count, 80);
+        let showcase =
+            showcase.map(|sum| compute::arithmetic::decide(sum).expect("bounded result"));
         assert_eq!(showcase, [294_000_000, 300_000_000]);
         assert_eq!(
             compute::arithmetic::ratio(showcase[0], showcase[1]),

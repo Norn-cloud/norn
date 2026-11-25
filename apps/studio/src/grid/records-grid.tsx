@@ -328,7 +328,7 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
           </div>
         )}
         {result.isError && (isWorkspaceUnavailableError(result.error)
-          ? <WorkspaceUnavailable error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} compact />
+          ? <WorkspaceUnavailable error={result.error} compact />
           : <ReadErrorState error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} />)}
         <div className="flex flex-wrap items-center gap-2">
           {hasViewModes && (

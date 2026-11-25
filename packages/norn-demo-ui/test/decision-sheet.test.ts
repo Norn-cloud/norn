@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url"
 import { parseFragment } from "parse5"
 
 import { type SheetDecision, type SheetDocument, decideRequest, directCall, needsConfirm, refusalPanelMarkup, sheetMarkup } from "../src/elements/decision-sheet.ts"
-import { type Evaluate, type Snapshot, enabled, init, update, walks, wasmEvaluate } from "../src/machine/index.ts"
+import { type Evaluate, type Snapshot, enabled, init, update, walks, wasmEvaluate } from "../../norn-react/src/machine/index.ts"
 import { sheetPayloads } from "./support/sheet-payloads.ts"
 
 const document = JSON.parse(readFileSync(join(import.meta.dir, "../../../apps/studio/src/decisions/decision-sheet.widget.json"), "utf8")) as SheetDocument

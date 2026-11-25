@@ -23,30 +23,28 @@ export function toolName(update: { readonly title?: string | null; readonly _met
   return name.replace(TOOL_PREFIX, "")
 }
 
-/** What each Norn tool did, in plain words; another tool reads as its name. */
-const TOOL_WORDS: Readonly<Record<string, string>> = {
-  norn_answer: "Answered the question",
-  norn_trace_answer: "Traced where the number comes from",
-  norn_trace_evaluated: "Traced the evaluated answer",
-  norn_evaluate: "Evaluated the question",
-  norn_inbox: "Read what needs attention",
-  norn_get_findings: "Read the held record's findings",
-  norn_list_held: "Listed held-back records",
-  norn_query_objects: "Read records",
-  norn_get_object: "Read a record",
-  norn_object_links: "Read a record's links",
-  norn_trace_object: "Traced a record to its sources",
-  norn_catalog: "Read the catalog",
-  norn_question_catalog: "Read the questions it can ask",
-  norn_list_metrics: "Listed the metrics",
-  norn_list_definitions: "Read the definitions",
-  norn_plan_definitions: "Planned a definitions change",
-  norn_apply_definitions: "Applied a definitions change",
-  norn_propose_definition: "Proposed a definition",
-  norn_profile_type: "Profiled a type",
-  norn_call_action: "Called an action",
+/**
+ * The server's label for each Norn tool: the `title` its own tool manifest declares
+ * (`x-norn-tool` on the route; an action's own title), which the bridge reads from the cell's
+ * MCP `tools/list` and sends as `_norn/tools`. Studio adds no words of its own: a tool the
+ * server gives no title is shown by its name.
+ */
+export type ToolLabels = ReadonlyMap<string, string>
+
+/** The labels in a `_norn/tools` notice; anything malformed is left out. */
+export function toolLabels(params: unknown): ToolLabels {
+  const tools = (params as { readonly tools?: unknown } | null | undefined)?.tools
+  const labels = new Map<string, string>()
+  if (!Array.isArray(tools)) return labels
+  for (const tool of tools as unknown[]) {
+    const { name, title } = (tool ?? {}) as { readonly name?: unknown; readonly title?: unknown }
+    if (typeof name === "string" && typeof title === "string" && title.trim() !== "") labels.set(name, title)
+  }
+  return labels
 }
-export const toolWords = (tool: string) => TOOL_WORDS[tool] ?? tool.replace(/^norn_/, "").replaceAll("_", " ")
+
+/** What a tool row says: the server's label, else the tool's own name. */
+export const toolLabel = (labels: ToolLabels, tool: string): string => labels.get(tool) ?? tool
 
 export function promptItem(transcript: Transcript, id: string, text: string): Transcript {
   return [...transcript, { kind: "user", id, text }]

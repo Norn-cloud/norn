@@ -122,3 +122,10 @@ test("apps/studio/src names no business domain", () => {
   const hits = scanned.flatMap((path) => domainWords(readFileSync(path, "utf8")).map((hit) => `${relative(join(SRC, ".."), path)}:${hit.line}: ${hit.word}: ${hit.text}`))
   expect(hits).toEqual([])
 })
+
+test("the page renderer (`@norn/react`) and the matrix harness page Studio builds name no business domain", () => {
+  const scanned = [...files(join(import.meta.dir, "../../../packages/norn-react/src")), join(import.meta.dir, "../e2e/matrix/main.tsx")]
+  expect(scanned.length).toBeGreaterThan(10)
+  const hits = scanned.flatMap((path) => domainWords(readFileSync(path, "utf8")).map((hit) => `${relative(join(import.meta.dir, "../../.."), path)}:${hit.line}: ${hit.word}: ${hit.text}`))
+  expect(hits).toEqual([])
+})

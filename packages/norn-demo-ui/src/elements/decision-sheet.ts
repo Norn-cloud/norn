@@ -7,9 +7,9 @@
 // takes one of its events. What it shows about the decision and its outcome is the server's own
 // document (the question, options, receipt, resolution, refusal), as sent.
 
-import { enabled, eventsOf } from "../machine/controls.ts"
-import { type Driver, type Transport, createDriver } from "../machine/driver.ts"
-import type { Evaluate, Fields, Machine, Msg, Snapshot } from "../machine/machine.ts"
+import { enabled, eventsOf } from "../../../norn-react/src/machine/controls.ts"
+import { type Driver, type Transport, createDriver } from "../../../norn-react/src/machine/driver.ts"
+import type { Evaluate, Fields, Machine, Msg, Snapshot } from "../../../norn-react/src/machine/machine.ts"
 import { adoptSheetStyles } from "./sheet.css.ts"
 
 export type Locale = "en" | "ar"

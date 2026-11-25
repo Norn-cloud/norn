@@ -2614,6 +2614,18 @@
       "message": "رمز سمة غير معروف أو غير مسموح به: {$token}",
       "review": "needs_review"
     },
+    "widget.authority.action_outside_binding": {
+      "message": "صفحة تصل إلى إجراء Norn خارج ربط الإجراء الخاص به: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.binding.exact_value_unhandled": {
+      "message": "خاصية عشرية دقيقة يعرضها مكوّن فهرس لا يصرّح بأنه يعالج القيم الدقيقة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.binding.marked_value_unhandled": {
+      "message": "خاصية موسومة يعرضها مكوّن فهرس لا يصرّح بأنه يعالج القيم المحجوبة: {$detail}",
+      "review": "needs_review"
+    },
     "widget.catalog.duplicate_entry": {
       "message": "كتالوج أداة رسومية يعلن معرّف المدخل نفسه مرتين: {$detail}",
       "review": "needs_review"
@@ -2686,6 +2698,14 @@
       "message": "صفحة في التطبيق ليس لها عنصر تحكم يصل إليها من صفحة الدخول: {$detail}",
       "review": "needs_review"
     },
+    "widget.layer.dismissal_refused_without_cause": {
+      "message": "طبقة من UI SDK ترفض الإغلاق حيث لا يبرّر شيء ذلك: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.layer.notification_intrusive": {
+      "message": "سطح إشعار يحجز الصفحة: {$detail}",
+      "review": "needs_review"
+    },
     "widget.lifecycle.assumption_violated": {
       "message": "حالة في الصفحة تظهر بينما الكائن في حالة دورة حياة لا تفترضها: {$detail}",
       "review": "needs_review"
@@ -2747,7 +2767,11 @@
       "review": "needs_review"
     },
     "widget.machine.error_without_recovery": {
-      "message": "حالة خطأ في ترسيمة الصفحة ليس لها انتقال يقوده شخص أو مؤقّت: {$detail}",
+      "message": "حالة خطأ في ترسيمة الصفحة لا تتيح لشخص إعادة المحاولة أو الإغلاق: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.failure_without_retry_or_close": {
+      "message": "حالة تدخلها ترسيمة الصفحة بعد فشل استدعاء لا تتيح لشخص إعادة المحاولة أو الإغلاق: {$detail}",
       "review": "needs_review"
     },
     "widget.machine.initial_not_idle": {
@@ -2772,6 +2796,10 @@
     },
     "widget.machine.nondeterministic": {
       "message": "حالة في ترسيمة الصفحة لها أكثر من انتقال غير مشروط على الحدث أو النتيجة نفسها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.outcome_code_undeclared": {
+      "message": "حالة في ترسيمة الصفحة تعالج رمز رفض لا يمكن أن ينتجه الاستدعاء المنتظر: {$detail}",
       "review": "needs_review"
     },
     "widget.machine.outcome_impossible": {

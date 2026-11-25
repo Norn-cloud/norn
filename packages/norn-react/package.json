@@ -1,0 +1,24 @@
+{
+  "name": "@norn/react",
+  "private": true,
+  "description": "The React renderer of admitted Widget UX documents: the page machine runtime, the closed UI states, UI SDK nodes and catalog islands (TypeScript source)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./machine": "./src/machine/index.ts",
+    "./state": "./src/state.ts"
+  },
+  "scripts": { "test": "bun test", "typecheck": "tsc -p tsconfig.json" },
+  "peerDependencies": { "@ui-sdk/core": "0.1.0-beta.17", "@ui-sdk/react": "0.1.0-beta.17", "react": "19.3.1", "react-dom": "19.3.1" },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@ui-sdk/core": "0.1.0-beta.17",
+    "@ui-sdk/react": "0.1.0-beta.17",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "6.0.3"
+  }
+}

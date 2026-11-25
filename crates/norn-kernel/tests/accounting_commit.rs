@@ -317,3 +317,37 @@ fn accounting_leg_declaration_is_resolved_from_the_type_catalog() {
     let model = norn_kernel::CommitModel::new(&catalog);
     assert!(model.accounting_leg(&types[1].name).unwrap().is_some());
 }
+
+#[test]
+fn balanced_journals_must_agree_on_unit_precision_in_one_commit() {
+    let mut writes = Vec::new();
+    for (journal, precision) in [("journal-a", 2), ("journal-b", 3)] {
+        for (side, amount) in [("debit", "100"), ("credit", "-100")] {
+            let mut leg = write(
+                &format!("{journal}-{side}"),
+                "book-1",
+                "USD",
+                amount,
+                journal,
+            );
+            if let FactMutation::Put { values } = &mut leg.mutation {
+                let record = values.get_mut("leg").unwrap().as_object_mut().unwrap();
+                record.insert(
+                    "unitPrecision".to_owned(),
+                    serde_json::from_value(json!(precision)).unwrap(),
+                );
+            }
+            writes.push(leg);
+        }
+    }
+    let mut cell = cell();
+    let result = cell.commit(CellCommit {
+        writes,
+        ..CellCommit::empty()
+    });
+    assert_eq!(
+        result.unwrap_err().code(),
+        "journal.unit_precision_mismatch"
+    );
+    assert!(cell.ledger().is_empty());
+}

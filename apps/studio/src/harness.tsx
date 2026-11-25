@@ -18,7 +18,7 @@ import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { useCellQuery } from "./lib/cell-query.ts"
-import { matchReadState } from "./lib/state/index.ts"
+import { matchReadState } from "../../../packages/norn-react/src/state.ts"
 import { NO_DATA_CELL, useStudioScope, type StudioScope } from "./lib/definitions.ts"
 import "./index.css"
 
@@ -42,7 +42,7 @@ function RecordRead({ type, ids }: { readonly type: string; readonly ids: readon
       {!open
         ? null
         : scope.isError
-          ? <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />
+          ? <WorkspaceUnavailable error={scope.error} />
           : scope.isSuccess && scope.data === null
             ? <EmptyState icon={Database} title="No data cell">{NO_DATA_CELL}</EmptyState>
             : scope.isSuccess
