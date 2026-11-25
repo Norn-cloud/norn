@@ -158,9 +158,10 @@ test("top bar: under reduced motion the extras switch instantly", async ({ page 
   await cell(page, heldInbox)
   await page.goto("/map")
   await drawn(page)
-  await expect(tickBar(page)).toHaveCSS("transition-duration", "0s")
+  // `motion-reduce:transition-none` drops the transition itself (its property), so nothing animates.
+  await expect(tickBar(page)).toHaveCSS("transition-property", "none")
   for (const slot of ["language-pill", "scheme-toggle"]) {
-    await expect(page.locator(`[data-slot="topbar"] [data-slot="${slot}"]`)).toHaveCSS("transition-duration", "0s")
+    await expect(page.locator(`[data-slot="topbar"] [data-slot="${slot}"]`)).toHaveCSS("transition-property", "none")
   }
 })
 
