@@ -53,7 +53,7 @@ Three consequences:
 
 ```mermaid
 flowchart LR
-  subgraph Surface
+  subgraph Syntax
     TS["TS v2<br/>pack / thing / happening / law / flow"]
     EG["TS Effect.gen flows<br/>(CURRENT, kept)"]
     PY["Python twin<br/>(PROPOSED)"]
@@ -221,7 +221,7 @@ declare function final(opts?: { immutable?: boolean }): Final
 - `S` is inferred from the keys of `states`; every target (`to`, shorthand string, `initial`, `after.to`) is `NoInfer<S>`, so `"psoted"` is a TypeScript error at the typo. Events are the keys of `on` across all states; the type exports `Invoice.events.post` as a typed handle for flows, access and questions.
 - Lowering, all to existing IR:
 
-| Surface | IR |
+| Authoring syntax | IR |
 |---|---|
 | the machine | enum property `status` + one `LifecycleDecl` (`builder/entity.ts`) |
 | `initial` | `LifecycleDecl.initial` |
@@ -278,7 +278,7 @@ Exactly one of `must` / `never` / `eventually` is required (a type error otherwi
 
 Lowering to `LawIR` (`builder/law.ts`, `crates/norn-ir/src/verification.rs`):
 
-| Surface | LawIR member | Inferred from |
+| Authoring syntax | LawIR member | Inferred from |
 |---|---|---|
 | `name` | `id` = `<pack>.<type>.<name>`; artifact `<id>.law` | pack + subject |
 | `id` (optional, codemod only) | `id` = the given value verbatim; artifact `<id>.law`. The codemod (§11) sets it whenever a source id differs from the derived one (`constitution.fine_mass` vs derived `constitution.Melt.fine_mass`) so the artifact id and bytes stay identical; new laws omit it | existing artifact |
@@ -293,21 +293,21 @@ Lowering to `LawIR` (`builder/law.ts`, `crates/norn-ir/src/verification.rs`):
 
 Laws declared on an interface lower once per interface; every implementation inherits them, and the checker refuses an implementation that weakens one (`law.model.weakens_inherited`, CURRENT).
 
-**Lambda subset** (shared by laws, guards, derivations, mappings and questions). The compiler lowers TypeScript syntax to norn-expr as checked by `norn-zen/6` (`crates/norn-expr/README.md`):
+**Lambda subset** (shared by laws, guards, derivations, mappings and questions). The compiler lowers TypeScript syntax to norn-expr as checked by `norn-zen/7` (`crates/norn-expr/README.md`):
 
 | TypeScript | norn-expr |
 |---|---|
-| `a === b`, `a !== b`, `<` `<=` `>` `>=` | `==`, `!=`, ordering. Ordering on `date` / `timestamp` properties lowers each operand through `date(...)` / `timestamp(...)` (`due_date >= issue_date` becomes `date(self.due_date) >= date(self.issue_date)`), because `norn-zen/6` rejects ordering on raw temporal properties and mixed raw/parsed operands |
+| `a === b`, `a !== b`, `<` `<=` `>` `>=` | `==`, `!=`, ordering. Ordering on `date` / `timestamp` properties lowers each operand through `date(...)` / `timestamp(...)` (`due_date >= issue_date` becomes `date(self.due_date) >= date(self.issue_date)`), because `norn-zen/7` rejects ordering on raw temporal properties and mixed raw/parsed operands |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
-| `+ - * /` | checked arithmetic (`%` is not admitted by `norn-zen/6`; it is a compile error, not part of the subset) |
+| `+ - * /` | checked arithmetic (`%` is not admitted by `norn-zen/7`; it is a compile error, not part of the subset) |
 | `c ? a : b`, `a ?? b` | conditional, coalesce |
 | `self.link.prop` | path read (link reads become slice entries) |
 | `xs.some(f)`, `xs.every(f)`, `xs.filter(f)`, `xs.map(f)`, `xs.length` | `some`, `all`, `filter`, `map`, `len` / `count` |
-| `sum(xs)` (imported helper) | `sum` |
+| `Norn.sum(xs)` (CURRENT) / `sum(xs)` (v2) | `sum` |
 | `s.startsWith(t)`, `.endsWith`, `.includes`, `.toLowerCase()`, `.trim()` | `startsWith`, `endsWith`, `contains`, `lower`, `trim` |
-| `daysBetween(a, b)`, `addDays(d, n)` (imported helpers) | `days_between`, `add_days` |
+| `daysBetween(a, b)`, `addDays(d, n)`, `secondsBetween`, `addSeconds`, `intervalsOverlap`, `intervalGapSeconds`, `intervalIntersectionSeconds`, `resolveLocalTimestamp` | matching `norn-zen/7` temporal builtins |
 
-Anything else (calls to local functions, `Date.now()`, mutation, `let`, loops) is a compile error naming the construct (`NORN-FLOW-UNSUPPORTED-CALL`, `NORN-FLOW-AMBIENT`, `NORN-FLOW-CAPTURE`, CURRENT codes). The typed builder `builder/expr.ts` today lacks closures and `sum`; adding them is a PROPOSED unit (norn-expr already admits them).
+Anything else (calls to local functions, `Date.now()`, mutation, `let`, loops) is a compile error naming the construct (`NORN-FLOW-UNSUPPORTED-CALL`, `NORN-FLOW-AMBIENT`, `NORN-FLOW-CAPTURE`, CURRENT codes). Closures (`some`, `every`, `filter`, `map`, `.filter(...).length`) and `Norn.sum` are CURRENT in `builder/expr.ts` and `compiler/index.ts`.
 
 Python:
 
@@ -346,7 +346,7 @@ type Dur = { seconds?: number; minutes?: number; hours?: number; days?: number }
 
 `run` is **never executed**. The compiler reads its body and lowers it to the builder's flow nodes (`builder/flow.ts`), and from there `lower-flow.ts` produces what `Effect.gen` flows produce today: a Run entity `<pack>.<Name>Run`, a generated lifecycle, and one `decide` decision table. Lowering:
 
-| Surface | Builder node | Effect.gen equivalent (CURRENT) |
+| Authoring syntax | Builder node | Effect.gen equivalent (CURRENT) |
 |---|---|---|
 | `await step("id", f, args)` | `perform` | `yield* Norn.perform("id", f, args)` |
 | `retry` / `step(..., { retry })` | `retry` (`recurs = maxAttempts - 1`, `spaced` or `exponential`) | `.pipe(Effect.retry(Schedule...))` |
@@ -443,14 +443,14 @@ The system pack's terms are generated from the source schema's datasets and fiel
 
 Python: `erp = connector("erpnext", ...)`, `erp.map(erp.datasets.SalesInvoice, Invoice, lambda s: {...}, ignore={"sku": "alias only"})`.
 
-## 5. Surface → IR lowering table
+## 5. Syntax to IR lowering table
 
 Every row names an existing IR kind; only the rows marked GAP need engine work.
 
-| Surface | IR kind (envelope `kind`) | Builder file | Rust IR | Status |
+| Authoring syntax | IR kind (envelope `kind`) | Builder file | Rust IR | Status |
 |---|---|---|---|---|
 | `pack(...)` | `business_pack` (composition) | new (no TS constructor) | `business_pack.rs` `CompositionPackRoot` | PROPOSED |
-| `thing` / `happening` | `entity` (`objectType`) | `builder/entity.ts` `objectType` | `entity_v2/object.rs` | CURRENT builder, PROPOSED surface |
+| `thing` / `happening` | `entity` (`objectType`) | `builder/entity.ts` `objectType` | `entity_v2/object.rs` | CURRENT builder, PROPOSED syntax |
 | `*.interface` | `entity` (`interface`) | `builder/entity.ts` `interfaceType` | `entity_v2/interface.rs` | CURRENT builder |
 | props / value types | `PropertyType` | `builder/entity.ts` | `entity_v2` | CURRENT |
 | `derive` | `PropertyDecl.computed` | `builder/entity.ts` (field missing) | `entity_v2/object.rs` `computed` | PROPOSED builder field |
@@ -464,8 +464,8 @@ Every row names an existing IR kind; only the rows marked GAP need engine work.
 | `by: Role` | `policy` (AccessIR) | `builder/access.ts` | `access.rs` | CURRENT builder |
 | `after` | `rule` (`decide`, `transitioned` trigger + timer) | `builder/rule.ts` | `rule.rs` | CURRENT builder, PROPOSED generator |
 | `run: flow` | `rule` (`decide`, `transitioned` trigger) | `builder/rule.ts` | `rule.rs` | PROPOSED generator |
-| `law` | `law` (LawIR) | `builder/law.ts` | `verification.rs` `LawIR` | CURRENT builder |
-| lambdas | ZEN expression text | `builder/expr.ts` (needs closures, `sum`) | `norn-expr` `norn-zen/6` | PROPOSED builder ops |
+| `law` | `law` (LawIR) | `builder/law.ts`, `compiler/definitions.ts` | `verification.rs` `LawIR` | CURRENT compiler (`Norn.law(name, spec)`) |
+| lambdas | ZEN expression text | `builder/expr.ts`, `compiler/index.ts` | `norn-expr` `norn-zen/7` | CURRENT (closures and `Norn.sum` included) |
 | `unless: { label: { when, because, unless? } }` | `LawIR.exceptions` (exception tree; labels are ids, a nested label overrides its parent, each source is its own slot) | `compiler/definitions.ts` `exceptions` | `verification.rs` `LawException`; checker `law_exceptions.rs` | CURRENT compiler and admission; **GAP §8.1** evaluation |
 | `Norn.decision({ hit: "unique" }, callback)` | `decisionTableNode` with `hitPolicy: unique`; each branch is a row and the fallthrough is their complement | `compiler/definitions.ts` `decision` | `jdm.rs` `JdmHitPolicy::Unique`; checker `jdm_profile::check_unique_tables` (TABLE-UNIQUE-1) | CURRENT compiler and admission |
 | `Norn.example(name, { of, given, expect })` | a compiled case run by `norn check` with the checker's `evaluateLaw` | `compiler/definitions.ts` `examples`, `src/examples.ts` | `law_examples.rs` (LAW-EXAMPLE-1) | CURRENT |
@@ -498,7 +498,7 @@ flowchart LR
 2. **Name the fix as an edit.** Each message ends with one or more `fix:` lines that are concrete source edits or commands, most likely first.
 3. **One stable code.** Ring 2 reuses the checker's registered code (`crates/norn-checker/src/codes.rs`; codes are never renamed). Ring 1 and ring 3 codes live in the `cli.*` namespace.
 4. **Count, then sample.** Ring 3 says how many live objects are affected and shows at most three ids.
-5. **Never blame plumbing the author did not write.** If a generated artifact fails, the message points at the surface line that generated it.
+5. **Never blame plumbing the author did not write.** If a generated artifact fails, the message points at the source line that generated it.
 
 ### Worked example 1: editor, state typo
 
@@ -530,7 +530,7 @@ accounting/journal.ts:41:30  lifecycle.validation.unknown_state
 export const opening = law("lines_reference_an_event", {
   on: JournalLine,
   must: l => l.event !== null,
-  unless: [{ name: "opening_balance", when: l => l.entry.kind === "opening", because: "Opening balances have no source event." }],
+  unless: { opening_balance: { when: l => l.entry.kind === "opening", because: "Opening balances have no source event." } },
   because: "...",
 })
 ```
@@ -772,13 +772,13 @@ export default pack("accounting", {
 | `posted` / `paid` / `closed` immutable | — | ✔ lifecycle admission (CURRENT) | hand-written model of `core.law.posted_immutable` (`verification/core-physics-v1/models/core-value-ledger.qnt`) | ✔ the cell refuses writes in immutable states (CURRENT) | narrowing warning (CURRENT `plan.ts`) |
 | `balanced` | lambda types (PROPOSED) | expression typing and cost (CURRENT for ZEN) | hand-written Quint model + Lean proof of `core.law.value_conservation` (`CoreValueLedger.lean`); nothing generated for this pack | ✔ the kernel accounting-leg commit check, once `JournalLine` lowers to `accountingLeg` (IR CURRENT, builder field PROPOSED) | live violations counted (PROPOSED) |
 | `account_code_matches`, `posts_to_leaf`, `same_currency` | lambda types | typing, bounded link reads (CURRENT) | — | **GAP §8.3**: today's commit check evaluates a law over the written object's own values only; link reads need the declared read set | PROPOSED |
-| `not_over_allocated`, `payment_covers_allocations` | lambda types | typing; `sum(map(...))` over a to-many link is within `norn-zen/6` and the 1,000-record slice cap | — | **GAP §8.3**: a write to Allocation does not re-evaluate the Invoice and Payment it links; the engine must derive affected objects from inverse links | PROPOSED |
+| `not_over_allocated`, `payment_covers_allocations` | lambda types | typing; `sum(map(...))` over a to-many link is within `norn-zen/7` and the 1,000-record slice cap | — | **GAP §8.3**: a write to Allocation does not re-evaluate the Invoice and Payment it links; the engine must derive affected objects from inverse links | PROPOSED |
 | `post` guard `period.status === "open"` | lambda types | guard typing (CURRENT) | — | **GAP §8.3**: `check_guards` (`decision_commit.rs`) binds `self` to the written object's own values only, so a guard that reads the linked `period` (or `settle`'s `allocations`) is not evaluated at commit today; linked guard reads and their commit-time validation are engine work | — |
 | Account `parent` acyclic | — | ✔ `acyclic` link admission (CURRENT) | — | ✔ (CURRENT) | — |
 | `due_after_issue` | lambda types | typing | — | ✔ | ✔ new law against live invoices (example 3) |
 | `sale_invoiced` (`eventually`, `within`) | lambda types | ✔ structural admission of `within` (CURRENT since #982) | — | ✗ no runtime deadline monitor yet (#1126 slice 1b) | PROPOSED |
 | `invoice_has_sale` (override) | — | **GAP §8.2** | — | **GAP §8.2** | override count shown |
-| `unless` on any law | — | **GAP §8.1** | — | **GAP §8.1** | — |
+| `unless` on any law | — | ✔ exception-tree admission (CURRENT, `law_exceptions.rs`) | — | **GAP §8.1** (`core.laws.unsupported_semantics`) | — |
 
 Today the only law with a **generated** model-checked result is the constitution `Melt` conservation law ([`scripts/demo/constitution.source.ts`](../../scripts/demo/constitution.source.ts)): the bounded enumeration profile `verification/profiles/constitution-one-create.json` (77 cases, 78 states) explores its one create action. Generated goals for the remaining obligations stay `unknown` (#565). The core laws (`verification/core-physics-v1/obligations.json`) have hand-written reference models, not generated ones. Generating Quint models for pack laws like `balanced` is #565's work; this spec only reserves the column.
 
@@ -786,7 +786,7 @@ Today the only law with a **generated** model-checked result is the constitution
 
 ### 8.1 Defeasible laws: `unless`
 
-Issue #1126 ("Defeasibility") and #938 (policy side). `DeonticRule` already carries `exceptions: Vec<RuleException>` (a ZEN condition each) and `defeated_by`, but they have no ordering semantics, and plain `LawIR` has no exceptions at all.
+Issue #1126 ("Defeasibility") and #938 (policy side). `LawIR.exceptions` and `DeonticRule` exception-tree admission (`law_exceptions.rs`) and `defeated_by` precedence admission (`deontic.rs`) are CURRENT; commit-path evaluation of exception trees remains open.
 
 Required semantics:
 
@@ -845,7 +845,7 @@ sequenceDiagram
 
 "Unsafe" for `plan` means: a new or changed `error` law violated by live objects; a narrowed lifecycle with objects in a removed state; a removed export another installed pack requires; an `override` promoted to `error` with open violations. Each blocked item prints its `fix:` lines.
 
-Today there are two CLIs: the Rust `norn` (`crates/norn-cli`: `check`, `eval`, `capabilities`, `mcp`, `source`, ...) and the authoring CLI (`bun src/cli.ts check|compile|profile|question|fmt|init`). v2 needs one front door; open question 5.
+Today there are two CLIs: the Rust `norn` (`crates/norn-cli`: `check`, `eval`, `explain`, `capabilities`, `mcp`, `remote`, `cell`, `source`, `openapi`, `source-digest`) and the authoring CLI (`bun src/cli.ts init|setup|dev|fmt|check|compile|profile|codegen|question|dashboard|plan|apply|explain`). v2 needs one front door; open question 5.
 
 ## 10. Python twin
 
