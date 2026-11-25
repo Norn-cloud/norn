@@ -27,6 +27,10 @@ pub const TOOL_EXTENSION: &str = "x-norn-tool";
 /// workspace declares (see [`Domain`]).
 pub const DOMAIN_KEY: &str = "x-norn-domain";
 
+/// The query parameters that carry the caller's scope. The host sends the
+/// caller's own on every call, so no tool argument binds them.
+pub const SCOPE_PARAMETERS: [&str; 2] = ["orgId", "environmentId"];
+
 /// The HTTP method of a tool's route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolMethod {
@@ -223,8 +227,10 @@ impl ToolManifest {
     /// # Errors
     ///
     /// A [`ManifestError`] for the first declaration that is malformed, binds
-    /// an argument the operation or the input schema does not declare, leaves
-    /// a path segment unbound, or repeats a tool name.
+    /// an argument the operation or the input schema does not declare, binds
+    /// a scope parameter, leaves a path segment without an argument in the
+    /// path, sits on a path template with an unclosed segment, or repeats a
+    /// tool name.
     pub fn from_openapi_paths(paths: &JsonValue) -> Result<Self, ManifestError> {
         let refused = |operation: String, reason: &str| ManifestError {
             operation,
@@ -282,12 +288,23 @@ fn text<'a>(object: &'a JsonObject, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("{TOOL_EXTENSION}.{key} must be a non-empty string"))
 }
 
-/// The `{name}` segments of a path template.
-fn template_segments(path: &str) -> BTreeSet<&str> {
-    path.split('{')
-        .skip(1)
-        .filter_map(|rest| rest.split_once('}').map(|(name, _)| name))
-        .collect()
+/// The `{name}` segments of a path template, read as a call fills them: a
+/// `{` left open, or a segment with no name, is refused here rather than at
+/// the call.
+fn template_segments(path: &str) -> Result<BTreeSet<&str>, String> {
+    let mut segments = BTreeSet::new();
+    let mut rest = path;
+    while let Some((_, tail)) = rest.split_once('{') {
+        let (name, after) = tail
+            .split_once('}')
+            .filter(|(name, _)| !name.is_empty() && !name.contains('{'))
+            .ok_or_else(|| {
+                format!("the path template has an unclosed or unnamed segment: {path}")
+            })?;
+        segments.insert(name);
+        rest = after;
+    }
+    Ok(segments)
 }
 
 /// The `(in, name)` of each parameter the operation declares.
@@ -416,6 +433,12 @@ fn argument(
             ));
         }
     };
+    if location == Location::Query && SCOPE_PARAMETERS.contains(&name) {
+        return Err(format!(
+            "argument {name}: the scope parameters ({}) are the caller's, never a tool's",
+            SCOPE_PARAMETERS.join(", ")
+        ));
+    }
     let encoding = match argument.get("encoding").map(JsonValue::as_string) {
         None | Some(Some("text")) => Encoding::Text,
         Some(Some("value")) => Encoding::Value,
@@ -475,7 +498,7 @@ fn arguments(
 ) -> Result<Vec<ToolArgument>, String> {
     let binds = Binds {
         method,
-        segments: template_segments(path),
+        segments: template_segments(path)?,
         parameters: parameters(operation),
         body: operation.contains_key("requestBody"),
     };
@@ -509,12 +532,20 @@ fn arguments(
         }
         arguments.push(parsed);
     }
-    let bound = |name: &&str| arguments.iter().any(|argument| argument.name == *name);
-    if let Some(unbound) = properties.iter().find(|name| !bound(name)) {
+    let bound = |name: &str, path: bool| {
+        arguments
+            .iter()
+            .any(|argument| argument.name == name && (!path || argument.location == Location::Path))
+    };
+    if let Some(unbound) = properties.iter().find(|name| !bound(name, false)) {
         return Err(format!("inputSchema property {unbound} has no argument"));
     }
-    if let Some(unbound) = binds.segments.iter().find(|name| !bound(name)) {
-        return Err(format!("path segment {unbound} has no argument"));
+    // A segment is filled only by an argument that travels in the path; one
+    // of the same name bound elsewhere would leave it open at the call.
+    if let Some(unbound) = binds.segments.iter().find(|name| !bound(name, true)) {
+        return Err(format!(
+            "path segment {unbound} has no argument in the path"
+        ));
     }
     Ok(arguments)
 }

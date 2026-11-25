@@ -231,6 +231,35 @@ export function toolLabels(tools: readonly { name: string; title?: unknown }[]):
   return tools.flatMap(({ name, title }) => typeof title === "string" && title.trim() !== "" ? [{ name, title }] : [])
 }
 
+/** One tool of a `tools/list` page, as far as the relay reads it. */
+export interface ListedTool { name: string; title?: unknown; _meta?: Json }
+
+/** The tools a `tools/list` page asks for: the most the server serves in one page. */
+export const TOOL_PAGE_LIMIT = 100
+/** The most `tools/list` pages the relay reads for one session; a catalog past that is cut there. */
+export const TOOL_PAGES = 20
+
+/**
+ * Every tool of a `tools/list` catalog: `page` asks for one page (`limit`, and the previous page's
+ * `nextCursor`) and answers its result, or null when the server refused it. The pages are read to
+ * the last, at most {@link TOOL_PAGES}; a refused page ends the listing with what was read before
+ * it, and a refused first page answers null.
+ */
+export async function listAllTools(
+  page: (params: { limit: number; cursor?: string }) => Promise<{ tools?: ListedTool[]; nextCursor?: unknown } | null>,
+): Promise<ListedTool[] | null> {
+  const tools: ListedTool[] = []
+  let cursor: string | undefined
+  for (let read = 0; read < TOOL_PAGES; read++) {
+    const result = await page(cursor === undefined ? { limit: TOOL_PAGE_LIMIT } : { limit: TOOL_PAGE_LIMIT, cursor })
+    if (result === null) return read === 0 ? null : tools
+    tools.push(...(result.tools ?? []))
+    if (typeof result.nextCursor !== "string" || result.nextCursor === "") break
+    cursor = result.nextCursor
+  }
+  return tools
+}
+
 /** The MCP Apps view a tool names, from its `tools/list` entry. */
 export function viewOf(tool: { _meta?: Json } | undefined): string | null {
   const meta = tool?._meta
@@ -289,10 +318,13 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   }
 
   async function listTools(connection: Connection) {
-    const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params: {} }), { "mcp-protocol-version": "2025-06-18" })
-    if (!response.ok) return
-    const body = await response.json().catch(() => null) as { result?: { tools?: { name: string; title?: unknown; _meta?: Json }[] } } | null
-    const tools = body?.result?.tools ?? []
+    const tools = await listAllTools(async (params) => {
+      const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params }), { "mcp-protocol-version": "2025-06-18" })
+      if (!response.ok) return null
+      const body = await response.json().catch(() => null) as { result?: { tools?: ListedTool[]; nextCursor?: unknown } } | null
+      return body?.result ?? null
+    })
+    if (tools === null) return
     for (const tool of tools) {
       const view = viewOf(tool)
       if (view !== null) connection.views.set(tool.name, view)

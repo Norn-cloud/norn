@@ -31,6 +31,7 @@ fn document(tool: &Value) -> Value {
             "operationId": "get_object",
             "parameters": [
                 {"in": "query", "name": "orgId"},
+                {"in": "query", "name": "environmentId"},
                 {"in": "path", "name": "type"},
                 {"in": "path", "name": "id"}
             ],
@@ -137,7 +138,7 @@ fn a_declaration_that_does_not_fit_its_operation_is_refused() {
     extra
         .as_array_mut()
         .expect("array")
-        .push(json!({"name": "orgId", "in": "query"}));
+        .push(json!({"name": "extra", "in": "local"}));
     assert!(refused(declared(&extra)).contains("property of inputSchema"));
     // An unknown domain.
     let mut tool = declared(&bound());
@@ -156,4 +157,78 @@ fn a_declaration_that_does_not_fit_its_operation_is_refused() {
     let error =
         ToolManifest::from_openapi_paths(&paths(&twice).expect("JSON")).expect_err("refused");
     assert!(error.to_string().contains("repeats"), "{error}");
+}
+
+/// A path segment is filled only by an argument that travels in the path: an
+/// argument of the same name bound in the query, the body or locally leaves
+/// the segment open, so the manifest refuses it rather than the call failing.
+#[test]
+fn a_path_segment_bound_outside_the_path_is_refused() {
+    // The fixture with `id` bound `in` somewhere other than the path, on an
+    // operation where that location exists.
+    let id_bound_in = |location: &str| {
+        let mut arguments = bound();
+        arguments[1] = json!({"name": "id", "in": location});
+        let mut document = document(&declared(&arguments));
+        let operation = &mut document["/v1/objects/{type}/{id}"];
+        match location {
+            "query" => operation["get"]["parameters"]
+                .as_array_mut()
+                .expect("array")
+                .push(json!({"in": "query", "name": "id"})),
+            "body" => {
+                let mut post = operation["get"].take();
+                post["requestBody"] =
+                    json!({"content": {"application/json": {"schema": {"type": "object"}}}});
+                *operation = json!({ "post": post });
+            }
+            _ => {}
+        }
+        document
+    };
+    for location in ["local", "query", "body"] {
+        let error = ToolManifest::from_openapi_paths(&paths(&id_bound_in(location)).expect("JSON"))
+            .expect_err(location)
+            .to_string();
+        assert!(
+            error.contains("path segment id has no argument in the path"),
+            "{location}: {error}"
+        );
+    }
+}
+
+/// The caller's scope is the host's to send: no tool argument binds `orgId` or
+/// `environmentId`, even where the operation declares them.
+#[test]
+fn a_scope_parameter_is_never_a_tool_argument() {
+    for scope in ["orgId", "environmentId"] {
+        let mut tool = declared(&bound());
+        tool["inputSchema"]["properties"][scope] = json!({"type": "string"});
+        tool["arguments"]
+            .as_array_mut()
+            .expect("array")
+            .push(json!({"name": scope, "in": "query"}));
+        let error = ToolManifest::from_openapi_paths(&paths(&document(&tool)).expect("JSON"))
+            .expect_err(scope)
+            .to_string();
+        assert!(error.contains("scope parameters"), "{scope}: {error}");
+    }
+}
+
+/// A path template with a `{` left open is refused when the manifest is read,
+/// not when a call fills it.
+#[test]
+fn a_path_template_with_an_unclosed_segment_is_refused() {
+    let mut arguments = bound();
+    arguments[1] = json!({"name": "id", "in": "local"});
+    let fixture = document(&declared(&arguments));
+    let mut open = serde_json::Map::new();
+    open.insert(
+        "/v1/objects/{type}/{id".to_owned(),
+        fixture["/v1/objects/{type}/{id}"].clone(),
+    );
+    let error = ToolManifest::from_openapi_paths(&paths(&Value::Object(open)).expect("JSON"))
+        .expect_err("refused")
+        .to_string();
+    assert!(error.contains("unclosed"), "{error}");
 }

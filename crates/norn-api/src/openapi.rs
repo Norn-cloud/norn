@@ -214,11 +214,13 @@ mod free_form_contract_tests {
     /// `object` generates as an object with no members (`Record<string,
     /// never>` in TypeScript), which no reader can use.
     ///
-    /// The value of a route's tool declaration (`x-norn-tool`) is extension
-    /// data, not an `OpenAPI` schema: no SDK type is generated from it, and its
-    /// `inputSchema` is the MCP tool's own JSON Schema, kept byte for byte by
-    /// the `tools/list` snapshots (`norn-cell-do` `tests/fixtures/mcp-tools-list`),
-    /// where `{"type": "object"}` means any object.
+    /// A route's tool declaration (`x-norn-tool` on an operation under
+    /// `paths`) is extension data, not an `OpenAPI` schema: no SDK type is
+    /// generated from it, and its `inputSchema` is the MCP tool's own JSON
+    /// Schema, kept byte for byte by the `tools/list` snapshots (`norn-cell-do`
+    /// `tests/fixtures/mcp-tools-list`), where `{"type": "object"}` means any
+    /// object. Only that operation-level key is set aside; a member of the
+    /// same name anywhere else is walked like any other.
     #[test]
     fn no_object_schema_is_bare() {
         fn walk(node: &Value, at: &str, bare: &mut Vec<String>) {
@@ -242,9 +244,7 @@ mod free_form_contract_tests {
                         bare.push(at.to_owned());
                     }
                     for (key, child) in members {
-                        if key != crate::tool_catalog::TOOL_EXTENSION {
-                            walk(child, &format!("{at}/{key}"), bare);
-                        }
+                        walk(child, &format!("{at}/{key}"), bare);
                     }
                 }
                 Value::Array(items) => {
@@ -255,7 +255,14 @@ mod free_form_contract_tests {
                 Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
             }
         }
-        let document: Value = serde_json::from_str(&super::openapi_json().unwrap()).unwrap();
+        let mut document: Value = serde_json::from_str(&super::openapi_json().unwrap()).unwrap();
+        for item in document["paths"].as_object_mut().unwrap().values_mut() {
+            for operation in item.as_object_mut().unwrap().values_mut() {
+                if let Some(operation) = operation.as_object_mut() {
+                    operation.remove(crate::tool_catalog::TOOL_EXTENSION);
+                }
+            }
+        }
         let mut bare = Vec::new();
         walk(&document, "#", &mut bare);
         assert_eq!(bare.len(), 0, "bare object schemas: {bare:#?}");

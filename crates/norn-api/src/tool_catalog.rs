@@ -410,14 +410,78 @@ impl utoipa::Modify for ToolDeclarations {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use serde_json::{Value, json};
+
     use super::TOOL_EXTENSION;
 
+    /// The property names a request body's schema declares, following a
+    /// `$ref` into `components.schemas` and each part of an `allOf`. A
+    /// reference it cannot resolve declares nothing.
+    fn body_properties<'a>(schemas: &'a Value, schema: &'a Value) -> BTreeSet<&'a str> {
+        let schema = match schema.get("$ref").and_then(Value::as_str) {
+            Some(reference) => reference
+                .strip_prefix("#/components/schemas/")
+                .and_then(|name| schemas.get(name))
+                .unwrap_or(&Value::Null),
+            None => schema,
+        };
+        let mut names: BTreeSet<&str> = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|properties| properties.keys().map(String::as_str))
+            .collect();
+        for part in schema
+            .get("allOf")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            names.extend(body_properties(schemas, part));
+        }
+        names
+    }
+
+    /// Each `in: "body"` argument of a declared tool that its operation's
+    /// JSON request body does not declare, as `method path: name`. The
+    /// manifest a host reads (`norn_projections::tool_manifest`) has no
+    /// `components`, so it checks only that a body exists; this checks each
+    /// field against the published document, at no cost to a host.
+    fn undeclared_body_arguments(document: &Value) -> Vec<String> {
+        let schemas = &document["components"]["schemas"];
+        let mut undeclared = Vec::new();
+        for (path, item) in document["paths"].as_object().unwrap() {
+            for (method, operation) in item.as_object().unwrap() {
+                let Some(tool) = operation.get(TOOL_EXTENSION) else {
+                    continue;
+                };
+                let declared = body_properties(
+                    schemas,
+                    &operation["requestBody"]["content"]["application/json"]["schema"],
+                );
+                for argument in tool["arguments"].as_array().unwrap() {
+                    let name = argument["name"].as_str().unwrap();
+                    if argument["in"] == "body" && !declared.contains(name) {
+                        undeclared.push(format!("{method} {path}: {name}"));
+                    }
+                }
+            }
+        }
+        undeclared
+    }
+
+    fn published() -> Value {
+        serde_json::from_str(&crate::openapi::openapi_json().unwrap()).unwrap()
+    }
+
     /// The published document and [`super::tool_operations`] carry the same
-    /// declarations on the same operations, and every declaration landed.
+    /// declarations on the same operations, every declaration landed, and
+    /// each body argument names a field its operation's request body declares.
     #[test]
     fn the_published_document_carries_every_declared_tool() {
-        let document: serde_json::Value =
-            serde_json::from_str(&crate::openapi::openapi_json().unwrap()).unwrap();
+        let document = published();
         let operations = super::tool_operations().unwrap();
         let mut published = 0_usize;
         for (path, item) in document["paths"].as_object().unwrap() {
@@ -444,5 +508,27 @@ mod tests {
             .map(|item| item.as_object().unwrap().len())
             .sum();
         assert_eq!(declared, published);
+        assert_eq!(
+            undeclared_body_arguments(&document),
+            Vec::<String>::new(),
+            "body arguments their request body does not declare"
+        );
+    }
+
+    /// A body argument misspelled against its request body is caught.
+    #[test]
+    fn a_body_argument_its_request_body_does_not_declare_is_caught() {
+        let mut document = published();
+        let lineage = document["paths"]["/v1/questions:trace"]["post"][TOOL_EXTENSION]["arguments"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|argument| argument["name"] == "lineageRef")
+            .unwrap();
+        lineage["name"] = json!("lineageRf");
+        assert_eq!(
+            undeclared_body_arguments(&document),
+            ["post /v1/questions:trace: lineageRf"]
+        );
     }
 }

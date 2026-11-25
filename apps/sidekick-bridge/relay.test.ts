@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose"
-import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, toolLabels, verifyGrant, viewOf } from "./relay.ts"
+import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, TOOL_PAGES, TOOL_PAGE_LIMIT, configFromEnv, forwardedUpdate, listAllTools, type ListedTool, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, toolLabels, verifyGrant, viewOf } from "./relay.ts"
 
 const STUDIO = "https://studio.norn.test"
 
@@ -98,6 +98,49 @@ test("a tool's label is the title its listing gives; an untitled tool has none",
     { name: "norn_blank", title: "  " },
     { name: "norn_odd", title: 7 },
   ])).toEqual([{ name: "norn_answer", title: "Answer a question" }, { name: "act_x", title: "Correct a scanned document" }])
+})
+
+/** A `tools/list` server as the cell pages it: sorted by name, `limit` 1..100 (32 when absent), `nextCursor` until the end. */
+function catalogServer(tools: ListedTool[]) {
+  const asked: { limit?: number; cursor?: string }[] = []
+  const page = async (params: { limit?: number; cursor?: string }) => {
+    asked.push(params)
+    const limit = params.limit ?? 32
+    if (limit < 1 || limit > 100) return null
+    const offset = params.cursor === undefined ? 0 : Number(params.cursor.split(":")[1])
+    const end = Math.min(offset + limit, tools.length)
+    return { tools: tools.slice(offset, end), ...(end < tools.length ? { nextCursor: `digest:${end}` } : {}) }
+  }
+  return { asked, page }
+}
+
+test("the relay reads every page of tools/list, so a tool past the first page keeps its label and view", async () => {
+  // A workspace with many actions: act_* sorts before norn_*, so the Norn tools fall on later pages.
+  const actions: ListedTool[] = Array.from({ length: 230 }, (_, index) => ({ name: `act_${String(index).padStart(3, "0")}`, title: `Action ${index}` }))
+  const norn: ListedTool[] = [
+    { name: "norn_answer", title: "Answer a question", _meta: { ui: { resourceUri: "ui://norn/answer.html" } } },
+    { name: "norn_trace_answer", title: "Trace an answer to its source", _meta: { ui: { resourceUri: "ui://norn/lineage.html" } } },
+    { name: "norn_trace_object", title: "Trace a record to its source", _meta: { ui: { resourceUri: "ui://norn/lineage.html" } } },
+  ]
+  const server = catalogServer([...actions, ...norn])
+  const tools = await listAllTools(server.page)
+  expect(server.asked).toEqual([{ limit: TOOL_PAGE_LIMIT }, { limit: TOOL_PAGE_LIMIT, cursor: "digest:100" }, { limit: TOOL_PAGE_LIMIT, cursor: "digest:200" }])
+  expect(tools?.length).toBe(233)
+  const labels = toolLabels(tools ?? [])
+  for (const { name, title } of norn) expect(labels).toContainEqual({ name, title: title as string })
+  const views = new Map((tools ?? []).flatMap((tool) => { const view = viewOf(tool); return view === null ? [] : [[tool.name, view] as const] }))
+  expect(Object.fromEntries(views)).toEqual({ norn_answer: "answer", norn_trace_answer: "lineage", norn_trace_object: "lineage" })
+})
+
+test("a refused tools/list page ends the listing; an endless cursor stops at the page cap", async () => {
+  expect(await listAllTools(async () => null)).toBeNull()
+  let served = 0
+  const second = await listAllTools(async () => served++ === 0 ? { tools: [{ name: "norn_answer", title: "Answer a question" }], nextCursor: "d:1" } : null)
+  expect(second).toEqual([{ name: "norn_answer", title: "Answer a question" }])
+  let pages = 0
+  const endless = await listAllTools(async () => { pages++; return { tools: [{ name: `norn_${pages}` }], nextCursor: "d:1" } })
+  expect(pages).toBe(TOOL_PAGES)
+  expect(endless?.length).toBe(TOOL_PAGES)
 })
 
 test("the browser sees the session's updates, never the host login's status, quota or raw SDK messages", () => {
