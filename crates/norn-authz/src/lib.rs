@@ -42,6 +42,14 @@ mod request;
 /// The `AccessIR` input types of [`compile`], re-exported from `norn-ir`.
 pub use norn_ir::access;
 
+#[doc(hidden)]
+pub mod cedar_projection {
+    pub use norn_projections::{
+        CedarAttribute, CedarPrincipalAttribute, project_cedar_schema_with_catalog,
+        project_cedar_schema_with_catalog_and_principal_attributes, project_host_access_schema,
+    };
+}
+
 pub use admit::ValidatedPolicySet;
 pub use base::{AuthzSchema, NORN_BASE_SCHEMA};
 pub use diag::{AuthzCode, AuthzDiagnostic, AuthzError};
