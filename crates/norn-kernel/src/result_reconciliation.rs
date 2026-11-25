@@ -47,31 +47,27 @@
 //!
 //!    Commits that touch nothing the token pins never invalidate a result.
 //!
-//! An [`Acceptance`] carries the compare-and-swap expectations that make the
-//! fact and destination checks hold **in the commit that accepts the
-//! outcome** ([`Acceptance::commit`]): a concurrent change to a pinned object
-//! between reconciliation and commit refuses the whole commit. Predicate and
-//! collection pins have no per-object CAS, so they hold at commit time only
-//! if nothing else commits in between: when
-//! [`Acceptance::requires_cell_lane`] is set, the host must hold the cell's
-//! single-writer lane **from reconciliation through the accepting commit**
-//! (every v1 host already runs one writer per cell).
+//! An [`Acceptance`] carries the compare-and-swap expectations that make the fact and destination
+//! checks hold **in the commit that accepts the outcome** ([`Acceptance::commit`]): a concurrent
+//! change to a pinned object between reconciliation and commit refuses the whole commit. Predicate
+//! and collection pins have no per-object CAS, so they hold at commit time only if nothing else
+//! commits in between: when [`Acceptance::requires_cell_lane`] is set, the host must hold the
+//! cell's single-writer lane **from reconciliation through the accepting commit** (every v1 host
+//! already runs one writer per cell).
 //!
-//! A [`Refused`] result is still consumed and recorded ([`ResultRecord`],
-//! [`Refused::commit`]); it never advances the transition. Duplicate and
-//! late deliveries are absorbed by generation fencing, so repeated stale
-//! results coalesce instead of looping.
+//! A [`Refused`] result is still consumed and recorded ([`ResultRecord`], [`Refused::commit`]); it
+//! never advances the transition. Duplicate and late deliveries are absorbed by generation fencing,
+//! so repeated stale results coalesce instead of looping.
 //!
 //! Fan-in ([`FanIn`]) aggregates child results by explicit child id and
 //! generation, never arrival order, under an all/any/quorum policy: exactly
 //! one child acceptance is [`FanInStep::Complete`], the one whose commit also
 //! emits the next command.
 //!
-//! The command's state ([`CommandState`]) and the fan-in state are plain
-//! data the host persists with the command (its outbox row or a fact), and
-//! the next state must be written **in the same commit** that accepts or
-//! records the result (and, for a completed fan-in, emits the next command),
-//! or a crash could count a child twice. This module performs no IO.
+//! The command's state ([`CommandState`]) and the fan-in state are plain data the host persists
+//! with the command (its outbox row or a fact), and the next state must be written **in the same
+//! commit** that accepts or records the result (and, for a completed fan-in, emits the next
+//! command), or a crash could count a child twice. This module performs no IO.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -318,6 +314,8 @@ pub struct ResultAuthzRequest<'a> {
     pub manifest: &'a Digest,
     /// The destination the result would be written to.
     pub destination: Option<&'a Destination>,
+    /// The host's effective logical time: authority is decided now.
+    pub now: LogicalTime,
 }
 
 /// Why the authorizer denies accepting a result now.
@@ -681,6 +679,7 @@ where
         command: &invocation.command_id,
         manifest: &invocation.manifest,
         destination: invocation.destination.as_ref(),
+        now: context.now,
     };
     if let Err(denial) = checks.authorizer.authorize(&request) {
         return refuse(

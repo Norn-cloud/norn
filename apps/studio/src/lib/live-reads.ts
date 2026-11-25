@@ -1,6 +1,6 @@
 import { useQueryClient, type QueryKey } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { LiveClient, type LiveRefusal } from "../../../../packages/norn-demo-ui/src/live/client.ts"
+import { LiveClient, type LiveRefusal } from "../../../../packages/norn-sdk/src/index.ts"
 import { type StudioScope, useStudioScope } from "./definitions.ts"
 
 /**
