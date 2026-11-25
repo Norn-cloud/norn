@@ -5,7 +5,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ActionForm } from "../src/actions/action-form.tsx"
 import { cases, field, heldCountText, heldGroupKey, heldKpiSub, heldRuleTechnicalId, heldRuleTitle, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "../src/lib/guarantees.ts"
-import type { ActionSummary } from "../src/lib/actions.ts"
+import type { ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import type { Guarantees } from "../src/lib/transport.ts"
 
 // Recorded model-checker documents (fixtures/demo/guarantees).

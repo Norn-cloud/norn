@@ -1,7 +1,7 @@
 {
   "name": "@norn/sdk",
   "private": true,
-  "description": "Core IR and checker types generated from Rust",
+  "description": "Generated IR and checker types, and the domain-agnostic action and live-read client (TypeScript source, no dependencies)",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
