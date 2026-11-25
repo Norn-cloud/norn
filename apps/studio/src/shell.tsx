@@ -1210,37 +1210,36 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
     return () => document.removeEventListener("focusin", onFocusIn)
   }, [])
 
-  // Focus is never stranded: when a collapse unmounts the focused control, focus moves to its rail
-  // counterpart (the workspace disc, the assistant, the account), else to the current rail icon, else
-  // to the toggle. A collapse that starts outside the sidebar leaves focus where it is.
+  // Focus is never stranded. Expanding from a rail destination with no page lands on that destination's
+  // row. Otherwise, when collapsing or expanding unmounts the focused control, focus moves to its
+  // counterpart in the other form (the workspace switcher, the assistant, the account), else to the
+  // current page's row or icon, else to the toggle. A focused control that survives, or focus outside
+  // the sidebar, is left alone.
   useEffect(() => {
     const wasOpen = wasOpenRef.current
     wasOpenRef.current = open
-    if (isMobile) return
-    if (wasOpen && !open) {
-      const last = lastInSidebarRef.current
-      const sidebar = document.getElementById(SIDEBAR_ID)
-      const active = document.activeElement
-      const lost = active === null || active === document.body || !active.isConnected || (navRef.current?.contains(active) ?? false)
-      if (last !== null && lost) {
-        const counterpart = last.scope
-          ? sidebar?.querySelector<HTMLElement>("[data-scope]")
-          : last.label !== null ? sidebar?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(last.label)}"]`) : null
-        ;(counterpart ?? navRef.current?.querySelector<HTMLElement>('[aria-current="page"]') ?? triggerRef.current)?.focus()
-      }
-      return
-    }
-    if (!wasOpen && open && pendingFocusSectionRef.current !== null) {
+    if (isMobile || wasOpen === open) return
+    const nav = navRef.current
+    if (open && pendingFocusSectionRef.current !== null) {
       const path = pendingFocusSectionRef.current
       pendingFocusSectionRef.current = null
-      const nav = navRef.current
       const sectionItem = Array.from(nav?.querySelectorAll<HTMLElement>("[data-section-path]") ?? [])
         .find((element) => element.dataset.sectionPath === path)
       sectionItem?.focus()
       if (nav && !nav.contains(document.activeElement)) {
         nav.querySelector<HTMLElement>('[role="treeitem"], a[href], button')?.focus()
       }
+      return
     }
+    const last = lastInSidebarRef.current
+    const active = document.activeElement
+    const lost = active === null || active === document.body || !active.isConnected || (!open && (nav?.contains(active) ?? false))
+    if (last === null || !lost) return
+    const sidebar = document.getElementById(SIDEBAR_ID)
+    const counterpart = last.scope
+      ? sidebar?.querySelector<HTMLElement>("[data-scope]")
+      : last.label !== null ? sidebar?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(last.label)}"]`) : null
+    ;(counterpart ?? nav?.querySelector<HTMLElement>('[aria-current="page"]') ?? triggerRef.current)?.focus()
   }, [open, isMobile])
 
   const { shell } = useAppearance()

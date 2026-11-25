@@ -131,6 +131,12 @@ test("sidebar: the toggle and ⌘B collapse it to a 48px rail of 32px icons and 
   await page.keyboard.press("Control+b")
   await expect.poll(async () => (await column(page).boundingBox())?.width).toBe(48)
   await expect(page.locator('[data-slot="sidebar"]').getByRole("button", { name: "Account" })).toBeFocused()
+  // And back: expanding from the rail's account control lands on the expanded one.
+  await page.keyboard.press("Control+b")
+  await expect.poll(async () => (await column(page).boundingBox())?.width).toBe(232)
+  await expect(page.locator('[data-slot="sidebar"]').getByRole("button", { name: "Account" })).toBeFocused()
+  await page.keyboard.press("Control+b")
+  await expect.poll(async () => (await column(page).boundingBox())?.width).toBe(48)
 
   // The reader's choice is kept per browser.
   await page.reload()
