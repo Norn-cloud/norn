@@ -396,6 +396,462 @@ fn an_installed_default_does_not_prove_an_edited_row() {
     }
 }
 
+/// Exact authenticated schema replay (#1750): a v1 row materialized with v2's
+/// default (`'standard'`) keeps `'standard'` across v3 (which changes the
+/// default to `'premium'`). Editing SQLite out-of-band to `'premium'` must
+/// fail closed with `UnprovenCorrection`, never pass via a union of defaults.
+#[test]
+fn a_v1_row_tampered_from_v2_default_to_v3_default_is_unproven() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&defaulted("standard")));
+    let (third, third_set) = definitions(&item(&defaulted("premium")));
+
+    let mut store = CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+        .expect("first definitions");
+    store.commit(&create("a", 15)).expect("created");
+    store
+        .install_definitions(second, input(&second_set, 20), Some(1), SCOPE)
+        .expect("second definitions");
+    store
+        .install_definitions(third.clone(), input(&third_set, 30), Some(2), SCOPE)
+        .expect("third definitions");
+    assert_eq!(
+        store
+            .read()
+            .observation_findings(MAIN_WORLD, "install.Item", "a")
+            .expect("proven before tamper"),
+        []
+    );
+    drop(store);
+
+    edit_rows(&path, "\"p:grade\" = 'premium'");
+    let reopened = CellStore::open(&path, third, StoreOptions::default()).expect("reopened");
+    let read = reopened.read();
+    let row = read
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("raw read")
+        .expect("row");
+    assert!(matches!(
+        read.observation_findings(MAIN_WORLD, "install.Item", "a"),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+    assert!(matches!(
+        read.observation_is_quarantined(MAIN_WORLD, &row),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+    assert!(matches!(
+        read.authoritative_object(MAIN_WORLD, "install.Item", "a"),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+}
+
+/// Exact authenticated schema replay (#1750): a newly added nullable column
+/// WITH a declared default (`'standard'`) materializes `'standard'` on v1
+/// rows. Editing SQLite out-of-band to `NULL` must fail closed with
+/// `UnprovenCorrection`.
+#[test]
+fn a_v1_row_nullable_with_default_tampered_to_null_is_unproven() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&[json!({
+        "id": "grade",
+        "type": { "kind": "text" },
+        "constraints": { "nullable": true },
+        "default": "standard"
+    })]));
+
+    let mut store = CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+        .expect("first definitions");
+    store.commit(&create("a", 15)).expect("created");
+    store
+        .install_definitions(second.clone(), input(&second_set, 20), Some(1), SCOPE)
+        .expect("second definitions");
+    let row = store
+        .read()
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.values.get("grade"), Some(&Value::from("standard")));
+    assert_eq!(
+        store
+            .read()
+            .observation_findings(MAIN_WORLD, "install.Item", "a")
+            .expect("proven before tamper"),
+        []
+    );
+    drop(store);
+
+    edit_rows(&path, "\"p:grade\" = NULL");
+    let reopened = CellStore::open(&path, second, StoreOptions::default()).expect("reopened");
+    let read = reopened.read();
+    let row = read
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("raw read")
+        .expect("row");
+    assert_eq!(row.values.get("grade"), Some(&Value::Null));
+    assert!(matches!(
+        read.observation_findings(MAIN_WORLD, "install.Item", "a"),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+    assert!(matches!(
+        read.observation_is_quarantined(MAIN_WORLD, &row),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+    assert!(matches!(
+        read.authoritative_object(MAIN_WORLD, "install.Item", "a"),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+}
+
+/// Exact authenticated schema replay (#1750): a nullable column added WITHOUT
+/// a default at v2 materializes `NULL` on v1 rows; adding a default
+/// (`'premium'`) to that existing column at v3 keeps `NULL` on the v1 row.
+/// Editing SQLite out-of-band from `NULL` to `'premium'` must fail closed.
+#[test]
+fn a_v1_row_nullable_without_default_tampered_to_v3_default_is_unproven() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (first, first_set) = definitions(&item(&[]));
+    let (second, second_set) = definitions(&item(&[json!({
+        "id": "remark",
+        "type": { "kind": "text" },
+        "constraints": { "nullable": true }
+    })]));
+    let (third, third_set) = definitions(&item(&[json!({
+        "id": "remark",
+        "type": { "kind": "text" },
+        "constraints": { "nullable": true },
+        "default": "premium"
+    })]));
+
+    let mut store = CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+        .expect("first definitions");
+    store.commit(&create("a", 15)).expect("created");
+    store
+        .install_definitions(second, input(&second_set, 20), Some(1), SCOPE)
+        .expect("second definitions");
+    store
+        .install_definitions(third.clone(), input(&third_set, 30), Some(2), SCOPE)
+        .expect("third definitions");
+    let row = store
+        .read()
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("read")
+        .expect("row");
+    assert_eq!(row.values.get("remark"), Some(&Value::Null));
+    assert_eq!(
+        store
+            .read()
+            .observation_findings(MAIN_WORLD, "install.Item", "a")
+            .expect("proven before tamper"),
+        []
+    );
+    drop(store);
+
+    edit_rows(&path, "\"p:remark\" = 'premium'");
+    let reopened = CellStore::open(&path, third, StoreOptions::default()).expect("reopened");
+    let read = reopened.read();
+    let row = read
+        .object(MAIN_WORLD, "install.Item", "a")
+        .expect("raw read")
+        .expect("row");
+    assert_eq!(row.values.get("remark"), Some(&Value::from("premium")));
+    assert!(matches!(
+        read.observation_findings(MAIN_WORLD, "install.Item", "a"),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+    assert!(matches!(
+        read.observation_is_quarantined(MAIN_WORLD, &row),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+    assert!(matches!(
+        read.authoritative_object(MAIN_WORLD, "install.Item", "a"),
+        Err(norn_cell::CellError::UnprovenCorrection)
+    ));
+}
+
+/// Build a model + canonical artifact set carrying `definition` and one
+/// always-enforced integrity law over `install.Item`.
+fn definitions_with_law(
+    definition: &serde_json::Value,
+    law_id: &str,
+    expression: &str,
+) -> (Model, String) {
+    let typed: ObjectTypeDef = serde_json::from_value(definition.clone()).expect("typed");
+    let artifact_id = format!("install.{law_id}.law");
+    let law_payload = json!({
+        "lawVersion": "0.1",
+        "id": law_id,
+        "owner": "install.controls",
+        "severity": "error",
+        "rationale": "Observation integrity law",
+        "provenance": { "source": "authoring_sdk" },
+        "subject": "install.Item",
+        "scope": {
+            "root": { "kind": "entity", "id": "install.Item" },
+            "objectTypes": ["install.Item"]
+        },
+        "modality": { "kind": "always" },
+        "response": { "kind": "predicate", "expression": expression }
+    });
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_value(json!([
+        {
+            "irVersion": "0.1",
+            "artifactId": "install.Item.entity",
+            "kind": "entity",
+            "namespace": "install",
+            "name": "Item",
+            "version": "0.1.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_demo", "environmentId": "dev" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk", "sourcePath": "test" },
+            "payload": { "entityVersion": "2.0", "objectType": definition }
+        },
+        {
+            "irVersion": "0.1",
+            "artifactId": artifact_id,
+            "kind": "law",
+            "namespace": "install",
+            "name": law_id,
+            "version": "0.1.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_demo", "environmentId": "dev" },
+            "dependencies": [
+                { "artifactId": "install.Item.entity", "kind": "entity", "version": "0.1.0", "required": true }
+            ],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": law_payload
+        }
+    ]))
+    .expect("artifacts");
+    let model = Model::from_definitions(&[typed], &[])
+        .expect("model")
+        .with_governing_laws(&artifacts)
+        .expect("governing laws");
+    let canonical = String::from_utf8(
+        norn_ir::canonical::canonical_json_of(&artifacts).expect("canonical set"),
+    )
+    .expect("utf8");
+    (model, canonical)
+}
+
+/// Capture one real observed `install.Item` through `SqliteCell` +
+/// `commit_observed_snapshot`, emitting an authentic quarantining finding when
+/// the observation breaks the active governing law.
+fn capture_observed_item(
+    cell: &mut norn_cell::SqliteCell<
+        norn_kernel::ObservationEvent,
+        BTreeMap<String, Value>,
+        BTreeMap<String, Value>,
+    >,
+    delivery: &str,
+    key: &str,
+    code: &str,
+) {
+    use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
+    use norn_kernel::{
+        CellHost as _, DecisionTurn, FactKey, ObservationId, Observed, Provenance, TypeCatalog,
+        World, load_slice,
+    };
+    let values = BTreeMap::from([("code".to_owned(), Value::from(code))]);
+    let provenance: norn_ir::InstanceProvenance = serde_json::from_value(json!({
+        "source": { "system": "synthetic-source", "record": format!("Item/{key}") },
+        "mappingVersion": "synthetic.items@1",
+        "recordedAt": "2026-11-01T10:01:00Z",
+        "sourceFields": ["code"]
+    }))
+    .expect("source provenance");
+    let observed = Observed {
+        id: ObservationId(delivery.to_owned()),
+        provenance: Provenance {
+            source: "synthetic-source".into(),
+            source_id: format!("Item/{key}"),
+            observed_at: cell.now(),
+            mapping_version: "synthetic.items@1".into(),
+        },
+        input: BTreeMap::from([
+            ("values".into(), Value::Object(values.clone())),
+            (
+                "provenance".into(),
+                norn_ir::runtime::encode(&provenance).expect("provenance"),
+            ),
+        ]),
+    };
+    assert!(cell.inject(&observed).expect("capture"));
+    let pending = cell.observe().expect("observe").expect("pending");
+    let model = cell.store().model().clone();
+    let catalog = TypeCatalog::new(model.object_types()).with_governing_laws(model.law_artifacts());
+    let fact_key = FactKey::new("install.Item", key);
+    let slice = load_slice(cell, [fact_key.clone()]).expect("slice");
+    let turn = DecisionTurn {
+        id: delivery.into(),
+        now: cell.now(),
+        world: World::Main,
+        consumes: Some(pending.consumed()),
+    };
+    let snapshot = ObservedSnapshot {
+        key: &fact_key,
+        values: &values,
+        lifecycles: &[],
+        provenance: &provenance,
+    };
+    commit_observed_snapshot(cell, &catalog, &slice, &turn, snapshot)
+        .expect("observed snapshot captured with finding");
+}
+
+/// Exact authenticated schema replay (#1750): a quarantined v1 observation
+/// cannot pass `proves()` or escape quarantine in `review_findings_at` via
+/// out-of-band SQLite edits targeting v2/v3 default or nullable columns — every
+/// such edit must fail closed with `UnprovenCorrection`.
+#[test]
+fn a_quarantined_observation_cannot_escape_quarantine_via_migrated_column_edits() {
+    let cases: [(&str, serde_json::Value, Option<serde_json::Value>, &str); 3] = [
+        (
+            "v2 default tampered to v3 default",
+            item(&defaulted("standard")),
+            Some(item(&defaulted("premium"))),
+            "\"p:grade\" = 'premium'",
+        ),
+        (
+            "nullable-with-default tampered to NULL",
+            item(&[json!({
+                "id": "grade",
+                "type": { "kind": "text" },
+                "constraints": { "nullable": true },
+                "default": "standard"
+            })]),
+            None,
+            "\"p:grade\" = NULL",
+        ),
+        (
+            "nullable-without-default tampered from NULL to v3-added default",
+            item(&[json!({
+                "id": "remark",
+                "type": { "kind": "text" },
+                "constraints": { "nullable": true }
+            })]),
+            Some(item(&[json!({
+                "id": "remark",
+                "type": { "kind": "text" },
+                "constraints": { "nullable": true },
+                "default": "premium"
+            })])),
+            "\"p:remark\" = 'premium'",
+        ),
+    ];
+
+    for (label, v2_def, v3_def, tamper_sql) in cases {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("cell.sqlite");
+        let (first, first_set) = definitions_with_law(&item(&[]), "code_ok", "self.code == \"ok\"");
+        let (second, second_set) = definitions_with_law(&v2_def, "code_ok", "self.code == \"ok\"");
+
+        let mut store =
+            CellStore::open(&path, first.clone(), StoreOptions::default()).expect("store");
+        store.bind("scope", SCOPE).expect("bind");
+        store
+            .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
+            .expect("v1");
+        let mut cell = norn_cell::SqliteCell::new(store, SCOPE, |_| BTreeMap::new()).expect("cell");
+        capture_observed_item(&mut cell, "obs-1", "a", "bad");
+
+        // Confirm `a` is quarantined at v1 before any schema migration.
+        assert!(
+            cell.store()
+                .read()
+                .authoritative_object(MAIN_WORLD, "install.Item", "a")
+                .expect("authoritative")
+                .is_none(),
+            "{label}: v1 observation should be quarantined"
+        );
+
+        cell.install_definitions(second.clone(), input(&second_set, 20), Some(1))
+            .expect("v2 installs over quarantined v1 observation");
+
+        let served = if let Some(v3_def) = v3_def {
+            let (third, third_set) =
+                definitions_with_law(&v3_def, "code_ok", "self.code == \"ok\"");
+            cell.install_definitions(third.clone(), input(&third_set, 30), Some(2))
+                .expect("v3 installs over quarantined v1 observation");
+            third
+        } else {
+            second
+        };
+
+        // Before tamper: the v1 observation is proven, quarantined, and has one
+        // open integrity finding.
+        {
+            let read = cell.store().read();
+            let row = read
+                .object(MAIN_WORLD, "install.Item", "a")
+                .expect("read")
+                .expect("row");
+            let findings = read
+                .observation_findings(MAIN_WORLD, "install.Item", "a")
+                .expect("findings before tamper");
+            assert_eq!(findings.len(), 1, "{label}: {findings:?}");
+            assert_eq!(findings[0].status, norn_ir::DataQualityFindingStatus::Open);
+            assert!(
+                read.observation_is_quarantined(MAIN_WORLD, &row)
+                    .expect("quarantined before tamper"),
+                "{label}: row should be quarantined before tamper"
+            );
+            assert!(
+                read.authoritative_object(MAIN_WORLD, "install.Item", "a")
+                    .expect("authoritative")
+                    .is_none(),
+                "{label}: quarantined row must be excluded from authoritative reads"
+            );
+        }
+        drop(cell);
+
+        // Tamper the migrated column out-of-band: exact schema replay must
+        // refuse with `UnprovenCorrection` rather than admitting the row or
+        // letting it proceed through `review_findings_at`.
+        edit_rows(&path, tamper_sql);
+        let reopened = CellStore::open(&path, served, StoreOptions::default()).expect("reopened");
+        let read = reopened.read();
+        let row = read
+            .object(MAIN_WORLD, "install.Item", "a")
+            .expect("raw read")
+            .expect("row");
+        assert!(
+            matches!(
+                read.observation_is_quarantined(MAIN_WORLD, &row),
+                Err(norn_cell::CellError::UnprovenCorrection)
+            ),
+            "{label}: tampered row must fail closed on quarantine check"
+        );
+        assert!(
+            matches!(
+                read.authoritative_object(MAIN_WORLD, "install.Item", "a"),
+                Err(norn_cell::CellError::UnprovenCorrection)
+            ),
+            "{label}: tampered row must fail closed on authoritative read"
+        );
+        assert!(
+            matches!(
+                read.observation_findings(MAIN_WORLD, "install.Item", "a"),
+                Err(norn_cell::CellError::UnprovenCorrection)
+            ),
+            "{label}: tampered row must fail closed on findings read"
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Step {
     /// Create `key`, its payload naming only `code` or every member.

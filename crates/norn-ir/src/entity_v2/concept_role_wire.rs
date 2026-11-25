@@ -63,7 +63,7 @@ impl JsonSchema for Role {
     }
 
     fn schema_id() -> Cow<'static, str> {
-        ConceptRole::schema_id()
+        Cow::Borrowed("norn_ir::entity_v2::concept_role::ConceptRole")
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
@@ -122,6 +122,10 @@ mod tests {
             assert_eq!(serde_json::from_str::<Role>(wire)?, role);
         }
         assert!(serde_json::from_str::<Role>("\"Thing\"").is_err());
+        assert_eq!(
+            <Role as schemars::JsonSchema>::schema_id(),
+            "norn_ir::entity_v2::concept_role::ConceptRole"
+        );
         let schema = serde_json::to_value(schemars::schema_for!(Role))?;
         assert_eq!(schema["title"], "ConceptRole");
         let spellings: Vec<_> = schema["oneOf"]

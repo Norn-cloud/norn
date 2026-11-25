@@ -1189,3 +1189,146 @@ async fn a_history_restore_rebuilds_lifecycle_states_and_the_rule_still_governs_
         ))
         .expect("a recorded transition on the restored cell");
 }
+
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
+fn open_dual() -> Cell {
+    let dual_def: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "test.Dual",
+        "properties": [
+            { "id": "workflow", "default": "draft", "type": { "kind": "enum", "values": [
+                { "value": "draft" }, { "value": "active" }, { "value": "archived" }
+            ] } },
+            { "id": "audit", "default": "pending", "type": { "kind": "enum", "values": [
+                { "value": "pending" }, { "value": "locked" }
+            ] } },
+            { "id": "title", "type": { "kind": "text" } }
+        ],
+        "lifecycles": [
+            {
+                "property": "workflow",
+                "initial": ["draft"],
+                "terminal": ["archived"],
+                "immutable": ["archived"],
+                "transitions": [
+                    { "id": "activate", "from": ["draft"], "to": "active" },
+                    { "id": "archive", "from": ["active"], "to": "archived" }
+                ]
+            },
+            {
+                "property": "audit",
+                "initial": ["pending"],
+                "terminal": ["locked"],
+                "immutable": ["locked"],
+                "transitions": [
+                    { "id": "lock", "from": ["pending"], "to": "locked" }
+                ]
+            }
+        ]
+    }))
+    .expect("dual definition decodes");
+    SqliteCell::open_in_memory(
+        common::model_of(&[dual_def]),
+        SCOPE,
+        |command: &norn_kernel::Command<JsonObject>| command.payload.clone(),
+    )
+    .expect("opens")
+}
+
+/// N1 (#1687): an object with two lifecycles can transition lifecycle A while
+/// lifecycle B stays fixed, and once lifecycle B enters an immutable state,
+/// unrecorded non-lifecycle writes are refused even while lifecycle A remains
+/// in a mutable state.
+#[test]
+fn a_two_lifecycle_object_governs_both_lifecycles_and_enforces_immutable_intersection() {
+    let mut cell = open_dual();
+    let key = FactKey::new("test.Dual", "DUAL-1");
+    let v1 = create(
+        &mut cell,
+        &key,
+        json!({ "workflow": "draft", "audit": "pending", "title": "initial" }),
+    );
+
+    // Transition lifecycle A (`workflow`: draft -> active) while lifecycle B
+    // (`audit`: pending) stays fixed; both are mutable so `title` may change.
+    cell.commit(put(
+        &key,
+        v1,
+        json!({ "workflow": "active", "audit": "pending", "title": "active-title" }),
+        vec![fired(&key, "workflow", "activate", "draft", "active")],
+    ))
+    .expect("transitioning lifecycle A while B stays fixed succeeds");
+    assert_eq!(property(&cell, &key, "workflow"), Some(json!("active")));
+    assert_eq!(property(&cell, &key, "audit"), Some(json!("pending")));
+    assert_eq!(property(&cell, &key, "title"), Some(json!("active-title")));
+
+    // Move lifecycle B (`audit`) to immutable `locked` while lifecycle A
+    // (`workflow`) remains in mutable `active`.
+    let v2 = cell.load(&key).expect("loads").version;
+    cell.commit(put(
+        &key,
+        v2,
+        json!({ "workflow": "active", "audit": "locked", "title": "active-title" }),
+        vec![fired(&key, "audit", "lock", "pending", "locked")],
+    ))
+    .expect("locking audit succeeds");
+    assert_eq!(property(&cell, &key, "audit"), Some(json!("locked")));
+
+    // Now A (`active`) is mutable, but B (`locked`) is immutable: a
+    // non-lifecycle write to `title` must be refused with zero partial effects.
+    let v3 = cell.load(&key).expect("loads").version;
+    let before = frozen(&cell);
+    let (refused_key, err) = refusal(
+        cell.commit(put(
+            &key,
+            v3,
+            json!({ "workflow": "active", "audit": "locked", "title": "mutated" }),
+            Vec::new(),
+        ))
+        .expect_err("non-lifecycle write must refuse when lifecycle B is immutable"),
+    );
+    assert_eq!(refused_key, key);
+    assert_eq!(
+        err,
+        LifecycleInitRefusal::ImmutableState {
+            lifecycle: "audit".into(),
+            state: "locked".into(),
+            property: "title".into(),
+        }
+    );
+    assert_eq!(frozen(&cell), before);
+
+    // An unrecorded jump on lifecycle A is still refused while B is fixed.
+    let (_, jumped) = refusal(
+        cell.commit(put(
+            &key,
+            v3,
+            json!({ "workflow": "archived", "audit": "locked", "title": "active-title" }),
+            Vec::new(),
+        ))
+        .expect_err("unrecorded transition on lifecycle A refuses"),
+    );
+    assert_eq!(
+        jumped,
+        LifecycleInitRefusal::UnrecordedTransition {
+            lifecycle: "workflow".into(),
+            reached: Some("active".into()),
+            written: Some("archived".into()),
+        }
+    );
+    assert_eq!(frozen(&cell), before);
+
+    // A recorded legal transition on lifecycle A (`active -> archived`) that
+    // keeps `title` and `audit` unchanged is admitted.
+    cell.commit(put(
+        &key,
+        v3,
+        json!({ "workflow": "archived", "audit": "locked", "title": "active-title" }),
+        vec![fired(&key, "workflow", "archive", "active", "archived")],
+    ))
+    .expect("recorded transition on lifecycle A succeeds with no other mutation");
+    assert_eq!(property(&cell, &key, "workflow"), Some(json!("archived")));
+    assert_eq!(property(&cell, &key, "audit"), Some(json!("locked")));
+}

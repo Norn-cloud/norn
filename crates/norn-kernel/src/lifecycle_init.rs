@@ -332,7 +332,7 @@ pub(crate) fn check_first_write_lifecycles(
             .map_err(lifecycle_init_refusal);
     }
     let replay = LifecycleReplay::new(catalog, key, trust, None);
-    let replayed = replay.replay(events)?;
+    let (replayed, _) = replay.replay(events)?;
     if replay.effective(&replayed)? != replay.effective(values)? {
         return Err(unrecorded(
             "the written values differ from the values its recorded changes produce",
@@ -346,16 +346,22 @@ pub(crate) fn check_first_write_lifecycles(
 /// fact events the same commit records for its canonical identity, in
 /// ledger order.
 ///
-/// The recorded events replay from the stored row under the decision path's
-/// own rules ([`LifecycleReplay`]): a transition fires from the state the
-/// replay holds with its guards evaluated there, a set never touches a
-/// lifecycle property and never lands in an immutable state. Then:
+/// Any declared lifecycle that does not resolve to an effective state machine
+/// fails closed ([`LifecycleInitRefusal::Unresolved`]). The recorded events
+/// replay from the stored row under the decision path's own rules
+/// ([`LifecycleReplay`]): creation and deletion of an already-existing object
+/// under a `Put` are refused, a transition fires from the state the replay
+/// holds with its guards evaluated there, and a set never touches a lifecycle
+/// property and never lands in an immutable state. Then:
 ///
 /// - every lifecycle property, inherited ones included, is written in exactly
 ///   the state that replay reaches. With no recorded transition that is the
 ///   stored state, so a `Put` alone never moves a lifecycle, a terminal state
 ///   is never left, and a skipped or forged transition is refused
 ///   ([`LifecycleInitRefusal::UnrecordedTransition`]);
+/// - every property explicitly modified by a recorded `FactEvent::Set` holds
+///   its final replayed value in the written row, so a forged `Set` cannot
+///   satisfy a transition guard without writing that value;
 /// - any other property the commit changes without recording it is a write
 ///   after the recorded ones, so it is refused when the replayed row holds an
 ///   immutable state ([`LifecycleInitRefusal::ImmutableState`]), as a
@@ -377,9 +383,19 @@ pub(crate) fn check_update_lifecycles(
         return Ok(());
     }
     let replay = LifecycleReplay::new(catalog, key, trust, Some(stored));
+    if let Some(unresolved) = replay
+        .lifecycle_properties
+        .iter()
+        .find(|property| !replay.lifecycles.contains_key(*property))
+    {
+        return Err(LifecycleInitRefusal::Unresolved {
+            lifecycle: unresolved.as_str().to_owned(),
+        });
+    }
+    let (replayed, set_properties) = replay.replay(events)?;
     // Compared as the host stores both rows, so a stored row that predates a
     // declared default is not a change.
-    let reached = replay.effective(&replay.replay(events)?)?;
+    let reached = replay.effective(&replayed)?;
     let written = replay.effective(values)?;
     let state = |values: &JsonObject, lifecycle: &PropertyId| match values.get(lifecycle.as_str()) {
         Some(JsonValue::String(state)) => Some(state.clone()),
@@ -398,6 +414,14 @@ pub(crate) fn check_update_lifecycles(
                 reached,
                 written,
             });
+        }
+    }
+    for property in &set_properties {
+        let name = property.as_str();
+        if reached.get(name) != written.get(name) {
+            return Err(unrecorded(&format!(
+                "the written value of {name} differs from its recorded set"
+            )));
         }
     }
     let Some((lifecycle, state)) = catalog.immutable_state(&key.object_type, &reached) else {
@@ -465,13 +489,20 @@ impl<'r, 'a> LifecycleReplay<'r, 'a> {
         }
     }
 
-    /// The object after `events`, applied in order to its pre-state.
-    fn replay(&self, events: &[&FactEvent]) -> Result<JsonObject, LifecycleInitRefusal> {
+    /// The object after `events`, applied in order to its pre-state, together
+    /// with the set of properties explicitly modified by `FactEvent::Set`.
+    fn replay(
+        &self,
+        events: &[&FactEvent],
+    ) -> Result<(JsonObject, BTreeSet<PropertyId>), LifecycleInitRefusal> {
         let mut current = self.stored.cloned();
+        let mut set_properties = BTreeSet::new();
         for event in events {
-            self.apply(&mut current, event)?;
+            self.apply(&mut current, &mut set_properties, event)?;
         }
-        current.ok_or_else(|| unrecorded("the recorded changes leave the object absent"))
+        let values =
+            current.ok_or_else(|| unrecorded("the recorded changes leave the object absent"))?;
+        Ok((values, set_properties))
     }
 
     /// `values` as the host stores them.
@@ -506,12 +537,18 @@ impl<'r, 'a> LifecycleReplay<'r, 'a> {
     /// every guard reads the values the final comparison does. A caller
     /// cannot supply a rules-only property: outside the kernel's owned-row
     /// origin, each one must hold exactly the value materialization gives it
-    /// without that input, or the kernel's creator stamp.
+    /// without that input, or the kernel's creator stamp. An object that
+    /// already existed before the commit is never re-created under a `Put`.
     fn create(
         &self,
         current: &mut Option<JsonObject>,
         created: &JsonObject,
     ) -> Result<(), LifecycleInitRefusal> {
+        if self.stored.is_some() {
+            return Err(unrecorded(
+                "the commit records the creation of an object that already existed",
+            ));
+        }
         if current.is_some() {
             return Err(unrecorded(
                 "the commit records the creation of an object that exists",
@@ -541,10 +578,17 @@ impl<'r, 'a> LifecycleReplay<'r, 'a> {
         Ok(())
     }
 
-    /// A recorded deletion, refused as decision preparation refuses it: a
-    /// type with rules-only properties, or with no effective view to prove
-    /// it has none, cannot be deleted (FA-PROTECT-1).
+    /// A recorded deletion, refused as decision preparation refuses it: an
+    /// object that already existed before the commit cannot be deleted and
+    /// re-created under a `Put`, and a type with rules-only properties, or
+    /// with no effective view to prove it has none, cannot be deleted
+    /// (FA-PROTECT-1).
     fn delete(&self, current: &mut Option<JsonObject>) -> Result<(), LifecycleInitRefusal> {
+        if self.stored.is_some() {
+            return Err(unrecorded(
+                "the commit records the deletion of an existing object under a put",
+            ));
+        }
         let protected = self
             .catalog
             .effective_type(&self.key.object_type)
@@ -569,6 +613,7 @@ impl<'r, 'a> LifecycleReplay<'r, 'a> {
     fn apply(
         &self,
         current: &mut Option<JsonObject>,
+        set_properties: &mut BTreeSet<PropertyId>,
         event: &FactEvent,
     ) -> Result<(), LifecycleInitRefusal> {
         let subject = match event {
@@ -595,7 +640,10 @@ impl<'r, 'a> LifecycleReplay<'r, 'a> {
             } => self.create(current, created)?,
             FactEvent::Set {
                 property, value, ..
-            } => self.set(current, property, value)?,
+            } => {
+                self.set(current, property, value)?;
+                set_properties.insert(property.clone());
+            }
             FactEvent::Transitioned {
                 lifecycle,
                 transition,
@@ -877,5 +925,307 @@ mod stamped_replay_tests {
             ),
             "written_by"
         ));
+    }
+}
+
+#[cfg(test)]
+mod update_replay_tests {
+    //! Direct `check_commit` regression tests for existing-object lifecycle
+    //! updates (#1687): delete+recreate resets (B2), unresolved lifecycles
+    //! (B3), and forged `Set`s satisfying transition guards (S1).
+
+    use std::convert::Infallible;
+
+    use norn_ir::{ObjectTypeDef, ObjectTypeName, PropertyId, TransitionId};
+
+    use crate::cell_host::{
+        CellCommit, CommitError, CommitModel, CommitView, Consumed, FactKey, FactMutation,
+        FactVersion, FactWrite, JsonObject, JsonValue, LinkKey,
+    };
+    use crate::commit_check::check_commit;
+    use crate::decision_commit::{FactEvent, TypeCatalog};
+
+    use super::LifecycleInitRefusal;
+
+    /// A minimal in-memory pre-state holding one stored object at version 1.
+    struct StoredRowView {
+        key: FactKey,
+        values: JsonObject,
+    }
+
+    impl CommitView for StoredRowView {
+        type Error = Infallible;
+
+        fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
+            Ok(false)
+        }
+
+        fn version(&self, key: &FactKey) -> Result<FactVersion, Infallible> {
+            Ok(if *key == self.key {
+                FactVersion(1)
+            } else {
+                FactVersion::ABSENT
+            })
+        }
+
+        fn concrete(&self, key: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+            Ok((*key == self.key).then(|| self.key.object_type.clone()))
+        }
+
+        fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
+            Ok(FactVersion::ABSENT)
+        }
+
+        fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+            Ok(Vec::new())
+        }
+
+        fn object_values(&self, key: &FactKey) -> Result<Option<JsonObject>, Infallible> {
+            Ok((*key == self.key).then(|| self.values.clone()))
+        }
+    }
+
+    #[allow(clippy::expect_used, reason = "test fixture")]
+    fn decode_type(value: serde_json::Value) -> ObjectTypeDef {
+        serde_json::from_value(value).expect("object type decodes")
+    }
+
+    #[allow(clippy::expect_used, reason = "test fixture")]
+    fn values(value: serde_json::Value) -> JsonObject {
+        serde_json::from_value(value).expect("values decode")
+    }
+
+    fn put_commit(
+        key: &FactKey,
+        written: serde_json::Value,
+        events: Vec<FactEvent>,
+    ) -> CellCommit<FactEvent, JsonObject, JsonObject> {
+        CellCommit {
+            writes: vec![FactWrite {
+                key: key.clone(),
+                expected: FactVersion(1),
+                mutation: FactMutation::Put {
+                    values: values(written),
+                },
+            }],
+            events,
+            ..CellCommit::empty()
+        }
+    }
+
+    /// B2 (#1687): `[FactEvent::Deleted, FactEvent::Created]` (and
+    /// `[FactEvent::Created]` alone) cannot reset an existing terminal or
+    /// immutable object through `check_commit`.
+    #[test]
+    fn deleted_then_created_cannot_reset_existing_terminal_or_immutable_object() {
+        let definition = decode_type(serde_json::json!({
+            "name": "test.Document",
+            "properties": [
+                { "id": "status", "default": "draft", "type": { "kind": "enum", "values": [
+                    { "value": "draft" }, { "value": "submitted" }, { "value": "published" }
+                ] } },
+                { "id": "pages", "type": { "kind": "integer" } }
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["draft"],
+                "terminal": ["published"],
+                "immutable": ["submitted", "published"],
+                "transitions": [
+                    { "id": "submit", "from": ["draft"], "to": "submitted" },
+                    { "id": "publish", "from": ["submitted"], "to": "published" }
+                ]
+            }]
+        }));
+        let catalog = TypeCatalog::new([&definition]);
+        let key = FactKey::new("test.Document", "D-1");
+
+        for state in ["published", "submitted"] {
+            let view = StoredRowView {
+                key: key.clone(),
+                values: values(serde_json::json!({ "status": state, "pages": 3 })),
+            };
+            let delete_then_create = put_commit(
+                &key,
+                serde_json::json!({ "status": "draft", "pages": 1 }),
+                vec![
+                    FactEvent::Deleted { key: key.clone() },
+                    FactEvent::Created {
+                        key: key.clone(),
+                        values: values(serde_json::json!({ "status": "draft", "pages": 1 })),
+                    },
+                ],
+            );
+            let err = check_commit(&delete_then_create, &CommitModel::new(&catalog), &view);
+            assert!(
+                matches!(
+                    err,
+                    Err(CommitError::LifecycleInitialization {
+                        key: ref refused_key,
+                        ref refusal,
+                    }) if *refused_key == key
+                        && matches!(**refusal, LifecycleInitRefusal::UnrecordedChange { .. })
+                ),
+                "{state}: unexpected result {err:?}"
+            );
+
+            let create_only = put_commit(
+                &key,
+                serde_json::json!({ "status": "draft", "pages": 1 }),
+                vec![FactEvent::Created {
+                    key: key.clone(),
+                    values: values(serde_json::json!({ "status": "draft", "pages": 1 })),
+                }],
+            );
+            let err = check_commit(&create_only, &CommitModel::new(&catalog), &view);
+            assert!(
+                matches!(
+                    err,
+                    Err(CommitError::LifecycleInitialization {
+                        key: ref refused_key,
+                        ref refusal,
+                    }) if *refused_key == key
+                        && matches!(**refusal, LifecycleInitRefusal::UnrecordedChange { .. })
+                ),
+                "{state}: unexpected result {err:?}"
+            );
+        }
+    }
+
+    /// B3 (#1687): an existing object whose declared lifecycle does not
+    /// resolve to an effective state machine fails closed with
+    /// `LifecycleInitRefusal::Unresolved`, even when the lifecycle property's
+    /// value is preserved.
+    #[test]
+    fn existing_object_with_unresolved_lifecycle_fails_closed() {
+        // Declaring a lifecycle on a non-enum property puts `status` in
+        // `lifecycle_properties` while leaving `lifecycles` empty.
+        let definition = decode_type(serde_json::json!({
+            "name": "test.Broken",
+            "properties": [
+                { "id": "status", "type": { "kind": "text" } },
+                { "id": "pages", "type": { "kind": "integer" } }
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["draft"],
+                "terminal": ["closed"],
+                "immutable": ["closed"],
+                "transitions": [{ "id": "close", "from": ["draft"], "to": "closed" }]
+            }]
+        }));
+        let catalog = TypeCatalog::new([&definition]);
+        let key = FactKey::new("test.Broken", "B-1");
+        let view = StoredRowView {
+            key: key.clone(),
+            values: values(serde_json::json!({ "status": "closed", "pages": 3 })),
+        };
+        let commit = put_commit(
+            &key,
+            serde_json::json!({ "status": "closed", "pages": 99 }),
+            Vec::new(),
+        );
+        let err = check_commit(&commit, &CommitModel::new(&catalog), &view);
+        assert!(
+            matches!(
+                err,
+                Err(CommitError::LifecycleInitialization {
+                    key: ref refused_key,
+                    ref refusal,
+                }) if *refused_key == key
+                    && **refusal == LifecycleInitRefusal::Unresolved {
+                        lifecycle: "status".to_owned()
+                    }
+            ),
+            "unexpected result {err:?}"
+        );
+    }
+
+    /// S1 (#1687): a forged `FactEvent::Set` that satisfies a transition guard
+    /// during replay while `written` holds a different value is refused, even
+    /// when the target state is mutable. A truthful `Set` whose value matches
+    /// `written` (alongside unrecorded non-lifecycle edits in the mutable
+    /// target state) is admitted.
+    #[test]
+    fn forged_set_satisfying_guard_without_matching_written_value_is_refused() {
+        let definition = decode_type(serde_json::json!({
+            "name": "test.MutableTarget",
+            "properties": [
+                { "id": "status", "default": "draft", "type": { "kind": "enum", "values": [
+                    { "value": "draft" }, { "value": "active" }
+                ] } },
+                { "id": "pages", "type": { "kind": "integer" } },
+                { "id": "note", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["draft"],
+                "transitions": [{
+                    "id": "activate",
+                    "from": ["draft"],
+                    "to": "active",
+                    "guards": ["self.pages > 0"]
+                }]
+            }]
+        }));
+        let catalog = TypeCatalog::new([&definition]);
+        let key = FactKey::new("test.MutableTarget", "M-1");
+        let view = StoredRowView {
+            key: key.clone(),
+            values: values(serde_json::json!({
+                "status": "draft",
+                "pages": 0,
+                "note": null
+            })),
+        };
+        let events = vec![
+            FactEvent::Set {
+                key: key.clone(),
+                property: PropertyId("pages".into()),
+                value: JsonValue::from(5_i64),
+            },
+            FactEvent::Transitioned {
+                key: key.clone(),
+                lifecycle: PropertyId("status".into()),
+                transition: TransitionId("activate".into()),
+                from: "draft".into(),
+                to: "active".into(),
+            },
+        ];
+
+        // Forged Set: written keeps `pages = 0` even though `Set` claimed 5.
+        let forged = put_commit(
+            &key,
+            serde_json::json!({ "status": "active", "pages": 0, "note": null }),
+            events.clone(),
+        );
+        let err = check_commit(&forged, &CommitModel::new(&catalog), &view);
+        assert!(
+            matches!(
+                err,
+                Err(CommitError::LifecycleInitialization {
+                    key: ref refused_key,
+                    ref refusal,
+                }) if *refused_key == key
+                    && matches!(
+                        &**refusal,
+                        LifecycleInitRefusal::UnrecordedChange { reason }
+                            if reason.contains("pages")
+                    )
+            ),
+            "unexpected result {err:?}"
+        );
+
+        // Truthful Set (`pages = 5` matches `written`) + unrecorded edit to
+        // `note` in the mutable target state `active`: admitted.
+        let truthful = put_commit(
+            &key,
+            serde_json::json!({ "status": "active", "pages": 5, "note": "updated" }),
+            events,
+        );
+        assert!(
+            check_commit(&truthful, &CommitModel::new(&catalog), &view).is_ok(),
+            "truthful Set plus unrecorded mutable-state edit must be admitted"
+        );
     }
 }

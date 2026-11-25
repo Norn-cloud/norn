@@ -486,18 +486,25 @@ impl ActionAuthorizer for NoResolver {
 }
 
 fn call<'a>(action: &'a ActionRoot, actor: &str, key: &str) -> TestResult<ActionCall<'a>> {
-    call_with(action, actor, key, json!({"expense_id": "EXP-1"}))
+    call_with(
+        action,
+        "expense.approve.action",
+        actor,
+        key,
+        json!({"expense_id": "EXP-1"}),
+    )
 }
 
 fn call_with<'a>(
     action: &'a ActionRoot,
+    action_artifact_id: &'a str,
     actor: &str,
     key: &str,
     input: Value,
 ) -> TestResult<ActionCall<'a>> {
     Ok(ActionCall {
         action,
-        action_artifact_id: "expense.approve.action",
+        action_artifact_id,
         action_version: "1.0.0",
         scope: BTreeMap::from([
             ("orgId".into(), "org_demo".into()),
@@ -794,8 +801,15 @@ fn a_governed_create_writer_reads_resolved_principal_inputs_and_fails_closed() -
     let host = Directory::new(&[("user:alice", &["approver"]), ("user:bob", &["member"])])?;
     let mut cell = open(&directory.path().join("create.sqlite"), &definitions)?;
     let advance = FactKey::new(ADVANCE, "ADV-1");
-    let file =
-        |actor: &str, key: &str| call_with(&action, actor, key, json!({"advance_id": "ADV-1"}));
+    let file = |actor: &str, key: &str| {
+        call_with(
+            &action,
+            "expense.advance.file.action",
+            actor,
+            key,
+            json!({"advance_id": "ADV-1"}),
+        )
+    };
     let untouched = |cell: &Cell, key: &str| -> TestResult {
         assert!(
             !cell.load(&advance)?.exists(),
@@ -887,5 +901,38 @@ fn a_governed_create_writer_reads_resolved_principal_inputs_and_fails_closed() -
     };
     assert_eq!(host.resolutions.get(), resolutions.saturating_add(1));
     assert_eq!(replayed, record);
+    Ok(())
+}
+
+/// S3 (#1760): a duplicate `create_only` call under a new idempotency key on an
+/// existing target returns `WriteModeFailed` without invoking the PDP resolver.
+#[test]
+fn a_duplicate_create_only_refuses_before_resolving_principal_inputs() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let definitions = types()?;
+    let rules = [rule()?, advance_rule()?];
+    let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    let action = file_advance()?;
+    let host = Directory::new(&[("user:alice", &["approver"])])?;
+    let mut cell = open(&directory.path().join("dup.sqlite"), &definitions)?;
+    let file = |key: &str| {
+        call_with(
+            &action,
+            "expense.advance.file.action",
+            "user:alice",
+            key,
+            json!({"advance_id": "ADV-1"}),
+        )
+    };
+    commit_action(&mut cell, &catalog, &file("alice-1")?, &host)?;
+    let resolutions = host.resolutions.get();
+    let duplicate = commit_action(&mut cell, &catalog, &file("alice-2")?, &host)
+        .expect_err("a second create_only on an existing target refuses");
+    assert_eq!(duplicate.code(), "action.write_mode_failed", "{duplicate}");
+    assert_eq!(
+        host.resolutions.get(),
+        resolutions,
+        "duplicate create_only must not invoke the principal-inputs resolver"
+    );
     Ok(())
 }

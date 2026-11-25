@@ -1,44 +1,13 @@
 //! OBS-EVIDENCE-1: durable finding identity and explicit authoritative population filtering.
 use crate::{
-    CellError, CommitBatch, Model, ObjectRecord, StoreReader,
+    CellError, CommitBatch, ObjectRecord, StoreReader,
     engine::{SqlEngine, SqlValue, params},
     read::to_i64,
     system::LEDGER,
 };
-use norn_ir::{
-    DataQualityFinding, DataQualityFindingStatus, ObjectTypeName, RuntimeObject, RuntimeValue,
-};
+use norn_ir::{DataQualityFinding, DataQualityFindingStatus, ObjectTypeName, RuntimeValue};
 use norn_kernel::{FactKey, TypeCatalog};
 use std::collections::BTreeSet;
-
-/// A value a record holds: null is the absence of one.
-fn held(value: &RuntimeValue) -> Option<&RuntimeValue> {
-    (!value.is_null()).then_some(value)
-}
-
-/// Whether `value` is exactly the default `model` declares for `member` of
-/// `object_type`, both as the cell stores them: typed equality through the
-/// scalar codec the writer and the install's materialization share, so one
-/// instant or one exact decimal is never two values.
-fn is_declared_default(
-    model: &Model,
-    object_type: &str,
-    member: &str,
-    value: &RuntimeValue,
-) -> bool {
-    let catalog = model.type_catalog();
-    let object_type = ObjectTypeName(object_type.into());
-    let stored = |submitted: RuntimeObject| {
-        catalog
-            .effective_object_values(&object_type, &submitted)
-            .ok()
-            .and_then(|mut values| values.remove(member))
-            .filter(|value| !value.is_null())
-    };
-    let declared = stored(RuntimeObject::new());
-    declared.is_some()
-        && declared == stored(RuntimeObject::from([(member.to_owned(), value.clone())]))
-}
 
 /// One authoritative page with explicit excluded-row accounting.
 #[derive(Debug)]
@@ -209,17 +178,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(findings)
     }
 
-    /// Whether the stored snapshot of `current`'s version is the row
-    /// `current` as read today.
+    /// Whether the authenticated snapshot of `current`'s version, replayed
+    /// through every intervening authenticated definitions install to the
+    /// active schema, produces the exact row `current` as read today.
     ///
-    /// Every member the snapshot names holds on the row exactly the value
-    /// the snapshot holds, null or not: a changed, added or erased value of
-    /// a member the row's version committed to is never proven.
-    ///
-    /// A member the snapshot does not name was installed after that version,
-    /// so the row never wrote it. It reads as null, or as the default its
-    /// install materialized on the rows that were already there
-    /// ([`Self::is_installed_default`]); any other value is not proven.
+    /// Replays `materialize_historical_values` step by step from the emitting
+    /// receipt's `definitions_version` through the active definitions version
+    /// (the same authenticated projection `verify_modified_before` uses), so
+    /// every column has one exact expected value: no union of historical and
+    /// active defaults, and no blanket null exemption for newly added columns.
     fn proves(
         &self,
         world: &str,
@@ -227,66 +194,63 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         current: &ObjectRecord,
     ) -> Result<bool, CellError> {
-        let Some(proof) = self.object_at_version(world, object_type, key, current.version)? else {
-            return Ok(false);
-        };
-        let committed = (&proof.object_type, &proof.id, &proof.scope, proof.version)
-            == (
-                &current.object_type,
-                &current.id,
-                &current.scope,
-                current.version,
-            )
-            && proof
-                .values
-                .iter()
-                .all(|(member, value)| held(value) == current.values.get(member).and_then(held));
-        if !committed {
+        let evidence = self.fact_version_evidence(world, object_type, key, current.version)?;
+        let snapshot = evidence.snapshot();
+        if (
+            &snapshot.object_type,
+            &snapshot.key,
+            &snapshot.scope,
+            snapshot.version,
+        ) != (
+            &current.object_type,
+            &current.id,
+            &current.scope,
+            current.version,
+        ) {
             return Ok(false);
         }
-        for (member, value) in &current.values {
-            if !proof.values.contains_key(member)
-                && !value.is_null()
-                && !self.is_installed_default(&current.object_type, member, value)?
+        let Some(mut materialized) = snapshot.values.clone() else {
+            return Ok(false);
+        };
+        let first = evidence.receipt().body.definitions_version;
+        let last = self.active_definitions_version()?.unwrap_or(0);
+        if first > last {
+            return Ok(false);
+        }
+        if first == last {
+            if first != 0
+                && self
+                    .installed_definitions(Some(first))?
+                    .is_none_or(|installed| installed.model_hash != snapshot.model_hash)
             {
                 return Ok(false);
             }
+            return Ok(
+                snapshot.model_hash == self.model().model_hash() && materialized == current.values
+            );
         }
-        Ok(true)
-    }
-
-    /// Whether `value` is what a definitions install materialized for
-    /// `member` on the rows of `object_type` that predate it: exactly the
-    /// default the active model declares or, when a later install changed
-    /// that default (which keeps the materialized values), the default of the
-    /// install that introduced the member.
-    fn is_installed_default(
-        &self,
-        object_type: &str,
-        member: &str,
-        value: &RuntimeValue,
-    ) -> Result<bool, CellError> {
-        if is_declared_default(self.model(), object_type, member, value) {
-            return Ok(true);
+        if first != 0 && self.retained_definition_model(first)?.model_hash() != snapshot.model_hash
+        {
+            return Ok(false);
         }
-        let declares = |model: &Model| {
-            model
-                .declaration(object_type, member)
-                .is_ok_and(|declaration| declaration.is_some())
-        };
-        // The first of the unbroken run of installed sets, ending at the
-        // active one, that declare the member: the install that added it.
-        let mut introduced = None;
-        let mut version = self.active_definitions_version()?.unwrap_or(0);
-        while version > 1 {
-            version = version.saturating_sub(1);
-            let previous = self.retained_definition_model(version)?;
-            if !declares(&previous) {
-                break;
+        let object_type_name = ObjectTypeName(snapshot.object_type.clone());
+        let mut previous_hash = snapshot.model_hash.clone();
+        for version in first.saturating_add(1)..=last {
+            let model = self.retained_definition_model(version)?;
+            if version == last && model.model_hash() != self.model().model_hash() {
+                return Ok(false);
             }
-            introduced = Some(previous);
+            if model.model_hash() == previous_hash {
+                continue;
+            }
+            materialized = crate::history::materialize_historical_values(
+                &model,
+                &object_type_name,
+                &materialized,
+            )?;
+            model.model_hash().clone_into(&mut previous_hash);
         }
-        Ok(introduced.is_some_and(|model| is_declared_default(&model, object_type, member, value)))
+        Ok(materialized == current.values)
     }
 
     fn review_findings(
