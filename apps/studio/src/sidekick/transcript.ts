@@ -16,11 +16,15 @@ export type SidekickChunk = UIMessageChunk<unknown, SidekickData>
 
 const TOOL_PREFIX = /^mcp__norn__/
 
+/** The tool identity a call carries in `_meta.claudeCode.toolName`, without the server prefix; null without one. */
+function metaToolName(update: { readonly _meta?: Record<string, unknown> | null }): string | null {
+  const meta = update._meta?.claudeCode as { toolName?: unknown } | undefined
+  return typeof meta?.toolName === "string" ? meta.toolName.replace(TOOL_PREFIX, "") : null
+}
+
 /** The Norn tool a tool call names, without the agent's server prefix. */
 export function toolName(update: { readonly title?: string | null; readonly _meta?: Record<string, unknown> | null }): string {
-  const meta = update._meta?.claudeCode as { toolName?: unknown } | undefined
-  const name = typeof meta?.toolName === "string" ? meta.toolName : update.title ?? "tool"
-  return name.replace(TOOL_PREFIX, "")
+  return metaToolName(update) ?? (update.title ?? "tool").replace(TOOL_PREFIX, "")
 }
 
 /** What each Norn tool did, in plain words; another tool reads as its name. */
@@ -61,7 +65,8 @@ export class Turn {
   private text: string | null = null
   private texts = 0
   private views = 0
-  private readonly tools = new Map<string, { settled: boolean }>()
+  /** Each tool call this turn opened: settled once it has an outcome, its input as last drawn, and whether the person was asked. */
+  private readonly tools = new Map<string, { name: string; settled: boolean; input: string; asked: boolean }>()
   private finished = false
 
   constructor(private readonly emit: (chunk: SidekickChunk) => void) {}
@@ -76,13 +81,24 @@ export class Turn {
     this.text = null
   }
 
-  /** Open a tool part for this call if the turn has not seen it yet. */
-  private openTool(call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">) {
-    if (this.tools.has(call.toolCallId)) return
-    this.closeText()
-    this.tools.set(call.toolCallId, { settled: false })
-    const name = toolName(call)
-    this.emit({ type: "tool-input-available", toolCallId: call.toolCallId, toolName: name, title: toolWords(name), input: call.rawInput ?? {}, dynamic: true })
+  /**
+   * Open a tool part for this call, or draw its input again when the call now carries a different
+   * one. The agent announces a call before its input has finished streaming, then sends the whole
+   * input in a later update and in the approval question; the part always shows the input the
+   * person is asked about. Once the person was asked, only the question redraws it: the part keeps
+   * their question and the input that came with it. The question also names the tool by the bridge's
+   * own identity (`_meta.claudeCode.toolName`), which wins over the name the call opened with.
+   */
+  private openTool(call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">, question = false) {
+    const known = this.tools.get(call.toolCallId)
+    // The name is the one the call opened with (a later update may not repeat it), unless the question names it.
+    const name = (question ? metaToolName(call) : null) ?? known?.name ?? toolName(call)
+    const input = call.rawInput ?? (known === undefined ? {} : JSON.parse(known.input) as unknown)
+    const drawn = JSON.stringify(input)
+    if (known !== undefined && (known.settled || (known.asked && !question) || (known.input === drawn && known.name === name))) return
+    if (known === undefined) this.closeText()
+    this.tools.set(call.toolCallId, { name, settled: false, input: drawn, asked: known?.asked ?? false })
+    this.emit({ type: "tool-input-available", toolCallId: call.toolCallId, toolName: name, title: toolWords(name), input, dynamic: true })
   }
 
   private settle(toolCallId: string, chunk: SidekickChunk) {
@@ -110,11 +126,13 @@ export class Turn {
         if (update.status === "completed") this.settle(update.toolCallId, { type: "tool-output-available", toolCallId: update.toolCallId, output: contentText(update), dynamic: true })
         if (update.status === "failed") this.settle(update.toolCallId, { type: "tool-output-error", toolCallId: update.toolCallId, errorText: contentText(update) || "The tool call failed.", dynamic: true })
         return
-      case "tool_call_update":
+      case "tool_call_update": {
         if (!this.tools.has(update.toolCallId)) return
+        this.openTool(update)
         if (update.status === "completed") this.settle(update.toolCallId, { type: "tool-output-available", toolCallId: update.toolCallId, output: contentText(update), dynamic: true })
         if (update.status === "failed") this.settle(update.toolCallId, { type: "tool-output-error", toolCallId: update.toolCallId, errorText: contentText(update) || "The tool call failed.", dynamic: true })
         return
+      }
       default:
         return
     }
@@ -130,7 +148,10 @@ export class Turn {
   /** The bridge asks the person before this call runs. */
   approval(approvalId: string, call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">) {
     if (this.finished) return
-    this.openTool(call)
+    // The question's own input is drawn first, so the person sees what they are allowing.
+    this.openTool(call, true)
+    const tool = this.tools.get(call.toolCallId)
+    if (tool !== undefined) tool.asked = true
     this.emit({ type: "tool-approval-request", approvalId, toolCallId: call.toolCallId })
   }
 

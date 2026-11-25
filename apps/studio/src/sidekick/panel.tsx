@@ -53,6 +53,10 @@ const STATE: Readonly<Record<DynamicToolUIPart["state"], { readonly status: stri
   "output-denied": { status: "declined", word: "Declined", dot: "destructive" },
 }
 
+/** A call the turn left unfinished (the person stopped it, or it ended first): it shows as stopped, never as still running or still asking. */
+const STOPPED = { status: "stopped", word: "Stopped", dot: "outline" } as const
+const UNFINISHED: ReadonlySet<DynamicToolUIPart["state"]> = new Set(["input-streaming", "input-available", "approval-requested", "approval-responded"])
+
 function ViewCard({ delivery, host }: { readonly delivery: ViewDelivery; readonly host: ToolHost }) {
   const view = viewOf(delivery.view)
   if (view === null) return null
@@ -72,9 +76,11 @@ function CallInput({ input }: { readonly input: unknown }) {
 }
 
 /** The bridge's question, under the call it is about: Allow or Decline, and afterwards what was answered. */
-function Approval({ part, onAnswer }: { readonly part: DynamicToolUIPart; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
+function Approval({ part, live, onAnswer }: { readonly part: DynamicToolUIPart; readonly live: boolean; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
   const approval = part.approval
   if (approval === undefined) return null
+  // The turn ended before the person answered: the question is closed, and the call never ran.
+  if (part.state === "approval-requested" && !live) return <p className="text-meta text-muted-foreground">Stopped before you answered; nothing ran.</p>
   if (part.state === "approval-requested") {
     return (
       <div role="group" aria-label="Approve this call" className="space-y-3 rounded-(--radius-well) border border-(--panel-border) bg-well p-3" data-slot="approval">
@@ -90,9 +96,10 @@ function Approval({ part, onAnswer }: { readonly part: DynamicToolUIPart; readon
   return <p className="text-meta text-muted-foreground">{approval.approved ? "You allowed this call." : "You declined; nothing ran."}</p>
 }
 
-function ToolCall({ part, onAnswer }: { readonly part: DynamicToolUIPart; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
-  const asking = part.state === "approval-requested"
-  const state = STATE[part.state]
+function ToolCall({ part, live, onAnswer }: { readonly part: DynamicToolUIPart; readonly live: boolean; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
+  const stopped = !live && UNFINISHED.has(part.state)
+  const asking = part.state === "approval-requested" && !stopped
+  const state = stopped ? STOPPED : STATE[part.state]
   // A call waiting on the person opens by itself; otherwise the reader opens it.
   const [open, setOpen] = useState(asking)
   useEffect(() => { if (asking) setOpen(true) }, [asking])
@@ -100,7 +107,7 @@ function ToolCall({ part, onAnswer }: { readonly part: DynamicToolUIPart; readon
     <Trace data-tool={part.toolName} data-status={state.status}>
       <TraceCollapsible open={open} onOpenChange={setOpen}>
         <TraceCollapsibleTrigger className="gap-2">
-          <TraceLine status={part.state === "output-error" ? "error" : part.state === "input-available" || part.state === "approval-responded" ? "running" : undefined}>
+          <TraceLine status={part.state === "output-error" ? "error" : !stopped && (part.state === "input-available" || part.state === "approval-responded") ? "running" : undefined}>
             <TraceIcon><Wrench /></TraceIcon>
             <TraceTitle>{toolWords(part.toolName)}</TraceTitle>
           </TraceLine>
@@ -109,7 +116,7 @@ function ToolCall({ part, onAnswer }: { readonly part: DynamicToolUIPart; readon
         <TraceCollapsibleContent className="space-y-3">
           <CallInput input={part.input} />
           {part.state === "output-error" && <p className="text-body text-destructive-text">{part.errorText}</p>}
-          <Approval part={part} onAnswer={onAnswer} />
+          <Approval part={part} live={live} onAnswer={onAnswer} />
         </TraceCollapsibleContent>
       </TraceCollapsible>
     </Trace>
@@ -118,12 +125,12 @@ function ToolCall({ part, onAnswer }: { readonly part: DynamicToolUIPart; readon
 
 /** The mascot's pose for an assistant message: what Sidekick is doing in it right now. */
 function poseOf(message: SidekickMessage, live: boolean, failed: boolean): MascotState {
-  if (message.parts.some((part) => part.type === "dynamic-tool" && part.state === "approval-requested")) return "asking"
+  if (live && message.parts.some((part) => part.type === "dynamic-tool" && part.state === "approval-requested")) return "asking"
   if (failed) return "unavailable"
   return live ? "thinking" : "answered"
 }
 
-function AssistantMessage({ message, pose, host, onAnswer }: { readonly message: SidekickMessage; readonly pose: MascotState; readonly host: ToolHost; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
+function AssistantMessage({ message, pose, live, host, onAnswer }: { readonly message: SidekickMessage; readonly pose: MascotState; readonly live: boolean; readonly host: ToolHost; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
   const drawn = message.parts.some((part) => part.type === "text" || part.type === "dynamic-tool" || part.type === "data-view")
   return (
     <Message data-role="assistant" className="items-start text-body">
@@ -134,7 +141,7 @@ function AssistantMessage({ message, pose, host, onAnswer }: { readonly message:
         {pose === "thinking" && !drawn && <p role="status" className="text-body text-muted-foreground">Thinking…</p>}
         {message.parts.map((part, index) => {
           if (part.type === "text") return <Streamdown key={index} className="text-body [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{part.text}</Streamdown>
-          if (part.type === "dynamic-tool") return <ToolCall key={part.toolCallId} part={part} onAnswer={onAnswer} />
+          if (part.type === "dynamic-tool") return <ToolCall key={part.toolCallId} part={part} live={live} onAnswer={onAnswer} />
           if (part.type === "data-view") return <ViewCard key={part.id ?? index} delivery={part.data} host={host} />
           return null
         })}
@@ -218,7 +225,7 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
                 </MessageContent>
               </Message>
             )
-            : <AssistantMessage key={message.id} message={message} host={host} onAnswer={answer} pose={poseOf(message, working && index === messages.length - 1, error !== undefined && index === messages.length - 1)} />)}
+            : <AssistantMessage key={message.id} message={message} host={host} onAnswer={answer} live={working && index === messages.length - 1} pose={poseOf(message, working && index === messages.length - 1, error !== undefined && index === messages.length - 1)} />)}
           {waiting && (
             <p role="status" className="flex items-center gap-2.5 text-body text-muted-foreground">
               <Mascot size={28} state="thinking" />{status === "submitted" ? "Connecting…" : "Thinking…"}

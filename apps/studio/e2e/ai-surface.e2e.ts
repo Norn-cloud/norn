@@ -205,6 +205,57 @@ for (const answer of ["Allow", "Decline"] as const) {
   })
 }
 
+test("approval: a call announced before its input shows the input the person is asked about, next to Allow", async ({ page }) => {
+  await studio(page)
+  let picked: unknown
+  await bridge(page, async ({ update, ask }) => {
+    // The adapter's real order: tool_call with no input yet, then the question carries the whole input.
+    update(tool("t2", "norn_call_action"))
+    picked = await ask("norn_call_action", { action: "demo.record.close", input: { id: "R-1", reason: "duplicate" } })
+    update({ sessionUpdate: "tool_call_update", toolCallId: "t2", status: "failed" })
+    return "end_turn"
+  })
+  const panel = await openSidekick(page)
+  await panel.getByLabel("Message Sidekick").fill("Close R-1")
+  await panel.getByLabel("Message Sidekick").press("Enter")
+  const call = panel.locator("[data-tool=norn_call_action]")
+  await expect(call).toHaveAttribute("data-status", "awaiting_approval")
+  const allow = call.getByRole("button", { name: "Allow" })
+  await expect(allow).toBeVisible()
+  const input = call.locator("pre")
+  await expect(input).toBeVisible()
+  await expect(input).toContainText("demo.record.close")
+  await expect(input).toContainText("duplicate")
+  if (shots) await shoot(page, "sidekick-approval-args")
+  await call.getByRole("button", { name: "Decline" }).click()
+  await expect.poll(() => picked).toEqual({ outcome: { outcome: "selected", optionId: "reject" } })
+})
+
+test("approval: Stop while the bridge is asking closes the question; the call shows as stopped and nothing is left to answer", async ({ page }) => {
+  await studio(page)
+  let picked: unknown
+  const sent = await bridge(page, async ({ update, ask, cancelled }) => {
+    update(tool("t2", "norn_call_action", { rawInput: { action: "demo.record.close", input: { id: "R-1" } } }))
+    picked = await ask("norn_call_action", { action: "demo.record.close", input: { id: "R-1" } })
+    await cancelled
+    return "cancelled"
+  })
+  const panel = await openSidekick(page)
+  await panel.getByLabel("Message Sidekick").fill("Close R-1")
+  await panel.getByLabel("Message Sidekick").press("Enter")
+  const call = panel.locator("[data-tool=norn_call_action]")
+  await expect(call).toHaveAttribute("data-status", "awaiting_approval")
+  await panel.getByRole("button", { name: "Stop" }).click()
+  await expect.poll(() => picked).toEqual({ outcome: { outcome: "cancelled" } })
+  await expect.poll(() => sent.some((message) => message.method === "session/cancel")).toBe(true)
+  await expect(call).toHaveAttribute("data-status", "stopped")
+  await expect(call).toContainText("Stopped before you answered; nothing ran.")
+  await expect(call.getByRole("button", { name: "Allow" })).toHaveCount(0)
+  await expect(call.getByRole("button", { name: "Decline" })).toHaveCount(0)
+  await expect(panel.locator("[data-role=assistant] [data-slot=mascot]").first()).not.toHaveAttribute("data-state", "asking")
+  await expect(panel.getByRole("button", { name: "Send" })).toBeVisible()
+})
+
 test("refusal: a call the cell refuses draws the server's words; a refused grant says so and Retry asks again", async ({ page }) => {
   const grant = await studio(page, "refused")
   await bridge(page, async ({ update, view }) => {
@@ -253,8 +304,7 @@ test("a11y: Sidekick idle and mid-conversation and the Ask bar have no axe viola
   expect(await check("[data-slot=sidekick]")).toEqual([])
   // Dark: measured once the scheme has settled (colours transition for 150ms; reduced motion stops that).
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" })
-  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true)
-  await page.waitForTimeout(400)
+  await settled(page, "dark")
   expect(await check("[data-slot=sidekick]")).toEqual([])
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" })
   if (shots) await shoot(page, "sidekick-conversation")
@@ -283,6 +333,15 @@ test("mascot: every state draws on the contact sheet; it moves only when motion 
 })
 
 /**
+ * Wait until the page has painted `scheme`: the scheme class is on the root and no CSS transition is
+ * still running, so the computed colours are the settled ones (no fixed sleep).
+ */
+async function settled(page: Page, scheme: "light" | "dark") {
+  await expect.poll(() => page.evaluate((dark) => document.documentElement.classList.contains("dark") === dark
+    && document.getAnimations().every((animation) => !(animation instanceof CSSTransition) || animation.playState !== "running"), scheme === "dark")).toBe(true)
+}
+
+/**
  * Light and dark at the current width, for review. The width never changes mid-conversation: below
  * 768px the panel is a sheet, and moving between the two remounts the chat (a 390px pass starts its
  * own conversation, below).
@@ -291,7 +350,7 @@ async function shoot(page: Page, name: string) {
   const label = (page.viewportSize()?.width ?? 1440) < 640 ? "390" : "desktop"
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" })
-    await page.waitForTimeout(400)
+    await settled(page, scheme)
     await page.screenshot({ path: `${shots}/${name}-${label}-${scheme}.png` })
   }
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" })
@@ -333,7 +392,7 @@ test("screenshots: home with the Ask Norn bar and a few core pages in Luma geome
       await expect(page.locator(ready).first()).toBeVisible()
       for (const scheme of ["light", "dark"] as const) {
         await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" })
-        await page.waitForTimeout(500)
+        await settled(page, scheme)
         await page.screenshot({ path: `${shots}/${name}-${label}-${scheme}.png`, fullPage: label === "390" })
       }
     }

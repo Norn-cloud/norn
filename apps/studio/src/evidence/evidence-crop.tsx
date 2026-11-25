@@ -53,8 +53,8 @@ function Correction({ evidence, subject }: { readonly evidence: Evidence; readon
   if (value === undefined || value === null) return null
   const scale = scaleOf(catalog.data?.document ?? [], subject.objectType, property)
   return (
-    <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-foreground">
-      <PencilLine aria-hidden className="size-3.5 self-center text-emerald-700 dark:text-emerald-400" />
+    <div className="flex flex-wrap items-baseline gap-x-1.5 rounded-sm bg-success/10 px-1.5 py-0.5 text-foreground">
+      <PencilLine aria-hidden className="size-3.5 self-center text-success" />
       <span>Read <span className="font-mono">“{evidence.text}”</span> → corrected to <span className="font-mono">{atScale(String(value), scale)}</span></span>
       <span className="text-muted-foreground">by {correction.writer.actor} ·</span>
       <Link to="/sources/$concept/$" params={{ concept: subject.objectType, _splat: subject.id }} hash="lineage" className="underline underline-offset-4" title="The correction's receipt and lineage">commit {correction.commit}</Link>
@@ -106,7 +106,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
         {scan.data && whole && (
           <div className="relative">
             <img src={scan.data.document.getUrl} alt={`Page ${evidence.page} of the scanned document`} className="w-full" />
-            <div aria-hidden className="absolute rounded-sm ring-2 ring-amber-500" style={{ left: percent(x), top: percent(y), width: percent(w), height: percent(h) }} />
+            <div aria-hidden className="absolute rounded-sm ring-2 ring-warning" style={{ left: percent(x), top: percent(y), width: percent(w), height: percent(h) }} />
           </div>
         )}
         {scan.isPending && <div className="flex h-16 items-center justify-center text-meta text-muted-foreground">Reading the scanned page…</div>}

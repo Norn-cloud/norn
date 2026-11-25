@@ -21,8 +21,11 @@
  *   ask, and the relay forwards that `session/request_permission` to the browser with only the
  *   "allow once" and "reject" options. It forwards back only an option it offered (anything else
  *   is the reject), answers `cancelled` for every open question when the person stops the turn, and
- *   never lets "always allow" through. If `tools/list` fails, nothing is pre-allowed. The cell
- *   still decides each call as the person.
+ *   never lets "always allow" through. If `tools/list` fails, nothing is pre-allowed. The session
+ *   runs in the manual permission mode (never auto or bypass, whatever the host's settings say;
+ *   the relay closes the connection if the adapter reports any other mode), and the relay's own MCP
+ *   proxy forwards a non-read-only `tools/call` only when it spends a one-time approval the person
+ *   gave for that tool with those arguments. The cell still decides each call as the person.
  * - The grant never reaches the agent. The agent's MCP server is this relay
  *   (`http://127.0.0.1:<port>/mcp/<capability>`, a random per-connection path); the relay adds the
  *   person's current grant on the way to Studio's /mcp, so the cell's PDP decides every call as
@@ -169,11 +172,17 @@ export function rewriteInitialize(params: Json | undefined): Json {
   }
 }
 
+/** The only permission mode a Sidekick session runs in: every non-pre-allowed tool asks (ACP mode id). */
+export const MANUAL_MODE = "default"
+
 /** The `session/new` the adapter sees: whatever the browser asked, only the Norn server, locked options, the scratch cwd. */
 export function rewriteNewSession(cwd: string, mcpUrl: string, model?: string, readOnly: Iterable<string> = []): Json {
   return {
     cwd,
     mcpServers: [{ type: "http", name: MCP_SERVER_NAME, url: mcpUrl, headers: [] }],
+    // The adapter picks the starting mode from the host's settings (auto when none is set); the
+    // session is switched to manual before it answers, and the relay checks the answer says so.
+    configOptions: [{ configId: "mode", value: MANUAL_MODE }],
     _meta: {
       claudeCode: {
         options: {
@@ -182,6 +191,8 @@ export function rewriteNewSession(cwd: string, mcpUrl: string, model?: string, r
           // Only the cell's read-only tools run without asking; every other Norn tool asks the person.
           allowedTools: [...readOnly].filter((name) => /^norn_[a-z0-9_]+$/.test(name)).sort().map((name) => `mcp__${MCP_SERVER_NAME}__${name}`),
           settingSources: [],
+          // No bypass mode, whatever the host's settings allow.
+          allowDangerouslySkipPermissions: false,
           strictMcpConfig: true,
           skills: [],
           plugins: [],
@@ -205,21 +216,96 @@ export function rewritePrompt(params: Json | undefined): Json | null {
   return text.length === 0 ? null : { sessionId, prompt: text }
 }
 
-/** Whether a permission request is for one of the Norn server's tools. */
-export function isNornTool(params: Json | undefined): boolean {
+/**
+ * The Norn tool a permission request names, without the server prefix; null when it is not a Norn
+ * tool. The name is read only from `_meta.claudeCode.toolName` (the adapter's tool identity), never
+ * from `title`, which is display text; without it the request is not a Norn tool and is refused.
+ */
+export function nornToolName(params: Json | undefined): string | null {
   const call = params?.toolCall as Json | undefined
   const meta = call?._meta as { claudeCode?: { toolName?: unknown } } | undefined
-  const name = meta?.claudeCode?.toolName ?? call?.title
-  return typeof name === "string" && name.startsWith(`mcp__${MCP_SERVER_NAME}__`)
+  const name = meta?.claudeCode?.toolName
+  const prefix = `mcp__${MCP_SERVER_NAME}__`
+  return typeof name === "string" && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null
 }
 
-/** The Norn tool a permission request names, without the server prefix; null when it is not a Norn tool. */
-export function nornToolName(params: Json | undefined): string | null {
-  if (!isNornTool(params)) return null
-  const call = params?.toolCall as Json | undefined
-  const meta = call?._meta as { claudeCode?: { toolName?: unknown } } | undefined
-  const name = (meta?.claudeCode?.toolName ?? call?.title) as string
-  return name.slice(`mcp__${MCP_SERVER_NAME}__`.length)
+/** Whether a permission request is for one of the Norn server's tools. */
+export const isNornTool = (params: Json | undefined): boolean => nornToolName(params) !== null
+
+/** A JSON value with object keys sorted, so the same arguments always read the same. */
+export function canonicalJson(value: unknown): string {
+  const sort = (item: unknown): unknown => Array.isArray(item)
+    ? item.map(sort)
+    : item !== null && typeof item === "object"
+      ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, sort((item as Json)[key])]))
+      : item
+  return JSON.stringify(sort(value ?? {}))
+}
+
+/** One call the person allowed once: the Norn tool and its exact arguments. */
+export interface Approval { readonly tool: string; readonly input: string }
+
+/** The MCP methods the proxy forwards without an approval: none of them runs a tool. Anything else but `tools/call` is refused. */
+export const PROXY_METHODS: ReadonlySet<string> = new Set(["initialize", "notifications/initialized", "ping", "tools/list", "resources/list", "resources/read", "resources/templates/list"])
+
+const plainObject = (value: unknown): value is Json =>
+  value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype
+
+/**
+ * Whether the agent's MCP request may reach Studio. Fails closed: only one plain JSON-RPC object
+ * passes (a batch is refused); a method that runs nothing (`PROXY_METHODS`) passes, a read-only tool
+ * passes, any other tool passes only by spending one approval the person gave for that tool with
+ * those arguments, and every other method is refused.
+ */
+export function proxyAdmits(body: unknown, readOnly: ReadonlySet<string>, approvals: Approval[]): boolean {
+  if (!plainObject(body)) return false
+  if (body.method !== "tools/call") return typeof body.method === "string" && PROXY_METHODS.has(body.method)
+  const call = body as { params?: { name?: unknown; arguments?: unknown } }
+  if (!plainObject(call.params)) return false
+  const name = call.params.name
+  if (typeof name !== "string") return false
+  if (readOnly.has(name)) return true
+  const input = canonicalJson(call.params?.arguments)
+  const at = approvals.findIndex((approval) => approval.tool === name && approval.input === input)
+  if (at < 0) return false
+  approvals.splice(at, 1)
+  return true
+}
+
+/** A JSON number literal as an exact decimal: sign, significant digits and exponent; "0" for zero, "NaN" for anything else. */
+export function exactDecimal(literal: string): string {
+  const parts = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(literal)
+  if (parts === null) return "NaN"
+  const fraction = parts[3] ?? ""
+  const digits = `${parts[2]}${fraction}`.replace(/^0+/, "")
+  if (digits === "") return "0"
+  const significant = digits.replace(/0+$/, "")
+  const exponent = BigInt(parts[4] ?? "0") - BigInt(fraction.length) + BigInt(digits.length - significant.length)
+  return `${parts[1]}${significant}e${exponent}`
+}
+
+const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y
+
+/**
+ * Whether every number in a JSON text survives JSON.parse exactly: re-serialised, it is the same
+ * decimal. Studio reads numbers as exact decimals, so a number a double rounds (2^53 + 1, 1e-400,
+ * 0.1000000000000000000001) would reach Studio as something other than what the person was shown.
+ * `text` must already be valid JSON.
+ */
+export function exactNumbers(text: string): boolean {
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at] as string
+    if (char === '"') {
+      for (at += 1; at < text.length && text[at] !== '"'; at += text[at] === "\\" ? 2 : 1) { /* inside a string */ }
+      continue
+    }
+    if (char !== "-" && (char < "0" || char > "9")) continue
+    NUMBER.lastIndex = at
+    const literal = NUMBER.exec(text)?.[0]
+    if (literal === undefined || exactDecimal(literal) !== exactDecimal(String(Number(literal)))) return false
+    at += literal.length - 1
+  }
+  return true
 }
 
 /** The tools the cell's own `tools/list` marks read-only: the only ones that run without asking. */
@@ -286,6 +372,20 @@ export function forwardedUpdate(message: Message): boolean {
   return update?.sessionUpdate !== "usage_update"
 }
 
+/** Whether every mode config option (id or category `mode`) in a list is set to the manual mode; true when there is none. */
+export function manualConfigOptions(options: unknown): boolean {
+  if (options === undefined || options === null) return true
+  if (!Array.isArray(options)) return false
+  return options.every((option: { id?: unknown; category?: unknown; currentValue?: unknown } | null) =>
+    option === null || typeof option !== "object" || (option.id !== "mode" && option.category !== "mode") || option.currentValue === MANUAL_MODE)
+}
+
+/** Whether the adapter's `session/new` answer puts the session in the manual permission mode (its mode and any mode config option). */
+export function manualMode(result: unknown): boolean {
+  const answer = result as { modes?: { currentModeId?: unknown }; configOptions?: unknown } | undefined
+  return answer?.modes?.currentModeId === MANUAL_MODE && manualConfigOptions(answer.configOptions)
+}
+
 // ---------------------------------------------------------------- MCP views
 
 /** The MCP Apps view a tool names, from its `tools/list` entry. */
@@ -309,8 +409,12 @@ interface Connection {
   views: Map<string, string>
   /** The Norn tools the cell marks read-only, from tools/list: the only ones pre-allowed. */
   readOnly: Set<string>
-  /** Permission questions forwarded to the person, by the relay's id, with the agent's request id. */
-  readonly questions: Map<string, { adapterId: Message["id"]; question: Question }>
+  /** Permission questions forwarded to the person, by the relay's id, with the agent's request id and the call asked about. */
+  readonly questions: Map<string, { adapterId: Message["id"]; question: Question; approval: Approval }>
+  /** Calls the person allowed once and the agent has not made yet; cleared when the turn ends or stops. */
+  readonly approvals: Approval[]
+  /** Messages from the browser, handled one at a time in the order they came. */
+  inbox: Promise<void>
   /** Ids the relay used for its own requests to the adapter, mapped back to the browser's id. */
   readonly pendingFromBrowser: Map<string, { id: Message["id"]; method: string }>
   nextId: number
@@ -347,16 +451,24 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     })
   }
 
+  /** The cell's tools, every page of them; the views and the read-only set change only when all pages arrived. */
   async function listTools(connection: Connection) {
-    const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params: {} }), { "mcp-protocol-version": "2025-06-18" })
-    if (!response.ok) return
-    const body = await response.json().catch(() => null) as { result?: { tools?: { name: string; _meta?: Json; annotations?: Json }[] } } | null
-    const tools = body?.result?.tools ?? []
-    for (const tool of tools) {
-      const view = viewOf(tool)
-      if (view !== null) connection.views.set(tool.name, view)
+    const tools: { name: string; _meta?: Json; annotations?: Json }[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < 64; page += 1) {
+      const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params: cursor === undefined ? {} : { cursor } }), { "mcp-protocol-version": "2025-06-18" })
+      if (!response.ok) throw new Error(`tools/list answered ${response.status}`)
+      const body = await response.json() as { result?: { tools?: { name: string; _meta?: Json; annotations?: Json }[]; nextCursor?: unknown } }
+      if (!Array.isArray(body.result?.tools)) throw new Error("tools/list answered no tools")
+      tools.push(...body.result.tools)
+      if (typeof body.result.nextCursor !== "string" || body.result.nextCursor === "") {
+        connection.views = new Map(tools.flatMap((tool) => { const view = viewOf(tool); return view === null ? [] : [[tool.name, view] as const] }))
+        connection.readOnly = readOnlyTools(tools)
+        return
+      }
+      cursor = body.result.nextCursor
     }
-    connection.readOnly = readOnlyTools(tools)
+    throw new Error("tools/list never ended")
   }
 
   /** Whether Studio's /mcp accepts this grant right now: the Worker's own answer, not just the signature. */
@@ -401,6 +513,13 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     })
   }
 
+  /** The turn ended or stopped: open questions answer `cancelled`, unspent approvals lapse. */
+  function endTurn(connection: Connection) {
+    for (const asked of connection.questions.values()) toAdapter(connection, { jsonrpc: "2.0", id: asked.adapterId, result: CANCELLED })
+    connection.questions.clear()
+    connection.approvals.length = 0
+  }
+
   function fromAdapter(connection: Connection, line: string) {
     let message: Message
     try { message = JSON.parse(line) as Message } catch { return }
@@ -410,6 +529,14 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       const pending = connection.pendingFromBrowser.get(key)
       if (pending === undefined) return
       connection.pendingFromBrowser.delete(key)
+      if (pending.method === "session/new" && message.error === undefined && !manualMode(message.result)) {
+        // Fail closed: a session in any mode but manual could run a tool without asking.
+        log(`conn ${connection.id} session refused: not in the manual permission mode`)
+        send(connection.ws, rpcError(pending.id, -32003, "Sidekick could not start a session that asks before every change."), secrets(connection))
+        connection.ws.close(1011, "permission mode")
+        return
+      }
+      if (pending.method === "session/prompt") endTurn(connection)
       send(connection.ws, { ...message, id: pending.id }, secrets(connection))
       return
     }
@@ -425,7 +552,8 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         }
         // Ask the person: the browser answers with one of the two options, or the reject stands.
         const id = `p${connection.nextId++}`
-        connection.questions.set(id, { adapterId: message.id, question: decision.ask })
+        const tool = nornToolName(message.params) as string
+        connection.questions.set(id, { adapterId: message.id, question: decision.ask, approval: { tool, input: canonicalJson((message.params?.toolCall as Json | undefined)?.rawInput) } })
         log(`conn ${connection.id} permission asked ${nornToolName(message.params)}`)
         send(connection.ws, { jsonrpc: "2.0", id, method: "session/request_permission", params: questionFor(message.params, decision.ask) }, secrets(connection))
         return
@@ -437,6 +565,12 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     // Only the session's own updates go to the browser. The adapter's extensions (account and
     // login status, rate limits, raw SDK messages) describe the host's login, never the person's work.
     if (!forwardedUpdate(message)) return
+    const update = message.params?.update as { sessionUpdate?: unknown; currentModeId?: unknown; configOptions?: unknown } | undefined
+    if ((update?.sessionUpdate === "current_mode_update" && update.currentModeId !== MANUAL_MODE) || (update?.sessionUpdate === "config_option_update" && !manualConfigOptions(update.configOptions))) {
+      log(`conn ${connection.id} closed: the session left the manual permission mode`)
+      connection.ws.close(1011, "permission mode")
+      return
+    }
     send(connection.ws, message, secrets(connection))
   }
 
@@ -449,7 +583,11 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       if (asked === undefined) return
       connection.questions.delete(message.id as string)
       const answer = personAnswer(asked.question, message)
-      log(`conn ${connection.id} permission ${(answer.outcome as Json).outcome === "cancelled" ? "cancelled" : (answer.outcome as Json).optionId === asked.question.reject ? "declined" : "allowed"} by the person`)
+      const outcome = answer.outcome as Json
+      const allowed = outcome.outcome === "selected" && outcome.optionId !== asked.question.reject
+      log(`conn ${connection.id} permission ${outcome.outcome === "cancelled" ? "cancelled" : allowed ? "allowed" : "declined"} by the person`)
+      // The proxy lets this one call through, once, with exactly these arguments.
+      if (allowed) connection.approvals.push(asked.approval)
       toAdapter(connection, { jsonrpc: "2.0", id: asked.adapterId, result: answer })
       return
     }
@@ -475,28 +613,39 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     let params: Json | null | undefined = message.params
     if (method === "initialize") params = rewriteInitialize(message.params)
     if (method === "session/new") {
+      // Only a request: the relay checks the adapter's answer for the manual mode, and a notification has none.
+      if (message.id === undefined || message.id === null) { log(`conn ${connection.id} session/new without an id refused`); return }
+      // A new session ends the last one's turn: its open questions answer `cancelled` and its approvals lapse.
+      endTurn(connection)
       if (!(await workerAccepts(connection))) {
         send(connection.ws, rpcError(message.id, -32001, "Studio did not accept the Sidekick grant."), secrets(connection))
         connection.ws.close(4403, "worker refused grant")
         return
       }
-      await listTools(connection).catch(() => undefined)
+      // A new session starts from nothing pre-allowed; if the listing fails, nothing is.
+      connection.readOnly = new Set()
+      connection.views = new Map()
+      await listTools(connection).catch(() => { connection.readOnly = new Set(); connection.views = new Map() })
       params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${config.mcpPort}/mcp/${connection.capability}`, config.model, connection.readOnly)
     }
     if (method === "session/prompt") params = rewritePrompt(message.params)
     if (method === "session/cancel") {
-      // Stopping the turn cancels every question still open (ACP: pending permissions answer `cancelled`).
-      for (const asked of connection.questions.values()) toAdapter(connection, { jsonrpc: "2.0", id: asked.adapterId, result: CANCELLED })
-      connection.questions.clear()
+      // Stopping the turn cancels every question still open (ACP: pending permissions answer `cancelled`)
+      // and every approval the agent has not spent.
+      endTurn(connection)
     }
     if (params === null) return send(connection.ws, rpcError(message.id, -32602, "Send text only."), secrets(connection))
     if (method === "_norn/call_tool") {
       // A view's follow-up read: one Norn tool, as the person.
       const name = message.params?.name
       if (typeof name !== "string" || !name.startsWith("norn_")) return send(connection.ws, rpcError(message.id, -32602, "Only Norn tools."), secrets(connection))
-      const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: message.params?.arguments ?? {} } }), { "mcp-protocol-version": "2025-06-18" })
-      const body = await response.json().catch(() => null) as { result?: unknown; error?: { message?: string } } | null
-      return send(connection.ws, body?.result !== undefined ? { jsonrpc: "2.0", id: message.id ?? null, result: body.result } : rpcError(message.id, -32000, body?.error?.message ?? `Norn answered ${response.status}.`), secrets(connection))
+      // Runs beside the inbox: a slow read never holds up the person's answers or Stop.
+      void (async () => {
+        const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: message.params?.arguments ?? {} } }), { "mcp-protocol-version": "2025-06-18" })
+        const body = await response.json().catch(() => null) as { result?: unknown; error?: { message?: string } } | null
+        send(connection.ws, body?.result !== undefined ? { jsonrpc: "2.0", id: message.id ?? null, result: body.result } : rpcError(message.id, -32000, body?.error?.message ?? `Norn answered ${response.status}.`), secrets(connection))
+      })().catch(() => send(connection.ws, rpcError(message.id, -32000, "Norn did not answer."), secrets(connection)))
+      return
     }
     const outgoing: Message = { jsonrpc: "2.0", method, ...params === undefined ? {} : { params } }
     if (message.id !== undefined && message.id !== null) {
@@ -516,14 +665,28 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       const connection = match === null ? undefined : byCapability.get(match[1] as string)
       if (connection === undefined || connection.closed) return new Response("Not found", { status: 404 })
       if (request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } })
-      const body = await request.text()
-      if (body.length > 262_144) return new Response("Too large", { status: 413 })
+      const raw = await request.text()
+      if (raw.length > 262_144) return new Response("Too large", { status: 413 })
+      let call: { id?: Message["id"]; method?: string; params?: { name?: unknown; arguments?: unknown } } | null = null
+      try { call = JSON.parse(raw) } catch { return Response.json(rpcError(null, -32700, "Parse error"), { status: 400 }) }
+      const id = plainObject(call) ? call.id : null
+      // A number a double would round reaches Studio as another number than the one checked and shown: refused.
+      if (!exactNumbers(raw)) {
+        log(`conn ${connection.id} tool call refused: a number does not survive exactly`)
+        return Response.json(rpcError(id, -32602, "A number in this call cannot be passed on exactly; send it as a string."), { headers: { "cache-control": "no-store" } })
+      }
+      if (!proxyAdmits(call, connection.readOnly, connection.approvals)) {
+        // Defence in depth: whatever the agent's own permission flow did, a call the person did not
+        // allow never reaches Studio with their grant.
+        log(`conn ${connection.id} tool call refused: not approved by the person`)
+        return Response.json(rpcError(id, -32001, "The person did not approve this call; ask them first."), { headers: { "cache-control": "no-store" } })
+      }
       const forward: Record<string, string> = {}
       for (const name of ["mcp-protocol-version", "mcp-session-id"]) { const value = request.headers.get(name); if (value !== null) forward[name] = value }
-      const response = await studioMcp(connection, body, forward)
+      // Studio gets the object that was checked, re-serialised, never the agent's own bytes: a duplicate
+      // key or a number spelled differently cannot reach Studio as anything but what was approved.
+      const response = await studioMcp(connection, JSON.stringify(call), forward)
       const text = await response.text()
-      let call: { method?: string; params?: { name?: unknown; arguments?: unknown } } | null = null
-      try { call = JSON.parse(body) } catch { /* not one message */ }
       if (call?.method === "tools/call" && typeof call.params?.name === "string") {
         const view = connection.views.get(call.params.name)
         let result: unknown
@@ -559,7 +722,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       open(ws) {
         const id = crypto.randomUUID()
         const capability = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
-        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), readOnly: new Set(), questions: new Map(), pendingFromBrowser: new Map(), nextId: 1, closed: false }
+        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), readOnly: new Set(), questions: new Map(), approvals: [], inbox: Promise.resolve(), pendingFromBrowser: new Map(), nextId: 1, closed: false }
         ws.data.connection = connection
         connections.set(id, connection)
         byCapability.set(capability, connection)
@@ -569,7 +732,10 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       },
       message(ws, data) {
         const connection = ws.data.connection
-        if (connection !== undefined) void fromBrowser(connection, typeof data === "string" ? data : new TextDecoder().decode(data))
+        if (connection === undefined) return
+        // One at a time, in order: a prompt never overtakes the session/new or grant check before it.
+        const raw = typeof data === "string" ? data : new TextDecoder().decode(data)
+        connection.inbox = connection.inbox.then(() => fromBrowser(connection, raw)).catch((error: unknown) => log(`conn ${connection.id} message failed: ${error instanceof Error ? error.message : "unknown"}`))
       },
       close(ws) {
         const connection = ws.data.connection

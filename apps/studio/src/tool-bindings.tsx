@@ -88,7 +88,7 @@ function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; 
           </div>
         ))}
       </fieldset>
-      {dropped.length > 0 && <p role="status" className="text-body text-amber-700 dark:text-amber-400">The tool no longer takes {dropped.join(", ")}; saving removes {dropped.length === 1 ? "that fixed input" : "those fixed inputs"} from this binding.</p>}
+      {dropped.length > 0 && <p role="status" className="text-body text-warning">The tool no longer takes {dropped.join(", ")}; saving removes {dropped.length === 1 ? "that fixed input" : "those fixed inputs"} from this binding.</p>}
       <div className="flex gap-2">
         <Button size="sm" type="submit" disabled={save.isPending}>{binding === undefined ? "Add binding" : "Save binding"}</Button>
         <Button size="sm" variant="ghost" type="button" onClick={onDone}>Cancel</Button>
