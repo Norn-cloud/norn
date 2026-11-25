@@ -53,10 +53,10 @@ function Systems({ catalog }: { readonly catalog: Catalog }) {
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
           {outside.map((system, index) => (
             <div key={system.id} className="flex items-center gap-3 px-4 py-2.5">
-              <span aria-hidden className={cn("flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
+              <span aria-hidden className={cn("flex size-7 shrink-0 items-center justify-center rounded-md text-meta", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
               <span className="min-w-0 flex-1">
-                <span className="block font-medium">{system.name}</span>
-                {system.schema && <span className="block truncate text-xs text-muted-foreground">
+                <span className="block">{system.name}</span>
+                {system.schema && <span className="block truncate text-meta text-muted-foreground">
                   {[system.schema.instance && `instance ${system.schema.instance}`, system.schema.version && `schema ${system.schema.version}`, system.schema.observedAt && `observed ${system.schema.observedAt}`].filter(Boolean).join(" · ")}
                 </span>}
               </span>
@@ -98,8 +98,8 @@ function ConceptRow({ concept }: { readonly concept: Concept }) {
     <TableRow className="relative">
       <TableCell className="w-[30%] min-w-48 py-2 align-top">
         <Link to="/sources/$concept" params={{ concept: concept.name }} lang={concept.titleLang}
-          className="font-medium outline-none after:absolute after:inset-0 hover:underline focus-visible:underline underline-offset-4">{concept.title}</Link>
-        {view === "technical" && <Iso className="block font-mono text-xs text-muted-foreground">{concept.name}</Iso>}
+          className="outline-none after:absolute after:inset-0 hover:underline focus-visible:underline underline-offset-4">{concept.title}</Link>
+        {view === "technical" && <Iso className="block font-mono text-meta text-muted-foreground">{concept.name}</Iso>}
       </TableCell>
       <TableCell lang={text?.lang} className="py-2 align-top whitespace-normal text-muted-foreground"><span className="line-clamp-2">{text?.text}</span></TableCell>
       <TableCell className="py-2 text-end align-top text-muted-foreground tabular-nums">{concept.fields.length}</TableCell>
@@ -114,12 +114,12 @@ const GAP = { not_in_source: "not in this system", defaulted: "defaulted", defer
 function SourceCell({ source }: { readonly source: Source | undefined }) {
   switch (source?.kind) {
     case undefined: return <span className="text-muted-foreground">not sent</span>
-    case "field": return <code className="text-xs">{source.field}</code>
-    case "fixed": return <span>always <code className="text-xs">{source.value}</code></span>
+    case "field": return <code className="text-meta">{source.field}</code>
+    case "fixed": return <span>always <code className="text-meta">{source.value}</code></span>
     case "empty": return <span className="text-muted-foreground">left empty</span>
-    case "computed": return <code className="text-xs">{source.expression}</code>
+    case "computed": return <code className="text-meta">{source.expression}</code>
     case "nested": return <span title={`${source.collection} rows where ${source.where}`}><SourceCell source={source.value} /> <span className="text-muted-foreground">in each {source.dataset} row</span></span>
-    case "transition": return <span><span className="text-muted-foreground">from transition </span><code className="text-xs">{source.expression}</code></span>
+    case "transition": return <span><span className="text-muted-foreground">from transition </span><code className="text-meta">{source.expression}</code></span>
     case "gap": return <Badge variant="outline" title={source.note}>{GAP[source.reason]}</Badge>
   }
 }
@@ -145,17 +145,17 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
         {[...concept.fields.map(({ id }) => ({ id, label: id.replaceAll("_", " ") })),
           ...concept.relationships.map(({ id, target }) => ({ id, label: `${id.replaceAll("_", " ")} → ${conceptTitle(target)}` }))].map(({ id, label }) => (
           <TableRow key={id}>
-            <TableCell className="font-medium">{label}</TableCell>
+            <TableCell>{label}</TableCell>
             {concept.feeds.map(({ system, dataset, facts }) => <TableCell key={`${system}/${dataset}`}>{(facts.get(id) ?? [undefined]).map((source, index) => <div key={index}><SourceCell source={source} /></div>)}</TableCell>)}
           </TableRow>
         ))}
       </DenseTable>
-      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
+      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-body text-muted-foreground"><b className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
       {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
         <div className="space-y-1">
-          <h3 className="text-meta font-medium text-muted-foreground">Left out of the mapping, on purpose</h3>
+          <h3 className="text-meta text-muted-foreground">Left out of the mapping, on purpose</h3>
           {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
-            <p key={`${system}/${dataset}/${field}`} className="text-sm text-muted-foreground"><b className="font-medium text-foreground">{system} {dataset}, <code className="font-mono text-xs">{field}</code>:</b> {reason}</p>
+            <p key={`${system}/${dataset}/${field}`} className="text-body text-muted-foreground"><b className="text-foreground">{system} {dataset}, <code className="font-mono text-meta">{field}</code>:</b> {reason}</p>
           )))}
         </div>
       )}
@@ -172,10 +172,10 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
     <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
       {concept.fields.map((field) => (
         <TableRow key={field.id}>
-          <TableCell className="font-medium">
+          <TableCell>
             <span lang={field.labelLang ?? "en"}>{field.label ?? field.id.replaceAll("_", " ")}</span>
             {field.optional && <span className="text-muted-foreground"> (optional)</span>}
-            {technical && <> <Iso className="font-mono text-xs text-muted-foreground">{field.id}</Iso></>}
+            {technical && <> <Iso className="font-mono text-meta text-muted-foreground">{field.id}</Iso></>}
             <MarkingChips markings={field.markings} catalog={markings} className="ms-2 inline-flex flex-wrap items-center gap-1 align-middle" />
           </TableCell>
           <TableCell className="whitespace-normal text-muted-foreground">
@@ -189,8 +189,8 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
                   <span key={value} dir={directionOf(locale)}>
                     {index > 0 && comma}
                     {label !== undefined
-                      ? <>{label}{technical && <> <Iso className="font-mono text-xs">{value}</Iso></>}</>
-                      : technical ? <Iso lang="en" className="font-mono text-xs">{value}</Iso> : <bdi lang="en">{value.replaceAll("_", " ")}</bdi>}
+                      ? <>{label}{technical && <> <Iso className="font-mono text-meta">{value}</Iso></>}</>
+                      : technical ? <Iso lang="en" className="font-mono text-meta">{value}</Iso> : <bdi lang="en">{value.replaceAll("_", " ")}</bdi>}
                   </span>
                 )
               })}</span>
@@ -205,7 +205,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
 /** One object type as a record page: what it is, its fields, links, rules and where its records come from. */
 function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Catalog; readonly concept: Concept; readonly recorded: boolean }) {
   const link = (target: string) => catalog.byName.has(target)
-    ? <Link to="/sources/$concept" params={{ concept: target }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
+    ? <Link to="/sources/$concept" params={{ concept: target }} className="underline-offset-4 hover:underline">{conceptTitle(target)}</Link>
     : <span>{conceptTitle(target)}</span>
   const systems = [...new Set(concept.feeds.map(({ system }) => system))]
   const { view } = useView()
@@ -213,14 +213,14 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
   return (
     <article className="space-y-6">
       <header className="space-y-2">
-        <h1 lang={concept.titleLang} className="text-title font-semibold tracking-tight">{concept.title}</h1>
+        <h1 lang={concept.titleLang} className="text-title tracking-tight">{concept.title}</h1>
         <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <Badge variant="secondary">{concept.definition === "interface" ? "Shared interface" : systems.length > 0 ? `Fed by ${systems.join(", ")}` : "No connected system feeds it"}</Badge>
           {recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
           {view === "technical" && <Iso className="font-mono">{concept.name}</Iso>}
         </div>
         {text !== undefined && <p lang={text.lang} className="max-w-2xl text-muted-foreground">{text.text}</p>}
-        {concept.parents.length > 0 && <p className="text-sm">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
+        {concept.parents.length > 0 && <p className="text-body">A kind of {concept.parents.map((parent, index) => <span key={parent}>{index > 0 && ", "}{link(parent)}</span>)}</p>}
       </header>
       <Panel icon={Shapes} label="Facts recorded">
         <div className="p-1"><FactsTable concept={concept} technical={view === "technical"} /></div>
@@ -229,7 +229,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
         <Panel icon={Shapes} label="Links">
           <Well className="divide-y">
             {concept.relationships.map((relationship) => (
-              <div key={relationship.id} className="px-4 py-2.5 text-sm">
+              <div key={relationship.id} className="px-4 py-2.5 text-body">
                 <span className="text-muted-foreground">{relationship.id.replaceAll("_", " ")} → </span>{relationship.count} {link(relationship.target)}
                 {relationship.description && <p className="text-meta text-muted-foreground">{relationship.description}</p>}
               </div>
@@ -239,7 +239,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
       )}
       <LawsPanel concept={concept} />
       <Panel icon={Database} label="Where its records come from">
-        <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-sm text-muted-foreground">No connected system maps records into it directly.</p>}</div>
+        <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-body text-muted-foreground">No connected system maps records into it directly.</p>}</div>
       </Panel>
     </article>
   )
@@ -316,7 +316,7 @@ export function SourcesPage() {
             {read.data?.origin === "live" && <SourceConnections />}
             <Tabs defaultValue="types" className="gap-3">
               <div className="flex flex-wrap items-center gap-3">
-                <h2 className="text-section font-medium">The model</h2>
+                <h2 className="text-heading">The model</h2>
                 <TabsList className="ms-2"><TabsTrigger value="types">Types</TabsTrigger><TabsTrigger value="graph">Graph</TabsTrigger></TabsList>
                 <label className="relative ms-auto block w-full max-w-64">
                   <span className="sr-only">Find an object type</span>
@@ -335,7 +335,7 @@ export function SourcesPage() {
                   const shown = loaded.concepts.filter((concept) => has(concept) && matches(concept))
                   return (
                     <div key={label} className="space-y-2">
-                      <h3 className="text-meta font-medium text-muted-foreground">{label} <span className="font-normal tabular-nums">{shown.length}</span></h3>
+                      <h3 className="text-meta text-muted-foreground">{label} <span className="font-normal tabular-nums">{shown.length}</span></h3>
                       {shown.length > 0
                         ? <DenseTable head={<TableRow><TableHead>Name</TableHead><TableHead>What it is</TableHead><TableHead className="text-end">Facts</TableHead><TableHead className="text-end">Links</TableHead><TableHead>Fed by</TableHead></TableRow>}>
                             {shown.map((concept) => <ConceptRow key={concept.name} concept={concept} />)}

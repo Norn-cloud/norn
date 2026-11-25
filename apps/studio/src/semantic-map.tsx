@@ -111,7 +111,7 @@ function IslandCard({
       <div className="flex items-start justify-between gap-3 border-b border-border/80 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-panel font-medium text-foreground">{island.title}</h3>
+            <h3 className="truncate text-body font-medium text-foreground">{island.title}</h3>
             {dimmed && <span className="sr-only">(outside the current lens)</span>}
             <span className="rounded-md bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground tabular-nums">
               {island.nodes.length}
@@ -224,7 +224,7 @@ function IslandExpansion({
           <ArrowLeft aria-hidden className={cn("size-3.5", FLOW_ARROW)} />All islands
         </Button>
         <div className="min-w-0">
-          <h2 ref={heading} tabIndex={-1} className="text-section font-medium text-foreground outline-none">{island.title}</h2>
+          <h2 ref={heading} tabIndex={-1} className="text-heading font-medium text-foreground outline-none">{island.title}</h2>
           <p className="text-xs text-muted-foreground">
             {island.subtitle} · {island.nodes.length} object {island.nodes.length === 1 ? "type" : "types"} · {island.lawCount} {island.lawCount === 1 ? "law" : "laws"}
           </p>
@@ -351,7 +351,7 @@ function ProvenanceSideSheet({
             <span className="truncate">{node.artifactId}</span>
             <ExternalLink aria-hidden className="size-3 shrink-0" />
           </Link>
-          <h2 className="mt-1.5 truncate text-section font-medium text-foreground" lang={node.titleLang}>{node.title}</h2>
+          <h2 className="mt-1.5 truncate text-heading font-medium text-foreground" lang={node.titleLang}>{node.title}</h2>
           <p className="text-xs text-muted-foreground">Island: {island.title}</p>
         </div>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="Close provenance sheet" onClick={onClose}>
@@ -472,7 +472,6 @@ function ProvenanceSideSheet({
   )
 }
 
-/** `/map`: Read-only Catalog Ontology Map (Phase 1, #1664) — Monochrome Islands, Bundled Bridges, Lenses & Schema Dossier. */
 /** What opened an island: its own "Expand island" trigger, or one end of a bridge in the bridges list. */
 type Opener = { readonly kind: "island"; readonly id: string } | { readonly kind: "bridge"; readonly id: string; readonly end: "from" | "to" }
 
@@ -480,6 +479,7 @@ const openerSelector = (opener: Opener): string => opener.kind === "island"
   ? `[data-slot="semantic-island"][data-island-id="${CSS.escape(opener.id)}"] [data-island-trigger]`
   : `[data-bridge-id="${CSS.escape(opener.id)}"][data-bridge-end="${opener.end}"]`
 
+/** `/map`: Read-only Catalog Ontology Map (Phase 1, #1664) — Monochrome Islands, Bundled Bridges, Lenses & Schema Dossier. */
 export function SemanticMapPage() {
   const { read, catalog } = useCatalog()
   const mode = useMode()

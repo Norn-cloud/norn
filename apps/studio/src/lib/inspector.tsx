@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useIsMobile } from "@/hooks/use-mobile"
 
+/** The docked panel becomes a sheet below 768px: beside a 48px rail it would leave the page too narrow. */
+const PANEL_BREAKPOINT = 768
+
 /** What the inspector shows: one value or record, with where it came from. */
 export interface Inspected {
   readonly title: ReactNode
@@ -23,7 +26,7 @@ export const useInspector = () => use(InspectorContext)
 /** Docked to the right of the page on wide screens, a sheet on phones; nothing until something is inspected. */
 export function Inspector() {
   const { inspected, inspect } = useInspector()
-  const mobile = useIsMobile()
+  const mobile = useIsMobile(PANEL_BREAKPOINT)
   if (inspected === undefined) return null
   if (mobile) {
     return (
@@ -38,7 +41,7 @@ export function Inspector() {
   return (
     <aside aria-label="Inspector" className="sticky top-0 hidden h-[calc(100svh-1rem)] w-80 shrink-0 flex-col border-s border-border/80 bg-background md:flex">
       <div className="flex h-12 items-center gap-2 border-b border-border/80 px-4">
-        <div className="min-w-0 flex-1 truncate font-medium">{inspected.title}</div>
+        <div className="min-w-0 flex-1 truncate">{inspected.title}</div>
         <Button variant="ghost" size="icon-sm" onClick={() => inspect()}><X /><span className="sr-only">Close inspector</span></Button>
       </div>
       <div className="flex-1 overflow-y-auto p-4">{inspected.body}</div>

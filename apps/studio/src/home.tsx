@@ -38,17 +38,17 @@ function EmptyWorkspaceChecklist() {
   return (
     <Panel icon={Sparkles} label="Get started" action="4 steps">
       <Well>
-        <ol className="divide-y">
+        <ol className="grid gap-px p-1.5">
           {CHECKLIST.map(({ step, title, description, to, icon: Icon }) => (
             <li key={to}>
-              <Link to={to} className="group flex items-center gap-4 px-4 py-3.5 transition-colors hover:bg-muted/40">
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-surface-subtle text-xs font-medium text-muted-foreground tabular-nums">{step}</span>
+              <Link to={to} className="group flex min-h-12 items-center gap-3 rounded-(--radius-row) px-3 py-2.5 transition-colors hover:bg-(--well-hover)">
+                <span className="flex size-[28px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-muted-foreground tabular-nums ring-1 ring-line">{step}</span>
                 <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-foreground">{title}</span>
+                  <span className="block text-body text-foreground">{title}</span>
                   <span className="block text-meta text-muted-foreground">{description}</span>
                 </span>
-                <ArrowRight aria-hidden className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                <ArrowRight aria-hidden className="size-4 shrink-0 text-subtle-foreground transition-transform group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5 motion-reduce:transition-none" />
               </Link>
             </li>
           ))}
@@ -96,7 +96,7 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-12 rounded-2xl border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
+      <InputGroup className="h-12 rounded-(--radius-search) max-sm:h-[52px] border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
         <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
@@ -149,7 +149,7 @@ function KeyNumbers() {
   })
   return (
     <section aria-labelledby="key-numbers" className="space-y-3">
-      <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
+      <h2 id="key-numbers" className="text-heading">Key numbers</h2>
       <LoadState
         status={metrics.status}
         data={metrics.data}
@@ -178,21 +178,24 @@ function KeyNumbers() {
                   const value = key === undefined ? undefined : result?.numbers.get(`/rows/${member(key)}/value`)
                   const label = metricHeading(metric, "period", view)
                   return (
-                    <section key={metric.name} data-slot="kpi" className="flex min-w-0 flex-col gap-1.5 px-4 py-3">
-                      <h3 className="truncate text-meta text-muted-foreground" title={label}>{label}</h3>
-                      {answer?.isPending && <Skeleton className="h-7 w-24" />}
-                      {result && <p className="text-figure leading-none font-medium tracking-tight tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
-                      {answer?.isError && (
-                        <p className="text-sm text-muted-foreground">
-                          Couldn't read this number.{" "}
-                          <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void answer?.refetch()}>Retry</button>
+                    // A StatWell (DESIGN.md 10): the label in the rim, the figure and its caption in the inset well.
+                    <section key={metric.name} data-slot="kpi" className="flex h-full min-w-0 flex-col rounded-(--radius-panel) border border-(--panel-border) bg-card p-(--panel-inset) shadow-(--panel-shadow)">
+                      <h3 className="flex h-9 min-w-0 items-center px-3.5 text-body text-foreground" title={label}><span className="truncate">{label}</span></h3>
+                      <div data-slot="kpi-well" className="flex flex-1 flex-col justify-between gap-1.5 rounded-(--radius-well) border border-(--well-border) bg-(--well) px-4 pt-3.5 pb-3">
+                        {answer?.isPending && <Skeleton className="h-7 w-24" />}
+                        {result && <p className="text-figure tabular-nums [overflow-wrap:anywhere]">{value === undefined ? "—" : groupDigits(value)}</p>}
+                        {answer?.isError && (
+                          <p className="text-body text-muted-foreground">
+                            Couldn't read this number.{" "}
+                            <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void answer?.refetch()}>Retry</button>
+                          </p>
+                        )}
+                        <p className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+                          <span className="truncate">{conceptTitle(metric.objectType)}</span>
+                          {result && <><span aria-hidden className="text-subtle-foreground">·</span><span title={FRESHNESS[result.document.freshness].meaning}>{FRESHNESS[result.document.freshness].label}</span></>}
+                          <Link to="/metrics" className="ms-auto inline-flex shrink-0 items-center gap-0.5 text-foreground underline-offset-4 hover:underline">Why<ArrowRight aria-hidden className="size-3.5 rtl:rotate-180" /></Link>
                         </p>
-                      )}
-                      <p className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-                        <span className="truncate">{conceptTitle(metric.objectType)}</span>
-                        {result && <><span aria-hidden>·</span><span title={FRESHNESS[result.document.freshness].meaning}>{FRESHNESS[result.document.freshness].label}</span></>}
-                        <Link to="/metrics" className="ms-auto inline-flex shrink-0 items-center gap-0.5 text-foreground underline-offset-4 hover:underline">Why<ArrowRight aria-hidden className="size-3.5" /></Link>
-                      </p>
+                      </div>
                     </section>
                   )
                 })}

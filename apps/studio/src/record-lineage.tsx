@@ -23,8 +23,8 @@ function NodeCard({ node }: { readonly node: LineageNode }) {
   const Icon = ICON[node.kind]
   const body = (
     <div className={cn("h-full w-full rounded-node border border-node-border bg-card px-3 py-2 shadow-[var(--node-highlight),var(--elevation-node)]", node.kind === "record" && "ring-2 ring-ring/30", node.kind === "fact" && "hover:shadow-[var(--node-highlight),var(--elevation-node-hover)]")}>
-      <div className="flex min-w-0 items-center gap-2"><Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" /><span className="truncate text-sm font-medium" title={node.title}>{node.title}</span></div>
-      <div className="truncate ps-6 font-mono text-[11px] text-muted-foreground" title={node.detail}>{node.detail}</div>
+      <div className="flex min-w-0 items-center gap-2"><Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" /><span className="truncate text-body" title={node.title}>{node.title}</span></div>
+      <div className="truncate ps-6 font-mono text-meta text-muted-foreground" title={node.detail}>{node.detail}</div>
     </div>
   )
   return node.kind === "fact" && node.ref ? <Link to="/sources/$concept/$" params={{ concept: node.ref.objectType, _splat: node.ref.key }} hash="lineage" className="block h-full">{body}</Link> : body
@@ -67,7 +67,7 @@ function Graph({ graph }: { readonly graph: LineageGraph }) {
             return (
               <g key={`${edge.from}→${edge.to}`}>
                 <path d={`M${x1},${y1} C${middle},${y1} ${middle},${y2} ${x2},${y2}`} className="fill-none stroke-muted-foreground/70" strokeWidth={1.25} markerEnd="url(#lineage-arrow)" />
-                {label && <text x={middle} y={(y1 + y2) / 2 - 6} textAnchor="middle" className="fill-muted-foreground text-[11px]">{label}</text>}
+                {label && <text x={middle} y={(y1 + y2) / 2 - 6} textAnchor="middle" className="fill-muted-foreground text-meta">{label}</text>}
               </g>
             )
           })}
@@ -85,7 +85,7 @@ function EdgeList({ graph }: { readonly graph: LineageGraph }) {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))
   const cell = (id: string) => {
     const node = byId.get(id)
-    return node ? <><div className="font-medium">{node.title}</div><div className="truncate font-mono text-xs text-muted-foreground" title={node.detail}>{node.detail}</div></> : id
+    return node ? <><div>{node.title}</div><div className="truncate font-mono text-meta text-muted-foreground" title={node.detail}>{node.detail}</div></> : id
   }
   return (
     <TableCard><Table>
@@ -95,8 +95,8 @@ function EdgeList({ graph }: { readonly graph: LineageGraph }) {
           <TableRow key={`${edge.from}→${edge.to}`}>
             <TableCell className="max-w-56">{cell(edge.from)}</TableCell>
             <TableCell className="max-w-56">{cell(edge.to)}</TableCell>
-            <TableCell className="font-mono text-xs max-sm:hidden">{edge.rules.join(", ") || "—"}</TableCell>
-            <TableCell className="text-sm">{edge.facts.map((name) => name.replaceAll("_", " ")).join(", ") || "—"}</TableCell>
+            <TableCell className="font-mono text-meta max-sm:hidden">{edge.rules.join(", ") || "—"}</TableCell>
+            <TableCell className="text-body">{edge.facts.map((name) => name.replaceAll("_", " ")).join(", ") || "—"}</TableCell>
           </TableRow>
         ))}
       </TableBody>
