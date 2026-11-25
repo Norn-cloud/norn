@@ -141,8 +141,8 @@ test("overlapping spans stack into the fewest rows and are marked; touching ends
 })
 
 test("a bar is clipped to the window and says on which side", () => {
-  expect(geometry({ start: -50, end: 50 }, { start: 0, end: 200 })).toEqual({ left: 0, width: 25, clippedStart: true, clippedEnd: false })
-  expect(geometry({ start: 100, end: 300 }, { start: 0, end: 200 })).toEqual({ left: 50, width: 50, clippedStart: false, clippedEnd: true })
+  expect(geometry({ start: -50, end: 50 }, { start: 0, end: 200 })).toEqual({ offset: 0, width: 25, clippedStart: true, clippedEnd: false })
+  expect(geometry({ start: 100, end: 300 }, { start: 0, end: 200 })).toEqual({ offset: 50, width: 50, clippedStart: false, clippedEnd: true })
 })
 
 test("tryWindowQuery enforces the cell's 8-clause cap by reserving 2 clauses for the time window", () => {

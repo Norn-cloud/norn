@@ -33,7 +33,7 @@ export function ChoiceColumn({ title, options, selected, onSelect, invalid, fiel
 }) {
   return (
     <div className="flex w-64 shrink-0 flex-col gap-2" data-field={field} data-invalid={invalid || undefined}>
-      <div className={cn("w-fit rounded-md border bg-card px-3 py-1.5 text-sm font-medium shadow-xs", invalid && "border-destructive text-destructive")}>{title}</div>
+      <div className={cn("w-fit rounded-md border bg-card px-3 py-1.5 text-body shadow-xs", invalid && "border-destructive text-destructive")}>{title}</div>
       <ol className="flex flex-col gap-2" aria-label={title}>
         {options.map((option, index) => {
           const active = option.id === selected
@@ -41,12 +41,12 @@ export function ChoiceColumn({ title, options, selected, onSelect, invalid, fiel
           return (
             <li key={option.id}>
               <button type="button" aria-pressed={active} onClick={() => onSelect(option.id)}
-                className={cn("w-full rounded-xl border border-border/90 bg-card px-3 py-2 text-start text-sm transition-[color,background-color,border-color,box-shadow] duration-150 outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
+                className={cn("w-full rounded-xl border border-border/90 bg-card px-3 py-2 text-start text-body transition-[color,background-color,border-color,box-shadow] duration-150 outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
                   active ? "border-action bg-background shadow-elevation ring-2 ring-action/20 dark:bg-card" : muted && "border-border/70 bg-surface-subtle/60")}>
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-sm border border-border/90 bg-surface-subtle px-1.5 font-mono text-xs text-muted-foreground">{index + 1}</span>
-                  <span className={cn("font-medium", muted ? "text-muted-foreground" : "text-foreground")}>{option.label}</span>
-                  {(option.marks ?? []).map((mark) => <span key={mark} className={cn("text-xs font-medium", muted ? "text-muted-foreground" : "text-action")}>{MARK_TEXT[mark]}</span>)}
+                  <span className="rounded-sm border border-border/90 bg-surface-subtle px-1.5 font-mono text-meta text-muted-foreground">{index + 1}</span>
+                  <span className={cn("", muted ? "text-muted-foreground" : "text-foreground")}>{option.label}</span>
+                  {(option.marks ?? []).map((mark) => <span key={mark} className={cn("text-meta", muted ? "text-muted-foreground" : "text-action")}>{MARK_TEXT[mark]}</span>)}
                 </span>
                 {option.detail && <span className="mt-1 block text-meta text-muted-foreground">{option.detail}</span>}
               </button>
@@ -62,12 +62,12 @@ export function ChoiceColumn({ title, options, selected, onSelect, invalid, fiel
 /** The chosen path by option number, "Then 1 – 2 – 1 – 3"; a step not chosen reads "–". */
 export function PathSummary({ numbers, children }: { readonly numbers: readonly (number | undefined)[]; readonly children?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 text-sm" aria-label="Chosen path">
+    <div className="flex flex-wrap items-center gap-3 text-body" aria-label="Chosen path">
       <span className="text-muted-foreground">Then</span>
       {numbers.map((number, index) => (
         <span key={index} className="flex items-center gap-1">
           {index > 0 && <span className="text-muted-foreground">–</span>}
-          <span className="rounded border px-1.5 font-mono text-xs">{number ?? "?"}</span>
+          <span className="rounded border px-1.5 font-mono text-meta">{number ?? "?"}</span>
         </span>
       ))}
       {children}

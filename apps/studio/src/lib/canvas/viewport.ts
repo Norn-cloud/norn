@@ -58,3 +58,27 @@ export function clearOfMinimap(nodes: readonly Box[], view: Viewport, container:
     return left + width * view.zoom <= map.left || left >= map.right || top + height * view.zoom <= map.top || top >= map.bottom
   })
 }
+
+/** Room a placed node keeps from the pane's sides and bottom, in screen pixels. */
+export const PLACE_MARGIN = 24
+
+/**
+ * Where a new node lands: wholly inside the visible pane (below `insets.top`, `insets.side` from each side,
+ * `insets.bottom` above the bottom), at the first spot, row by row from the view's top left, that keeps clear of
+ * every node already there; when none is clear, the middle of the visible pane. Flow coordinates, whole pixels.
+ */
+export function placeInView(view: Viewport, container: { readonly width: number; readonly height: number }, size: { readonly width: number; readonly height: number }, taken: readonly Box[], insets: Insets): { readonly x: number; readonly y: number } {
+  const zoom = view.zoom > 0 ? view.zoom : 1
+  const left = (insets.side - view.x) / zoom, top = (insets.top - view.y) / zoom
+  // The last spot a node's top-left corner may take and still end inside; a node larger than the view starts at its top left.
+  const right = Math.max(left, (container.width - insets.side - view.x) / zoom - size.width)
+  const bottom = Math.max(top, (container.height - insets.bottom - view.y) / zoom - size.height)
+  const inside = (value: number, low: number, high: number) => Math.min(Math.floor(high), Math.max(Math.ceil(low), Math.round(value)))
+  const gap = 16
+  const clear = (x: number, y: number) => taken.every((box) => x + size.width + gap <= box.x || x >= box.x + box.width + gap || y + size.height + gap <= box.y || y >= box.y + box.height + gap)
+  for (let y = top; y <= bottom; y += size.height + gap) for (let x = left; x <= right; x += size.width + gap) {
+    const at = { x: inside(x, left, right), y: inside(y, top, bottom) }
+    if (clear(at.x, at.y)) return at
+  }
+  return { x: inside((left + right) / 2, left, right), y: inside((top + bottom) / 2, top, bottom) }
+}

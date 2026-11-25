@@ -319,3 +319,26 @@ test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong field
   expect(diagnostics).toEqual([])
   expect(readFileSync(usage, "utf8").match(/^\/\/ @ts-expect-error/gm)?.length).toBe(22)
 })
+
+// #1762 milestone C: a widget's catalog islands become `WidgetIslands` and the
+// `RequiredCatalogRegistry` a renderer must be given; a set without islands is typed as before.
+test("CODEGEN-TS-ISLANDS: a widget's islands are typed, tiered and digested; a set without them is unchanged", async () => {
+  const { matrixArtifact } = await import("../../../packages/norn-react/test/fixtures/matrix-page.ts")
+  const generated = generateTypes([matrixArtifact()])
+  // The fixture's checked-in registry is exactly codegen's (packages/norn-react/test/islands.types.ts compiles against it).
+  expect(readFileSync(join(REPO, "packages/norn-react/test/fixtures/matrix-islands.d.ts"), "utf8")).toBe(generated)
+  expect(generated).toContain('readonly "fixture-meter": { readonly tier: "presentational"; readonly props: { readonly "caption": string }; readonly events: { readonly "pick": Readonly<Record<string, never>> } }')
+  expect(generated).toContain('readonly "fixture-status": { readonly tier: "stateful"')
+  expect(generated).toContain("export type RequiredCatalogRegistry<W extends keyof WidgetIslands, States> = {")
+  // The islands are part of what the file types, so they are part of its digest.
+  const digest = (text: string) => /DefinitionsDigest = "(sha256:[0-9a-f]+)"/.exec(text)?.[1]
+  expect(digest(generated)).not.toBe(digest(generateTypes([])))
+  // A widget whose catalog holds only native entries declares no island: nothing is emitted.
+  const native = matrixArtifact() as unknown as { payload: { ux: { catalog: { trust: string }[] } } }
+  for (const entry of native.payload.ux.catalog) entry.trust = "native"
+  expect(generateTypes([native])).toBe(generateTypes([]))
+  // A value type outside the closed set stops the run.
+  const odd = matrixArtifact() as unknown as { payload: { ux: { catalog: { props?: { type: string }[] }[] } } }
+  odd.payload.ux.catalog[0]!.props![0]!.type = "money"
+  expect(() => generateTypes([odd])).toThrow(CodegenError)
+})

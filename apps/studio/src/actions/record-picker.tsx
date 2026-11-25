@@ -9,13 +9,15 @@ import { cn } from "@/lib/utils"
 import type { Concept } from "../lib/catalog.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
 import { DATA_CHANGED, type RecordsQuery } from "../lib/records-query.ts"
-import { readRecords, type RecordsRead } from "../lib/records-source.ts"
+import type { PageRead, RecordsRead } from "../lib/records-source.ts"
+import { studioScopeKey } from "../lib/definitions.ts"
+import { readPage, useWorkspace } from "../lib/workspace.tsx"
 
 /** Attributes a form field passes to its control (id, aria-*). */
 export type Aria = Record<string, string | boolean | undefined>
 
 /** The form's select and input look. */
-export const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-sm aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
+export const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-body aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
 
 /** One record a picker offers: its id (the value it sets) and its title (what it reads as). */
 export interface PickedRecord { readonly id: string; readonly title: string }
@@ -93,7 +95,7 @@ export function pickerPageError(read: RecordsRead): string | null {
  * surfaces an inline error with Retry.
  */
 export async function fetchPickerPage(
-  read: typeof readRecords,
+  read: PageRead,
   objectKind: string,
   search: string,
   property: string | undefined,
@@ -148,7 +150,7 @@ export function pickerChoices({ records, moved, optional, value, more, typed }: 
 
 const sameChoice = (a: PickerChoice, b: PickerChoice): boolean => a.key === b.key
 
-const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-sm:min-h-[44px] text-sm outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-sm:min-h-[44px] text-body outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
 
 /**
  * A field that names an existing record (the cell's `inputLinks`): a searchable list of the
@@ -161,10 +163,14 @@ const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-
  * Base UI's Combobox (input inside the popup) owns the keyboard, focus, highlight and ARIA wiring;
  * the cell lists and narrows the records, so the combobox never filters them itself.
  */
-export function RecordPicker({ objectKind, value, onPick, aria, read = readRecords }: {
+export function RecordPicker({ objectKind, value, onPick, aria }: {
   readonly objectKind: string; readonly value: string; readonly onPick: (id: string) => void; readonly aria: Aria
-  readonly read?: typeof readRecords
 }) {
+  // The records are read through the page's decided workspace (`lib/workspace.tsx`): a live cell's at
+  // its scope, the recording's otherwise, and nothing until the workspace is decided (#1762).
+  const workspace = useWorkspace()
+  const decided = workspace.kind === "live" || workspace.kind === "recorded" ? workspace : undefined
+  const where = decided === undefined ? "undecided" : decided.kind === "live" ? studioScopeKey(decided.scope) : "recorded"
   const { catalog } = useCatalog()
   const client = useQueryClient()
   const layer = useLayer()
@@ -174,11 +180,14 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
   const [search, setSearch] = useState("")
   // Titles seen in any page, so the chosen record keeps its title once the search moves on.
   const [titles, setTitles] = useState<ReadonlyMap<string, string>>(new Map())
-  const queryKey = ["picker", objectKind, property ?? null, search.trim()] as const
+  const queryKey = ["picker", objectKind, where, property ?? null, search.trim()] as const
   const pages = useInfiniteQuery({
     queryKey,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => fetchPickerPage(read, objectKind, search, property, pageParam),
+    queryFn: ({ pageParam }) => decided === undefined
+      ? Promise.reject(new Error("No workspace is decided for these records."))
+      : fetchPickerPage(readPage(decided.reader), objectKind, search, property, pageParam),
+    enabled: decided !== undefined,
     getNextPageParam: (last) => last?.snapshotMoved ? undefined : last?.next,
     retry: false, staleTime: 30_000,
   })
@@ -242,7 +251,7 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
                 <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <Combobox.Input aria-label={`Search ${noun} records`}
                   placeholder={property === undefined ? "Type an id" : `Search ${noun} by ${property.replaceAll("_", " ")} or type an id`}
-                  className="h-10 w-full rounded-md bg-transparent text-sm outline-none max-sm:min-h-[44px] placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring" />
+                  className="h-10 w-full rounded-md bg-transparent text-body outline-none max-sm:min-h-[44px] placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring" />
               </div>
               <Combobox.Status className="grid gap-1 px-3 empty:hidden [&>p]:py-2 text-meta text-muted-foreground">
                 {pages.isPending && <p>Reading {noun} records…</p>}

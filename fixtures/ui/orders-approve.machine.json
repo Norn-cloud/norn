@@ -71,6 +71,13 @@
         "kind": "outcome",
         "outcome": "cancelled"
       }
+    },
+    {
+      "eventId": "not-served",
+      "source": {
+        "kind": "outcome",
+        "outcome": "not_served"
+      }
     }
   ],
   "states": [
@@ -213,6 +220,12 @@
       "from": "failed",
       "on": "dismiss",
       "target": "browsing"
+    },
+    {
+      "transitionId": "on-not-served",
+      "from": "approving",
+      "on": "not-served",
+      "target": "failed"
     }
   ]
 }

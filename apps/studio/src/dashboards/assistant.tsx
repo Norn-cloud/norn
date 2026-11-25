@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ArrowUp, Check, CircleCheck, CircleX, CornerDownRight, Sparkles, X } from "lucide-react"
+import { ArrowUp, Check, CircleCheck, CircleX, CornerDownRight, X } from "lucide-react"
 import { useState } from "react"
 import { ValidationPanel } from "@/components/editor"
-import { Well } from "@/components/panel"
+import { Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -14,6 +14,7 @@ import { useView } from "@/lib/view"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 import { conceptTitle } from "../lib/catalog.ts"
+import { Mascot } from "@/components/system/mascot"
 
 /**
  * The dashboard assistant in Studio. The person says what they want; the
@@ -110,11 +111,11 @@ function Verdict({ proposal, catalog }: { readonly proposal: Proposal; readonly 
   const canonical = verdict.restatement
   const tiles = proposal.definition.tiles
   return (
-    <div className="space-y-2 rounded-lg border bg-card p-3 text-sm shadow-elevation">
-      <div className="flex items-center gap-2 font-medium"><CircleCheck className="size-4 text-success" />The cell's checker admitted this dashboard</div>
+    <div className="space-y-2 rounded-lg border bg-card p-3 text-body shadow-elevation">
+      <div className="flex items-center gap-2"><CircleCheck className="size-4 text-success" />The cell's checker admitted this dashboard</div>
       {view === "business" && tiles.length > 0 && (
         <div className="space-y-1 rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-meta" data-proposal-summary>
-          <p className="font-medium text-foreground">Summary (for reading — accepting signs the checker's exact words below)</p>
+          <p className="text-foreground">Summary (for reading — accepting signs the checker's exact words below)</p>
           <ul className="list-disc space-y-0.5 ps-4 text-muted-foreground">
             {tiles.map((tile) => {
               const metrics = tileMetrics(tile, catalog)
@@ -156,20 +157,20 @@ export function ProposalCard({ proposal, catalog, preview }: { readonly proposal
   return (
     <article className="space-y-3 rounded-xl border bg-card p-4 shadow-elevation" data-proposal={proposal.id} data-state={proposal.state}>
       <header className="flex flex-wrap items-start gap-2">
-        <Sparkles aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <Mascot size={20} state={proposal.state === "refused" ? "unavailable" : proposal.state === "pending" ? "asking" : "answered"} className="mt-0.5" />
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="font-medium">{proposal.definition.title}</h3>
+          <h3>{proposal.definition.title}</h3>
           <p className="text-meta text-muted-foreground">You asked: “{proposal.request}”</p>
         </div>
         <Badge variant={state.variant}>{state.label}</Badge>
       </header>
       {proposal.verdict.guard
         ? <SafePrompt guard={proposal.verdict.guard} />
-        : proposal.verdict.note && <p className="text-sm">{proposal.verdict.note}</p>}
+        : proposal.verdict.note && <p className="text-body">{proposal.verdict.note}</p>}
       <Verdict proposal={proposal} catalog={catalog} />
       {proposal.verdict.admitted && proposal.state !== "declined" && preview(proposal.definition)}
-      {accept.isError && <p role="alert" className="text-sm text-destructive">Not accepted. {accept.error.message}</p>}
-      {decline.isError && <p role="alert" className="text-sm text-destructive">Not declined. {decline.error.message}</p>}
+      {accept.isError && <p role="alert" className="text-body text-destructive">Not accepted. {accept.error.message}</p>}
+      {decline.isError && <p role="alert" className="text-body text-destructive">Not declined. {decline.error.message}</p>}
       <footer className="flex flex-wrap items-center gap-2 border-t pt-3">
         <span className="text-meta text-muted-foreground">{proposal.model} · {dollars(proposal.costMicroUsd)}</span>
         {proposal.state === "accepted" && proposal.installed && <Button asChild size="sm" variant="outline" className="ms-auto"><Link to="/dashboards/$id" params={{ id: proposal.installed.id }}>Open version {proposal.installed.version}</Link></Button>}
@@ -208,8 +209,8 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
       <div className="space-y-3 rounded-2xl border bg-card p-3 shadow-elevation">
         <form className="group/prompt rounded-xl border bg-background transition-shadow focus-within:border-foreground/25 focus-within:shadow-sm"
           onSubmit={(event) => { event.preventDefault(); if (request.trim() !== "" && !capped) ask.mutate(request.trim()) }}>
-          <p aria-hidden className="flex items-center gap-2 px-3 pt-2.5 text-sm font-medium">
-            <Sparkles className="size-4 text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}
+          <p aria-hidden className="flex items-center gap-2 px-3 pt-2.5 text-body">
+            <Mascot tone="ink" size={16} className="text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}
           </p>
           <Textarea value={request} maxLength={2000} rows={2} aria-label={dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"} placeholder={dashboardId ? "e.g. Show the trend as bars and add a total" : "Describe what you want to see"} onChange={(event) => setRequest(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && request.trim() !== "") ask.mutate(request.trim()) }}
@@ -217,17 +218,17 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
           <div className="flex items-center gap-2 px-3 pb-2.5">
             <p className="text-meta text-muted-foreground">The server proposes; its checker decides; nothing is saved until you accept.</p>
             <span className="ms-auto hidden text-meta text-muted-foreground sm:inline">⌘↵</span>
-            <Button type="submit" size="sm" className="rounded-full" disabled={ask.isPending || request.trim() === "" || capped}>{ask.isPending ? <Sparkles className="animate-pulse" /> : <ArrowUp />}{ask.isPending ? "Proposing…" : "Propose"}</Button>
+            <Button type="submit" size="sm" className="rounded-full" disabled={ask.isPending || request.trim() === "" || capped}>{ask.isPending ? <Mascot tone="ink" size={16} state="thinking" /> : <ArrowUp />}{ask.isPending ? "Proposing…" : "Propose"}</Button>
           </div>
         </form>
         {!dashboardId && examples(catalog).length > 0 && (
           <div className="space-y-1 px-1">
-            <p className="px-2 text-xs text-muted-foreground">Try asking</p>
+            <p className="px-2 text-meta text-muted-foreground">Try asking</p>
             <ul className="grid gap-0.5">
               {examples(catalog).map((example) => (
                 <li key={example}>
                   <button type="button" onClick={() => setRequest(example)}
-                    className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-start text-sm text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                    className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-start text-body text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
                     <CornerDownRight aria-hidden className="mt-0.5 size-3.5 shrink-0" /><span className="min-w-0 text-pretty">{example}</span>
                   </button>
                 </li>
@@ -235,15 +236,15 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
             </ul>
           </div>
         )}
-        {capped && <p role="status" className="text-sm text-muted-foreground">The assistant has reached its spending cap.</p>}
-        {ask.isError && <p role="alert" className="text-sm text-destructive">{ask.error.message}</p>}
-        {listing.isError && <p role="status" className="text-sm text-muted-foreground">{listing.error.message}</p>}
+        {capped && <p role="status" className="text-body text-muted-foreground">The assistant has reached its spending cap.</p>}
+        {ask.isError && <p role="alert" className="text-body text-destructive">{ask.error.message}</p>}
+        {listing.isError && <p role="status" className="text-body text-muted-foreground">{listing.error.message}</p>}
       </div>
       {ask.isPending && <div className="h-24 animate-pulse rounded-xl border bg-muted/40" aria-label="Proposing" />}
       {latest && <ProposalCard key={latest.id} proposal={latest} catalog={catalog} preview={preview} />}
       {earlier.length > 0 && (
-        <details className="rounded-xl border bg-card p-3 text-sm">
-          <summary className="cursor-pointer font-medium">Earlier proposals ({earlier.length})</summary>
+        <details className="rounded-xl border bg-card p-3 text-body">
+          <summary className="cursor-pointer">Earlier proposals ({earlier.length})</summary>
           <div className="mt-3 space-y-3">{earlier.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} catalog={catalog} preview={() => null} />)}</div>
         </details>
       )}

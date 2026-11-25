@@ -41,6 +41,17 @@ const cleanInbox = {
   items: [],
 }
 
+/** One failing connection that names ERPNext's mapping: the types it feeds have sync errors and no rule holdings. */
+const syncInbox = {
+  scanLimit: 500,
+  sections: [
+    { kind: "held_back", count: 0, shown: 0, approximate: false },
+    { kind: "decision", count: 0, shown: 0, approximate: false },
+    { kind: "source_error", count: 1, shown: 1, approximate: false },
+  ],
+  items: [{ kind: "source_error", id: "connection/erpnext", target: "/connections", values: { status: "failed", mapping_id: "erpnext.three.mapping" } }],
+}
+
 /**
  * The same definitions with one cross-island link (a holding restated by the core model's
  * analytical restatement, an object type on another island), so the overview lists a bridge. The
@@ -95,6 +106,23 @@ test("map: a capped inbox reads as lower bounds, and a connection id is never ta
   // A node without a count says its status in words, not only with a dot.
   await expect(page.locator('[data-slot="semantic-node"][data-node-id="canon.Holding"] [data-slot="node-status"]')).toHaveText("Alerts not known")
   await shoot(page, info, "island")
+})
+
+test("map: a type in trouble for sync errors alone says so in words; no red dot stands without its word", async ({ page }, info) => {
+  await cell(page, syncInbox)
+  await page.goto("/map")
+  const erp = island(page, "ERPNext")
+  await expect(erp.getByText("1 sync error", { exact: true }).first()).toBeVisible()
+  // The preview rows name it too: before, a type with sync errors alone had only a red lead dot.
+  await expect(erp.locator('[data-slot="list-row"]').getByText("1 sync error", { exact: true }).first()).toBeVisible()
+  // Every red dot on the card, the preview rows' included, is the dot of a StatusDot beside its word.
+  await expect(erp.locator('[data-slot="dot"][data-tone="bad"]').first()).toBeVisible()
+  await expect(erp.locator('[data-slot="dot"][data-tone="bad"]:not([data-slot="status-dot"] > *)')).toHaveCount(0)
+  await erp.getByRole("button", { name: "Expand island" }).click()
+  const types = page.locator('[data-slot="semantic-node"]')
+  await expect(types.getByText("1 sync error", { exact: true }).first()).toBeVisible()
+  await expect(types.locator('[data-slot="dot"]:not([data-slot="status-dot"] > *)')).toHaveCount(0)
+  await shoot(page, info, "sync-only")
 })
 
 test("map: a clean live inbox reads 'No open alerts' on each node in words", async ({ page }) => {

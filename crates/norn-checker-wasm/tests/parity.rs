@@ -22,7 +22,8 @@ use norn_checker::{
 };
 use norn_checker_wasm::{
     canonical_runtime_value_json, check_agent_json, check_artifact_set_json, check_expression_json,
-    evaluate_expression_json, function_contract_json, lifecycle_diagrams_json, version_json,
+    evaluate_expression_json, function_contract_json, lifecycle_diagrams_json,
+    renderer_capabilities_json, version_json,
 };
 use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
 use norn_ir::ResourceLimitProfile;
@@ -503,6 +504,28 @@ fn evaluation_returns_typed_refusals_and_stops_at_its_fuel_limit() {
         budget["error"]["used"].as_u64().expect("attempted charge") > limit,
         "{budget}"
     );
+}
+
+#[test]
+fn renderer_capabilities_match_the_ui_checker() {
+    let text = std::fs::read_to_string(
+        repo_root().join("apps/studio/src/decisions/decision-sheet.widget.json"),
+    )
+    .expect("decision sheet document");
+    let document: Value = serde_json::from_str(&text).expect("decision sheet JSON");
+    let ux_json = document["payload"]["ux"].to_string();
+    let ux: norn_ir::WidgetUx = serde_json::from_str(&ux_json).expect("decision sheet ux");
+    let expected: Vec<String> = norn_ui_checker::ui_sdk::renderer_capabilities(&ux)
+        .into_iter()
+        .collect();
+    let output = json_of(&renderer_capabilities_json(&ux_json).expect("capabilities"));
+    assert_eq!(output, serde_json::json!(expected));
+    assert!(
+        expected
+            .iter()
+            .any(|capability| capability == "agent:redaction")
+    );
+    assert!(renderer_capabilities_json("{}").is_err());
 }
 
 #[test]

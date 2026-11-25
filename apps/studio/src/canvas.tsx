@@ -6,7 +6,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { SourceTag } from "@/components/system/source-tag"
+import { Dot, StatusDot } from "@/components/system/status-dot"
 import { CARD, EDGE_PILL, InspectorHead, KindChip, NodeCard, cardHeight } from "@/components/canvas/node-card"
 import { cn } from "@/lib/utils"
 import { LANE, bundleRoute, laneRoute, type Rail } from "./lib/canvas/routes.ts"
@@ -22,6 +25,7 @@ import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type
 import { AutomationEditor } from "./automation-canvas.tsx"
 import { words } from "./lib/format.ts"
 import { transport, type Envelope } from "./lib/transport.ts"
+import { useCatalog } from "./lib/use-catalog.ts"
 import { EditorShortcuts } from "@/components/keys"
 
 export const SAVE_BLOCKED = "Saving to the server needs its admission and governed-install route, which is not live yet."
@@ -69,7 +73,7 @@ export function BundleEdge({ id, targetX, targetY, markerEnd, data }: EdgeProps<
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {routed.ticks.map((tick, index) => <circle key={index} cx={tick.x} cy={tick.y} r={3} className="canvas-bundle-tick" />)}
       <EdgeLabelRenderer>
-        <div data-edge-label={id} title={`${data.label}: ${data.sources.map(words).join(", ")}`} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive")} onClick={() => store.getState().addSelectedEdges([id])}
+        <div data-edge-label={id} title={`${data.label}: ${data.sources.map(words).join(", ")}`} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
           style={{ maxWidth: 220, transform: `translate(-50%, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
       </EdgeLabelRenderer>
     </>
@@ -88,7 +92,7 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {data?.label && room >= 28 && (
         <EdgeLabelRenderer>
-          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive")} onClick={() => store.getState().addSelectedEdges([id])}
+          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
             style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
         </EdgeLabelRenderer>
       )}
@@ -111,7 +115,7 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
       {standing.length > 0 && (
         <details className="text-meta text-muted-foreground">
           <summary className="cursor-pointer select-none">{standing.length} findings the loaded definitions already had</summary>
-          <div className="space-y-2 pt-2">{standing.map((finding, index) => <IssueCard key={index} issue={finding} />)}</div>
+          <div className="space-y-3 pt-2">{standing.map((finding, index) => <IssueCard key={index} issue={finding} />)}</div>
         </details>
       )}
     </>
@@ -134,9 +138,9 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
     <>
       {node && <InspectorHead kind="state" id={node.id} />}
       {edge && <InspectorHead kind="route" kindLabel="Step" id={`${words(edge.source)} → ${words(edge.target)}`} />}
-      {own.map((issue, index) => <IssueCard key={index} issue={issue} />)}
+      {own.length > 0 && <div className="space-y-3">{own.map((issue, index) => <IssueCard key={index} issue={issue} />)}</div>}
       {node && <>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Name</span>
+        <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">Name</span>
           <Input aria-label="Name" defaultValue={node.id} key={`name:${node.id}`} onBlur={(event) => {
             const to = event.target.value.trim()
             if (!to || to === node.id) return
@@ -144,19 +148,19 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
             edit(g.renameNode(graph, node.id, to)); select({ nodes: [to], edges: [] })
           }} /></label>
         {FLAGS.map((flag) => (
-          <label key={flag} className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
+          <label key={flag} className="flex items-center gap-2 text-body"><input type="checkbox" aria-label={words(flag)} checked={node.config[flag] === "yes"} onChange={(event) => edit(g.configureNode(graph, node.id, { [flag]: event.target.checked ? "yes" : "" }))} />{words(flag)}</label>
         ))}
       </>}
       {edge && siblings.length > 1 && (
         <section className="space-y-2" data-testid="step-sources">
-          <h3 className="text-xs font-semibold text-muted-foreground">From {siblings.length} states</h3>
-          <ul className="space-y-1.5">
+          <h3 className="text-meta text-muted-foreground">From {siblings.length} states</h3>
+          <ul className="-mx-1.5 flex flex-col">
             {siblings.map((id) => { const one = graph.edges.find((other) => other.id === id)!; return (
-              <li key={id} className="flex items-center justify-between gap-2 rounded-lg border border-node-border bg-card px-2.5 py-1.5 text-sm">
+              <li key={id} className="flex min-h-10 items-center justify-between gap-2 rounded-(--radius-row) px-1.5 py-1 text-body hover:bg-(--well-hover) max-sm:min-h-[44px]">
                 <span>{words(one.source)} → {words(one.target)}</span>
                 <span className="flex items-center gap-1">
                   {/* Reconnect, for a step drawn inside a bundle: point this one step at another state (undoable). */}
-                  <select aria-label={`Change target of the step from ${words(one.source)}`} className="h-8 rounded-3xl bg-input/50 px-2 text-xs" value=""
+                  <select aria-label={`Change target of the step from ${words(one.source)}`} className="h-8 rounded-full bg-input/50 px-2 text-meta max-sm:min-h-[44px]" value=""
                     onChange={(event) => {
                       const target = event.target.value
                       if (!target) return
@@ -174,23 +178,32 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
         </section>
       )}
       {edge && <>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Step id</span>
+        <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">Step id</span>
           <Input aria-label="Step id" defaultValue={edge.config.transition} key={`${edge.id}:id:${edge.config.transition}`} onBlur={(event) => { const id = event.target.value.trim(); if (id) edit(g.configureEdges(graph, siblings, { transition: id })) }} /></label>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Allowed only when (one rule per line)</span>
-          <Textarea aria-label="Guards" defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono text-xs" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Description</span>
+        <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">Allowed only when (one rule per line)</span>
+          <Textarea aria-label="Guards" defaultValue={edge.config.guards} key={`${edge.id}:guards:${edge.config.guards}`} className="font-mono" onBlur={(event) => edit(g.configureEdges(graph, siblings, { guards: event.target.value }))} /></label>
+        <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">Description</span>
           <Input aria-label="Description" defaultValue={edge.config.description} key={`${edge.id}:description:${edge.config.description}`} onBlur={(event) => edit(g.configureEdges(graph, siblings, { description: event.target.value }))} /></label>
       </>}
-      <div className="border-t border-node-border pt-3"><Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remove}><Trash2 />Delete</Button></div>
+      <div className="border-t border-node-border pt-3"><Button size="sm" variant="destructive" onClick={remove}><Trash2 />Delete</Button></div>
     </>
   )
 }
 
+/** A lifecycle's names from the server's catalog: its type's title and its status field's label, when the catalog has them. */
+export interface LifecycleNames {
+  readonly type?: string
+  readonly field?: string
+}
+
+/** The type's title from the catalog, else its id as a code: an id is never turned into a made-up title here. */
+export const TypeName = ({ id, title }: { readonly id: string; readonly title?: string }) => title ?? <SourceTag>{id}</SourceTag>
+
 /** The frame's props for one lifecycle; the sheet renders the same props with fixed findings. */
-export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issues: CanvasFrameProps["issues"], standing: readonly Finding[]): CanvasFrameProps {
+export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issues: CanvasFrameProps["issues"], standing: readonly Finding[], names: LifecycleNames = {}): CanvasFrameProps {
   return {
     draftKey: `lifecycle:${lifecycle.artifactId}:${lifecycle.index}`,
-    label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
+    label: <span className="inline-flex flex-wrap items-center gap-1"><TypeName id={lifecycle.objectType} title={names.type} />: {names.field ?? <SourceTag>{lifecycle.property}</SourceTag>}</span>,
     // A status canvas opens tidy: the main row straight, side states in a band, the fewest crossings.
     initial: tidyLifecycle(decompile(envelope, lifecycle), STATE_SPACING), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues, saveBlocked: SAVE_BLOCKED,
     empty: "This lifecycle has no states. Add one to start.",
@@ -226,30 +239,35 @@ export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issu
       return { id: g.freshName(graph.edges.map(({ id }) => id), edgeId(transition, source)), source, target, sourcePort: sourceHandle ?? "out", targetPort: targetHandle ?? "in", config: { transition, guards: "", description: "" } }
     },
     copyEdgeConfig: (edge, taken) => ({ ...edge.config, transition: g.freshName(taken, `${edge.config.transition || "step"}_copy`) }),
-    palette: ({ graph, edit, select }) => (
-      <Button size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => { const id = g.freshId(graph, "new_state"); edit(g.addNode(graph, { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} })); select({ nodes: [id], edges: [] }) }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
+    palette: ({ graph, edit, select, spot }) => (
+      <Button size="sm" variant="ghost" className="gap-1.5 ps-1.5" onClick={() => {
+        const id = g.freshId(graph, "new_state")
+        // It lands wholly inside the part of the canvas in view, clear of the states there.
+        const state: g.CanvasNode = { id, kind: "state", position: { x: 40, y: 40 + graph.nodes.length * 20 }, config: {} }
+        edit(g.addNode(graph, { ...state, position: spot?.(state) ?? state.position })); select({ nodes: [id], edges: [] })
+      }}><KindChip kind="state" className="size-5 rounded-md" />State</Button>
     ),
     inspector: (editing, found) => <Inspector editing={editing} issues={found} standing={standing} kinds={lifecycleKinds(lifecycle)} />,
   }
 }
 
 /** Edit one lifecycle: every change compiles the entity again and the checker runs over the definition set. */
-function Editor({ definitions, envelope, lifecycle }: { readonly definitions: readonly Envelope[]; readonly envelope: Envelope; readonly lifecycle: LifecycleRef }) {
+function Editor({ definitions, envelope, lifecycle, names }: { readonly definitions: readonly Envelope[]; readonly envelope: Envelope; readonly lifecycle: LifecycleRef; readonly names: LifecycleNames }) {
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   // What the loaded definitions already fail on, so the canvas leads with what an edit changed.
   const baseline = useMemo(() => checker.data?.(definitions).diagnostics.diagnostics, [checker.data, definitions])
 
   const issues = useCallback((graph: g.Graph) => {
-    if (checker.isError) return { issues: [], status: <span className="text-destructive" role="alert">Checker not loaded: no diagnostics</span> }
+    if (checker.isError) return { issues: [], status: <StatusDot tone="bad" role="alert">Checker not loaded: no diagnostics</StatusDot> }
     if (!checker.data || !baseline) return { issues: [], status: <span role="status">Loading the checker…</span> }
     const compiled = compile(envelope, lifecycle, graph)
     const set = definitions.map((other) => other.artifactId === envelope.artifactId ? compiled.envelope : other)
     const placed = place(checker.data(set).diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id)))
-    const found: Issue[] = introduced(placed, baseline).added.map(({ finding: { code, message }, node, edge }) => ({ code, message, ...(node ? { node } : {}), ...(edge ? { edge } : {}) }))
-    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Badge> }
+    const found: Issue[] = introduced(placed, baseline).added.map(({ finding: { code, message, severity }, node, edge }) => ({ code, message, severity, ...(node ? { node } : {}), ...(edge ? { edge } : {}) }))
+    return { issues: found, status: found.length === 0 ? <Badge variant="success">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Badge> }
   }, [checker.isError, checker.data, baseline, definitions, envelope, lifecycle])
 
-  const props = useMemo(() => lifecycleFrame(envelope, lifecycle, issues, baseline?.filter(({ artifactId }) => artifactId === envelope.artifactId) ?? []), [envelope, lifecycle, issues, baseline])
+  const props = useMemo(() => lifecycleFrame(envelope, lifecycle, issues, baseline?.filter(({ artifactId }) => artifactId === envelope.artifactId) ?? [], names), [envelope, lifecycle, issues, baseline, names])
   return <CanvasFrame {...props} />
 }
 
@@ -263,31 +281,39 @@ export interface DefinitionsRead {
 export function CanvasPage() {
   const definitions = useQuery({ queryKey: ["definitions"], queryFn: recordedDefinitions })
   const data = useMemo(() => definitions.data?.map(({ document }) => document), [definitions.data])
-  return <CanvasPageView definitions={{ isPending: definitions.isPending, error: definitions.error, data }} />
+  // Names come from the server's catalog in the reader's language (its labels); until it is read, ids show as codes.
+  const { catalog } = useCatalog()
+  const names = useCallback((ref: LifecycleRef): LifecycleNames => {
+    const concept = catalog?.byName.get(ref.objectType)
+    const field = concept?.fields.find(({ id }) => id === ref.property)?.label
+    return { ...concept ? { type: concept.title } : {}, ...field ? { field } : {} }
+  }, [catalog])
+  return <CanvasPageView definitions={{ isPending: definitions.isPending, error: definitions.error, data }} names={names} />
 }
 
-export function CanvasPageView({ definitions }: { readonly definitions: DefinitionsRead }) {
+const NO_NAMES = (): LifecycleNames => ({})
+
+export function CanvasPageView({ definitions, names = NO_NAMES }: { readonly definitions: DefinitionsRead; readonly names?: (ref: LifecycleRef) => LifecycleNames }) {
   const envelopes = useMemo(() => definitions.data ?? [], [definitions.data])
   const found = useMemo(() => lifecyclesIn(envelopes), [envelopes])
   const [chosen, setChosen] = useState(0)
   const [kind, setKind] = useState<"lifecycle" | "automation">("lifecycle")
   const lifecycle = found[chosen]
   const envelope = envelopes.find(({ artifactId }) => artifactId === lifecycle?.artifactId)
+  // One object per lifecycle and catalog, so the editor's frame is not rebuilt on every render.
+  const editorNames = useMemo(() => lifecycle ? names(lifecycle) : {}, [lifecycle, names])
   return (
     <section className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Canvas</h1>
-        <p className="max-w-2xl text-muted-foreground">Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides.</p>
-      </div>
+      <PageHeader title="Canvas" description="Draw how a process moves. Every change is checked as you make it; saving asks the server, which checks again and decides." />
       <div className="flex flex-wrap gap-1.5">
-        {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
+        {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}><TypeName id={ref.objectType} title={names(ref).type} /></Button>)}
         <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
       </div>
       {kind === "automation" && <AutomationEditor />}
-      {kind === "lifecycle" && definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-sm text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
-      {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="p-6 text-sm text-destructive" role="alert">The definitions could not be read: {definitions.error.message}</p></Well></Panel>}
+      {kind === "lifecycle" && definitions.isPending && <Panel label="Canvas"><Well><p className="p-6 text-body text-muted-foreground" role="status">Reading definitions…</p></Well></Panel>}
+      {kind === "lifecycle" && definitions.error && <Panel label="Canvas"><Well><p className="flex items-start gap-2 p-6 text-body text-foreground" role="alert"><Dot tone="bad" className="mt-[7px]">The definitions could not be read: {definitions.error.message}</Dot></p></Well></Panel>}
       {kind === "lifecycle" && definitions.data && found.length === 0 && <Panel label="Canvas"><Well><EmptyState icon={Network}>No admitted definition declares a lifecycle yet.</EmptyState></Well></Panel>}
-      {kind === "lifecycle" && lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} />}
+      {kind === "lifecycle" && lifecycle && envelope && <Editor key={`${lifecycle.artifactId}:${lifecycle.index}`} definitions={envelopes} envelope={envelope} lifecycle={lifecycle} names={editorNames} />}
     </section>
   )
 }

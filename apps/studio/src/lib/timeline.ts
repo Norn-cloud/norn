@@ -341,11 +341,11 @@ export function stack<T>(spans: readonly { readonly item: T; readonly start: num
   }
 }
 
-/** Where a span sits in a window, as percentages of its width, clipped to the window. */
-export function geometry(span: Span, window: Span): { readonly left: number; readonly width: number; readonly clippedStart: boolean; readonly clippedEnd: boolean } {
+/** Where a span sits in a window, as percentages of its width from the window's start edge (inline-start, so it mirrors in RTL), clipped to the window. */
+export function geometry(span: Span, window: Span): { readonly offset: number; readonly width: number; readonly clippedStart: boolean; readonly clippedEnd: boolean } {
   const total = window.end - window.start
   const start = Math.max(span.start, window.start), end = Math.min(span.end, window.end)
-  return { left: ((start - window.start) / total) * 100, width: Math.max(0, ((end - start) / total) * 100), clippedStart: span.start < window.start, clippedEnd: span.end > window.end }
+  return { offset: ((start - window.start) / total) * 100, width: Math.max(0, ((end - start) / total) * 100), clippedStart: span.start < window.start, clippedEnd: span.end > window.end }
 }
 
 /** The heading of a window: "Monday 23 November 2026", "23 – 29 Nov 2026" or "November 2026" (always Gregorian). */

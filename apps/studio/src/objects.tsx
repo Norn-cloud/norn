@@ -4,13 +4,13 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { sentence } from "@/components/lifecycle-view"
 import { useLocale } from "./lib/locale.tsx"
-import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
-import { Chip, FactChip } from "@/components/chip"
-import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
+import { Clock, GitCommitHorizontal, ShieldX } from "lucide-react"
+import { Chip, FactChip } from "@/components/system/chip"
+import { FACT_STATUS_META, FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CopyId, DigestId, PathText } from "@/components/copy-id"
 import { FactProvenance, ProvenanceChain } from "@/components/provenance"
@@ -23,8 +23,8 @@ import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
-import { retryMode, useMode } from "./lib/live-transport.ts"
-import { findingsQuery, recordRead } from "./lib/record-read.ts"
+import { retryWorkspace, useMode } from "./lib/live-transport.ts"
+import { untilDecided, useWorkspace } from "./lib/workspace.tsx"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
@@ -36,6 +36,7 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
+import { formatLocale } from "./lib/timeline.ts"
 import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
@@ -68,35 +69,49 @@ export function ObjectPage() {
   const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  // The record's source workspace: a live record is read at the scope its decided mode was read
-  // at (checked before and after the read), cached under it, and its reveals go to it. The same id
-  // in another workspace is another record, never this one's cached read. Nothing is read until the
-  // mode is decided: a failed mode read waits for Retry rather than reading without a workspace.
-  // Until then the read's key is the recording's, which no live answer reaches (#1740). Only a
-  // decided mode binds the page: after a failed refetch TanStack keeps the last answer, which is
-  // no longer current (#1745).
+  // The record's source workspace, as the page's mode decided it (lib/workspace.tsx): a live record is
+  // read at that workspace (checked before and after the read), cached under it, and its reveals go to
+  // it; a recorded workspace reads only the recording. The same id in another workspace is another
+  // record, never this one's cached read. Nothing is read until the workspace is decided, and after a
+  // failed mode read (TanStack keeps the last answer, which is no longer current) nothing it read shows:
+  // the page waits for Retry (#1740, #1745).
+  const workspace = useWorkspace()
   const mode = useMode()
-  const decided = mode.isSuccess ? mode.data : undefined
-  const sourceScope = decided?.kind === "live" ? decided.scope : undefined
-  const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })
-  const modeError = mode.isError ? mode.error : null
+  const decided = workspace.kind === "live" || workspace.kind === "recorded" ? workspace : undefined
+  const sourceScope = workspace.kind === "live" ? workspace.scope : undefined
+  const reads = useQuery(untilDecided(decided?.reader.object(name, id), ["object", name, id]))
+  const modeError = workspace.kind === "unavailable" ? workspace.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
-  // read again reads both, so neither is left from an earlier read.
+  // read again reads both, so neither is left from an earlier read. It reads the findings again too,
+  // under the reader's own key: a correction can release a held record or settle a finding, and the
+  // header and the Findings panel would otherwise keep the earlier answer while it is fresh (FINDINGS_STALE_MS).
   const queries = useQueryClient()
-  const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
-  // Retry decides the mode again (the shell's own retry); the record is read once it is decided,
-  // at that mode's scope. An errored read under a decided mode is read again here.
-  const retry = () => {
-    void retryMode(queries)
-    void catalogRead.refetch()
-    if (mode.isSuccess) void reads.refetch()
+  const readAgain = () => {
+    void reads.refetch()
+    void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) })
+    if (workspace.kind === "live") void queries.invalidateQueries({ queryKey: workspace.reader.findings(name, id).queryKey, exact: true })
   }
-  const live = decided?.kind === "live"
+  // Retry is the workspace's (`retryWorkspace`): it decides the mode again and then reads again every
+  // errored read, the type's and the record's among them, at that mode's scope. A read still waiting
+  // for its answer (its skeleton timed out) did not error, so it is read again here, once the mode is
+  // decided, and only if it is still waiting then: no read is sent twice.
+  const retry = () => {
+    const waiting = [
+      ...catalogRead.isPending ? [["catalog"]] : [],
+      ...decided !== undefined && reads.isPending ? [decided.reader.object(name, id).queryKey] : [],
+    ]
+    void retryWorkspace(queries).then(() => {
+      for (const queryKey of waiting) {
+        if (queries.getQueryState(queryKey)?.status === "pending") void queries.refetchQueries({ queryKey, exact: true })
+      }
+    })
+  }
+  const live = workspace.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   // Read and cached at the record's source workspace, and shown only while the mode is decided: no
   // findings from another workspace, or from before the mode failed, show beside Workspace unavailable (#1745).
-  const review = useQuery(findingsQuery(name, id, sourceScope))
-  const reviewed = mode.isSuccess ? review.data?.document : undefined
+  const review = useQuery({ ...untilDecided(workspace.kind === "live" ? workspace.reader.findings(name, id) : undefined, ["findings", name, id]), retry: false })
+  const reviewed = workspace.kind === "live" ? review.data?.document : undefined
   const evidence = reviewed?.evidence ?? []
   const broken = reviewed?.findings.filter(({ status }) => status === "open") ?? []
   const heldBack = reviewed?.quarantined === true
@@ -109,7 +124,7 @@ export function ObjectPage() {
   const lineage = data?.source?.document
   // A failed mode read is the workspace's state, not this read's: it shows Workspace unavailable
   // with the page's Retry (below) instead of a bare message.
-  const problem = mode.isError ? undefined : readProblem(catalogRead, reads)
+  const problem = workspace.kind === "unavailable" ? undefined : readProblem(catalogRead, reads)
   const { icon: TypeIcon, text } = KINDS.objectType
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
@@ -135,8 +150,11 @@ export function ObjectPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
-            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
-            {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
+            {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
+                the record: the title says exactly how many, and each value says how it was projected. */}
+            {recordStatus === "withheld" && maskedRecord !== undefined
+              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord, formatLocale(locale))}</Chip>
+              : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
@@ -153,7 +171,7 @@ export function ObjectPage() {
             <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>
-            <RecordActions objectType={name} id={id} onDone={() => { readAgain(); void review.refetch() }} />
+            <RecordActions objectType={name} id={id} onDone={readAgain} />
           </div>
         )}
       </header>
@@ -172,7 +190,7 @@ export function ObjectPage() {
         </LoadState>
       )}
       {reads.isSuccess && data === null && (live
-        ? <QuarantinedRecord objectType={name} id={id} scope={sourceScope} onDone={readAgain} />
+        ? workspace.kind === "live" && <QuarantinedRecord objectType={name} id={id} reader={workspace.reader} onDone={readAgain} />
         : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
@@ -193,7 +211,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {live && <Findings objectType={name} id={id} scope={sourceScope} actionFor={corrections.actionFor} />}
+                {workspace.kind === "live" && <Findings objectType={name} id={id} reader={workspace.reader} actionFor={corrections.actionFor} quarantineStated={heldBack} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}
@@ -248,13 +266,26 @@ export function ObjectPage() {
           </TabsContent>
         </Tabs>
       )}
-      {corrections.sheet(() => { readAgain(); void review.refetch() })}
+      {corrections.sheet(readAgain)}
     </section>
     </RevealScope.Provider>
   )
 }
 
 const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const
+
+/**
+ * How many of the record's values the server projected for this reader, in words: "1 value masked",
+ * "2 values withheld", "3 values masked or withheld" when the modes differ. The count is in `numbers`,
+ * the reader's number format (`formatLocale`).
+ */
+export function maskedWords(masked: Readonly<Record<string, unknown>>, numbers = "en"): string {
+  const modes = Object.values(masked).map((entry) => (entry as { mode?: unknown } | null)?.mode)
+  const count = modes.length
+  const refused = modes.filter((mode) => mode === "refuse").length
+  const verb = refused === 0 ? "masked" : refused === count ? "withheld" : "masked or withheld"
+  return `${count.toLocaleString(numbers)} ${count === 1 ? "value" : "values"} ${verb}`
+}
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the

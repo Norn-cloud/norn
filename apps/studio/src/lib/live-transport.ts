@@ -5,12 +5,10 @@
  */
 import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readAtScope, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { NO_HOST_ERROR } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
-import { readsOf } from "./record-name.ts"
-import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
-import type { CountedLinkPage, LinkCounts } from "./record-page.ts"
+import type { Artifact, Envelope, Transport } from "./transport.ts"
 import { totalOf, type Total } from "./records-query.ts"
 
 /** A read this cell does not serve. While a cell is connected nothing recorded stands in for it. */
@@ -25,12 +23,6 @@ export function subRead<T>(read: Read<unknown>, prefix: string, document: T): Re
   const numbers = new Map<string, string>()
   for (const [pointer, text] of read.numbers) if (pointer === prefix || pointer.startsWith(`${prefix}/`)) numbers.set(pointer.slice(prefix.length), text)
   return { document, numbers, origin: read.origin }
-}
-
-/** The cell's link page (`next` cursor) in the shape the pages read (`hasMore`), with its counts when it sends them. */
-function linkPage(read: Read<{ readonly objectType: string; readonly id: string; readonly items: LinkPage["items"]; readonly next?: string | null; readonly counts?: LinkCounts | null }>): Read<CountedLinkPage> {
-  const { objectType, id, items, next, counts } = read.document
-  return { ...read, document: { objectType, id, items, hasMore: typeof next === "string", ...counts ? { counts } : {} } }
 }
 
 /** Where Studio's documents come from: the connected cell, or the recording when no cell is connected. */
@@ -195,23 +187,11 @@ async function readDefinitions(fetcher: Fetch, scope: StudioScope, signal?: Abor
   }
 }
 
-/** The live transport over one connected cell's routes. */
-export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch, counts: ObjectCounts = {}, scope?: StudioScope): Transport {
-  const call = scopedHostFetch(fetcher, "/api/host", scope !== undefined ? async () => scope : () => readStudioScope(fetcher))
-  /** One read; `null` when the cell answers 404 (no such object, or none this principal may read). */
-  const read = async <T,>(path: string): Promise<Read<T> | null> => {
-    const response = await call(path, { headers: { accept: "application/json" } })
-    const text = await response.text()
-    if (response.status === 404) return null
-    if (!response.ok) {
-      let parsed: unknown = null
-      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
-      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
-      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
-    }
-    return readDocument<T>(text, "live")
-  }
-  const objectPath = (objectType: string, id: string, leaf?: string) => `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
+/**
+ * The live transport over one connected cell: the catalog and counts its mode read carried. It reads
+ * nothing itself; records are read through the decided workspace's reader (`lib/workspace.tsx`).
+ */
+export function liveTransport(catalog: Read<readonly Artifact[]>, counts: ObjectCounts = {}): Transport {
   return {
     catalog: async () => catalog,
     objectCounts: async () => counts,
@@ -219,61 +199,7 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     questionBoard: async () => { throw new NotServed("Saved questions are") },
     restatement: async () => { throw new NotServed("Restated answers are") },
     guarantees: async () => { throw new NotServed("Model-checked proofs are") },
-    objectPage: async (objectType, after) => read<ObjectPage>(`/v1/objects/${encodeURIComponent(objectType)}${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`),
-    object: async (objectType, id) => {
-      const [object, links, source] = await Promise.all([
-        read<ObjectRecord>(objectPath(objectType, id)),
-        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath(objectType, id, "links")),
-        // 404: no mapping produced this object (or its source is not readable): there is no lineage to show.
-        read<SourceLineage>(objectPath(objectType, id, "lineage")),
-      ])
-      if (object === null || links === null) return null
-      const page = linkPage(links)
-      return readsOf(objectType, id, object.document, page.document) ? { object, links: page, source } : null
-    },
   }
-}
-
-/**
- * Read one live record, its links, and its lineage pinned explicitly to `scope`. Verifies `/api/me`
- * matches `scope` before and after dispatch so a stale drawer cannot read from another workspace.
- */
-export async function readObjectAtScope(
-  objectType: string,
-  id: string,
-  scope: StudioScope,
-  signal?: AbortSignal,
-  fetcher: Fetch = defaultFetch,
-) {
-  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
-  const read = async <T,>(path: string): Promise<Read<T> | null> => {
-    const response = await call(path, { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) })
-    const text = await response.text()
-    if (response.status === 404) return null
-    if (!response.ok) {
-      let parsed: unknown = null
-      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
-      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
-      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
-    }
-    return readDocument<T>(text, "live")
-  }
-  const objectPath = (leaf?: string) => `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
-  return readAtScope(
-    scope,
-    (s) => readStudioScope(fetcher, s),
-    async () => {
-      const [object, links, source] = await Promise.all([
-        read<ObjectRecord>(objectPath()),
-        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath("links")),
-        read<SourceLineage>(objectPath("lineage")),
-      ])
-      if (object === null || links === null) return null
-      const page = linkPage(links)
-      return readsOf(objectType, id, object.document, page.document) ? { object, links: page, source } : null
-    },
-    signal,
-  )
 }
 
 /** Raised when an in-flight mode read settles after a newer scope or `refreshMode()` superseded it. */
@@ -633,8 +559,17 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
   })
 }
 
-/** Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh replacements. */
-export async function retryMode(client: QueryClient): Promise<void> {
+/**
+ * Stop in-flight scope and mode probes (including reads the transport started directly) and start fresh
+ * replacements. Resolves `true` once the page's mode is decided again, `false` when it settled in error
+ * (the session or the cell still does not answer).
+ *
+ * When the scope is read again and answers, that answer is applied here, at once ({@link scopeAnswered}:
+ * a different workspace purges the old one's reads), and that workspace's mode is read here too, not
+ * left to `useMode`'s next render: until it runs, no mode query of the new key is mounted, and whatever
+ * reads again next would discover the scope a second time or read in the old workspace.
+ */
+export async function retryMode(client: QueryClient): Promise<boolean> {
   const scopeFilter = { queryKey: ["studio-scope"], type: "active" } as const
   const modeFilter = { queryKey: ["studio-mode"], type: "active" } as const
   const scopeState = client.getQueryState(["studio-scope"])
@@ -651,18 +586,52 @@ export async function retryMode(client: QueryClient): Promise<void> {
   if (retryScope) {
     await client.refetchQueries(scopeFilter, { cancelRefetch: false })
     const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
-    const nextModeKey =
-      nextScope?.status === "success"
-        ? studioScopeKey(nextScope.data)
-        : nextScope?.status === "error"
-          ? "outage"
-          : null
-    if (nextModeKey !== null) {
-      await client.refetchQueries({ queryKey: ["studio-mode", nextModeKey], exact: true, type: "active" }, { cancelRefetch: false })
+    if (nextScope?.status === "success") {
+      const scope = nextScope.data ?? null
+      scopeAnswered(client, scope)
+      // Read always (`staleTime: 0`): Retry decides the mode again even when this workspace's is cached.
+      // A mode query of this key that `useMode` mounts meanwhile joins this read.
+      return client.fetchQuery({ ...modeQuery(scope), staleTime: 0 }).then(() => true, () => false)
     }
-    return
+    if (nextScope?.status !== "error") return false
+    const outage = ["studio-mode", "outage"]
+    await client.refetchQueries({ queryKey: outage, exact: true, type: "active" }, { cancelRefetch: false })
+    return client.getQueryState(outage)?.status === "success"
   }
   await client.refetchQueries(modeFilter, { cancelRefetch: false })
+  return client.getQueryCache().findAll(modeFilter).every((query) => query.state.status === "success")
+}
+
+/**
+ * Whether a read's answer is a refusal held as data, not as the query's error: a pushed refusal
+ * (`CellRefused`, `{ kind: "refused" }`) or a cell call's refused result (`{ result: { kind: "refused" } }`,
+ * such as the decisions inbox). The query succeeded, but what it shows is the refusal, and its page may
+ * show it as Workspace unavailable, whose Retry is {@link retryWorkspace}.
+ */
+function holdsRefusal(data: unknown): boolean {
+  const refused = (value: unknown) => typeof value === "object" && value !== null && (value as { readonly kind?: unknown }).kind === "refused"
+  return refused(data) || (typeof data === "object" && data !== null && refused((data as { readonly result?: unknown }).result))
+}
+
+/**
+ * The one user Retry for the workspace (the shell's one-line status, a page's own Workspace unavailable
+ * state, a skeleton's Retry while the mode is read): decide the mode again (`retryMode`), and only once
+ * it is decided read again every read on screen that errored or holds a refusal. Sequenced, so a page's
+ * read never runs while the mode is still undecided (that read would discover the scope a second time);
+ * a read that is already running again is joined, not restarted. When the mode settles in error nothing
+ * else is read: the page shows Workspace unavailable for the mode, and its reads would only ask the cell
+ * that did not answer again (each with its own automatic retries, keeping Retry disabled meanwhile).
+ * Resolves when both are done, so a Retry button can stay disabled until then.
+ */
+export async function retryWorkspace(client: QueryClient): Promise<void> {
+  if (!await retryMode(client)) return
+  await client.invalidateQueries({
+    predicate: (query) => {
+      const head = query.queryKey[0]
+      if (head === "studio-scope" || head === "studio-mode") return false
+      return query.state.status === "error" || holdsRefusal(query.state.data)
+    },
+  }, { cancelRefetch: false })
 }
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */

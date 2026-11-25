@@ -1937,6 +1937,15 @@
     "source_schema.validation.unknown_field": {
       "message": "dataset {$dataset} has no field {$field}"
     },
+    "widget.authority.action_outside_binding": {
+      "message": "a page reaches a Norn action outside its action binding: {$detail}"
+    },
+    "widget.binding.exact_value_unhandled": {
+      "message": "an exact decimal property is rendered by a catalog component that does not declare it handles exact values: {$detail}"
+    },
+    "widget.binding.marked_value_unhandled": {
+      "message": "a marked property is rendered by a catalog component that does not declare it handles masked values: {$detail}"
+    },
     "widget.catalog.duplicate_entry": {
       "message": "a widget's catalog declares one entry id twice: {$detail}"
     },
@@ -1991,6 +2000,12 @@
     "widget.interaction.unreachable_page": {
       "message": "an app page has no control that reaches it from the entry page: {$detail}"
     },
+    "widget.layer.dismissal_refused_without_cause": {
+      "message": "a UI SDK layer refuses dismissal where nothing justifies it: {$detail}"
+    },
+    "widget.layer.notification_intrusive": {
+      "message": "a notification surface holds the page: {$detail}"
+    },
     "widget.lifecycle.assumption_violated": {
       "message": "a page state is shown while the object is in a lifecycle state it does not assume: {$detail}"
     },
@@ -2037,7 +2052,10 @@
       "message": "a page machine declares one field, event, state or transition id twice: {$detail}"
     },
     "widget.machine.error_without_recovery": {
-      "message": "a page machine error state has no transition a person or a timer drives: {$detail}"
+      "message": "a page machine error state offers no Retry or Close a person drives: {$detail}"
+    },
+    "widget.machine.failure_without_retry_or_close": {
+      "message": "a page machine state a failed call enters offers no Retry or Close a person drives: {$detail}"
     },
     "widget.machine.initial_not_idle": {
       "message": "a page machine's initial state is not an idle state: {$detail}"
@@ -2056,6 +2074,9 @@
     },
     "widget.machine.nondeterministic": {
       "message": "a page machine state has more than one unguarded transition on one event or outcome: {$detail}"
+    },
+    "widget.machine.outcome_code_undeclared": {
+      "message": "a page machine handles a refusal code the awaited call cannot produce: {$detail}"
     },
     "widget.machine.outcome_impossible": {
       "message": "a page machine handles an outcome the awaited call cannot have: {$detail}"

@@ -57,27 +57,27 @@ export function LifecycleStepper({ lifecycle, record, concept, locale: explicitL
           return (
             <li key={step} data-state={step} data-current={current ? "" : undefined} data-ending={isEnding ? "" : undefined}
               aria-current={current ? "step" : undefined} className="flex items-center gap-2">
-              {index > 0 && <span aria-hidden className="text-xs text-muted-foreground/70">{rtl ? "←" : "→"}</span>}
+              {index > 0 && <span aria-hidden className="text-meta text-muted-foreground/70">{rtl ? "←" : "→"}</span>}
               <span className={cn(
-                "grid min-w-[6.5rem] self-stretch content-center gap-0.5 rounded-lg border px-3 py-1.5 text-sm transition-[border-color,box-shadow]",
+                "grid min-w-[6.5rem] self-stretch content-center gap-0.5 rounded-lg border px-3 py-1.5 text-body transition-[border-color,box-shadow]",
                 isEnding && "border-[3px] border-double px-[calc(0.75rem-2px)] py-[calc(0.375rem-2px)]",
                 current
-                  ? "border-primary bg-card font-medium text-foreground shadow-elevation ring-2 ring-primary/25"
+                  ? "border-primary bg-card text-foreground shadow-elevation ring-2 ring-primary/25"
                   : "border-border/90 bg-surface-subtle/70 text-muted-foreground",
               )}>
                 <span className={cn("leading-snug", current && "text-foreground")}>{stateLabel(step)}</span>
-                {role !== "" && <span className="text-[11px] font-normal text-muted-foreground">{role}</span>}
+                {role !== "" && <span className="text-meta font-normal text-muted-foreground">{role}</span>}
               </span>
             </li>
           )
         })}
       </ol>
-      <p className="text-sm text-muted-foreground">
+      <p className="text-body text-muted-foreground">
         {state === undefined
           ? copy.unset(propertyLabel)
           : terminal || next.length === 0
             ? copy.noStep
-            : <>{copy.nextLead}{next.map(({ id, to }, index) => <span key={id}>{index > 0 && (rtl ? "، " : ", ")}<b className="font-medium text-foreground">{sentence(id)}</b> ({copy.to(stateLabel(to))})</span>)}{copy.nextTail}</>}
+            : <>{copy.nextLead}{next.map(({ id, to }, index) => <span key={id}>{index > 0 && (rtl ? "، " : ", ")}<b className="text-foreground">{sentence(id)}</b> ({copy.to(stateLabel(to))})</span>)}{copy.nextTail}</>}
       </p>
     </div>
   )
