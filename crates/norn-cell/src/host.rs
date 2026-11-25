@@ -23,6 +23,8 @@
 //! observations arrive through [`SqliteCell::inject`]. The default engine is
 //! the native SQLite test driver; portable hosts supply their own engine.
 
+mod claim;
+
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 #[cfg(feature = "native")]
@@ -76,22 +78,7 @@ pub(crate) type AdmissionArgs<'a> = (
 /// server host.
 pub type Responder<C, I> = Box<dyn FnMut(&Command<C>) -> I + Send>;
 
-/// Durable state of the outbox head before an external `perform` dispatch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PerformClaim<C, I> {
-    /// This generation was durably claimed by this call and may be dispatched.
-    Fresh(Command<C>),
-    /// A result was already recorded and must be redelivered without dispatch.
-    Recorded {
-        /// The command whose result was recorded.
-        command: Command<C>,
-        /// The recorded result delivery.
-        performed: Performed<I>,
-    },
-    /// A prior process durably claimed this generation, but no result was
-    /// recorded before it stopped. The external outcome must be reconciled.
-    OutcomeUnknown(Command<C>),
-}
+pub use claim::ClaimOutcome;
 
 /// A `CellHost` over a [`CellStore`], using its selected SQL engine.
 pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
@@ -1375,92 +1362,6 @@ where
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
 where
-    C: DeserializeOwned,
-    I: DeserializeOwned,
-{
-    /// Inspect and durably claim the outbox head before external dispatch.
-    ///
-    /// A restored perform fence takes precedence over both a saved result and
-    /// a saved claim. A fresh command is returned only after the claim's
-    /// zero-event commit and export-journal record are durable.
-    ///
-    /// # Errors
-    ///
-    /// SQLite or decode errors, or an outbox race that invalidates the claim
-    /// before its commit.
-    pub fn claim_perform(&mut self) -> Result<Option<PerformClaim<C, I>>, CellError> {
-        self.claim_perform_with_reconciliation(None)
-    }
-
-    /// Claim the exact later generation authorized by the host's ledgered
-    /// reconciliation policy. The restore fence itself remains intact; a new
-    /// restore fences this generation again. Callers must atomically ledger
-    /// the authorization and enqueue before invoking this method.
-    ///
-    /// # Errors
-    /// Store or decode errors, as for [`Self::claim_perform`].
-    pub fn claim_reconciled_perform(
-        &mut self,
-        command_id: &CommandId,
-        generation: Generation,
-    ) -> Result<Option<PerformClaim<C, I>>, CellError> {
-        self.claim_perform_with_reconciliation(Some((command_id, generation)))
-    }
-
-    fn claim_perform_with_reconciliation(
-        &mut self,
-        authorized: Option<(&CommandId, Generation)>,
-    ) -> Result<Option<PerformClaim<C, I>>, CellError> {
-        let Some(head) = self.store.read().head_command()? else {
-            return Ok(None);
-        };
-        let fence = self
-            .store
-            .perform_fence_generation(&head.command.command_id)?;
-        let admitted = authorized.is_some_and(|(id, generation)| {
-            id.0 == head.command.command_id
-                && generation.0 == head.command.generation
-                && fence.is_some_and(|fenced| generation.0 > fenced)
-        });
-        if fence.is_some() && !admitted {
-            tracing::warn!(command_id = %head.command.command_id, "restored command fenced pending external-effect reconciliation");
-            return Ok(None);
-        }
-        let command: Command<C> = from_runtime(&head.command.command)?;
-        if let Some(result) = head.result {
-            let performed = Performed {
-                command: command.id.clone(),
-                generation: command.generation,
-                input: from_runtime(&result)?,
-            };
-            return Ok(Some(PerformClaim::Recorded { command, performed }));
-        }
-        if self
-            .store
-            .read()
-            .perform_claimed(&head.command.command_id, head.command.generation)?
-        {
-            // WORLD-ISOLATE-1 (Fable S9): a fork inherits main's claim but can
-            // never learn or settle its real outcome.
-            self.store.refuse_perform_in_fork()?;
-            return Ok(Some(PerformClaim::OutcomeUnknown(command)));
-        }
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            effects: vec![EffectRow::ClaimPerform {
-                command_id: head.command.command_id,
-                generation: head.command.generation,
-            }],
-            ..CommitBatch::default()
-        })?;
-        Ok(Some(PerformClaim::Fresh(command)))
-    }
-}
-
-impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
-where
     I: Serialize,
 {
     /// Record the result of a previously claimed command generation.
@@ -2264,13 +2165,13 @@ where
 
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {
         match self.claim_perform()? {
-            None => Ok(None),
-            Some(PerformClaim::Recorded { performed, .. }) => Ok(Some(performed)),
-            Some(PerformClaim::Fresh(command)) => {
+            ClaimOutcome::Empty | ClaimOutcome::HeadFenced { .. } => Ok(None),
+            ClaimOutcome::Recorded { performed, .. } => Ok(Some(performed)),
+            ClaimOutcome::Fresh(command) => {
                 let input = (self.responder)(&command);
                 self.complete_perform(&command, input)
             }
-            Some(PerformClaim::OutcomeUnknown(command)) => Err(CellError::PerformOutcomeUnknown {
+            ClaimOutcome::OutcomeUnknown(command) => Err(CellError::PerformOutcomeUnknown {
                 command_id: command.id.0,
                 generation: command.generation.0,
             }),

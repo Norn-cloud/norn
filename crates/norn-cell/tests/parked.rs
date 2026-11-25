@@ -11,9 +11,10 @@
 use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 
-use norn_cell::{CellError, Model, SqliteCell, StoreOptions};
+use norn_cell::{CellError, ClaimOutcome, Model, SqliteCell, StoreOptions};
 use norn_ir::RuntimeValue;
 use norn_kernel::cell_host::JsonObject;
+use norn_kernel::world::outbox::Queue;
 use norn_kernel::{
     CellCommit, CellHost, Command, CommandId, CommitError, Consumed, Effect, FactEvent,
     FreshnessPolicy, Generation, IdempotencyKey,
@@ -108,7 +109,7 @@ fn a_parked_decision_never_blocks_the_fifo_head() {
     consume(&mut cell, "notify").unwrap();
     // With the tool call consumed, the queue is empty: the decision is never performed.
     assert!(cell.perform().unwrap().is_none());
-    assert!(cell.claim_perform().unwrap().is_none());
+    assert_eq!(cell.claim_perform().unwrap(), ClaimOutcome::Empty);
     // The decision completes out of order whenever the cell resolves it.
     assert!(
         cell.complete_parked(&CommandId("ask".into()), Generation(1), answer("approve"))
@@ -500,4 +501,128 @@ fn queue_progress_never_decodes_unrelated_parked_results() {
     );
     consume(&mut cell, "late").unwrap();
     assert!(cell.perform().unwrap().is_none());
+}
+
+fn queues(cell: &Cell) -> Vec<(String, Queue)> {
+    cell.store()
+        .read()
+        .pending_commands()
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.command.command_id, row.queue))
+        .collect()
+}
+
+fn reissue(cell: &mut Cell, command: Command<JsonObject>) -> Result<(), CommitError<CellError>> {
+    cell.commit(CellCommit {
+        effects: vec![Effect::Perform(command)],
+        ..CellCommit::empty()
+    })
+    .map(|_| ())
+}
+
+/// D03 (#1699): the queue is stored once, at enqueue, and survives reopen. A
+/// newer generation cannot move a command to another queue, and an equal or
+/// older generation never re-executes or rewrites the stored payload.
+#[test]
+fn the_queue_is_stored_at_enqueue_and_a_reissue_never_moves_or_rewrites_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cell.sqlite");
+    let mut cell = open_at(&path);
+    dispatch(
+        &mut cell,
+        vec![command("ask", decision()), command("notify", tool())],
+    );
+    let stored = vec![
+        ("ask".to_owned(), Queue::Parked),
+        ("notify".to_owned(), Queue::Fifo),
+    ];
+    assert_eq!(queues(&cell), stored);
+    reissue(&mut cell, command("notify", tool())).unwrap();
+    // The CellHost law keeps an equal-generation reissue a no-op, whatever
+    // its payload: the stored payload is unchanged (checked after reopen).
+    reissue(&mut cell, command("notify", perform("billing.notify", "2"))).unwrap();
+    let mut moved = command("notify", decision());
+    moved.generation = Generation(2);
+    let moved = reissue(&mut cell, moved);
+    assert!(
+        matches!(
+            moved,
+            Err(CommitError::Host(CellError::OutboxReissueRefused {
+                generation: 2,
+                ..
+            }))
+        ),
+        "{moved:?}"
+    );
+    let mut older = command("notify", perform("billing.notify", "0"));
+    older.generation = Generation(0);
+    reissue(&mut cell, older).unwrap();
+    drop(cell);
+
+    let cell = open_at(&path);
+    assert_eq!(queues(&cell), stored);
+    let head = cell.store().read().head_command().unwrap().unwrap();
+    assert_eq!(
+        (head.command.command_id.as_str(), head.command.generation),
+        ("notify", 1)
+    );
+    // The diverged and the older payloads were never written.
+    let version = head
+        .command
+        .command
+        .get("payload")
+        .and_then(|payload| payload.get("functionVersion"))
+        .and_then(RuntimeValue::as_str);
+    assert_eq!(version, Some("1"));
+}
+
+/// D03 (#1699): an empty queue and a head a restore fenced are different
+/// answers; a reconciled claim takes only its own target, and only at a
+/// generation above the fence.
+#[test]
+fn a_fenced_head_is_not_an_empty_queue_and_only_its_reconciled_generation_is_claimed() {
+    let mut empty = fresh();
+    assert_eq!(empty.claim_perform().unwrap(), ClaimOutcome::Empty);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cell.sqlite");
+    let mut cell = open_at(&path);
+    dispatch(
+        &mut cell,
+        vec![command("notify", tool()), command("later", tool())],
+    );
+    // What a restore records for the command it fences.
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute(
+        "INSERT INTO \"_norn_meta\" (\"key\", \"value\") VALUES ('restore:perform_fence:notify', '1')",
+        [],
+    )
+    .unwrap();
+    drop(raw);
+    let notify = CommandId("notify".to_owned());
+    let fenced = ClaimOutcome::HeadFenced {
+        command: notify.clone(),
+        fenced_at: Generation(1),
+    };
+    assert_eq!(cell.claim_perform().unwrap(), fenced);
+    assert!(cell.perform().unwrap().is_none());
+    assert_eq!(
+        cell.claim_reconciled_perform(&notify, Generation(1))
+            .unwrap(),
+        fenced
+    );
+    assert!(matches!(
+        cell.claim_reconciled_perform(&CommandId("later".to_owned()), Generation(1)),
+        Err(CellError::PerformClaimNotPending { ref command_id, generation: 1 }) if command_id == "later"
+    ));
+    let mut next = command("notify", tool());
+    next.generation = Generation(2);
+    reissue(&mut cell, next.clone()).unwrap();
+    assert_eq!(cell.claim_perform().unwrap(), fenced);
+    assert_eq!(
+        cell.claim_reconciled_perform(&notify, Generation(2))
+            .unwrap(),
+        ClaimOutcome::Fresh(next)
+    );
+    assert!(cell.store().read().perform_claimed("notify", 2).unwrap());
 }

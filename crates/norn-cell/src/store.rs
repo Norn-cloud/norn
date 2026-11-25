@@ -3649,7 +3649,7 @@ impl<E: SqlEngine> CellStore<E> {
                 .with_source_disputes(&self.source_disputes)
                 .pending_command(command_id)?
                 .filter(|row| {
-                    crate::read::is_parked(&row.command)
+                    row.queue == norn_kernel::world::outbox::Queue::Parked
                         && row.command.generation == generation
                         && row.result.is_none()
                 });

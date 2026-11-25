@@ -2396,7 +2396,7 @@ fn replayed_result<E: SqlEngine>(
     let Some(row) = reader.pending_at(position)? else {
         return Ok(None);
     };
-    if crate::read::is_parked(&row.command) {
+    if row.queue == norn_kernel::world::outbox::Queue::Parked {
         return Ok(Some(row));
     }
     let fifo_head = reader.head_command()?.map(|head| head.position);

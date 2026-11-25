@@ -471,6 +471,26 @@ pub enum CellError {
         /// The claimed generation.
         generation: u64,
     },
+    /// P5 (#1698): a snapshot was requested for a world the store does not
+    /// serve: `Main` on a fork, or `Fork` on main. Nothing is read.
+    #[error("snapshot of {expected} refused: the store serves `{found}`")]
+    SnapshotWorldMismatch {
+        /// The world the snapshot was typed with.
+        expected: &'static str,
+        /// The world the store serves.
+        found: String,
+    },
+    /// D03 (#1699): an enqueue of a pending command was refused: a reissue
+    /// that would move it to another queue. Nothing is written.
+    #[error("outbox reissue of `{command_id}` generation {generation} refused: {reason}")]
+    OutboxReissueRefused {
+        /// The command id.
+        command_id: String,
+        /// The reissued generation.
+        generation: u64,
+        /// Why.
+        reason: String,
+    },
     /// The ledger hash chain or a receipt does not verify.
     #[error("ledger corrupt at seq {seq}: {reason}")]
     LedgerCorrupt {

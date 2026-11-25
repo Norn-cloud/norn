@@ -202,3 +202,6 @@ mod profile_ownership;
 /// Versioned single-cell read evidence and context validation.
 pub mod read_envelope;
 mod read_token_check;
+
+/// D03 outbox lifecycle (#1699) and typed world pins (#1698).
+pub mod world;
