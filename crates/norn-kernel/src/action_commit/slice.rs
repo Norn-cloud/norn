@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
+use norn_expr::{Expression, TurnFuel, Value as ExprValue};
 use norn_ir::{
     ActionEffectProgram, ActionRoot, ObjectTypeName, ResourceLimitProfile, RuntimeValue,
     SliceDeclaration, SliceKey, UpsertWriteMode,
@@ -1016,7 +1016,7 @@ pub(super) fn check_action_preconditions<X>(
     action: &ActionRoot,
     input: &JsonObject,
     slice: &LoadedActionSlice,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
     receipt_evidence_bytes: &mut usize,
     max_receipt_bytes: usize,
 ) -> Result<Vec<ActionPreconditionOutcome>, ActionRefusal<X>> {
@@ -1062,13 +1062,9 @@ pub(super) fn check_action_preconditions<X>(
         };
         let expression =
             Expression::compile(source).map_err(|error| refusal(Some(error.to_string())))?;
-        let attempt = expression.evaluate_admitted_metered(
-            &context,
-            EvaluationBudget::new(*remaining_fuel),
-            &env,
-            &norn_expr::Type::Bool,
-        );
-        *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
+        let attempt = remaining_fuel.spend(|budget| {
+            expression.evaluate_admitted_metered(&context, budget, &env, &norn_expr::Type::Bool)
+        });
         let evaluated = attempt
             .result
             .map_err(|error| refusal(Some(error.to_string())))?;

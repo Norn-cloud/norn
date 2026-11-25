@@ -168,7 +168,7 @@ where
         changes,
         Pending {
             effective_input: preparation.effective_input.clone(),
-            remaining_fuel: preparation.remaining_fuel,
+            remaining_fuel: &mut preparation.remaining_fuel,
             target,
             slice: slice.facts,
             reference_only: slice.reference_only,

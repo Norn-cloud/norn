@@ -138,6 +138,8 @@ pub mod pack_mbt_support {
         ))
     }
 }
+/// The one monotonic fuel tank every invariant, law and action turn spends from (P1).
+pub use norn_expr::TurnFuel;
 pub use norn_ir::{MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, TraceContext, TraceContextError};
 pub use serde;
 pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedObservation};

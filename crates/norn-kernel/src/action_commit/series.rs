@@ -180,7 +180,7 @@ where
             record,
             series_candidate: Some(candidate),
             decision_links: Vec::new(),
-            remaining_fuel: preparation.remaining_fuel,
+            remaining_fuel: &mut preparation.remaining_fuel,
             receipt: None,
             creator_stamp: stamp,
         };

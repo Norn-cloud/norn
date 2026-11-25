@@ -73,6 +73,7 @@ units; runtime failures retain the charged units.
 | `expr.budget.exhausted` | `limit`, `used`, `message` — the attempted charge exceeds the fixed budget; top-level `unitsUsed` remains capped at the limit |
 | `expr.number.invalid` | `input`, `reason` |
 | `expr.result.unsupported` | `typeName` |
+| `expr.input.key_collision` | `key`, `message` — two input object keys are one key after NFC normalization |
 | `expr.error.unknown` | `message` — reserved for a future unclassified evaluator error |
 
 `expr.output.invalid` is retired (D113): evaluation no longer issues a receipt, so no output conversion step can fail.

@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::EvaluationBudget;
+use norn_expr::{EvaluationBudget, TurnFuel};
 use norn_ir::provenance::{
     FactRef, InstanceProvenance, MappingVersion, SourceRecordRef, UtcTimestamp,
 };
@@ -1943,7 +1943,7 @@ fn referenced_numeric_defaults_are_resolved_before_invariant_evaluation() {
         ))
     );
 
-    let mut remaining = norn_kernel::invariant_evaluation_budget();
+    let mut remaining = TurnFuel::new(norn_kernel::invariant_evaluation_budget());
     assert_eq!(
         norn_kernel::evaluate_invariants(
             &catalog,
@@ -3350,7 +3350,7 @@ fn val_exact_invariants_admit_products_and_refuse_unqualified_division() {
         })).expect("definition");
         let catalog = TypeCatalog::new([&definition]);
         let values = object(json!({"amount": "1.005"}));
-        let mut remaining = 10000;
+        let mut remaining = TurnFuel::new(10000);
         let failures = norn_kernel::evaluate_invariants(
             &catalog,
             &FactKey::new(ITEM, "exact"),
@@ -3359,7 +3359,7 @@ fn val_exact_invariants_admit_products_and_refuse_unqualified_division() {
         )
         .expect("evaluation");
         assert_eq!(!failures.is_empty(), refused, "{source}");
-        assert!(remaining < 10000);
+        assert!(remaining.remaining() < 10000);
     }
 }
 
@@ -3417,15 +3417,11 @@ fn law_invariant_runtime_violation_refuses_atomically_with_the_retained_law_pin(
     let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
     let key = FactKey::new(ITEM, "invariant-law-invalid");
     let values = object(json!({"item_id":"invalid", "amount":0}));
-    let failure = norn_kernel::governing_laws::evaluate(
-        &catalog,
-        &key,
-        &values,
-        &mut EvaluationBudget::default().units(),
-    )
-    .expect("law evaluates")
-    .pop()
-    .expect("violation");
+    let failure =
+        norn_kernel::governing_laws::evaluate(&catalog, &key, &values, &mut TurnFuel::default())
+            .expect("law evaluates")
+            .pop()
+            .expect("violation");
     assert_eq!(failure.outcome, DataQualityOutcome::NotSatisfied);
     assert!(
         matches!(&failure.rule_ref, DataQualityRuleRef::Law {artifact_id, law_id, version}
@@ -3534,7 +3530,7 @@ fn law_invariant_runtime_misbound_missing_and_negated_references_refuse() {
             &catalog,
             &FactKey::new(ITEM, "invalid-binding"),
             &object(json!({"item_id":"valid", "amount":1})),
-            &mut EvaluationBudget::default().units(),
+            &mut TurnFuel::default(),
         )
         .expect_err("invalid retained reference refuses");
         assert_eq!(error.code(), code);
@@ -3577,7 +3573,7 @@ fn law_invariant_runtime_exhausted_budget_refuses() {
     let laws = [invariant_amount_law()];
     let types = [quality_item_type()];
     let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
-    let mut budget = 0;
+    let mut budget = TurnFuel::new(0);
     assert_eq!(
         norn_kernel::governing_laws::evaluate(
             &catalog,
@@ -3587,7 +3583,7 @@ fn law_invariant_runtime_exhausted_budget_refuses() {
         ),
         Err(norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded)
     );
-    assert_eq!(budget, 0);
+    assert_eq!(budget.remaining(), 0);
 }
 
 #[test]
@@ -3667,7 +3663,7 @@ fn law_invariant_runtime_missing_or_ambiguous_members_do_not_verify_a_pin() {
         &catalog,
         &FactKey::new(ITEM, "pin"),
         &object(json!({"item_id":"pin", "amount":0})),
-        &mut EvaluationBudget::default().units(),
+        &mut TurnFuel::default(),
     )
     .unwrap()
     .pop()
@@ -3727,7 +3723,7 @@ fn law_interface_transitive_and_diamond_implementors_govern_once_with_the_interf
         let governed = retained.governing_laws(&ObjectTypeName(ty.into())).unwrap();
         assert_eq!(governed.len(), 1, "{ty}");
         let key = FactKey::new(ty, "unnamed");
-        let mut budget = EvaluationBudget::default().units();
+        let mut budget = TurnFuel::default();
         let failure =
             norn_kernel::governing_laws::evaluate(&retained, &key, &named_values(""), &mut budget)
                 .unwrap()
@@ -3745,7 +3741,7 @@ fn law_interface_transitive_and_diamond_implementors_govern_once_with_the_interf
                 .unwrap(),
             norn_kernel::DataQualityRuleClassification::Integrity
         );
-        let mut budget = EvaluationBudget::default().units();
+        let mut budget = TurnFuel::default();
         assert_eq!(
             norn_kernel::governing_laws::evaluate(
                 &retained,
@@ -3807,7 +3803,7 @@ norn_testkit::proptest::proptest! {
         let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
         let key = FactKey::new(ITEM, "missing-interface");
         prop_assert!(matches!(retained.governing_laws(&key.object_type), Err(LawEvaluationError::Invalid(name)) if name == missing));
-        let mut budget = EvaluationBudget::default().units();
+        let mut budget = TurnFuel::default();
         prop_assert!(matches!(norn_kernel::governing_laws::evaluate(&retained, &key, &named_values("named"), &mut budget), Err(LawEvaluationError::Invalid(name)) if name == missing));
     }
 }
@@ -3834,7 +3830,7 @@ fn law_interface_mixed_scopes_and_misowned_invariants_refuse() {
     ] {
         let laws = [law];
         let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
-        let mut budget = EvaluationBudget::default().units();
+        let mut budget = TurnFuel::default();
         assert!(matches!(
             norn_kernel::governing_laws::evaluate(
                 &retained,
@@ -3856,8 +3852,8 @@ norn_testkit::proptest::proptest! {
         let retained = catalog(&types, &interfaces).with_governing_laws(&laws);
         let key = FactKey::new(if subtype { SUBTYPE } else { ITEM }, "generated");
         let values = named_values(&item_id);
-        let shared = norn_kernel::evaluate_invariants(&retained, &key, &values, &mut EvaluationBudget::default().units()).unwrap();
-        let governed = norn_kernel::governing_laws::evaluate(&retained, &key, &values, &mut EvaluationBudget::default().units()).unwrap();
+        let shared = norn_kernel::evaluate_invariants(&retained, &key, &values, &mut TurnFuel::default()).unwrap();
+        let governed = norn_kernel::governing_laws::evaluate(&retained, &key, &values, &mut TurnFuel::default()).unwrap();
         prop_assert_eq!(governed.is_empty(), !item_id.is_empty());
         prop_assert_eq!(
             shared.into_iter().map(|failure| (failure.owner, failure.outcome)).collect::<Vec<_>>(),
@@ -3875,9 +3871,9 @@ norn_testkit::proptest::proptest! {
         let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
         let key = FactKey::new(ITEM, "generated-invariant-law");
         let values = object(json!({"item_id":"generated", "amount":amount}));
-        let mut shared_budget = EvaluationBudget::default().units();
+        let mut shared_budget = TurnFuel::default();
         let shared = norn_kernel::evaluate_invariants(&catalog, &key, &values, &mut shared_budget).unwrap();
-        let mut law_budget = EvaluationBudget::default().units();
+        let mut law_budget = TurnFuel::default();
         let governed = norn_kernel::governing_laws::evaluate(&catalog, &key, &values, &mut law_budget).unwrap();
         prop_assert_eq!(governed.is_empty(), amount > 0);
         prop_assert_eq!(shared.into_iter().map(|failure| failure.outcome).collect::<Vec<_>>(),
@@ -3900,12 +3896,12 @@ norn_testkit::proptest::proptest! {
                 prop_assert!(catalog.governing_laws(&ObjectTypeName(ty.into())).expect("kernel-owned record").is_empty());
             }
             prop_assert!(catalog.governing_laws(&ObjectTypeName("unknown.Application".into())).is_err());
-            let mut budget = EvaluationBudget::default().units();
+            let mut budget = TurnFuel::default();
             let failures = norn_kernel::governing_laws::evaluate(
                 &catalog, &key, &values, &mut budget,
             ).expect("evaluate");
             prop_assert_eq!(failures.is_empty(), amount <= 100);
-            prop_assert!(budget < EvaluationBudget::default().units());
+            prop_assert!(budget.remaining() < EvaluationBudget::default().units());
             let mut native = cell().with_governing_laws(laws.into());
             let result = native.commit(CellCommit {
                 writes: vec![FactWrite {
@@ -4030,12 +4026,7 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
     let values = object(json!({"reading":{"elapsed":"PT1S"}}));
     let catalog = TypeCatalog::new([&definition]);
     assert!(matches!(
-        norn_kernel::evaluate_invariants(
-            &catalog,
-            &key,
-            &values,
-            &mut EvaluationBudget::default().units()
-        ),
+        norn_kernel::evaluate_invariants(&catalog, &key, &values, &mut TurnFuel::default()),
         Err(norn_kernel::InvariantEvaluationError::InvalidEffectiveValues(_))
     ));
     let mut native =
@@ -4119,7 +4110,7 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
         "start_date": "2026-01-01",
         "end_date": "2026-01-05"
     }));
-    let mut remaining = 10_000;
+    let mut remaining = TurnFuel::new(10_000);
     let failures = norn_kernel::evaluate_invariants(
         &catalog,
         &FactKey::new(ITEM, "shift-ok"),
@@ -4131,7 +4122,7 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
         failures.is_empty(),
         "expected no failures, got {failures:?}"
     );
-    assert!(remaining < 10_000);
+    assert!(remaining.remaining() < 10_000);
 
     // Date-order violation evaluates to NotSatisfied (not an admission EvaluationFailed).
     let reversed_dates = object(json!({
@@ -4140,7 +4131,7 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
         "start_date": "2026-01-05",
         "end_date": "2026-01-01"
     }));
-    let mut remaining = 10_000;
+    let mut remaining = TurnFuel::new(10_000);
     let date_failures = norn_kernel::evaluate_invariants(
         &catalog,
         &FactKey::new(ITEM, "shift-bad-dates"),
@@ -4161,7 +4152,7 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
         "start_date": "2026-01-01",
         "end_date": "2026-01-05"
     }));
-    let mut remaining = 10_000;
+    let mut remaining = TurnFuel::new(10_000);
     let hour_failures = norn_kernel::evaluate_invariants(
         &catalog,
         &FactKey::new(ITEM, "shift-bad-hours"),
@@ -4197,7 +4188,7 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
         "start_date": "2026-01-01",
         "end_date": "2026-01-05"
     }));
-    let mut remaining = 10_000;
+    let mut remaining = TurnFuel::new(10_000);
     let div_failures = norn_kernel::evaluate_invariants(
         &bad_catalog,
         &FactKey::new(ITEM, "shift-div"),

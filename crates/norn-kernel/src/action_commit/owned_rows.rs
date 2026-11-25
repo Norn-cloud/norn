@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
+use norn_expr::{Expression, TurnFuel, Value as ExprValue};
 use norn_ir::{
     ActionRoot, Decimal, DecisionOutput, FactChange, ObjectTypeName, OwnedChildCollection,
-    OwnedCollectionAction, PropertyId, ResourceLimitProfile,
+    OwnedCollectionAction, PropertyId,
 };
 
 use crate::cell_host::{
@@ -415,7 +415,7 @@ fn derive_row_values<X>(
     config: &OwnedCollectionAction,
     input: &JsonObject,
     mut proposed: JsonObject,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
 ) -> Result<JsonObject, ActionRefusal<X>> {
     if catalog.effective_type(&collection.child_type).is_none() {
         return Err(ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
@@ -483,7 +483,7 @@ fn check_row_preconditions<X>(
     config: &OwnedCollectionAction,
     input: &JsonObject,
     proposed: &JsonObject,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
 ) -> Result<(), ActionRefusal<X>> {
     let context = row_expression_context::<X>(input, proposed)?;
     let base_env = catalog
@@ -533,26 +533,21 @@ fn check_row_preconditions<X>(
 fn evaluate_row_expression<X>(
     source: &str,
     context: &ExprValue,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
     env: &norn_expr::ZenTypeEnv,
     expected: &norn_expr::Type,
     invalid: impl Fn(String) -> ActionRefusal<X>,
 ) -> Result<ExprValue, ActionRefusal<X>> {
     let expression = Expression::compile(source).map_err(|error| invalid(error.to_string()))?;
-    let attempt = expression.evaluate_admitted_metered(
-        context,
-        EvaluationBudget::new(*remaining_fuel),
-        env,
-        expected,
-    );
-    *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
+    let attempt = remaining_fuel
+        .spend(|budget| expression.evaluate_admitted_metered(context, budget, env, expected));
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "The foreign non-exhaustive enum requires a catch-all; unknown variants retain the existing fallback"
     )]
     let evaluated = attempt.result.map_err(|error| match error {
         norn_expr::ExprError::BudgetExhausted { .. } => ActionRefusal::ExpressionBudgetExceeded {
-            limit: ResourceLimitProfile::norn_limits_v1().turn.fuel_units,
+            limit: remaining_fuel.limit(),
         },
         _ => invalid(error.to_string()),
     })?;

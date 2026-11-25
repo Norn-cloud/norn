@@ -316,6 +316,11 @@ fn evaluation_error_json(profile: &str, error: ExprError, units_used: u64) -> St
                 "prepared expression was admitted for tzdb `{admitted}`, not `{evaluated}`"
             ),
         }),
+        ExprError::KeyCollision { key } => json!({
+            "code": "expr.input.key_collision",
+            "message": format!("input keys collide after NFC normalization at `{key}`"),
+            "key": key,
+        }),
         _ => json!({
             "code": "expr.error.unknown",
             "message": "expression evaluation failed with an unclassified error",

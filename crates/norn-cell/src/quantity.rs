@@ -411,8 +411,8 @@ fn receipt_evidence<S: SqlEngine>(
     Ok(body)
 }
 
-/// Maximum serialized request or persisted pack/vector bytes for one turn.
-const MAX_RECORD_BYTES: usize = 256 * 1024;
+/// Maximum request or persisted record bytes: the kernel's one writer/reader constant (Q1).
+const MAX_RECORD_BYTES: usize = norn_kernel::quantity::MAX_QUANTITY_RECORD_BYTES;
 
 const REVERSAL_PROJECTION_SQL: &str = r#"SELECT "id" FROM "_norn_quantity_posting" WHERE "world"=?1 AND "ledger"=?2 AND "reverses"=?3"#;
 const LATEST_TRANSITION_SQL: &str = r#"SELECT "commit_seq" FROM "_norn_ledger" WHERE "world"=?1
@@ -476,7 +476,7 @@ pub(crate) fn check_request<S: SqlEngine>(
 }
 
 fn decode<T: DeserializeOwned>(text: &str) -> Result<T, CellError> {
-    if text.len() > MAX_RECORD_BYTES.saturating_add(128) {
+    if text.len() > MAX_RECORD_BYTES {
         return Err(QuantityError::InvalidContract.into());
     }
     Ok(serde_json::from_str(text)?)

@@ -412,7 +412,7 @@ fn commit_effect<H>(
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     changes: Vec<FactChange>,
-    pending: Pending,
+    pending: Pending<'_>,
     envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
@@ -424,7 +424,7 @@ where
     let EnvelopePolicy { limits, meter } = envelope;
     let Pending {
         effective_input,
-        mut remaining_fuel,
+        remaining_fuel,
         target,
         slice,
         reference_only,
@@ -456,7 +456,7 @@ where
         call.action,
         &effective_input,
         &format!("{}/{}", call.action.action_id, call.idempotency_key),
-        &mut remaining_fuel,
+        remaining_fuel,
     )?;
     let output = norn_ir::DecisionOutput {
         facts: changes,
