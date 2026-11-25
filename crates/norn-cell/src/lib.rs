@@ -47,6 +47,7 @@ pub mod engine_release;
 pub mod error;
 pub mod export;
 mod export_journal;
+mod export_journal_residue;
 pub mod flow_run;
 pub mod fork;
 pub mod function_receipt;
@@ -112,7 +113,10 @@ pub use coverage_observer::{
     CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
     ObservedSqliteCell, TransitionKey,
 };
-pub use definition_scope::{is_reserved_kernel_name, kernel_record_types};
+pub use definition_scope::{
+    PRINCIPAL_INPUTS_PROPERTY, is_reserved_kernel_name, kernel_record_types,
+    kernel_record_types_recording_principal_inputs,
+};
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};

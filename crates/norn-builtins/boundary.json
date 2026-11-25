@@ -8,6 +8,8 @@
   "dev_only_norn": [],
   "third_party": [
     "serde",
-    "serde_json"
+    "serde_json",
+    "geo",
+    "h3o"
   ]
 }

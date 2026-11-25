@@ -4,3 +4,4 @@ Ring 0 (pure, sans-IO, wasm32): Norn-owned host built-in Functions and their com
 
 - `norn.decision@1` (`decision`): ask a person. Only the cell resolves it, by issuing the receipt for a verified decider. `IssuedOnly` makes reconciliation refuse every other receipt for this manifest.
 - `parks(payload)` (PARKED-1): a `norn.decision@1` perform waits outside the cell's FIFO perform queue until the cell resolves it.
+- `geo` (GEO-1): deterministic geo functions over WGS84 coordinates and RFC 7946 `GeoJSON` text: `geo.distance_meters`, `geo.h3_cell`, `geo.validate_shape` and `geo.point_in_shape`. A library, not registered built-ins: `resolve` answers nothing for them, so no flow can perform one yet. Built on `h3o` (without `std`, so trigonometry is `libm`) and on `geo`'s exact orientation predicate, each pinned to one exact version.

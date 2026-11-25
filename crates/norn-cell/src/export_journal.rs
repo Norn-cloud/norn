@@ -26,7 +26,8 @@ pub(crate) const JOURNAL_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_export
 
 /// Create the local export journal table in the store's initialization transaction.
 pub(crate) fn init(engine: &impl SqlEngine) -> Result<(), CellError> {
-    engine.execute_batch(JOURNAL_DDL)
+    engine.execute_batch(JOURNAL_DDL)?;
+    crate::export_journal_residue::init(engine)
 }
 
 /// Read the hash-verified journal preimage without recursively verifying its
@@ -159,6 +160,23 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
         })
 }
 
+/// The cell's identity bindings, as its export records carry them.
+fn bindings(engine: &impl SqlEngine) -> Result<BTreeMap<String, String>, CellError> {
+    let mut bindings = BTreeMap::new();
+    let rows = engine.query(&format!(
+        "SELECT \"key\", \"value\" FROM \"{META}\" WHERE \"key\" LIKE 'binding:%' ORDER BY \"key\""
+    ), &[])?;
+    for values in rows {
+        let row = SqlRow(values);
+        let key: String = row.get(0)?;
+        let value: String = row.get(1)?;
+        if let Some(key) = key.strip_prefix("binding:") {
+            bindings.insert(key.to_owned(), value);
+        }
+    }
+    Ok(bindings)
+}
+
 /// Persist a commit's replayable export record in the same engine transaction.
 ///
 /// INGEST-JOURNAL-MEMORY-1: `entries` are the ledger entries this commit's
@@ -227,19 +245,7 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    let mut bindings = BTreeMap::new();
-    let rows = engine.query(&format!(
-        "SELECT \"key\", \"value\" FROM \"{META}\" WHERE \"key\" LIKE 'binding:%' ORDER BY \"key\""
-    ), &[])?;
-    for values in rows {
-        let row = SqlRow(values);
-        let key: String = row.get(0)?;
-        let value: String = row.get(1)?;
-        if let Some(key) = key.strip_prefix("binding:") {
-            bindings.insert(key.to_owned(), value);
-        }
-    }
-
+    let bindings = bindings(engine)?;
     let export = ExportRecord {
         format: EXPORT_FORMAT.to_owned(),
         store_format: engine.query_row(
@@ -264,11 +270,16 @@ pub(crate) fn record<E: SqlEngine>(
         automation_continuation: automation.continuation,
         automation_inline: automation.inline,
     };
-    // The record's hash and its packed encoding both start from its canonical
-    // text; canonicalize it once.
+    // The record's hash and its stored encoding both start from its canonical
+    // text; canonicalize it once. A steady-state main-world record stores its
+    // residue alone (EXPORT-RESIDUE-1); the hash is the full record's either way.
     let canonical = crate::codec::canonical_json(&export)?;
     let hash = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(canonical.as_bytes());
-    let serialized = crate::payload_storage::encode_export(engine, &export, &canonical)?;
+    let serialized = if crate::export_journal_residue::eligible(&export) {
+        crate::export_journal_residue::encode(engine, &export, &canonical)?
+    } else {
+        crate::payload_storage::encode_export(engine, &export, &canonical)?
+    };
     engine.execute(
         r#"INSERT INTO "_norn_export_journal" ("commit_seq", "hash", "record") VALUES (?1, ?2, ?3)"#,
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],

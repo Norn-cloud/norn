@@ -401,7 +401,7 @@ pub(super) mod tests {
     /// The test host, plus `extra` generated sales over the first week of
     /// November in four regions, committed 1,000 at a time.
     fn host_with(dir: &std::path::Path, extra: usize) -> DevHost<NativeEngine> {
-        let admitted = super::super::admit::admit(&artifacts(true), 1_000)
+        let admitted = super::super::admit::admit(&artifacts(true), 1_000, false)
             .ok()
             .expect("admitted");
         let engine = NativeEngine::open(&dir.join("cell.sqlite"), StoreOptions::default()).unwrap();
@@ -800,7 +800,7 @@ pub(super) mod tests {
         let metrics = DevMetrics::new([7_u8; 32], scope());
         let amount = metric(&metrics, &host, "amount", false);
         let active = host.active_definitions().ok().flatten().expect("active");
-        let admitted = super::super::admit::admit(&artifacts(false), 3_000)
+        let admitted = super::super::admit::admit(&artifacts(false), 3_000, false)
             .ok()
             .expect("admitted");
         host.install_definitions(admitted.model, admitted.input, Some(active.version))

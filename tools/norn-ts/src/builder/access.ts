@@ -45,6 +45,21 @@ export interface AccessRuleDecl {
   readonly allOf?: ReadonlyArray<AccessCondition>
 }
 
+/**
+ * One declared entry of the principal attribute catalog (#1091), mirroring
+ * `PrincipalCatalogEntry` in `crates/norn-ir/src/access.rs`: a role (`bool`),
+ * a named role bundle (`stringSet`) or a scoped attribute a decision may read
+ * as a typed principal input.
+ */
+export interface PrincipalCatalogEntry {
+  readonly name: string
+  readonly type: "bool" | "long" | "string" | "stringSet"
+  readonly source:
+    | { readonly kind: "role" }
+    | { readonly kind: "roleProfile"; readonly roles: ReadonlyArray<string> }
+    | { readonly kind: "attribute" }
+}
+
 export interface AccessDef {
   readonly _tag: "Access"
   /** `policyId`; the artifact is `<id>.policy` in the id's first namespace segment. */
@@ -52,12 +67,13 @@ export interface AccessDef {
   readonly title: string
   readonly version: string
   readonly rules: ReadonlyArray<AccessRuleDecl>
+  readonly principalCatalog: ReadonlyArray<PrincipalCatalogEntry>
   readonly at?: SourceLocation
 }
 
-export function access(meta: Omit<AccessDef, "_tag" | "at"> & { readonly at?: SourceLocation | undefined }): AccessDef {
-  const { at, rules, ...rest } = meta
-  return located({ _tag: "Access" as const, ...rest, rules: [...rules] }, at)
+export function access(meta: Omit<AccessDef, "_tag" | "at" | "principalCatalog"> & { readonly principalCatalog?: ReadonlyArray<PrincipalCatalogEntry>; readonly at?: SourceLocation | undefined }): AccessDef {
+  const { at, rules, principalCatalog = [], ...rest } = meta
+  return located({ _tag: "Access" as const, ...rest, rules: [...rules], principalCatalog: [...principalCatalog] }, at)
 }
 
 export type AccessBuildResult =
@@ -81,6 +97,7 @@ export function lowerAccess(def: AccessDef, options: EnvelopeOptions): AccessBui
       scope: { dimensions: r.scope.dimensions },
       allOf: r.allOf === undefined || r.allOf.length === 0 ? undefined : r.allOf,
     })),
+    principalCatalog: def.principalCatalog.length === 0 ? undefined : def.principalCatalog,
   }
   const artifact = envelope(
     { kind: "policy", artifactId: `${def.id}.policy`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },
