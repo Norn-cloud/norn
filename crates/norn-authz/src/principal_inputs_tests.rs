@@ -25,7 +25,7 @@ fn scope(org: &str) -> ScopeKey {
     }
 }
 
-fn access(entries: Value) -> AccessIr {
+fn access(entries: &Value) -> AccessIr {
     serde_json::from_value(json!({
         "accessVersion": "0.1", "policyId": "review.access", "rules": [],
         "principalCatalog": entries
@@ -42,7 +42,7 @@ fn catalog() -> PrincipalAttributeCatalog {
         {"name": "level", "type": "long", "source": {"kind": "attribute"}},
         {"name": "regions", "type": "stringSet", "source": {"kind": "attribute"}}
     ]);
-    principal_attribute_catalog(&[access(entries)], &BTreeMap::new()).expect("catalog")
+    principal_attribute_catalog(&[access(&entries)], &BTreeMap::new()).expect("catalog")
 }
 
 fn inputs(declared: Value) -> Vec<PrincipalInputDeclaration> {
@@ -241,33 +241,29 @@ fn the_catalog_is_one_with_the_types_access_rules_infer() {
     // `AccessIR` uses the same attribute as a string: one catalog.
     let agreeing = BTreeMap::from([("department".to_owned(), CedarPrincipalAttribute::String)]);
     let catalog =
-        principal_attribute_catalog(&[access(declared.clone())], &agreeing).expect("one catalog");
+        principal_attribute_catalog(&[access(&declared)], &agreeing).expect("one catalog");
     assert!(catalog.get("department").is_some());
     // `AccessIR` uses it as a set: the declaration refuses.
     let disagreeing =
         BTreeMap::from([("department".to_owned(), CedarPrincipalAttribute::StringSet)]);
-    let error = principal_attribute_catalog(&[access(declared.clone())], &disagreeing)
+    let error = principal_attribute_catalog(&[access(&declared)], &disagreeing)
         .expect_err("one name, two types");
     assert!(error.has(AuthzCode::AccessPrincipalConflict), "{error}");
     // Two policies declaring one name differently refuse; identically, they agree.
     let other = json!([{"name": "department", "type": "long", "source": {"kind": "attribute"}}]);
-    let error =
-        principal_attribute_catalog(&[access(declared.clone()), access(other)], &BTreeMap::new())
-            .expect_err("conflicting declarations");
+    let error = principal_attribute_catalog(&[access(&declared), access(&other)], &BTreeMap::new())
+        .expect_err("conflicting declarations");
     assert!(error.has(AuthzCode::AccessPrincipalConflict), "{error}");
     assert!(
-        principal_attribute_catalog(
-            &[access(declared.clone()), access(declared)],
-            &BTreeMap::new()
-        )
-        .is_ok()
+        principal_attribute_catalog(&[access(&declared), access(&declared)], &BTreeMap::new())
+            .is_ok()
     );
     // A role is a boolean; an attribute name is an identifier.
     for invalid in [
         json!([{"name": "reviewer", "type": "long", "source": {"kind": "role"}}]),
         json!([{"name": "cost-centre", "type": "string", "source": {"kind": "attribute"}}]),
     ] {
-        let error = principal_attribute_catalog(&[access(invalid)], &BTreeMap::new())
+        let error = principal_attribute_catalog(&[access(&invalid)], &BTreeMap::new())
             .expect_err("invalid entry");
         assert!(error.has(AuthzCode::AccessNameInvalid), "{error}");
     }

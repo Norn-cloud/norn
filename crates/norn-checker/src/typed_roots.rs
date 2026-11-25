@@ -1992,7 +1992,6 @@ pub fn validate_rule_ir_v2_payload(
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);
     crate::rule_bindings::validate_rule_bindings(payload, diagnostics, artifact_id);
     crate::source_commands::validate(payload, diagnostics, artifact_id);
-    crate::principal_inputs::validate(payload, diagnostics, artifact_id);
     if let Some(graph) = payload.get("graph") {
         crate::jdm_profile::validate_jdm_graph(graph, dependencies, diagnostics, artifact_id);
     }

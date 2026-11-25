@@ -145,25 +145,26 @@ impl SynchronousRule {
 
 impl<X> From<norn_decisions::DecisionError> for ActionRefusal<X> {
     fn from(error: norn_decisions::DecisionError) -> Self {
-        match error {
-            norn_decisions::DecisionError::BudgetExhausted { .. } => {
-                Self::ExpressionBudgetExceeded {
-                    limit: crate::limits::ResourceLimitProfile::norn_limits_v1()
-                        .turn
-                        .fuel_units,
-                }
-            }
-            // PRINCIPAL-INPUT-1: the column's path, never a value.
-            norn_decisions::DecisionError::PrincipalInputType { path } => {
-                Self::PrincipalInputUnavailable { input: path }
-            }
-            norn_decisions::DecisionError::PrincipalInputUnavailable { .. } => {
-                Self::PrincipalInputUnavailable {
-                    input: norn_ir::rule::DECIDE_PRINCIPAL_MEMBER.to_owned(),
-                }
-            }
-            other => refused(other.to_string()),
+        use norn_decisions::DecisionError;
+        if let DecisionError::BudgetExhausted { .. } = error {
+            return Self::ExpressionBudgetExceeded {
+                limit: crate::limits::ResourceLimitProfile::norn_limits_v1()
+                    .turn
+                    .fuel_units,
+            };
         }
+        // PRINCIPAL-INPUT-1: the column's path, never a value.
+        if let DecisionError::PrincipalInputType { path } = &error {
+            return Self::PrincipalInputUnavailable {
+                input: path.clone(),
+            };
+        }
+        if let DecisionError::PrincipalInputUnavailable { .. } = error {
+            return Self::PrincipalInputUnavailable {
+                input: norn_ir::rule::DECIDE_PRINCIPAL_MEMBER.to_owned(),
+            };
+        }
+        refused(error.to_string())
     }
 }
 

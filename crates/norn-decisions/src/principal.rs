@@ -85,8 +85,7 @@ impl AdmittedDecision {
     #[must_use]
     pub fn principal_inputs(&self) -> &[PrincipalInputDeclaration] {
         self.principal_contract()
-            .map(|contract| contract.inputs.as_slice())
-            .unwrap_or_default()
+            .map_or_default(|contract| contract.inputs.as_slice())
     }
 
     /// Binds the host-resolved principal inputs to `event`. `principal` is

@@ -168,8 +168,7 @@ pub trait Authorizer: Send + Sync {
             input: request
                 .inputs
                 .first()
-                .map(|input| input.name.clone())
-                .unwrap_or_default(),
+                .map_or_default(|input| input.name.clone()),
         })
     }
 

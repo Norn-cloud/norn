@@ -299,8 +299,7 @@ fn unresolved(request: &PrincipalInputsRequest<'_>) -> UnresolvedPrincipalInput 
         input: request
             .inputs
             .first()
-            .map(|input| input.name.clone())
-            .unwrap_or_default(),
+            .map_or_default(|input| input.name.clone()),
     }
 }
 
@@ -506,13 +505,14 @@ fn an_approver_holding_the_role_under_the_scope_approves_and_one_without_it_is_r
         &catalog,
         &call(&action, "user:alice", "alice-1")?,
         &host,
-    )
-    .expect("an approver approves");
+    )?;
     let ActionOutcome::Committed { record, .. } = outcome else {
         panic!("the first call commits");
     };
     assert_eq!(status(&cell)?, text("approved"));
-    let recorded = record.principal_inputs.expect("recorded principal inputs");
+    let recorded = record
+        .principal_inputs
+        .ok_or("the record has no principal inputs")?;
     assert_eq!(recorded.principal, "user:alice");
     assert_eq!(recorded.policy_version, "grants/1");
     assert_eq!(recorded.subject, FactKey::new(EXPENSE, "EXP-1"));
@@ -566,7 +566,7 @@ fn replay_reads_the_receipt_and_never_resolves_again_after_grants_change() -> Te
     let mut cell = open(&path, &definitions)?;
 
     let ActionOutcome::Committed { record, .. } =
-        commit_action(&mut cell, &catalog, &request, &host).expect("committed")
+        commit_action(&mut cell, &catalog, &request, &host)?
     else {
         panic!("the first call commits");
     };
@@ -579,16 +579,16 @@ fn replay_reads_the_receipt_and_never_resolves_again_after_grants_change() -> Te
     let mut cell = open(&path, &definitions)?;
 
     let ActionOutcome::Replayed { record: replayed } =
-        commit_action(&mut cell, &catalog, &request, &host).expect("replayed")
+        commit_action(&mut cell, &catalog, &request, &host)?
     else {
         panic!("an exact retry replays");
     };
     assert_eq!(host.resolutions.get(), 1, "replay never resolves");
     assert_eq!(replayed, record);
-    assert_eq!(stored_record(&cell, "alice-1")?, Some(record.clone()));
+    assert_eq!(stored_record(&cell, "alice-1")?, Some(record));
     let recorded = replayed
         .principal_inputs
-        .expect("recorded principal inputs");
+        .ok_or("the replayed record has no principal inputs")?;
     assert_eq!(recorded.policy_version, "grants/1");
     assert_eq!(
         recorded.values.get("isApprover"),
@@ -640,16 +640,14 @@ fn an_input_that_cannot_be_resolved_fails_closed_and_names_no_value() -> TestRes
         // No policy version.
         |resolved| resolved.policy_version.clear(),
     ];
-    let hosts: Vec<Box<dyn ActionAuthorizer + '_>> = tampers
-        .into_iter()
-        .map(|tamper| {
-            Box::new(Tampered {
-                honest: &honest,
-                tamper,
-            }) as Box<dyn ActionAuthorizer + '_>
-        })
-        .chain([Box::new(NoResolver) as Box<dyn ActionAuthorizer + '_>])
-        .collect();
+    let mut hosts: Vec<Box<dyn ActionAuthorizer + '_>> = Vec::new();
+    for tamper in tampers {
+        hosts.push(Box::new(Tampered {
+            honest: &honest,
+            tamper,
+        }));
+    }
+    hosts.push(Box::new(NoResolver));
     for (index, host) in hosts.iter().enumerate() {
         let key = format!("closed-{index}");
         let refused = commit_action(

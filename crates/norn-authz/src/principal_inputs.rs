@@ -355,7 +355,12 @@ impl HoldsRolePdp {
             return None;
         }
         let request = AccessRequest {
-            principal: context.principal.clone(),
+            // Membership reads the principal's roles alone: its scoped
+            // attributes are not part of the `holdsRole` schema.
+            principal: PrincipalInput {
+                attributes: BTreeMap::new(),
+                ..context.principal.clone()
+            },
             scope: Some(context.request_scope.clone()),
             capability: HOLDS_ROLE_ACTION.to_owned(),
             action_id: HOLDS_ROLE_ACTION.to_owned(),

@@ -221,7 +221,7 @@ fn a_decision_that_declares_nothing_accepts_no_principal() -> TestResult {
         .pointer_mut("/graph/nodes/1/content/rules/0/out_facts")
         .ok_or("cell")? = json!("[]");
     let decision = admit(rule)??;
-    assert!(decision.principal_inputs().is_empty());
+    assert_eq!(decision.principal_inputs(), []);
     let (slice, event) = typed(&decision)?;
     let refused = decision
         .bind_principal(
@@ -231,6 +231,6 @@ fn a_decision_that_declares_nothing_accepts_no_principal() -> TestResult {
         .expect_err("nothing is declared");
     assert!(matches!(refused, DecisionError::PrincipalInputType { .. }));
     let output = evaluate(&decision, &slice, &event, EvaluationBudget::default())?.output;
-    assert!(output.facts.is_empty());
+    assert_eq!(output.facts, []);
     Ok(())
 }

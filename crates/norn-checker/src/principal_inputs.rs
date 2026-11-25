@@ -197,8 +197,7 @@ fn check_record(
     }
     let columns: BTreeSet<&str> = member(Some(record), "properties")
         .and_then(JsonValue::as_object)
-        .map(|properties| properties.keys().map(String::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|properties| properties.keys().map(String::as_str).collect());
     let required: BTreeSet<&str> = member(Some(record), "required")
         .and_then(JsonValue::as_array)
         .unwrap_or_default()
@@ -228,15 +227,15 @@ fn check_record(
 
 /// One string below a node's `content`: the member that holds it and the
 /// member that holds that one (`field` of `outputs`, a cell of `rules`).
-struct Text<'v> {
+struct Site<'v> {
     holder: &'v str,
     parent: &'v str,
     text: &'v str,
 }
 
-fn strings<'v>(value: &'v JsonValue, holder: &'v str, parent: &'v str, out: &mut Vec<Text<'v>>) {
+fn strings<'v>(value: &'v JsonValue, holder: &'v str, parent: &'v str, out: &mut Vec<Site<'v>>) {
     match value {
-        JsonValue::String(text) => out.push(Text {
+        JsonValue::String(text) => out.push(Site {
             holder,
             parent,
             text,
@@ -255,7 +254,7 @@ fn strings<'v>(value: &'v JsonValue, holder: &'v str, parent: &'v str, out: &mut
     }
 }
 
-impl Text<'_> {
+impl Site<'_> {
     /// A path the node writes: an expression's `key`, a table output's
     /// `field`, an `outputPath`.
     fn is_written_path(&self) -> bool {
