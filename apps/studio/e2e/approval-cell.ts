@@ -106,7 +106,7 @@ export function approvalCell(now = Date.UTC(2026, 10, 21, 9)): ApprovalCell {
         return route.fulfill({ status: 202, json: { outcome: "pending", decision: { id: fresh.id, expiresAtMs: fresh.expiresAtMs } } })
       }
       if (same.status === "pending") return route.fulfill({ status: 202, json: { outcome: "pending", decision: { id: same.id, expiresAtMs: same.expiresAtMs } } })
-      if (same.status === "rejected") return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "approval.rejected", category: "conflict", retryable: false, message: "a decider rejected this call", diagnostics: [] } })
+      if (same.status === "rejected") return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "approval.rejected", category: "conflict", retryable: false, reason: null, message: "a decider rejected this call", explanation: "", diagnostics: [] } })
       // Approved: the requester's own retry, decided again under their current authority.
       if (revoked.has(actor.id)) return refuse(route, "denied")
       same.state = "committed"
@@ -129,9 +129,9 @@ export function approvalCell(now = Date.UTC(2026, 10, 21, 9)): ApprovalCell {
       const id = decodeURIComponent(path.slice("/v1/decisions/".length).replace(/:decide$/, ""))
       const target = parked.find((p) => p.id === id)
       // The requester never decides their own call, and the cell does not say it exists.
-      if (target === undefined || target.requester === actor.id) return route.fulfill({ status: 404, json: { format: "norn/refusal@2", code: "decision.not_found", category: "visibility", retryable: false, message: "no such decision", diagnostics: [] } })
+      if (target === undefined || target.requester === actor.id) return route.fulfill({ status: 404, json: { format: "norn/refusal@2", code: "decision.not_found", category: "visibility", retryable: false, reason: null, message: "no such decision", explanation: "", diagnostics: [] } })
       const { choice } = JSON.parse(route.request().postData() ?? "{}") as { choice: string }
-      if (target.status !== "pending") return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "decision.resolved", category: "conflict", retryable: false, message: "someone resolved it first", diagnostics: [], resolution: { resolution: "decided", by: "another decider", atMs: target.resolvedAtMs, choice: null } } })
+      if (target.status !== "pending") return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "decision.resolved", category: "conflict", retryable: false, reason: null, message: "someone resolved it first", explanation: "", diagnostics: [], resolution: { resolution: "decided", by: "another decider", atMs: target.resolvedAtMs, choice: null } } })
       target.status = choice === "approve" ? "approved" : "rejected"
       target.state = choice === "approve" ? "not_executed" : null
       target.resolvedAtMs = now + 60_000

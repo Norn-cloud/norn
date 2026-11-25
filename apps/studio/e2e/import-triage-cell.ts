@@ -578,7 +578,7 @@ export async function importTriageCell(
 
   const scoped = (url: URL) => url.searchParams.get("orgId") === "org_demo" && url.searchParams.get("environmentId") === "analytics"
   const refuse = (route: Route, status: number, code: string, message: string) =>
-    route.fulfill({ status, json: { code, category: "law", message, diagnostics: [{ code, message, span: null }] } })
+    route.fulfill({ status, json: { format: "norn/refusal@2", code, category: status === 403 ? "permission" : "precondition", retryable: false, reason: null, message, explanation: "", diagnostics: [{ code, severity: "error", message, span: null }] } })
 
   await page.route("**/api/host/v1/blobs/**", async (route) => {
     const url = new URL(route.request().url())
@@ -622,7 +622,7 @@ export async function importTriageCell(
         // Structured JSON 500 error (must remain retryable, NOT a non-retryable refusal).
         return route.fulfill({
           status: 500,
-          json: { code: "internal.storage_busy", category: "internal", message: "Upstream ledger timeout" },
+          json: { format: "norn/refusal@2", code: "internal.storage_busy", category: "internal", retryable: true, reason: null, message: "Upstream ledger timeout", explanation: "" },
         })
       }
       const pendingDecision = pendings.get(rowId)
@@ -650,7 +650,7 @@ export async function importTriageCell(
         supersessionFailures.delete(conflictId)
         return route.fulfill({
           status: 500,
-          json: { code: "internal.storage_busy", category: "internal", message: "Upstream ledger timeout" },
+          json: { format: "norn/refusal@2", code: "internal.storage_busy", category: "internal", retryable: true, reason: null, message: "Upstream ledger timeout", explanation: "" },
         })
       }
     }
