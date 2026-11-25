@@ -459,12 +459,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let Some((marked_version, expected_slots)) = marked_snapshot else {
             return Ok(None);
         };
-        if marked_version != version_sql {
-            return Ok(None);
-        }
         let Ok(expected_slots) = usize::try_from(expected_slots) else {
             return Ok(None);
         };
+        if marked_version != version_sql {
+            return Ok(None);
+        }
         // Under sparse markings (#1533), `_norn_marking_snapshot` pins the exact
         // count of non-empty slots; any omitted slot is `∅` once the pin matches.
         let mut result: BTreeMap<String, Vec<String>> = self
@@ -476,19 +476,17 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let mut nonempty_observed = 0_usize;
         if let Some(subject) = marking_subject(self.conn, world, object_type, id)? {
             let rows = if current {
-                self.conn.query(
-                    &format!(
-                        "SELECT \"property\", \"version\", \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 ORDER BY \"property\""
-                    ),
-                    params![world, object_type, subject],
-                )?
+                let sql = format!(
+                    "SELECT \"property\", \"version\", \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 ORDER BY \"property\""
+                );
+                self.conn
+                    .query(&sql, params![world, object_type, subject])?
             } else {
-                self.conn.query(
-                    &format!(
-                        "SELECT \"property\", \"version\", \"markings\" FROM \"{MARKING_VERSION}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
-                    ),
-                    params![world, object_type, subject, version_sql],
-                )?
+                let sql = format!(
+                    "SELECT \"property\", \"version\", \"markings\" FROM \"{MARKING_VERSION}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"version\" = ?4 ORDER BY \"property\""
+                );
+                self.conn
+                    .query(&sql, params![world, object_type, subject, version_sql])?
             };
             for row in rows {
                 let row = SqlRow(row);
@@ -507,10 +505,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 }
             }
         }
-        if nonempty_observed != expected_slots {
-            return Ok(None);
-        }
-        Ok(Some(result))
+        Ok((nonempty_observed == expected_slots).then_some(result))
     }
 
     /// Durable classifications of the occurrence/version of one fact,
@@ -835,27 +830,34 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             fv = crate::system::FACT_VALUES,
         );
         let sql = format!(
-            "SELECT 1 FROM \"{fv}\" AS fv \
+            "WITH counts AS MATERIALIZED ( \
+               SELECT mv.\"subject\" AS \"subject\", mv.\"version\" AS \"version\", COUNT(*) AS \"cnt\" \
+               FROM \"{ver}\" AS mv INDEXED BY \"{ver_idx}\" \
+               WHERE mv.\"world\" = ?1 AND mv.\"object_type\" = ?3 AND mv.\"markings\" != '[]' \
+               GROUP BY mv.\"subject\", mv.\"version\" \
+             ) \
+             SELECT 1 FROM \"{fv}\" AS fv \
              LEFT JOIN \"{snap}\" AS s \
                ON s.\"world\" = fv.\"world\" AND s.\"object_type\" = fv.\"object_type\" \
               AND s.\"id\" = fv.\"id\" AND s.\"version\" = fv.\"version\" AND s.\"is_current\" = 0 \
              LEFT JOIN \"{subj}\" AS ms \
                ON ms.\"world\" = s.\"world\" AND ms.\"object_type\" = s.\"object_type\" AND ms.\"id\" = s.\"id\" \
-             LEFT JOIN \"{ver}\" AS mv \
-               ON mv.\"world\" = s.\"world\" AND mv.\"object_type\" = s.\"object_type\" \
-              AND mv.\"subject\" = ms.\"subject\" AND mv.\"version\" = s.\"version\" AND mv.\"markings\" != '[]' \
+             LEFT JOIN counts AS c \
+               ON c.\"subject\" = ms.\"subject\" AND c.\"version\" = s.\"version\" \
              WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
                AND json_type(fv.\"snapshot\", '$.values') = 'object' \
-             GROUP BY fv.\"id\", fv.\"version\", s.\"nonempty_slots\" \
-             HAVING s.\"nonempty_slots\" IS NULL \
+               AND ( \
+                 s.\"nonempty_slots\" IS NULL \
                  OR typeof(s.\"nonempty_slots\") != 'integer' \
                  OR s.\"nonempty_slots\" < 0 \
-                 OR COUNT(mv.\"property\") != s.\"nonempty_slots\" \
+                 OR COALESCE(c.\"cnt\", 0) != s.\"nonempty_slots\" \
+               ) \
              LIMIT 1",
             fv = crate::system::FACT_VALUES,
             snap = MARKING_SNAPSHOT,
             subj = MARKING_SUBJECT,
             ver = MARKING_VERSION,
+            ver_idx = crate::system::MARKING_VERSION_NONEMPTY,
         );
         let any_history_sql = format!(
             "SELECT 1 FROM \"{fv}\" AS fv \

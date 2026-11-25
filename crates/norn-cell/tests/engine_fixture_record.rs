@@ -3,7 +3,11 @@
 //! storage version `N` it records, before that release's successor lands:
 //!
 //! `NORN_RECORD_ENGINE_FIXTURE=$PWD/crates/norn-cell/tests/fixtures/engine-storage-vN.json \
-//!   cargo test -p norn-cell --lib suites::engine_fixture_record -- --ignored`
+//!   cargo test -p norn-cell --lib suites::engine_fixture_record::record_engine_storage_fixture -- --exact --ignored`
+//!
+//! For v7 (marked + declassified fixture), run on the last v7 engine (`origin/main`):
+//! `NORN_RECORD_ENGINE_FIXTURE=$PWD/crates/norn-cell/tests/fixtures/engine-storage-v7.json \
+//!   cargo test -p norn-cell --lib suites::engine_fixture_record::record_engine_storage_v7_fixture -- --exact --ignored`
 //!
 //! For v6, apply this recorder and the test-only checkpoint options in
 //! `support/engine_fixture.rs` to the named v6 checkout before recording.
@@ -57,7 +61,7 @@ fn record_engine_storage_fixture() {
 }
 
 #[test]
-#[ignore = "records fixtures/engine-storage-v7.json (with marked + declassified snapshots); run on the last v7 engine (origin/main)"]
+#[ignore = "#1533: records fixtures/engine-storage-v7.json (with marked + declassified snapshots); run on the last v7 engine (origin/main)"]
 fn record_engine_storage_v7_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::env::var_os("NORN_RECORD_ENGINE_FIXTURE")
         .ok_or_else(|| std::io::Error::other("NORN_RECORD_ENGINE_FIXTURE not set"))?;
@@ -66,7 +70,7 @@ fn record_engine_storage_v7_fixture() -> Result<(), Box<dyn std::error::Error>> 
     engine_fixture::write_v7_marked_cell(&cell)?;
     let store = norn_cell::CellStore::open(
         &cell,
-        engine_fixture::v7_marked_model(),
+        engine_fixture::v7_marked_model()?,
         engine_fixture::checkpoint_fixture_options(),
     )?;
     store.conn.transaction(|| {

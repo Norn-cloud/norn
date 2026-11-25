@@ -238,16 +238,15 @@ pub fn checkpoint_fixture_options() -> StoreOptions {
 /// unmarked objects and a marked object type so v7 → v8 upgrade tests prove
 /// exact `nonempty_slots` backfill across unmarked, marked, and declassified
 /// snapshots.
-pub fn v7_marked_model() -> Model {
+pub fn v7_marked_model() -> Result<Model, norn_cell::CellError> {
     let marked: ObjectTypeDef = serde_json::from_value(json!({
         "name": "fixture.MarkedItem",
         "properties": [
             {"id": "secret", "type": {"kind": "text"}, "markings": ["pii.contact"]},
             {"id": "label", "type": {"kind": "text"}, "default": "public"}
         ]
-    }))
-    .unwrap_or_else(|_| object_type());
-    Model::from_definitions(&[object_type(), marked], &[]).unwrap_or_else(|_| model())
+    }))?;
+    Model::from_definitions(&[object_type(), marked], &[])
 }
 
 /// Write a committed cell exercising unmarked rows, a marked row (`m2`), and
@@ -258,9 +257,10 @@ pub fn write_v7_marked_cell(path: &Path) -> Result<(), norn_cell::CellError> {
     let engine = NativeEngine::open(path, StoreOptions::default())?;
     let cell_id = CellId::try_from(CELL_ID.to_owned())
         .map_err(|error| norn_cell::CellError::Encoding(error.to_string()))?;
-    let mut store = CellStore::from_engine_with_identity_source(engine, v7_marked_model(), |_| {
-        Ok(cell_id.clone())
-    })?;
+    let mut store =
+        CellStore::from_engine_with_identity_source(engine, v7_marked_model()?, |_| {
+            Ok(cell_id.clone())
+        })?;
     store.bind("scope", SCOPE)?;
     for batch in batches() {
         store.commit(&batch)?;

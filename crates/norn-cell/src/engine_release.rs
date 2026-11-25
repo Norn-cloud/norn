@@ -404,34 +404,41 @@ fn backfill_snapshot_nonempty_slots<E: SqlEngine>(engine: &E) -> Result<(), Cell
             |row| row.get::<i64>(0),
         )?
         .is_some();
+    engine.execute(
+        "UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = 0",
+        params![],
+    )?;
     for (table, is_current) in [
         ("_norn_marking_current", 1_i64),
         ("_norn_marking_version", 0_i64),
     ] {
-        let count_expr = if interned {
+        let counts = if interned {
             format!(
-                "SELECT COUNT(*) FROM \"{table}\" AS m \
+                "SELECT s.\"world\", s.\"object_type\", s.\"id\", m.\"version\", COUNT(*) AS \"cnt\" \
+                 FROM \"{table}\" AS m \
                  JOIN \"_norn_marking_subject\" AS s \
                    ON s.\"subject\" = m.\"subject\" AND s.\"world\" = m.\"world\" AND s.\"object_type\" = m.\"object_type\" \
-                 WHERE s.\"world\" = \"_norn_marking_snapshot\".\"world\" \
-                   AND s.\"object_type\" = \"_norn_marking_snapshot\".\"object_type\" \
-                   AND s.\"id\" = \"_norn_marking_snapshot\".\"id\" \
-                   AND m.\"version\" = \"_norn_marking_snapshot\".\"version\" \
-                   AND m.\"markings\" != '[]'"
+                 WHERE m.\"markings\" != '[]' \
+                 GROUP BY s.\"world\", s.\"object_type\", s.\"id\", m.\"version\""
             )
         } else {
             format!(
-                "SELECT COUNT(*) FROM \"{table}\" AS m \
-                 WHERE m.\"world\" = \"_norn_marking_snapshot\".\"world\" \
-                   AND m.\"object_type\" = \"_norn_marking_snapshot\".\"object_type\" \
-                   AND m.\"id\" = \"_norn_marking_snapshot\".\"id\" \
-                   AND m.\"version\" = \"_norn_marking_snapshot\".\"version\" \
-                   AND m.\"markings\" != '[]'"
+                "SELECT m.\"world\", m.\"object_type\", m.\"id\", m.\"version\", COUNT(*) AS \"cnt\" \
+                 FROM \"{table}\" AS m \
+                 WHERE m.\"markings\" != '[]' \
+                 GROUP BY m.\"world\", m.\"object_type\", m.\"id\", m.\"version\""
             )
         };
         engine.execute(
             &format!(
-                "UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = COALESCE(({count_expr}), 0) WHERE \"is_current\" = ?1"
+                "UPDATE \"_norn_marking_snapshot\" \
+                 SET \"nonempty_slots\" = counts.\"cnt\" \
+                 FROM ({counts}) AS counts \
+                 WHERE \"_norn_marking_snapshot\".\"world\" = counts.\"world\" \
+                   AND \"_norn_marking_snapshot\".\"object_type\" = counts.\"object_type\" \
+                   AND \"_norn_marking_snapshot\".\"id\" = counts.\"id\" \
+                   AND \"_norn_marking_snapshot\".\"version\" = counts.\"version\" \
+                   AND \"_norn_marking_snapshot\".\"is_current\" = ?1"
             ),
             params![is_current],
         )?;

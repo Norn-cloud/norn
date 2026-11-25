@@ -1791,37 +1791,37 @@ fn a_storage_v7_marked_and_declassified_cell_upgrades_and_backfills_nonempty_slo
         Admission::Upgrade { from: 7 }
     );
 
+    let expected = |secret: &[&str]| {
+        Some(std::collections::BTreeMap::from([
+            ("label".to_owned(), Vec::new()),
+            (
+                "secret".to_owned(),
+                secret.iter().map(|s| (*s).to_owned()).collect(),
+            ),
+        ]))
+    };
     let store = CellStore::open(
         &path,
-        engine_fixture::v7_marked_model(),
+        engine_fixture::v7_marked_model()?,
         StoreOptions::default(),
     )?;
     assert_eq!(
         store
             .read()
             .effective_markings("main", "fixture.MarkedItem", "m1", None)?,
-        Some(std::collections::BTreeMap::from([
-            ("label".to_owned(), Vec::new()),
-            ("secret".to_owned(), Vec::new()),
-        ]))
+        expected(&[])
     );
     assert_eq!(
         store
             .read()
             .effective_markings("main", "fixture.MarkedItem", "m1", Some(1))?,
-        Some(std::collections::BTreeMap::from([
-            ("label".to_owned(), Vec::new()),
-            ("secret".to_owned(), vec!["pii.contact".to_owned()]),
-        ]))
+        expected(&["pii.contact"])
     );
     assert_eq!(
         store
             .read()
             .effective_markings("main", "fixture.MarkedItem", "m2", None)?,
-        Some(std::collections::BTreeMap::from([
-            ("label".to_owned(), Vec::new()),
-            ("secret".to_owned(), vec!["pii.contact".to_owned()]),
-        ]))
+        expected(&["pii.contact"])
     );
     drop(store);
 
@@ -1836,29 +1836,20 @@ fn a_storage_v7_marked_and_declassified_cell_upgrades_and_backfills_nonempty_slo
         "SELECT id, is_current, nonempty_slots FROM _norn_marking_snapshot WHERE object_type = 'fixture.MarkedItem' ORDER BY id, is_current",
         &[],
     )?;
+    let pin = |id: &str, current: i64, slots: i64| {
+        vec![
+            SqlValue::from(id),
+            SqlValue::Integer(current),
+            SqlValue::Integer(slots),
+        ]
+    };
     assert_eq!(
         pins,
         vec![
-            vec![
-                SqlValue::from("m1"),
-                SqlValue::Integer(0),
-                SqlValue::Integer(1)
-            ],
-            vec![
-                SqlValue::from("m1"),
-                SqlValue::Integer(1),
-                SqlValue::Integer(0)
-            ],
-            vec![
-                SqlValue::from("m2"),
-                SqlValue::Integer(0),
-                SqlValue::Integer(1)
-            ],
-            vec![
-                SqlValue::from("m2"),
-                SqlValue::Integer(1),
-                SqlValue::Integer(1)
-            ],
+            pin("m1", 0, 1),
+            pin("m1", 1, 0),
+            pin("m2", 0, 1),
+            pin("m2", 1, 1),
         ]
     );
     // Deleting `m2`'s marked row while leaving its backfilled snapshot intact must fail closed.
@@ -1870,7 +1861,7 @@ fn a_storage_v7_marked_and_declassified_cell_upgrades_and_backfills_nonempty_slo
 
     let reopened = CellStore::open(
         &path,
-        engine_fixture::v7_marked_model(),
+        engine_fixture::v7_marked_model()?,
         StoreOptions::default(),
     )?;
     assert_eq!(

@@ -1283,9 +1283,9 @@ fn a_declassified_history_is_never_served_clear_from_an_empty_catalog() {
             norn_cell::StoreOptions::default(),
         )
         .unwrap()
-        .execute(
-            "UPDATE \"_norn_marking_current\" SET \"markings\" = '[]'",
-            &[],
+        .execute_batch(
+            "DELETE FROM \"_norn_marking_current\"; \
+             UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = 0 WHERE \"is_current\" = 1;",
         )
         .unwrap();
     }
