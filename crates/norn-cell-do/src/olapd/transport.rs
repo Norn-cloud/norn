@@ -332,7 +332,7 @@ mod tests {
     /// wait, is cut off at the absolute deadline, not served forever.
     #[test]
     fn a_trickling_head_is_cut_off_at_its_deadline() {
-        let (mut client, server) = pair();
+        let (client, server) = pair();
         let (stop, trickling) = trickle(client);
         let started = Instant::now();
         let mut reader =
