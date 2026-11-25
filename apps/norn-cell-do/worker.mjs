@@ -186,7 +186,7 @@ export class Cell {
       // connection secret namespace, so connectVars never hands it to a connector.
       if (this.env.NORN_OLAP_URL !== undefined) {
         try {
-          this.cell.enableAnalytics(this.env[OLAP_SIGNING_KEY]);
+          this.cell.enableAnalytics(this.env[OLAP_SIGNING_KEY], this.env.NORN_OLAP_ENGINE);
         } catch (error) {
           console.error(`analytics not enabled: ${error}`);
         }

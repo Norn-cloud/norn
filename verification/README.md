@@ -14,6 +14,7 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 | `semantics-v1/` | Shared Lean semantics (`NornSem`) and checker proofs, with pinned statements and axioms |
 | `exact-arith-v1/` | Lean proofs over Aeneas extractions of the exact decimal, rational and ledger arithmetic |
 | `authz-v1/`, `ontology-v1/`, `linear-conservation-v1/`, `query-compute-v1/`, `specialisation-v1/`, `quantity-batch-atomicity-v1/`, `quantity-unit-dimension-v1/`, `core-physics-v1/` | Lean proofs and Quint models for one subsystem each |
+| `owl-time-v1/` | Lean reference proof of Allen's thirteen interval relations over half-open intervals, a Kani harness over the Rust classifier in `crates/norn-expr/src/temporal/allen.rs`, and the list of temporal boundary laws with their evidence (`README.md`) |
 | `cell-protocol-v1/` | Hand-written Quint models of cell protocols, TLC liveness harnesses, traces and `results.json`. Not a promoted gate. |
 | `canonical-values-v1/`, `cell-profile-v1/`, `ordered-fold-v1/`, `parameters/`, `values-v1/` | Kani harnesses and contracts. Crates include some of them under `#[cfg(kani)]`. |
 | `ontology/` | Ontology packs, registry and their validator |
@@ -40,7 +41,7 @@ What the gates use:
 | Lean | `*-lean` gates, plus the proofs inside the Aeneas gates |
 | Quint + Apalache | `*-quint` gates (bounded model checks, mostly `--max-steps 8`) and `*-quint-typecheck` |
 | Charon + Aeneas | nine `*-correspondence` gates. Each extracts production Rust and proves the Lean translation against a spec (`scripts/verify-*-aeneas.sh`). |
-| Kani | `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`) |
+| Kani | `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`), `owl-time-allen-kani` (`owl-time-v1/allen_kani.rs`) |
 | F* (via hax) | `artifact-governance-rust-extraction` (`scripts/verify-artifact-governance-extraction.sh`) |
 | Verus | none; see [The Verus spike](#the-verus-spike) |
 
