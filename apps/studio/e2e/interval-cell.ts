@@ -49,7 +49,12 @@ export interface IntervalCell {
   readonly calls: { readonly actionId: string; readonly body: string }[]
 }
 
-export async function intervalCell(page: Page, options: { readonly pointed?: boolean } = {}): Promise<IntervalCell> {
+/**
+ * `actions` swaps the cell's action catalog (default: the fixture's), so a row can serve a variant
+ * of one action (an optional field, say) through the same routes and response shapes.
+ */
+export async function intervalCell(page: Page, options: { readonly pointed?: boolean; readonly actions?: readonly (typeof INTERVAL_ACTIONS)[number][] } = {}): Promise<IntervalCell> {
+  const actions = options.actions ?? INTERVAL_ACTIONS
   const records = intervalRecords()
   const requests: URL[] = []
   const calls: { actionId: string; body: string }[] = []
@@ -100,7 +105,7 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
       return a.id < b.id ? -1 : 1
     })
     const slice = kept.slice(offset, offset + limit)
-    const offers = INTERVAL_ACTIONS.filter((action) => action.objectKind === type).map(({ actionId }) => actionId)
+    const offers = actions.filter((action) => action.objectKind === type).map(({ actionId }) => actionId)
     return route.fulfill({
       json: {
         objectType: type, quarantineCount: 0, scannedThrough: null, query: { sort, filter }, next: offset + limit < kept.length ? String(offset + limit) : null, total: { count: kept.length, approximate: false },
@@ -114,12 +119,12 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
     if (!scoped(url)) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "" } })
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
-      return route.fulfill({ json: { definitionsVersion: 1, items: INTERVAL_ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: actions.filter((a) => kind === null || a.objectKind === kind) } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""
     calls.push({ actionId, body })
-    const action = INTERVAL_ACTIONS.find((a) => a.actionId === actionId)
+    const action = actions.find((a) => a.actionId === actionId)
     if (action === undefined) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "" } })
     const { input } = JSON.parse(body) as { input: Record<string, unknown> }
     const problems: { code: string; message: string; span: { pointer: string } }[] = []

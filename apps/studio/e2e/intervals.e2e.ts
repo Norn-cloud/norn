@@ -176,14 +176,10 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
 
 // #1724 (Fable r1): on an optional field that has a value, a search highlights the match, never Clear.
 test("picker: on an optional field with a value, a search then Enter picks the match; Clear is listed only unsearched", async ({ page }) => {
-  await intervalCell(page)
-  // The same action with its equipment optional (the cell's schema decides; Studio reads `required`).
+  // The same action with its equipment optional (the cell's schema decides; Studio reads `required`),
+  // served through the cell's own routes so the catalog keeps the shape the client reads.
   const optional = { ...BOOK_EQUIPMENT, inputSchema: { ...BOOK_EQUIPMENT.inputSchema, required: BOOK_EQUIPMENT.inputSchema.required.filter((field) => field !== "equipment") } }
-  await page.route("**/api/host/v1/actions**", (route) => {
-    if (route.request().method() !== "GET") return route.fallback()
-    const kind = new URL(route.request().url()).searchParams.get("objectKind")
-    return route.fulfill({ json: { items: INTERVAL_ACTIONS.map((a) => a === BOOK_EQUIPMENT ? optional : a).filter((a) => kind === null || a.objectKind === kind) } })
-  })
+  await intervalCell(page, { actions: INTERVAL_ACTIONS.map((action) => action === BOOK_EQUIPMENT ? optional as unknown as typeof action : action) })
   await page.goto("/objects/facilities.EquipmentBooking")
   await page.getByRole("button", { name: "New equipment booking" }).click()
   const form = sheet(page)
