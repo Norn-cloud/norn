@@ -38,7 +38,7 @@ const WEIGHTS: &[(&str, u32)] = &[
 const COMPILE_SECONDS: u32 = 216;
 const WASM_COMPILE_SECONDS: u32 = 300;
 const TARGET_SECONDS: u32 = 660;
-const MAX_BUNDLES: usize = 8;
+const MAX_BUNDLES: usize = 6;
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -606,7 +606,7 @@ mod tests {
     // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "phase/test-shards", "phase/doc"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "phase/guards"]}, {"id": "b3", "tasks": ["phase/browser", "phase/wasm"]}, {"id": "b4", "tasks": ["test/rest-3", "test/heavy-5", "test/heavy-4", "phase/clippy"]}, {"id": "b5", "tasks": ["phase/duckdb", "phase/rivet"]}, {"id": "b6", "tasks": ["test/rest-1", "test/heavy-3", "test/heavy-6", "test/heavy-1", "phase/doctest", "phase/integration-clients"]}, {"id": "b7", "tasks": ["test/heavy-2", "phase/features"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/guards"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-6", "test/heavy-5", "phase/doc"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "test/heavy-4", "phase/test-shards", "phase/clippy"]}, {"id": "b3", "tasks": ["phase/browser", "phase/rivet", "phase/wasm"]}, {"id": "b4", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-1", "phase/integration-clients"]}, {"id": "b5", "tasks": ["phase/duckdb", "phase/features", "phase/doctest", "phase/provenance"]}]}"#,
             "\n"
         ),
         concat!(

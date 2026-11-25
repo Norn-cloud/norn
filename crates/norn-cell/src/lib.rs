@@ -36,6 +36,7 @@ pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod coverage_observer;
 pub mod dataset_laws;
 pub mod dataset_manifest;
 pub mod decision_ledger;
@@ -105,6 +106,10 @@ mod test_door;
 pub mod transparency;
 mod write;
 
+pub use coverage_observer::{
+    CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
+    ObservedSqliteCell, TransitionKey,
+};
 pub use definition_scope::{is_reserved_kernel_name, kernel_record_types};
 pub use error::CellError;
 

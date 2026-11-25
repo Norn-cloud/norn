@@ -86,7 +86,7 @@ fn ask(
         .analytics_prepare(plan, context, &tenant())
         .map_err(|e| code(&e))?;
     // An engine fault keeps its detail: it never equals a Core 03 refusal.
-    let response = engine.evaluate(&prepared.request).map_err(|r| {
+    let response = engine.evaluate(prepared.request()).map_err(|r| {
         if r.code == "analytics.engine" {
             format!("{}: {}", r.code, r.detail)
         } else {
@@ -339,7 +339,8 @@ fn an_answer_at_an_earlier_frontier_reads_only_versions_current_then() {
     let earlier = store
         .analytics_prepare(&plan, context, &tenant())
         .expect("prepared")
-        .request;
+        .request()
+        .clone();
     commit(
         &mut store,
         vec![
@@ -436,8 +437,8 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
             let page = engine
                 .members(&MembersRequest {
                     tenant: tenant(),
-                    source: prepared.request.source.clone(),
-                    query: prepared.request.query.clone(),
+                    source: prepared.request().source.clone(),
+                    query: prepared.request().query.clone(),
                     group: group.clone(),
                     after: after.clone(),
                     limit: 2,
@@ -467,7 +468,8 @@ fn a_row_of_another_scope_refuses_as_stale() {
     let mut request = store
         .analytics_prepare(&plan, context, &tenant())
         .expect("prepared")
-        .request;
+        .request()
+        .clone();
     if let Source::Mirror { scope, .. } = &mut request.source {
         *scope = "another".into();
     }
@@ -475,6 +477,58 @@ fn a_row_of_another_scope_refuses_as_stale() {
         engine.evaluate(&request).expect_err("refused").code,
         "core.compute.stale_input"
     );
+    assert!(matches!(
+        engine.profile(&norn_cell::analytics::ProfileRequest {
+            tenant: request.tenant.clone(),
+            source: request.source.clone(),
+            columns: vec!["recovered".to_owned()],
+            model_pin: request.model_pin.clone(),
+            cell_revision: String::new(),
+        }),
+        Err(ref refused) if refused.code == "core.compute.stale_input"
+    ));
+    if let Source::Mirror { scope, model, .. } = &mut request.source {
+        *scope = "synthetic".into();
+        *model = Some("wrong-model-hash".into());
+    }
+    assert!(matches!(
+        engine.profile(&norn_cell::analytics::ProfileRequest {
+            tenant: request.tenant,
+            source: request.source,
+            columns: vec!["recovered".to_owned()],
+            model_pin: request.model_pin,
+            cell_revision: String::new(),
+        }),
+        Err(ref refused) if refused.code == "core.compute.unsupported_engine"
+    ));
+}
+
+/// D136 / QUERY-FRESH-1: the engine names the snapshot it read, the cell
+/// accepts that answer, and a mirror synced under another model refuses.
+#[test]
+fn the_engine_names_its_snapshot_and_refuses_another_model()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, engine) = engine();
+    let (mut store, plan, context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    sync(&store, &engine, WORLD);
+    let prepared = store.analytics_prepare(&plan, context, &tenant())?;
+    let mut other = prepared.request().clone();
+    let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
+    assert_eq!(
+        response.provenance.engine,
+        norn_cell::analytics::AnalyticalEngineId::DuckDb
+    );
+    store.analytics_answer(prepared, response)?;
+    other.model_pin = "another model".into();
+    assert!(matches!(
+        engine.evaluate(&other),
+        Err(refused) if refused.code == "core.compute.stale_input"
+    ));
+    Ok(())
 }
 
 /// A batch that does not continue the mirror's frontier is refused whole.
@@ -495,12 +549,70 @@ fn a_sync_that_skips_commits_is_refused() {
         after: 7,
         through: 9,
         rows: Vec::new(),
+        model_pin: String::new(),
+        schema_pins: std::collections::BTreeMap::new(),
         links: Vec::new(),
     };
     assert_eq!(
         engine.sync(&skipping).expect_err("refused").code,
         "analytics.frontier_moved"
     );
+}
+
+/// D136: a batch carries the mirror generation (model and table schemas) it
+/// was encoded under; once the mirror is reset to another, the batch is
+/// refused before any row is applied or the frontier moves.
+#[test]
+fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let (dir, mut engine) = engine();
+    let reopen = || -> Result<Engine, Box<dyn std::error::Error>> {
+        Ok(Engine::new(Settings {
+            root: dir.path().to_path_buf(),
+            memory_limit: "256MB".into(),
+            threads: 1,
+        })?)
+    };
+    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
+    let (mut store, _plan, _context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let mut mirror = store.analytics_frontier(&tenant(), WORLD)?;
+    let initial = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    let batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
+    assert_ne!(batch.rows.len(), 0);
+    let assert_refused_and_empty = |eng: Engine,
+                                    request: &SyncRequest,
+                                    frontier_req: &norn_cell::analytics::FrontierRequest,
+                                    expected: &norn_cell::analytics::FrontierResponse|
+     -> Result<Engine, Box<dyn std::error::Error>> {
+        assert!(matches!(
+            eng.sync(request),
+            Err(refused) if refused.code == "core.compute.stale_input"
+        ));
+        assert_eq!(eng.frontier(frontier_req).map_err(|r| r.detail)?, *expected);
+        drop(eng);
+        let conn = ::duckdb::Connection::open(&database)?;
+        let rows: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM \"m:{TYPE}\""), [], |r| {
+            r.get(0)
+        })?;
+        assert_eq!(rows, 0);
+        drop(conn);
+        reopen()
+    };
+    let mut other_schema = batch.clone();
+    for pin in other_schema.schema_pins.values_mut() {
+        pin.push('x');
+    }
+    engine = assert_refused_and_empty(engine, &other_schema, &mirror, &initial)?;
+    let mut missing_pin = batch.clone();
+    missing_pin.schema_pins.clear();
+    engine = assert_refused_and_empty(engine, &missing_pin, &mirror, &initial)?;
+    mirror.model_pin = "another model".into();
+    let reset = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    let _engine = assert_refused_and_empty(engine, &batch, &mirror, &reset)?;
+    Ok(())
 }
 
 /// A CSV in the tenant's scratch directory, the only place its load reads.
@@ -610,7 +722,7 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
 /// and the refused load has no lineage record.
 #[test]
 fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
-    use ::duckdb::OptionalExt as _;
+    use duckdb::OptionalExt as _;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let (first, first_sha) = csv(
@@ -700,6 +812,7 @@ proptest::proptest! {
                 source: Source::Dataset { table: TYPE.into(), load: "load-1".into() },
                 query: lower(&plan).expect("lowered"),
                 inline_members: 100,
+                model_pin: String::new(),
             })
             .expect("dataset answer");
         proptest::prop_assert_eq!(totals(&response), exact_totals(&exact));
@@ -776,6 +889,8 @@ fn load_timestamp(text: &str) -> Option<(i64, u32)> {
                 load: "t".into(),
             },
             columns: vec!["at".into()],
+            model_pin: String::new(),
+            cell_revision: String::new(),
         })
         .expect("profile");
     match profile.columns[0].ranks.get(&1).cloned() {
@@ -901,6 +1016,7 @@ fn bulk_path_measurements() {
         },
         query: lower(&plan).expect("lowered"),
         inline_members: 100,
+        model_pin: String::new(),
     };
     let mut times = Vec::new();
     for _ in 0..11 {
@@ -928,6 +1044,8 @@ fn bulk_path_measurements() {
                 "occurred_at".into(),
                 "metal".into(),
             ],
+            model_pin: String::new(),
+            cell_revision: String::new(),
         })
         .expect("profile");
     println!(
@@ -983,9 +1101,8 @@ fn bulk_path_measurements() {
     );
     // The governed mirror: 100k versions in batches of 10k.
     let (store, _plan, _context) = by_metal(true, 100);
-    engine
-        .frontier(&store.analytics_frontier(&tenant(), WORLD).expect("tables"))
-        .expect("frontier");
+    let mirror = store.analytics_frontier(&tenant(), WORLD).expect("tables");
+    engine.frontier(&mirror).expect("frontier");
     let table = table_schema(TYPE, plan.properties()).expect("schema");
     let started = Instant::now();
     let mut seq = 0u64;
@@ -1027,6 +1144,12 @@ fn bulk_path_measurements() {
                 after: batch,
                 through: batch + 1,
                 rows,
+                model_pin: mirror.model_pin.clone(),
+                schema_pins: mirror
+                    .tables
+                    .iter()
+                    .map(|t| (t.name.clone(), t.pin.clone()))
+                    .collect(),
                 links: Vec::new(),
             })
             .expect("sync");
@@ -1797,6 +1920,8 @@ mod sources_pack {
                 tenant: tenant(),
                 source: source.clone(),
                 columns,
+                model_pin: store.model().model_hash().to_owned(),
+                cell_revision: String::new(),
             })
             .expect("profile");
         assert_eq!(profile.rows, 2);
@@ -1941,6 +2066,8 @@ mod alias_names {
                 tenant: tenant(),
                 source: source.clone(),
                 columns: columns.clone(),
+                model_pin: store.model().model_hash().to_owned(),
+                cell_revision: String::new(),
             })
             .expect("profile");
         assert_eq!(profile.rows, 3);
@@ -2032,7 +2159,7 @@ mod known_at {
         let prepared = store
             .analytics_prepare_known_at(plan, context.clone(), &tenant(), cutoff)
             .map_err(|e| code(&e))?;
-        let response = engine.evaluate(&prepared.request).map_err(|r| r.code)?;
+        let response = engine.evaluate(prepared.request()).map_err(|r| r.code)?;
         let mut answer = store
             .analytics_answer_known_at(prepared, response)
             .map_err(|e| code(&e))?;
@@ -2409,6 +2536,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
             source: source(load),
             query: lower(&plan).expect("lowered"),
             inline_members: 100,
+            model_pin: String::new(),
         })
     };
     // Landed but not stored: no reader sees the rows, at any identity.
@@ -2455,6 +2583,8 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
                 tenant: tenant(),
                 source: source(&cache),
                 columns: vec!["input".into()],
+                model_pin: String::new(),
+                cell_revision: String::new(),
             })
             .expect("profile")
     };

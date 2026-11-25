@@ -538,7 +538,7 @@ fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_doe
     let prepared = store
         .analytics_prepare(&plan, context(), &tenant)
         .expect("prepared");
-    let response = engine.evaluate(&prepared.request).expect("DuckDB answers");
+    let response = engine.evaluate(prepared.request()).expect("DuckDB answers");
     let mut answered = store
         .analytics_answer(prepared, response)
         .expect("the engine's answer");
