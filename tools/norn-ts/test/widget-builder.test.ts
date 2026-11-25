@@ -61,7 +61,7 @@ function confirmPage(heldIn: ReadonlyArray<string>, cancel: boolean): W.WidgetDe
 
 const codes = (def: W.WidgetDef): string[] => {
   const checked = checker!.checkArtifactSet([W.lowerWidget(def, options)])
-  return checked.diagnostics.diagnostics.filter((d) => d.severity === "error").map((d) => d.code)
+  return checked.diagnostics.diagnostics.filter((d) => d.severity === "error").map((d) => `${d.code}: ${d.message}`)
 }
 
 test("a typed page lowers to the widget artifact the checker reads", () => {
@@ -86,5 +86,5 @@ test("a typed page lowers to the widget artifact the checker reads", () => {
 
 test.skipIf(!checker)("the checker admits the held confirmation and refuses it without a Cancel (L1)", () => {
   expect(codes(confirmPage(["confirming", "sending"], true))).toEqual([])
-  expect(codes(confirmPage(["confirming", "sending"], false))).toContain("widget.layer.dismissal_refused_without_cause")
+  expect(codes(confirmPage(["confirming", "sending"], false)).some((found) => found.startsWith("widget.layer.dismissal_refused_without_cause:"))).toBe(true)
 })

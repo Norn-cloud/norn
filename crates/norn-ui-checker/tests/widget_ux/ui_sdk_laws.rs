@@ -84,7 +84,12 @@ fn without(machine: &mut Value, transition: &str) {
 fn layer_codes(widget: Value) -> Vec<(String, String, String)> {
     coded(
         widget_findings(widget),
-        &["widget.layer.", "widget.catalog.", "widget.view."],
+        &[
+            "widget.layer.",
+            "widget.catalog.",
+            "widget.view.",
+            "widget.validation.",
+        ],
     )
 }
 
@@ -604,5 +609,17 @@ fn a_marked_or_exact_value_needs_a_renderer_that_handles_it() {
     assert_eq!(found, [], "{found:#?}");
     // The native renderer draws both faithfully by its own contract.
     let found = handled(Value::Null, Value::Null);
+    assert_eq!(found, [], "{found:#?}");
+}
+
+#[test]
+fn a_held_confirmation_layer_is_admitted_with_no_finding_at_all() {
+    let widget = layered(
+        "ui-sdk:alert-dialog",
+        &json!({ "pendingAnnouncement": "\"Approving\"" }),
+        &json!(["confirming", "approving"]),
+        |_| {},
+    );
+    let found = coded(widget_findings(widget), &["widget."]);
     assert_eq!(found, [], "{found:#?}");
 }

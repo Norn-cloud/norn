@@ -495,12 +495,19 @@ impl UxChecker<'_, '_, '_> {
                         | WidgetComponent::ChildGrid { .. }
                 )
             }),
+            // A UI SDK primitive with a `content` part (a dialog, a drawer, a popover) renders
+            // its children there; any other catalog component is a leaf joined only by its props
+            // and events.
+            WidgetComponent::Catalog { .. } => {
+                node.children.is_empty()
+                    || crate::ui_sdk::primitive_of(node)
+                        .is_some_and(|(_, primitive)| primitive.parts.contains("content"))
+            }
             WidgetComponent::Field { .. }
             | WidgetComponent::ChildGrid { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
             | WidgetComponent::Control { .. }
-            | WidgetComponent::Catalog { .. }
             | WidgetComponent::Composition { .. } => node.children.is_empty(),
         };
         if !valid {
