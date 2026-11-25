@@ -233,7 +233,7 @@ impl<E: SqlEngine> Serving<E> {
             // here.
             // Not marked compiled on failure: the next request tries again,
             // so `/v1/access` never keeps the previous version's collections.
-            let served = norn_api::action_admission::prepare_action_model(&model)
+            let served = norn_api::action_admission::prepare_action_model_for(&model, &artifacts)
                 .map_err(|refusal| refusal.explanation)?;
             self.object_types = collections(served.object_types());
             let reveal = RevealPolicy::compile(&model, &artifacts, self.host.scope())

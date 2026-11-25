@@ -212,7 +212,8 @@ pub(crate) fn model_of(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> 
     let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
         .and_then(|model| model.with_governing_laws(artifacts))
         .map_err(|error| error.to_string())?;
-    norn_api::action_admission::prepare_action_model(&model).map_err(|refusal| refusal.message)
+    norn_api::action_admission::prepare_action_model_for(&model, artifacts)
+        .map_err(|refusal| refusal.message)
 }
 
 /// The envelopes of a retained canonical set.

@@ -11,7 +11,38 @@ use std::collections::{BTreeMap, BTreeSet};
 /// # Errors
 /// Tenant declarations using SQLite-equivalent reserved names or invalid models refuse.
 pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model, Refusal> {
+    prepare(model, false)
+}
+
+/// [`prepare_action_model`] for the definitions `artifacts`. When a decide
+/// rule of the set declares principal inputs (PRINCIPAL-INPUT-1, #1091) the
+/// call record also keeps `principalInputs`. A set that declares none is
+/// served exactly the model [`prepare_action_model`] gives it, so its ledger
+/// does not change.
+/// # Errors
+/// As [`prepare_action_model`].
+pub fn prepare_action_model_for(
+    model: &norn_cell::Model,
+    artifacts: &[ArtifactEnvelope],
+) -> Result<norn_cell::Model, Refusal> {
+    let declared = artifacts.iter().any(|artifact| {
+        artifact.kind() == ArtifactKind::Rule
+            && matches!(
+                artifact.payload.to_json_value().as_object().and_then(|payload| payload.get("principalInputs")),
+                Some(norn_ir::JsonValue::Array(inputs)) if !inputs.is_empty()
+            )
+    });
+    prepare(model, declared)
+}
+
+fn prepare(model: &norn_cell::Model, principal_inputs: bool) -> Result<norn_cell::Model, Refusal> {
     use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType};
+    // The call record's `principalInputs`, only for a set that declares them.
+    let recorded_principal: &[&str] = if principal_inputs {
+        &["principalInputs"]
+    } else {
+        &[]
+    };
     let mut snapshot = model.definitions_snapshot();
     for (name, text_fields, json_fields) in [
         (
@@ -35,7 +66,6 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
                 "derivedValues",
                 "preconditionOutcomes",
                 "parameterPins",
-                "principalInputs",
                 "rowOperations",
                 "trace",
             ][..],
@@ -63,6 +93,11 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
             .chain(
                 json_fields
                     .iter()
+                    .chain(
+                        recorded_principal
+                            .iter()
+                            .filter(|_| name == norn_kernel::ACTION_CALL_TYPE),
+                    )
                     .map(|id| (*id, PropertyType::JsonExt { schema: None })),
             )
             .map(|(id, property_type)| Property {
@@ -388,4 +423,66 @@ pub(crate) fn target_version<E: norn_cell::engine::SqlEngine>(
             receipt.body.commit_seq,
         )
         .map_err(Refusal::host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn call_record_properties(model: &norn_cell::Model) -> Vec<String> {
+        model
+            .object_types()
+            .find(|object_type| object_type.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+            .map_or_default(|object_type| {
+                object_type
+                    .properties
+                    .iter()
+                    .map(|property| property.id.0.clone())
+                    .collect()
+            })
+    }
+
+    fn rule(payload: &serde_json::Value) -> ArtifactEnvelope {
+        serde_json::from_value(json!({
+            "irVersion": "0.1",
+            "artifactId": "document.review.rule",
+            "kind": "rule",
+            "namespace": "document",
+            "name": "Review",
+            "version": "1.0.0",
+            "lifecycle": "draft",
+            "scope": {"orgId": "org_demo", "environmentId": "dev"},
+            "dependencies": [],
+            "provenance": {"source": "authoring_sdk", "sourcePath": "test.ts"},
+            "payload": payload
+        }))
+        .expect("rule artifact")
+    }
+
+    /// PRINCIPAL-INPUT-1: the call record gains `principalInputs` only for a
+    /// set that declares principal inputs; every other set is served the
+    /// model it was served before, so its ledger does not change.
+    #[test]
+    fn only_a_set_that_declares_principal_inputs_records_them() {
+        let model = norn_cell::Model::from_definitions(&[], &[]).expect("model");
+        let plain = call_record_properties(&prepare_action_model(&model).expect("served model"));
+        assert!(!plain.iter().any(|id| id == "principalInputs"));
+        let undeclared = rule(&json!({"ruleId": "document.review"}));
+        let same = prepare_action_model_for(&model, &[undeclared]).expect("served model");
+        assert_eq!(call_record_properties(&same), plain);
+        let declared = rule(&json!({
+            "ruleId": "document.review",
+            "principalInputs": [
+                {"name": "isReviewer", "kind": {"holdsRole": {"role": "reviewer", "at": "resource"}}}
+            ]
+        }));
+        let recorded = prepare_action_model_for(&model, &[declared]).expect("served model");
+        let recorded = call_record_properties(&recorded);
+        assert_eq!(recorded.last().map(String::as_str), Some("principalInputs"));
+        assert_eq!(
+            recorded.split_last().map(|(_, rest)| rest),
+            Some(plain.as_slice())
+        );
+    }
 }

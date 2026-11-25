@@ -194,7 +194,8 @@ pub fn serving_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> {
             .join("; "),
         KernelRefusal::Invalid(detail) => detail,
     })?;
-    crate::action_admission::prepare_action_model(&model).map_err(|refusal| refusal.message)
+    crate::action_admission::prepare_action_model_for(&model, artifacts)
+        .map_err(|refusal| refusal.message)
 }
 
 /// Admit `added` over an installed set, as installing it would: the retained
