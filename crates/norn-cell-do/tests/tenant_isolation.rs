@@ -1423,6 +1423,8 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
 /// records each incident with its monotonic `(seq N)`.
 #[test]
 fn incident_ids_do_not_leak_another_tenants_errors() {
+    // #1710: this thread opts in to keeping its incident lines.
+    norn_cell_do::incident::capture();
     let parse_opaque = |response: &Response| -> String {
         assert_eq!(response.status, 500, "{}", response.body);
         let doc = json_of(response);
