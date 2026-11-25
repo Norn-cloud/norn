@@ -39,7 +39,11 @@ async function bridge(page: Page) {
       sent.push(message)
       const reply = (result: unknown) => send({ jsonrpc: "2.0", id: message.id, result })
       if (message.method === "initialize") return reply({ protocolVersion: 1, agentCapabilities: { loadSession: false, promptCapabilities: {}, mcpCapabilities: {} }, authMethods: [] })
-      if (message.method === "session/new") return reply({ sessionId: "s1" })
+      if (message.method === "session/new") {
+        // The bridge sends the cell's own label for each tool it lists before the session starts.
+        send({ jsonrpc: "2.0", method: "_norn/tools", params: { tools: [{ name: "norn_answer", title: "Answer a question" }] } })
+        return reply({ sessionId: "s1" })
+      }
       if (message.method !== "session/prompt") return
       update({ sessionUpdate: "tool_call", toolCallId: "t1", title: "mcp__norn__norn_answer", kind: "other", status: "pending", _meta: { claudeCode: { toolName: "mcp__norn__norn_answer" } } })
       send({ jsonrpc: "2.0", method: "_norn/tool_result", params: { tool: "norn_answer", view: "answer", input: { question: "demo.yield_week" }, result: { content: [{ type: "text", text: ANSWER }] } } })
@@ -60,7 +64,7 @@ test("sidekick: Home's Ask bar opens Sidekick, which answers through a Norn tool
   await page.getByRole("button", { name: "Ask" }).click()
   const panel = page.locator("[data-slot=sidekick]")
   await expect(panel.getByText("What's our weekly yield?")).toBeVisible()
-  await expect(panel.locator("[data-tool=norn_answer][data-status=completed]")).toContainText("Answered the question")
+  await expect(panel.locator("[data-tool=norn_answer][data-status=completed]")).toContainText("Answer a question")
   await expect(panel.locator("[data-view=answer]")).toBeVisible()
   // The view is drawn, not left loading: Studio's own answer card, from the tool's document.
   await expect(panel.getByText("Drawing Norn's answer…")).toHaveCount(0)

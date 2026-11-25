@@ -51,4 +51,7 @@ export const SHEET: readonly SheetState[] = [
   { component: "FactsTable", id: "locale/facts", note: "Facts and enum values in the reader's language from a labels artifact; a fact without a label keeps its id in words, marked lang=en; Technical ids isolated." },
   { component: "CodedMessage", id: "locale/message", note: "A coded checker message from the catalog; artifact ids, versions and a +20 phone number stay isolated inside Arabic text." },
   { component: "CanvasFrame", id: "locale/problems", note: "Problems list in the reader's language; codes stay as sent." },
+  { component: "Mascot", id: "mascot/states", note: "The assistant mascot (pebble, the pick): idle blinks, thinking sways its thread, answered smiles, unavailable closes its eyes, asking raises its hand. Brand tone (knot body) and ink tone (currentColor with the eyes cut out) at 56, 28 and 20px. Still under reduced motion." },
+  { component: "Mascot", id: "mascot/candidates", note: "The three candidate characters in every state: pebble (the pick), loom, drop. Each is drawn from the same parts, so the owner can swap the variant without touching a screen." },
+  { component: "Mascot", id: "mascot/rtl", note: "Arabic: the mascot mirrors, so the asking hand and the thinking gaze point to the reading end." },
 ]

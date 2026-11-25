@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import config from "../vite.config.ts"
 
 // The deploys' served-build checks look for assets/index-<hash>.js: the app's Rollup input must stay keyed `index`.
-test("the app builds as the index entry, with the contact sheet and the read harness beside it", () => {
+test("the app builds as the index entry, with the contact sheet, the read harness and the widget matrix beside it", () => {
   const input = (config as { build?: { rollupOptions?: { input?: Record<string, string> } } }).build?.rollupOptions?.input ?? {}
-  expect(Object.keys(input).sort()).toEqual(["harness", "index", "sheet"])
+  expect(Object.keys(input).sort()).toEqual(["harness", "index", "matrix", "sheet"])
   expect(input.index?.endsWith("/index.html")).toBe(true)
 })

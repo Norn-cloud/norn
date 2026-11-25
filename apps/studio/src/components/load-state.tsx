@@ -1,15 +1,18 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
 import { CopyId } from "@/components/copy-id"
-import { EmptyState } from "@/components/panel"
+import { Disclosure } from "@/components/disclosure"
+import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"
-import { NotServed } from "@/lib/live-transport"
+import { NotServed, retryWorkspace, useMode } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
+import type { Workspace } from "@/lib/workspace"
 
 /** Wait before showing a quiet "Taking longer than usual…" hint beneath a skeleton. */
 export const SLOW_WAIT_MS = 4_000
@@ -97,13 +100,22 @@ export function SkeletonBlock({ kind = "list", label = "Loading" }: { readonly k
  * Honest state for a broken, unopenable, or unreachable workspace cell: names what the server
  * said, shows the incident id when logged, says when the workspace was last reachable, separates
  * non-retryable failures from transient ones, and offers an explicit Retry.
+ *
+ * It owns that Retry, and takes none from its page: while a page shows this state the shell's one-line
+ * status steps aside, so this Retry is the only one and must do what the shell's would
+ * (`retryWorkspace`: decide the mode again, then read every errored read again). It stays disabled
+ * until both have settled. A page that passed its own read here instead left the mode unavailable.
  */
-export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compact = false }: {
+export function WorkspaceUnavailable({ error, compact = false }: {
   readonly error: unknown
-  readonly onRetry?: () => void
-  readonly isFetching?: boolean
   readonly compact?: boolean
 }) {
+  const queries = useQueryClient()
+  const [retrying, setRetrying] = useState(false)
+  const retry = () => {
+    setRetrying(true)
+    void retryWorkspace(queries).finally(() => setRetrying(false))
+  }
   const scope = useCachedStudioScope()
   const { locale } = useLocale()
   const { view } = useView()
@@ -118,7 +130,8 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
         <span className="flex size-9 shrink-0 items-center justify-center rounded-(--radius-well) bg-(--well) text-muted-foreground ring-1 ring-line">
           <CloudOff aria-hidden className="size-4" strokeWidth={1.6} />
         </span>
-        <div className="min-w-0 flex-1 space-y-1.5">
+        {/* The words keep at least 15rem: on a phone Retry moves under them rather than squeezing them. */}
+        <div className="min-w-0 flex-1 basis-60 space-y-1.5">
           <div className="text-foreground">Workspace unavailable</div>
           <p className="text-pretty text-muted-foreground">{info.headline}</p>
           {info.detail && <p className="text-meta text-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
@@ -136,20 +149,17 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
             )}
           </div>
           {(info.code || info.status || info.raw) && (
-            <details open={view === "technical"} className="pt-1 text-meta text-muted-foreground">
-              <summary className="cursor-pointer select-none">Technical</summary>
-              <div className="mt-1 grid gap-0.5 font-mono text-meta [overflow-wrap:anywhere]">
+            <Disclosure open={view === "technical"} summary="Technical" className="pt-1 text-meta text-muted-foreground">
+              <div className="mt-1 grid gap-0.5 ps-5 font-mono text-meta [overflow-wrap:anywhere]">
                 {(info.status || info.code) && <span>{[info.status ? `HTTP ${info.status}` : null, info.code].filter(Boolean).join(" · ")}</span>}
                 {info.raw && <span>{info.raw}</span>}
               </div>
-            </details>
+            </Disclosure>
           )}
         </div>
-        {onRetry && (
-          <Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
-            <RefreshCw className={isFetching ? "animate-spin" : undefined} />Retry
-          </Button>
-        )}
+        <Button type="button" variant="outline" size="sm" disabled={retrying} onClick={retry}>
+          <RefreshCw className={retrying ? "animate-spin" : undefined} />Retry
+        </Button>
       </div>
     </div>
   )
@@ -160,30 +170,38 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
  * the server's explanation (never hidden), incident id when present, technical details under
  * Technical, and an explicit Retry.
  */
-export function ReadErrorState({ error, onRetry, isFetching = false }: {
+export function ReadErrorState({ error, onRetry, isFetching = false, title, inset = false, children }: {
   readonly error: unknown
   readonly onRetry?: () => void
   readonly isFetching?: boolean
+  /** What could not be read, in plain words; the server's own words follow it. */
+  readonly title?: string
+  /** Drawn inside a panel's well: the same state with no card of its own (one way to nest). */
+  readonly inset?: boolean
+  /** One more honest line, such as what still works. */
+  readonly children?: ReactNode
 }) {
   const { locale } = useLocale()
   const { view } = useView()
   const info = explainError(error, locale, view)
   return (
-    <div role="alert" data-load-state="error" className="rounded-(--radius-panel) border border-(--panel-border) bg-card p-4 text-body shadow-(--panel-shadow)">
+    <div role={inset ? "status" : "alert"} data-load-state="error"
+      className={inset ? "px-2.5 py-2.5 text-body" : "rounded-(--radius-panel) border border-(--panel-border) bg-card p-4 text-body shadow-(--panel-shadow)"}>
       <div className="flex flex-wrap items-start gap-3">
         <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-foreground">{info.headline}</p>
+          {title && <p className="text-foreground">{title}</p>}
+          <p className={title ? "text-meta text-muted-foreground [overflow-wrap:anywhere]" : "text-foreground"}>{info.headline}</p>
           {info.detail && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
           {info.incidentId && <p className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">Incident <CopyId value={info.incidentId} /></p>}
+          {children}
           {(info.code || info.raw) && (
-            <details open={view === "technical"} className="pt-0.5 text-meta text-muted-foreground">
-              <summary className="cursor-pointer select-none">Technical</summary>
-              <div className="mt-1 grid gap-0.5 font-mono text-meta [overflow-wrap:anywhere]">
+            <Disclosure open={view === "technical"} summary="Technical" className="pt-0.5 text-meta text-muted-foreground">
+              <div className="mt-1 grid gap-0.5 ps-5 font-mono text-meta [overflow-wrap:anywhere]">
                 {info.code && <span>{info.code}</span>}
                 {info.raw && <span>{info.raw}</span>}
               </div>
-            </details>
+            </Disclosure>
           )}
         </div>
         {onRetry && (
@@ -315,7 +333,7 @@ export function LoadState<T>({
       )
     }
     if (isWorkspaceUnavailableError(error)) {
-      return <WorkspaceUnavailable error={error} onRetry={onRetry} isFetching={isFetching} />
+      return <WorkspaceUnavailable error={error} />
     }
     return <ReadErrorState error={error} onRetry={onRetry} isFetching={isFetching} />
   }
@@ -331,4 +349,32 @@ export function LoadState<T>({
     )
   }
   return <>{children(data)}</>
+}
+
+/**
+ * A section before its workspace is decided (`lib/workspace.tsx`): its skeleton while the mode is read,
+ * and Workspace unavailable with the mode's own Retry once the read failed. It reads nothing itself.
+ */
+export function WorkspaceUndecided({ workspace, bone, skeleton, loadingLabel }: {
+  readonly workspace: Extract<Workspace, { readonly kind: "deciding" | "unavailable" }>
+  readonly bone?: StudioBoneName
+  readonly skeleton?: SkeletonKind
+  readonly loadingLabel?: string
+}) {
+  const queries = useQueryClient()
+  const mode = useMode()
+  return (
+    <LoadState
+      status={workspace.kind === "deciding" ? "pending" : "error"}
+      error={workspace.kind === "unavailable" ? workspace.error : null}
+      isFetching={mode.isFetching}
+      // The skeleton's and a refusal's Retry; Workspace unavailable owns its own, the same one.
+      onRetry={() => void retryWorkspace(queries)}
+      {...bone === undefined ? {} : { bone }}
+      {...skeleton === undefined ? {} : { skeleton }}
+      {...loadingLabel === undefined ? {} : { loadingLabel }}
+    >
+      {() => null}
+    </LoadState>
+  )
 }

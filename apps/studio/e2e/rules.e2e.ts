@@ -278,8 +278,8 @@ test("rules: /guarantees redirects preserving suffix/query/hash, nav & palette u
   await expect(page).toHaveURL((url) => url.pathname === "/rules" && url.search === "" && url.hash === "")
   await expect(page.getByRole("heading", { name: "Rules", level: 1 })).toBeVisible()
 
-  // Builder sidebar names Rules, never Guarantees.
-  const builderNav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Builder pages" })
+  // The Builder menu names Rules, never Guarantees.
+  const builderNav = page.getByRole("navigation", { name: "Builder menu" })
   await expect(builderNav.getByRole("link", { name: "Rules" })).toBeVisible()
   await expect(builderNav.getByRole("link", { name: "Guarantees" })).toHaveCount(0)
 
@@ -401,7 +401,12 @@ test("rules: held-record counts preserve lower bounds (including profile), scope
   await review.click()
   await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
   await expect(page.getByRole("heading", { name: "SCAN-INV-0042", level: 1 })).toBeVisible()
-  await expect(page.getByRole("status").filter({ hasText: "Held in quarantine" })).toBeVisible()
+  // One statement of the state: the title's Quarantined status, and one sentence in a neutral well saying what it means.
+  await expect(page.locator("div:has(> h1)").locator('[data-fact-status="quarantined"]')).toHaveText("Quarantined")
+  await expect(page.locator("[data-quarantine-statement]")).toContainText("Not served")
+  await expect(page.getByText("Quarantined", { exact: true })).toHaveCount(1)
+  // The finding names its rule as Home does, with its date in the shared format.
+  await expect(page.locator("[data-finding]").first()).toContainText("first seen 23 Nov 2026")
   await expect(page.getByText("total 720.00 ≠ lines 72.00", { exact: true })).toBeVisible()
   await expect(page.getByRole("dialog")).toHaveCount(0)
   expect(await page.evaluate(() => window.history.state?.suggestedFix)).toBeUndefined()

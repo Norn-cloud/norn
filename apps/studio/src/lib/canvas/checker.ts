@@ -44,13 +44,22 @@ export async function loadEngine(packages: Record<string, () => Promise<Pick<Che
 }
 
 let engineOnce: ReturnType<typeof loadEngine> | null = null
+let engineLoaded = false
 
 /**
  * The engine, loaded once per page. Hosts call it early (when the inbox renders) so it compiles
- * while the person reads; a sheet never waits for it to draw its first state.
+ * while the person reads; a sheet never waits for it to draw its first state. A failed load is
+ * forgotten, and `fresh` (a person's Retry after a load that never settled) starts a new one
+ * unless the engine is already here.
  */
-export function sharedEngine(): ReturnType<typeof loadEngine> {
-  engineOnce ??= loadEngine()
-  engineOnce.catch(() => { engineOnce = null })
+export function sharedEngine(attempt?: { readonly fresh: boolean }): ReturnType<typeof loadEngine> {
+  if (engineOnce === null || (attempt?.fresh === true && !engineLoaded)) {
+    const loading = loadEngine()
+    engineOnce = loading
+    loading.then(
+      () => { if (engineOnce === loading) engineLoaded = true },
+      () => { if (engineOnce === loading) engineOnce = null },
+    )
+  }
   return engineOnce
 }

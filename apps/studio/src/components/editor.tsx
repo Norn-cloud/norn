@@ -100,8 +100,8 @@ export function ValidationPanel({ issues, title = "The server found problems", d
     ;(target?.matches("input,select,textarea,button") ? target : target?.querySelector<HTMLElement>("input,select,textarea,button"))?.focus()
   }
   return (
-    <div role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
-      <div className="flex items-center gap-2 font-medium"><CircleAlert className="size-4 text-destructive" />{title}</div>
+    <div role="alert" className="space-y-2 rounded-xl border border-destructive/40 bg-card p-3 text-body">
+      <div className="flex items-center gap-2"><CircleAlert className="size-4 text-destructive" />{title}</div>
       <ul className="space-y-1">
         {issues.map((issue, index) => (
           <li key={`${issue.code}:${index}`}>

@@ -14,9 +14,12 @@ const widget = (): Plugin => ({
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), widget()],
-  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  // `@norn/react` (packages/norn-react) is imported by path: its React and UI SDK resolve from this
+  // app, so the page runs one React and one UI SDK agent registry.
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) }, dedupe: ["react", "react-dom", "@ui-sdk/core", "@ui-sdk/react"] },
   server: { fs: { allow: ["../.."] } },
-  // The contact sheet (sheet.html) and the read harness (harness.html, #1374) build beside the app so a deployed stage serves them too.
+  // The contact sheet (sheet.html), the read harness (harness.html, #1374) and the widget state-matrix harness
+  // (matrix.html, #1762) build beside the app so a deployed stage serves them too.
   // The app's input stays `index`: its entry chunk is assets/index-<hash>.js, which the deploys' served-build checks read.
   build: {
     rollupOptions: {
@@ -24,6 +27,7 @@ export default defineConfig({
         index: fileURLToPath(new URL("./index.html", import.meta.url)),
         sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)),
         harness: fileURLToPath(new URL("./harness.html", import.meta.url)),
+        matrix: fileURLToPath(new URL("./matrix.html", import.meta.url)),
       },
       output: {
         codeSplitting: {

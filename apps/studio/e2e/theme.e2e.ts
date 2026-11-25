@@ -181,17 +181,29 @@ async function shot(page: Page, name: string, locator?: Locator) {
 }
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`theme v4 (${scheme}): Polar monochrome default + Open v6 double-shell geometry, primary button states (rest/hover/focus), and layered surfaces`, async ({ page }) => {
+  test(`theme v4 (${scheme}): Luma opaque islands by default, Polar monochrome + Open v6 double-shell geometry, primary button states (rest/hover/focus), and layered surfaces`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.emulateMedia({ colorScheme: scheme })
     await recorded(page)
+    // The default is luma (owner decisions, 2026-11-25): the main island is an opaque floating panel, as
+    // in Polar's dashboard, with its 1px hairline, 16px radius and at most a shadow-xs; no glass.
     await page.goto("/sources")
+    await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("luma")
+    const island = page.locator('[data-slot="sidebar-inset"]')
+    await expect(island).toHaveCSS("border-top-left-radius", "16px")
+    await expect(island).toHaveCSS("border-top-width", "1px")
+    await expect(island).toHaveCSS("backdrop-filter", "none")
+    expect(await island.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe("none")
+    // Polar is the monochrome alternative, one choice away.
+    await page.evaluate(() => localStorage.setItem("norn.studio.skin", "polar"))
+    await page.reload()
     await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
     await expect(page.locator('[data-slot="stat-strip"]')).toBeVisible()
     await expect(page.locator('[data-slot="panel"]').first()).toBeVisible()
     await expect(page.locator('[data-slot="table-header"]').first()).toBeVisible()
 
-    // HTML scheme class matches system color scheme, and default first-party skin is Polar monochrome.
+    // HTML scheme class matches system color scheme, and the chosen skin is Polar monochrome.
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(scheme === "dark")
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("polar")
 
@@ -204,8 +216,6 @@ for (const scheme of ["light", "dark"] as const) {
       const primary = document.querySelector<HTMLElement>('[data-slot="button"][data-variant="default"]')!
       const thRow = document.querySelector<HTMLElement>('[data-slot="table-header"] tr')!
       const kpiValue = document.querySelector<HTMLElement>('[data-slot="kpi-well"] > div')!
-      const perspTrack = document.querySelector<HTMLElement>('[role="group"][aria-label="Perspective"]')!
-      const perspActive = perspTrack.querySelector<HTMLElement>('button[aria-pressed="true"]')!
 
       const canvas = document.createElement("canvas")
       canvas.width = 1
@@ -238,27 +248,21 @@ for (const scheme of ["light", "dark"] as const) {
         primaryRadius: Number.parseFloat(cs(primary).borderTopLeftRadius),
         thBg: toRgb(cs(thRow).backgroundColor, pageBg),
         kpiVariantNumeric: cs(kpiValue).fontVariantNumeric,
-        perspTrackBg: toRgb(cs(perspTrack).backgroundColor, pageBg),
-        perspActiveBg: toRgb(cs(perspActive).backgroundColor, pageBg),
       }
     })
 
     const polar = await measureLayout()
 
-    // 1. The content column is the unframed canvas (DESIGN.md 9.1): no radius, hairline or shadow around
-    // the page, so the ShellCards are the only frames. In polar the sidebar ground is the canvas itself.
-    expect(polar.pageRadius).toBe(0)
-    expect(polar.pageBorder).toBe(0)
-    expect(polar.pageShadow).toBe("none")
+    // 1. The main island is its own floating panel in every skin (DESIGN.md 9.1); polar's islands are
+    // opaque, so the submenu island and the main island are the same monochrome ground.
+    expect(polar.pageRadius).toBe(18)
+    expect(polar.pageBorder).toBe(1)
     expect(polar.shellBg).toBe(polar.pageBg)
 
-    // Polar monochrome layers: cards lift off the canvas, active segment > track.
+    // Polar monochrome layers: cards lift off the island.
     const polarPageLum = luminance(rgb(polar.pageBg))
     const polarPanelLum = luminance(rgb(polar.panelBg))
-    const polarTrackLum = luminance(rgb(polar.perspTrackBg))
-    const polarActiveLum = luminance(rgb(polar.perspActiveBg))
     expect(polar.panelBg).not.toBe(polar.pageBg)
-    expect(polarActiveLum).toBeGreaterThan(polarTrackLum)
     expect(polarPageLum).not.toBe(polarPanelLum)
 
     // 2. Polar keeps the concentric double shell (DESIGN.md 5): 16px rim, 4px inset, 11px well, in px.
@@ -302,29 +306,26 @@ for (const scheme of ["light", "dark"] as const) {
     const openPageLum = luminance(rgb(open.pageBg))
     const openPanelLum = luminance(rgb(open.panelBg))
     const openWellLum = luminance(rgb(open.kpiWellBg))
-    const openTrackLum = luminance(rgb(open.perspTrackBg))
-    const openActiveLum = luminance(rgb(open.perspActiveBg))
     if (scheme === "dark") {
       expect(openShellLum).toBeLessThan(openPageLum)
       expect(openPageLum).toBeLessThan(openPanelLum)
       expect(openPanelLum).toBeLessThan(openWellLum)
-      expect(openActiveLum).toBeGreaterThan(openTrackLum)
     } else {
       expect(openShellLum).toBeLessThan(openPageLum)
       expect(openWellLum).toBeLessThan(openPageLum)
-      expect(openActiveLum).toBeGreaterThan(openTrackLum)
     }
     expect(open.kpiWellBg).not.toBe(open.pageBg)
-    expect(open.pageRadius).toBe(0)
+    expect(open.pageRadius).toBe(18)
     expect(open.panelRadius).toBe(20)
     expect(open.kpiRadius).toBe(20)
     expect(open.kpiWellRadius).toBe(15)
+    // Chrome is monochrome in every skin (DESIGN.md 19.6): open's CTA is polar's zinc ink, not blue
+    // (a cast of a few units at most; the old blue had its blue channel 60 above the others).
     const [opr, opg, opb] = rgb(open.primaryBg)
-    expect(opb).toBeGreaterThan(opr + 40)
-    expect(opb).toBeGreaterThan(opg + 60)
+    expect(Math.max(opr, opg, opb) - Math.min(opr, opg, opb)).toBeLessThanOrEqual(8)
   })
 
-  test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, selected Perspective button, current rail icon and current sidebar item`, async ({ page }) => {
+  test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, the current applet on the rail and the current menu row`, async ({ page }) => {
     test.skip(Boolean(process.env.E2E_BASE), "uses deterministic record-cell stand-in")
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.emulateMedia({ colorScheme: scheme })
@@ -353,23 +354,13 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(overview).toHaveAttribute("aria-selected", "true")
     await expectVisibleFocusOutline(overview)
 
-    // 2. Selected Perspective button: Tab from Search onto the pressed perspective button; focus outline coexists with selection ring.
-    const activePerspective = page.getByRole("group", { name: "Perspective" }).locator('button[aria-pressed="true"]')
-    await expect(activePerspective).toBeVisible()
-    await page.getByRole("button", { name: "Search" }).focus()
-    await moveFocusWithKey(page, activePerspective, "Tab", 5)
-    const perspState = await expectVisibleFocusOutline(activePerspective)
-    expect(hasVisibleShadow(perspState.boxShadow), "selected Perspective button keeps its selection shadow/ring").toBe(true)
-    await shot(page, `focus-perspective-${scheme}`, page.locator("header").first())
-
-    // 3. Current rail icon: on Inbox (/decisions) collapse the sidebar to its 48px rail, then Tab and arrow onto
-    // the current destination; the 2px ring coexists with the neutral selection pill (no ring or bar of its own).
+    // 2. Current applet: on Inbox (/decisions), Tab from the workspace switcher into the applet rail and arrow
+    // onto the current applet; the 2px ring coexists with the neutral selection pill (no ring or bar of its own).
     await page.unrouteAll({ behavior: "ignoreErrors" })
     await recorded(page)
     await page.goto("/decisions")
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
-    await page.getByRole("button", { name: "Sidebar", exact: true }).click()
-    const rail = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("toolbar")
+    const rail = page.getByRole("navigation", { name: "Applets" }).getByRole("toolbar")
     const activeRail = rail.locator('a[href="/decisions"][aria-current="page"]')
     await expect(activeRail).toBeVisible()
     await page.locator("[data-scope]").focus()
@@ -382,14 +373,13 @@ for (const scheme of ["light", "dark"] as const) {
     await expectVisibleFocusOutline(activeRail)
     await expect(activeRail).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
     await shot(page, `focus-rail-active-${scheme}`, rail)
-    await page.getByRole("button", { name: "Sidebar", exact: true }).click()
 
-    // 4. Current sidebar tree item: on /sources, Tab into Builder tree and ArrowDown onto aria-current="page".
+    // 3. Current menu row: on /sources, Tab from the Builder menu's filter into its tree and arrow onto aria-current="page".
     await page.goto("/sources")
     await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-    const currentTreeItem = page.locator('nav[aria-label="Studio navigation"] [role="tree"][aria-label="Builder pages"] [role="treeitem"][aria-current="page"]')
+    const currentTreeItem = page.locator('nav[aria-label="Builder menu"] [role="tree"] [role="treeitem"][aria-current="page"]')
     await expect(currentTreeItem).toBeVisible()
-    await page.locator("[data-scope]").focus()
+    await page.getByRole("searchbox", { name: "Filter Builder" }).focus()
     await page.keyboard.press("Tab")
     await moveFocusWithKey(page, currentTreeItem, "ArrowDown", 15)
     await expectVisibleFocusOutline(currentTreeItem, currentTreeItem.locator('> [data-slot="tree-label"]'))
@@ -554,7 +544,7 @@ for (const scheme of ["light", "dark"] as const) {
     expect(numContrast.ratio, `${scheme} DecisionTree selected number`).toBeGreaterThanOrEqual(4.5)
 
     const unselectedOption = decisionTree.locator('button[aria-pressed="false"]').first()
-    const unselectedOptContrast = await measureRenderedContrast(unselectedOption.locator("span.font-semibold").first())
+    const unselectedOptContrast = await measureRenderedContrast(unselectedOption.locator("span[data-option-label]").first())
     expect(unselectedOptContrast.opacity, `${scheme} DecisionTree unselected option stays opaque`).toBe(1)
     expect(unselectedOptContrast.ratio, `${scheme} DecisionTree unselected option label`).toBeGreaterThanOrEqual(4.5)
 

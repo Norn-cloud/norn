@@ -7,7 +7,8 @@ import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger, chrome
 import { ToggleGroup, ToggleGroupItem, createArrowSelectGuard, isRadioArrowKey } from "../src/components/ui/toggle-group.tsx"
 import { AppearanceProvider, SHELLS, SKINS, applyAppearance, isShellChrome, isSkin, storedShellChrome, storedSkin } from "../src/lib/appearance.tsx"
 import type { Account } from "../src/lib/session.ts"
-import { Shell, type Section } from "../src/shell.tsx"
+import type { Section } from "../src/lib/nav-model.ts"
+import { Shell } from "../src/shell.tsx"
 
 const account: Account = {
   user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" },
@@ -26,7 +27,8 @@ const sections: readonly Section[] = [
 ]
 
 test("appearance validators and defaults cover all four skins and both shell layouts", () => {
-  expect(SKINS.map(({ id }) => id)).toEqual(["polar", "open", "luma", "glass"])
+  // Luma leads: it is the default (owner decision, 2026-11-25); polar, open and glass stay selectable.
+  expect(SKINS.map(({ id }) => id)).toEqual(["luma", "polar", "open", "glass"])
   expect(SHELLS.map(({ id }) => id)).toEqual(["sidebar", "dock"])
   expect(isSkin("polar")).toBe(true)
   expect(isSkin("open")).toBe(true)
@@ -45,14 +47,14 @@ test("applyAppearance writes data-skin and data-shell onto the root element", ()
   expect(root.dataset.shell).toBe("dock")
 })
 
-test("blocked localStorage falls back cleanly to polar monochrome skin and sidebar chrome", () => {
+test("blocked localStorage falls back cleanly to the luma skin and the island chrome", () => {
   const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
     get: () => { throw new DOMException("blocked", "SecurityError") },
   })
   try {
-    expect(storedSkin()).toBe("polar")
+    expect(storedSkin()).toBe("luma")
     expect(storedShellChrome()).toBe("sidebar")
     expect(renderToStaticMarkup(<AppearanceProvider><span>ok</span></AppearanceProvider>)).toBe("<span>ok</span>")
   } finally {

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Chip, type Tone } from "../src/components/chip.tsx"
+import { Chip, type Tone } from "../src/components/system/chip.tsx"
 import { ChoiceColumn } from "../src/components/decision/choice-columns.tsx"
 import { badgeVariants } from "../src/components/ui/badge.tsx"
 import { buttonVariants } from "../src/components/ui/button.tsx"
@@ -77,6 +77,16 @@ const FLAT_TOKENS: Readonly<Record<Skin, Readonly<Record<Theme, Readonly<Record<
   ...SKIN_TOKENS,
   luma: { light: flatTokens("luma", "light"), dark: flatTokens("luma", "dark") },
   glass: { light: flatTokens("glass", "light"), dark: flatTokens("glass", "dark") },
+}
+
+/**
+ * The skins every component class list is measured in: `luma`, the default (its translucent islands
+ * flattened over the canvas; the islands themselves are measured over the backdrop below), and the
+ * opaque `polar` and `open`.
+ */
+const COMPONENT_SKINS = ["luma", "polar", "open"] as const
+const COMPONENT_TOKENS: Readonly<Record<(typeof COMPONENT_SKINS)[number], Readonly<Record<Theme, Readonly<Record<string, string>>>>>> = {
+  luma: FLAT_TOKENS.luma, polar: SKIN_TOKENS.polar, open: SKIN_TOKENS.open,
 }
 
 const COLOR_MAP: Readonly<Record<string, string>> = (() => {
@@ -260,13 +270,14 @@ const BUTTON_VARIANTS = ["default", "outline", "secondary", "ghost", "destructiv
 const BADGE_VARIANTS = ["default", "secondary", "destructive", "outline", "success", "warning", "info", "ghost", "link"] as const
 
 const shellSource = readSrc("shell.tsx")
+const shellNavSource = readSrc("shell-nav.tsx")
 const tabsSource = readSrc("components/ui/tabs.tsx")
 const recordsGridSource = readSrc("grid/records-grid.tsx")
 const decisionTreeSource = readSrc("decision-tree.tsx")
 
-for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const) {
+for (const skin of COMPONENT_SKINS) for (const theme of ["light", "dark"] as const) {
   test(`${skin}/${theme}: surfaces stay distinct, text tokens pass 4.5:1, and edges/focus ring pass 3:1`, () => {
-    THEME_TOKENS = SKIN_TOKENS[skin]
+    THEME_TOKENS = COMPONENT_TOKENS[skin]
     expect(tokenHex(theme, "shell")).not.toBe(tokenHex(theme, "background"))
     expect(tokenHex(theme, "well")).not.toBe(tokenHex(theme, "background"))
     if (theme === "dark") expect(tokenHex(theme, "card")).not.toBe(tokenHex(theme, "background"))
@@ -288,7 +299,7 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
   })
 
   test(`${skin}/${theme}: every Button variant passes 4.5:1 at rest and on hover across real hosting surfaces, with dedicated focus outline and flat disabled state`, () => {
-    THEME_TOKENS = SKIN_TOKENS[skin]
+    THEME_TOKENS = COMPONENT_TOKENS[skin]
     for (const variant of BUTTON_VARIANTS) {
       const classes = buttonVariants({ variant })
       for (const host of HOST_SURFACES) {
@@ -313,7 +324,7 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
   })
 
   test(`${skin}/${theme}: ChoiceColumn stays opaque on enabled unselected options and passes 4.5:1 across resting, selected, unselected and hover states`, () => {
-    THEME_TOKENS = SKIN_TOKENS[skin]
+    THEME_TOKENS = COMPONENT_TOKENS[skin]
     const options = [
       { id: "a", label: "Every record", detail: "all rows", marks: ["recommended" as const] },
       { id: "b", label: "Filtered", detail: "subset", marks: ["agent" as const] },
@@ -347,7 +358,7 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
   })
 
   test(`${skin}/${theme}: Records filter count and DecisionTree numbers/options/Agent's pick pass 4.5:1 without opacity dimming`, () => {
-    THEME_TOKENS = SKIN_TOKENS[skin]
+    THEME_TOKENS = COMPONENT_TOKENS[skin]
     // 1. Records filter count badge (resting on background and hovered inside ghost button on accent).
     const filterCountClass = /Filter\{filterCount > 0 && <span className="([^"]+)"/.exec(recordsGridSource)?.[1]
     expect(filterCountClass, "filter count span class in records-grid.tsx").toBeDefined()
@@ -381,8 +392,8 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
     expect(optionButton).toContain("focus-visible:outline-ring")
   })
 
-  test(`${skin}/${theme}: selected Tabs, Perspective switch, rail links and sidebar rows keep dedicated focus outlines and >= 4.5:1 active text`, () => {
-    THEME_TOKENS = SKIN_TOKENS[skin]
+  test(`${skin}/${theme}: selected Tabs, applet rail buttons and menu rows keep dedicated focus outlines and >= 4.5:1 active text`, () => {
+    THEME_TOKENS = COMPONENT_TOKENS[skin]
     // 1. Rendered TabsTrigger (both default and line variants).
     for (const variant of ["default", "line"] as const) {
       const html = renderToStaticMarkup(
@@ -409,23 +420,19 @@ for (const skin of OPAQUE_SKINS) for (const theme of ["light", "dark"] as const)
     expect(tabsSource).toContain("group-data-[variant=line]/tabs-list:focus-visible:-outline-offset-2")
 
     // 2. Shell controls whose selection/border uses ring-* must use dedicated focus-visible outline.
-    const railButtonClass = /const railButton = "([^"]+)"/.exec(shellSource)?.[1]
-    const focusRowClass = /const focusRow = "([^"]+)"/.exec(shellSource)?.[1]
-    const perspectiveClass = /function PerspectiveSwitch[\s\S]*?aria-pressed=\{perspective === id\}[\s\S]*?className="([^"]+)"/.exec(shellSource)?.[1]
+    const railButtonClass = /const railButton = "([^"]+)"/.exec(shellNavSource)?.[1]
+    const focusRowClass = /const focusRow = "([^"]+)"/.exec(shellNavSource)?.[1]
     expect(railButtonClass).toBeDefined()
     expect(focusRowClass).toBeDefined()
-    expect(perspectiveClass).toBeDefined()
-    for (const [name, cls] of [["railButton", railButtonClass!], ["focusRow", focusRowClass!], ["PerspectiveSwitch", perspectiveClass!]] as const) {
+    for (const [name, cls] of [["railButton", railButtonClass!], ["focusRow", focusRowClass!]] as const) {
       expect(cls, `${name} must use focus-visible outline, not ring`).not.toMatch(/focus-visible:(?:\[[^\]]+\]:)?ring-/)
       expect(cls, `${name} outline width`).toContain("outline-2")
       expect(cls, `${name} outline style`).toContain("outline-solid")
       expect(cls, `${name} outline color`).toContain("outline-ring")
       expect(cls, `${name} outline offset`).toMatch(/outline-offset-/)
     }
-    // PerspectiveSwitch active & inactive text contrast on its track.
-    const trackHex = tokenHex(theme, theme === "dark" ? "shell" : "surface-subtle")
-    expect(resolveClasses(perspectiveClass!, theme, "selected", trackHex).ratio, `${theme} PerspectiveSwitch selected`).toBeGreaterThanOrEqual(4.5)
-    expect(resolveClasses(perspectiveClass!, theme, "rest", trackHex).ratio, `${theme} PerspectiveSwitch resting`).toBeGreaterThanOrEqual(4.5)
+    // The rail replaced the perspective switch: there is no second control for the same choice.
+    expect(shellSource).not.toMatch(/function PerspectiveSwitch/)
   })
 }
 
@@ -558,45 +565,125 @@ test("shell never duplicates data-skin inside the document body, keeping :root.d
 })
 
 /**
- * DESIGN.md 4.6: the sidebar's measured pairs in every skin and scheme, composited the same way as
- * section 4.2 (8 bits per layer). Ground is `--sidebar` over the canvas, the hover wash is
- * `--sidebar-accent` at 50% over the ground, and the pill is `--sidebar-accent` over the ground. The
- * phone sheet is opaque `--shell`, so it is measured again on that ground.
+ * DESIGN.md 4.6 and 4.7: the islands' measured pairs in every skin and scheme, composited the same way
+ * as section 4.2 (8 bits per layer), over the backdrop at its worst case: flat, under either ambient
+ * glow at its peak, and under both, each as the island's `saturate()` paints it. The nav islands (rail and submenu) are `--sidebar` over that
+ * backdrop, with the hover wash (`--sidebar-accent` at 50%) and the pill (`--sidebar-accent`) on it;
+ * the main island is `--island`, with a card and a well inside it. The phone sheet is opaque `--shell`.
+ * The reduced-transparency fallback paints `--shell` and `--canvas`, measured by the canvas pairs.
  */
 const PALETTES = themePalettes(css)
-for (const skin of ["polar", "open", "luma", "glass"] as const) for (const theme of ["light", "dark"] as const) {
-  test(`skin=${skin} (${theme}): sidebar ground, 50% hover wash and selection pill pass DESIGN.md 4.6 (text 4.5:1, ring and dot 3:1)`, () => {
-    const palette = PALETTES[skin][theme]
-    const color = (token: string): Color => {
-      const parsed = parseColor(palette[token as keyof typeof palette]!)
-      expect(parsed, `${skin}/${theme} --${token}`).not.toBeNull()
-      return parsed!
-    }
-    const canvas = color("canvas")
-    for (const [where, ground] of [["sidebar", over(color("sidebar"), canvas)], ["phone sheet", over(color("shell"), canvas)]] as const) {
+/**
+ * The backdrop as an island sees it: `--island-blur`'s `saturate()` (the Filter Effects saturate
+ * matrix on the sRGB values, clamped, 8 bits a channel, as Chromium paints a CSS filter function).
+ * The glows are wide gradients, so the blur leaves their peak as it is; the saturation does not.
+ */
+function saturated(color: Color, amount: number): Color {
+  const { r, g, b } = color
+  const channel = (value: number) => Math.round(Math.min(1, Math.max(0, value)) * 255) / 255
+  return {
+    ...color,
+    r: channel((0.213 + 0.787 * amount) * r + (0.715 - 0.715 * amount) * g + (0.072 - 0.072 * amount) * b),
+    g: channel((0.213 - 0.213 * amount) * r + (0.715 + 0.285 * amount) * g + (0.072 - 0.072 * amount) * b),
+    b: channel((0.213 - 0.213 * amount) * r + (0.715 - 0.715 * amount) * g + (0.072 + 0.928 * amount) * b),
+  }
+}
+function saturation(skin: Skin, theme: Theme): number {
+  const filter = skinVars(css, skin, theme)["island-blur"]
+  expect(filter, `${skin}/${theme} --island-blur`).toBeDefined()
+  const amount = /saturate\(\s*([\d.]+)(%?)\s*\)/.exec(filter!)
+  return amount ? Number(amount[1]) / (amount[2] === "%" ? 100 : 1) : 1
+}
+test("the gate's saturate matches the Filter Effects matrix: grey is unchanged, 100% is the identity, 0% is the luminance grey", () => {
+  const grey = parseColor("#808080")!
+  expect(cssColor(saturated(grey, 1.6))).toBe("#808080")
+  const tint = parseColor("#eef1f8")!
+  expect(cssColor(saturated(tint, 1))).toBe("#eef1f8")
+  const flat = saturated(tint, 0)
+  expect([flat.r, flat.g]).toEqual([flat.g, flat.b])
+  // More than 100% pushes a tint away from grey: the blue channel rises and the red one falls.
+  const vivid = saturated(tint, 1.65)
+  expect(vivid.b).toBeGreaterThan(tint.b)
+  expect(vivid.r).toBeLessThan(tint.r)
+  // Monochrome (DESIGN.md 19.6): no skin saturates its islands any more; luma's are opaque.
+  expect(saturation("glass", "light")).toBe(1)
+  expect(saturation("luma", "light")).toBe(1)
+})
+function backdrops(color: (token: string) => Color, amount: number): readonly (readonly [string, Color])[] {
+  const flat = color("backdrop")
+  const glow1 = over(color("backdrop-glow-1"), flat)
+  const seen = [["backdrop", flat], ["glow 1", glow1], ["glow 2", over(color("backdrop-glow-2"), flat)], ["both glows", over(color("backdrop-glow-2"), glow1)]] as const
+  return seen.map(([where, backdrop]) => [where, saturated(backdrop, amount)] as const)
+}
+for (const skin of ["luma", "polar", "open", "glass"] as const) for (const theme of ["light", "dark"] as const) {
+  const palette = PALETTES[skin][theme]
+  const color = (token: string): Color => {
+    const parsed = parseColor(palette[token as keyof typeof palette]!)
+    expect(parsed, `${skin}/${theme} --${token}`).not.toBeNull()
+    return parsed!
+  }
+  const amount = saturation(skin, theme)
+  test(`skin=${skin} (${theme}): nav islands' ground, 50% hover wash and selection pill pass DESIGN.md 4.6 over the worst-case backdrop (text 4.5:1, ring and dot 3:1)`, () => {
+    const grounds = [...backdrops(color, amount).map(([where, backdrop]) => [`nav island over ${where}`, over(color("sidebar"), backdrop)] as const), ["phone sheet", over(color("shell"), color("canvas"))] as const]
+    for (const [where, ground] of grounds) {
       const hover = over(fade(color("sidebar-accent"), 0.5), ground)
       const pill = over(color("sidebar-accent"), ground)
       const at = (label: string) => `${skin}/${theme} ${where}: ${label}`
-      // Resting rows, group headers and counts: muted ink on the ground and on the hover wash (the text does not change on hover).
+      // Resting rows, group headers, counts and the applet icons: muted ink on the ground and on the hover wash.
       expect(contrastOn(color("muted-foreground"), ground), at("muted on ground")).toBeGreaterThanOrEqual(4.5)
       expect(contrastOn(color("muted-foreground"), hover), at("muted on hover")).toBeGreaterThanOrEqual(4.5)
-      // The current row: label, icon and count all take the pill's ink.
+      // The current row and the current applet: label, icon and count all take the pill's ink.
       expect(contrastOn(color("sidebar-accent-foreground"), pill), at("pill ink on pill")).toBeGreaterThanOrEqual(4.5)
-      // Workspace and principal names in the header and footer.
+      // The applet's name in the submenu header, the workspace and the principal.
       expect(contrastOn(color("sidebar-foreground"), ground), at("names on ground")).toBeGreaterThanOrEqual(4.5)
       expect(contrastOn(color("sidebar-foreground"), hover), at("names on hover")).toBeGreaterThanOrEqual(4.5)
+      expect(contrastOn(color("foreground"), ground), at("applet name on ground")).toBeGreaterThanOrEqual(4.5)
       // The focus ring and the attention dot (also `--ring`): 3:1 on the ground, the wash and the pill.
       for (const [label, surface] of [["ground", ground], ["hover", hover], ["pill", pill]] as const) {
         expect(contrastOn(color("ring"), surface), at(`ring/dot on ${label}`)).toBeGreaterThanOrEqual(3)
       }
     }
   })
+  test(`skin=${skin} (${theme}): the main island's text, links, ring, cards and wells pass DESIGN.md 4.2 over the worst-case backdrop`, () => {
+    for (const [where, backdrop] of backdrops(color, amount)) {
+      const island = over(color("island"), backdrop)
+      const card = over(color("card"), island)
+      const well = over(color("well"), card)
+      const hover = over(color("well-hover"), well)
+      const at = (label: string) => `${skin}/${theme} main island over ${where}: ${label}`
+      for (const [name, surface] of [["island", island], ["card", card], ["well", well], ["well hover", hover]] as const) {
+        for (const ink of ["foreground", "muted-foreground", "action", "link"] as const) {
+          expect(contrastOn(color(ink), surface), at(`${ink} on ${name}`)).toBeGreaterThanOrEqual(4.5)
+        }
+        expect(contrastOn(color("ring"), surface), at(`ring on ${name}`)).toBeGreaterThanOrEqual(3)
+      }
+      // The top bar's icon buttons and the search field's text are muted ink on the island itself.
+      expect(contrastOn(color("subtle-foreground"), island), at("decorative glyphs on island")).toBeGreaterThanOrEqual(3)
+    }
+  })
 }
 
-test("sidebar rows: a 50% wash on hover with no text change, the neutral pill with its own ink at 400 when current, and no ring, bar or accent", () => {
-  const row = /const row = "([^"]+)"/.exec(shellSource)?.[1] ?? ""
-  const rail = /const railButton = "([^"]+)"/.exec(shellSource)?.[1] ?? ""
-  const groupHeading = /const groupHeading = "([^"]+)"/.exec(shellSource)?.[1] ?? ""
+test("the islands' glass falls back to opaque surfaces under reduced transparency, without backdrop-filter, and in forced colours", () => {
+  const block = (query: string) => {
+    const at = css.indexOf(query)
+    expect(at, query).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf("\n  }\n", at))
+  }
+  for (const query of ["@media (prefers-reduced-transparency: reduce)", "@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))"]) {
+    const rules = block(query)
+    expect(rules, query).toContain('[data-island="nav"] { background-color: var(--shell); }')
+    expect(rules, query).toContain('[data-island="main"] { background-color: var(--canvas); }')
+  }
+  expect(block("@media (prefers-reduced-transparency: reduce)")).toMatch(/backdrop-filter: none/)
+  expect(block("@media (forced-colors: active)")).toMatch(/backdrop-filter: none[\s\S]*border-color: CanvasText/)
+  // The glass is CSS only: no WebGL or refraction library paints it.
+  expect(shellSource + shellNavSource).not.toMatch(/webgl|WebGL|liquid-glass|refraction/)
+})
+
+test("menu rows and applet buttons: a 50% wash on hover with no text change, the neutral pill with its own ink at 400 when current, and no ring, bar or accent", () => {
+  const row = /const row = "([^"]+)"/.exec(shellNavSource)?.[1] ?? ""
+  const rail = /const railButton = "([^"]+)"/.exec(shellNavSource)?.[1] ?? ""
+  const groupHeading = /const groupHeading = "([^"]+)"/.exec(shellNavSource)?.[1] ?? ""
   for (const [name, cls, current] of [["row", row, "data-current"], ["railButton", rail, "aria-[current=page]"]] as const) {
     expect(cls, name).toContain("hover:bg-sidebar-accent/50")
     expect(cls, `${name} keeps its text colour on hover`).not.toMatch(/hover:text-/)
@@ -604,18 +691,15 @@ test("sidebar rows: a 50% wash on hover with no text change, the neutral pill wi
     expect(cls, name).toContain(`${current}:text-sidebar-accent-foreground`)
     const whenCurrent = cls.split(/\s+/).filter((token) => token.startsWith(`${current}:`)).map((token) => token.slice(current.length + 1))
     expect(whenCurrent.sort(), `${name}: the current row is only the pill and its ink (no ring, bar, shadow, weight or accent)`).toEqual(["bg-sidebar-accent", "text-sidebar-accent-foreground"])
-    expect(cls, `${name} is 32px`).toContain(name === "row" ? "h-[32px]" : "size-[32px]")
+    expect(cls, `${name} size`).toContain(name === "row" ? "h-[32px]" : "size-[40px]")
+    expect(cls, `${name} phone target`).toContain(name === "row" ? "max-sm:min-h-[44px]" : "max-sm:size-[44px]")
     expect(cls, `${name} weight`).not.toMatch(/font-(medium|semibold|bold)/)
   }
-  // A pressed control (the assistant, on the rail and as a row) takes the wash, never the pill: only the current destination holds it.
-  const assistantRow = /aria-pressed=\{open\} onClick=\{toggle\}\s*className=\{cn\(row, "([^"]+)"\)\}/.exec(shellSource)?.[1]
-  expect(assistantRow, "AssistantRow's row classes in shell.tsx").toBeDefined()
-  for (const [name, cls] of [["railButton", rail], ["AssistantRow", assistantRow!]] as const) {
-    const whenPressed = cls.split(/\s+/).filter((token) => token.startsWith("aria-pressed:")).map((token) => token.slice("aria-pressed:".length))
-    expect(whenPressed, `${name} pressed state`).toEqual(["bg-sidebar-accent/50"])
-  }
+  // A pressed control (the assistant, and the applet whose menu the phone sheet shows) takes the wash, never the pill.
+  const whenPressed = rail.split(/\s+/).filter((token) => token.startsWith("aria-pressed:")).map((token) => token.slice("aria-pressed:".length))
+  expect(whenPressed).toEqual(["bg-sidebar-accent/50"])
+  expect(shellNavSource).toMatch(/aria-label=\{title\} aria-pressed=\{open\} onClick=\{toggle\} className=\{railButton\}/)
   expect(row).toContain("text-body")
-  expect(row).toContain("max-sm:min-h-[44px]")
   expect(groupHeading).toContain("text-meta")
   expect(groupHeading).toContain("h-[32px]")
   expect(groupHeading).not.toMatch(/uppercase|tracking-|font-semibold/)
@@ -650,3 +734,26 @@ test("cn keeps a type-scale step beside a text colour, leading and tracking in e
   // The live case: the start node's label keeps its leading beside the step.
   expect(cn("font-medium leading-snug", "text-body")).toBe("font-medium leading-snug text-body")
 })
+
+// UI polish: the projected value's chip and a refused verb in "Who can see or act" are text, so their ink keeps
+// 4.5:1 on every surface they sit on (a grid row, a well and its hover, a sheet, the page), in every skin and
+// scheme. The chip has no tint or fill of its own; a refused verb is struck, never faded.
+const maskedValueSource = readSrc("components/masked-value.tsx")
+const recordRailSource = readSrc("record-rail.tsx")
+for (const skin of COMPONENT_SKINS) for (const theme of ["light", "dark"] as const) {
+  test(`${skin}/${theme}: the masked-value chip and a refused verb keep 4.5:1 ink on every host, with no fill or fade`, () => {
+    THEME_TOKENS = COMPONENT_TOKENS[skin]
+    const chip = /const MASK_CHIP = "([^"]+)"/.exec(maskedValueSource)?.[1]
+    expect(chip, "MASK_CHIP in masked-value.tsx").toBeDefined()
+    const deny = /deny: "([^"]+)"/.exec(recordRailSource)?.[1]
+    expect(deny, "VERB_STYLE.deny in record-rail.tsx").toBeDefined()
+    expect(chip!.split(/\s+/).some((token) => /^bg-/.test(token)), `the chip carries no fill (${chip})`).toBe(false)
+    for (const [name, classes] of [["masked chip", chip!], ["refused verb", deny!]] as const) {
+      expect(classes.split(/\s+/).some((token) => /^(?:text-[a-z-]+\/\d+|opacity-\d+)$/.test(token)), `${name} is not faded (${classes})`).toBe(false)
+      for (const host of ["card", "well", "well-hover", "popover", "background"] as const) {
+        const pair = resolveClasses(classes, theme, "rest", tokenHex(theme, host))
+        expect(pair.ratio, `${skin}/${theme} ${name} ink on --${host}`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
+}

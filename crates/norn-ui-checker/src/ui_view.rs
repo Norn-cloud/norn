@@ -3,13 +3,18 @@
 //! A `WidgetPage.view` names a semantic view kind and the domain concept it presents. The laws keep
 //! the ontology honest: the kind fits the subject (a collection presents an object type, a form an
 //! action), an object-type or action subject is one the contract actually reads or calls, and each
-//! accessibility behaviour sits on a component that can carry it. Rendering stays with renderers;
-//! nothing here is visual.
+//! accessibility behaviour is a UI SDK foundation behaviour (the generated catalog,
+//! [`crate::ui_sdk`]) that the node's component is built from: a UI SDK primitive's own, a custom
+//! catalog entry's declared ones, or those the Norn renderer draws a native component with.
+//! Rendering stays with renderers; nothing here is visual.
+
+use std::collections::BTreeSet;
 
 use norn_ir::{
-    ArtifactEnvelope, WidgetBehavior, WidgetComponent, WidgetNode, WidgetUx, WidgetViewKind,
-    WidgetViewSubject,
+    ArtifactEnvelope, WidgetComponent, WidgetNode, WidgetUx, WidgetViewKind, WidgetViewSubject,
 };
+
+use crate::ui_sdk;
 
 use norn_checker::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
@@ -60,7 +65,23 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
                 ));
             }
         }
-        behaviors(&page.root, &format!("{base}/root"), &mut findings);
+        behaviors(ux, &page.root, &format!("{base}/root"), &mut findings);
+    }
+    // A custom catalog entry implements behaviours of the pinned UI SDK, by name.
+    let known = crate::ui_sdk::catalog().map(|catalog| &catalog.behaviors);
+    for (index, entry) in ux.catalog.iter().enumerate() {
+        for (at, behavior) in entry.behaviors.iter().enumerate() {
+            if !known.is_some_and(|known| known.contains(&behavior.0)) {
+                findings.push((
+                    BEHAVIOR_UNFIT,
+                    format!("/payload/ux/catalog/{index}/behaviors/{at}"),
+                    format!(
+                        "catalog entry `{}` names `{}`, which is not a foundation behaviour of the pinned UI SDK",
+                        entry.entry_id, behavior.0
+                    ),
+                ));
+            }
+        }
     }
     findings
         .into_iter()
@@ -97,55 +118,64 @@ fn kind_fits_subject(kind: WidgetViewKind, subject: &WidgetViewSubject) -> bool 
     )
 }
 
-/// Which components can carry a behaviour: item behaviours need items, overlay behaviours need an
-/// overlay, announcements need content that changes.
-fn behavior_fits(behavior: WidgetBehavior, component: &WidgetComponent) -> bool {
-    match behavior {
-        WidgetBehavior::RovingFocus | WidgetBehavior::Typeahead | WidgetBehavior::Selection => {
-            matches!(
-                component,
-                WidgetComponent::List { .. }
-                    | WidgetComponent::ChildGrid { .. }
-                    | WidgetComponent::Navigation { .. }
-                    | WidgetComponent::Control { .. }
-            )
+/// The foundation behaviours a node's component can carry: a UI SDK primitive's own, a custom
+/// catalog entry's declared ones (an entry of another widget is judged there), or the native
+/// renderer's. `None` when every catalog behaviour fits (an entry this contract cannot see).
+fn carried(ux: &WidgetUx, component: &WidgetComponent) -> Option<BTreeSet<String>> {
+    if let WidgetComponent::Catalog { entry, .. } = component {
+        if entry.widget.is_some() {
+            return None;
         }
-        WidgetBehavior::DragAndDrop => matches!(
-            component,
-            WidgetComponent::List { .. } | WidgetComponent::ChildGrid { .. }
-        ),
-        WidgetBehavior::FocusScope | WidgetBehavior::Popup | WidgetBehavior::Dismiss => {
-            matches!(component, WidgetComponent::Dialog { .. })
+        if ui_sdk::component(&entry.entry_id).is_some() {
+            return Some(
+                ui_sdk::entry(&entry.entry_id)
+                    .map_or_default(|entry| entry.behaviors.into_iter().map(|b| b.0).collect()),
+            );
         }
-        WidgetBehavior::LiveRegion => matches!(
-            component,
-            WidgetComponent::Section { .. }
-                | WidgetComponent::Detail { .. }
-                | WidgetComponent::List { .. }
-        ),
+        return Some(
+            ux.catalog
+                .iter()
+                .filter(|declared| declared.entry_id == entry.entry_id)
+                .flat_map(|declared| declared.behaviors.iter().map(|b| b.0.clone()))
+                .collect(),
+        );
     }
+    Some(ui_sdk::native_behaviors(component))
 }
 
-fn behaviors(node: &WidgetNode, pointer: &str, findings: &mut Vec<(&'static str, String, String)>) {
+fn behaviors(
+    ux: &WidgetUx,
+    node: &WidgetNode,
+    pointer: &str,
+    findings: &mut Vec<(&'static str, String, String)>,
+) {
+    let known = ui_sdk::catalog().map(|catalog| &catalog.behaviors);
+    let fits = carried(ux, &node.component);
     for (index, behavior) in node.behaviors.iter().enumerate() {
-        if !behavior_fits(*behavior, &node.component)
-            || node
-                .behaviors
-                .iter()
-                .take(index)
-                .any(|earlier| earlier == behavior)
+        let name = behavior.0.as_str();
+        let problem = if !known.is_some_and(|known| known.contains(name)) {
+            Some("is not a foundation behaviour of the pinned UI SDK")
+        } else if fits.as_ref().is_some_and(|fits| !fits.contains(name)) {
+            Some("is not one its component is built from")
+        } else if node
+            .behaviors
+            .iter()
+            .take(index)
+            .any(|earlier| earlier == behavior)
         {
+            Some("is listed twice")
+        } else {
+            None
+        };
+        if let Some(problem) = problem {
             findings.push((
                 BEHAVIOR_UNFIT,
                 format!("{pointer}/behaviors/{index}"),
-                format!(
-                    "node `{}` cannot carry behaviour {behavior:?} (wrong component, or listed twice)",
-                    node.node_id
-                ),
+                format!("behaviour `{name}` of node `{}` {problem}", node.node_id),
             ));
         }
     }
     for (index, child) in node.children.iter().enumerate() {
-        behaviors(child, &format!("{pointer}/children/{index}"), findings);
+        behaviors(ux, child, &format!("{pointer}/children/{index}"), findings);
     }
 }

@@ -1,23 +1,25 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
+import { ListRow, TypeDisc } from "@/components/system/list-row"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ArrowRight, ArrowUp, Blend, Database, LayoutDashboard, ShieldCheck, Sigma, Sparkles } from "lucide-react"
-import { useState } from "react"
+import { ArrowRight, Blend, Database, LayoutDashboard, ListChecks, ShieldCheck, Sigma } from "lucide-react"
 import { useAssistant } from "@/assistant-slot"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
-import { PageHeader, Panel, Well } from "@/components/panel"
-import { StatStrip } from "@/components/kpi-tile"
+import { PageHeader } from "@/components/panel"
+import { Panel, Well } from "@/components/system/panel"
+import { StatStrip } from "@/components/system/kpi-tile"
 import { Button } from "@/components/ui/button"
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
+import { ChatComposer } from "@/components/chat-composer"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
 import { evaluateQuestion, type Evaluation } from "./lib/evaluate.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, groupDigits } from "./lib/format.ts"
-import { retryMode, useMode } from "./lib/live-transport.ts"
+import { retryWorkspace, useMode } from "./lib/live-transport.ts"
 import { metricHeading, readMetrics, recentWindow, type MetricSummary } from "./lib/metrics.ts"
 import { useView } from "./lib/view.tsx"
 import { Inbox as InboxPanel } from "./inbox.tsx"
+import { Mascot } from "@/components/system/mascot"
 
 /** How many key numbers Home asks for: the cell answers each live, one request apiece. */
 const KEY_NUMBERS = 4
@@ -36,20 +38,13 @@ const CHECKLIST = [
 /** Guided checklist shown on Home for a freshly provisioned cell with no tenant definitions yet. */
 function EmptyWorkspaceChecklist() {
   return (
-    <Panel icon={Sparkles} label="Get started" action="4 steps">
+    <Panel icon={ListChecks} label="Get started" action="4 steps">
       <Well>
-        <ol className="grid gap-px p-1.5">
-          {CHECKLIST.map(({ step, title, description, to, icon: Icon }) => (
-            <li key={to}>
-              <Link to={to} className="group flex min-h-12 items-center gap-3 rounded-(--radius-row) px-3 py-2.5 transition-colors hover:bg-(--well-hover)">
-                <span className="flex size-[28px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-muted-foreground tabular-nums ring-1 ring-line">{step}</span>
-                <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-body text-foreground">{title}</span>
-                  <span className="block text-meta text-muted-foreground">{description}</span>
-                </span>
-                <ArrowRight aria-hidden className="size-4 shrink-0 text-subtle-foreground transition-transform group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5 motion-reduce:transition-none" />
-              </Link>
+        <ol data-slot="row-list" className="flex flex-col p-1.5">
+          {CHECKLIST.map(({ step, title, description, to, icon }) => (
+            <li key={to} data-step={step}>
+              <ListRow render={<Link to={to} />} className="group" lead={<TypeDisc icon={icon} />} title={title} description={description}
+                end={<ArrowRight aria-hidden className="size-4 text-subtle-foreground transition-transform group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5 motion-reduce:transition-none" />} />
             </li>
           ))}
         </ol>
@@ -62,14 +57,14 @@ function EmptyWorkspaceChecklist() {
 export function HomePage() {
   const queryClient = useQueryClient()
   const mode = useMode()
-  const retry = () => { void retryMode(queryClient) }
+  const retry = () => { void retryWorkspace(queryClient) }
   const empty = mode.data?.kind === "live" && Array.isArray(mode.data.catalog?.document) && isEmptyWorkspace(mode.data.catalog.document)
   return (
-    <section className="max-w-5xl space-y-8">
+    <section data-home="" className="mx-auto w-full max-w-5xl space-y-8">
       <PageHeader title="Home" description={empty ? "Your workspace is ready. Follow these steps to bring data in and build your first dashboard." : "What needs you, and the numbers that matter. Every item opens where you act on it."} />
       <AskBar />
       {mode.isError
-        ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={retry} />
+        ? <WorkspaceUnavailable error={mode.error} />
         : mode.isPending
           ? <LoadState status="pending" bone="home-key-numbers" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={retry}>{() => null}</LoadState>
           : empty
@@ -82,28 +77,23 @@ export function HomePage() {
   )
 }
 
-/** One field for a question or an instruction: the assistant takes it where the server serves one, else Metrics. */
+/**
+ * Ask Norn: one field for a question or an instruction (the chat composer, DESIGN.md 19.3), led by the
+ * mascot. The assistant takes it where the server serves one, else Metrics.
+ */
 function AskBar() {
-  const [text, setText] = useState("")
   const assistant = useAssistant()
   const navigate = useNavigate()
-  const submit = () => {
-    const request = text.trim()
-    if (request === "") return
+  const submit = (request: string) => {
     if (assistant.available) assistant.ask(request)
     else void navigate({ to: "/metrics" })
-    setText("")
   }
   return (
-    <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-12 rounded-(--radius-search) max-sm:h-[52px] border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
-        <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
-        <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
-        <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
-        </InputGroupAddon>
-      </InputGroup>
-    </form>
+    <div data-slot="ask-norn">
+      <ChatComposer label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" rows={1} onSubmit={submit} submitLabel="Ask" submitText="Ask"
+        lead={<Mascot tone="ink" size={22} className="text-muted-foreground" />}
+        groupClassName="min-h-12 rounded-(--radius-search) border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) max-sm:min-h-[52px] dark:bg-card" />
+    </div>
   )
 }
 

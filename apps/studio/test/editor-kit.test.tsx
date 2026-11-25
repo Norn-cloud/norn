@@ -76,7 +76,7 @@ test("a refusal shows once: the validation panel, with the codes under Details; 
   const html = renderToStaticMarkup(<ValidationPanel issues={[{ code: "question.window_order", message: "The time window must be an ordered half-open UTC interval.", field: "window" }]} title="The checker refused this question" details={<div>question.window_order</div>} />)
   expect(html.match(/The time window must be an ordered half-open UTC interval\./g)?.length).toBe(1)
   expect(html).toMatch(/<details[^>]*><summary[^>]*>Details<\/summary><div[^>]*><div>question\.window_order<\/div>/)
-  const { EmptyState } = await import("../src/components/panel.tsx")
+  const { EmptyState } = await import("../src/components/system/panel.tsx")
   const { Wrench } = await import("lucide-react")
   expect(renderToStaticMarkup(<EmptyState icon={Wrench} title="No tools bound yet">No tool can run from Norn until an admin binds it.</EmptyState>)).toContain(">No tools bound yet<")
   expect(renderToStaticMarkup(<EmptyState icon={Wrench}>Nothing.</EmptyState>)).toContain(">No data yet<")

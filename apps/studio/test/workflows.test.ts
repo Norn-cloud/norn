@@ -3,7 +3,10 @@ import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { Envelope } from "../src/lib/transport.ts"
 import { anchorOf, backOf, pathTo, spineOf, stepId, treeOf, visibleOf } from "../src/lib/tree.ts"
-import { guardedFields, workflows } from "../src/lib/workflows.ts"
+import { catalogOf } from "../src/lib/catalog.ts"
+import { guardsWords } from "../src/lib/guard-words.ts"
+import type { Artifact } from "../src/lib/transport.ts"
+import { guardedFields, workflowHeading, workflows } from "../src/lib/workflows.ts"
 
 // The admitted core definitions the transport replays.
 const directory = join(import.meta.dir, "../../../registry/core/artifacts")
@@ -31,6 +34,32 @@ test("a guard reads as the fields it requires, in words", () => {
   const approve = named("core.analytics.Restatement")?.steps.find(({ transition }) => transition.id === "approve")
   expect(guardedFields(approve?.transition.guards ?? [])).toEqual(["reason", "slice ids", "candidate", "candidate digest"])
   expect(guardedFields(["(self.candidate != '') and (self.candidate_digest != '')"])).toEqual(["candidate", "candidate digest"])
+})
+
+test("a step's condition reads in full: an empty-string guard says what it compares with", () => {
+  const restatement = named("core.analytics.Restatement")
+  const guards = (id: string) => restatement?.steps.find(({ transition }) => transition.id === id)?.transition.guards ?? []
+  // The old words dropped the empty literal: "candidate is not and candidate digest is not".
+  expect(guardsWords(guards("stage"))).toBe("candidate and candidate digest are not empty")
+  expect(guardsWords(guards("activate"))).toBe("candidate and candidate digest are not empty")
+  // Nested grouping parentheses no longer fall back to the bare field list.
+  expect(guardsWords(guards("approve"))).toBe("reason, slice ids, candidate and candidate digest are not empty")
+  expect(guardsWords(["self.candidate == ''"])).toBe("candidate is empty")
+  expect(guardsWords(["self.candidate != null"])).toBe("candidate is not empty")
+  expect(guardsWords(["self.amount > 0", "self.limit > 0"])).toBe("amount and limit > 0")
+  for (const id of ["stage", "approve", "activate"]) expect(guardsWords(guards(id))).not.toMatch(/\bis not( and|$)/)
+})
+
+test("a workflow's heading uses the served catalog title and property label, never a client-made name", () => {
+  const restatement = named("core.analytics.Restatement")
+  if (restatement === undefined) throw new Error("Restatement")
+  const catalog = catalogOf(definitions as unknown as readonly Artifact[])
+  const concept = catalog.byName.get("core.analytics.Restatement")
+  const heading = workflowHeading(restatement, new Map(), catalog)
+  expect(heading.title).toBe(concept?.title)
+  expect(heading.property).toBe(concept?.fields.find(({ id }) => id === "status")?.label)
+  // Nothing served yet: no guessed name, so the page shows the ids as code.
+  expect(workflowHeading(restatement, new Map(), undefined)).toEqual({ title: undefined, titleLang: undefined, property: undefined, propertyLang: undefined })
 })
 
 test("the spine runs from the start to the furthest declared end, by its shortest path", () => {

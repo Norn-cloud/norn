@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ShieldAlert } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { NotServed, cellRead } from "@/lib/live-transport"
+import type { DecidedScope } from "@/lib/workspace"
 
 /** `GET /v1/objects/{type}:quarantined`: the rows the cell holds back that this reader may read. */
 interface Quarantined {
@@ -18,16 +19,20 @@ interface Quarantined {
  * findings, opening to the record and why it is held. Only rows whose values this reader may
  * read are named; the cell decides which.
  */
-export function QuarantinePanel({ objectType }: { readonly objectType: string }) {
+export function QuarantinePanel({ objectType, scope }: {
+  readonly objectType: string
+  /** The workspace the page's mode decided: the held rows are read and cached there (#1754). */
+  readonly scope: DecidedScope
+}) {
   const held = useQuery({
-    queryKey: ["quarantined", objectType],
-    queryFn: () => cellRead<Quarantined>(`/v1/objects/${encodeURIComponent(objectType)}:quarantined`, "Quarantined records are"),
+    queryKey: ["quarantined", objectType, scope.orgId, scope.environmentId],
+    queryFn: () => cellRead<Quarantined>(`/v1/objects/${encodeURIComponent(objectType)}:quarantined`, "Quarantined records are", {}, undefined, scope),
     retry: false,
   })
-  if (held.isPending) return <p className="text-sm text-muted-foreground">Reading what the cell holds back…</p>
+  if (held.isPending) return <p className="text-body text-muted-foreground">Reading what the cell holds back…</p>
   if (held.isError) return held.error instanceof NotServed
     ? <EmptyState icon={ShieldAlert} title="Not served">{held.error.message}</EmptyState>
-    : <p role="alert" className="text-sm text-destructive">{held.error.message}</p>
+    : <p role="alert" className="text-body text-destructive">{held.error.message}</p>
   const { items, approximate, scanLimit } = held.data.document
   return (
     <Panel icon={ShieldAlert} label="In quarantine">
@@ -38,7 +43,7 @@ export function QuarantinePanel({ objectType }: { readonly objectType: string })
             : <EmptyState icon={ShieldAlert} title="Nothing held back">No record of this type is in quarantine.</EmptyState>
         )}
         {items.map(({ id, openFindings }) => (
-          <div key={id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
+          <div key={id} className="flex items-center justify-between gap-3 px-4 py-2.5 text-body">
             <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} className="font-mono underline-offset-4 hover:underline">{id}</Link>
             <Badge variant={openFindings > 0 ? "destructive" : "outline"}>{openFindings} open {openFindings === 1 ? "finding" : "findings"}</Badge>
           </div>

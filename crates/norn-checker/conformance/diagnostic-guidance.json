@@ -2580,6 +2580,18 @@
     "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
   },
   {
+    "code": "widget.authority.action_outside_binding",
+    "fix": "Declare an action binding for the action and start it with a call of kind \"action\"; never call the action or MCP route as a host operation."
+  },
+  {
+    "code": "widget.binding.exact_value_unhandled",
+    "fix": "Declare handles: [\"exact\"] on the catalog entry that renders numbers, once it never rounds through a binary float, or render the property natively."
+  },
+  {
+    "code": "widget.binding.marked_value_unhandled",
+    "fix": "Declare handles: [\"masked\"] on the catalog entry that renders the field type, once it shows a masked or withheld value as such, or render the property natively."
+  },
+  {
     "code": "widget.catalog.duplicate_entry",
     "fix": "Give every catalog entry its own id."
   },
@@ -2652,6 +2664,14 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "widget.layer.dismissal_refused_without_cause",
+    "fix": "Hold a layer that refuses a dismissal only in pending states, or in idle states with a way out: Escape (onOpenChange where Escape closes the layer, onDismissAttempt where it refuses Escape, and each where a computed dismissible decides which) or a control inside the layer, reaching a state the layer is not held in without starting a call or entering a pending state. Give a layer that refuses nothing the same way out of every state it is held in that is not pending. Say when a layer is open with heldIn, never with open; use defaultOpen only on a layer that refuses no dismissal and names no heldIn."
+  },
+  {
+    "code": "widget.layer.notification_intrusive",
+    "fix": "Keep toasts and live regions non-modal, never held open and never trapping focus, and let them expire or be dismissed."
+  },
+  {
     "code": "widget.lifecycle.assumption_violated",
     "fix": "Handle the lifecycle state the run reaches, or widen the state's assumption."
   },
@@ -2713,7 +2733,11 @@
   },
   {
     "code": "widget.machine.error_without_recovery",
-    "fix": "Add a retry, edit or dismiss transition on a user event, or a timed recovery."
+    "fix": "Add an unguarded Retry or Close transition on a user event; a timer alone is no recovery."
+  },
+  {
+    "code": "widget.machine.failure_without_retry_or_close",
+    "fix": "Give the state an unguarded transition on a user event (Retry or Close), make it an error state with one, or end the page in a terminal state."
   },
   {
     "code": "widget.machine.initial_not_idle",
@@ -2740,8 +2764,12 @@
     "fix": "Keep one unguarded transition per event and outcome, and guard the others."
   },
   {
+    "code": "widget.machine.outcome_code_undeclared",
+    "fix": "Name only an error code the bound action declares in uiEffects.errorCodes, or handle the refusal by its category."
+  },
+  {
     "code": "widget.machine.outcome_impossible",
-    "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, and cancelled only where the state offers a cancel."
+    "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, stale and subscription_refused only for reads of a binding the machine subscribes to, and cancelled only where the state offers a cancel."
   },
   {
     "code": "widget.machine.outcome_outside_pending",

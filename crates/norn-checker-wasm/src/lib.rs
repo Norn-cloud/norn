@@ -31,6 +31,10 @@
 mod checker;
 #[cfg(feature = "checker")]
 pub use checker::*;
+#[cfg(feature = "checker")]
+mod ui;
+#[cfg(feature = "checker")]
+pub use ui::renderer_capabilities_json;
 
 mod evaluate;
 pub use evaluate::{EVALUATION_FORMAT, evaluate_expression_json};

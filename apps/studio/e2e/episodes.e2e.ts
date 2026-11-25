@@ -319,10 +319,10 @@ test("list: Workspace Learning space lists episodes, sends flat server agreement
     })
   })
 
-  // Reach Episodes through the Workspace → Learning space in the shell sidebar.
+  // Reach Episodes through the Learning applet on the rail, then its menu.
   await page.goto("/")
-  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
-  await expect(nav).toContainText("Learning")
+  await page.getByRole("navigation", { name: "Applets" }).getByRole("link", { name: "Learning" }).click()
+  const nav = page.getByRole("navigation", { name: "Learning menu" })
   await nav.getByRole("link", { name: "Episodes" }).click()
   await expect(page).toHaveURL(/\/learning\/episodes$/)
 

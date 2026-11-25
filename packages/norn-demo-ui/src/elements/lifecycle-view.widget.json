@@ -129,6 +129,13 @@
                   "kind": "outcome",
                   "outcome": "timeout"
                 }
+              },
+              {
+                "eventId": "not-served",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "not_served"
+                }
               }
             ],
             "states": [
@@ -278,6 +285,12 @@
                     }
                   }
                 ]
+              },
+              {
+                "transitionId": "read-not-served",
+                "from": "reading",
+                "on": "not-served",
+                "target": "unavailable"
               }
             ]
           }

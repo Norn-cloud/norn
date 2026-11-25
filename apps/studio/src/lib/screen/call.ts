@@ -1,5 +1,6 @@
 import type { CallAnswer, CatalogRead } from "../actions.ts"
 import type { ActionReceipt, ActionSummary, Diagnostic, PendingDecision, RefusalReason } from "../../../../../packages/norn-sdk/src/index.ts"
+import type { ActionCallState, SentCall } from "../../../../../packages/norn-react/src/state.ts"
 
 /**
  * The renderer core for one governed call, framework-neutral (#1220, L-0):
@@ -30,25 +31,19 @@ export interface UndoOffer { readonly actionId: string; readonly input: string }
 /** The action this machine calls, as the catalog served it. */
 export interface Target { readonly actionId: string; readonly risky: boolean }
 
-export type Unreachable = "no-cell" | "unavailable" | "error"
+/** The fields of the cell's refusal of a call, as the form shows them. */
+export interface CallRefusal { readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason; readonly decidedAt?: string; readonly incidentId?: string }
 
-export type Phase =
-  | { readonly kind: "editing" }
-  | { readonly kind: "confirm" }
-  | { readonly kind: "sending" }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason; readonly decidedAt?: string; readonly incidentId?: string }
-  | { readonly kind: "failed"; readonly reason: Unreachable; readonly message: string | null }
-  | { readonly kind: "done"; readonly receipt: ActionReceipt; readonly undo: UndoOffer | null }
-  /** Sent for approval: nothing committed; the decision waits in the inbox. */
-  | { readonly kind: "pending"; readonly decision: PendingDecision }
-  | { readonly kind: "undoing"; readonly receipt: ActionReceipt; readonly undo: UndoOffer }
-  /**
-   * The undo did not come back with a receipt. `known`: the cell answered without committing (a refusal,
-   * or no route), so nothing was undone. Otherwise the answer was lost and the undo may have committed:
-   * a retry re-sends it under the same key, so it never applies twice.
-   */
-  | { readonly kind: "undo-failed"; readonly receipt: ActionReceipt; readonly undo: UndoOffer; readonly message: string | null; readonly known: boolean }
-  | { readonly kind: "undone"; readonly receipt: ActionReceipt; readonly reversal: ActionReceipt }
+/** One governed call's state (`@norn/react`'s {@link ActionCallState}): a draft, a call out, its answer, its undo. */
+export type Phase = ActionCallState<ActionReceipt, UndoOffer, PendingDecision, CallRefusal>
+
+/**
+ * A call no deciding cell answered: no cell is served (`not_served`), the cell answered without applying
+ * it (`unavailable`), or the answer was lost and it may have committed (`timed_out`). A Retry sends it
+ * again, under its key, so it never applies twice.
+ */
+export type Unreached = Extract<Phase, { readonly kind: "not_served" | "unavailable" | "timed_out" }>
+export const unreached = (phase: Phase): phase is Unreached => phase.kind === "not_served" || phase.kind === "unavailable" || phase.kind === "timed_out"
 
 export interface State {
   readonly target: Target
@@ -56,7 +51,7 @@ export interface State {
   /** The draft's idempotency key: replaced by an edit to the draft. While a call is out the form is locked and an edit changes nothing. */
   readonly key: string
   /** The call last sent, input and key, so a retry sends exactly that call again: never its body under a new key, or a new body under its key. */
-  readonly sent: { readonly input: string; readonly key: string } | null
+  readonly sent: SentCall | null
 }
 
 export type Msg =
@@ -90,11 +85,11 @@ export interface ParkedCall { readonly decision: PendingDecision; readonly input
 
 /** A machine back on a parked call (the sheet reopened on it): pending, with the call it sent. */
 export const resume = (target: Target, parked: ParkedCall): State =>
-  ({ target, phase: { kind: "pending", decision: parked.decision }, key: parked.key, sent: { input: parked.input, key: parked.key } })
+  ({ target, phase: { kind: "pending_approval", decision: parked.decision }, key: parked.key, sent: { input: parked.input, key: parked.key } })
 
 /** The parked call a state holds, to keep while its decision is open; null in any other phase. */
 export const parkedOf = (state: State): ParkedCall | null =>
-  state.phase.kind === "pending" && state.sent !== null ? { decision: state.phase.decision, input: state.sent.input, key: state.sent.key } : null
+  state.phase.kind === "pending_approval" && state.sent !== null ? { decision: state.phase.decision, input: state.sent.input, key: state.sent.key } : null
 
 const call = (actionId: string, input: string, key: string): Cmd => ({ kind: "call", actionId, input, key })
 const REFETCH: Cmd = { kind: "refetch" }
@@ -108,55 +103,59 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
     case "edit": {
       // The view holds the fields still while a call is out (and the draft is gone after a commit), so an
       // edit then is not one: the call that is out keeps its body and key, and nothing unsent is lost.
-      if (inFlight(state) || phase.kind === "done" || phase.kind === "pending" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
+      if (inFlight(state) || phase.kind === "committed" || phase.kind === "pending_approval" || phase.kind === "undo_failed" || phase.kind === "undone") return [state, []]
       // A refusal stays visible while the user fixes the fields it names; a confirm or an outage clears.
-      const next: Phase = phase.kind === "confirm" || phase.kind === "failed" ? { kind: "editing" } : phase
+      const next: Phase = phase.kind === "confirming" || unreached(phase) ? { kind: "editing" } : phase
       return [{ ...state, phase: next, key: msg.key }, []]
     }
     case "submit": {
-      if (inFlight(state) || phase.kind === "done" || phase.kind === "pending" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone") return [state, []]
-      if (state.target.risky && phase.kind !== "confirm") return [{ ...state, phase: { kind: "confirm" } }, []]
-      return [{ ...state, phase: { kind: "sending" }, sent: { input: msg.input, key: state.key } }, [call(state.target.actionId, msg.input, state.key)]]
+      if (inFlight(state) || phase.kind === "committed" || phase.kind === "pending_approval" || phase.kind === "undoing" || phase.kind === "undo_failed" || phase.kind === "undone") return [state, []]
+      if (state.target.risky && phase.kind !== "confirming") return [{ ...state, phase: { kind: "confirming" } }, []]
+      const sent: SentCall = { input: msg.input, key: state.key }
+      return [{ ...state, phase: { kind: "sending", sent }, sent }, [call(state.target.actionId, sent.input, sent.key)]]
     }
     case "back":
-      return phase.kind === "confirm" ? [{ ...state, phase: { kind: "editing" } }, []] : [state, []]
+      return phase.kind === "confirming" ? [{ ...state, phase: { kind: "editing" } }, []] : [state, []]
     case "retry":
-      if (phase.kind === "failed" && state.sent !== null) return [{ ...state, phase: { kind: "sending" } }, [call(state.target.actionId, state.sent.input, state.sent.key)]]
+      if (unreached(phase) && state.sent !== null) return [{ ...state, phase: { kind: "sending", sent: state.sent } }, [call(state.target.actionId, state.sent.input, state.sent.key)]]
       // Undo keeps its own key across a retry, like any call.
-      if (phase.kind === "undo-failed") return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo } }, [call(phase.undo.actionId, phase.undo.input, state.key)]]
+      if (phase.kind === "undo_failed") return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo } }, [call(phase.undo.actionId, phase.undo.input, state.key)]]
       return [state, []]
     case "run-approved":
       // Only the decision this machine waits on, only its own action: never another call's key.
-      if (phase.kind !== "pending" || phase.decision.id !== msg.decisionId || msg.actionId !== state.target.actionId) return [state, []]
-      return [{ ...state, phase: { kind: "sending" }, key: msg.next, sent: { input: msg.input, key: msg.key } }, [call(state.target.actionId, msg.input, msg.key)]]
+      if (phase.kind !== "pending_approval" || phase.decision.id !== msg.decisionId || msg.actionId !== state.target.actionId) return [state, []]
+      {
+        const sent: SentCall = { input: msg.input, key: msg.key }
+        return [{ ...state, phase: { kind: "sending", sent }, key: msg.next, sent }, [call(state.target.actionId, sent.input, sent.key)]]
+      }
     case "again":
       // A new draft is a new call; an undo left unconfirmed keeps its own Retry until then.
-      if (phase.kind !== "done" && phase.kind !== "undone" && phase.kind !== "undo-failed" && phase.kind !== "pending") return [state, []]
+      if (phase.kind !== "committed" && phase.kind !== "undone" && phase.kind !== "undo_failed" && phase.kind !== "pending_approval") return [state, []]
       return [{ ...state, phase: { kind: "editing" }, key: msg.key, sent: null }, []]
     case "undo":
-      if (phase.kind !== "done" || phase.undo === null) return [state, []]
+      if (phase.kind !== "committed" || phase.undo === null) return [state, []]
       return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo }, key: msg.key }, [call(phase.undo.actionId, phase.undo.input, msg.key)]]
     case "threw":
-      if (phase.kind === "sending") return [{ ...state, phase: { kind: "failed", reason: "error", message: msg.message } }, []]
-      if (phase.kind === "undoing") return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message: msg.message, known: false } }, []]
+      if (phase.kind === "sending") return [{ ...state, phase: { kind: "timed_out", sent: phase.sent, message: msg.message } }, []]
+      if (phase.kind === "undoing") return [{ ...state, phase: { kind: "undo_failed", receipt: phase.receipt, undo: phase.undo, message: msg.message, known: false } }, []]
       return [state, []]
     case "answered":
-      if (phase.kind === "sending") return [{ ...state, phase: answered(msg.result) }, msg.result.kind === "receipt" ? [REFETCH] : []]
+      if (phase.kind === "sending") return [{ ...state, phase: answered(msg.result, phase.sent) }, msg.result.kind === "receipt" ? [REFETCH] : []]
       if (phase.kind === "undoing") {
         const result = msg.result
         if (result.kind === "receipt") return [{ ...state, phase: { kind: "undone", receipt: phase.receipt, reversal: result.receipt } }, [REFETCH]]
         const message = result.kind === "refused" ? result.message : result.kind === "pending" ? "The undo was sent for approval; it runs once a decider approves it." : null
-        return [{ ...state, phase: { kind: "undo-failed", receipt: phase.receipt, undo: phase.undo, message, known: true } }, []]
+        return [{ ...state, phase: { kind: "undo_failed", receipt: phase.receipt, undo: phase.undo, message, known: true } }, []]
       }
       // An answer nobody is waiting for (a late reply after the state moved on) changes nothing.
       return [state, []]
   }
 }
 
-function answered(result: CallAnswer): Phase {
+function answered(result: CallAnswer, sent: SentCall): Phase {
   switch (result.kind) {
-    case "receipt": return { kind: "done", receipt: result.receipt, undo: undoOf(result.receipt) }
-    case "pending": return { kind: "pending", decision: result.decision }
+    case "receipt": return { kind: "committed", receipt: result.receipt, undo: undoOf(result.receipt) }
+    case "pending": return { kind: "pending_approval", decision: result.decision }
     case "refused": return {
       kind: "refused",
       status: result.status,
@@ -168,8 +167,8 @@ function answered(result: CallAnswer): Phase {
       ...result.decidedAt === undefined ? {} : { decidedAt: result.decidedAt },
       ...result.incidentId === undefined ? {} : { incidentId: result.incidentId },
     }
-    case "no-cell": return { kind: "failed", reason: "no-cell", message: null }
-    case "unavailable": return { kind: "failed", reason: "unavailable", message: null }
+    case "no-cell": return { kind: "not_served" }
+    case "unavailable": return { kind: "unavailable", sent }
   }
 }
 

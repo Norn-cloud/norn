@@ -226,17 +226,24 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await page.getByRole("link", { name: "Sources" }).click()
   await page.reload()
 
-  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately on both banner and page.
+  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately, once:
+  // the page's own full state carries the server's words, the incident, Last reachable and Retry, so the
+  // main island's one-line status stays out of its way (shell v2).
   const banner = page.locator('[data-connection="unavailable"]')
-  await expect(banner).toBeVisible()
-  await expect(page.locator("[data-workspace-unavailable]")).toBeVisible()
-  await expect(banner).toContainText("Workspace unavailable")
-  await expect(banner).toContainText("Storage migration is paused for this environment.")
-  await expect(banner).toContainText("inc-cell-909")
-  await expect(banner).toContainText("Last reachable")
+  const state = page.locator("[data-workspace-unavailable]")
+  await expect(state).toBeVisible()
+  await expect(state).toContainText("Workspace unavailable")
+  await expect(state).toContainText("Storage migration is paused for this environment.")
+  await expect(state).toContainText("inc-cell-909")
+  await expect(state).toContainText("Last reachable")
+  await expect(banner).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })).toHaveCount(1)
+  await expect(page.getByText("inc-cell-909", { exact: true }).filter({ visible: true })).toHaveCount(1)
   await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
   await expect(page.getByText("Retrying…")).toHaveCount(0)
-  await expect(banner.getByRole("button", { name: "Retry" })).toBeEnabled()
+  await expect(state.getByRole("button", { name: "Retry" })).toBeEnabled()
+  // Nothing can be connected to a workspace that can't be opened: the page doesn't offer it (the mode's answer).
+  await expect(page.getByRole("link", { name: "Connect a source" })).toHaveCount(0)
   await page.clock.resume()
   await shoot(page, "cell-unavailable")
   await page.clock.install()
@@ -250,10 +257,60 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   // Clicking Retry once the cell recovers restores both the live workspace and the Sources page.
   await page.clock.resume()
   unopenable = false
-  await banner.getByRole("button", { name: "Retry" }).click()
+  await state.getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Connect a source" })).toBeVisible()
 })
+
+for (const [path, heading] of [["/markings", "Markings"], ["/map", "Semantic map"], ["/rules", "Rules"], ["/transforms", "Transforms"], ["/workflows", "Workflows"]] as const) {
+  test(`${path}: a settled Workspace unavailable recovers with the page's one Retry, which decides the mode again (top status stays hidden, nothing left errored)`, async ({ page }) => {
+    await session(page)
+    let unopenable = true
+    // What the session and the cell were asked, in order: the Retry's reads must wait for the mode.
+    const asked: string[] = []
+    await page.route("**/api/me", (route) => { asked.push("me"); return route.fallback() })
+    await page.route("**/api/host/v1/**", (route) => {
+      const url = new URL(route.request().url())
+      if (url.pathname.endsWith("/v1/definitions") && route.request().method() === "GET") {
+        if (unopenable) {
+          return route.fulfill({
+            status: 503,
+            json: { format: "norn/refusal@2", code: "cell.unopenable", category: "internal", retryable: false, reason: null, incidentId: "inc-cell-910", message: "The workspace cell could not be opened.", explanation: "Storage migration is paused for this environment." },
+          })
+        }
+        asked.push("definitions")
+        return route.fulfill({ json: { artifacts: definitions } })
+      }
+      if (url.pathname.endsWith("/v1/definitions:list")) return route.fulfill({ json: { items: [], nextCursor: null } })
+      return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+    })
+
+    await page.goto(path)
+    // Settled: the page's own full state, once, and the one-line status steps aside for it.
+    const state = page.locator("[data-workspace-unavailable]")
+    await expect(state.first()).toBeVisible()
+    await expect(state.first()).toContainText("Storage migration is paused for this environment.")
+    await expect(page.locator('[data-connection="unavailable"]')).toHaveCount(0)
+    const retry = page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })
+    await expect(retry).toHaveCount(1)
+    await shoot(page, `retry${path.replaceAll("/", "-")}-unavailable`)
+
+    // The cell recovers; the page's one Retry decides the mode again and only then reads the page: the
+    // scope was answered, so the mode reads the cell at once, and no page read asks the session first
+    // (a read started beside the mode would discover the scope again, before the mode answered).
+    unopenable = false
+    asked.length = 0
+    await retry.click()
+    await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
+    await expect(page.getByRole("heading", { name: heading, exact: true }).first()).toBeVisible()
+    await expect(page.locator("[data-connection]")).toHaveCount(0)
+    await expect(page.locator('[data-load-state="error"]')).toHaveCount(0)
+    await expect(page.locator('[data-load-state="loading"], [data-load-state="slow"]')).toHaveCount(0)
+    expect(asked[0]).toBe("definitions")
+    await shoot(page, `retry${path.replaceAll("/", "-")}-recovered`)
+  })
+}
 
 test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded backoff window and settles to Workspace unavailable without falling back to recorded", async ({ page }) => {
   await session(page)
@@ -289,9 +346,13 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   await page.clock.runFor(1_700)
   await page.clock.runFor(3_300)
 
+  // Workspace unavailable shows once: Home has its own full state, so the one-line status stays away.
   const banner = page.locator('[data-connection="unavailable"]')
-  await expect(banner).toBeVisible()
-  await expect(banner).toContainText("Workspace unavailable")
+  const state = page.locator("[data-workspace-unavailable]")
+  await expect(state).toBeVisible()
+  await expect(state).toContainText("Workspace unavailable")
+  await expect(state).toHaveCount(1)
+  await expect(banner).toHaveCount(0)
   // Let any parallel query retries (e.g. catalog's 1 s + 2 s + 4 s backoff) finish settling, then confirm retries stop completely.
   await page.clock.runFor(5_000)
   const settledHits = definitionHits - before
@@ -305,7 +366,7 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   // Explicit Retry recovers once the gateway is back.
   await page.clock.resume()
   gatewayDown = false
-  await banner.getByRole("button", { name: "Retry" }).click()
+  await page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 })
