@@ -59,9 +59,14 @@ export interface Transport {
   readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
 
-let recordedPromise: Promise<Transport> | undefined
+let recordedPromise: Promise<Transport> | null = null
 const loadRecorded = (): Promise<Transport> =>
-  (recordedPromise ??= import("./recorded-transport.ts").then((module) => module.recordedTransportImpl))
+  (recordedPromise ??= import("./recorded-transport.ts")
+    .then((module) => module.recordedTransportImpl)
+    .catch((error) => {
+      recordedPromise = null
+      throw error
+    }))
 
 /** Documents the engine produced for the synthetic recorded question and three-systems worlds, loaded lazily only outside live cells. */
 export const recordedTransport: Transport = {

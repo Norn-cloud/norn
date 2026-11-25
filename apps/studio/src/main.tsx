@@ -134,8 +134,12 @@ const queryClient = new QueryClient({
     },
   },
 })
+function RoutePending() {
+  return <div role="status" aria-label="Loading page" className="min-h-40 py-8 text-sm text-muted-foreground">Loading…</div>
+}
+
 const root = createRootRoute({ component: Root })
-const router = createRouter({ routeTree: routeTree(root) })
+const router = createRouter({ routeTree: routeTree(root), defaultPendingComponent: RoutePending })
 
 // Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")

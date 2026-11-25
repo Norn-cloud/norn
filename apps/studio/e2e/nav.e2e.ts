@@ -15,6 +15,13 @@ async function recorded(page: Page, errors: string[]) {
 
 const settled = (page: Page) => expect(page.getByText("Connecting…")).toHaveCount(0)
 
+/** Wait for a lazy route chunk to commit and render content before asserting on its text. */
+async function routeCommitted(page: Page, path: string, label: string) {
+  await expect(page.locator(`[data-route="${path}"]`), label).toBeVisible()
+  await expect(page.getByRole("status", { name: "Loading page" }), label).toHaveCount(0)
+  await expect(page.locator("main h1, main h2").first(), label).toBeVisible()
+}
+
 test("nav: every rail destination and every sidebar entry, in both perspectives, navigates and renders", async ({ page }) => {
   test.setTimeout(300_000)
   const errors: string[] = []
@@ -27,6 +34,7 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
   for (const href of global) {
     await rail.locator(`a[href="${href}"]`).click()
     await expect(page).toHaveURL((url) => url.pathname === href)
+    await routeCommitted(page, href, `rail ${href}`)
     await expect(page.locator("main")).not.toContainText(/Something went wrong|Not Found/)
   }
   let entries = 0
@@ -48,6 +56,7 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
       const [path = "", hash] = href.split("#")
       await nav.locator(`a[href="${href}"]`).click()
       await expect(page, `entry ${href} in ${perspective}`).toHaveURL((url) => url.pathname === path && (hash === undefined || url.hash === `#${hash}`))
+      await routeCommitted(page, path, `entry ${href} in ${perspective}`)
       if (hash !== undefined) await expect(page.locator(`[id="${decodeURIComponent(hash)}"]`), `anchor ${hash}`).toBeInViewport()
       await expect(page.locator("main")).not.toContainText(/Something went wrong|Not Found/)
       // The page belongs to this perspective, so its sidebar stays.

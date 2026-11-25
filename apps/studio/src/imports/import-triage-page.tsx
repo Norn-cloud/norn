@@ -24,6 +24,7 @@ import {
   fetchImportTriage,
   fetchRequestedDecisionForReconciliation,
   fieldEditKey,
+  IMPORT_TRIAGE_QUERY_KEY as QUERY_KEY,
   IMPORT_TRIAGE_UNAVAILABLE,
   initialAliasDraft,
   initialSupersessionDraft,
@@ -60,8 +61,6 @@ import { cn } from "@/lib/utils"
 import { AliasMatcher } from "./alias-matcher.tsx"
 import { SplitPaneReview } from "./split-pane-review.tsx"
 import { SupersessionDiffList } from "./supersession-diff.tsx"
-
-const QUERY_KEY = ["imports", "triage"] as const
 
 /** Unsent drafts, in-flight/queued promotion locks, and request outcomes scoped to one `batchId`. */
 interface BatchDraftState {

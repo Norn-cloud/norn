@@ -278,6 +278,11 @@ function ViewAndLanguage() {
 function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
   const { skin, setSkin, shell, setShell, customTheme } = useAppearance()
   const [themeDialogOpen, setThemeDialogOpen] = useState(false)
+  const [themeDialogMounted, setThemeDialogMounted] = useState(false)
+  const openThemeDialog = () => {
+    setThemeDialogMounted(true)
+    setThemeDialogOpen(true)
+  }
   return (
     <>
     <ChromeDock
@@ -348,7 +353,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <button
             type="button"
             data-slot="custom-theme-trigger"
-            onClick={() => setThemeDialogOpen(true)}
+            onClick={openThemeDialog}
             className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <span className="flex items-center gap-1.5">
@@ -360,7 +365,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
         </div>
       </ChromeDockTray>
     </ChromeDock>
-    {themeDialogOpen && <Suspense fallback={null}><LazyCustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} /></Suspense>}
+    {themeDialogMounted && <Suspense fallback={null}><LazyCustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} /></Suspense>}
     </>
   )
 }
@@ -1163,6 +1168,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
 
   const { shell } = useAppearance()
   const isDock = shell === "dock"
+  const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname })
 
   return (
     <>
@@ -1221,10 +1227,8 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
               </header>
             )}
           <ConnectionBanner />
-          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}>
-            <Suspense fallback={<div role="status" aria-label="Loading page" className="min-h-40 py-8 text-sm text-muted-foreground">Loading…</div>}>
-              <Outlet />
-            </Suspense>
+          <div data-route={resolvedPathname} className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}>
+            <Outlet />
           </div>
         </div>
         <Inspector />

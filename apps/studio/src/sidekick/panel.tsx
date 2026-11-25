@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
 import { getDisplayedScope, type StudioScope } from "@/lib/definitions"
 import type { ToolHost } from "@/widget/bridge"
 import type { View } from "@/widget/views"
-import { SidekickSession, type ViewDelivery } from "./client.ts"
+import type { SidekickSession, ViewDelivery } from "./client.ts"
 import { applyUpdate, promptItem, toolWords, viewItem, type Item, type Transcript } from "./transcript.ts"
 
 export { useSidekickServed } from "./served.ts"
@@ -96,7 +96,9 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
     if (session.current !== null && !session.current.closed) return session.current
     setStatus("connecting")
     const pinnedScope = scope !== undefined ? scope : getDisplayedScope()
-    const opened = await SidekickSession.open(
+    const { SidekickSession: Session } = await import("./client.ts")
+    if (generation.current !== expectedGeneration) return null
+    const opened = await Session.open(
       {
         update: (notification) => {
           if (generation.current !== expectedGeneration) return

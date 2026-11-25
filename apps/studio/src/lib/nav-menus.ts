@@ -6,16 +6,17 @@ import type { MenuEntry } from "../shell.tsx"
 import { catalogOf, conceptTitle } from "./catalog.ts"
 import { badgeText, countDecisions } from "./decisions.ts"
 import { useStudioScope } from "./definitions.ts"
-import { useRunTypeFlows, type RunFlow } from "./flows.ts"
-import { headline, words } from "./format.ts"
-import { fetchImportTriage, triageSummary } from "./import-triage.ts"
+import { useRunTypeFlows } from "./flows.ts"
+import { headline } from "./format.ts"
+import { GUARANTEE_TITLES } from "./guarantees.ts"
+import { fetchImportTriage, IMPORT_TRIAGE_QUERY_KEY, triageSummary } from "./import-triage.ts"
 import { useLiveRefresh } from "./live-reads.ts"
 import { useMode } from "./live-transport.ts"
 import type { Total } from "./records-query.ts"
 import { transport, type QuestionAnswer } from "./transport.ts"
 import { useCatalog } from "./use-catalog.ts"
 import { cellViews } from "./views.ts"
-import { workflows, type Workflow } from "./workflows.ts"
+import { workflowAnchor, workflows, workflowTitle } from "./workflows.ts"
 
 /**
  * Lightweight sidebar menu and badge hooks shared by the shell (`main.tsx`) and their respective pages.
@@ -23,12 +24,7 @@ import { workflows, type Workflow } from "./workflows.ts"
  * pulling charts, flow graphs, decision sheets, or editors into the initial entry chunk.
  */
 
-export const IMPORT_TRIAGE_QUERY_KEY = ["imports", "triage"] as const
-
-const GUARANTEE_TITLES: Readonly<Record<string, string>> = {
-  original: "As declared",
-  mutant: "With the loss rule removed (a deliberately broken copy)",
-}
+export { IMPORT_TRIAGE_QUERY_KEY }
 
 const views = cellViews()
 
@@ -125,9 +121,6 @@ export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
     { href: "#corrections", label: "Corrections", group: "Corrections" },
   ]
 }
-
-const workflowAnchor = (workflow: Workflow) => `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
-const workflowTitle = (workflow: Workflow, flows: ReadonlyMap<string, RunFlow>) => flows.get(workflow.objectType)?.title ?? words(workflow.objectType)
 
 /** The admitted lifecycles, for the submenu island. */
 export function useWorkflowsMenu(): readonly MenuEntry[] | undefined {
