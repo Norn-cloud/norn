@@ -19,7 +19,7 @@ use std::io::Write as _;
 
 use proptest::strategy::Strategy as _;
 
-use super::backend::{Engine, Settings};
+use super::analytics_backend::{Engine, Settings};
 use norn_cell::analytics::{
     EvaluateResponse, FileFormat, FileSource, GroupKey, LandRequest, LoadRequest, MembersRequest,
     MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
@@ -93,7 +93,7 @@ fn ask(
         }
     })?;
     // D137: the answer is the engine under test's, never another's.
-    assert_eq!(response.provenance.engine, super::backend::ENGINE_ID);
+    assert_eq!(response.provenance.engine, super::analytics_backend::ENGINE_ID);
     store
         .analytics_answer(prepared, response)
         .map_err(|e| code(&e))
@@ -123,7 +123,7 @@ fn compare(
         (Ok(exact), Ok(mut answered)) => {
             assert_eq!(
                 answered.engine,
-                norn_cell::compute::Engine::from(super::backend::ENGINE_ID)
+                norn_cell::compute::Engine::from(super::analytics_backend::ENGINE_ID)
             );
             answered.engine = norn_cell::compute::Engine::Cell;
             assert_eq!(answered, exact);
@@ -522,7 +522,7 @@ fn the_engine_names_its_snapshot_and_refuses_another_model()
     let prepared = store.analytics_prepare(&plan, context, &tenant())?;
     let mut other = prepared.request().clone();
     let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
-    assert_eq!(response.provenance.engine, super::backend::ENGINE_ID);
+    assert_eq!(response.provenance.engine, super::analytics_backend::ENGINE_ID);
     store.analytics_answer(prepared, response)?;
     other.model_pin = "another model".into();
     assert!(matches!(
@@ -593,7 +593,7 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
         ));
         assert_eq!(eng.frontier(frontier_req).map_err(|r| r.detail)?, *expected);
         drop(eng);
-        assert_eq!(super::backend::mirror_rows(dir.path(), &tenant(), TYPE), 0);
+        assert_eq!(super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE), 0);
         reopen()
     };
     let mut other_schema = batch.clone();
@@ -622,7 +622,7 @@ fn a_refused_update_preserves_every_visible_row() -> Result<(), Box<dyn std::err
         vec![row("A", 1000, Some(400), TIMES[0], "gold")],
     );
     let before = ask(&store, &engine, &plan, context.clone())?;
-    let visible = super::backend::mirror_rows(dir.path(), &tenant(), TYPE);
+    let visible = super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE);
     assert_ne!(visible, 0);
     let mirror = store.analytics_frontier(&tenant(), WORLD)?;
     let frontier = engine.frontier(&mirror).map_err(|r| r.detail)?;
@@ -642,7 +642,7 @@ fn a_refused_update_preserves_every_visible_row() -> Result<(), Box<dyn std::err
         Err("core.compute.stale_input".to_owned())
     );
     assert_eq!(
-        super::backend::mirror_rows(dir.path(), &tenant(), TYPE),
+        super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE),
         visible
     );
     assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, frontier);
@@ -785,7 +785,7 @@ fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
     engine.load(&request, first.path()).expect("first load");
     // Inject the failure: the tenant's metadata refuses one key.
     drop(engine);
-    super::backend::refuse_meta_key(dir.path(), &tenant(), "lineage:load-2");
+    super::analytics_backend::refuse_meta_key(dir.path(), &tenant(), "lineage:load-2");
     let engine = Engine::new(Settings {
         root: dir.path().to_path_buf(),
         memory_limit: "256MB".into(),
@@ -796,12 +796,12 @@ fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
         .load(&load_request(&plan, "load-2", second_sha), second.path())
         .expect_err("the lineage write is refused");
     drop(engine);
-    let meta = |key: &str| super::backend::meta(dir.path(), &tenant(), key);
+    let meta = |key: &str| super::analytics_backend::meta(dir.path(), &tenant(), key);
     assert_eq!(meta(&format!("load:{table}")).as_deref(), Some("load-1"));
     assert!(meta("lineage:load-1").is_some());
     assert_eq!(meta("lineage:load-2"), None);
     assert_eq!(
-        super::backend::dataset_rows(dir.path(), &tenant(), &table),
+        super::analytics_backend::dataset_rows(dir.path(), &tenant(), &table),
         1,
         "the replacement dataset did not commit"
     );
@@ -2252,7 +2252,7 @@ mod known_at {
                     (Ok(want), Ok(mut got)) => {
                         proptest::prop_assert_eq!(
                             got.result.engine,
-                            Answered::from(super::super::backend::ENGINE_ID)
+                            Answered::from(super::super::analytics_backend::ENGINE_ID)
                         );
                         got.result.engine = Answered::Cell;
                         proptest::prop_assert_eq!(
@@ -2578,7 +2578,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
     for load in [cache.as_str(), "land-1"] {
         assert_eq!(
             ask(&engine, load).expect_err("not stored").code,
-            super::backend::DATASET_COLD
+            super::analytics_backend::DATASET_COLD
         );
     }
     let stored = store(&engine, &store_request(&request, &response)).expect("stored");
@@ -2656,7 +2656,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
 /// the engine never minted is refused alike.
 #[test]
 fn a_store_never_removes_an_attempt_it_does_not_hold() {
-    use super::backend::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
+    use super::analytics_backend::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let request = landing_request(&plan);
@@ -2757,7 +2757,7 @@ fn a_store_never_removes_an_attempt_it_does_not_hold() {
 /// changes nothing a later honest replay reads.
 #[test]
 fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
-    use super::backend::ATTEMPT_UNKNOWN;
+    use super::analytics_backend::ATTEMPT_UNKNOWN;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let request = landing_request(&plan);

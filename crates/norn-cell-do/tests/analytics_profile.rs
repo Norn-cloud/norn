@@ -10,7 +10,7 @@
     reason = "engine correspondence over the seeded demo cell"
 )]
 
-use super::backend::{Engine, Settings};
+use super::analytics_backend::{Engine, Settings};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, EngineQuestions, Transport};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
@@ -70,7 +70,7 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
         let engine_document: Value = serde_json::from_str(&engine.body).unwrap();
         assert_eq!(
             engine_document["engine"],
-            super::backend::ENGINE_ID.as_str(),
+            super::analytics_backend::ENGINE_ID.as_str(),
             "{name}"
         );
         assert_eq!(profile_of(&engine), profile_of(&exact), "{name}");
@@ -243,7 +243,7 @@ fn a_profile_of_another_model_is_never_accepted() -> Result<(), Box<dyn std::err
     let exchange = Exchange::new(
         norn_api::olap_credential::Issuer::parse(&secret)?,
         tenant,
-        norn_cell::analytics::EngineCapabilities::of(super::backend::ENGINE_ID),
+        norn_cell::analytics::EngineCapabilities::of(super::analytics_backend::ENGINE_ID),
     );
     let mut answered = None;
     for _step in 0..8 {

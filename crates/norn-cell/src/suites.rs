@@ -11,8 +11,11 @@
 #[path = "../tests/analytics_engine_datafusion.rs"]
 mod analytics_engine_datafusion;
 #[cfg(all(feature = "duckdb", feature = "native"))]
-#[path = "../tests/analytics_engine_duckdb.rs"]
-mod analytics_engine_duckdb;
+#[path = "../tests/analytics_engine.rs"]
+mod analytics_engine;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "../tests/backends/duckdb.rs"]
+mod analytics_backend;
 #[path = "../tests/answer_documents.rs"]
 mod answer_documents;
 #[path = "../tests/bench_latency.rs"]

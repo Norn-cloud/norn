@@ -14,6 +14,9 @@
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "analytics_backend.rs"]
+mod analytics_backend;
 #[path = "bench_clauses.rs"]
 mod bench_clauses;
 #[path = "bench_import.rs"]
@@ -31,12 +34,12 @@ mod cell_host;
 mod cell_host_dst;
 #[path = "commit_path.rs"]
 mod commit_path;
+#[cfg(all(feature = "duckdb", feature = "native"))]
+#[path = "dataset_laws.rs"]
+mod dataset_laws;
 #[cfg(all(feature = "datafusion", feature = "duckdb"))]
 #[path = "dataset_laws_datafusion.rs"]
 mod dataset_laws_datafusion;
-#[cfg(all(feature = "duckdb", feature = "native"))]
-#[path = "dataset_laws_duckdb.rs"]
-mod dataset_laws_duckdb;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
 #[path = "jewelry_pricing.rs"]

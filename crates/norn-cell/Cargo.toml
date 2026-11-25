@@ -36,7 +36,7 @@ native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
 duckdb = ["dep:duckdb"]
 # D136 / D137 (#1533, #1661): the native DataFusion analytical engine. Native
 # targets only; its Arrow (59.x) stays inside the adapter, apart from DuckDB's.
-datafusion = ["native", "dep:datafusion", "dep:parquet", "dep:csv", "dep:unicode-normalization", "tokio/rt-multi-thread"]
+datafusion = ["native", "dep:datafusion", "dep:parquet", "dep:csv", "dep:unicode-normalization"]
 # Test-only: `engine::FaultEngine` for deterministic fault injection. Enabled
 # only through dev-dependencies, never by a production build.
 fault-injection = []

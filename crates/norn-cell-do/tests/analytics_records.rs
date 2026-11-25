@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use super::backend::{Engine, Settings};
+use super::analytics_backend::{Engine, Settings};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadRecord, Uploads};
 use norn_api::host::DevHost;
 use norn_cell::analytics::{
@@ -701,7 +701,7 @@ struct PanicTransport;
 
 impl Transport for PanicTransport {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
-        norn_cell::analytics::EngineCapabilities::of(super::backend::ENGINE_ID)
+        norn_cell::analytics::EngineCapabilities::of(super::analytics_backend::ENGINE_ID)
     }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
@@ -810,7 +810,7 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     );
     assert!(routed && profile_v1.status == 200, "{}", profile_v1.body);
     let profile_v1_doc: Value = serde_json::from_str(&profile_v1.body).unwrap();
-    assert_eq!(profile_v1_doc["engine"], super::backend::ENGINE_ID.as_str());
+    assert_eq!(profile_v1_doc["engine"], super::analytics_backend::ENGINE_ID.as_str());
     assert_eq!(profile_v1_doc["rows"], 2);
 
     let dq_v1 = DerivedQuestions::new([7; 32], scope.clone());

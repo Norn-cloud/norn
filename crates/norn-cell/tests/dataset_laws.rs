@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 
-use super::backend::{Engine, Settings};
+use super::analytics_backend::{Engine, Settings};
 use norn_cell::analytics::{
     FileFormat, FileSource, LandRequest, LandResponse, LoadRequest, ResidueRow, SettleRequest,
     StoreRequest, StoredObject, TenantId,
@@ -803,7 +803,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             })
             .expect_err("the attempt is gone")
             .code,
-        super::backend::ATTEMPT_UNKNOWN
+        super::analytics_backend::ATTEMPT_UNKNOWN
     );
     assert_eq!(read(&stored).expect("unchanged"), current);
     // The retry settles on its own and lands what a clean run lands.
@@ -1374,7 +1374,7 @@ fn a_residue_page_counts_its_brackets() {
 /// The `lineage:` records of the engine directory `root`, read once the
 /// engine that wrote them is gone.
 fn lineage_records(root: &std::path::Path) -> Vec<String> {
-    super::backend::lineage_keys(root, &tenant())
+    super::analytics_backend::lineage_keys(root, &tenant())
 }
 
 /// MANIFEST-LAWS-1 (Sol r2 S8): a landing refused at its preflight (a

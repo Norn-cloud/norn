@@ -151,7 +151,6 @@ pub struct Engine {
     settings: Settings,
     memory: usize,
     pool: Arc<dyn MemoryPool>,
-    runtime: tokio::runtime::Runtime,
     tenants: Mutex<BTreeMap<TenantId, Arc<Mutex<Tenant>>>>,
     attempts: Mutex<BTreeMap<(TenantId, String), landing::Held>>,
 }
@@ -165,15 +164,9 @@ impl Engine {
     pub fn new(settings: Settings) -> std::io::Result<Self> {
         std::fs::create_dir_all(settings.root.join("tmp"))?;
         let memory = parse_memory(&settings.memory_limit)?;
-        let threads = usize::try_from(settings.threads.max(1)).unwrap_or(1);
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(threads)
-            .thread_name("norn-datafusion")
-            .build()?;
         Ok(Self {
             pool: Arc::new(FairSpillPool::new(memory)),
             memory,
-            runtime,
             settings,
             tenants: Mutex::new(BTreeMap::new()),
             attempts: Mutex::new(BTreeMap::new()),
@@ -288,18 +281,25 @@ impl Engine {
         Ok(batches)
     }
 
-    /// Drive `future` to completion on the engine's runtime from a thread of
-    /// its own, so a caller inside another runtime never nests one.
+    /// Drive `future` to completion on a current-thread runtime of its own,
+    /// on a thread of its own, so a caller inside another runtime never nests
+    /// one; memory and spill stay bounded by the tenant's shared `RuntimeEnv`.
     fn block_on<F>(&self, future: F) -> Outcome<F::Output>
     where
         F: std::future::Future + Send,
         F::Output: Send,
     {
+        let _settings = &self.settings;
         std::thread::scope(|scope| {
             scope
-                .spawn(|| self.runtime.block_on(future))
+                .spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .map(|runtime| runtime.block_on(future))
+                        .map_err(|error| engine_error(error.to_string()))
+                })
                 .join()
-                .map_err(|_panicked| engine_error("a scan failed"))
+                .map_err(|_panicked| engine_error("a scan failed"))?
         })
     }
 

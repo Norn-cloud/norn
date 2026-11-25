@@ -29,7 +29,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use super::ENGINE;
+use super::analytics_backend::ENGINE_ID as ENGINE;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use norn_api::analytics_routes::{EngineCall, Transport as _};
