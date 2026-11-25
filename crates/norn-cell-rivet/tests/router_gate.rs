@@ -359,7 +359,7 @@ async fn jwks_unreachable_at_cold_start_backs_off_and_recovers() {
     // only around the time jump, then `resume` immediately so reqwest's
     // live HTTP timeouts are not affected.
     tokio::time::pause();
-    tokio::time::advance(COLD_BACKOFF + Duration::from_millis(1)).await;
+    tokio::time::advance(COLD_BACKOFF.saturating_add(Duration::from_millis(1))).await;
     tokio::time::resume();
 
     // The next request refetches and admits.
