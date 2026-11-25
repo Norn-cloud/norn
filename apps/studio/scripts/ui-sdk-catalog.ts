@@ -211,7 +211,7 @@ async function runtimePrimitives(root: string, exports: Record<string, unknown>)
       for (const [name, value] of Object.entries(module)) {
         if (typeof value !== "function" || !("options" in value) || !("slots" in value)) continue
         seen = undefined
-        const instance = (value as (options: { id: string }) => { name: string; api: Record<string, unknown>; get: () => object })({ id: "catalog" })
+        const instance = (value as unknown as (options: { id: string }) => { name: string; api: Record<string, unknown>; get: () => object })({ id: "catalog" })
         keep(instance)
         if (seen === undefined) throw new Error(`${subpath} ${name}: the kernel did not report its definition`)
         const reported: { agent: Runtime["agent"]; controlled: string[] | undefined } = seen
