@@ -12,11 +12,12 @@
 //!   unguarded transitions on the person's own events to a state the layer is not held in, where no
 //!   step starts a call or enters a pending state. The person's events are Escape, which every
 //!   person can press (the layer's `onOpenChange` where Escape closes it; its `onDismissAttempt`,
-//!   as a dirty form's "Discard changes?", where it refuses Escape), and a control inside the
-//!   layer, as Cancel. Asking again into the same state, or between held states, is no way out, and
-//!   neither is a Confirm control that sends the command, nor an `onDismissAttempt` that only an
-//!   outside press or a swipe raises. A layer that refuses dismissal with no `heldIn` state refuses
-//!   it whenever a person opens it: refused.
+//!   as a dirty form's "Discard changes?", where it refuses Escape; each, on its own path, where a
+//!   computed `dismissible` decides which Escape raises), and a control inside the layer, as
+//!   Cancel. Asking again into the same state, or between held states, is no way out, and neither
+//!   is a Confirm control that sends the command, nor an `onDismissAttempt` that only an outside
+//!   press or a swipe raises. A layer that refuses dismissal with no `heldIn` state refuses it
+//!   whenever a person opens it: refused.
 //!
 //!   `heldIn` is the one source of whether a layer is open. A prop reads only the machine's fields,
 //!   never its state, and UI SDK keeps a layer whose `open` is set as `open` says whatever Escape,
@@ -37,7 +38,9 @@
 //!   server's.
 //!
 //! What a prop is set to when it is not a literal is unknown here and read as its least
-//! permissive value (a dynamic `dismissible` may be `false`).
+//! permissive value. A computed `dismissible` may be `false`, so the layer locks, and may be
+//! `true`, so Escape raises `onOpenChange` rather than `onDismissAttempt`: it needs a way out on
+//! both.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,7 +75,7 @@ const DISMISS_ATTEMPT: &str = "onDismissAttempt";
 /// The `onOpenChange` callback: a dismissal the layer does not refuse, raised as a machine event.
 const OPEN_CHANGE: &str = "onOpenChange";
 /// How a finding names a way out (see [`way_out`]).
-const WAY_OUT: &str = "a way out: Escape (`onOpenChange` where Escape closes the layer, `onDismissAttempt` where it refuses Escape) or a control inside the layer, reaching a state it is not held in without starting a call or entering a pending state";
+const WAY_OUT: &str = "a way out: Escape (`onOpenChange` where Escape closes the layer, `onDismissAttempt` where it refuses Escape, and each where a computed `dismissible` decides which) or a control inside the layer, reaching a state it is not held in without starting a call or entering a pending state";
 const ANNOUNCE: &str = "platform/announce";
 const MODAL: &str = "popups/modal";
 
@@ -272,7 +275,8 @@ impl Layer<'_> {
         let mut inside = BTreeSet::new();
         descendants(self.node, &mut inside);
         // Escape is the dismissal every person can make: it closes the layer and raises
-        // `onOpenChange`, or it is refused and raises `onDismissAttempt`.
+        // `onOpenChange`, or it is refused and raises `onDismissAttempt`. A computed
+        // `dismissible` may do either, so each needs its own way out.
         let escape = if escape_closes {
             Some(OPEN_CHANGE)
         } else {
@@ -281,6 +285,8 @@ impl Layer<'_> {
                 .contains("escape-key")
                 .then_some(DISMISS_ATTEMPT)
         };
+        let escape_may_close = literal(self.props, "dismissible") == Prop::Computed
+            && primitive.dismiss_reasons.contains("escape-key");
         for (index, state_id) in self.held_in.iter().enumerate() {
             let held = machine.and_then(|machine| {
                 let state = machine
@@ -297,7 +303,9 @@ impl Layer<'_> {
                 });
                 continue;
             };
-            let out = way_out(machine, id, escape, &inside, self.held_in, state_id);
+            let out = way_out(machine, id, escape, &inside, self.held_in, state_id)
+                && (!escape_may_close
+                    || way_out(machine, id, Some(OPEN_CHANGE), &inside, self.held_in, state_id));
             let legal = match state.role {
                 WidgetStateRole::Pending => true,
                 WidgetStateRole::Idle => out,
@@ -309,6 +317,8 @@ impl Layer<'_> {
             let message = if locks {
                 let level = if escape_closes || out {
                     "locks out an outside press or swipe"
+                } else if escape_may_close {
+                    "may close on Escape or refuse it (its `dismissible` is computed)"
                 } else {
                     "cannot be dismissed at all"
                 };
