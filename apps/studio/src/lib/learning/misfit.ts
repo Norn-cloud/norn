@@ -251,7 +251,7 @@ export function topRateRow(
 
 // ---- Strict envelope & row validation (S6) ------------------------------------------------------
 
-const VALID_ENGINES = new Set<string>(["ivm", "cell", "duckdb"])
+const VALID_ENGINES = new Set<string>(["ivm", "cell", "duckdb", "datafusion"])
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
@@ -268,7 +268,7 @@ function validateAnswerEnvelope(read: Read<Answer>): Answer {
   const doc = value as unknown as Record<string, unknown>
   if (typeof doc.complete !== "boolean") throw new DecodeError("/complete must be a boolean")
   if (typeof doc.effectiveAsOf !== "string" || doc.effectiveAsOf === "") throw new DecodeError("/effectiveAsOf must be a timestamp string")
-  if (typeof doc.engine !== "string" || !VALID_ENGINES.has(doc.engine)) throw new DecodeError("/engine must be ivm, cell, or duckdb")
+  if (typeof doc.engine !== "string" || !VALID_ENGINES.has(doc.engine)) throw new DecodeError("/engine must be ivm, cell, duckdb, or datafusion")
   if (typeof doc.knownAsOf !== "number" || !Number.isSafeInteger(doc.knownAsOf) || doc.knownAsOf < 0) throw new DecodeError("/knownAsOf must be a non-negative integer")
   if (typeof doc.nowMs !== "number" || !Number.isSafeInteger(doc.nowMs) || doc.nowMs < 0) throw new DecodeError("/nowMs must be a non-negative integer")
   if (!isPlainObject(doc.exclusions)) throw new DecodeError("/exclusions must be an object")

@@ -31,6 +31,9 @@ use std::collections::BTreeSet;
 use crate::entity_instance::EffectiveCatalog;
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
+mod scope;
+mod window;
+
 /// The refusal of anything this dialect does not lower to a typed operator.
 pub const SQL_UNSUPPORTED: &str = "derived.validation.sql_unsupported";
 
@@ -757,6 +760,9 @@ impl Parser {
         }
         self.expect_symbol(")")?;
         if lower == "coalesce" {
+            if call.distinct || call.star || self.keyword("over") {
+                return Err(refusal("COALESCE takes plain values", at));
+            }
             // ZEN nests the values pairwise, one level per value.
             let height = taller([tallest], call.args.len().max(1), at)?;
             return Ok((Ex::Coalesce(call.args), height));
@@ -999,72 +1005,8 @@ struct Scope {
     /// Alias → (object type, column prefix in the joined row).
     aliases: BTreeMap<String, (String, String)>,
     base: String,
-}
-
-impl Scope {
-    fn column(&self, alias: Option<&str>, column: &str, at: usize) -> Result<String, Refusal> {
-        let alias = alias.unwrap_or(&self.base);
-        let (_, prefix) = self
-            .aliases
-            .get(alias)
-            .ok_or_else(|| refusal(format!("no source is named {alias:?}"), at))?;
-        Ok(format!("{prefix}{column}"))
-    }
-
-    /// ZEN over `input.<column>` for a row expression; aggregates and windows refuse.
-    fn zen(&self, ex: &Ex, at: usize) -> Result<String, Refusal> {
-        Ok(match ex {
-            Ex::Column(alias, column) => {
-                zen_column(&self.column(alias.as_deref(), column, at)?, at)?
-            }
-            Ex::Number(number) => zen_number(number),
-            Ex::Text(text) => zen_text(text, at)?,
-            Ex::Bool(flag) => flag.to_string(),
-            Ex::Null => "null".to_owned(),
-            // Every compound form is wrapped whole: ZEN binds `not` looser
-            // than `??`, so an unwrapped `not (a) ?? b` would read as
-            // `not (a ?? b)`.
-            Ex::Not(inner) => format!("(not ({}))", self.zen(inner, at)?),
-            Ex::Negate(inner) => format!("(-({}))", self.zen(inner, at)?),
-            Ex::Binary(op, left, right) => {
-                format!("({} {op} {})", self.zen(left, at)?, self.zen(right, at)?)
-            }
-            Ex::IsNull(inner, negated) => format!(
-                "({} {} null)",
-                self.zen(inner, at)?,
-                if *negated { "!=" } else { "==" }
-            ),
-            Ex::Case(condition, then, otherwise) => format!(
-                "({} ? {} : {})",
-                self.zen(condition, at)?,
-                self.zen(then, at)?,
-                self.zen(otherwise, at)?
-            ),
-            Ex::Coalesce(args) => {
-                if args.len() < 2 {
-                    return Err(refusal("COALESCE takes two or more values", at));
-                }
-                // Nested left to right, so the tree does not rest on how ZEN
-                // associates `??`.
-                let mut parts = args.iter().map(|arg| self.zen(arg, at));
-                let first = parts
-                    .next()
-                    .ok_or_else(|| refusal("COALESCE takes two or more values", at))??;
-                parts.try_fold(
-                    first,
-                    |left, right: Result<String, Refusal>| -> Result<String, Refusal> {
-                        Ok(format!("({left} ?? {})", right?))
-                    },
-                )?
-            }
-            Ex::Call(call) => {
-                return Err(refusal(
-                    format!("{} is not a row expression here", call.name.to_uppercase()),
-                    call.at,
-                ));
-            }
-        })
-    }
+    /// Alias → the columns its scan reads: `id` and its stored properties.
+    columns: BTreeMap<String, BTreeSet<String>>,
 }
 
 struct Lowering<'c> {
@@ -1126,6 +1068,22 @@ impl Lowering<'_> {
     fn fresh(&mut self, stem: &str) -> String {
         self.counter = self.counter.saturating_add(1);
         format!("{stem}_{}", self.counter)
+    }
+
+    /// The columns a scan of `object_type` reads: `id` and stored properties.
+    fn columns(&self, object_type: &str) -> BTreeSet<String> {
+        let object = self
+            .catalog
+            .object_type_named(object_type)
+            .and_then(Result::ok);
+        let stored = object.into_iter().flat_map(|object| {
+            let properties = object
+                .properties
+                .iter()
+                .filter(|property| !property.computed);
+            properties.map(|property| property.id.as_str().to_owned())
+        });
+        std::iter::once("id".to_owned()).chain(stored).collect()
     }
 
     fn scan(&mut self, source: &Source, at: usize) -> Result<String, Refusal> {
@@ -1206,7 +1164,7 @@ impl Lowering<'_> {
                         join.at,
                     ));
                 };
-                object
+                let key = object
                     .keys
                     .iter()
                     .find(|key| key.components.len() == 1 && key.components.iter().any(|c| c.as_str() == joined_column))
@@ -1219,10 +1177,23 @@ impl Lowering<'_> {
                             ),
                             join.at,
                         )
-                    })?
+                    })?;
+                // The plan reads a key named `id` as the row's own id.
+                if key == "id" {
+                    return Err(refusal(
+                        format!(
+                            "{}'s key on {joined_column} is named \"id\", which a plan reads as the row id",
+                            join.source.name
+                        ),
+                        join.at,
+                    ));
+                }
+                key
             };
             json!({"key": {"left": [scope.column(Some(&outer), &outer_column, join.at)?], "right": key}})
         };
+        let columns = self.columns(&join.source.name);
+        scope.columns.insert(alias.clone(), columns);
         scope
             .aliases
             .insert(alias, (join.source.name.clone(), prefix.clone()));
@@ -1247,6 +1218,7 @@ impl Lowering<'_> {
                 (select.from.name.clone(), String::new()),
             )]),
             base: select.from.alias.clone(),
+            columns: BTreeMap::from([(select.from.alias.clone(), self.columns(&select.from.name))]),
         };
         for join in &select.joins {
             node = self.join(&node, &mut scope, join)?;
@@ -1284,8 +1256,15 @@ impl Lowering<'_> {
                 }
             })
         };
-        // Columns computed before grouping or windowing: grain passthroughs plus each needed value.
-        let mut prepared: Vec<(String, String)> = Vec::new();
+        let mut selected = BTreeSet::new();
+        for (index, item) in select.items.iter().enumerate() {
+            let name = name_of(item, index);
+            if !selected.insert(name.clone()) {
+                return Err(refusal(format!("{name:?} is selected twice"), item.at));
+            }
+        }
+        // Columns computed before grouping: each needed value, its ZEN and where it is written.
+        let mut prepared: Vec<(String, String, usize)> = Vec::new();
         // Every source's id passes through: whatever the joins make the grain,
         // it is among these columns.
         let grain_columns: Vec<String> = std::iter::once(select.from.alias.clone())
@@ -1296,11 +1275,15 @@ impl Lowering<'_> {
             let mut group_by = Vec::new();
             let mut measures = Vec::new();
             let mut keys: Vec<(Ex, String)> = Vec::new();
+            // What each plain key column carries, for windows over the groups.
+            let mut carried: Vec<(String, String)> = Vec::new();
             for (ex, at) in &select.group_by {
                 let (value, grain_unit) = if let Ex::Call(call) = ex
                     && call.name == "date_trunc"
                 {
-                    let [Ex::Text(unit), value] = call.args.as_slice() else {
+                    let ([Ex::Text(unit), value], None, false, false) =
+                        (call.args.as_slice(), &call.over, call.distinct, call.star)
+                    else {
                         return Err(refusal("DATE_TRUNC('week', column)", call.at));
                     };
                     (value.clone(), Some(unit.to_ascii_lowercase()))
@@ -1322,7 +1305,7 @@ impl Lowering<'_> {
                         },
                         |(index, item)| name_of(item, index),
                     );
-                prepared.push((name.clone(), scope.zen(&value, *at)?));
+                prepared.push((name.clone(), scope.zen(&value, *at)?, *at));
                 if let Some(unit) = &grain_unit {
                     if !["day", "week", "month", "quarter", "year"].contains(&unit.as_str()) {
                         return Err(refusal(
@@ -1332,6 +1315,7 @@ impl Lowering<'_> {
                     }
                     group_by.push(json!({"column": name, "grain": unit}));
                 } else {
+                    carried.push((scope.zen(&value, *at)?, name.clone()));
                     group_by.push(json!({"column": name}));
                 }
                 keys.push((ex.clone(), name));
@@ -1339,7 +1323,15 @@ impl Lowering<'_> {
             let mut windows = Vec::new();
             for (index, item) in select.items.iter().enumerate() {
                 let name = name_of(item, index);
-                if keys.iter().any(|(ex, _)| *ex == item.ex) {
+                if let Some((_, key)) = keys.iter().find(|(ex, _)| *ex == item.ex) {
+                    if *key != name {
+                        return Err(refusal(
+                            format!(
+                                "group key {key:?} is selected again as {name:?}; select it once"
+                            ),
+                            item.at,
+                        ));
+                    }
                     continue;
                 }
                 if windowed(&item.ex) {
@@ -1375,18 +1367,30 @@ impl Lowering<'_> {
                         return Err(refusal("an aggregate takes one column", call.at));
                     };
                     let value_column = format!("{name}_value");
-                    prepared.push((value_column.clone(), scope.zen(arg, call.at)?));
+                    prepared.push((value_column.clone(), scope.zen(arg, call.at)?, call.at));
                     measures.push(json!({"name": name, "fn": function, "column": value_column}));
                 }
             }
             let projected = self.fresh("prepared");
-            let mut columns: Vec<Value> = grain_columns
+            // One value per name. Every source id passes through as itself
+            // (a projection keeps the grain), and the aggregate names a key
+            // by its column, so a key aliased to an id has no plan: it refuses
+            // rather than grouping by the id.
+            let mut columns: Vec<Value> = Vec::new();
+            let mut value_of: BTreeMap<String, String> = BTreeMap::new();
+            let ids = grain_columns
                 .iter()
-                .map(|column| json!({"name": column, "expression": format!("input.{column}")}))
-                .collect();
-            for (name, expression) in &prepared {
-                if !grain_columns.contains(name) {
-                    columns.push(json!({"name": name, "expression": expression}));
+                .map(|id| (id.clone(), format!("input.{id}"), 0));
+            for (name, expression, at) in ids.chain(prepared) {
+                match value_of.insert(name.clone(), expression.clone()) {
+                    None => columns.push(json!({"name": name, "expression": expression})),
+                    Some(earlier) if earlier == expression => {}
+                    Some(_) => {
+                        return Err(refusal(
+                            format!("{name:?} names two columns before grouping; alias it apart"),
+                            at,
+                        ));
+                    }
                 }
             }
             self.nodes.insert(
@@ -1406,13 +1410,15 @@ impl Lowering<'_> {
                     .enumerate()
                     .map(|(index, item)| (item.ex.clone(), name_of(item, index)))
                     .collect();
-                node = self.window(&node, &windows, &names)?;
+                node = self.window(&node, &windows, &names, &scope, &carried)?;
             }
             return Ok(node);
         }
         // A row-level SELECT: a projection that keeps the grain, then windows.
         let mut columns: Vec<Value> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
+        // What each projected column carries, for windows over the rows.
+        let mut carried: Vec<(String, String)> = Vec::new();
         let mut windows = Vec::new();
         for (index, item) in select.items.iter().enumerate() {
             let name = name_of(item, index);
@@ -1421,10 +1427,13 @@ impl Lowering<'_> {
                 continue;
             }
             seen.insert(name.clone());
-            columns.push(json!({"name": name, "expression": scope.zen(&item.ex, item.at)?}));
+            let expression = scope.zen(&item.ex, item.at)?;
+            carried.push((expression.clone(), name.clone()));
+            columns.push(json!({"name": name, "expression": expression}));
         }
         for column in &grain_columns {
             if !seen.contains(column) {
+                carried.push((format!("input.{column}"), column.clone()));
                 columns.insert(
                     0,
                     json!({"name": column, "expression": format!("input.{column}")}),
@@ -1444,84 +1453,9 @@ impl Lowering<'_> {
                 .enumerate()
                 .map(|(index, item)| (item.ex.clone(), name_of(item, index)))
                 .collect();
-            node = self.window(&node, &windows, &names)?;
+            node = self.window(&node, &windows, &names, &scope, &carried)?;
         }
         Ok(node)
-    }
-
-    /// One window node over output columns named by the select list.
-    fn window(
-        &mut self,
-        input: &str,
-        windows: &[(String, Ex, usize)],
-        names: &[(Ex, String)],
-    ) -> Result<String, Refusal> {
-        let column_of = |ex: &Ex, at: usize| -> Result<String, Refusal> {
-            let selected = names
-                .iter()
-                .find(|(selected, _)| selected == ex)
-                .map(|(_, name)| name.clone());
-            if let Ex::Column(_, column) = ex {
-                Ok(selected.unwrap_or_else(|| column.clone()))
-            } else {
-                selected.ok_or_else(|| refusal("a window reads a selected column", at))
-            }
-        };
-        let mut over: Option<&Over> = None;
-        let mut columns = Vec::new();
-        for (name, ex, at) in windows {
-            let Ex::Call(call) = ex else {
-                return Err(refusal("expected a window function", *at));
-            };
-            let Some(this) = &call.over else {
-                return Err(refusal("expected OVER", *at));
-            };
-            if over.is_some_and(|first| first != this) {
-                return Err(refusal("windows in one SELECT share one OVER (…)", *at));
-            }
-            over = Some(this);
-            let function = match (call.name.as_str(), call.args.as_slice()) {
-                ("row_number" | "rank" | "dense_rank", []) => {
-                    json!({"name": name, "fn": call.name})
-                }
-                ("lag" | "lead", [value]) => {
-                    json!({"name": name, "fn": call.name, "column": column_of(value, *at)?})
-                }
-                ("lag" | "lead", [value, Ex::Number(offset)]) => {
-                    json!({"name": name, "fn": call.name, "column": column_of(value, *at)?, "offset": offset.parse::<u32>().map_err(|_error| refusal("an offset is a whole number", *at))?})
-                }
-                ("sum", [value]) => {
-                    json!({"name": name, "fn": "running_sum", "column": column_of(value, *at)?})
-                }
-                _ => {
-                    return Err(refusal(
-                        format!(
-                            "{} OVER (…) has no typed window operator",
-                            call.name.to_uppercase()
-                        ),
-                        *at,
-                    ));
-                }
-            };
-            columns.push(function);
-        }
-        let over = over.ok_or_else(|| refusal("expected a window", 0))?;
-        let partition = over
-            .partition
-            .iter()
-            .map(|ex| column_of(ex, 0))
-            .collect::<Result<Vec<_>, _>>()?;
-        let order = over
-            .order
-            .iter()
-            .map(|(ex, descending)| Ok(json!({"column": column_of(ex, 0)?, "direction": if *descending { "desc" } else { "asc" }})))
-            .collect::<Result<Vec<_>, Refusal>>()?;
-        let id = self.fresh("windowed");
-        self.nodes.insert(
-            id.clone(),
-            json!({"op": "window", "input": input, "partitionBy": partition, "orderBy": order, "columns": columns}),
-        );
-        Ok(id)
     }
 }
 
@@ -2373,6 +2307,7 @@ mod properties {
                     ("shop.Order".to_owned(), String::new()),
                 )]),
                 base: "o".to_owned(),
+                columns: std::collections::BTreeMap::new(),
             };
             let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool(), &BTreeSet::new());
             let plan = match lower_sql(&sql, &catalog) {
