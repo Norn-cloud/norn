@@ -6,7 +6,8 @@ import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { Findings as FindingsPanel } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { readFindings } from "./evidence/review.ts"
+import type { StudioScope } from "./lib/definitions.ts"
+import { findingsQuery } from "./lib/record-read.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 
 /**
@@ -14,12 +15,13 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
  * so), the page shows why, with the findings and the actions that can set it right; otherwise the
  * record is simply not readable here.
  */
-export function QuarantinedRecord({ objectType, id, onDone }: { readonly objectType: string; readonly id: string; readonly onDone: () => void }) {
-  const findings = useQuery({
-    queryKey: ["findings", objectType, id],
-    queryFn: () => readFindings(objectType, id),
-    retry: false,
-  })
+export function QuarantinedRecord({ objectType, id, scope, onDone }: {
+  readonly objectType: string; readonly id: string
+  /** The workspace the record page's mode was decided in: the findings are read and cached there (#1745). */
+  readonly scope: StudioScope | undefined
+  readonly onDone: () => void
+}) {
+  const findings = useQuery(findingsQuery(objectType, id, scope))
   const corrections = useEvidenceActions(objectType, id)
   const absent = <p className="text-muted-foreground">This record is not available: it does not exist, or you may not read it.</p>
   if (findings.isPending) return <LoadState status="pending" skeleton="detail" loadingLabel="Reading record" onRetry={() => void findings.refetch()}>{() => null}</LoadState>
@@ -40,7 +42,7 @@ export function QuarantinedRecord({ objectType, id, onDone }: { readonly objectT
           <p className="text-sm text-muted-foreground">The cell loaded this record but does not serve it: it breaks a law. It stays out of every answer until it is corrected.</p>
         </div>
       </div>
-      <FindingsPanel objectType={objectType} id={id} actionFor={corrections.actionFor} />
+      <FindingsPanel objectType={objectType} id={id} scope={scope} actionFor={corrections.actionFor} />
       <History objectType={objectType} id={id} />
       <RecordActions objectType={objectType} id={id} onDone={onDone} />
       {corrections.sheet(onDone)}
