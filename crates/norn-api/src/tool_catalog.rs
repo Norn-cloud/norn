@@ -11,8 +11,9 @@
 //! each argument travels in the route's request.
 //!
 //! It is stamped onto that operation as `x-norn-tool`, so the published
-//! `OpenAPI` document carries the manifest; [`tool_operations`] returns the
-//! same operations for a host to build its MCP catalog from
+//! `OpenAPI` document carries the manifest;
+//! [`tool_operations`](crate::tool_catalog::tool_operations) returns the same
+//! operations for a host to build its MCP catalog from
 //! (`norn_projections::tool_manifest`) without generating the whole document;
 //! and that catalog's titles are the labels Studio's Sidekick shows for each
 //! tool call. Nothing here grants anything: a call is the route's own
