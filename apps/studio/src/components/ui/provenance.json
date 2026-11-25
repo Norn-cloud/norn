@@ -15,7 +15,6 @@
       "apps/studio/src/components/ui/card.tsx",
       "apps/studio/src/components/ui/chart.tsx",
       "apps/studio/src/components/ui/collapsible.tsx",
-      "apps/studio/src/components/ui/command.tsx",
       "apps/studio/src/components/ui/dialog.tsx",
       "apps/studio/src/components/ui/dropdown-menu.tsx",
       "apps/studio/src/components/ui/input-group.tsx",

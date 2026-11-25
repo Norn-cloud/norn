@@ -362,7 +362,6 @@ impl From<&Node<'_>> for UnaryNodeBehaviour {
                     InternalFunction::Avg => CompareWithReference(Equal),
                     InternalFunction::Min => CompareWithReference(Equal),
                     InternalFunction::Max => CompareWithReference(Equal),
-                    InternalFunction::Rand => CompareWithReference(Equal),
                     InternalFunction::Median => CompareWithReference(Equal),
                     InternalFunction::Mode => CompareWithReference(Equal),
                     InternalFunction::Floor => CompareWithReference(Equal),

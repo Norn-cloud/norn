@@ -11,7 +11,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {

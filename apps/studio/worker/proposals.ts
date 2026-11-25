@@ -49,17 +49,62 @@ const proposalOf = (row: Row): Proposal => ({
   decidedAtMs: row.decided_at,
 })
 
-/** Everything the assistant has spent, in millionths of a dollar: the cap is checked against this before each call. */
+/** Everything the assistant has spent (settled), in millionths of a dollar. */
 export async function spent(db: D1Database): Promise<number> {
   const row = await db.prepare("SELECT COALESCE(SUM(cost_micro_usd), 0) AS total FROM agent_spend").first<{ total: number }>()
   return row?.total ?? 0
 }
 
-/** Record each model call, paid for whether or not it produced a proposal. */
-export async function recordSpend(db: D1Database, userId: string, proposalId: string | null, answers: readonly Answer[], now: number): Promise<void> {
-  if (answers.length === 0) return
-  await db.batch(answers.map((answer) => db.prepare("INSERT INTO agent_spend (id, user_id, proposal_id, model, input_tokens, output_tokens, cost_micro_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), userId, proposalId, answer.model, answer.inputTokens, answer.outputTokens, answer.costMicroUsd, now)))
+/** What open requests have reserved and not yet settled, in millionths of a dollar: counted against the cap like spend. */
+export async function reserved(db: D1Database): Promise<number> {
+  const row = await db.prepare("SELECT COALESCE(SUM(reserved_micro_usd), 0) AS total FROM agent_reservation WHERE state = 'reserved'").first<{ total: number }>()
+  return row?.total ?? 0
+}
+
+export type Reservation = { readonly ok: true } | { readonly ok: false; readonly limit: "spend_cap" | "proposals_hourly" }
+
+/**
+ * Admit one assistant request before any provider call, in one conditional insert (atomic in D1): it
+ * takes one of the person's hourly slots and reserves `amountMicroUsd`, the worst case of every call it
+ * may make, only when settled spend plus every open reservation plus this one stays within the cap.
+ * Concurrent requests cannot both see the same remaining budget, and every admitted request holds a
+ * slot whether or not it ends in a proposal.
+ */
+export async function reserve(db: D1Database, request: { readonly requestId: string; readonly userId: string; readonly amountMicroUsd: number; readonly capMicroUsd: number; readonly hourly: number; readonly now: number }): Promise<Reservation> {
+  const { requestId, userId, amountMicroUsd, capMicroUsd, hourly, now } = request
+  const hourAgo = now - 3_600_000
+  const row = await db.prepare(`INSERT INTO agent_reservation (request_id, user_id, reserved_micro_usd, state, created_at)
+    SELECT ?, ?, ?, 'reserved', ?
+    WHERE (SELECT COUNT(*) FROM agent_reservation WHERE user_id = ? AND created_at > ?) < ?
+      AND (SELECT COALESCE(SUM(cost_micro_usd), 0) FROM agent_spend) + (SELECT COALESCE(SUM(reserved_micro_usd), 0) FROM agent_reservation WHERE state = 'reserved') + ? <= ?
+    RETURNING request_id`)
+    .bind(requestId, userId, amountMicroUsd, now, userId, hourAgo, hourly, amountMicroUsd, capMicroUsd).first<{ request_id: string }>()
+  if (row !== null) return { ok: true }
+  // Refused: say which limit (the decision itself was the insert above).
+  const recent = await db.prepare("SELECT COUNT(*) AS n FROM agent_reservation WHERE user_id = ? AND created_at > ?").bind(userId, hourAgo).first<{ n: number }>()
+  return { ok: false, limit: (recent?.n ?? 0) >= hourly ? "proposals_hourly" : "spend_cap" }
+}
+
+/**
+ * Settle a reservation once, by its request id: record each model call it made and close it, in one
+ * batch (a D1 transaction). A second settlement of the same request records nothing (each row is
+ * conditional on the reservation still being open, and its id is the request's). When any call's usage
+ * is uncertain, the request is recorded at no less than its whole reservation.
+ */
+export async function settle(db: D1Database, settlement: { readonly requestId: string; readonly userId: string; readonly proposalId: string | null; readonly answers: readonly Answer[]; readonly uncertain?: boolean; readonly now: number }): Promise<void> {
+  const { requestId, userId, proposalId, answers, now } = settlement
+  const open = await db.prepare("SELECT reserved_micro_usd AS amount FROM agent_reservation WHERE request_id = ? AND state = 'reserved'").bind(requestId).first<{ amount: number }>()
+  if (open === null) return
+  const known = answers.reduce((total, answer) => total + answer.costMicroUsd, 0)
+  const uncertain = settlement.uncertain === true || answers.some((answer) => answer.uncertain === true)
+  const rows = answers.map((answer) => ({ model: answer.model, input: answer.inputTokens, output: answer.outputTokens, cost: answer.costMicroUsd }))
+  if (uncertain && open.amount > known) rows.push({ model: "reservation.retained", input: 0, output: 0, cost: open.amount - known })
+  const stillOpen = "EXISTS (SELECT 1 FROM agent_reservation WHERE request_id = ? AND state = 'reserved')"
+  await db.batch([
+    ...rows.map((row, index) => db.prepare(`INSERT INTO agent_spend (id, user_id, proposal_id, model, input_tokens, output_tokens, cost_micro_usd, at) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ${stillOpen}`)
+      .bind(`${requestId}:${index}`, userId, proposalId, row.model, row.input, row.output, row.cost, now, requestId)),
+    db.prepare("UPDATE agent_reservation SET state = 'settled', settled_at = ? WHERE request_id = ? AND state = 'reserved'").bind(now, requestId),
+  ])
 }
 
 export async function insertProposal(db: D1Database, scope: Scope, proposal: Omit<Proposal, "installed" | "decidedAtMs" | "costMicroUsd">): Promise<void> {

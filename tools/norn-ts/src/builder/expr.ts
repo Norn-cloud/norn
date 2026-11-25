@@ -10,6 +10,7 @@
  * so a read of an undeclared path is a `NORN-FLOW-SLICE` finding before the
  * Rust checker sees the artifact.
  */
+import { assignable } from "./assignable.ts"
 import type { Json } from "../canonical.ts"
 import {
   type ValueSchema,
@@ -22,7 +23,8 @@ import {
   isScalar,
   literalSchema,
   mergeSchemas,
-  acceptsSchema,
+  nullable,
+  nonNull,
   record as recordSchema,
 } from "./schema.ts"
 
@@ -51,20 +53,23 @@ export type CallFn =
   | "interval_gap_seconds"
   | "interval_intersection_seconds"
   | "resolve_local_timestamp"
-/** norn-zen/6 closures (`crates/norn-expr/README.md`): the body sees the element under `alias`. */
+/** norn-zen/6 closures (`crates/norn-expr/README.md`): the body sees its own bound element. */
 export type ClosureFn = "some" | "all" | "none" | "one" | "filter" | "count" | "map"
 export type CompareOp = "==" | "!=" | "<" | "<=" | ">" | ">="
 export type LogicalOp = "and" | "or"
 
+type BinderId = number & { readonly __binder: unique symbol }
+let nextBinder = 0
+
 export type Expr =
   | { readonly _tag: "Binary"; readonly op: "+" | "-" | "*" | "/" | "%" | "in"; readonly left: Expr; readonly right: Expr }
   | { readonly _tag: "Call"; readonly fn: CallFn; readonly args: ReadonlyArray<Expr> }
-  | { readonly _tag: "Closure"; readonly fn: ClosureFn; readonly list: Expr; readonly alias: string; readonly body: Expr }
+  | { readonly _tag: "Closure"; readonly fn: ClosureFn; readonly list: Expr; readonly binder: BinderId; readonly body: Expr }
   | { readonly _tag: "Conditional"; readonly condition: Expr; readonly yes: Expr; readonly no: Expr }
   | { readonly _tag: "Coalesce"; readonly value: Expr; readonly fallback: Expr }
-  | { readonly _tag: "Unsafe"; readonly text: string; readonly schema: ValueSchema }
+  | { readonly _tag: "Bound"; readonly binder: BinderId; readonly path: ReadonlyArray<string> }
   | { readonly _tag: "Literal"; readonly value: string | number | boolean | null }
-  | { readonly _tag: "Ref"; readonly name: string; readonly path: ReadonlyArray<string> }
+  | { readonly _tag: "Input"; readonly name: string; readonly path: ReadonlyArray<string> }
   | { readonly _tag: "Compare"; readonly op: CompareOp; readonly left: Expr; readonly right: Expr }
   | { readonly _tag: "Logical"; readonly op: LogicalOp; readonly left: Expr; readonly right: Expr }
   | { readonly _tag: "Not"; readonly operand: Expr }
@@ -75,7 +80,6 @@ export const binary = (op: "+" | "-" | "*" | "/" | "%" | "in", left: Expr, right
 export const call = (fn: Extract<Expr, { _tag: "Call" }>["fn"], ...args: Expr[]): Expr => ({ _tag: "Call", fn, args })
 export const conditional = (condition: Expr, yes: Expr, no: Expr): Expr => ({ _tag: "Conditional", condition, yes, no })
 export const coalesce = (value: Expr, fallback: Expr): Expr => ({ _tag: "Coalesce", value, fallback })
-export const unsafeZen = (text: string, schema: ValueSchema): Expr => ({ _tag: "Unsafe", text, schema })
 
 /** `sum(list of numbers)`; zen sums an empty list to 0. */
 export const sum = (list: Expr): Expr => call("sum", list)
@@ -112,18 +116,12 @@ export const intervalIntersectionSeconds = (aStart: Expr, aEnd: Expr, bStart: Ex
 export const resolveLocalTimestamp = (localWallTime: Expr, ianaTz: Expr, dstPolicy: Expr): Expr =>
   call("resolve_local_timestamp", localWallTime, ianaTz, dstPolicy)
 
-const RESERVED_ALIASES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "true", "false", "null", "as"])
-/**
- * A closure over `list`. `body` receives the element as a reference to
- * `alias`, which renders as zen's `as` alias, so nested closures never rely on
- * the innermost-only `#`.
- */
-export function closure(fn: ClosureFn, list: Expr, alias: string, body: Expr | ((element: Expr) => Expr)): Expr {
-  if (!IDENT.test(alias) || RESERVED_ALIASES.has(alias)) throw new ExprError("NORN-FLOW-EXPRESSION", `closure alias ${JSON.stringify(alias)} must be a plain identifier other than ${[...RESERVED_ALIASES].join(", ")}`)
-  return { _tag: "Closure", fn, list, alias, body: typeof body === "function" ? body(ref(alias)) : body }
+/** Bind the element by identity; author parameter spellings never enter the IR. */
+export function closure(fn: ClosureFn, list: Expr, body: (element: Expr) => Expr): Expr {
+  const binder = nextBinder++ as BinderId
+  return { _tag: "Closure", fn, list, binder, body: body({ _tag: "Bound", binder, path: [] }) }
 }
-type ClosureBuilder = (list: Expr, alias: string, body: Expr | ((element: Expr) => Expr)) => Expr
-const closureOf = (fn: ClosureFn): ClosureBuilder => (list, alias, body) => closure(fn, list, alias, body)
+const closureOf = (fn: ClosureFn) => (list: Expr, body: (element: Expr) => Expr) => closure(fn, list, body)
 export const some = closureOf("some")
 export const all = closureOf("all")
 export const none = closureOf("none")
@@ -142,7 +140,11 @@ export function temporalKind(expr: Expr): "date" | "timestamp" | undefined {
 
 export const lit = (value: string | number | boolean | null): Expr => ({ _tag: "Literal", value })
 /** A read of `name` (a binding in scope) and a declared property path below it. */
-export const ref = (name: string, ...path: ReadonlyArray<string>): Expr => ({ _tag: "Ref", name, path: [...path] })
+export const ref = (name: string, ...path: ReadonlyArray<string>): Expr => ({ _tag: "Input", name, path: [...path] })
+export function field(reference: Expr, key: string): Expr {
+  if (reference._tag !== "Input" && reference._tag !== "Bound") throw new ExprError("NORN-FLOW-SLICE", "expected a property path")
+  return { ...reference, path: [...reference.path, key] }
+}
 const compare =
   (op: CompareOp) =>
   (left: Expr, right: Expr): Expr => ({ _tag: "Compare", op, left, right })
@@ -217,25 +219,27 @@ export function zenJson(value: Json): string {
 }
 
 /** FOLD-STEP-TYPE: record paths and bounded inline list indexes retain their declared schema. */
-function resolve(scope: Scope, name: string, path: ReadonlyArray<string>): { readonly zen: string; readonly schema: ValueSchema } {
-  const binding = scope.get(name)
+function resolve(binding: Binding | undefined, name: string, path: ReadonlyArray<string>): { readonly zen: string; readonly schema: ValueSchema } {
   if (!binding) {
-    throw new ExprError("NORN-FLOW-SLICE", `\`${name}\` is not bound here (bindings: ${[...scope.keys()].join(", ") || "none"})`)
+    throw new ExprError("NORN-FLOW-SLICE", `\`${name}\` is not bound here`)
   }
   let schema = binding.schema
+  let optional = false
   let zenPath = "zen" in binding ? binding.zen : ""
   for (const segment of path) {
     const arrayIndex = schema.type === "array" && /^(0|[1-9][0-9]*)$/.test(segment) && Number.isSafeInteger(Number(segment))
     if (arrayIndex && "zen" in binding) {
       throw new ExprError("NORN-FLOW-SLICE", "runtime array indexes are outside the admitted expression profile")
     }
-    const member = schema.type === "array" && arrayIndex ? schema.items : schema.type === "object" ? schema.properties[segment] : undefined
+    if (schema.type === "object" && !schema.required?.includes(segment)) optional = true
+    const member = schema.type === "array" && arrayIndex ? schema.items : schema.type === "object" && Object.hasOwn(schema.properties, segment) ? schema.properties[segment] : undefined
     if (!member) {
       throw new ExprError("NORN-FLOW-SLICE", `expected a declared field, got ${segment} on ${name}; did you mean ${schema.type === "object" ? Object.keys(schema.properties).join(", ") : "a record field"}?`)
     }
     zenPath += arrayIndex ? `[${segment}]` : `${zenPath ? "." : ""}${zenKey(segment)}`
     schema = member
   }
+  if (optional) schema = nullable(schema)
   if ("zen" in binding) return { zen: zenPath, schema }
   // An inline record: follow the path through its fields at build time.
   let expr = binding.inline
@@ -248,22 +252,62 @@ function resolve(scope: Scope, name: string, path: ReadonlyArray<string>): { rea
       const item = expr.items[Number(segment)]
       if (!item) throw new ExprError("NORN-FLOW-SLICE", `list index ${segment} is not set`)
       expr = item
-    } else if (expr._tag === "Ref") {
-      expr = { _tag: "Ref", name: expr.name, path: [...expr.path, ...path.slice(index)] }
+    } else if (expr._tag === "Input" || expr._tag === "Bound") {
+      expr = { ...expr, path: [...expr.path, ...path.slice(index)] }
       break
     } else {
       throw new ExprError("NORN-FLOW-SLICE", `\`${[name, ...path].join(".")}\` reads into a non-record value`)
     }
   }
-  return { zen: operand(expr, binding.scope), schema }
+  return { zen: operand(expr, binding.scope, new Map()), schema }
+}
+
+type Binders = ReadonlyMap<BinderId, { zen: string; schema: ValueSchema }>
+
+/** Reserve even bare column names (a decision input renders with an empty root). */
+function freshAlias(scope: Scope, binders: Binders, element: ValueSchema): string {
+  const used = new Set<string>()
+  const schemas = new Set<ValueSchema>()
+  const scopes = new Set<Scope>()
+  function reserveSchema(schema: ValueSchema): void {
+    if (schemas.has(schema)) return
+    schemas.add(schema)
+    if ("items" in schema) reserveSchema(schema.items)
+    if ("properties" in schema) for (const [key, member] of Object.entries(schema.properties)) {
+      used.add(key)
+      reserveSchema(member)
+    }
+  }
+  function reserveScope(bindings: Scope): void {
+    if (scopes.has(bindings)) return
+    scopes.add(bindings)
+    for (const [name, binding] of bindings) {
+      used.add(name)
+      reserveSchema(binding.schema)
+      if ("inline" in binding) reserveScope(binding.scope)
+      else for (const id of binding.zen.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []) used.add(id)
+    }
+  }
+  reserveScope(scope)
+  reserveSchema(element)
+  for (const binding of binders.values()) {
+    used.add(binding.zen)
+    reserveSchema(binding.schema)
+  }
+  let i = 0
+  while (used.has(`b${i}`)) i++
+  return `b${i}`
 }
 
 /** The closed schema of `expr` in `scope`, or {@link ExprError}. */
 export function typeOf(expr: Expr, scope: Scope): ValueSchema {
+  return infer(expr, scope, new Map())
+}
+
+function infer(expr: Expr, scope: Scope, binders: Binders): ValueSchema {
   switch (expr._tag) {
-    case "Unsafe": return expr.schema
     case "Binary": {
-      const l = typeOf(expr.left, scope), r = typeOf(expr.right, scope)
+      const l = infer(expr.left, scope, binders), r = infer(expr.right, scope, binders)
       if (expr.op === "in") {
         if (r.type !== "array" || typeof mergeSchemas(l, r.items) === "string") throw new ExprError("NORN-FLOW-EXPRESSION", "membership expects a value and an array of the same type")
         return boolean
@@ -273,7 +317,7 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       return numberSchema
     }
     case "Call": {
-      const args = expr.args.map((arg) => typeOf(arg, scope))
+      const args = expr.args.map((arg) => infer(arg, scope, binders))
       if (expr.fn === "concat") {
         if (args.length !== 2 || args[0]?.type !== "array" || args[1]?.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", "concat expects two arrays")
         const merged = mergeSchemas(args[0].items, args[1].items)
@@ -327,11 +371,10 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       return arity === 1 ? text() : boolean
     }
     case "Closure": {
-      const list = typeOf(expr.list, scope)
+      const list = infer(expr.list, scope, binders)
       if (list.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} iterates a list, not ${String(list.type)}`)
-      if (scope.has(expr.alias)) throw new ExprError("NORN-FLOW-EXPRESSION", `closure alias ${expr.alias} shadows a binding in scope; rename it`)
-      const inner: Scope = new Map([...scope, [expr.alias, { zen: expr.alias, schema: list.items }]])
-      const body = typeOf(expr.body, inner)
+      const inner = new Map(binders).set(expr.binder, { zen: "", schema: list.items })
+      const body = infer(expr.body, scope, inner)
       if (expr.fn === "map") {
         if (body.type === "null" || Array.isArray(body.type)) throw new ExprError("NORN-FLOW-EXPRESSION", "a map body must not be null")
         return array(body)
@@ -340,17 +383,21 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       return expr.fn === "filter" ? list : expr.fn === "count" ? integer : boolean
     }
     case "Conditional": {
-      if (typeOf(expr.condition, scope).type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", "conditional expects a boolean condition")
+      if (infer(expr.condition, scope, binders).type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", "conditional expects a boolean condition")
       // Empty arrays acquire the other branch's item type.
-      if (expr.yes._tag === "List" && expr.yes.items.length === 0) return typeOf(expr.no, scope)
-      if (expr.no._tag === "List" && expr.no.items.length === 0) return typeOf(expr.yes, scope)
-      const merged = mergeSchemas(typeOf(expr.yes, scope), typeOf(expr.no, scope))
+      const empty = (e: Expr) => e._tag === "List" && e.items.length === 0
+      if (empty(expr.yes) || empty(expr.no)) {
+        const other = infer(empty(expr.yes) ? expr.no : expr.yes, scope, binders)
+        if (!("items" in other)) throw new ExprError("NORN-FLOW-EXPRESSION", "empty list needs an array on the other branch")
+        return other
+      }
+      const merged = mergeSchemas(infer(expr.yes, scope, binders), infer(expr.no, scope, binders))
       if (typeof merged === "string") throw new ExprError("NORN-FLOW-EXPRESSION", merged)
       return merged
     }
     case "Coalesce": {
-      const value = typeOf(expr.value, scope), fallback = typeOf(expr.fallback, scope)
-      const nonnull = Array.isArray(value.type) ? { ...value, type: value.type[0] } as ValueSchema : value
+      const value = infer(expr.value, scope, binders), fallback = infer(expr.fallback, scope, binders)
+      const nonnull = nonNull(value)
       const merged = value.type === "null" ? fallback : mergeSchemas(nonnull, fallback)
       if (typeof merged === "string") throw new ExprError("NORN-FLOW-EXPRESSION", merged)
       return merged
@@ -360,11 +407,13 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       if (!schema) throw new ExprError("NORN-FLOW-EXPRESSION", "literal is not a JSON scalar")
       return schema
     }
-    case "Ref":
-      return resolve(scope, expr.name, expr.path).schema
+    case "Bound":
+      return resolve(binders.get(expr.binder), "closure element", expr.path).schema
+    case "Input":
+      return resolve(scope.get(expr.name), expr.name, expr.path).schema
     case "Compare": {
-      const left = typeOf(expr.left, scope)
-      const right = typeOf(expr.right, scope)
+      const left = infer(expr.left, scope, binders)
+      const right = infer(expr.right, scope, binders)
       if (expr.op === "==" || expr.op === "!=") {
         const comparable =
           isScalar(left) && isScalar(right) && (left.type === right.type || left.type === "null" || right.type === "null" || (isNumeric(left) && isNumeric(right)))
@@ -382,16 +431,16 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
     case "Not": {
       const operands = expr._tag === "Not" ? [expr.operand] : [expr.left, expr.right]
       for (const operand of operands) {
-        const t = typeOf(operand, scope)
+        const t = infer(operand, scope, binders)
         if (t.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr._tag === "Not" ? "not" : expr.op} takes booleans, not ${t.type}`)
       }
       return boolean
     }
     case "List": {
       if (expr.items.length === 0) throw new ExprError("NORN-FLOW-EXPRESSION", "an empty list has no item type; v1 lists are non-empty")
-      let items = typeOf(expr.items[0]!, scope)
+      let items = infer(expr.items[0]!, scope, binders)
       for (const item of expr.items.slice(1)) {
-        const merged = mergeSchemas(items, typeOf(item, scope))
+        const merged = mergeSchemas(items, infer(item, scope, binders))
         if (typeof merged === "string") throw new ExprError("NORN-FLOW-EXPRESSION", `list items disagree: ${merged}`)
         items = merged
       }
@@ -402,7 +451,7 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       for (const [name, value] of expr.fields) {
         zenKey(name)
         if (name in fields) throw new ExprError("NORN-FLOW-EXPRESSION", `record key ${name} is repeated`)
-        fields[name] = typeOf(value, scope)
+        fields[name] = infer(value, scope, binders)
       }
       return recordSchema(fields)
     }
@@ -411,69 +460,94 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
 
 /** ZEN text of `expr` in `scope`. Every compound operand is parenthesised, so precedence never matters. */
 export function render(expr: Expr, scope: Scope): string {
+  return renderIn(expr, scope, new Map())
+}
+
+function renderIn(expr: Expr, scope: Scope, binders: Binders): string {
   switch (expr._tag) {
-    case "Unsafe": return expr.text
-    case "Binary": return `${operand(expr.left, scope)} ${expr.op} ${operand(expr.right, scope)}`
+    case "Binary": return `${operand(expr.left, scope, binders)} ${expr.op} ${operand(expr.right, scope, binders)}`
     case "Call": return expr.fn === "concat"
-      ? `flatten([${expr.args.map((arg) => render(arg, scope)).join(", ")}])`
+      ? `flatten([${expr.args.map((arg) => renderIn(arg, scope, binders)).join(", ")}])`
       : expr.fn === "dateBefore"
-      ? `date(${render(expr.args[0]!, scope)}) < date(${render(expr.args[1]!, scope)})`
+      ? `date(${renderIn(expr.args[0]!, scope, binders)}) < date(${renderIn(expr.args[1]!, scope, binders)})`
       : expr.fn === "timestampBefore"
-      ? `${render(expr.args[0]!, scope)} < ${render(expr.args[1]!, scope)}`
+      ? `${renderIn(expr.args[0]!, scope, binders)} < ${renderIn(expr.args[1]!, scope, binders)}`
       : expr.fn === "timestampAtOrBefore"
-      ? `${render(expr.args[0]!, scope)} <= ${render(expr.args[1]!, scope)}`
-      : `${expr.fn}(${expr.args.map((arg) => render(arg, scope)).join(", ")})`
+      ? `${renderIn(expr.args[0]!, scope, binders)} <= ${renderIn(expr.args[1]!, scope, binders)}`
+      : `${expr.fn}(${expr.args.map((arg) => renderIn(arg, scope, binders)).join(", ")})`
     case "Closure": {
-      const inner: Scope = new Map([...scope, [expr.alias, { zen: expr.alias, schema: closureElement(expr, scope) }]])
-      return `${expr.fn}(${operand(expr.list, scope)} as ${expr.alias}, ${render(expr.body, inner)})`
+      const schema = closureElement(expr, scope, binders)
+      const alias = freshAlias(scope, binders, schema)
+      const inner = new Map(binders).set(expr.binder, { zen: alias, schema })
+      return `${expr.fn}(${operand(expr.list, scope, binders)} as ${alias}, ${renderIn(expr.body, scope, inner)})`
     }
-    case "Conditional": return `${operand(expr.condition, scope)} ? ${operand(expr.yes, scope)} : ${operand(expr.no, scope)}`
-    case "Coalesce": return `${operand(expr.value, scope)} ?? ${operand(expr.fallback, scope)}`
+    case "Conditional": return `${operand(expr.condition, scope, binders)} ? ${operand(expr.yes, scope, binders)} : ${operand(expr.no, scope, binders)}`
+    case "Coalesce": return `${operand(expr.value, scope, binders)} ?? ${operand(expr.fallback, scope, binders)}`
     case "Literal":
       return zenJson(expr.value)
-    case "Ref":
-      return resolve(scope, expr.name, expr.path).zen
+    case "Bound":
+      return resolve(binders.get(expr.binder), "closure element", expr.path).zen
+    case "Input":
+      return resolve(scope.get(expr.name), expr.name, expr.path).zen
     case "Compare":
     case "Logical":
-      return `${operand(expr.left, scope)} ${expr.op} ${operand(expr.right, scope)}`
+      return `${operand(expr.left, scope, binders)} ${expr.op} ${operand(expr.right, scope, binders)}`
     case "Not":
-      return `not ${operand(expr.operand, scope)}`
+      return `not ${operand(expr.operand, scope, binders)}`
     case "List":
-      return `[${expr.items.map((item) => render(item, scope)).join(", ")}]`
+      return `[${expr.items.map((item) => renderIn(item, scope, binders)).join(", ")}]`
     case "Record":
-      return `{${expr.fields.map(([name, value]) => `${zenKey(name)}: ${render(value, scope)}`).join(", ")}}`
+      return `{${expr.fields.map(([name, value]) => `${zenKey(name)}: ${renderIn(value, scope, binders)}`).join(", ")}}`
   }
 }
 
-function closureElement(expr: Extract<Expr, { _tag: "Closure" }>, scope: Scope): ValueSchema {
-  const list = typeOf(expr.list, scope)
+function closureElement(expr: Extract<Expr, { _tag: "Closure" }>, scope: Scope, binders: Binders): ValueSchema {
+  const list = infer(expr.list, scope, binders)
   if (list.type !== "array") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} iterates a list, not ${String(list.type)}`)
   return list.items
 }
 
-function operand(expr: Expr, scope: Scope): string {
-  const text = render(expr, scope)
+function operand(expr: Expr, scope: Scope, binders: Binders): string {
+  const text = renderIn(expr, scope, binders)
   // `dateBefore` / `timestampBefore` / `timestampAtOrBefore` are calls in the
   // AST but render as comparisons, so they are compound operands like any other (#1109).
-  const atomic = ["Literal", "Ref", "List", "Record", "Call", "Closure"].includes(expr._tag)
+  const atomic = ["Literal", "Input", "Bound", "List", "Record", "Call", "Closure"].includes(expr._tag)
     && !(expr._tag === "Call" && (expr.fn === "dateBefore" || expr.fn === "timestampBefore" || expr.fn === "timestampAtOrBefore"))
   return atomic ? text : `(${text})`
 }
 
-/** FOLD-OPERANDS: contextual empty arrays retain their declared item schema. */
-export function conforms(expr: Expr, expected: ValueSchema, scope: Scope): boolean {
-  if (expr._tag === "Conditional") return typeOf(expr.condition, scope).type === "boolean" && conforms(expr.yes, expected, scope) && conforms(expr.no, expected, scope)
+/** Check a contextual expression, retaining literal enum members and empty-list item types. */
+export function assignmentError(expr: Expr, expected: ValueSchema, scope: Scope, path = "$"): string | undefined {
+  if (expr._tag === "Conditional") {
+    if (typeOf(expr.condition, scope).type !== "boolean") return `${path} condition must be boolean`
+    return assignmentError(expr.yes, expected, scope, path) ?? assignmentError(expr.no, expected, scope, path)
+  }
   if (expr._tag === "Coalesce") {
-    const value = typeOf(expr.value, scope)
-    const nonnull = Array.isArray(value.type) ? { ...value, type: value.type[0] } as ValueSchema : value
-    return (value.type === "null" || acceptsSchema(expected, nonnull)) && conforms(expr.fallback, expected, scope)
+    const source = typeOf(expr.value, scope)
+    const problem = source.type === "null" ? undefined : assignable(nonNull(source), expected, path)
+    return problem ?? assignmentError(expr.fallback, expected, scope, path)
   }
-  const target = Array.isArray(expected.type) ? { ...expected, type: expected.type[0] } as ValueSchema : expected
-  if (expr._tag === "Literal" && typeof expr.value === "string" && target.type === "string") return target.enum === undefined || target.enum.includes(expr.value)
-  if (expr._tag === "List" && target.type === "array") return expr.items.every(item => conforms(item, target.items, scope))
+  const target = nonNull(expected)
+  if (expr._tag === "List" && target.type === "array") {
+    for (const item of expr.items) {
+      const problem = assignmentError(item, target.items, scope, `${path}[]`)
+      if (problem) return problem
+    }
+    return undefined
+  }
   if (expr._tag === "Record" && target.type === "object") {
-    return (target.required ?? []).every(k => expr.fields.some(([name]) => name === k))
-      && expr.fields.every(([k, value]) => target.properties[k] !== undefined && conforms(value, target.properties[k], scope))
+    const keys = new Set<string>()
+    for (const [key, value] of expr.fields) {
+      zenKey(key)
+      if (keys.has(key)) return `${path}.${key} is repeated`
+      keys.add(key)
+      if (!Object.hasOwn(target.properties, key)) return `${path}.${key} is not declared`
+      const problem = assignmentError(value, target.properties[key]!, scope, `${path}.${key}`)
+      if (problem) return problem
+    }
+    for (const key of target.required ?? []) if (!keys.has(key)) return `${path}.${key} is required`
+    return undefined
   }
-  return acceptsSchema(expected, typeOf(expr, scope))
+  const source = expr._tag === "Literal" && typeof expr.value === "string" ? text([expr.value]) : typeOf(expr, scope)
+  return assignable(source, expected, path)
 }

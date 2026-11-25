@@ -14,6 +14,16 @@ first-party app's pattern wins, unless Studio's rule is stricter about authority
 accessibility or RTL.** Each such call is recorded where it is made, and in the token diff
 (section 17).
 
+**Owner decision (2026-11-25): Polar and a thin sidebar by default.** Every Norn UI (Studio,
+`@norn/ui`, first-party apps, generated apps) defaults to the `polar` skin and a thin, Apple-style
+source-list sidebar (`data-skin="polar"`, `data-shell="sidebar"`; sections 3 and 9.1). The
+first-party app's `open` skin and floating dock stay supported, but only as opt-ins: the sidebar is
+always the default, and an app may opt into the dock only as a non-default mode for kiosk or
+mobile-first surfaces, chosen explicitly by the app (section 9.2). This overrides
+the `open` + `dock` default merged in #1692. The rest of the first-party app's language still
+applies everywhere: the concentric double-shell `ShellCard`/`StatWell`, calm weights, dot-first
+status, the floating inset `DetailSheet` and the five-step type scale.
+
 Status words used below: **CURRENT** means shipped in `apps/studio` today (and, where a gate is
 named, enforced by it); **TARGET** means required for new work but not yet built, and tracked as a
 gap in section 18. A section marked CURRENT may contain TARGET items; those are marked inline. A
@@ -28,7 +38,9 @@ TARGET rule is never described as shipped.
    values the browser already holds. Fix the renderer or the server document, never the screen.
 2. **Calm, then clear.** Hierarchy comes from size, spacing and one tonal step between surfaces,
    not from weight, borders or colour. A screen reads in one breath: page title, a band of key
-   figures, then lists that open into a sheet.
+   figures, then lists that open into a sheet. The frame stays quiet as well: by default it is a
+   thin source-list sidebar on monochrome Polar surfaces (section 9.1), so the content carries the
+   colour.
 3. **One way to nest.** The concentric double shell (`ShellCard` around a well) is the only nesting
    pattern. Anything else that frames a frame is a bug.
 4. **Colour means something.** Surfaces are neutral. Saturated colour is reserved for status dots,
@@ -76,16 +88,24 @@ on skin, shell or scheme.
 
 | Attribute | Values | Owns |
 | --- | --- | --- |
-| `data-skin` | `open` (default), `polar`, `luma`, `glass` | Palette, radii, shadows. |
+| `data-skin` | `polar` (default), `open`, `luma`, `glass` | Palette, radii, shadows. |
 | `.dark` | present or absent | Light or dark scheme (OS preference unless the user or a theme forces one). |
-| `data-shell` | `dock` (TARGET default; `sidebar` is today's default), `sidebar` | Frame chrome and navigation geometry only (section 9). A user preference, persisted per browser. |
+| `data-shell` | `sidebar` (default), `dock` (opt-in) | Frame chrome and navigation geometry only (section 9). A user preference, persisted per browser. |
 | *(no attribute)* `minimal` | route-level, not a `data-shell` value | Chromeless routes (login, OAuth, embeds) render outside the shell (section 9.3). A stored preference can never select it. |
 | `data-density` | `comfortable` (default), `compact` | Row heights (`--density-*`); `compact` for builder views. |
 | `dir`, `lang` | `ltr` / `rtl`, BCP 47 | Direction and font pairing (section 14). |
 
-**Default skin is `open`** (TARGET; the first-party app's default and the look the owner chose). `polar` is the
-first-class monochrome alternative. `luma` and `glass` remain supported skins and follow the same
-geometry rules. This replaces Studio's earlier `polar` default; see section 17 for why.
+**Default skin is `polar`** (CURRENT: `storedSkin` in `src/lib/appearance.tsx`; owner decision,
+2026-11-25). It is monochrome ink on neutral surfaces, with colour only where section 13 allows it.
+`open` (the first-party app's white canvas with a blue accent) is the first-class alternative.
+`luma` and `glass` remain supported skins and follow the same geometry rules. This reverses the
+`open` default from #1692; section 17.1 records the decision.
+
+**Default shell is `sidebar`** (CURRENT: `storedShellChrome`; owner decision, 2026-11-25). It is
+the thin source list described in section 9.1, and it is always the default, in Studio and in every
+app. `dock` is never a default: an app may opt into it only as a non-default mode for kiosk or
+mobile-first surfaces, chosen explicitly by the app (section 9.2). A reader's stored choice wins
+over the default. A view never branches on the shell.
 
 **StudioTheme JSON (CURRENT, `src/lib/studio-theme.ts`).** Operators and tenants may supply a
 declarative theme (`version: 1`, `baseSkin`, `appearance`, `accent`, `canvas`, `colors`,
@@ -164,7 +184,9 @@ Measured pairs, reproducible from the values in this section and in `src/index.c
   - well: `--well` over card over canvas (a well is always inset in a card);
   - well-hover: `--well-hover` over well over card over canvas (a hovered row inside a well);
   - popover: `--popover` over canvas;
-  - dock: `--dock-surface` over canvas.
+  - dock: `--dock-surface` over canvas;
+  - sidebar: `--sidebar` over canvas; sidebar hover: `--sidebar-accent` at 50% over sidebar; sidebar
+    pill: `--sidebar-accent` over sidebar (measured in section 4.6).
 - **Surface sets:** text roles (`--action`, `--link`, `--foreground` as figure, `--muted-foreground`
   as unit) take the minimum over canvas, card, well, well-hover and popover; `--ring` over canvas,
   card and well; `--dock-indicator` on the dock; CTA ink on its two fills.
@@ -197,8 +219,11 @@ Floors: 4.5:1 text, 3:1 ring and indicator. Each minimum names the surface that 
 
 Status colour comes in two strengths. **Dot** tokens are saturated and used only for 6px dots, data
 bars and chart marks; a dot is always paired with a text label, so it is never the only carrier of
-the state. **Text** tokens are the AA-safe versions used when a value itself must be coloured (a
-signed delta, an "After" value, a page-head live line).
+the state. Navigation attention dots (the sidebar's and the dock's) are the exception: their state
+lives only in the control's accessible name, so they use their own 3:1 tokens (`--ring` in the
+sidebar, section 4.6; `--dock-indicator` on the dock, section 4.5). **Text** tokens are the
+AA-safe versions used when a value itself must be coloured (a signed delta, an "After" value, a
+page-head live line).
 
 | State | Dot token | light | dark | Text token | light | dark |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -232,7 +257,7 @@ signed delta, an "After" value, a page-head live line).
   id**, never the display name, so a rename or a switch between Arabic and English keeps the colour.
   Hard-coded hex in components (the first-party app's `DISC_BG`/`DISC_FG`) is replaced by these tokens.
 
-### 4.5 Dock
+### 4.5 Dock (opt-in shell)
 
 `--dock-surface` #1d1d20 / #222226, `--dock-well` #34343a / #3a3a41, `--dock-border`
 rgb(255 255 255 / .08), `--dock-foreground` #ffffff, `--dock-muted` #b4b4bc (8.16:1 / 7.70:1 on the
@@ -244,6 +269,57 @@ shipped `index.css` still uses #a5a5ad, which is 4.15:1 on glass light: see sect
 even in light schemes (polar-light `--action` #18181b on the dock is 1.05:1). Values (CURRENT in
 `index.css`): #6b98ff in `open`, `luma` and `glass`; #f4f4f5 in `polar`. It must reach 3:1 on the
 actual dock surface (`apps/studio/test/contrast.test.ts`, CURRENT); see the table in 4.2.
+
+### 4.6 Sidebar (default shell)
+
+The source list in section 9.1 uses the `--sidebar-*` family that `index.css` already defines
+(CURRENT values). These tokens are in the StudioTheme allowlist.
+
+| Token | open L | open D | polar L | polar D | luma L | luma D | glass L | glass D | Use |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `--sidebar` | #f6f6f7 | #09090a | #f6f6f8 | #0a0a0b | #f3f4f6 | #0b0b0e | rgb(246 248 254 / .62) | rgb(15 18 30 / .60) | Sidebar ground. Equal to `--shell` in every skin except `glass`, which uses a translucent material. |
+| `--sidebar-foreground` | #1b1b1d | #ececee | #18181b | #fafafa | #1b1b1d | #ececee | #1b1b1d | #ececee | Workspace and principal names in the header and footer. |
+| `--sidebar-accent` | #ececef | #18181b | #ebebef | #1d1d21 | #e8eaf0 | #18181f | rgb(255 255 255 / .72) | rgb(255 255 255 / .09) | The selection pill. At 50% it is the hover wash. |
+| `--sidebar-accent-foreground` | #1b1b1d | #ececee | #18181b | #fafafa | #1b1b1d | #ececee | #1b1b1d | #ececee | Label, icon and count of the current row, drawn on the pill. |
+| `--sidebar-border` | #ebebeb | #202024 | #e5e5ea | #232328 | #e2e4ea | #1e1e26 | rgb(58 109 240 / .14) | rgb(255 255 255 / .12) | Inline-end hairline and rail separators. Decorative only. |
+
+Resting rows, group headers and counts use `--muted-foreground` (section 4.1; `luma` and `glass`
+inherit `open`'s). Focus uses `--ring` (section 4.2). The source list does not read
+`--sidebar-primary`, `--sidebar-primary-foreground` or `--sidebar-ring`, because chrome gets no
+accent fills and `--sidebar-ring` (#3a6df0 in open light) is not the focus ring.
+
+Measured pairs use the formula and compositing of section 4.2. `glass` is composited over its
+`--canvas`, so the ground is the composite listed in the table below. Floors: 4.5:1 for text,
+3:1 for the ring and the attention dot.
+
+| Skin / scheme | ground | hover | pill | muted on ground | muted on hover | pill ink on pill | `--ring` on ground / pill | dot (`--ring`) on ground / hover / pill | pill vs ground |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| open L | #f6f6f7 | #f1f1f3 | #ececef | 4.98 | 4.77 | 14.59 | 5.03 / 4.61 | 5.03 / 4.82 / 4.61 | 1.09 |
+| open D | #09090a | #111113 | #18181b | 7.21 | 6.84 | 15.02 | 6.29 / 5.60 | 6.29 / 5.96 / 5.60 | 1.12 |
+| polar L | #f6f6f8 | #f1f1f4 | #ebebef | 6.12 | 5.86 | 14.90 | 7.16 / 6.50 | 7.16 / 6.86 / 6.50 | 1.10 |
+| polar D | #0a0a0b | #141416 | #1d1d21 | 7.36 | 6.84 | 16.10 | 7.72 / 6.56 | 7.72 / 7.18 / 6.56 | 1.18 |
+| luma L | #f3f4f6 | #eeeff3 | #e8eaf0 | 4.89 | 4.68 | 14.30 | 5.32 / 4.87 | 5.32 / 5.10 / 4.87 | 1.09 |
+| luma D | #0b0b0e | #121217 | #18181f | 7.12 | 6.77 | 14.97 | 5.43 / 4.88 | 5.43 / 5.16 / 4.88 | 1.11 |
+| glass L | #f3f5fc | #f7f9fd | #fcfcfe | 4.94 | 5.10 | 16.78 | 4.99 / 5.30 | 4.99 / 5.15 / 5.30 | 1.06 |
+| glass D | #0d101b | #181b25 | #232630 | 6.88 | 6.23 | 12.79 | 6.00 / 4.77 | 6.00 / 5.43 / 4.77 | 1.26 |
+
+- **The attention dot uses `--ring`, not `--dot-accent`.** The sidebar dot carries its state only
+  through the row's `aria-label` (section 9.1), so nothing visible sits beside it, and it must reach
+  3:1 on the ground, the hover wash and the pill. `--dot-accent` (`--action-dot`) does not: open
+  and glass light #7f9ef4 is 2.40 / 2.30 / 2.20:1 and 2.38 / 2.46 / 2.53:1. `--ring` reaches
+  4.61:1 or more in every row, so the sidebar dot reuses it, just as the dock's dot has its own
+  `--dock-indicator` (section 4.5).
+- **Muted text never sits on the pill.** In the current row, the count also takes the pill's ink.
+  luma-light `--muted-foreground` on its pill would be 4.47:1, below the floor.
+- **The pill is not the only cue.** Its fill is only 1.06–1.26:1 against the ground, which is too
+  faint to carry state alone. The current row is the only row whose label and icon step up from
+  `--muted-foreground` to `--sidebar-accent-foreground`, and it is the only row with
+  `aria-current="page"` (section 9.1).
+- **The mobile sheet is opaque.** It uses `--shell` in every skin, so `glass` drops the translucent
+  material there. On the glass ground (#eef1f8 / #0b0d17), muted text is 4.76 / 7.02:1 on the
+  ground and 4.97 / 6.41:1 on the hover wash, the pill ink is 16.61 / 13.27:1, and `--ring`
+  (focus ring and attention dot) is 4.80 / 6.12:1 on the ground, 5.02 / 5.60:1 on the hover wash
+  and 5.25 / 4.95:1 on the pill.
 
 ---
 
@@ -284,7 +360,8 @@ skin flattens it (Studio's `polar` used to drop the inset; that is now a gap).
 | `--dock-shadow` | `0 10px 30px -8px rgb(0 0 0/.35), 0 2px 6px rgb(0 0 0/.12)` | `0 10px 30px -8px rgb(0 0 0/.7)` |
 | `--elevation-node`, `-node-hover`, `-float` | Studio's canvas values (CURRENT) | same |
 
-Four levels only: flat (canvas, wells), card (`panel-shadow`), popup, and sheet/dock. Shadows are
+Four levels only: flat (canvas, wells, the sidebar), card (`panel-shadow`), popup, and
+sheet/dock (the mobile sidebar sheet takes `--sheet-shadow`). Shadows are
 whisper contact plus soft ambient; never a hard blob. Dark mode lifts with a 1px inner highlight
 rather than a darker shadow.
 
@@ -297,6 +374,8 @@ rather than a darker shadow.
   is 14.4px here. Anything that must be an exact pixel size (touch targets, radii, dots, the sheet
   inset, slide distances) is written as an arbitrary px value (`top-[12px]`, `min-h-[44px]`).
 - **Canvas:** content `max-width: 1220px`, centred, `px-6 sm:px-8`. Top bar `max-width: 1260px`.
+  In the sidebar shell both are centred in the content column beside the sidebar, not in the
+  viewport.
 - **Vertical rhythm:** page head `pt-6 pb-5`; `gap-4` between cards in a band; `mt-6` between bands.
 - **Dock clearance:** in dock shell, the scroll container ends with `pb-32` so the last row clears
   the dock.
@@ -318,7 +397,7 @@ Fonts: `--font-sans: "Geist Variable", "Cairo Variable", ui-sans-serif, system-u
 
 | Step | Token | Size | px @ 90% | Line height | Tracking | Weight | Used for |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `--text-meta` | 0.84rem | 12.1 | 1.4 | 0 | 400 | Secondary runs, counts, timestamps, mono codes, table headers, SourceTag, footnotes, dock labels. |
+| 1 | `--text-meta` | 0.84rem | 12.1 | 1.4 | 0 | 400 | Secondary runs, counts, timestamps, mono codes, table headers, SourceTag, footnotes, sidebar group headers, dock labels. |
 | 2 | `--text-body` | 1rem | 14.4 | 1.45 | -0.003em | 400 | List titles, card titles, Props, buttons, menu rows, inputs, prose. |
 | 3 | `--text-heading` | 1.35rem | 19.4 | 1.25 | -0.02em | 500 | Sheet titles, dialog titles. |
 | 4 | `--text-title` | 1.85rem | 26.6 | 1.15 | -0.025em | 500 | Page `h1`. |
@@ -334,6 +413,8 @@ labels and minimap text are the one exception (they scale with the canvas zoom) 
 
 - **400** everywhere by default: card headers, list titles, KPIs, Props, body.
 - **500** only for: page `h1`, sheet/dialog titles, the active pill or segment, the primary CTA.
+  The current sidebar row is not an active pill in this sense. It stays at 400, and the selection
+  pill and ink step show it (section 9.1).
 - **600 and 700 are banned** in UI chrome and content, including canvas node cards and decision
   trees. Emphasis comes from size step, `--foreground` vs `--muted-foreground`, or position.
 - No uppercase chrome (section banners, eyebrow labels). Codes keep their own case.
@@ -344,7 +425,159 @@ labels and minimap text are the one exception (they scale with the canvas zoom) 
 
 Shells own frame chrome and navigation only. A view never knows which shell it is in.
 
-### 9.1 `dock` (TARGET default for operators and every app surface)
+### 9.1 `sidebar` (default for every Norn UI)
+
+The sidebar is a thin source list on the start side, like the macOS sidebars in Finder, Notes and
+Mail. It is quiet, compact and one column wide, and it stays out of the content's way. The default
+itself is CURRENT. The geometry below is TARGET until the restyle lane lands it (section 18).
+
+**Frame**
+
+- The sidebar runs the full height of the start side (the right side in RTL). The top bar and the
+  page sit in the content column beside it.
+- **Width:** **232px** expanded (`--sidebar-width`), and **48px** collapsed to an icon rail
+  (`--sidebar-width-icon`: an 8px gutter, a 32px row, an 8px gutter). Both are in px, so they do
+  not scale with the 90% root. At 232px, after the 8px list gutter, 8px row padding, 16px icon and
+  8px gap, the label column is 176px, about 24 characters at step 2.
+- **Ground:** `--sidebar`, which equals `--shell` in every skin except `glass` (section 4.6). In
+  `polar` that is the same #f6f6f8 / #0a0a0b as `--canvas`. A 1px `--sidebar-border` hairline on
+  the inline-end edge (`border-e`) separates the sidebar from the content. The sidebar is flat: no
+  shadow, no card and no inset frame (section 6).
+- **Translucent material (optional):** a skin may make `--sidebar` translucent, and today only
+  `glass` does. Its text is measured composited over `--canvas` and must still reach 4.5:1
+  (section 4.6). Under `prefers-reduced-transparency: reduce`, the sidebar falls back to opaque
+  `--shell`.
+- **Content area:** the `--canvas` ground, holding the content column from section 7. ShellCards
+  and StatWells sit directly on it. The content area gets no frame of its own, because a rounded,
+  bordered panel around ShellCards would put a card inside a card (section 10).
+
+**Top bar.** The top bar spans only the content column. It is `h-[52px]` with no bottom border, on
+the `--canvas` ground. On the start side: the sidebar toggle, then the breadcrumbs (breadcrumbs live
+in the bar, never in the page). On the end side, in order: search (`⌘K`), the perspective switch
+when the app has perspectives, page tools, the guarantee tick bar pill (section 12.4), the language
+toggle pill and the scheme toggle. The workspace switcher and the principal's avatar live in the
+sidebar.
+
+**Anatomy, top to bottom**
+
+1. **Header** (`h-[48px]`, `px-[8px]`): the workspace switcher, laid out as a row. It holds a 24px
+   org disc (avatar tokens, hashed by id), the workspace name (step 2, 400,
+   `--sidebar-foreground`) and a chevron (`--subtle-foreground`, decorative). Its menu holds the
+   workspace, the access preview (where the server grants it) and the skin. Collapsed, only the
+   disc shows.
+2. **Navigation** (scrolls): the destinations every perspective shares (Home, Inbox), then the
+   groups.
+3. **Footer** (`px-[8px] pb-[8px]`): the assistant row (when the app has an assistant) and the
+   principal's row. The principal's row is a 24px Initials disc and the display name (step 2, 400,
+   `--sidebar-foreground`), and its menu holds account actions and sign-out. Collapsed, only the
+   icons and the disc show.
+
+**Rows**
+
+- **Size:** `h-[32px]`, which meets the 32px target in section 16.2. Rows use `--radius-row`,
+  `px-[8px]` and `gap-[8px]`, sit inside an 8px list gutter, and stack with no gap between them.
+- **Content:** a 16px lucide icon (1.6 stroke), then the label (step 2, `--text-body`, weight 400).
+  Icon and label are both `--muted-foreground` at rest. The label truncates with an ellipsis, and
+  the row's accessible name always starts with the full label.
+- **End slot** (at most one): either a count (step 1, tabular, `--muted-foreground`) or a 6px
+  `--ring` attention dot. There are no filled badges and no red count pills (section 13). The count
+  comes from the server, like StatWell values and the tick bar: a count the server did not send
+  renders nothing, never `0`. A visible count is part of the row's name. A dot is not, so a row
+  with a dot names its state in full, as in the dock rule in section 9.2:
+  `aria-label="Inbox, new activity"`. Because no visible text carries the dot's state, the dot must
+  reach 3:1 on the ground, the hover wash and the pill in every skin and scheme (section 4.6).
+- **Hover:** a `--sidebar-accent` wash at 50% (`hover:bg-sidebar-accent/50`). The text colour does
+  not change. Full strength is reserved for the selection pill.
+- **Current row:** the selection pill. Its fill is `--sidebar-accent`, and its label, icon and count
+  all step to `--sidebar-accent-foreground`. The weight stays 400. There is no ring, border, shadow
+  or accent bar. Exactly one row carries `aria-current="page"`: the row for the current page, or,
+  when the current page has no row of its own, its nearest listed ancestor.
+- **Focus:** a 2px `--ring` outline, drawn inside the 8px gutter so the sidebar's overflow never
+  clips it.
+- **Density:** `data-density` does not change sidebar rows. It applies only to content rows
+  (section 7).
+- **Nesting:** a destination may list its items under it. Items indent to the parent's label column
+  (`ps-[32px]`) and carry no icon, since everything under one destination is one kind. A
+  destination may split its items under sub-headings styled like group headers and indented to
+  the same column. Anything deeper belongs in the page, not the sidebar.
+
+**Groups**
+
+- A group header is a quiet label: step 1 (`--text-meta`), weight 400, `--muted-foreground`,
+  sentence case, with no tracking, rule or uppercase (section 8.2). Each group after the first has
+  12px above it.
+- Groups are collapsible. The header is the disclosure control: it carries `aria-expanded` and has
+  a 32px hit area (`h-[32px]`). Its chevron is `--subtle-foreground`, shows at the end side on hover
+  and focus, turns 90° when the group is open, and is mirrored in RTL. Where the primary input
+  cannot hover (`@media (hover: none)`, such as phones and tablets) and in the mobile sheet, the
+  chevron is always visible, so touch readers still see the disclosure. A group that holds the
+  current row always stays open (CURRENT, `SectionSidebar`).
+- Groups are lenses or workspaces chosen by the app. They are never an alphabetical dump of tables
+  or raw schema names (section 10).
+
+**Collapsed rail (48px)**
+
+- Each destination becomes a 32×32 icon button centred in the rail, and the current one keeps the
+  pill. Group headers turn into decorative 16px `--sidebar-border` hairlines (`aria-hidden`), and
+  each group stays a `role="group"` with an `aria-label`. Items are hidden. Activating a
+  destination that has no page of its own expands the sidebar to show its items (CURRENT,
+  `RailLink`).
+- Each icon's accessible name is its label plus its state, for example `"Inbox, 3 open"`. An
+  end-side tooltip shows the same text.
+
+**Width and persistence**
+
+- At 1024px and wider, the sidebar is expanded by default. From 640 to 1023px it is collapsed to
+  the rail by default. The reader's own choice is persisted per browser and wins at every width
+  from 640px up (TARGET).
+- Collapsing animates the width over 200ms, ease-out. Under `prefers-reduced-motion: reduce` it
+  switches instantly (section 15).
+
+**Below 640px: overlay sheet**
+
+- The sidebar leaves the layout. The top bar's toggle opens it as a modal sheet from the start
+  edge, built on the Base UI `Dialog`: it traps focus, makes the page `inert`, closes on Escape and
+  returns focus to the toggle. The dialog is named "Navigation" by a visually hidden
+  `Dialog.Title`, which Base UI wires to the popup's `aria-labelledby`.
+- **Geometry:** `top-[8px] bottom-[8px] start-[8px]`, with
+  `w-[min(320px,calc(100vw-56px))]`, so a strip of the page stays visible and tapping it closes the
+  sheet. It uses `--radius-sheet`, an opaque `--shell` ground (section 4.6), a `--panel-border`
+  ring, `--sheet-shadow` and the DetailSheet backdrop (section 11).
+- The anatomy matches the expanded sidebar, but every target is at least **44 × 44 CSS px**: rows
+  and group headers are `min-h-[44px]`, icons are 18px, and the header gains a close button
+  (`size-[44px]`, `aria-label="Close navigation"`). Following a link closes the sheet.
+- Motion: 150ms opacity plus a 16px inline slide from the start edge, mirrored in RTL (section 15).
+
+**Keyboard and accessibility**
+
+- **One navigation landmark.** `<nav aria-label="<app> navigation">` wraps every destination row,
+  expanded or collapsed. The workspace switcher and the account menu sit in the sidebar but outside
+  the landmark.
+- **Real links.** Rows are `<a href>` links, so opening in a new tab and copying the link both
+  work. Studio builds the list with the UI SDK `Tree`, following the APG navigation treeview: arrows
+  move between rows, Right and Left expand and collapse, Home and End jump, type-ahead works, and
+  Enter follows the link. Its `current` prop sets `aria-current="page"` (CURRENT). An app with no
+  nested items may use a plain list of links with disclosure buttons for its groups instead.
+- **Collapse toggle.** A visible icon button (`PanelLeft`, mirrored in RTL) at the start of the top
+  bar, shown at every width. It is `size-[32px]`, or `size-[44px]` below 640px. Its accessible name
+  stays "Sidebar" in both states, and it carries `aria-expanded`. At 640px and wider it also carries
+  `aria-controls` (the sidebar's id). Below 640px it carries `aria-haspopup="dialog"`, and it sets
+  `aria-controls` (the dialog's id) only while the sheet is open, because the closed dialog is not
+  in the DOM and `aria-controls` never names a missing id. Its tooltip reads "Hide sidebar ⌘B"
+  or "Show sidebar ⌘B", and `⌘B` / `Ctrl+B` toggles the sidebar (CURRENT).
+- **Focus is never stranded.** If focus was inside the sidebar when it collapses, it moves to the
+  current rail icon, or to the toggle when there is none (CURRENT, `WorkbenchFrame`).
+- **RTL.** The sidebar sits on the right, with its hairline on the inline-end edge (`border-e`).
+  Chevrons and the toggle icon flip, and rail tooltips open towards the content (section 14).
+
+### 9.2 `dock` (opt-in: kiosk and mobile-first operational apps)
+
+The dock is an alternative frame for apps whose readers work standing up or on a phone, such as
+kiosks and floor or field operations. It is never the default (owner decision, 2026-11-25): the
+sidebar is always the default, and an app may opt into the dock only as a non-default mode for
+kiosk or mobile-first surfaces, chosen explicitly by the app. A reader may also pick it as a stored
+preference (section 3). When the dock is on, every rule below applies in full, including the
+accessibility rules.
 
 - **Top bar:** `h-[4.5rem]`, **no bottom border**, no background change from the canvas. Start
   side: Norn mark (32px), then a workspace pill (`rounded-full`, `h-9`, 24px org disc, name,
@@ -370,12 +603,6 @@ Shells own frame chrome and navigation only. A view never knows which shell it i
     The dock may scroll horizontally on its toolbar axis; it never wraps.
 - `prefers-reduced-transparency` or `glass` fallbacks keep the dock opaque enough for 4.5:1 labels; with
   `--dock-muted` #b4b4bc the glass-light composite (#3f414a) holds 4.93:1 (TARGET until `index.css` adopts it).
-
-### 9.2 `sidebar` (opt-in, for builders)
-
-Collapsible spaces rail grouped by workspace or lens, never an alphabetical dump of tables or raw
-schema names. Pairs with `data-density="compact"`. The top bar keeps its controls; breadcrumbs live
-in the bar, not in the page.
 
 ### 9.3 `minimal` (route-level, TARGET)
 
@@ -413,10 +640,11 @@ compose these; they do not restyle them with ad-hoc classes.
 | **Canvas nodes** (`@xyflow/react`) | Studio's node elevation, 12px radius, accent selection ring, destructive failing ring. | Keep as is; weights follow section 8.2. | Bold node titles. |
 
 **Box rule (replaces "zero box-in-box").** Allowed frames are: ShellCard/StatWell (with exactly one
-well inside), popovers/menus/tooltips, DetailSheet and dialogs, the dock, hover/selection states of
-rows, and dashed Blueprint outlines for uncommitted proposals. A frame inside a well, three levels of
-borders, or a card inside a card is a defect. Open streams, spatial maps and canvases may still sit
-directly on the canvas with no card.
+well inside), popovers/menus/tooltips, DetailSheet and dialogs, the sidebar and its mobile sheet,
+the dock, hover/selection states of rows, and dashed Blueprint outlines for uncommitted proposals.
+A frame inside a well, three levels of borders, or a card inside a card is a defect. A framed
+content panel around the page's ShellCards is a card inside a card. Open streams, spatial maps and
+canvases may still sit directly on the canvas with no card.
 
 **Banned patterns** (reject in review): alphabetical table sidebars; 600/700 headers or uppercase
 banners; duplicate summary/metadata boxes that repeat the primary stream; raw internal jargon in
@@ -568,7 +796,7 @@ the principal may take it.
 ## 13. Status and colour discipline
 
 - Saturated colour appears only in: status dots, data bars and chart marks, avatar discs, the focus
-  ring, the dock's attention dot, and the single primary CTA.
+  ring, the sidebar's and the dock's attention dots, and the single primary CTA.
 - Coloured **text** appears only for: a PageHead live line, signed money or Before → After values,
   and inline links. Always the AA text tokens (`--success`, `--warning`, `--destructive-text`,
   `--link`), never the dot tokens.
@@ -600,8 +828,8 @@ the principal may take it.
   locales so tables align and copy matches. Arabic-Indic digits only in prose when the pack's
   locale asks. Never mix both in one view.
 - **Font pairing (TARGET):** Cairo for Arabic, matched to Geist's x-height; same weights (400/500).
-- Tables, schedules and dock order mirror. Charts with a time axis keep time running in the reading
-  direction of the locale.
+- Tables, schedules and the dock's order mirror, and the sidebar moves to the right side. Charts
+  with a time axis keep time running in the reading direction of the locale.
 - Every screen ships with an Arabic Playwright row and an RTL screenshot (section 16).
 
 ---
@@ -609,6 +837,8 @@ the principal may take it.
 ## 15. Motion
 
 - Popups and menus: 150ms opacity + scale 0.95 from `--transform-origin`.
+- Sidebar: collapse and expand animate the width over 200ms, ease-out. The mobile sidebar sheet
+  moves like the DetailSheet below, from the start edge.
 - Sheet: 150ms opacity + exactly 16px inline-axis slide from its edge (`translate-x-[16px]`, with
   `rtl:-translate-x-[16px]`; `translate-x-4` would be 14.4px at this root).
 - Hover and selection: 150–200ms colour transitions; canvas nodes lift 1.5px with `--ease-spring`.
@@ -638,7 +868,7 @@ the principal may take it.
   deferred inside that same handler, as `components/ui/toggle-group.tsx` does; capture-phase
   handlers race the roving focus and select the wrong item.
 - Primitives carry `data-slot` names (`panel`, `well`, `kpi`, `list-row`, `detail-sheet`,
-  `floating-dock`) so tests, skins and agents target structure, not class strings.
+  `sidebar`, `floating-dock`) so tests, skins and agents target structure, not class strings.
 - Selection and open sheets live in the URL, so an agent and a person share state by link.
 
 ### 16.2 Gates (every PR touching UI)
@@ -649,13 +879,15 @@ the principal may take it.
    the new tokens): across every skin × scheme, text ≥ 4.5:1 on its real surface (card **and**
    well, resting, hover, selected), including step-5 figures and their units; `--action` as text ≥
    4.5:1 on the same surfaces; `--primary-foreground` on `--primary` and on `--action-hover` ≥
-   4.5:1; focus rings, graph edges, chart marks and `--dock-indicator` on the dock ≥ 3:1; avatar
-   pairs ≥ 4.5:1. Dots are exempt only
+   4.5:1; focus rings, graph edges, chart marks, `--dock-indicator` on the dock and the sidebar's
+   `--ring` attention dot on its ground, hover wash and pill ≥ 3:1; avatar pairs ≥ 4.5:1. Other
+   dots are exempt only
    because they are always paired with a label; a gate check for that pairing is TARGET (see
    section 18).
    `--subtle-foreground` may not carry information.
-4. **Touch:** interactive targets ≥ 44 × 44 CSS px below 640px (dock, ListRow, pills, buttons,
-   sheet close, form inputs), written in px; ≥ 32px elsewhere.
+4. **Touch:** interactive targets ≥ 44 × 44 CSS px below 640px (sidebar rows, group headers and
+   toggle, dock, ListRow, pills, buttons, sheet close, form inputs), written in px; ≥ 32px
+   elsewhere.
 5. **Focus:** every control shows `focus-visible` outline 2px in `--ring` (dock: `--dock-ring`).
 6. **Type lock (TARGET lint):** no arbitrary `text-[…]` sizes and no `font-semibold`/`font-bold` in
    first-party screens; `font-medium` only on the allowed elements.
@@ -683,11 +915,12 @@ the principal may take it.
   only for live attention and highlighted causal links; Blueprint dashed overlays and
   `Before / Delta / After` diffs for uncommitted changes; committed changes ripple through the
   server-side trigger outbox (`#1650`) as `Stale` tasks, never silent drift or marking leaks.
-- **Visual references** (inspiration, not copies): `getopen.so` (open canvas, dark pill dock),
-  `polar.sh` (monochrome craft, carbon dark), The Weave (source-coloured provenance threads),
-  Floorplan (MIT; semantic zoom, Blueprint overlays), Archify (Apache-2.0; `SRC` badges, diffs),
-  `bilalgursen/liquid-glass` (MIT; optional single WebGL2 shader behind `glass`, CSS fallback
-  mandatory).
+- **Visual references** (inspiration, not copies): macOS source lists in Finder, Notes and Mail
+  (the default sidebar's geometry), `polar.sh` (monochrome craft, carbon dark, the default skin),
+  `getopen.so` (open canvas, dark pill dock, now opt-in), The Weave (source-coloured provenance
+  threads), Floorplan (MIT; semantic zoom, Blueprint overlays), Archify (Apache-2.0; `SRC` badges,
+  diffs), `bilalgursen/liquid-glass` (MIT; optional single WebGL2 shader behind `glass`, CSS
+  fallback mandatory).
 
 ### 17.1 Token diff: Studio `index.css` vs the first-party app
 
@@ -695,8 +928,10 @@ Same token, different values. "Pick" is what this spec adopts.
 
 | Skin / scheme | Token | Studio | First-party app | Pick | Why |
 | --- | --- | --- | --- | --- | --- |
-| all | default skin | `polar` | `open` | `open` | Owner chose the first-party app's look; `open` is still neutral surfaces with one accent, so colour discipline holds. `polar` stays one click away. |
-| all | default shell | `sidebar` | dock | `dock` | Non-negotiable 5; Studio's own spec already named the dock the target default. Builders opt into `sidebar`. |
+| all | default skin | `polar` | `open` | `polar` | **Owner decision, 2026-11-25:** the Polar look is the default for every Norn UI. This reverses the `open` pick from #1692. `open` stays a first-class alternative, one click away. |
+| all | default shell | `sidebar` | dock | `sidebar` (thin source list, section 9.1) | **Owner decision, 2026-11-25:** a thin, Apple-style sidebar is the default frame for every Norn UI. This reverses the `dock` pick from #1692. The dock is never a default: an app may opt into it only as a non-default mode for kiosk or mobile-first surfaces, chosen explicitly by the app (section 9.2). |
+| all | sidebar width | 17rem (244.8px at 90%) = a 3rem (43.2px) rail plus a spaces panel; collapses to the 3rem rail | — | 232px expanded, 48px rail, one column | Thin, Finder-style source list. Px so it does not scale with the root, and 48px fits a 32px row with 8px gutters. |
+| all | sidebar selection | `--background` fill, ring, `shadow-control`, 2.5px `--action` start bar, `--action` icon, weight 500 | — | `--sidebar-accent` pill, `--sidebar-accent-foreground` ink, weight 400 | A soft pill with no border or colour in chrome (sections 4.6 and 13). The ink step and `aria-current` back up a fill of 1.06–1.26:1. |
 | open L | `--radius-panel` / `--radius-well` | 1.25rem / 0.9375rem (18 / 13.5px at 90%) | 20px / 15px | 20px / 15px | Non-negotiable 1; px so geometry does not scale with the root. |
 | open L | `--action`, `--primary`, `--ring` | #2e60e0 | #3a6df0 | #2e60e0 | White on #3a6df0 is 4.54:1 (knife-edge) and #3a6df0 as text on the well is 4.16:1 (fails); #2e60e0 is 5.43:1. Accessibility is stricter. #3a6df0 stays as `--chart-1`. |
 | open L | `--action-hover` | #2451c7 | #2d5de0 | #2451c7 | Follows the action pick. |
@@ -732,13 +967,12 @@ Same token, different values. "Pick" is what this spec adopts.
 
 ## 18. Conformance gaps in Studio today
 
-Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane owns them. Counts are
-`grep` occurrences in `apps/studio/src`.
+Measured on `origin/main` at `ff0f95bd5e`, except the sidebar-shell gaps, which were measured at
+`39e0c3e6ce`. **None are fixed here**; the restyle lane owns them. Counts are `grep` occurrences in
+`apps/studio/src`, and `file:line` references are relative to `apps/studio/src` at the stated sha.
 
 **Tokens and theming (`src/index.css`, `src/lib/appearance.tsx`, `src/lib/studio-theme.ts`)**
 
-- [ ] Default skin is `polar` (`storedSkin`) and default shell is `sidebar` (`storedShellChrome`);
-  spec: `open` + `dock`.
 - [ ] Radii in rem (scale with the 90% root); `polar`, `luma`, `glass` radii break the concentric
   rule; `[data-skin="polar"] [data-slot="panel"] { padding: 0 }` and the polar KPI well override
   flatten the double shell.
@@ -747,6 +981,12 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
   `--radius-row/sheet/search/dock/popup`; StudioTheme allowlist needs the new colour tokens.
 - [ ] Solid `bg-action` fills (4 uses) put `--action-foreground` on the text-role `--action`: 2.78:1
   on open-dark #6b98ff and 3.62:1 on luma-dark #7c74ff. Solid fills move to `bg-primary`.
+- [ ] The `polar` default holds only once JS runs. Bare `:root` (`index.css:24`) and the
+  `:root:not([data-skin])` rules (`index.css:487-502`) are the `open` palette and geometry.
+  `polar` arrives only when `main.tsx:129` calls `applyAppearance`, which sets `data-skin`
+  (`lib/appearance.tsx:88`), and `index.html` has no pre-paint script. So the first paint, and any
+  page that loads `index.css` without that call, renders `open`. Spec: the bare-root palette is
+  `polar`, so the default holds without JS.
 - [ ] `--font-sans` has no Arabic pairing (no Cairo; not in `package.json`).
 - [ ] No `minimal` route-level chromeless frame; login and OAuth use shadcn `Card`.
 - [ ] Type tokens are 0.8125/0.9375/1.0625/1.75/2rem; body is 0.875rem.
@@ -800,15 +1040,87 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
   `dashboards/tile-view.tsx`, `objects.tsx`, `grid/records-grid.tsx`, `learning/cases-page.tsx`,
   `lib/inspector.tsx`. Widths vary (`sm:max-w-lg` to `sm:max-w-4xl`). Replace with one DetailSheet.
 
-**Shell and dock (`shell.tsx`)**
+**Sidebar shell, the default (`shell.tsx`, `components/ui/sidebar.tsx`; section 9.1)**
 
-- [ ] `FloatingDock` is icon-only at every width; no labels below 640px; buttons are `size-10`
-  (36px at the 90% root), under the 44px target.
-- [ ] Dock attention dot uses physical `right-[7px]` and is colour-only (no accessible text).
-- [ ] Dock-mode top bar (`data-slot="dock-topbar"`) is borderless but `h-[4.4rem]` on
-  `bg-background`, and has no guarantee tick bar, language pill or scheme toggle.
-- [ ] The top-bar Notifications popover renders a hard-coded "Nothing yet." instead of a
-  server-backed list or an honest unavailable state.
+- [ ] The sidebar has two columns instead of one source list. A permanent 3rem rail (`Rail`,
+  `shell.tsx:471-505`) sits beside the spaces panel (`shell.tsx:1169-1179`), and collapsing hides
+  only the panel (`shell.tsx:1174`). Spec: one 232px column that collapses to a 48px rail.
+- [ ] Widths are in rem: `--sidebar-width: 17rem` and `--sidebar-width-icon: 3rem`, which are
+  244.8px and 43.2px at the 90% root (`shell.tsx:1252`). The primitive's defaults are 16rem, 18rem
+  on mobile and 3rem (`components/ui/sidebar.tsx:29-31`). Spec: 232px and 48px.
+- [ ] Rows are `h-7.5` (27px) at `text-sm`, under the 32px target, with labels at
+  `text-sidebar-foreground/80` (`shell.tsx:509`). Rail buttons are `size-8`, which is 28.8px
+  (`shell.tsx:417`).
+- [ ] The current row uses `bg-background`, `ring-1`, `shadow-control`, `font-medium`, a 2.5px
+  `--action` start bar and an `--action` icon (`shell.tsx:509`). The current rail icon uses an
+  accent wash and ring (`bg-action/12 text-action ring-1 ring-action/20`, `shell.tsx:418` and
+  `:446`). Spec: the neutral `--sidebar-accent` pill with `--sidebar-accent-foreground` ink at
+  weight 400, with no ring, bar or accent colour.
+- [ ] Hover is full strength and changes the text colour. Rows hover at `hover:bg-sidebar-accent
+  hover:text-sidebar-foreground` (`shell.tsx:509`) and rail buttons at `hover:bg-sidebar-accent
+  hover:text-foreground` (`shell.tsx:417`). Full `--sidebar-accent` is the new selection pill, so
+  once the pill lands a hovered row would look selected. Spec: a 50% `--sidebar-accent` wash with
+  no text change.
+- [ ] Group headers are uppercase, `font-semibold` and tracked, at `text-[0.6875rem]`, with an
+  `h-6` (21.6px) disclosure target (`shell.tsx:613`). Sub-headings are also `h-6`
+  (`shell.tsx:647`). Spec: step 1, weight 400, sentence case, 32px hit area.
+- [ ] Counts are filled red badges in `font-semibold` at arbitrary sizes, on the rail
+  (`shell.tsx:427`) and on rows (`shell.tsx:659`). Spec: a muted step-1 count or a 6px `--ring`
+  dot, never a filled badge.
+- [ ] The workspace switcher's disc and name are `font-semibold`, and the disc is
+  `text-[0.6875rem]` (`shell.tsx:186` and `:188`).
+- [ ] There are two navigation regions. The rail is a `Toolbar` labelled "Studio" outside any
+  landmark (`shell.tsx:483`), and the panel is a separate `<nav>` named after the perspective
+  (`shell.tsx:583`). Spec: one `<nav aria-label="<app> navigation">` around every destination,
+  whether the sidebar is expanded or collapsed.
+- [ ] The content is framed. In sidebar mode, `SidebarInset` adds `md:my-2 md:me-2 md:rounded-shell
+  md:border md:shadow-shell` on `bg-background` (`shell.tsx:1181-1184`). That puts the ShellCards
+  inside a card, and in `polar` it paints the ground #ffffff (`--background`) instead of #f6f6f8
+  (`--canvas`), so white cards lose their contrast against the ground. Spec: an unframed `--canvas`
+  content area.
+- [ ] The sidebar-mode top bar is `h-12` (43.2px) with a `border-b` on `bg-background/95`
+  (`shell.tsx:1210`). It has no guarantee tick bar, language pill or scheme toggle. Spec: 52px,
+  borderless, on `--canvas`.
+- [ ] Sidebar-mode content uses `max-w-7xl px-5 py-7`, which is 1152px at the 90% root
+  (`shell.tsx:1223`). Spec: the 1220px column of section 7.
+- [ ] The toggle, `SidebarTrigger`, is `size-8` (28.8px) (`shell.tsx:1212`). It is named "Toggle
+  Sidebar" by an `sr-only` span and has no `aria-expanded` or `aria-controls`
+  (`components/ui/sidebar.tsx:253-276`).
+- [ ] The collapse state does not survive a reload. `SidebarProvider` writes the `sidebar_state`
+  cookie (`components/ui/sidebar.tsx:85`) but never reads it, and `defaultOpen` is hard-coded to
+  `true` (`:56`). There is also no width-based default that collapses to the rail from 640 to
+  1023px.
+- [ ] Mobile switches at 768px (`hooks/use-mobile.ts:3`), not 640px. The mobile sidebar is the
+  edge-attached `Sheet` (`components/ui/sidebar.tsx:181-202`), which has physical `left/right`,
+  `w-3/4`, and no inset or radius (`components/ui/sheet.tsx:53`). Its close button is hidden
+  (`[&>button]:hidden`, `components/ui/sidebar.tsx:189`), and its rows stay at 27px, under 44px.
+- [ ] Vendored parts are unused. Nothing outside `components/ui/sidebar.tsx` imports
+  `SidebarRail`, `SidebarInput`, `SidebarHeader`, `SidebarFooter`, `SidebarSeparator`,
+  `SidebarContent`, `SidebarGroup*` or `SidebarMenu*` (`:279-302` and `:317-712`; `SidebarInset`
+  at `:304` is in use). These parts carry
+  `font-medium`, `text-xs` and `ring-sidebar-ring`. Delete them rather than restyle them.
+- [ ] The contrast gate checks today's row and rail classes (`test/contrast.test.ts:385`). It has
+  to move to the section 4.6 pairs when the rows change: muted text on the 50% `--sidebar-accent`
+  hover wash, and `--ring` on `--sidebar` and on the pill, plus on the hover wash for the attention
+  dot, including `glass`, whose `--sidebar` is translucent. The StudioTheme validator checks muted
+  text on `sidebar` and ink on `sidebar-accent` (`lib/studio-theme.ts:553-566`), but it does not
+  check the hover wash or the ring (and so the dot) on the sidebar.
+- [ ] The top-bar Notifications popover renders a hard-coded "Nothing yet." in both shells
+  (`shell.tsx:922` and `:1202`), instead of a server-backed list or an honest unavailable state.
+
+**Dock shell, opt-in (`shell.tsx`; section 9.2)**
+
+These gaps apply only when an app or a reader opts into the dock, and the dock's rules still bind
+whenever it is on.
+
+- [ ] `FloatingDock` is icon-only at every width, with no labels below 640px. Its buttons are
+  `size-10` (36px at the 90% root), under the 44px target.
+- [ ] The dock's attention dot uses physical `right-[7px]` and is colour-only, with no accessible
+  text.
+- [ ] The dock-mode top bar (`data-slot="dock-topbar"`) is borderless, but it is `h-[4.4rem]` on
+  `bg-background` and has no guarantee tick bar, language pill or scheme toggle.
+- [ ] `index.css` `--dock-muted` is #a5a5ad (4.15:1 on the glass-light dock composite #3f414a);
+  the spec value is #b4b4bc (4.93:1) (section 4.5).
 
 **RTL**
 
@@ -827,8 +1139,6 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
   so a typed `Refusal` on those statuses is never shown (section 12.4).
 - [ ] An untyped 503 renders the unsupported-route copy with no Retry; it should read as a temporary
   outage with Retry, and only an untyped 404 keeps "doesn't take actions" (section 12.4).
-- [ ] `index.css` `--dock-muted` is #a5a5ad (4.15:1 on the glass-light dock composite #3f414a);
-  the spec value is #b4b4bc (4.93:1) (section 9.1 tokens).
 
 **Agent operability**
 
