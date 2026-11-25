@@ -34,6 +34,9 @@ path = "tests/suites.rs"
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
 duckdb = ["dep:duckdb"]
+# D136 / D137 (#1533, #1661): the native DataFusion analytical engine. Native
+# targets only; its Arrow (59.x) stays inside the adapter, apart from DuckDB's.
+datafusion = ["native", "dep:datafusion", "dep:parquet", "dep:futures", "dep:unicode-normalization"]
 # Test-only: `engine::FaultEngine` for deterministic fault injection. Enabled
 # only through dev-dependencies, never by a production build.
 fault-injection = []
@@ -63,6 +66,14 @@ tokio = { version = "1.53.1", features = ["rt", "sync"], optional = true }
 
 tempfile = { version = "3.27.0", optional = true }
 duckdb = { version = "=1.20000.1", default-features = false, features = ["bundled", "json", "parquet"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# D137: the DataFusion adapter's own engine and Parquet I/O. `recursive_protection`
+# keeps deep expression trees from overflowing the stack.
+datafusion = { version = "=55.3.0", default-features = false, features = ["parquet", "recursive_protection"], optional = true }
+parquet = { version = "=59.3.3", default-features = false, features = ["arrow", "snap", "zstd", "lz4", "flate2", "brotli"], optional = true }
+futures = { version = "0.3.34", default-features = false, features = ["std"], optional = true }
+unicode-normalization = { version = "0.1.26", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.129"

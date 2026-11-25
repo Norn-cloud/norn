@@ -66,10 +66,10 @@ use norn_api::clock::Clock;
 use norn_api::olap_credential::{Denied, Keyring, body_digest};
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    AnalyticalEngine, EngineOutcome, EngineRefusal, EvaluateRequest, ExportRequest,
-    FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest, PageRequest,
-    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId, dispatch_evaluate,
-    dispatch_members,
+    AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal, EvaluateRequest,
+    ExportRequest, FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest,
+    PageRequest, ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId,
+    dispatch_evaluate, dispatch_members,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -100,6 +100,9 @@ pub struct Config {
     pub keys_file: PathBuf,
     /// Engine settings: `NORN_OLAP_DATA`, `NORN_OLAP_MEMORY_LIMIT`, `NORN_OLAP_THREADS`.
     pub settings: Settings,
+    /// D136: the one engine this daemon runs, `NORN_OLAP_ENGINE` (`duckdb`,
+    /// the default, or `datafusion` in a build with it).
+    pub engine: AnalyticalEngineId,
 }
 
 impl Config {
@@ -144,7 +147,14 @@ impl Config {
             })
             .transpose()?
             .unwrap_or(1);
+        let engine = AnalyticalEngineId::from_name(
+            text("NORN_OLAP_ENGINE")?.as_deref().unwrap_or("duckdb"),
+        )?;
+        if engine == AnalyticalEngineId::DataFusion && !cfg!(feature = "datafusion") {
+            return Err("NORN_OLAP_ENGINE=datafusion needs a build with `datafusion`".to_owned());
+        }
         Ok(Self {
+            engine,
             addr: text("NORN_OLAP_ADDR")?.unwrap_or_else(|| "0.0.0.0:8790".to_owned()),
             keys_file,
             settings: Settings {
@@ -251,6 +261,30 @@ pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> s
     serve_with(listener, config, clock, Arc::new(NoSeam))
 }
 
+/// D136: the one engine `selected` at startup, over `settings`.
+fn open_engine(
+    selected: AnalyticalEngineId,
+    settings: Settings,
+) -> std::io::Result<Arc<dyn AnalyticalEngine>> {
+    match selected {
+        AnalyticalEngineId::DuckDb => Ok(Arc::new(Engine::new(settings)?)),
+        #[cfg(feature = "datafusion")]
+        AnalyticalEngineId::DataFusion => {
+            Ok(Arc::new(norn_cell::analytics::datafusion::Engine::new(
+                norn_cell::analytics::datafusion::Settings {
+                    root: settings.root,
+                    memory_limit: settings.memory_limit,
+                    threads: settings.threads,
+                },
+            )?))
+        }
+        #[cfg(not(feature = "datafusion"))]
+        AnalyticalEngineId::DataFusion => {
+            Err(std::io::Error::other("this build has no DataFusion engine"))
+        }
+    }
+}
+
 /// Points in a call the daemon announces to a [`Seam`], so a test can run
 /// other calls there and interleave them deterministically.
 pub trait Seam: Send + Sync {
@@ -274,7 +308,7 @@ pub fn serve_with(
     clock: Arc<dyn Clock>,
     seam: Arc<dyn Seam>,
 ) -> std::io::Result<()> {
-    let engine: Arc<dyn AnalyticalEngine> = Arc::new(Engine::new(config.settings)?);
+    let engine = open_engine(config.engine, config.settings)?;
     let gate = Arc::new(Gate {
         keys_file: config.keys_file,
         clock,

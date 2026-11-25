@@ -162,6 +162,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "owl-time-allen-lean",
+      "profile": "fast",
+      "command": "lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "transition-lean",
       "profile": "fast",
       "command": "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean",
@@ -887,6 +902,21 @@
       "classifications": [
         {
           "subsystem": "quantity-ledger",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "owl-time-allen-kani",
+      "profile": "full",
+      "command": "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/owl-time-v1/allen_kani.rs",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "assurance-certificates",
           "layer": "proof"
         }
       ],

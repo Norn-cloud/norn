@@ -10,10 +10,10 @@
     reason = "engine correspondence over the seeded demo cell"
 )]
 
+use super::analytics_backend::{Engine, Settings};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, EngineQuestions, Transport};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
-use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::{Exchange, InProcess};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -68,7 +68,11 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
         let engine = server::analytics(&host, &principals, &transport, None, &request)
             .expect("an engine route");
         let engine_document: Value = serde_json::from_str(&engine.body).unwrap();
-        assert_eq!(engine_document["engine"], "duckdb", "{name}");
+        assert_eq!(
+            engine_document["engine"],
+            super::analytics_backend::ENGINE_ID.as_str(),
+            "{name}"
+        );
         assert_eq!(profile_of(&engine), profile_of(&exact), "{name}");
     }
 }
@@ -77,7 +81,7 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
 type Edit = fn(&mut EngineAnswer);
 
 /// A transport whose engine answers `profile` and then has `edit` applied.
-struct Edited<F>(InProcess, F);
+struct Edited<F>(InProcess<Engine>, F);
 
 impl<F: Fn(&mut EngineAnswer) + Send + Sync> Transport for Edited<F> {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
@@ -95,7 +99,7 @@ impl<F: Fn(&mut EngineAnswer) + Send + Sync> Transport for Edited<F> {
     }
 }
 
-fn engine_in(dir: &tempfile::TempDir) -> std::io::Result<InProcess> {
+fn engine_in(dir: &tempfile::TempDir) -> std::io::Result<InProcess<Engine>> {
     Ok(InProcess(Engine::new(Settings {
         root: dir.path().to_path_buf(),
         memory_limit: "256MB".into(),
@@ -239,7 +243,7 @@ fn a_profile_of_another_model_is_never_accepted() -> Result<(), Box<dyn std::err
     let exchange = Exchange::new(
         norn_api::olap_credential::Issuer::parse(&secret)?,
         tenant,
-        norn_cell::analytics::EngineCapabilities::DUCKDB,
+        norn_cell::analytics::EngineCapabilities::of(super::analytics_backend::ENGINE_ID),
     );
     let mut answered = None;
     for _step in 0..8 {
