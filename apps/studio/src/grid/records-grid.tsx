@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/system/status-dot"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -6,7 +7,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, F
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { CopyId, PathText } from "@/components/copy-id"
 import { LoadState, ReadErrorState, WorkspaceUnavailable, WorkspaceUndecided, isWorkspaceUnavailableError, useBoundedWait } from "@/components/load-state"
-import { EmptyState } from "@/components/panel"
+import { EmptyState } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -307,7 +308,7 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
-            <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><span>{refused.message}</span>
+            <Dot tone="bad" /><span>{refused.message}</span>
             {sortProblems.map((problem) => <span key={`${problem.pointer}:${problem.code}`} className="text-meta">{problem.message}</span>)}
             <span className="flex-1" />
             <Button variant="outline" size="sm" className={pill} onClick={() => { setDraft([]); changeQuery({ sort: [], filter: null }) }}>Reset sort and filter</Button>
@@ -475,7 +476,7 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
               </div>
             </div>
           </div>
-          {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
+          {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 end-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
         </div>
 
         {!shownLifecycle && (

@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { BarChart3 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
 import type { DecidedScope } from "@/lib/workspace"
@@ -67,10 +67,10 @@ export function ProfilePanel({ objectType, scope, scales = new Map() }: {
   readonly scales?: ReadonlyMap<string, number>
 }) {
   const profile = useQuery({ queryKey: profileQueryKey(objectType, scope), queryFn: () => readProfile(objectType, scope), retry: false })
-  if (profile.isPending) return <p className="text-sm text-muted-foreground">Profiling the records…</p>
+  if (profile.isPending) return <p className="text-body text-muted-foreground">Profiling the records…</p>
   if (profile.isError) return profile.error instanceof NotServed
     ? <EmptyState icon={BarChart3} title="Not served">{profile.error.message}</EmptyState>
-    : <p role="alert" className="text-sm text-destructive">{profile.error.message}</p>
+    : <p role="alert" className="text-body text-destructive">{profile.error.message}</p>
   const read = profile.data
   // A numeric figure is written at its property's declared scale, as the record shows it.
   const scaled = (property: PropertyProfile, text: string) => property.kind === "numeric" ? atScale(text, scales.get(property.property)) : text
@@ -78,18 +78,18 @@ export function ProfilePanel({ objectType, scope, scales = new Map() }: {
   return (
     <Panel icon={BarChart3} label="Profile" action={<span className="text-meta text-muted-foreground">computed by the {engine} engine</span>}>
       <div className="space-y-3 p-1">
-        <Well className="flex flex-wrap items-baseline gap-x-6 gap-y-1 px-4 py-3 text-sm tabular-nums">
-          <span><b className="font-medium">{rows}</b> records profiled</span>
-          {withheldRows > 0 && <span><b className="font-medium">{withheldRows}</b> withheld from you, not counted</span>}
-          <span><b className="font-medium">{quarantinedRows}</b> in quarantine</span>
+        <Well className="flex flex-wrap items-baseline gap-x-6 gap-y-1 px-4 py-3 text-body tabular-nums">
+          <span><b>{rows}</b> records profiled</span>
+          {withheldRows > 0 && <span><b>{withheldRows}</b> withheld from you, not counted</span>}
+          <span><b>{quarantinedRows}</b> in quarantine</span>
           {approximate && <Badge variant="outline" title={`The cell profiles at most ${scanLimit} visible records; past that the figures cover only the first ${scanLimit}.`}>First {scanLimit} records</Badge>}
         </Well>
         {properties.length === 0
           ? <EmptyState icon={BarChart3}>This type declares no properties to profile.</EmptyState>
           : <TableCard><Table>
             <TableHeader><TableRow>
-              <TableHead>Property</TableHead><TableHead className="text-right">Values</TableHead><TableHead className="text-right">Empty</TableHead><TableHead className="text-right">Distinct</TableHead>
-              <TableHead className="text-right">Min</TableHead><TableHead className="text-right">Median</TableHead><TableHead className="text-right">Max</TableHead><TableHead>Distribution</TableHead>
+              <TableHead>Property</TableHead><TableHead className="text-end">Values</TableHead><TableHead className="text-end">Empty</TableHead><TableHead className="text-end">Distinct</TableHead>
+              <TableHead className="text-end">Min</TableHead><TableHead className="text-end">Median</TableHead><TableHead className="text-end">Max</TableHead><TableHead>Distribution</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {properties.map((property, index) => {
@@ -97,14 +97,14 @@ export function ProfilePanel({ objectType, scope, scales = new Map() }: {
                 const ranged = property.kind === "numeric" || property.kind === "temporal"
                 return (
                   <TableRow key={property.property}>
-                    <TableCell><div className="font-medium">{property.property.replaceAll("_", " ")}</div><div className="text-xs text-muted-foreground">{property.kind}</div></TableCell>
-                    <TableCell className="text-right tabular-nums">{property.count}</TableCell>
-                    <TableCell className="text-right tabular-nums" title={`${property.nulls} of ${property.count + property.nulls}`}>{percent(property.nulls, property.count + property.nulls)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{property.distinct}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{ranged ? scaled(property, profiled(read, `${at}/min`, property.min)) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-xs" title={ranged ? property.quantiles.map(({ percent: p }, q) => `p${p} ${profiled(read, `${at}/quantiles/${q}/value`, property.quantiles[q]?.value)}`).join(" · ") : undefined}>{ranged ? scaled(property, quantile(read, at, property, 50)) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{ranged ? scaled(property, profiled(read, `${at}/max`, property.max)) : ""}</TableCell>
-                    <TableCell>{property.histogram && property.histogram.bins.length > 0 ? <Bars read={read} at={at} histogram={property.histogram} /> : <span className="text-xs text-muted-foreground">{ranged ? "—" : `${property.distinct} distinct`}</span>}</TableCell>
+                    <TableCell><div className="">{property.property.replaceAll("_", " ")}</div><div className="text-meta text-muted-foreground">{property.kind}</div></TableCell>
+                    <TableCell className="text-end tabular-nums">{property.count}</TableCell>
+                    <TableCell className="text-end tabular-nums" title={`${property.nulls} of ${property.count + property.nulls}`}>{percent(property.nulls, property.count + property.nulls)}</TableCell>
+                    <TableCell className="text-end tabular-nums">{property.distinct}</TableCell>
+                    <TableCell className="text-end font-mono text-meta">{ranged ? scaled(property, profiled(read, `${at}/min`, property.min)) : ""}</TableCell>
+                    <TableCell className="text-end font-mono text-meta" title={ranged ? property.quantiles.map(({ percent: p }, q) => `p${p} ${profiled(read, `${at}/quantiles/${q}/value`, property.quantiles[q]?.value)}`).join(" · ") : undefined}>{ranged ? scaled(property, quantile(read, at, property, 50)) : ""}</TableCell>
+                    <TableCell className="text-end font-mono text-meta">{ranged ? scaled(property, profiled(read, `${at}/max`, property.max)) : ""}</TableCell>
+                    <TableCell>{property.histogram && property.histogram.bins.length > 0 ? <Bars read={read} at={at} histogram={property.histogram} /> : <span className="text-meta text-muted-foreground">{ranged ? "—" : `${property.distinct} distinct`}</span>}</TableCell>
                   </TableRow>
                 )
               })}

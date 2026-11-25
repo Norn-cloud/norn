@@ -464,7 +464,8 @@ item is marked TARGET.
 the `--canvas` ground. On the start side: the sidebar toggle, then the breadcrumbs (breadcrumbs live
 in the bar, never in the page). On the end side, in order: search (`⌘K`), the perspective switch
 when the app has perspectives, page tools, the guarantee tick bar pill (section 12.4), the language
-toggle pill and the scheme toggle (CURRENT since restyle 2, `TopBarExtras` in `shell.tsx`; they
+toggle pill and the scheme toggle (CURRENT since restyle 2: `TopBarExtras`, `LanguageSwitch` and
+`SchemeSwitch` in `src/top-bar-extras.tsx`, standalone so any shell places them; they
 give way as the bar narrows: the scheme toggle below a 36rem bar, the language pill below 64rem, the
 tick bar below 72rem, and on a phone the "Language and view" menu holds the language and the
 scheme). The workspace switcher and the principal's avatar live in the
@@ -804,7 +805,8 @@ reduced by `src/lib/screen/call.ts`). Each arm has one rendering:
 - After commit the sheet shows the receipt, the Before → After that actually happened (when the
   server returns it), and a link to lineage.
 
-The top bar's **rules tick bar** (CURRENT since restyle 2, `TickBar` + `RulesTickBar`) shows the
+The top bar's **rules tick bar** (CURRENT since restyle 2, `TickBar` + `RulesTickBar`, which matches the
+workspace and each read through `lib/state`'s `matchWorkspaceState` / `matchReadState`) shows the
 workspace's live laws, from two server reads only: the laws the catalog lists, and the held-back
 groups `GET /v1/inbox` returns. Ten hairline ticks fill in `--dot-held` for the share of rules the
 inbox lists as holding records back (at least one tick for any share, never all ten while one rule is
