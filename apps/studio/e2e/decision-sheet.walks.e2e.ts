@@ -54,7 +54,7 @@ function answer(msg: Extract<Msg, { kind: "outcome" }>): { status: number; body:
       const category = msg.category ?? "precondition"
       const code = String(msg.payload?.code ?? "decision.law_not_satisfied")
       const resolution = code === "decision.resolved" ? { resolution: { resolution: "decided", by: "Mona Ali", atMs: Date.UTC(2026, 10, 6, 9, 5) } } : {}
-      return { status: code === "decision.expired" ? 410 : STATUS[category], body: { format: "norn/refusal@2", code, category, retryable: false, message: `Refused: ${code}.`, ...resolution } }
+      return { status: code === "decision.expired" ? 410 : STATUS[category], body: { format: "norn/refusal@2", code, category, retryable: false, reason: null, message: `Refused: ${code}.`, explanation: "", ...resolution } }
     }
   }
 }

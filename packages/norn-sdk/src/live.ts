@@ -1,52 +1,244 @@
-/**
- * The live-read protocol `norn.live.v1` (UI-LIVE-1), typed from the contract
- * (`LiveClientMessage`, `LiveServerMessage`, generated from
- * `crates/norn-api/src/live.rs`). A client subscribes to the cell's GET routes
- * on one WebSocket; the cell answers each like the GET, as the subscriber, and
- * again whenever a commit changes the answer.
- */
-import type { components } from "./generated/norn-api.ts"
-import { numbersUnder, numberTexts } from "./exact.ts"
+// The client side of live reads (UI-LIVE-1, `norn.live.v1`): one socket per page, one wire
+// subscription per path however many views listen, and a cache that holds only what the cell last
+// sent for each path. It never polls and never computes data: a view shows the cell's answer or
+// says it has none yet. An expired token closes the socket with 4401 and the client reconnects at
+// once (the host mints a fresh token per upgrade); any other loss reconnects with backoff, and
+// after `maxFailures` failed opens the client reports `unavailable` so views can say so.
 
-export type LiveClientMessage = components["schemas"]["LiveClientMessage"]
-export type LiveServerMessage = components["schemas"]["LiveServerMessage"]
-export type LiveSnapshotMessage = Extract<LiveServerMessage, { readonly type: "snapshot" }>
-export type LiveRefusedMessage = Extract<LiveServerMessage, { readonly type: "refused" }>
-
-/** The WebSocket subprotocol. */
 export const LIVE_PROTOCOL = "norn.live.v1"
-/** The largest client frame, in UTF-8 bytes; the cell closes the socket (1009) on a larger one. */
-export const LIVE_MAX_MESSAGE = 4096
-/** Subscriptions one socket may hold. */
-export const LIVE_MAX_SUBSCRIPTIONS = 8
-/** The codes a `refused` frame carries. */
-export const LIVE_REFUSALS = {
-  invalidId: "live.invalid_id",
-  notSubscribable: "live.not_subscribable",
-  tooManySubscriptions: "live.too_many_subscriptions",
-  unknownMessage: "live.unknown_message",
-} as const
 
-/** One frame from the cell, with the exact text of every number in a snapshot's body. */
-export type LiveFrame =
-  | { readonly message: LiveSnapshotMessage; readonly numbers: ReadonlyMap<string, string> }
-  | { readonly message: LiveRefusedMessage }
-
-/** The frame `text` holds, or null when it is no `norn.live.v1` frame. */
-export function parseLiveFrame(text: string): LiveFrame | null {
-  let value: unknown
-  try { value = JSON.parse(text) } catch { return null }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null
-  const frame = value as Record<string, unknown>
-  if (frame["type"] === "refused") {
-    if (typeof frame["code"] !== "string" || typeof frame["message"] !== "string") return null
-    const id = typeof frame["id"] === "string" ? frame["id"] : null
-    return { message: { type: "refused", id, code: frame["code"], message: frame["message"] } }
-  }
-  if (frame["type"] !== "snapshot" || typeof frame["id"] !== "string" || typeof frame["status"] !== "number" || typeof frame["digest"] !== "string") return null
-  const message: LiveSnapshotMessage = { type: "snapshot", id: frame["id"], status: frame["status"], digest: frame["digest"], body: frame["body"] ?? null }
-  return { message, numbers: numbersUnder(numberTexts(text), "/body") }
+export interface LiveSnapshot {
+  readonly status: number
+  readonly digest: string
+  readonly body: unknown
 }
 
-/** The wire text of a client frame. */
-export const encodeLiveMessage = (message: LiveClientMessage): string => JSON.stringify(message)
+export interface LiveRefusal {
+  readonly code: string
+  readonly message: string
+}
+
+export interface LiveClientRefusal extends LiveRefusal {
+  readonly id: string | null
+  readonly path: string | null
+}
+
+export type LiveState = "idle" | "connecting" | "open" | "unavailable"
+
+export type LiveListener = (snapshot: LiveSnapshot) => void
+
+export interface LiveSubscribeOptions {
+  /** Called when the cell refuses this subscription (`{"type":"refused",...}`). */
+  readonly onRefused?: (refusal: LiveRefusal) => void
+}
+
+/** The slice of the browser WebSocket the client uses (tests pass their own). */
+export interface SocketLike {
+  readonly readyState: number
+  send(data: string): void
+  close(code?: number, reason?: string): void
+  addEventListener(type: "open" | "close" | "message" | "error", listener: (event: { readonly code?: number; readonly data?: unknown }) => void): void
+}
+
+export interface LiveOptions {
+  /** The socket URL, read at every (re)connect. */
+  readonly url: () => string | Promise<string>
+  readonly connect?: (url: string) => SocketLike
+  readonly maxFailures?: number
+  readonly delay?: (attempt: number) => number
+  readonly schedule?: (callback: () => void, ms: number) => unknown
+  readonly onState?: (state: LiveState) => void
+  /** Called on any protocol `refused` frame, including frames with `id: null`. */
+  readonly onRefused?: (refusal: LiveClientRefusal) => void
+}
+
+interface Subscriber {
+  readonly listener: LiveListener
+  readonly onRefused?: (refusal: LiveRefusal) => void
+}
+
+interface Entry {
+  readonly id: string
+  readonly path: string
+  readonly subscribers: Set<Subscriber>
+  last: LiveSnapshot | undefined
+  refused: LiveRefusal | undefined
+}
+
+const OPEN = 1
+/** The cell closes a socket with 1009 on any client frame larger than 4096 bytes. */
+const MAX_MESSAGE = 4096
+const utf8 = new TextEncoder()
+
+export class LiveClient {
+  readonly #options: LiveOptions
+  readonly #entries = new Map<string, Entry>()
+  readonly #byId = new Map<string, Entry>()
+  #socket: SocketLike | null = null
+  #state: LiveState = "idle"
+  #failures = 0
+  #next = 0
+  #pending = false
+
+  constructor(options: LiveOptions) {
+    this.#options = options
+  }
+
+  get state(): LiveState {
+    return this.#state
+  }
+
+  /** The cell's last answer for `path`, if one arrived. */
+  snapshot(path: string): LiveSnapshot | undefined {
+    return this.#entries.get(path)?.last
+  }
+
+  /** The cell's refusal for `path`, if this subscription was refused. */
+  refusal(path: string): LiveRefusal | undefined {
+    return this.#entries.get(path)?.refused
+  }
+
+  /** Listen to `path`; the last answer or refusal, if any, is delivered at once. Returns the unsubscribe. */
+  subscribe(path: string, listener: LiveListener, options?: LiveSubscribeOptions): () => void {
+    let entry = this.#entries.get(path)
+    const isNew = entry === undefined
+    if (!entry) {
+      entry = { id: `s${++this.#next}`, path, subscribers: new Set(), last: undefined, refused: undefined }
+      this.#entries.set(path, entry)
+      this.#byId.set(entry.id, entry)
+    }
+    const subscriber: Subscriber = options?.onRefused ? { listener, onRefused: options.onRefused } : { listener }
+    entry.subscribers.add(subscriber)
+    if (entry.last) listener(entry.last)
+    if (entry.refused) subscriber.onRefused?.(entry.refused)
+    if (isNew) this.#sendSubscribe(entry)
+    this.#ensure()
+    const held = entry
+    return () => {
+      held.subscribers.delete(subscriber)
+      if (held.subscribers.size > 0) return
+      this.#entries.delete(held.path)
+      this.#byId.delete(held.id)
+      if (held.refused?.code !== "live.not_subscribable") this.#send({ type: "unsubscribe", id: held.id })
+      if (this.#entries.size === 0) this.close()
+    }
+  }
+
+  close(): void {
+    const socket = this.#socket
+    this.#socket = null
+    socket?.close(1000, "done")
+    this.#setState("idle")
+  }
+
+  #setState(state: LiveState) {
+    if (this.#state === state) return
+    this.#state = state
+    this.#options.onState?.(state)
+  }
+
+  #send(message: unknown) {
+    if (this.#socket?.readyState === OPEN) this.#socket.send(JSON.stringify(message))
+  }
+
+  #sendSubscribe(entry: Entry) {
+    if (entry.refused?.code === "live.not_subscribable") return
+    const wire = JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path })
+    if (utf8.encode(wire).byteLength > MAX_MESSAGE) {
+      // Never send a frame larger than MAX_MESSAGE: the cell closes the shared socket with 1009.
+      const refusal: LiveRefusal = { code: "live.not_subscribable", message: "subscription exceeds the live protocol frame limit" }
+      entry.refused = refusal
+      const subscribers = [...entry.subscribers]
+      queueMicrotask(() => {
+        if (this.#byId.get(entry.id) !== entry) return
+        for (const subscriber of subscribers) {
+          if (entry.subscribers.has(subscriber)) subscriber.onRefused?.(refusal)
+        }
+        this.#options.onRefused?.({ ...refusal, id: entry.id, path: entry.path })
+      })
+      return
+    }
+    if (this.#socket?.readyState === OPEN) this.#socket.send(wire)
+  }
+
+  #ensure() {
+    if (this.#socket !== null || this.#pending || this.#entries.size === 0 || this.#state === "unavailable") return
+    this.#pending = true
+    this.#setState("connecting")
+    void Promise.resolve(this.#options.url()).then(
+      (url) => {
+        this.#pending = false
+        if (this.#entries.size === 0) return this.#setState("idle")
+        this.#open(url)
+      },
+      () => {
+        this.#pending = false
+        this.#lost(1006)
+      },
+    )
+  }
+
+  #open(url: string) {
+    const connect = this.#options.connect ?? ((target: string) => new WebSocket(target, LIVE_PROTOCOL) as unknown as SocketLike)
+    let socket: SocketLike
+    try {
+      socket = connect(url)
+    } catch {
+      this.#lost(1006)
+      return
+    }
+    this.#socket = socket
+    socket.addEventListener("open", () => {
+      if (this.#socket !== socket) return
+      this.#failures = 0
+      this.#setState("open")
+      for (const entry of this.#entries.values()) this.#sendSubscribe(entry)
+    })
+    socket.addEventListener("message", (event) => {
+      if (this.#socket !== socket || typeof event.data !== "string") return
+      let message: { type?: unknown; id?: unknown; status?: unknown; digest?: unknown; body?: unknown; code?: unknown; message?: unknown }
+      try {
+        message = JSON.parse(event.data) as typeof message
+      } catch {
+        return
+      }
+      if (message.type === "refused" && typeof message.code === "string" && typeof message.message === "string") {
+        const id = typeof message.id === "string" ? message.id : null
+        const entry = id !== null ? this.#byId.get(id) : undefined
+        const refusal: LiveRefusal = { code: message.code, message: message.message }
+        if (entry) {
+          entry.refused = refusal
+          for (const subscriber of entry.subscribers) subscriber.onRefused?.(refusal)
+        }
+        this.#options.onRefused?.({ ...refusal, id, path: entry?.path ?? null })
+        return
+      }
+      const entry = typeof message.id === "string" ? this.#byId.get(message.id) : undefined
+      if (!entry || message.type !== "snapshot" || typeof message.status !== "number" || typeof message.digest !== "string") return
+      entry.refused = undefined
+      entry.last = { status: message.status, digest: message.digest, body: message.body }
+      for (const subscriber of entry.subscribers) subscriber.listener(entry.last)
+    })
+    socket.addEventListener("close", (event) => {
+      if (this.#socket !== socket) return
+      this.#socket = null
+      this.#lost(event.code ?? 1006)
+    })
+  }
+
+  #lost(code: number) {
+    if (this.#entries.size === 0) return this.#setState("idle")
+    // An expired token is routine: reconnect at once with a fresh one.
+    if (code === 4401) {
+      this.#setState("connecting")
+      this.#ensure()
+      return
+    }
+    this.#failures += 1
+    if (this.#failures >= (this.#options.maxFailures ?? 5)) return this.#setState("unavailable")
+    this.#setState("connecting")
+    const wait = (this.#options.delay ?? ((attempt: number) => Math.min(30_000, 1000 * 2 ** (attempt - 1))))(this.#failures)
+    const schedule = this.#options.schedule ?? ((callback: () => void, ms: number) => setTimeout(callback, ms))
+    schedule(() => this.#ensure(), wait)
+  }
+}

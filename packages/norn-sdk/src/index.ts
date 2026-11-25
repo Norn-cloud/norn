@@ -1,7 +1,22 @@
-/** Core IR and checker types generated from the Rust OpenAPI projection, and the typed client over them. */
+/** Core IR and checker types generated from the Rust OpenAPI projection. */
 import type { components } from "./generated/norn-api.ts"
-export type { components, paths } from "./generated/norn-api.ts"
+export type { components } from "./generated/norn-api.ts"
 export type Schemas = components["schemas"]
-export * from "./client.ts"
-export * from "./exact.ts"
-export * from "./live.ts"
+
+/** The generic governed-action client. */
+export { createIntentKey, createNornClient, NornUnavailable, NornUnexpectedResponse, readRefusal } from "./client.ts"
+export type {
+  ActionCatalog, ActionContract, ActionId, ActionInput, ActionMapShape, ActionOutput, ActionReceipt, ActionSummary,
+  CallOptions, CallResult, Diagnostic, Fetch, Immutable, Intent, NornClient, NornClientOptions, ObjectFields, ObjectMapShape,
+  PendingDecision, Refusal, RefusalCategory, RefusalReason, Scope, TraceContext, UiEffects, UntypedActions,
+} from "./client.ts"
+
+/** Exact JSON: numbers kept as their source text. */
+export { parseExactJson } from "./exact-json.ts"
+export type { ExactJson } from "./exact-json.ts"
+
+/** The live-read client (`norn.live.v1`). */
+export { LIVE_PROTOCOL, LiveClient } from "./live.ts"
+export type {
+  LiveClientRefusal, LiveListener, LiveOptions, LiveRefusal, LiveSnapshot, LiveState, LiveSubscribeOptions, SocketLike,
+} from "./live.ts"
