@@ -42,10 +42,56 @@ const STORAGE_V6: &str = include_str!("fixtures/engine-storage-v6.json");
 const STORAGE_V7: &str = include_str!("fixtures/engine-storage-v7.json");
 const STORAGE_V8: &str = include_str!("fixtures/engine-storage-v8.json");
 
-/// What storage versions 8 and 9 change in an older cell's image.
-fn apply_v9_upgrade(image: &mut Value) {
+/// What storage versions 8 through 10 change in an older cell's image.
+fn apply_v10_upgrade(image: &mut Value) {
     apply_v8_sparse_markings_upgrade(image);
     add_export_context_table(image);
+    add_outbox_queue(image);
+}
+
+/// Storage version 10 (D03, #1699) adds `_norn_outbox.queue`, backfilled
+/// from each stored command's classification (a `norn.decision@1` or
+/// `norn.action@1` perform parks), and the partial index `_norn_outbox/queue`.
+fn add_outbox_queue(image: &mut Value) {
+    let schema = image["schema"].as_array_mut().expect("schema");
+    for entry in schema.iter_mut() {
+        if entry["name"] == "_norn_outbox"
+            && let Some(sql) = entry["sql"].as_str()
+        {
+            entry["sql"] = Value::String(sql.replacen(
+                "\"consumed_commit_seq\" INTEGER,",
+                "\"consumed_commit_seq\" INTEGER, \"queue\" TEXT NOT NULL DEFAULT 'fifo' CHECK (\"queue\" IN ('fifo', 'parked')),",
+                1,
+            ));
+        }
+    }
+    schema.push(serde_json::json!({
+        "type": "index",
+        "name": "_norn_outbox/queue",
+        "table": "_norn_outbox",
+        "sql": "CREATE INDEX \"_norn_outbox/queue\" ON \"_norn_outbox\" (\"queue\", \"position\") WHERE \"consumed_commit_seq\" IS NULL",
+    }));
+    let outbox = &mut image["tables"]["_norn_outbox"];
+    let command_at = outbox["columns"]
+        .as_array()
+        .and_then(|columns| columns.iter().position(|column| column == "command"))
+        .expect("outbox command column");
+    outbox["columns"]
+        .as_array_mut()
+        .expect("outbox columns")
+        .push(Value::String("queue".to_owned()));
+    for row in outbox["rows"].as_array_mut().expect("outbox rows") {
+        let command: Value =
+            serde_json::from_str(row[command_at].as_str().expect("command text")).expect("command");
+        let payload = &command["payload"];
+        let parked = payload["kind"] == "perform"
+            && (payload["function"] == "norn.decision" || payload["function"] == "norn.action")
+            && payload["functionVersion"] == "1";
+        let queue = if parked { "parked" } else { "fifo" };
+        row.as_array_mut()
+            .expect("outbox row")
+            .push(Value::String(queue.to_owned()));
+    }
 }
 
 /// Storage version 9 (#1533 Part 2, EXPORT-RESIDUE-1) adds the empty
@@ -761,7 +807,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v9_upgrade(&mut expected);
+    apply_v10_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -893,7 +939,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v9_upgrade(&mut expected);
+    apply_v10_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -996,7 +1042,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v9_upgrade(&mut expected);
+    apply_v10_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1069,7 +1115,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v9_upgrade(&mut expected);
+    apply_v10_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1142,7 +1188,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v9_upgrade(&mut expected);
+    apply_v10_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1243,7 +1289,7 @@ fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v9_upgrade(&mut expected);
+    apply_v10_upgrade(&mut expected);
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(path);
     by_name(&mut actual);
@@ -1807,7 +1853,7 @@ fn apply_v8_marked_fixture_upgrade(image: &mut Value) -> Result<(), Box<dyn std:
         .ok_or_else(|| std::io::Error::other("v7 fixture missing engine stamp"))?;
     stamp_row[2] = stamp.into();
     image["storage"] = STORAGE_VERSION.into();
-    apply_v9_upgrade(image);
+    apply_v10_upgrade(image);
     let rows = image["tables"]["_norn_marking_snapshot"]["rows"]
         .as_array_mut()
         .ok_or_else(|| std::io::Error::other("v7 fixture missing snapshot rows"))?;
@@ -2019,7 +2065,7 @@ async fn a_storage_v8_cell_upgrades_and_exports_packed_and_residue_rows_alike()
     by_name(&mut actual);
     assert_eq!(
         actual, expected,
-        "v9 adds the empty context table and restamps"
+        "v9 adds the empty context table, v10 the outbox queue, and the open restamps"
     );
 
     store = CellStore::open(
@@ -2088,6 +2134,7 @@ fn upgraded_v8_image(mut expected: Value) -> Result<Value, Box<dyn std::error::E
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_export_context_table(&mut expected);
+    add_outbox_queue(&mut expected);
     by_name(&mut expected);
     Ok(expected)
 }

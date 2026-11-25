@@ -99,7 +99,15 @@ pub(crate) fn to_variable(value: &Value) -> Result<Variable, ExprError> {
         Value::Object(entries) => {
             let mut map = VariableMap::with_capacity(entries.len());
             for (key, item) in entries {
-                map.insert(Variable::key(&nfc(key)), to_variable(item)?);
+                // P6: two distinct keys that are one key after NFC are refused,
+                // never silently overwritten by whichever sorts last.
+                let key = nfc(key);
+                if map
+                    .insert(Variable::key(&key), to_variable(item)?)
+                    .is_some()
+                {
+                    return Err(ExprError::KeyCollision { key });
+                }
             }
             Variable::from_object(map)
         }
@@ -154,5 +162,18 @@ mod tests {
         ]);
         assert_eq!(from_variable(&to_variable(&value)?)?, value);
         Ok(())
+    }
+
+    #[test]
+    fn keys_colliding_after_nfc_are_refused() {
+        let composed = Value::object([("\u{e9}", Value::from(1)), ("x", Value::from(2))]);
+        assert!(to_variable(&composed).is_ok());
+        let colliding = Value::object([("\u{e9}", Value::from(1)), ("e\u{301}", Value::from(2))]);
+        assert_eq!(
+            to_variable(&colliding).err(),
+            Some(ExprError::KeyCollision {
+                key: "\u{e9}".to_owned()
+            })
+        );
     }
 }

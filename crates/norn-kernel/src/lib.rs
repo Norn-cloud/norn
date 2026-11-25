@@ -140,6 +140,8 @@ pub mod pack_mbt_support {
         ))
     }
 }
+/// The one monotonic fuel tank every invariant, law and action turn spends from (P1).
+pub use norn_expr::TurnFuel;
 pub use norn_ir::{MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, TraceContext, TraceContextError};
 pub use serde;
 pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedObservation};
@@ -155,7 +157,7 @@ pub use action_commit::{
     prepare_action_input, prepare_action_input_for_call, prepare_action_intent,
     retained_person_matches, validate_accountable_person, validate_automation_static_input,
 };
-pub use cell_host::{Authorized, Checked, Committed, Proposed};
+pub use cell_host::{Authorized, Checked, CommitSeal, Committed, Proposed};
 pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
@@ -205,3 +207,6 @@ mod profile_ownership;
 /// Versioned single-cell read evidence and context validation.
 pub mod read_envelope;
 mod read_token_check;
+
+/// D03 outbox lifecycle (#1699) and typed world pins (#1698).
+pub mod world;

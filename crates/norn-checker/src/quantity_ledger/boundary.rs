@@ -64,90 +64,14 @@ impl LedgerPackSeal {
 
 /// Computes the domain-separated SHA-256 identity of the exact ordered pack.
 ///
-/// The preimage is a versioned sequence of fixed-width SHA-256 parts. Vector
-/// order is significant; pack-local unit definitions and layer declarations
-/// are therefore bound without depending on JSON object ordering.
+/// The preimage is the whole pack's exact canonical encoding (P6): sorted
+/// keys, strings verbatim, vector order significant. Every field is bound,
+/// including ones added later, with no hand-maintained list to fall behind
+/// (v2 listed fields and omitted `funding`).
 #[must_use]
 pub fn ledger_pack_sha256(pack: &LedgerPackIr) -> String {
-    let mut hash = StableHash::new(b"norn.quantity.ledger-pack.v2");
-    hash.text(b"ir-version", pack.ir_version.as_str());
-    hash.text(b"pack-id", pack.pack_id.as_str());
-    hash.text(
-        b"ontology-artifact-id",
-        pack.ontology_artifact.artifact_id.as_str(),
-    );
-    hash.text(
-        b"ontology-artifact-version",
-        pack.ontology_artifact.artifact_version.as_str(),
-    );
-    hash.text(
-        b"ontology-artifact-sha256",
-        pack.ontology_artifact.artifact_sha256.as_str(),
-    );
-    hash.marker(b"units-start");
-    for unit in &pack.units {
-        hash.marker(b"unit");
-        hash.text(b"unit-id", unit.unit_id.as_str());
-        hash.text(b"unit-term-id", unit.unit_term_id.as_str());
-        hash.text(
-            b"quantity-kind-term-id",
-            unit.quantity_kind_term_id.as_str(),
-        );
-        hash.byte(b"unit-precision", unit.precision);
-    }
-    hash.marker(b"units-end");
-    hash.marker(b"accounts-start");
-    for account in &pack.accounts {
-        hash.marker(b"account");
-        hash.text(b"account-id", account.account_id.as_str());
-        hash.marker(b"account-units-start");
-        for unit_id in &account.allowed_unit_ids {
-            hash.text(b"account-unit-id", unit_id.as_str());
-        }
-        hash.marker(b"account-units-end");
-    }
-    hash.marker(b"accounts-end");
-    hash.marker(b"layers-start");
-    for layer in &pack.layers {
-        hash.marker(b"layer");
-        hash.text(b"layer-id", layer.layer_id.as_str());
-    }
-    hash.marker(b"layers-end");
-    hash.marker(b"templates-start");
-    for template in &pack.templates {
-        hash.marker(b"template");
-        hash.text(b"template-id", template.template_id.as_str());
-        hash.marker(b"parameters-start");
-        for parameter in &template.parameters {
-            hash.marker(b"parameter");
-            hash.text(b"parameter-id", parameter.parameter_id.as_str());
-            hash.byte(b"parameter-scale", parameter.scale);
-            hash.text(b"parameter-min", parameter.min_unscaled.as_str());
-            hash.text(b"parameter-max", parameter.max_unscaled.as_str());
-        }
-        hash.marker(b"parameters-end");
-        hash.marker(b"legs-start");
-        for leg in &template.legs {
-            hash.marker(b"leg");
-            hash.text(b"leg-id", leg.leg_id.as_str());
-            hash.text(b"account-id", leg.account_id.as_str());
-            hash.text(b"unit-id", leg.unit_id.as_str());
-            hash.text(b"layer-id", leg.layer.as_str());
-            hash.byte(b"result-scale", leg.amount.result_scale);
-            hash.text(b"constant", leg.amount.constant_unscaled.as_str());
-            hash.byte(b"constant-scale", leg.amount.constant_scale);
-            hash.marker(b"terms-start");
-            for term in &leg.amount.terms {
-                hash.marker(b"term");
-                hash.text(b"parameter-id", term.parameter_id.as_str());
-                hash.text(b"coefficient", term.coefficient_unscaled.as_str());
-                hash.byte(b"coefficient-scale", term.coefficient_scale);
-            }
-            hash.marker(b"terms-end");
-        }
-        hash.marker(b"legs-end");
-    }
-    hash.marker(b"templates-end");
+    let mut hash = StableHash::new(b"norn.quantity.ledger-pack.v3");
+    hash.whole(b"pack", pack);
     hash.finish()
 }
 
@@ -814,6 +738,16 @@ impl StableHash {
 
     fn u64(&mut self, label: &[u8], value: u64) {
         self.part(label, &value.to_be_bytes());
+    }
+
+    /// Binds the pack's whole exact canonical encoding. A pack is a tree of
+    /// strings, small integers and vectors, which always encodes; were one
+    /// ever not to, it binds a marker no JSON text equals.
+    fn whole(&mut self, label: &[u8], pack: &LedgerPackIr) {
+        match norn_canonical::canonical_json_exact_of(pack) {
+            Ok(bytes) => self.part(label, &bytes),
+            Err(_unencodable) => self.part(b"unencodable", label),
+        }
     }
 
     fn part(&mut self, label: &[u8], value: &[u8]) {

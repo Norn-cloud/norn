@@ -792,10 +792,11 @@ pub const SYSTEM_DDL: &[&str] = &[
   "deadline" INTEGER,
   "command" TEXT NOT NULL,
   "result" TEXT,
-  "consumed_commit_seq" INTEGER,
+  "consumed_commit_seq" INTEGER, "queue" TEXT NOT NULL DEFAULT 'fifo' CHECK ("queue" IN ('fifo', 'parked')),
   PRIMARY KEY ("command_id")
 )"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_outbox/position" ON "_norn_outbox" ("position")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_outbox/queue" ON "_norn_outbox" ("queue", "position") WHERE "consumed_commit_seq" IS NULL"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_perform_claim" (
   "command_id" TEXT NOT NULL,
   "generation" INTEGER NOT NULL,

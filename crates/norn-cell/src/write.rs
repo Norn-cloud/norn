@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{FactChange, ObjectTypeName, RuntimeValue as Value};
+use norn_kernel::world::outbox::Queue;
 use norn_kernel::{EffectiveValuesError, TypeCatalog};
 use norn_projections::PropertyColumn;
 use norn_projections::sqlite_ddl::{
@@ -3282,7 +3283,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             let parked = StoreReader::new(self.conn, self.model)
                 .pending_command(command_id)?
                 .is_some_and(|row| {
-                    crate::read::is_parked(&row.command) && row.command.generation == generation
+                    row.queue == Queue::Parked && row.command.generation == generation
                 });
             if parked {
                 return Err(CellError::ParkedClaimUnsupported {
@@ -3327,20 +3328,30 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .map(|deadline| to_i64(deadline, "deadline"))
             .transpose()?;
         let serialized = canonical_json(&command.command)?;
-        let known: Option<(i64, Option<i64>)> = self.conn.query_optional(
+        let queue = crate::read::classify(&command.command);
+        // The stored payload is compared in SQL, never loaded.
+        let known: Option<(i64, Option<i64>, i64, String)> = self.conn.query_optional(
             &format!(
-                "SELECT \"generation\", \"consumed_commit_seq\" FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1"
+                "SELECT \"generation\", \"consumed_commit_seq\", \"command\" = ?2, \"queue\" FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1"
             ),
-            params![command.command_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            params![command.command_id, serialized],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         let position = match known {
-            // A re-issue at the same or an older generation never re-executes.
-            Some((known, _)) if known >= generation => return Ok(()),
-            // A newer generation of a pending command replaces it in place.
-            Some((_, None)) => None,
+            // A consumed row is terminal: a re-issue at its generation or an
+            // older one never re-executes.
+            Some((known, Some(_), ..)) if known >= generation => return Ok(()),
+            // D03 (#1699): a newer generation of a pending command replaces
+            // it in place; anything else the outbox step refuses or ignores.
+            Some((known, None, same, stored)) => {
+                let known = to_u64(known, "generation")?;
+                if !crate::read::reissue_replaces(command, known, same == 1, &stored, queue)? {
+                    return Ok(());
+                }
+                None
+            }
             // New, or a newer generation of a consumed command: appended.
-            Some((_, Some(_))) | None => {
+            Some((_, Some(_), ..)) | None => {
                 let maximum = self.conn.query_row(
                     &format!("SELECT COALESCE(MAX(\"position\"), 0) FROM \"{OUTBOX}\""),
                     params![],
@@ -3363,7 +3374,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         if let Some(position) = position {
             self.conn.execute(
                 &format!(
-                    "INSERT INTO \"{OUTBOX}\" (\"command_id\", \"position\", \"generation\", \"commit_seq\", \"idempotency_key\", \"deadline\", \"command\", \"result\", \"consumed_commit_seq\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL)"
+                    "INSERT INTO \"{OUTBOX}\" (\"command_id\", \"position\", \"generation\", \"commit_seq\", \"idempotency_key\", \"deadline\", \"command\", \"result\", \"consumed_commit_seq\", \"queue\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8)"
                 ),
                 params![
                     command.command_id,
@@ -3372,7 +3383,8 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     commit_seq,
                     command.idempotency_key,
                     deadline,
-                    serialized
+                    serialized,
+                    queue.as_str()
                 ],
             )?;
         } else {

@@ -789,7 +789,11 @@ async fn exported_perform_claim_is_replayed_but_restore_fence_stays_first() {
             |_command| panic!("restored claim must remain fenced"),
         )
         .expect("host");
-        assert!(cell.claim_perform().expect("fenced claim").is_none());
+        assert!(matches!(
+            cell.claim_perform().expect("fenced claim"),
+            norn_cell::ClaimOutcome::HeadFenced { command, fenced_at: norn_kernel::Generation(0) }
+                if command.0 == "command"
+        ));
         assert!(cell.perform().expect("fenced perform").is_none());
     }
 }

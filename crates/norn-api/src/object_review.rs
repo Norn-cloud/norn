@@ -914,27 +914,28 @@ mod trace_tests {
                 workspace: None,
                 business_unit: None,
             };
-            Ok(norn_kernel::authz::AccessRequest {
-                principal: norn_kernel::authz::PrincipalInput {
-                    subject_id: actor.into(),
-                    actor_kind: norn_kernel::authz::ActorKind::User,
-                    agent_session_id: None,
-                    roles: vec![],
-                    attributes: BTreeMap::new(),
-                },
-                scope: Some(key.clone()),
-                capability: format!("test.{capability:?}"),
-                action_id: "norn.read".into(),
-                resource: norn_kernel::authz::ResourceInput {
+            Ok(norn_kernel::authz::AccessRequest::new(
+                &norn_kernel::authz::VerifiedPrincipal::new(
+                    actor,
+                    norn_kernel::authz::ActorKind::User,
+                    None,
+                    vec![],
+                    BTreeMap::new(),
+                ),
+                Some(key.clone()),
+                format!("test.{capability:?}"),
+                "norn.read",
+                norn_kernel::authz::ResourceInput {
                     object_type: row.map_or(object_type, |r| r.object_type.as_str()).into(),
                     id: row.map_or(object_type, |r| r.id.as_str()).into(),
                     scope: key,
                     attributes: BTreeMap::new(),
                 },
-                context: BTreeMap::new(),
-                binding: None,
-                delegation: norn_kernel::authz::Delegation::Direct,
-            })
+                BTreeMap::new(),
+                norn_kernel::authz::Binding::Unbound(
+                    norn_kernel::authz::UnboundProfile::HostedRead,
+                ),
+            ))
         }
     }
 

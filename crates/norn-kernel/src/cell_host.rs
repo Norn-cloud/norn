@@ -979,6 +979,37 @@ pub struct Checked<'c, E, C, T> {
     versions: CommitVersions,
 }
 
+/// P3 (one write door): proof that [`Authorized::check`] admitted a commit.
+///
+/// Minted only by [`Checked::seal`], consuming the stage: no public constructor,
+/// not `Clone`. A host's write door (`norn-cell`'s guarded commit) demands one
+/// from its in-transaction guard, so an unchecked commit cannot be written.
+///
+/// ```compile_fail,E0451
+/// // A seal cannot be forged outside the kernel.
+/// let _ = norn_kernel::cell_host::CommitSeal { _admitted: () };
+/// ```
+///
+/// ```compile_fail,E0451
+/// // Nor a `Checked` stage built without running the check.
+/// use norn_kernel::{CellCommit, Checked, CommitVersions};
+/// fn forge(commit: &CellCommit<(), (), ()>, versions: CommitVersions) -> Checked<'_, (), (), ()> {
+///     Checked { commit, versions }
+/// }
+/// ```
+///
+/// ```compile_fail,E0599
+/// // Nor copied to commit a second time.
+/// fn twice(seal: norn_kernel::cell_host::CommitSeal) {
+///     let _again = seal.clone();
+/// }
+/// ```
+#[derive(Debug)]
+#[must_use = "a seal is the proof the write door consumes"]
+pub struct CommitSeal {
+    _admitted: (),
+}
+
 /// A checked commit the host applied, with its receipt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Committed {
@@ -1041,6 +1072,12 @@ impl<'c, E, C, T> Checked<'c, E, C, T> {
     #[must_use]
     pub fn into_versions(self) -> CommitVersions {
         self.versions
+    }
+
+    /// Consume this stage into the versions the commit assigns and the
+    /// [`CommitSeal`] a host's write door demands as proof of admission.
+    pub fn seal(self) -> (CommitSeal, CommitVersions) {
+        (CommitSeal { _admitted: () }, self.versions)
     }
 
     /// Record that the host applied this commit with `receipt`.

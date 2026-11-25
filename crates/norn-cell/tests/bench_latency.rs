@@ -186,7 +186,7 @@ fn governed_commit_and_law_check_latency_by_history_size() {
         let mut law_only = Vec::with_capacity(5_000);
         for _ in 0..5_000 {
             let at = Instant::now();
-            let mut fuel = 1_000_000;
+            let mut fuel = norn_kernel::TurnFuel::new(1_000_000);
             let failures =
                 governing_laws::evaluate(&catalog, &key, &values, &mut fuel).expect("law check");
             law_only.push(at.elapsed().as_nanos());

@@ -15,7 +15,7 @@ use norn_cell::{CellStore, ObjectRecord, engine::NativeEngine};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-    authz::{ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey},
+    authz::{ActorKind, ResourceInput, ScopeKey},
 };
 
 #[path = "../tests/support/action_cell.rs"]
@@ -52,7 +52,7 @@ impl Authorizer for Policy {
         }
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        if request.access.principal.subject_id == AUDITOR {
+        if request.access.principal().subject_id == AUDITOR {
             Ok(())
         } else {
             Err(read_denied())
@@ -135,27 +135,26 @@ impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for Disclosure {
             workspace: None,
             business_unit: None,
         };
-        Ok(norn_kernel::authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: "norn.read.values".into(),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
+        Ok(norn_kernel::authz::AccessRequest::new(
+            &norn_kernel::authz::VerifiedPrincipal::new(
+                actor,
+                ActorKind::User,
+                None,
+                vec![],
+                BTreeMap::new(),
+            ),
+            Some(key.clone()),
+            "norn.read.values",
+            "norn.read",
+            ResourceInput {
                 object_type: object_type.into(),
                 id: object_type.into(),
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            norn_kernel::authz::Binding::Unbound(norn_kernel::authz::UnboundProfile::HostedRead),
+        ))
     }
 }
 

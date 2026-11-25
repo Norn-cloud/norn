@@ -90,10 +90,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 9,
         change: "#1533 Part 2 (EXPORT-RESIDUE-1): a steady-state main-world _norn_export_journal row stores a norn.cell.export-residue/1 residue (commit, previous hash, batch, storage version) naming its store format, model hashes, DDL and bindings by content address in the new _norn_export_context table; readers rebuild the record from it, its receipt and its ledger span, and check the unchanged record hash. Earlier journal rows are not rewritten",
     },
+    StorageVersion {
+        version: 10,
+        change: "D03 (#1699): _norn_outbox stores the queue each command waits in (`queue`, 'fifo' or 'parked'), set once at enqueue, and the partial index _norn_outbox/queue serves queue selection; upgrading backfills `queue` from each stored command's classification",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 9;
+pub const STORAGE_VERSION: u32 = 10;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -365,12 +369,55 @@ fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
         // strict-prefix indexes on `_norn_link_version` so upgraded cells shed
         // their write amplification too.
         8 => migrate_v8_sparse_markings(engine),
+        // Version 10 (D03, #1699): add and backfill `_norn_outbox.queue`; the
+        // schema statements that follow the chain create `_norn_outbox/queue`.
+        10 => migrate_v10_outbox_queue(engine),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,
             reason: format!("no migration to storage version {to}"),
         }),
     }
+}
+
+/// D03 (#1699): add `_norn_outbox.queue` and classify every stored command
+/// once, through the same classifier enqueue uses.
+fn migrate_v10_outbox_queue<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    let has_column = engine
+        .query_optional(
+            "SELECT 1 FROM pragma_table_info('_norn_outbox') WHERE \"name\" = 'queue'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    let has_table = engine
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_outbox'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_table || has_column {
+        return Ok(());
+    }
+    engine.execute_batch(
+        "ALTER TABLE \"_norn_outbox\" ADD COLUMN \"queue\" TEXT NOT NULL DEFAULT 'fifo' CHECK (\"queue\" IN ('fifo', 'parked'));",
+    )?;
+    let rows = engine.query(
+        "SELECT \"command_id\", \"command\" FROM \"_norn_outbox\" ORDER BY \"position\"",
+        params![],
+    )?;
+    for values in rows {
+        let row = crate::engine::SqlRow(values);
+        let command_id: String = row.get(0)?;
+        let command: String = row.get(1)?;
+        let queue = crate::read::classify(&serde_json::from_str(&command)?);
+        engine.execute(
+            "UPDATE \"_norn_outbox\" SET \"queue\" = ?1 WHERE \"command_id\" = ?2",
+            params![queue.as_str(), command_id],
+        )?;
+    }
+    Ok(())
 }
 
 fn migrate_v8_sparse_markings<E: SqlEngine>(engine: &E) -> Result<(), CellError> {

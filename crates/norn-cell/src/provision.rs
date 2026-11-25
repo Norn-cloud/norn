@@ -1,6 +1,6 @@
 //! A host's own provisioning writes: fixed inputs only (#1375 S4, #1444 fix 5).
 //!
-//! The raw store commit runs no law check, so it is private to this crate:
+//! The engine writes without a law check only through its closed system-write set;
 //! an authored write reaches storage only through the kernel path
 //! ([`crate::host`]). A host still seeds two fixed, synthetic row sets
 //! without an actor: the public demo cell's catalog rows ([`demo_rows`]) and
@@ -33,7 +33,7 @@ use norn_ir::{Decimal, RuntimeValue};
 
 use crate::engine::SqlEngine;
 use crate::error::CellError;
-use crate::store::{CellStore, CommitBatch, CommitOutcome, FactWriteRow, MAIN_WORLD};
+use crate::store::{At, CellStore, CommitOutcome, FactWriteRow, MAIN_WORLD, SystemWrite};
 
 /// The idempotency key of the demo rows' one commit: a restarted host
 /// replays it without writing, and nothing is ever wiped.
@@ -110,16 +110,16 @@ pub fn demo_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &str) -> Result<
                 ("kind".to_owned(), text(kind)),
             ]),
         });
-    store
-        .commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.into(),
-            scope: scope.to_owned(),
-            logical_time: DEMO_ROWS_AT.max(floor),
-            idempotency_key: Some(DEMO_ROWS_KEY.into()),
-            writes: items.chain(parties).collect(),
-            ..CommitBatch::default()
-        })
-        .map(|_outcome| ())
+    let at = At {
+        world: MAIN_WORLD,
+        scope,
+        logical_time: DEMO_ROWS_AT.max(floor),
+    };
+    let write = SystemWrite::Provision {
+        idempotency_key: Some(DEMO_ROWS_KEY.into()),
+        writes: items.chain(parties).collect(),
+    };
+    store.apply_system(&at, write).map(|_outcome| ())
 }
 
 /// Commit the recorded K1 conversions (`fixtures/demo/scrap-yield-k1.csv`)
@@ -134,13 +134,16 @@ pub fn k1_conversions<E: SqlEngine>(
     store: &mut CellStore<E>,
     scope: &str,
 ) -> Result<CommitOutcome, CellError> {
-    store.commit_unchecked(&CommitBatch {
-        world: K1_WORLD.into(),
-        scope: scope.to_owned(),
+    let at = At {
+        world: K1_WORLD,
+        scope,
         logical_time: K1_CLOCK,
+    };
+    let write = SystemWrite::Provision {
+        idempotency_key: None,
         writes: k1_rows()?,
-        ..CommitBatch::default()
-    })
+    };
+    store.apply_system(&at, write)
 }
 
 /// The K1 conversion rows, as [`k1_conversions`] writes them.

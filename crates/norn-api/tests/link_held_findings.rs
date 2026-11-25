@@ -28,7 +28,8 @@ use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::{LINK_HELD_RULE, ObjectRecord, SqliteCell};
 use norn_ir::{DataQualityRuleRef, RuntimeObject, RuntimeValue};
 use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
+    AccessRequest as PdpRequest, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile,
+    VerifiedPrincipal,
 };
 use norn_kernel::{ObservationEvent, ObservationId, Observed};
 use serde_json::{Value, json};
@@ -46,9 +47,9 @@ impl Authorizer for Policy {
         Ok(())
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        let allowed = match request.access.principal.subject_id.as_str() {
+        let allowed = match request.access.principal().subject_id.as_str() {
             "full" => true,
-            "limited" => request.access.resource.id != OWNER,
+            "limited" => request.access.resource().id != OWNER,
             "reviewer" => request.capability != ReadCapability::Sources,
             _ => false,
         };
@@ -77,18 +78,12 @@ impl ObjectAccess for Mapping {
             workspace: None,
             business_unit: None,
         };
-        Ok(PdpRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: format!("fixture.{capability:?}"),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
+        Ok(PdpRequest::new(
+            &VerifiedPrincipal::new(actor, ActorKind::User, None, vec![], BTreeMap::new()),
+            Some(key.clone()),
+            format!("fixture.{capability:?}"),
+            "norn.read",
+            ResourceInput {
                 object_type: row
                     .map_or(object_type, |row| row.object_type.as_str())
                     .into(),
@@ -96,10 +91,9 @@ impl ObjectAccess for Mapping {
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedRead),
+        ))
     }
 }
 

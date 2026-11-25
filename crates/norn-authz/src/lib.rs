@@ -70,8 +70,9 @@ pub use principal_inputs::{
     holds_role_keys, principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
 };
 pub use request::{
-    AccessRequest, ActorKind, AttrValue, CapabilityGrant, CommitBinding, Delegation,
+    AccessRequest, ActorKind, AttrValue, Binding, CapabilityGrant, CommitBinding, Delegation,
     EntitlementCatalog, EntitlementInput, EntityRef, PrincipalInput, ResourceInput, ScopeKey,
+    UnboundProfile, VerifiedPrincipal,
 };
 
 #[cfg(test)]

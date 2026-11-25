@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
+use norn_expr::{Expression, TurnFuel, Value as ExprValue};
 use norn_ir::{
     ActionCommand, ActionCommandOperation, ActionEffectProgram, ActionRoot, Decimal,
     ResourceLimitProfile, RuntimeValue,
@@ -28,7 +28,7 @@ pub(super) fn build_action_commands<X>(
     action: &ActionRoot,
     input: &JsonObject,
     action_call: &str,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
 ) -> Result<Vec<JsonObject>, ActionRefusal<X>> {
     if action.commands.is_empty() {
         return Ok(Vec::new());
@@ -144,7 +144,7 @@ fn evaluate_action_expected_modified<X>(
     command_index: usize,
     source: Option<&str>,
     context: &ActionExpressionContext,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
 ) -> Result<Option<RuntimeValue>, ActionRefusal<X>> {
     let Some(source) = source else {
         return Ok(None);
@@ -168,7 +168,7 @@ fn build_action_child_merges<X>(
     command_index: usize,
     command: &ActionCommand,
     context: &ActionExpressionContext,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
 ) -> Result<Option<RuntimeValue>, ActionRefusal<X>> {
     if command.child_merges.is_empty() {
         return Ok(None);
@@ -233,16 +233,17 @@ fn build_action_child_merges<X>(
 fn evaluate_action_expression(
     source: &str,
     context: &ActionExpressionContext,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
 ) -> Result<RuntimeValue, String> {
     let expression = Expression::compile(source).map_err(|error| error.to_string())?;
-    let attempt = expression.evaluate_admitted_metered(
-        &context.value,
-        EvaluationBudget::new(*remaining_fuel),
-        &context.environment,
-        &norn_expr::Type::Json,
-    );
-    *remaining_fuel = (*remaining_fuel).saturating_sub(attempt.units_used);
+    let attempt = remaining_fuel.spend(|budget| {
+        expression.evaluate_admitted_metered(
+            &context.value,
+            budget,
+            &context.environment,
+            &norn_expr::Type::Json,
+        )
+    });
     let evaluated = attempt.result.map_err(|error| error.to_string())?;
     expression_value_to_runtime(evaluated.value())
 }
@@ -380,7 +381,7 @@ fn prepare_action_input_inner<'a, X>(
             actor: actor.map(str::to_owned),
             effective_input: normalized,
             derived_values: Vec::new(),
-            remaining_fuel: profile.turn.fuel_units,
+            remaining_fuel: TurnFuel::turn(&profile),
             receipt_evidence_bytes: 0,
             precondition_outcomes: Vec::new(),
         });
@@ -419,7 +420,7 @@ fn prepare_action_input_inner<'a, X>(
         });
     }
     let mut derived_values = Vec::with_capacity(action.derive.len());
-    let mut remaining_fuel = profile.turn.fuel_units;
+    let mut remaining_fuel = TurnFuel::turn(&profile);
 
     for (index, derivation) in action.derive.iter().enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
@@ -605,7 +606,7 @@ fn prepare_action_derivation<X>(
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
     actor: Option<&str>,
-    remaining_fuel: &mut u64,
+    remaining_fuel: &mut TurnFuel,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
     let context = action_derivation_context(effective_input, actor, derivation)?;
@@ -625,13 +626,8 @@ fn prepare_action_derivation<X>(
             }
         })?;
     let expected = action_derivation_destination(action, derivation, &env);
-    let attempt = expression.evaluate_admitted_metered(
-        &context,
-        EvaluationBudget::new(*remaining_fuel),
-        &env,
-        &expected,
-    );
-    *remaining_fuel = remaining_fuel.saturating_sub(attempt.units_used);
+    let attempt = remaining_fuel
+        .spend(|budget| expression.evaluate_admitted_metered(&context, budget, &env, &expected));
     let evaluated = attempt
         .result
         .map_err(|error| ActionRefusal::DerivationFailed {

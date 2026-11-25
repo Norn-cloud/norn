@@ -37,7 +37,7 @@ use norn_cell::engine::{
     FaultEngine, FaultSwitch, MAX_PARAMETERS, MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine,
     SqlEngine, SqlValue, Thrown, Transact, validate_bindings, validate_value,
 };
-use norn_cell::{CellError, CellStore, JournalMode, Model, PerformClaim, SqliteCell, StoreOptions};
+use norn_cell::{CellError, CellStore, ClaimOutcome, JournalMode, Model, SqliteCell, StoreOptions};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     CellCommit, CellHost, Command, CommandId, CommitError, CommitReceipt, Consumed, DueTimer,
@@ -958,10 +958,11 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
         let claimed = self.cell.claim_perform();
         self.after_write();
         match claimed.map_err(|error| error.to_string())? {
-            Some(PerformClaim::Fresh(command)) => Ok(Some(command)),
-            Some(PerformClaim::Recorded { .. } | PerformClaim::OutcomeUnknown(_)) | None => {
-                Ok(None)
-            }
+            ClaimOutcome::Fresh(command) => Ok(Some(command)),
+            ClaimOutcome::Recorded { .. }
+            | ClaimOutcome::OutcomeUnknown(_)
+            | ClaimOutcome::HeadFenced { .. }
+            | ClaimOutcome::Empty => Ok(None),
         }
     }
 
@@ -2050,8 +2051,11 @@ fn a_claim_without_a_result_survives_reopen_as_outcome_unknown() {
     let mut cell = open(&path);
     cell.commit(place()).expect("commits");
     let command = match cell.claim_perform().expect("claims") {
-        Some(PerformClaim::Fresh(command)) => command,
-        other => panic!("expected fresh claim, got {other:?}"),
+        ClaimOutcome::Fresh(command) => command,
+        other @ (ClaimOutcome::Empty
+        | ClaimOutcome::HeadFenced { .. }
+        | ClaimOutcome::Recorded { .. }
+        | ClaimOutcome::OutcomeUnknown(_)) => panic!("expected fresh claim, got {other:?}"),
     };
     assert!(
         cell.store()
@@ -2064,7 +2068,7 @@ fn a_claim_without_a_result_survives_reopen_as_outcome_unknown() {
     let mut cell = open(&path);
     assert!(matches!(
         cell.claim_perform().expect("claim reads"),
-        Some(PerformClaim::OutcomeUnknown(found)) if found == command
+        ClaimOutcome::OutcomeUnknown(found) if found == command
     ));
     assert!(matches!(
         cell.perform(),
@@ -2084,10 +2088,10 @@ fn a_claim_without_a_result_survives_reopen_as_outcome_unknown() {
     assert_eq!(performed.input, input);
     assert!(matches!(
         cell.claim_perform().expect("redelivers"),
-        Some(PerformClaim::Recorded {
+        ClaimOutcome::Recorded {
             command: found,
             performed: found_result,
-        }) if found == command && found_result == performed
+        } if found == command && found_result == performed
     ));
 }
 
@@ -2097,8 +2101,11 @@ fn a_late_completion_never_writes_a_replacement_generation() {
     let mut cell = open(&dir.path().join("cell.sqlite"));
     cell.commit(place()).expect("commits");
     let old = match cell.claim_perform().expect("claims") {
-        Some(PerformClaim::Fresh(command)) => command,
-        other => panic!("expected fresh claim, got {other:?}"),
+        ClaimOutcome::Fresh(command) => command,
+        other @ (ClaimOutcome::Empty
+        | ClaimOutcome::HeadFenced { .. }
+        | ClaimOutcome::Recorded { .. }
+        | ClaimOutcome::OutcomeUnknown(_)) => panic!("expected fresh claim, got {other:?}"),
     };
     let mut replacement = old.clone();
     replacement.generation = Generation(1);
@@ -2122,7 +2129,7 @@ fn a_late_completion_never_writes_a_replacement_generation() {
     );
     assert!(matches!(
         cell.claim_perform().expect("claims replacement"),
-        Some(PerformClaim::Fresh(found)) if found == replacement
+        ClaimOutcome::Fresh(found) if found == replacement
     ));
 }
 
@@ -3719,7 +3726,7 @@ fn perform_main(cell: &mut LawNative) -> String {
 /// between claim and result inherits an outcome-unknown claim).
 fn claim_main(cell: &mut LawNative) -> String {
     match cell.claim_perform() {
-        Ok(Some(norn_cell::PerformClaim::Fresh(command))) => format!("claimed {}", command.id.0),
+        Ok(ClaimOutcome::Fresh(command)) => format!("claimed {}", command.id.0),
         Ok(other) => format!("{other:?}"),
         Err(error) => panic!("main's claim refused: {error:?}"),
     }
