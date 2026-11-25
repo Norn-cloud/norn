@@ -380,6 +380,11 @@ test("buildSemanticMap never joins a source error on its connection id, and an u
   const named = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: { ...inbox, items: [{ kind: "source_error", id: "conn_9", target: "/connections", values: { system: "Gamma Feed" } }] } })
   expect(named.nodesById.get("app.Item")!.sourceErrors).toBe(1)
   expect(named.nodesById.get("app.Item")!.sourceErrorsApproximate).toBe(false)
+
+  // #1724 (Fable r1): a system *name* that equals a mapping id is a name, never that mapping.
+  const nameLikeId = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: { ...inbox, items: [{ kind: "source_error", id: "conn_10", target: "/connections", values: { system: "mapping.gamma_secondary" } }] } })
+  expect(nameLikeId.nodesById.get("app.Item")!.sourceErrors).toBe(0)
+  expect(nameLikeId.totals.alerts).toMatchObject({ sourceErrors: 1, bounded: true })
 })
 
 test("every boneyard-js .bones.json capture uses valid 0..100 percentage x/w coordinates with zero horizontal overflow", () => {

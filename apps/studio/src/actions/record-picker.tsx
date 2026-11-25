@@ -128,8 +128,10 @@ const recordChoice = (record: PickedRecord): PickerChoice => ({ kind: "record", 
 
 /**
  * The options a picker lists, in order: Reload when the snapshot moved; else Clear (optional
- * fields with a value), the records, Show more (or Retry), and "Use the id" for a typed id that
- * no listed record has.
+ * fields with a value, and only while nothing is searched), the records, Show more (or Retry), and
+ * "Use the id" for a typed id that no listed record has. A search highlights its first option, so
+ * Clear is never listed then: Enter after a search picks the match, never clears the field (the X
+ * beside the field still clears it).
  */
 export function pickerChoices({ records, moved, optional, value, more, typed }: {
   readonly records: readonly PickedRecord[]; readonly moved: boolean; readonly optional: boolean
@@ -137,7 +139,7 @@ export function pickerChoices({ records, moved, optional, value, more, typed }: 
 }): readonly PickerChoice[] {
   const choices: PickerChoice[] = []
   if (moved) choices.push({ kind: "reload", key: "reload" })
-  if (!moved && optional && value !== "") choices.push({ kind: "clear", key: "clear" })
+  if (!moved && optional && value !== "" && typed === "") choices.push({ kind: "clear", key: "clear" })
   if (!moved) choices.push(...records.map(recordChoice))
   if (!moved && more) choices.push({ kind: "more", key: "more" })
   if (typed !== "" && !records.some((record) => record.id === typed)) choices.push({ kind: "typed", key: choiceKey({ kind: "typed", id: typed }), id: typed })
@@ -228,13 +230,13 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
         <Combobox.Trigger {...aria}
           className={cn(control, "flex min-w-0 flex-1 items-center justify-between gap-2 font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring/50")}>
           {chosenTitle === null
-            ? <span className="text-muted-foreground">Choose a {noun}…</span>
+            ? <span className="text-muted-foreground">Choose {noun}…</span>
             : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{chosenTitle}</span>{chosenTitle !== value && <span className="truncate font-mono text-xs text-muted-foreground">{value}</span>}</span>}
           <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </Combobox.Trigger>
         <Combobox.Portal container={layer}>
           <Combobox.Positioner align="start" sideOffset={4} className="z-50 outline-none">
-            <Combobox.Popup aria-label={`Choose a ${noun}`}
+            <Combobox.Popup aria-label={`Choose ${noun}`}
               className="flex max-h-[min(24rem,var(--available-height))] w-(--anchor-width) max-w-(--available-width) min-w-64 origin-(--transform-origin) flex-col overflow-hidden rounded-node border border-node-border bg-popover p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
               <div className="flex items-center gap-2 border-b border-border/60 px-3">
                 <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />

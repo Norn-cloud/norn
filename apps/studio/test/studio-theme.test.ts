@@ -290,3 +290,15 @@ test("colours are parsed by culori and written as canonical CSS; mixed-syntax rg
   expect(rawStyles.has("--foreground")).toBe(false)
   expect(rawStyles.get("--background")).toBe("#ff0000")
 })
+
+// #1724 (Fable r1): a CSS `none` channel is painted as 0, so the parsed colour has every channel.
+test("parseColor reads a CSS none channel as 0, so every Color holds all of r, g, b and alpha", async () => {
+  const { canonicalColor, parseColor } = await import("../src/lib/color.ts")
+  expect(parseColor("rgb(none 0 0)")).toEqual({ mode: "rgb", r: 0, g: 0, b: 0, alpha: 1 })
+  expect(canonicalColor("rgb(none 255 0)")).toBe("#00ff00")
+  for (const raw of ["rgb(none none none / none)", "hsl(none 0% 50%)", "oklch(none none none)"]) {
+    const color = parseColor(raw)
+    expect(color).not.toBeNull()
+    for (const channel of [color!.r, color!.g, color!.b, color!.alpha]) expect(Number.isFinite(channel)).toBe(true)
+  }
+})

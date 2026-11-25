@@ -41,13 +41,23 @@ const cleanInbox = {
   items: [],
 }
 
-async function cell(page: Page, inbox: unknown, definitionsServed: Promise<void> = Promise.resolve()) {
+/**
+ * The same definitions with one cross-island link (a holding restated by the core model's
+ * analytical restatement, an object type on another island), so the overview lists a bridge. The
+ * three-systems fixture declares none across islands, and only object types are map nodes.
+ */
+const bridgedDefinitions = (definitions as { artifactId: string; payload: { objectType?: { links: unknown[] } } }[]).map((artifact) =>
+  artifact.artifactId === "canon.Holding.entity"
+    ? { ...artifact, payload: { ...artifact.payload, objectType: { ...artifact.payload.objectType!, links: [...artifact.payload.objectType!.links, { id: "restated_by", target: "core.analytics.Restatement", description: "The restatement that last revised the holding.", cardinality: { from: "many", to: "one", required: false } }] } } }
+    : artifact)
+
+async function cell(page: Page, inbox: unknown, definitionsServed: Promise<void> = Promise.resolve(), served: unknown = definitions) {
   await session(page)
   await page.route("**/api/host/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/v1/definitions")) {
       await definitionsServed
-      return route.fulfill({ json: { artifacts: definitions } })
+      return route.fulfill({ json: { artifacts: served } })
     }
     if (path.endsWith("/v1/inbox")) return route.fulfill({ json: inbox })
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
@@ -129,6 +139,20 @@ test("map: drilling in focuses the island's heading; Back returns focus to the i
   await expect(page.getByRole("button", { name: "All islands" })).toBeFocused()
   await page.keyboard.press("Enter")
   await expect(trigger).toBeFocused()
+})
+
+// #1724 (Fable r1): an island opened from the bridges list returns focus to the bridge end that opened it.
+test("map: Back from an island opened in the bridges list returns focus to that bridge's button", async ({ page }) => {
+  await cell(page, cleanInbox, Promise.resolve(), bridgedDefinitions)
+  await page.goto("/map")
+  const end = page.locator('[data-bridge-end="to"]').first()
+  await expect(end).toBeVisible()
+  const title = (await end.innerText()).trim()
+  await end.focus()
+  await page.keyboard.press("Enter")
+  await expect(page.getByRole("heading", { level: 2, name: title })).toBeFocused()
+  await page.getByRole("button", { name: "All islands" }).click()
+  await expect(end).toBeFocused()
 })
 
 test("map: arrows that point along the reading direction flip in right-to-left text", async ({ page }) => {

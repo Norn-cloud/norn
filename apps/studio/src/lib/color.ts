@@ -39,7 +39,8 @@ export function parseColor(raw: string): Color | null {
   const parsed = parse(value)
   if (parsed === undefined) return null
   const rgb = clampRgb(toRgb(parsed))
-  return { mode: "rgb", r: rgb.r, g: rgb.g, b: rgb.b, alpha: rgb.alpha ?? 1 }
+  // A CSS `none` channel (`rgb(none 0 0)`) reads as missing; CSS paints it as 0, so it is 0 here too.
+  return { mode: "rgb", r: rgb.r ?? 0, g: rgb.g ?? 0, b: rgb.b ?? 0, alpha: rgb.alpha ?? 1 }
 }
 
 /** The canonical CSS for a colour: `#rrggbb` when opaque, else `rgba(r, g, b, a)`. */

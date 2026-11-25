@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { intervalCell } from "./interval-cell.ts"
-import { NOW } from "./interval-fixtures.ts"
+import { BOOK_EQUIPMENT, INTERVAL_ACTIONS, NOW } from "./interval-fixtures.ts"
 
 // One test per row of the operator verbs on two unrelated `core.TimeInterval` worlds (see the PR):
 // the Table | Timeline view, the form's date, time and record pickers, and refusals shown at the
@@ -148,7 +148,7 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   // The sheet is the outer dialog; the open list is a dialog inside it.
   // It opens from 95% scale, so it is measured once settled.
   const [field, panel] = await Promise.all([equipment.boundingBox(), form.first().boundingBox()])
-  const popup = page.getByRole("dialog", { name: "Choose a equipment" })
+  const popup = page.getByRole("dialog", { name: "Choose equipment" })
   await expect.poll(async () => (await popup.boundingBox())!.width).toBeGreaterThanOrEqual(field!.width - 1)
   const settled = (await popup.boundingBox())!
   expect(settled.x).toBeGreaterThanOrEqual(panel!.x - 1)
@@ -169,6 +169,45 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   await expect(equipment).toBeFocused()
   await expect(form).toHaveCount(1)
   await expect(equipment).toContainText("Forklift")
+})
+
+// #1724 (Fable r1): on an optional field that has a value, a search highlights the match, never Clear.
+test("picker: on an optional field with a value, a search then Enter picks the match; Clear is listed only unsearched", async ({ page }) => {
+  await intervalCell(page)
+  // The same action with its equipment optional (the cell's schema decides; Studio reads `required`).
+  const optional = { ...BOOK_EQUIPMENT, inputSchema: { ...BOOK_EQUIPMENT.inputSchema, required: BOOK_EQUIPMENT.inputSchema.required.filter((field) => field !== "equipment") } }
+  await page.route("**/api/host/v1/actions**", (route) => {
+    if (route.request().method() !== "GET") return route.fallback()
+    const kind = new URL(route.request().url()).searchParams.get("objectKind")
+    return route.fulfill({ json: { items: INTERVAL_ACTIONS.map((a) => a === BOOK_EQUIPMENT ? optional : a).filter((a) => kind === null || a.objectKind === kind) } })
+  })
+  await page.goto("/objects/facilities.EquipmentBooking")
+  await page.getByRole("button", { name: "New equipment booking" }).click()
+  const form = sheet(page)
+  const equipment = form.getByRole("combobox", { name: "Equipment", exact: true })
+  const list = page.getByRole("listbox", { name: "Equipment records" })
+  const search = page.getByRole("combobox", { name: "Search equipment records" })
+  // Give the field a value first: Spare unit 01.
+  await equipment.click()
+  await search.fill("Spare unit 01")
+  await expect(list.getByRole("option").first()).toContainText("Spare unit 01")
+  await page.keyboard.press("Enter")
+  await expect(list).toBeHidden()
+  await expect(equipment).toContainText("Spare unit 01")
+  // Unsearched, the optional field with a value lists Clear first.
+  await equipment.click()
+  await expect(list.getByRole("option").first()).toHaveText(/Clear selection/)
+  // Searched, Clear is gone and Enter picks the match.
+  await search.fill("fork")
+  await expect(list.getByRole("option")).toHaveText([/Forklift\s*equipment\/2/, /Use the id/])
+  await expect(list.getByRole("option", { name: "Clear selection" })).toHaveCount(0)
+  await shoot(page, "picker-optional-search")
+  await page.keyboard.press("Enter")
+  await expect(list).toBeHidden()
+  await expect(equipment).toContainText("Forklift")
+  // The X beside the field still clears it.
+  await form.getByRole("button", { name: "Clear selection" }).click()
+  await expect(equipment).toContainText("Choose equipment")
 })
 
 test.describe("in Cairo", () => {
@@ -267,7 +306,7 @@ test.describe("in Cairo", () => {
     await form.getByRole("combobox", { name: "Equipment", exact: true }).click()
     const list = page.getByRole("listbox")
     await expect(list.getByRole("option", { name: /Forklift/ })).toBeVisible()
-    const picker = page.getByRole("dialog", { name: "Choose a equipment" })
+    const picker = page.getByRole("dialog", { name: "Choose equipment" })
     await page.getByRole("option", { name: "Show more" }).click()
     await expect(picker.getByRole("alert")).toHaveText("Access changed mid-page.")
     await expect(list.getByRole("option", { name: /Forklift/ })).toBeVisible()

@@ -197,7 +197,6 @@ export function buildSemanticMap(
 
   const resolveSystem = (mappingId: string | undefined, systemName: string | undefined): SourceSystem | undefined => {
     if (mappingId && externalById.has(mappingId)) return externalById.get(mappingId)
-    if (systemName && externalById.has(systemName)) return externalById.get(systemName)
     if (systemName && uniqueExternalByName.has(systemName)) return uniqueExternalByName.get(systemName)
     return undefined
   }

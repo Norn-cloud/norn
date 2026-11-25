@@ -473,6 +473,13 @@ function ProvenanceSideSheet({
 }
 
 /** `/map`: Read-only Catalog Ontology Map (Phase 1, #1664) — Monochrome Islands, Bundled Bridges, Lenses & Schema Dossier. */
+/** What opened an island: its own "Expand island" trigger, or one end of a bridge in the bridges list. */
+type Opener = { readonly kind: "island"; readonly id: string } | { readonly kind: "bridge"; readonly id: string; readonly end: "from" | "to" }
+
+const openerSelector = (opener: Opener): string => opener.kind === "island"
+  ? `[data-slot="semantic-island"][data-island-id="${CSS.escape(opener.id)}"] [data-island-trigger]`
+  : `[data-bridge-id="${CSS.escape(opener.id)}"][data-bridge-end="${opener.end}"]`
+
 export function SemanticMapPage() {
   const { read, catalog } = useCatalog()
   const mode = useMode()
@@ -481,11 +488,15 @@ export function SemanticMapPage() {
   const [query, setQuery] = useState("")
   const [openIslandId, setOpenIslandId] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  // The island the user drilled out of: Back returns focus to its trigger on the overview.
-  const [returnTo, setReturnTo] = useState<string | null>(null)
+  // What opened the island (its own trigger, or a bridge's end in the bridges list): Back returns
+  // focus there on the overview. A jump to another island from inside opens that island in its own
+  // right, so Back then returns to that island's trigger.
+  const [opener, setOpener] = useState<Opener | null>(null)
+  const [returnTo, setReturnTo] = useState<Opener | null>(null)
+  const openIsland = (id: string, from: Opener = { kind: "island", id }) => { setOpenIslandId(id); setOpener(from) }
   useEffect(() => {
     if (openIslandId !== null || returnTo === null) return
-    document.querySelector<HTMLElement>(`[data-slot="semantic-island"][data-island-id="${CSS.escape(returnTo)}"] [data-island-trigger]`)?.focus()
+    document.querySelector<HTMLElement>(openerSelector(returnTo))?.focus()
     setReturnTo(null)
   }, [openIslandId, returnTo])
 
@@ -507,9 +518,7 @@ export function SemanticMapPage() {
   const selectNode = (nodeId: string) => {
     setSelectedNodeId(nodeId)
     const node = projection?.nodesById.get(nodeId)
-    if (node && openIslandId && node.islandId !== openIslandId) {
-      setOpenIslandId(node.islandId)
-    }
+    if (node && openIslandId && node.islandId !== openIslandId) openIsland(node.islandId)
   }
 
   return (
@@ -604,9 +613,9 @@ export function SemanticMapPage() {
                       lens={lens}
                       query={query}
                       selectedNodeId={selectedNodeId}
-                      onBack={() => { setReturnTo(activeIsland.id); setOpenIslandId(null) }}
+                      onBack={() => { setReturnTo(opener ?? { kind: "island", id: activeIsland.id }); setOpenIslandId(null) }}
                       onSelectNode={selectNode}
-                      onJumpIsland={(id) => { setOpenIslandId(id); setSelectedNodeId(null) }}
+                      onJumpIsland={(id) => { openIsland(id); setSelectedNodeId(null) }}
                     />
                   ) : (
                     <>
@@ -621,7 +630,7 @@ export function SemanticMapPage() {
                               attentionStatus={map.attentionStatus}
                               bridgeCount={bridgeCount}
                               dimmed={dimmed}
-                              onOpen={() => setOpenIslandId(island.id)}
+                              onOpen={() => openIsland(island.id)}
                               onSelectNode={selectNode}
                             />
                           )
@@ -638,7 +647,9 @@ export function SemanticMapPage() {
                                 <div key={bridge.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
                                   <button
                                     type="button"
-                                    onClick={() => setOpenIslandId(bridge.fromIsland)}
+                                    data-bridge-id={bridge.id}
+                                    data-bridge-end="from"
+                                    onClick={() => openIsland(bridge.fromIsland, { kind: "bridge", id: bridge.id, end: "from" })}
                                     className="font-medium text-foreground underline-offset-4 hover:underline"
                                   >
                                     {from?.title ?? bridge.fromIsland}
@@ -646,7 +657,9 @@ export function SemanticMapPage() {
                                   <ArrowRight aria-hidden className={cn("size-3.5 text-muted-foreground", FLOW_ARROW)} />
                                   <button
                                     type="button"
-                                    onClick={() => setOpenIslandId(bridge.toIsland)}
+                                    data-bridge-id={bridge.id}
+                                    data-bridge-end="to"
+                                    onClick={() => openIsland(bridge.toIsland, { kind: "bridge", id: bridge.id, end: "to" })}
                                     className="font-medium text-foreground underline-offset-4 hover:underline"
                                   >
                                     {to?.title ?? bridge.toIsland}

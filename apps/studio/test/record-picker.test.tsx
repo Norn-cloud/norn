@@ -162,6 +162,15 @@ test("a record named like an action is still a record: options are keyed by kind
   expect(choiceKey({ kind: "typed", id: "__clear" })).not.toBe(choiceKey({ kind: "record", id: "__clear" }))
 })
 
+// #1724 (Fable r1): a search highlights the first option, so Clear is listed only while nothing is searched.
+test("an optional field with a value lists Clear only with an empty search, so Enter after a search picks the match", () => {
+  const records = [{ id: "equipment/1", title: "Forklift" }, { id: "equipment/2", title: "Cutter" }]
+  expect(pickerChoices({ records, moved: false, optional: true, value: "equipment/2", more: false, typed: "" }).map((choice) => choice.key)).toEqual(["clear", "record:equipment/1", "record:equipment/2"])
+  const searched = pickerChoices({ records: [records[0]!], moved: false, optional: true, value: "equipment/2", more: true, typed: "fork" })
+  expect(searched.map((choice) => choice.key)).toEqual(["record:equipment/1", "more", "typed:fork"])
+  expect(searched[0]).toMatchObject({ kind: "record", id: "equipment/1" })
+})
+
 test("the options follow the list's state: Reload alone when the snapshot moved; Use the id only for an unlisted id", () => {
   const records = [{ id: "equipment/2", title: "Forklift" }]
   expect(pickerChoices({ records, moved: true, optional: true, value: "equipment/2", more: true, typed: "" }).map((choice) => choice.kind)).toEqual(["reload"])

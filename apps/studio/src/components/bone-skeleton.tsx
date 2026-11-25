@@ -47,7 +47,6 @@ export function BoneSkeleton({
   name,
   loading,
   label = "Loading",
-  fallback,
   fixture,
   animate,
   className,
@@ -56,7 +55,6 @@ export function BoneSkeleton({
   readonly name: StudioBoneName
   readonly loading: boolean
   readonly label?: string
-  readonly fallback?: ReactNode
   readonly fixture?: ReactNode
   readonly animate?: AnimationStyle
   readonly className?: string
@@ -81,10 +79,9 @@ export function BoneSkeleton({
         color="var(--muted)"
         darkColor="var(--well)"
         animate={resolvedAnimate}
-        // boneyard-js scales captured bones to the container's first measured height. Rendering the
-        // fallback before it picks a breakpoint would lock that height to the fallback's (#1705), so
-        // a captured skeleton gets no fallback and opens at its own captured height.
-        fallback={STUDIO_BONES[name] === undefined ? fallback : undefined}
+        // No `fallback`: every StudioBoneName has captured bones (`STUDIO_BONES` is total), and
+        // boneyard-js scales them to the container's first measured height, so a fallback painted
+        // before it picks a breakpoint would lock that height to the fallback's (#1705).
         fixture={fixture}
         select="viewport"
       >
