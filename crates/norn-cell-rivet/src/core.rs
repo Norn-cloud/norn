@@ -204,16 +204,13 @@ impl CellCore {
     ///
     /// # Errors
     /// A missing or malformed signing key; the cell then has no analytics.
-    pub fn enable_analytics(
-        &mut self,
-        signing_key: Option<&str>,
-        engine: Option<&str>,
-    ) -> Result<(), String> {
+    pub fn enable_analytics(&mut self, olap: &crate::config::Olap) -> Result<(), String> {
         // D136: the engine the deployment selected (`NORN_OLAP_ENGINE`).
-        let engine =
-            norn_cell::analytics::AnalyticalEngineId::from_name(engine.unwrap_or("duckdb"))?;
+        let engine = norn_cell::analytics::AnalyticalEngineId::from_name(
+            olap.engine.as_deref().unwrap_or("duckdb"),
+        )?;
         let issuer = norn_api::olap_credential::Issuer::parse(
-            signing_key.ok_or_else(|| "NORN_OLAP_SIGNING_KEY is required".to_owned())?,
+            olap.signing_key.as_deref().ok_or_else(|| "NORN_OLAP_SIGNING_KEY is required".to_owned())?,
         )
         .map_err(|error| format!("NORN_OLAP_SIGNING_KEY: {error}"))?;
         self.tenant.enable_analytics(issuer, engine);

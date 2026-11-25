@@ -114,6 +114,26 @@ pub struct HostConfig {
     pub conformance: bool,
 }
 
+/// What the cell needs to call the tenant analytics engine.
+#[derive(Clone)]
+pub struct Olap {
+    /// `NORN_OLAP_SIGNING_KEY`.
+    pub signing_key: Option<String>,
+    /// `NORN_OLAP_ENGINE`.
+    pub engine: Option<String>,
+}
+
+impl HostConfig {
+    /// The analytics engine settings the cell is opened with.
+    #[must_use]
+    pub fn olap(&self) -> Olap {
+        Olap {
+            signing_key: self.olap_signing_key.clone(),
+            engine: self.olap_engine.clone(),
+        }
+    }
+}
+
 impl std::fmt::Debug for HostConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HostConfig")

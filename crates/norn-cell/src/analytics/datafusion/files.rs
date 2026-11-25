@@ -259,6 +259,11 @@ fn parquet_text(
         };
         return Ok(Some(format!("{}.{fraction}Z", format_second(secs))));
     }
+    plain_text(array, row, kind)
+}
+
+/// A non-instant Parquet value as its text cast.
+fn plain_text(array: &dyn Array, row: usize, kind: ColumnKind) -> Outcome<Option<String>> {
     let any = array.as_any();
     let text = match array.data_type() {
         DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => text_at(array, row),

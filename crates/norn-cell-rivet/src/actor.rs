@@ -651,18 +651,14 @@ impl CellActor {
         let sources = self.config.sources.clone();
         let vars = self.config.connect_vars.clone();
         let analytics = self.config.olap_url.is_some();
-        let signing_key = self.config.olap_signing_key.clone();
-        let olap_engine = self.config.olap_engine.clone();
+        let olap = self.config.olap();
         self.cell
             .call(move |slot| -> Result<bool, String> {
                 let mut core = CellCore::open(slot.engine(), args)?;
                 if let Err(error) = core.configure_connect(&sources, &vars) {
                     tracing::error!(error = %error, "source connections not configured");
                 }
-                if analytics
-                    && let Err(error) =
-                        core.enable_analytics(signing_key.as_deref(), olap_engine.as_deref())
-                {
+                if analytics && let Err(error) = core.enable_analytics(&olap) {
                     tracing::error!(error = %error, "analytics not enabled");
                 }
                 let serving = core.serving();
