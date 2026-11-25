@@ -495,7 +495,8 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     let catalog = model
         .type_catalog()
         .with_governing_laws(model.law_artifacts())
-        .with_action_rules(&admitted.rules);
+        .with_action_rules(&admitted.rules)
+        .with_transition_guards(&admitted.guards);
     let now = turn_clock(&mut cell, now)?;
     let kernel_call = norn_kernel::ActionCall {
         action,

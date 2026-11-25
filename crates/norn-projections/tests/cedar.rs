@@ -474,6 +474,41 @@ fn synchronous_writer_authorization_projects_exact_declared_resource_types() {
     }
 }
 
+/// CREATE-WRITER-1 (#1101): a create-only writer action projects its declared
+/// writer footprint like a transition writer; an upsert that may update does
+/// not admit a writer, so its projection stays the primary target.
+#[test]
+fn create_only_writer_projects_declared_resource_types() {
+    let (types, properties, actions) = representative_model();
+    for (write_mode, projects) in [
+        (serde_json::json!({"kind":"create_only"}), true),
+        (serde_json::json!({"kind":"upsert"}), false),
+    ] {
+        let mut source = serde_json::to_value(&actions[0]).expect("action");
+        source["effectProgram"] = serde_json::json!({"kind":"upsert_input_object","objectIdField":"id","objectKind":"alpha.Root","entityArtifactId":"alpha.Root","entityArtifactVersion":"1.0.0","writeMode":write_mode});
+        source["writes"] = serde_json::json!([
+            {"entityKind":"alpha.Root","change":"created"},
+            {"entityKind":"alpha.Target","change":"created"}
+        ]);
+        source["synchronousRule"] =
+            serde_json::json!({"artifactId":"alpha.writer.rule","version":"1.0.0"});
+        let projected =
+            project_cedar_schema_with_catalog(&types, &[], &properties, &[action(source)]);
+        let expected = if projects {
+            "alpha::Child, alpha::Root, alpha::SpecialTarget, alpha::Target"
+        } else {
+            "alpha::Child, alpha::Root"
+        };
+        assert!(
+            projected
+                .schema
+                .contains(&format!("resource: [{expected}]")),
+            "{write_mode}: {}",
+            projected.schema
+        );
+    }
+}
+
 #[test]
 fn refusal_detail_pdp_fixture_matches_the_generated_host_schema() {
     let entities = project_cedar_schema(&[], &[], &[]);

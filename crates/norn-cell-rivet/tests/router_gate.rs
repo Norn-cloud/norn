@@ -1,19 +1,25 @@
 //! The public router refuses a caller without a valid host token before it
 //! reads the body, looks up or creates an actor, or upgrades a socket. The
-//! engine here is a bare TCP listener that counts connections: every actor
-//! lookup, creation or request goes through it, so a refused request leaves
-//! the count at zero. A valid token is the control that reaches it.
+//! engine here is a bare TCP listener that counts connections and signals a
+//! shared `Notify` on each accept: every actor lookup, creation or request
+//! goes through it, so a refused request leaves the count at zero. A valid
+//! token is the control that reaches it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
+use axum::response::IntoResponse as _;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer as _, SigningKey};
+use http::StatusCode;
 use norn_cell_rivet::actor::{MAX_PROVISION_BODY, now_ms};
 use norn_cell_rivet::config::HostConfig;
+use norn_cell_rivet::gate::COLD_BACKOFF;
 use norn_cell_rivet::router::{Router, app};
 use rivetkit::client::{Client, ClientConfig};
 use serde_json::{Value, json};
+use tokio::sync::Notify;
 
 const ISSUER: &str = "https://studio.test";
 
@@ -53,32 +59,66 @@ fn token(org: &str) -> String {
 struct Host {
     url: String,
     engine_connections: Arc<AtomicUsize>,
+    /// Woken on each accept by the counting engine, so tests can await a
+    /// real outbound hit without a yield-spin.
+    engine_connected: Arc<Notify>,
     http: reqwest::Client,
+    /// Number of JWKS fetches the issuer mock has served (test-controlled).
+    jwks_fetches: Arc<AtomicUsize>,
+    /// When `true`, the issuer mock serves 200 with the JWKS document;
+    /// otherwise it serves 500 and the fetch fails.
+    jwks_ok: Arc<AtomicBool>,
 }
 
-/// A router in front of a counting engine, with its issuer's JWKS served
-/// locally.
-async fn host() -> Host {
+async fn start_counting_engine() -> (std::net::SocketAddr, Arc<AtomicUsize>, Arc<Notify>) {
     let engine = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let engine_addr = engine.local_addr().unwrap();
     let engine_connections = Arc::new(AtomicUsize::new(0));
+    let engine_connected = Arc::new(Notify::new());
     let counted = Arc::clone(&engine_connections);
+    let notifier = Arc::clone(&engine_connected);
     tokio::spawn(async move {
         while let Ok((stream, _)) = engine.accept().await {
             counted.fetch_add(1, Ordering::SeqCst);
+            notifier.notify_one();
             drop(stream);
         }
     });
+    (engine_addr, engine_connections, engine_connected)
+}
+
+async fn start_issuer_mock() -> (std::net::SocketAddr, Arc<AtomicUsize>, Arc<AtomicBool>) {
     let issuer = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer_addr = issuer.local_addr().unwrap();
-    let document = jwks();
+    let fetches = Arc::new(AtomicUsize::new(0));
+    let ok = Arc::new(AtomicBool::new(true));
+    let counted = Arc::clone(&fetches);
+    let ok_flag = Arc::clone(&ok);
     tokio::spawn(async move {
+        let document = jwks();
         let keys = axum::Router::new().fallback(move || {
             let document = document.clone();
-            async move { document }
+            let counted = Arc::clone(&counted);
+            let ok_flag = Arc::clone(&ok_flag);
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                if ok_flag.load(Ordering::SeqCst) {
+                    (StatusCode::OK, document).into_response()
+                } else {
+                    (StatusCode::INTERNAL_SERVER_ERROR, String::new()).into_response()
+                }
+            }
         });
         axum::serve(issuer, keys).await.unwrap();
     });
+    (issuer_addr, fetches, ok)
+}
+
+/// A router in front of a counting engine, with a controllable JWKS mock.
+/// The gate uses its real (production) cold-start backoff ([`COLD_BACKOFF`]).
+async fn host() -> Host {
+    let (engine_addr, engine_connections, engine_connected) = start_counting_engine().await;
+    let (issuer_addr, jwks_fetches, jwks_ok) = start_issuer_mock().await;
     let config = Arc::new(HostConfig {
         issuer: Some(ISSUER.to_owned()),
         jwks_url: Some(format!("http://{issuer_addr}/jwks")),
@@ -93,7 +133,10 @@ async fn host() -> Host {
     Host {
         url: format!("http://{public_addr}"),
         engine_connections,
+        engine_connected,
         http: reqwest::Client::new(),
+        jwks_fetches,
+        jwks_ok,
     }
 }
 
@@ -224,5 +267,113 @@ async fn a_valid_token_reaches_the_engine() {
     assert!(
         host.engine_connections.load(Ordering::SeqCst) > 0,
         "an admitted request did not reach the engine"
+    );
+}
+
+/// The WebSocket subscribe path with a valid token: the gate admits, axum
+/// completes the upgrade handshake (101 Switching Protocols), and the
+/// spawned join task opens a connection to the counting engine.
+#[tokio::test]
+async fn a_valid_token_on_a_websocket_upgrade_reaches_the_engine() {
+    let host = host().await;
+    let public_addr = host.url.strip_prefix("http://").unwrap();
+    let stream = tokio::net::TcpStream::connect(public_addr).await.unwrap();
+    let request = http::Request::builder()
+        .uri(format!(
+            "ws://{public_addr}/v1/subscribe?orgId=org_a&environmentId=dev"
+        ))
+        .header("host", public_addr)
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", URL_SAFE_NO_PAD.encode([5_u8; 16]))
+        .header("sec-websocket-protocol", "norn.live.v1")
+        .header("authorization", token("org_a"))
+        .body(())
+        .unwrap();
+    let (socket, response) = tokio_tungstenite::client_async(request, stream)
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status().as_u16(),
+        101,
+        "a valid-token WebSocket upgrade was not accepted"
+    );
+    // axum spawns the join future after the upgrade. The counting engine
+    // notifies on accept; await under a timeout so a regression fails the
+    // test instead of hanging.
+    tokio::time::timeout(Duration::from_secs(5), host.engine_connected.notified())
+        .await
+        .expect("the admitted WebSocket upgrade never reached the engine");
+    assert!(host.engine_connections.load(Ordering::SeqCst) > 0);
+    drop(socket);
+}
+
+/// A cold-start JWKS outage returns 503 for every request and backs off:
+/// a concurrent burst coalesces on the gate's mutex and hits the issuer
+/// exactly once, the backoff holds a recovered JWKS behind 503 until
+/// the real [`COLD_BACKOFF`] elapses (advanced via `tokio::time::pause`
+/// so reqwest's live-time HTTP timeouts are untouched), and then the gate
+/// refetches and admits.
+#[tokio::test]
+async fn jwks_unreachable_at_cold_start_backs_off_and_recovers() {
+    let host = host().await;
+    host.jwks_ok.store(false, Ordering::SeqCst);
+
+    // Five concurrent requests: the coalescing path (mutex waiters) must
+    // dedupe to one outbound JWKS fetch.
+    let request = || async {
+        host.http
+            .post(format!("{}{SCOPED}", host.url))
+            .header("authorization", token("org_a"))
+            .body("{}")
+            .send()
+            .await
+    };
+    let (r1, r2, r3, r4, r5) = tokio::join!(request(), request(), request(), request(), request());
+    for r in [r1, r2, r3, r4, r5] {
+        assert_eq!(r.unwrap().status().as_u16(), 503);
+    }
+    assert_eq!(
+        host.jwks_fetches.load(Ordering::SeqCst),
+        1,
+        "cold-start backoff did not coalesce the burst (expected 1 fetch)"
+    );
+    assert_eq!(
+        host.engine_connections.load(Ordering::SeqCst),
+        0,
+        "an unavailable gate let a request through to the engine"
+    );
+
+    // JWKS recovers, but the backoff still holds within the cooldown.
+    host.jwks_ok.store(true, Ordering::SeqCst);
+    let response = request().await.unwrap();
+    assert_eq!(response.status().as_u16(), 503);
+    assert_eq!(
+        host.jwks_fetches.load(Ordering::SeqCst),
+        1,
+        "the gate hit JWKS inside the cold-start backoff window"
+    );
+
+    // Real cooldown elapses on the monotonic clock. `pause` + `advance`
+    // only around the time jump, then `resume` immediately so reqwest's
+    // live HTTP timeouts are not affected.
+    tokio::time::pause();
+    tokio::time::advance(COLD_BACKOFF.saturating_add(Duration::from_millis(1))).await;
+    tokio::time::resume();
+
+    // The next request refetches and admits.
+    let response = request().await.unwrap();
+    // The counting engine drops the connection: the admitted request
+    // answers 503, but the engine saw it.
+    assert_eq!(response.status().as_u16(), 503);
+    assert_eq!(
+        host.jwks_fetches.load(Ordering::SeqCst),
+        2,
+        "the gate did not refetch JWKS after the cooldown elapsed"
+    );
+    assert!(
+        host.engine_connections.load(Ordering::SeqCst) > 0,
+        "the gate did not recover: an admitted request did not reach the engine"
     );
 }

@@ -208,6 +208,17 @@ fn validate_action_transaction_members(
             artifact_id
         );
     }
+    // ACTOR-INDEPENDENT-1: the target-relative checks are the artifact set's.
+    if payload.contains_key("independentOf") {
+        let _ = decode_member!(
+            Vec<norn_ir::PropertyId>,
+            payload,
+            "independentOf",
+            ACTION_CODE,
+            diagnostics,
+            artifact_id
+        );
+    }
 }
 
 pub(crate) fn validate_action_typed_members(

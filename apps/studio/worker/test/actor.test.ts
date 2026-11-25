@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, HOST_TOKEN_SECONDS, WORKSPACE_CHANGED_MESSAGE, hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
+import { NO_HOST_ERROR } from "../../../../packages/norn-sdk/src/client.ts"
 
 const ORIGIN = "https://studio-preview.norn.cloud"
 const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8")
@@ -94,7 +95,10 @@ test("without a session or a connected host, Norn calls refuse", async () => {
   const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   if (!actor) throw new Error("no actor")
   db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
-  expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(503)
+  const noHost = await call(env, "/api/host/v1/defs", { headers: { cookie } })
+  expect(noHost.status).toBe(503)
+  // The SDK tells this answer from a gateway's 503 by its body: here the route is not served at all.
+  expect(JSON.parse(await noHost.text()) as unknown).toEqual({ error: NO_HOST_ERROR })
 })
 
 test("a request body reaches the host unchanged", async () => {

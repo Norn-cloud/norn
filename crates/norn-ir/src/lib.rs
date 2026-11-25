@@ -102,11 +102,11 @@ pub use access::{
     AccessIr, ApprovalPolicyRoot, ObligationPolicyRoot, PolicyObligation, PolicyRoot,
 };
 pub use action::{
-    AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
-    ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
-    ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
-    ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, McpTool,
-    McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
+    ACTOR_SUBJECT_STAMP, AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation,
+    ActionCompensation, ActionCreateLink, ActionInputDerivation, ActionLinkSource,
+    ActionQuantityEffect, ActionQuantityOperation, ActionQuantityParameter, ActionRoot,
+    ActionRuleRef, ActionUiEffect, ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES,
+    MAX_TRACE_ID_BYTES, McpTool, McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
 };
 pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
@@ -1270,6 +1270,7 @@ define_payload_root!(ActionPayload {
         writes => "writes" as Vec<ActionWrite>,
         compensation => "compensation" as ActionCompensation,
         access => "access" as AccessRef,
+        independent_of => "independentOf" as Vec<PropertyId>,
         ui_effects => "uiEffects" as ActionUiEffects
     }
 });

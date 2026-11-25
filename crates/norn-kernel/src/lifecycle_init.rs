@@ -16,6 +16,7 @@ use norn_ir::{Lifecycle, PropertyId, TransitionId};
 use crate::cell_host::{
     CellCommit, CommitError, CommitModel, CommitView, FactKey, FactMutation, JsonObject, JsonValue,
 };
+use crate::creator_stamp::{CreatorStamp, KernelTrust};
 use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, check_guards, materialize_lifecycle_defaults,
     resolve_transition,
@@ -108,7 +109,7 @@ pub(crate) fn check_first_writes<E: 'static, C, T, V: CommitView + ?Sized>(
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: KernelTrust<'_>,
 ) -> Result<(), CommitError<V::Error>> {
     let authorized = authorization.map(ObservationAuthorization::indexed);
     let mut recorded: Option<BTreeMap<FactKey, Recorded<'_>>> = None;
@@ -138,18 +139,11 @@ pub(crate) fn check_first_writes<E: 'static, C, T, V: CommitView + ?Sized>(
             .map_or((&[][..], None), |recorded| {
                 (recorded.facts.as_slice(), recorded.observed)
             });
-        check_first_write_lifecycles(
-            model.catalog,
-            &write.key,
-            values,
-            events,
-            trusted_owned_rows,
-            observed,
-        )
-        .map_err(|refusal| CommitError::LifecycleInitialization {
-            key: write.key.clone(),
-            refusal: Box::new(refusal),
-        })?;
+        check_first_write_lifecycles(model.catalog, &write.key, values, events, trust, observed)
+            .map_err(|refusal| CommitError::LifecycleInitialization {
+                key: write.key.clone(),
+                refusal: Box::new(refusal),
+            })?;
     }
     Ok(())
 }
@@ -247,9 +241,10 @@ pub(crate) fn with_initial_states<X>(
 /// ends in an initial state, since a final row alone cannot tell a legal
 /// sequence from a forged one: it is replayed from initialization under the
 /// decision path's own rules ([`FirstWriteReplay`]) and must end in
-/// exactly the written values. `kernel_origin` is the kernel-prepared
-/// owned-row admission, whose creations may initialize rules-only properties
-/// under the kernel's private origin (FA-PROTECT-1). `observed` is why an
+/// exactly the written values. Under `trust`, the kernel-prepared owned-row
+/// admission's creations may initialize rules-only properties under the
+/// kernel's private origin (FA-PROTECT-1), and a governed create may hold its
+/// creator stamp (ACTOR-STAMP-1). `observed` is why an
 /// observed transition or deletion names the object: that is history of an
 /// existing object, so it contradicts a first write.
 pub(crate) fn check_first_write_lifecycles(
@@ -257,7 +252,7 @@ pub(crate) fn check_first_write_lifecycles(
     key: &FactKey,
     values: &JsonObject,
     events: &[&FactEvent],
-    kernel_origin: bool,
+    trust: KernelTrust<'_>,
     observed: Option<&str>,
 ) -> Result<(), LifecycleInitRefusal> {
     let lifecycle_properties = catalog.lifecycle_properties(&key.object_type);
@@ -278,7 +273,8 @@ pub(crate) fn check_first_write_lifecycles(
         key,
         lifecycle_properties,
         lifecycles,
-        kernel_origin,
+        kernel_origin: trust.owned_rows(),
+        stamp: trust.stamp(),
     };
     let mut current: Option<JsonObject> = None;
     for event in events {
@@ -316,6 +312,8 @@ struct FirstWriteReplay<'r, 'a> {
     lifecycles: BTreeMap<PropertyId, Lifecycle>,
     /// Whether the kernel's owned-row admission prepared the commit.
     kernel_origin: bool,
+    /// The creator stamp of a kernel-prepared governed create (ACTOR-STAMP-1).
+    stamp: Option<&'r CreatorStamp>,
 }
 
 impl FirstWriteReplay<'_, '_> {
@@ -344,7 +342,7 @@ impl FirstWriteReplay<'_, '_> {
     /// every guard reads the values the final comparison does. A caller
     /// cannot supply a rules-only property: outside the kernel's owned-row
     /// origin, each one must hold exactly the value materialization gives it
-    /// without that input.
+    /// without that input, or the kernel's creator stamp.
     fn create(
         &self,
         current: &mut Option<JsonObject>,
@@ -359,8 +357,14 @@ impl FirstWriteReplay<'_, '_> {
             caller.retain(|property, _| !self.rules_only(property));
             if caller.len() != created.len() {
                 let defaults = self.materialize(&caller)?;
+                let stamped = |property: &str| {
+                    self.stamp
+                        .zip(created.get(property))
+                        .is_some_and(|(stamp, value)| stamp.permits(self.key, property, value))
+                };
                 if let Some(property) = created.keys().find(|property| {
                     self.rules_only(property)
+                        && !stamped(property.as_str())
                         && materialized.get(property.as_str()) != defaults.get(property.as_str())
                 }) {
                     return Err(unrecorded(&format!("{property} is writable only by rules")));
