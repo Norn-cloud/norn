@@ -8,9 +8,11 @@
  * - A withheld value (mode `refuse`, `withheldProperties`, or a row withheld whole) is
  *   `data-agent-hidden`: the agent never sees the element.
  * - A control that starts an action the server says is irreversible, destructive, monetary
- *   (`uiEffects`) or ledgered (the admitted action), or a placement whose confirmation is not
- *   `safe`, is `data-agent-confirm` with what it does. An approval requirement is the server's
- *   answer to the call (202), which no catalog states ahead of it.
+ *   (`uiEffects`) or ledgered (the admitted action), or an action whose placement's confirmation is
+ *   not `safe`, is `data-agent-confirm` with what it does. So is every control that starts an action
+ *   whose effects the server has not said (no catalog, or its read still loading or failed): the mark
+ *   fails closed. An approval requirement is the server's answer to the call (202), which no catalog
+ *   states ahead of it.
  *
  * Every mark reflects a server answer; none decides anything. Server-side redaction before
  * serialization stays the one secrecy authority: these attributes are agent and DOM defence in
@@ -57,9 +59,15 @@ export function valueMark(masked: MaskedProperty | undefined, withheld: boolean)
 /** The mark of a row the server withheld whole (`withheld: true`). */
 export const rowMark = (withheld: boolean): AgentAttributes => (withheld ? HIDDEN : NONE)
 
-/** Why a press needs a person, from the server's own effects, or null when it does not. */
+/** What the mark says when the server has not said an action's effects. */
+export const UNKNOWN_EFFECTS = "its effects are not known"
+
+/**
+ * Why a press needs a person, from the server's own effects, or null when it does not. Effects the
+ * server has not said (`undefined`) need a person too.
+ */
 export function effectsReason(effects: ActionEffects | undefined): string | null {
-  if (effects === undefined) return null
+  if (effects === undefined) return UNKNOWN_EFFECTS
   const said = [
     ...(effects.irreversible ? ["cannot be undone"] : []),
     ...(effects.destructive ? ["may destroy data"] : []),
@@ -71,25 +79,33 @@ export function effectsReason(effects: ActionEffects | undefined): string | null
 
 export const confirmMark = (reason: string | null): AgentAttributes => (reason === null ? NONE : { "data-agent-confirm": reason })
 
+/** The placements of action binding `bindingId` whose confirmation is not `safe`, as the mark says them. */
+function severities(ux: WidgetUx, bindingId: string, locale: string): string[] {
+  return ux.actionPlacements.flatMap((placement) =>
+    placement.bindingId === bindingId && placement.confirmation.severity !== "safe" ? [`${text(placement.label, locale)}: ${placement.confirmation.severity}`] : [])
+}
+
 /**
- * Why pressing node `nodeId` of a page needs a person: a placement whose confirmation is not
- * `safe`, or a transition its events fire that starts an action the server says is consequential.
+ * Why pressing node `nodeId` of a page needs a person (a control, an action placement, or an island
+ * through its `emit`): its placement's confirmation is not `safe`, or a transition its events fire
+ * starts an action that a placement asks to confirm, or that the server says is consequential, or
+ * whose effects the server has not said.
  */
 export function confirmReason(ux: WidgetUx, machine: Machine | undefined, nodeId: string, placementId: string | null, effectsOf: (actionId: string) => ActionEffects | undefined, locale: string): string | null {
   const reasons: string[] = []
   const placement = placementId === null ? undefined : ux.actionPlacements.find((candidate) => candidate.placementId === placementId)
-  if (placement !== undefined && placement.confirmation.severity !== "safe") {
-    reasons.push(`${text(placement.label, locale)}: ${placement.confirmation.severity}`)
-  }
+  if (placement !== undefined && placement.confirmation.severity !== "safe") reasons.push(`${text(placement.label, locale)}: ${placement.confirmation.severity}`)
   const events = new Set((machine?.events ?? []).filter((event) => event.source.kind === "user" && event.source.nodeId === nodeId).map((event) => event.eventId))
   for (const transition of machine?.transitions ?? []) {
     if (!events.has(transition.on)) continue
     for (const effect of transition.effects ?? []) {
       if (effect.kind !== "start" || effect.call.kind !== "action") continue
       const bindingId = effect.call.bindingId
+      reasons.push(...severities(ux, bindingId, locale))
       const binding = ux.actionBindings.find((candidate) => candidate.bindingId === bindingId)
-      const reason = binding === undefined ? null : effectsReason(effectsOf(binding.action.id))
-      if (binding !== undefined && reason !== null) reasons.push(`${binding.action.id}: ${reason}`)
+      // A start the contract does not bind is refused at admission; were it here, it is not known either.
+      const reason = effectsReason(binding === undefined ? undefined : effectsOf(binding.action.id))
+      if (reason !== null) reasons.push(`${binding?.action.id ?? bindingId}: ${reason}`)
     }
   }
   return reasons.length === 0 ? null : [...new Set(reasons)].join(". ")

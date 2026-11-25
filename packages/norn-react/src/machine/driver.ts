@@ -7,12 +7,16 @@
 // the expression engine before it is loaded (`EngineNotReady`) is deferred, with every message after
 // it, and replayed in order by `resume` once the engine is here: nothing is dropped or reordered.
 //
+// A transition whose guard or assignment the engine refuses (`EvaluationError`, a guard that is not a
+// Boolean) fires nothing, whether it ran at once or on replay: the page stays where it was, the
+// message is dropped, `onError` reports it, and the messages after it still run.
+//
 // Idempotency: one key per (call, request body). A definitive answer (accepted, refused, pending
 // approval, answer moved) retires the key; a timeout, network failure or cancel keeps it, so a
 // retry of the same request replays instead of committing twice. An edited request gets a new key.
 
 import { EngineNotReady } from "./evaluate.ts"
-import { type Classified, classifyResponse } from "./outcome.ts"
+import { type Classified, classifyText } from "./outcome.ts"
 import { type Cmd, type Evaluate, type Fields, type Machine, type MachineCall, type Msg, type Snapshot, type Step, init, update } from "./machine.ts"
 
 export interface CallOptions {
@@ -39,8 +43,10 @@ export interface DriverOptions {
   readonly onStart?: (cmd: Extract<Cmd, { kind: "start" }>, idempotencyKey: string) => void
   /** Every answer to a started call, before its outcome is dispatched: the body the page shows. */
   readonly onAnswer?: (cmd: Extract<Cmd, { kind: "start" }>, answer: Classified, idempotencyKey: string) => void
-  /** A message waits for the expression engine (`resume` replays it). */
+  /** A message waits for the expression engine (`resume` replays it): called for each message that waits. */
   readonly onDefer?: () => void
+  /** A message whose transition the engine refused: it fired nothing and was dropped. */
+  readonly onError?: (error: unknown, msg: Msg) => void
   readonly navigate?: (itemId: string) => void
   readonly newKey?: () => string
   readonly clock?: Clock
@@ -73,16 +79,7 @@ export function fetchTransport(
     async call(call, input, options) {
       const { url, init } = request(call, input, options.idempotencyKey)
       const response = await fetcher(url, { ...init, signal: options.signal })
-      const text = await response.text()
-      let body: unknown
-      if (text !== "") {
-        try {
-          body = JSON.parse(text)
-        } catch {
-          body = undefined
-        }
-      }
-      return classifyResponse(response.status, body)
+      return classifyText(response.status, await response.text())
     },
   }
 }
@@ -101,14 +98,19 @@ export function createDriver(options: DriverOptions): Driver {
   const waiting: Msg[] = []
   const idle = (): Step => ({ snapshot: current, cmds: [], fired: null })
 
-  /** Fire `msg`, or keep it waiting when its transition needs the engine; false when it waits. */
+  /**
+   * Fire `msg`; null when its transition needs the engine (it waits). A transition the engine refuses
+   * fires nothing: the same step whether the message runs at once or is replayed.
+   */
   const fire = (msg: Msg): Step | null => {
     let step: Step
     try {
       step = update(machine, evaluate, current, msg)
     } catch (error) {
       if (error instanceof EngineNotReady) return null
-      throw error
+      if (options.onError === undefined) console.error(error)
+      else options.onError(error, msg)
+      return idle()
     }
     current = step.snapshot
     options.onStep?.(step, msg)
@@ -118,11 +120,7 @@ export function createDriver(options: DriverOptions): Driver {
 
   const dispatch = (msg: Msg): Step => {
     if (disposed) return idle()
-    if (waiting.length > 0) {
-      waiting.push(msg)
-      return idle()
-    }
-    const step = fire(msg)
+    const step = waiting.length > 0 ? null : fire(msg)
     if (step !== null) return step
     waiting.push(msg)
     options.onDefer?.()
@@ -131,6 +129,7 @@ export function createDriver(options: DriverOptions): Driver {
 
   const resume = () => {
     while (!disposed && waiting.length > 0) {
+      // Still at the head while it fires, so a message it dispatches lands behind it.
       if (fire(waiting[0]!) === null) return
       waiting.shift()
     }

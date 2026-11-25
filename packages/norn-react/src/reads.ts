@@ -6,7 +6,7 @@
  * `ScopedReader` and `RecordedReader` implement): the reader is bound to the decided scope, and
  * answers each read already classified as one of the machine's call outcomes. An action binding is
  * called through `WidgetCalls`. The renderer turns those answers into `ReadState` and
- * `ActionCallState` (`lib/state`'s unions, `state.ts`) and draws each with `matchReadState` /
+ * `ActionCallState` (the closed unions of `state.ts`) and draws each with `matchReadState` /
  * `matchActionState`; nothing here judges permission.
  */
 import type { Classified } from "./machine/outcome.ts"

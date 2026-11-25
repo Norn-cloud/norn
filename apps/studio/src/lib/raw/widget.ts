@@ -9,7 +9,7 @@
  * (VAL-EXACT-1).
  */
 import { parseExactJson } from "../../../../../packages/norn-sdk/src/index.ts"
-import { classifyResponse, type Classified } from "../../../../../packages/norn-react/src/machine/outcome.ts"
+import { classifyText, type Classified } from "../../../../../packages/norn-react/src/machine/outcome.ts"
 import type { BindingRead } from "../../../../../packages/norn-react/src/reads.ts"
 import { defaultFetch, NO_DATA_CELL, readAtScope, readStudioScope, scopedHostFetch, StudioScopeError } from "../definitions.ts"
 import type { Fetch } from "../live-transport.ts"
@@ -36,8 +36,7 @@ export function readWidgetAtScope(read: BindingRead, scope: DecidedScope, signal
       // No data cell behind the workspace: the read is not served; any other failure is no answer.
       return error instanceof StudioScopeError && error.message === NO_DATA_CELL ? { outcome: "not_served", payload: {} } : { outcome: "network_failure", payload: {} }
     }
-    const text = await response.text()
-    return classifyResponse(response.status, text === "" ? undefined : parseExactJson(text))
+    return classifyText(response.status, await response.text(), parseExactJson)
   }, signal)
 }
 

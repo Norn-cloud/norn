@@ -10,6 +10,9 @@
  *
  * The renderer holds no permission logic: it reflects the server's answers (reads, refusals,
  * projections, approvals) and the admitted document, nothing else.
+ *
+ * A live page is keyed by its decided scope: another workspace gets another page, its own machine,
+ * reads and calls, never one carried from the last.
  */
 import { useMemo, useRef, type ReactNode } from "react"
 import type { ActionEffects } from "./agent.ts"
@@ -43,7 +46,11 @@ export interface NornAppRendererProps<Scope, Reader extends WidgetReader, Record
   readonly objectTypeOf: (artifactId: string) => string | undefined
   /** The action id the cell calls for an action artifact, from the admitted definitions. */
   readonly actionIdOf: (artifactId: string) => string | undefined
-  /** What the server says an action artifact's effects are (`uiEffects`, and `ledgered`). */
+  /**
+   * What the server says an action artifact's effects are (`uiEffects`, and `ledgered`); `undefined`
+   * while it has not said (no catalog, or its read loading or failed), which marks every control
+   * that starts the action as needing a person (L6 fails closed).
+   */
   readonly actionEffects?: (artifactId: string) => ActionEffects | undefined
   readonly locale?: string
   readonly dir?: "ltr" | "rtl"
@@ -71,6 +78,20 @@ export function refusalsOf(ux: WidgetUx, islands: IslandRegistry, live: boolean)
   }
   if (!live && ux.pages.some((page) => page.machine?.events.some((event) => event.source.kind === "subscription"))) missing.push("live:feed")
   return missing
+}
+
+/**
+ * The one "unavailable" state the renderer draws: the workspace's mode read, or the page's
+ * expression engine, did not answer. A person's Retry asks again.
+ */
+function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "workspace" | "engine"; readonly title: string; readonly message: string; readonly onRetry?: (() => void) | undefined; readonly dir: "ltr" | "rtl" }) {
+  return (
+    <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable" } : {})} className="grid gap-2">
+      <p className="text-body font-medium">{title}</p>
+      <p className="text-meta text-muted-foreground">{message}</p>
+      {onRetry !== undefined && <button type="button" className="justify-self-start text-meta underline" onClick={onRetry}>Retry</button>}
+    </div>
+  )
 }
 
 function Refused({ missing, dir }: { readonly missing: readonly string[]; readonly dir: "ltr" | "rtl" }) {
@@ -111,10 +132,12 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
     navigate: props.navigate ?? NO_NAVIGATION,
   }
   const role = machine.states.find((state) => state.stateId === runtime.snapshot.stateId)?.role
+  const dir = props.dir ?? "ltr"
+  const steps = runtime.waiting === 1 ? "One step waits" : `${runtime.waiting} steps wait`
   return (
     // Not a landmark itself: the page's own root node names its region, so no two regions share a name.
     <div
-      dir={props.dir ?? "ltr"}
+      dir={dir}
       lang={props.locale ?? "en"}
       className="grid gap-4"
       data-norn-page={page.pageId}
@@ -122,7 +145,15 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
       data-role={role}
       data-engine={runtime.engine}
       data-workspace={reader.kind}
+      data-waiting={runtime.waiting}
     >
+      {runtime.engine === "failed" && (
+        <Unavailable what="engine" dir={dir} title="Page engine unavailable" onRetry={runtime.retryEngine}
+          message={`This page's expression engine did not load. ${runtime.waiting === 0 ? "Steps that need it wait" : `${steps} for it`} and run, in order, once Retry loads it; nothing that needs it has run.`} />
+      )}
+      {runtime.fault !== null && (
+        <p role="alert" data-fault="" className="text-meta text-destructive-text">{`That step could not run: ${runtime.fault.message} The page stayed where it was.`}</p>
+      )}
       <Node scope={scope} node={page.root} />
     </div>
   )
@@ -140,15 +171,14 @@ export function NornAppRenderer<Scope, Reader extends WidgetReader, Recorded ext
   if (missing.length > 0) return <Refused missing={missing} dir={dir} />
   return matchWorkspaceState(workspace, {
     deciding: () => <p role="status" aria-busy="true" dir={dir} data-workspace="deciding" className="text-meta text-muted-foreground">Deciding the workspace…</p>,
-    unavailable: ({ error }) => (
-      <div role="alert" dir={dir} data-workspace="unavailable" className="grid gap-2">
-        <p className="text-body font-medium">Workspace unavailable</p>
-        <p className="text-meta text-muted-foreground">{error.message}</p>
-        {props.onRetryWorkspace !== undefined && <button type="button" className="justify-self-start text-meta underline" onClick={props.onRetryWorkspace}>Retry</button>}
-      </div>
-    ),
-    // Keyed by workspace kind: a page never carries one workspace's machine into another.
+    unavailable: ({ error }) => <Unavailable what="workspace" dir={dir} title="Workspace unavailable" message={error.message} onRetry={props.onRetryWorkspace} />,
+    // Keyed by the decided workspace: a page never carries one workspace's machine, reads or calls into another.
     recorded: ({ reader }) => <Page key="recorded" {...props} page={page} reader={reader as WidgetReader} />,
-    live: ({ reader }) => <Page key="live" {...props} page={page} reader={reader as WidgetReader} />,
+    live: ({ scope, reader }) => <Page key={pageKey({ kind: "live", scope })} {...props} page={page} reader={reader as WidgetReader} />,
   })
+}
+
+/** The key a decided workspace's page is drawn under: its kind and, live, its scope. */
+export function pageKey(workspace: { readonly kind: "recorded" } | { readonly kind: "live"; readonly scope: unknown }): string {
+  return workspace.kind === "recorded" ? "recorded" : `live:${JSON.stringify(workspace.scope)}`
 }

@@ -6,7 +6,7 @@ import { expect, test, type Page } from "@playwright/test"
 import { type Machine, type Msg, type Walk, wasmEvaluate } from "../../../../packages/norn-react/src/machine/index.ts"
 import type { WidgetUx } from "../../../../packages/norn-react/src/index.ts"
 import { demoDefinitions, MATRIX_WIDGET_ID, matrixArtifact } from "../../../../packages/norn-react/test/fixtures/matrix-page.ts"
-import { answerFor, matrixCell, type NotServed } from "./cell.ts"
+import { answerFor, matrixCell, RECORDS_ELSEWHERE, type NotServed } from "./cell.ts"
 import { matrixOf, nodesById } from "./manifest.ts"
 
 // The generated state matrix (#1762 milestone C). From the fixture page's admitted Widget UX
@@ -32,6 +32,8 @@ const nodes = nodesById(ux)
 const AXE = createRequire(import.meta.url).resolve("axe-core/axe.min.js")
 /** Room for the expression engine (WASM) to compile in a fresh page under the suite's load. */
 const ENGINE_MS = 30_000
+/** The expression engine's WASM, as the build serves it (`src/engine`, hashed by Vite). */
+const ENGINE_WASM = /\/norn_engine_wasm_bg[^/]*\.wasm(\?|$)/
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the matrix stand-in cell`) })
 
@@ -51,15 +53,27 @@ function queueFor(cell: Cell, step: Walk["steps"][number] | undefined, next: Msg
   }
 }
 
-/** Open the matrix page; the page's own `page_opened` starts its first read, so that answer is queued first. */
-async function open(page: Page, walk: Walk, variant: Variant, notServed: NotServed) {
+/**
+ * Open the matrix page; the page's own `page_opened` starts its first read, so that answer is queued
+ * first. `engine: "any"` opens it without waiting for the expression engine (a row that holds or fails it).
+ */
+async function open(page: Page, walk: Walk, variant: Variant, notServed: NotServed, engine: "ready" | "any" = "ready", environment?: { current: string }) {
   await page.setViewportSize({ width: variant.width, height: 900 })
-  const cell = await matrixCell(page, definitions)
+  const cell = await matrixCell(page, definitions, environment)
   if (walk.steps[0]?.msg.kind === "page_opened") queueFor(cell, walk.steps[0], walk.steps[1]?.msg, notServed)
   await page.clock.install({ time: new Date("2026-11-25T09:00:00Z") })
   await page.goto(`/matrix.html?widget=${MATRIX_WIDGET_ID}&theme=${variant.theme}&dir=${variant.dir}&locale=${localeOf(variant)}`)
   const root = page.locator("[data-norn-page]")
-  await expect(root).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
+  if (engine === "ready") await expect(root).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
+  return { root, cell }
+}
+
+/** Open the page with the engine not here (held or failing) and answer its first read: the page browses. */
+async function browseWithoutEngine(page: Page) {
+  const { root, cell } = await open(page, matrix.states.get("browsing")!, DEFAULT, "404", "any")
+  await expect.poll(() => cell.reads.inFlight).toBe(true)
+  cell.reads.release()
+  await expect(root).toHaveAttribute("data-state", "browsing")
   return { root, cell }
 }
 
@@ -161,6 +175,91 @@ test("L6: masked values are secret, withheld ones hidden, a ledgered confirm nee
   const refused = await agentAct(page, "Confirm", "press")
   expect(refused.ok).toBe(false)
   await expect(root).toHaveAttribute("data-state", "confirming")
+})
+
+test("engine held: the note and the save wait for the engine, in order, and run once it is here", async ({ page }) => {
+  let release = () => {}
+  const held = new Promise<void>((resolve) => { release = resolve })
+  await page.route(ENGINE_WASM, async (route) => {
+    await held
+    await route.continue()
+  })
+  const { root, cell } = await browseWithoutEngine(page)
+  // The note's assignment needs the engine: it waits. Save needs none, yet waits behind it: nothing is reordered.
+  expect((await agentAct(page, "Note", "setValue", ["Checked twice"])).ok).toBe(true)
+  await expect(root).toHaveAttribute("data-waiting", "1")
+  expect((await agentAct(page, "Save", "press")).ok).toBe(true)
+  await expect(root).toHaveAttribute("data-waiting", "2")
+  await expect(root).toHaveAttribute("data-state", "browsing")
+  release()
+  await expect(root).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
+  await expect(root).toHaveAttribute("data-state", "confirming")
+  await expect(root).toHaveAttribute("data-waiting", "0")
+  expect(cell.sent).toEqual([])
+})
+
+test("engine failing: the page says so with a person's Retry; what waited runs once Retry loads it", async ({ page }) => {
+  let failing = true
+  await page.route(ENGINE_WASM, (route) => (failing ? route.abort("failed") : route.continue()))
+  const { root } = await browseWithoutEngine(page)
+  const unavailable = page.locator('[data-unavailable="engine"]')
+  await expect(root).toHaveAttribute("data-engine", "failed", { timeout: ENGINE_MS })
+  await expect(unavailable).toBeVisible()
+  await expect(unavailable).toContainText("Page engine unavailable")
+  expect((await agentAct(page, "Note", "setValue", ["Checked twice"])).ok).toBe(true)
+  expect((await agentAct(page, "Save", "press")).ok).toBe(true)
+  await expect(root).toHaveAttribute("data-waiting", "2")
+  await expect(unavailable).toContainText("2 steps wait for it")
+  await expect(root).toHaveAttribute("data-state", "browsing")
+  if (process.env.SHOTS) await page.screenshot({ path: join(process.env.SHOTS, "engine-unavailable-light-1280-ltr.png"), fullPage: true })
+  // The chunk is back; a person presses Retry.
+  failing = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  await expect(root).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
+  await expect(root).toHaveAttribute("data-state", "confirming")
+  await expect(unavailable).toHaveCount(0)
+})
+
+test("workspace A → B: B's page reads and calls in B only, and shows nothing A read or called", async ({ page }) => {
+  const environment = { current: "analytics" }
+  const browsing = matrix.states.get("browsing")!
+  const { root, cell } = await open(page, browsing, DEFAULT, "404", "ready", environment)
+  await expect.poll(() => cell.reads.inFlight).toBe(true)
+  cell.reads.release()
+  await expect(root.getByText("Moving average")).toBeVisible()
+  // A's save commits: the status island draws it.
+  expect((await agentAct(page, "Save", "press")).ok).toBe(true)
+  cell.calls.push(answerFor({ kind: "outcome", entry: 0, outcome: "accepted" }, "action"))
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
+  await expect.poll(() => cell.calls.inFlight).toBe(true)
+  cell.calls.release()
+  await expect(root).toHaveAttribute("data-state", "saved")
+  const status = page.locator('[data-island="fixture-status"] p')
+  await expect(status).toHaveAttribute("data-island-call", "committed")
+  // The session moves to B (the server's answer; the tab notices on focus). B's cell holds other records.
+  cell.reads.push({ status: 200, body: RECORDS_ELSEWHERE })
+  environment.current = "ops"
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event("visibilitychange", { bubbles: true }))
+    window.dispatchEvent(new Event("focus"))
+  })
+  await expect.poll(() => cell.reads.urls.length).toBe(2)
+  expect(new URL(cell.reads.urls[1]!).searchParams.get("environmentId")).toBe("ops")
+  // B's page opened on its own: nothing A read or called is drawn while B's read is pending.
+  await expect(root).toHaveAttribute("data-state", "loading")
+  await expect(root.getByText("Moving average")).toHaveCount(0)
+  await expect(status).toHaveAttribute("data-island-call", "none")
+  cell.reads.release()
+  await expect(root).toHaveAttribute("data-state", "browsing")
+  await expect(root.getByText("Ops policy")).toBeVisible()
+  await expect(root.getByText("Moving average")).toHaveCount(0)
+  // B's save goes to B.
+  expect((await agentAct(page, "Save", "press")).ok).toBe(true)
+  cell.calls.push(answerFor({ kind: "outcome", entry: 0, outcome: "accepted" }, "action"))
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
+  await expect.poll(() => cell.sent.length).toBe(2)
+  expect(cell.sent.map((call) => new URL(call.url).searchParams.get("environmentId"))).toEqual(["analytics", "ops"])
+  expect(new URL(cell.reads.urls[0]!).searchParams.get("environmentId")).toBe("analytics")
 })
 
 test("Escape: while the layer saves, it refuses and keeps focus inside", async ({ page }) => {

@@ -288,7 +288,7 @@ describe("lazy engine", () => {
     driver.dispatch({ kind: "user", eventId: "back" })
     expect(driver.snapshot().stateId).toBe("open")
     expect(driver.deferred()).toBe(2)
-    expect(deferred).toBe(1)
+    expect(deferred).toBe(2)
     const loaded = engine.load()
     expect(engine.state()).toBe("loading")
     release(fake)
@@ -298,6 +298,71 @@ describe("lazy engine", () => {
     expect(driver.deferred()).toBe(0)
     expect(driver.snapshot().stateId).toBe("idle")
     driver.dispose()
+  })
+
+  // A guard or assignment the engine refuses fires nothing, whether the message ran at once or waited
+  // for the engine: replay ends where eager evaluation ends, and the messages after it still run.
+  const refusing: Machine = {
+    ...guarded,
+    fields: [...guarded.fields, { fieldId: "note", type: "text", required: true, initial: "" }],
+    events: [...guarded.events, { eventId: "edit", source: { kind: "user", nodeId: "edit-node" } }, { eventId: "close", source: { kind: "user", nodeId: "close-node" } }],
+    transitions: [
+      { transitionId: "open", from: "idle", on: "open", target: "open" },
+      { transitionId: "go", from: "open", on: "go", target: "gone", guard: "input.fields.missing" },
+      { transitionId: "edit", from: "open", on: "edit", target: "open", assign: { note: "input.fields.missing" } },
+      { transitionId: "close", from: "open", on: "close", target: "idle" },
+    ],
+  }
+  const strict = {
+    evaluateExpression: (expression: string, inputJson: string) => {
+      const value = (JSON.parse(inputJson) as { fields: Record<string, unknown> }).fields[expression.replace("input.fields.", "")]
+      return JSON.stringify(value === undefined ? { ok: false, error: { code: "unknown_field", message: `${expression} names no field` } } : { ok: true, value })
+    },
+  }
+  const messages: Msg[] = [{ kind: "user", eventId: "open" }, { kind: "user", eventId: "go" }, { kind: "user", eventId: "edit" }, { kind: "user", eventId: "close" }]
+
+  test("a replayed guard or assignment the engine refuses is dropped and reported, and replay ends where eager evaluation does", async () => {
+    let release: (checker: typeof strict) => void = () => {}
+    const engine = lazyEngine(() => new Promise((resolve) => { release = resolve }))
+    const refused: Msg[] = []
+    const lazy = createDriver({ machine: refusing, evaluate: engine.evaluate, transport: { call: () => Promise.reject(new Error("no calls")) }, onError: (_error, msg) => { refused.push(msg) } })
+    for (const msg of messages) lazy.dispatch(msg)
+    expect(lazy.snapshot().stateId).toBe("open")
+    expect(lazy.deferred()).toBe(3)
+    const loaded = engine.load()
+    release(strict)
+    await loaded
+    lazy.resume()
+    expect(lazy.deferred()).toBe(0)
+    expect(refused).toEqual([messages[1]!, messages[2]!])
+    // The same messages with the engine already here.
+    const eagerRefused: Msg[] = []
+    const eager = createDriver({ machine: refusing, evaluate: engine.evaluate, transport: { call: () => Promise.reject(new Error("no calls")) }, onError: (_error, msg) => { eagerRefused.push(msg) } })
+    for (const msg of messages) eager.dispatch(msg)
+    expect(eagerRefused).toEqual(refused)
+    expect(lazy.snapshot()).toEqual(eager.snapshot())
+    expect(lazy.snapshot()).toEqual({ stateId: "idle", fields: { ready: true, note: "" }, entry: 2 })
+    // The queue is not stuck: the page keeps taking messages.
+    lazy.dispatch(messages[0]!)
+    expect(lazy.snapshot().stateId).toBe("open")
+    lazy.dispose()
+    eager.dispose()
+  })
+
+  test("after a failed load, a retry reports loading until it settles", async () => {
+    let attempts = 0
+    const engine = lazyEngine(async () => {
+      attempts += 1
+      if (attempts === 1) throw new Error("chunk failed")
+      return fake
+    })
+    await engine.load().catch(() => {})
+    expect(engine.state()).toBe("failed")
+    const retried = engine.load()
+    expect(engine.state()).toBe("loading")
+    await retried
+    expect(engine.state()).toBe("ready")
+    expect(attempts).toBe(2)
   })
 
   test("a constant literal needs no engine; anything else does", () => {

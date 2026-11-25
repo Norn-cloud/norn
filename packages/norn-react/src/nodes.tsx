@@ -74,18 +74,23 @@ function canAct(scope: PageScope, node: WidgetNode): { readonly on: boolean; rea
   }
 }
 
-/** A catalog node's props, each its ZEN expression over the page's fields; one waiting for the engine is left out. */
-function propsOf(scope: PageScope, node: WidgetNode): Record<string, unknown> {
-  if (node.component.kind !== "catalog") return {}
-  const out: Record<string, unknown> = {}
+/**
+ * A catalog node's props, each its ZEN expression over the page's fields. `waiting` names the props
+ * whose expressions wait for the engine: they are left out, and an island is not drawn until none is.
+ */
+function propsOf(scope: PageScope, node: WidgetNode): { readonly props: Record<string, unknown>; readonly waiting: readonly string[] } {
+  if (node.component.kind !== "catalog") return { props: {}, waiting: [] }
+  const props: Record<string, unknown> = {}
+  const waiting: string[] = []
   for (const [name, expression] of Object.entries(node.component.props ?? {})) {
     try {
-      out[name] = scope.runtime.evaluate(expression, { fields: scope.runtime.snapshot.fields, event: {} })
+      props[name] = scope.runtime.evaluate(expression, { fields: scope.runtime.snapshot.fields, event: {} })
     } catch (error) {
       if (!(error instanceof EngineNotReady)) throw error
+      waiting.push(name)
     }
   }
-  return out
+  return { props, waiting }
 }
 
 /** One read, drawn through its closed state. */
@@ -198,11 +203,15 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
   )
 }
 
-/** A UI SDK layer held open in the machine states its node names (`heldIn`). */
+/**
+ * A UI SDK layer held open in the machine states its node names (`heldIn`). `heldIn` is the one source
+ * of whether it is open (the checker's L1 refuses a set `open`, and `defaultOpen` on a held or locking
+ * layer): its own `open`/`defaultOpen` props are never read here.
+ */
 function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly node: WidgetNode; readonly primitive: string }) {
   const heldIn = node.component.kind === "catalog" ? node.component.heldIn ?? [] : []
   const open = heldIn.includes(scope.runtime.snapshot.stateId)
-  const props = propsOf(scope, node)
+  const { props } = propsOf(scope, node)
   const title = node.children.find((child) => child.component.kind === "section")
   const titled = title?.component.kind === "section" ? text(title.component.section.label, scope.locale) : scope.page.name
   // The layer's message: the confirmation message of the action it asks about (an alert dialog points at it).
@@ -252,7 +261,11 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   )
 }
 
-/** A catalog island, given its props, its emit and, for Tier 2, the page's server states. */
+/**
+ * A catalog island, given its props, its emit and, for Tier 2, the page's server states. It is held
+ * (a placeholder) until every prop evaluates, so it never sees a prop its generated type says is
+ * there missing. An island whose events start an action that needs a person carries the mark (L6).
+ */
 function Island({ scope, node }: { readonly scope: PageScope; readonly node: WidgetNode }) {
   if (node.component.kind !== "catalog") return null
   const entryId = node.component.entry.entryId
@@ -260,13 +273,18 @@ function Island({ scope, node }: { readonly scope: PageScope; readonly node: Wid
   const island = scope.islands[entryId] as ((input: unknown) => ReactNode) | undefined
   const tier = entry === undefined ? null : tierOf(entry.trust)
   if (island === undefined || tier === null) return null
+  const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale))
+  const { props, waiting } = propsOf(scope, node)
+  if (waiting.length > 0) {
+    return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="waiting" aria-busy="true" className="h-9 animate-pulse rounded-[var(--radius)] bg-muted" />
+  }
   const states: IslandStates = { reads: Object.fromEntries(scope.runtime.reads), calls: Object.fromEntries(scope.runtime.calls) }
   const input = {
-    props: propsOf(scope, node),
+    props,
     emit: (event: string, payload: Fields = {}) => raise(scope, node, payload, event),
     ...(tier === "stateful" ? { states } : {}),
   }
-  return <div data-node={node.nodeId} data-island={entryId} data-tier={tier}>{island(input)}</div>
+  return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier}>{island(input)}</div>
 }
 
 /** One node of the tree. */
@@ -331,12 +349,11 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
         ? <Control scope={scope} node={node} label={label} placementId={null} />
         : <Button className={BUTTON} data-node={node.nodeId} onClick={() => scope.navigate(component.itemId)}>{label}</Button>
     }
-    case "dialog":
-      return <div role="group" aria-label={scope.page.name} data-node={node.nodeId} className="grid gap-3">{children}<CallLine state={component.bindingId === undefined ? undefined : scope.runtime.calls.get(component.bindingId)} /></div>
     case "catalog": {
       const primitive = primitiveOf(node)
       return primitive === null ? <Island scope={scope} node={node} /> : <Layer scope={scope} node={node} primitive={primitive} />
     }
+    case "dialog":
     case "form":
     case "child_grid":
     case "composition":

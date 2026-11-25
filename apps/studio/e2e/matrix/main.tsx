@@ -64,7 +64,7 @@ function MatrixPage() {
     queryFn: async () => {
       const response = await scopedHostFetch(defaultFetch, "/api/host", async () => live!.scope)("/v1/actions", { headers: { accept: "application/json" } })
       const items = response.ok ? record(await response.json()).items : []
-      return new Map((Array.isArray(items) ? items : []).map((item) => [String(record(item).actionId), record(item).uiEffects as ActionEffects]))
+      return new Map((Array.isArray(items) ? items : []).map((item) => [String(record(item).actionId), record(item).uiEffects as ActionEffects | undefined]))
     },
   })
   const calls = useMemo(() => (workspace.kind === "live" || workspace.kind === "recorded" ? widgetCalls(workspace) : null), [workspace])
@@ -79,10 +79,11 @@ function MatrixPage() {
       islands={matrixIslands}
       objectTypeOf={(artifactId) => objectTypes.get(artifactId)}
       actionIdOf={(artifactId) => actionIdOf(artifactId) || undefined}
+      // Until the cell's catalog answers, and for an action it does not list, the effects are not
+      // known (`undefined`): the renderer marks every control that starts it as needing a person.
       actionEffects={(artifactId) => {
         const effects = catalog.data?.get(actionIdOf(artifactId))
-        const books = ledgered.has(artifactId)
-        return effects === undefined && !books ? undefined : { irreversible: false, destructive: false, money: [], ...effects, ledgered: books }
+        return effects === undefined ? undefined : { ...effects, ledgered: ledgered.has(artifactId) }
       }}
       locale={locale}
       dir={dir}

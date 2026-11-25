@@ -90,7 +90,6 @@ export type Component =
   | { readonly kind: "section"; readonly section: { readonly sectionId: string; readonly kind: "section" | "tab"; readonly label: LocaleText; readonly fields: ReadonlyArray<PropertyRef>; readonly order: number } }
   | { readonly kind: "list"; readonly dataBindingId: string; readonly fields: ReadonlyArray<PropertyRef>; readonly selection: "none" | "single" | "multiple" }
   | { readonly kind: "detail"; readonly dataBindingId: string }
-  | { readonly kind: "dialog"; readonly bindingId?: string; readonly blocking: boolean; readonly dismissalMethods?: ReadonlyArray<"visible_close" | "scrim" | "swipe" | "escape"> }
   | { readonly kind: "form"; readonly formId: string }
   | { readonly kind: "field"; readonly fieldId: string }
   | { readonly kind: "action"; readonly placementId: string }

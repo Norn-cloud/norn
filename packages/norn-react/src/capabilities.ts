@@ -39,8 +39,12 @@ export const RENDERED_BEHAVIORS = [
   "text/accessible-name",
 ] as const
 
-/** Component kinds this renderer draws. `form`, `child_grid` and `composition` are refused. */
-export const RENDERED_COMPONENTS: readonly ComponentKind[] = ["action", "catalog", "control", "detail", "dialog", "field", "list", "navigation", "section"]
+/**
+ * Component kinds this renderer draws. `form`, `child_grid` and `composition` are refused, and so is
+ * `dialog` (a dialog scope with `blocking` and `dismissalMethods`) until it draws through a UI SDK
+ * dialog layer; a page's layers are UI SDK primitives held open in its states (`heldIn`).
+ */
+export const RENDERED_COMPONENTS: readonly ComponentKind[] = ["action", "catalog", "control", "detail", "field", "list", "navigation", "section"]
 
 const OUTCOMES = ["accepted", "refused", "pending_approval", "answer_moved", "network_failure", "not_served", "stale", "subscription_refused", "timeout", "cancelled"] as const
 

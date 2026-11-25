@@ -21,7 +21,6 @@ import type { Read } from "./exact.ts"
 import { useMode, type Fetch, type Mode } from "./live-transport.ts"
 import { readFindings, readObjectAtScope, readRecordedObject } from "./raw/record.ts"
 import { readRecordedRecords, readRecordsAtScope } from "./raw/records.ts"
-import { readRecordedWidget, readWidgetAtScope } from "./raw/widget.ts"
 import { recordsQueryParams, recordsQueryPrefix, type RecordsQuery } from "./records-query.ts"
 import type { PageRead, RecordsRead } from "./records-source.ts"
 import type { ObjectReads } from "./transport.ts"
@@ -104,9 +103,10 @@ const RECORDED: RecordedReader = Object.freeze({
     queryKey: ["object", "recorded", objectType, id],
     queryFn: () => readRecordedObject(objectType, id),
   }),
+  // Loaded with the first widget page that reads: no page off that path pays for it.
   widget: (read: BindingRead) => ({
     queryKey: ["widget", "recorded", read],
-    queryFn: () => readRecordedWidget(read),
+    queryFn: async () => (await import("./raw/widget.ts")).readRecordedWidget(read),
   }),
 })
 
@@ -130,7 +130,7 @@ function scopedReader(scope: DecidedScope, fetcher: Fetch): ScopedReader {
     }),
     widget: (read: BindingRead) => ({
       queryKey: ["widget", read, scope.orgId, scope.environmentId],
-      queryFn: ({ signal }: { readonly signal: AbortSignal }) => readWidgetAtScope(read, scope, signal, fetcher),
+      queryFn: async ({ signal }: { readonly signal: AbortSignal }) => (await import("./raw/widget.ts")).readWidgetAtScope(read, scope, signal, fetcher),
     }),
   })
 }

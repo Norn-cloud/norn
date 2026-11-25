@@ -51,6 +51,23 @@ export function classifyResponse(status: number, body: unknown): Classified {
   return { outcome: "network_failure", payload: {}, body }
 }
 
+/**
+ * Classify one HTTP answer from its body text, parsed by `parse` (an exact parser keeps every number's
+ * text). A body that is no JSON, such as a proxy's HTML error page, is classified as no body: a 404
+ * page is still not served, a gateway's 503 page still no answer.
+ */
+export function classifyText(status: number, text: string, parse: (text: string) => unknown = JSON.parse): Classified {
+  let body: unknown
+  if (text !== "") {
+    try {
+      body = parse(text)
+    } catch {
+      body = undefined
+    }
+  }
+  return classifyResponse(status, body)
+}
+
 /** The code with which a host says it has no such route at all. */
 export const ROUTE_NOT_FOUND = "route.not_found"
 

@@ -1,16 +1,19 @@
 // L6 DOM contract (#1762 milestone C): the renderer declares `agent:redaction` and `agent:confirm`,
 // and emits them. A value the server masked is `data-agent-secret`, one it withheld is
-// `data-agent-hidden`, and a control that starts a ledgered or consequential action is
-// `data-agent-confirm`. Rendered to markup from the admitted fixture page and the stand-in's
-// real `NornObjectPage` envelope; nothing here decides what is masked.
+// `data-agent-hidden`, and a control that starts a ledgered or consequential action, an action a
+// placement asks to confirm, or one whose effects the server has not said, is `data-agent-confirm`
+// (it fails closed). Rendered to markup from the admitted fixture page and the stand-in's real
+// `NornObjectPage` envelope; nothing here decides what is masked.
 import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
+import type { ActionEffects } from "../src/agent.ts"
+import type { IslandRegistry } from "../src/islands.ts"
 import { lazyEngine } from "../src/machine/evaluate.ts"
 import type { Machine } from "../src/machine/machine.ts"
 import { Node, type PageScope } from "../src/nodes.tsx"
 import type { BindingCallState, BindingReadState } from "../src/reads.ts"
 import type { MachineRuntime } from "../src/runtime.ts"
-import { nodesOf, type WidgetUx } from "../src/ux.ts"
+import { nodesOf, type WidgetNode, type WidgetUx } from "../src/ux.ts"
 import { ACTION, matrixArtifact } from "./fixtures/matrix-page.ts"
 
 const ux = matrixArtifact().payload.ux as WidgetUx
@@ -25,12 +28,19 @@ const records = {
   ],
 }
 
-function scope(stateId: string, reads: ReadonlyMap<string, BindingReadState>, calls: ReadonlyMap<string, BindingCallState> = new Map(), ledgered = true): PageScope {
+interface Variant {
+  readonly ux?: WidgetUx
+  readonly effects?: (artifactId: string) => ActionEffects | undefined
+  readonly islands?: IslandRegistry
+}
+
+function scope(stateId: string, reads: ReadonlyMap<string, BindingReadState>, calls: ReadonlyMap<string, BindingCallState> = new Map(), ledgered = true, variant: Variant = {}): PageScope {
   const engine = lazyEngine(() => Promise.reject(new Error("markup only")))
-  const runtime: MachineRuntime = { snapshot: { stateId, fields: { note: "" }, entry: 1 }, engine: "idle", evaluate: engine.evaluate, send: () => {}, reads, calls }
+  const runtime: MachineRuntime = { snapshot: { stateId, fields: { note: "" }, entry: 1 }, engine: "idle", evaluate: engine.evaluate, send: () => {}, retryEngine: () => {}, reads, calls, waiting: 0, fault: null }
+  const shown = variant.ux ?? ux
   return {
-    ux, page, machine, runtime, islands: {}, locale: "en", navigate: () => {}, raisedBy: { current: null },
-    actionEffects: (artifactId) => (artifactId === ACTION.id ? { irreversible: false, destructive: false, money: [], ledgered } : undefined),
+    ux: shown, page: shown.pages[0]!, machine: shown.pages[0]!.machine as Machine, runtime, islands: variant.islands ?? {}, locale: "en", navigate: () => {}, raisedBy: { current: null },
+    actionEffects: variant.effects ?? ((artifactId) => (artifactId === ACTION.id ? { irreversible: false, destructive: false, money: [], ledgered } : undefined)),
   }
 }
 const node = (nodeId: string) => nodesOf(page.root).find((candidate) => candidate.nodeId === nodeId)!
@@ -55,6 +65,71 @@ test("agent:confirm: the control that starts a ledgered action needs a person; t
   // The mark is the server's answer: an action it does not call ledgered or consequential is unmarked.
   const plain = renderToStaticMarkup(<Node scope={scope("confirming", ok, new Map(), false)} node={node("confirm-node")} />)
   expect(attributes(plain, "data-agent-confirm")).toEqual([])
+})
+
+test("agent:confirm fails closed: an action whose effects the server has not said needs a person, at every control that starts it", () => {
+  const unsaid = { effects: () => undefined }
+  const confirm = renderToStaticMarkup(<Node scope={scope("confirming", ok, new Map(), true, unsaid)} node={node("confirm-node")} />)
+  expect(attributes(confirm, "data-agent-confirm")).toEqual([`data-agent-confirm="${ACTION.id}: its effects are not known"`])
+  const retry = renderToStaticMarkup(<Node scope={scope("save-failed", ok, new Map(), true, unsaid)} node={node("retry-save")} />)
+  expect(attributes(retry, "data-agent-confirm")).toEqual([`data-agent-confirm="${ACTION.id}: its effects are not known"`])
+  // A control that starts no action is never marked.
+  const save = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, unsaid)} node={node("save-node")} />)
+  expect(attributes(save, "data-agent-confirm")).toEqual([])
+})
+
+/** The fixture with its save placement's confirmation at `severity`. */
+const placed = (severity: "confirm" | "destructive"): WidgetUx => ({
+  ...ux,
+  actionPlacements: ux.actionPlacements.map((placement) => ({ ...placement, confirmation: { ...placement.confirmation, severity } })),
+})
+
+test("agent:confirm: a placement that is not `safe` marks every control that starts its binding, not only itself", () => {
+  const variant = { ux: placed("destructive") }
+  const retry = renderToStaticMarkup(<Node scope={scope("save-failed", ok, new Map(), false, variant)} node={node("retry-save")} />)
+  expect(attributes(retry, "data-agent-confirm")).toEqual(['data-agent-confirm="Confirm: destructive"'])
+  const confirm = renderToStaticMarkup(<Node scope={scope("confirming", ok, new Map(), false, variant)} node={node("confirm-node")} />)
+  expect(attributes(confirm, "data-agent-confirm")).toEqual(['data-agent-confirm="Confirm: destructive"'])
+})
+
+/** The fixture's meter island, with its `pick` starting the save call, and its caption read from the page's fields. */
+function islandPage(): WidgetUx {
+  const page = ux.pages[0]!
+  const meter = (child: WidgetNode): WidgetNode => (child.nodeId === "meter-node" && child.component.kind === "catalog" ? { ...child, component: { ...child.component, props: { caption: "input.fields.note" } } } : child)
+  return {
+    ...ux,
+    pages: [{
+      ...page,
+      root: { ...page.root, children: page.root.children.map(meter) },
+      machine: { ...page.machine!, transitions: page.machine!.transitions.map((transition) => (transition.transitionId === "pick" ? { ...transition, target: "saving", effects: [{ kind: "start" as const, call: { kind: "action" as const, bindingId: "save" } }] } : transition)) },
+    }],
+  }
+}
+
+test("agent:confirm: an island that can emit a consequential action carries the mark", () => {
+  let drawn = 0
+  const islands: IslandRegistry = { "fixture-meter": () => { drawn += 1; return "meter" }, "fixture-status": () => null }
+  const fixtureMeter = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, { islands })} node={node("meter-node")} />)
+  expect(attributes(fixtureMeter, "data-agent-confirm")).toEqual([])
+  const variant = { ux: islandPage(), islands }
+  const meter = nodesOf(variant.ux.pages[0]!.root).find((candidate) => candidate.nodeId === "meter-node")!
+  const marked = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, variant)} node={meter} />)
+  expect(attributes(marked, "data-agent-confirm")).toEqual([`data-agent-confirm="${ACTION.id}: is recorded in the ledger"`])
+  expect(drawn).toBe(1)
+})
+
+test("an island is held until every prop evaluates: it never sees a prop its type says is there missing", () => {
+  const seen: unknown[] = []
+  const islands: IslandRegistry = { "fixture-meter": (input: { readonly props: unknown }) => { seen.push(input.props); return "meter" }, "fixture-status": () => null }
+  const variant = { ux: islandPage(), islands }
+  const meter = nodesOf(variant.ux.pages[0]!.root).find((candidate) => candidate.nodeId === "meter-node")!
+  // The caption reads a field: until the engine is here it cannot evaluate, so the island waits.
+  const waiting = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, variant)} node={meter} />)
+  expect(waiting).toMatch(/data-island="fixture-meter"[^>]*data-engine="waiting"[^>]*aria-busy="true"/)
+  expect(seen).toEqual([])
+  // A constant caption needs no engine: the island draws with it.
+  renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, { islands })} node={node("meter-node")} />)
+  expect(seen).toEqual([{ caption: "Records read" }])
 })
 
 test("every read state draws through matchReadState, and a call's state through matchActionState", () => {

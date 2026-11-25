@@ -6,7 +6,7 @@
  * The cell decides every call; nothing here judges it.
  */
 import { parseExactJson } from "../../../../packages/norn-sdk/src/index.ts"
-import { classifyResponse } from "../../../../packages/norn-react/src/machine/outcome.ts"
+import { classifyText } from "../../../../packages/norn-react/src/machine/outcome.ts"
 import type { WidgetCalls } from "../../../../packages/norn-react/src/reads.ts"
 import { defaultFetch, scopedHostFetch } from "./definitions.ts"
 import type { Fetch } from "./live-transport.ts"
@@ -31,8 +31,7 @@ export function widgetCalls(workspace: DecidedWorkspace, fetcher: Fetch = defaul
         if (signal.aborted) throw error
         return { outcome: "network_failure", payload: {} }
       }
-      const text = await response.text()
-      return classifyResponse(response.status, text === "" ? undefined : parseExactJson(text))
+      return classifyText(response.status, await response.text(), parseExactJson)
     },
   }
 }

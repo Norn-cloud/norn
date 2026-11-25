@@ -51,6 +51,9 @@ test("a page that needs what the renderer does not draw is refused, saying what"
   const page = fixture.pages[0]!
   const form = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-form", component: { kind: "form" as const, formId: "f" }, children: [] }] } }] }
   expect(missingCapabilities(form)).toEqual(["component:form"])
+  // A dialog scope (`blocking`, `dismissalMethods`) is refused until it draws through a UI SDK dialog layer.
+  const dialog = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-dialog", component: { kind: "dialog" as const, bindingId: "save", blocking: true, dismissalMethods: ["escape"] }, children: [] }] } }] }
+  expect(missingCapabilities(dialog)).toEqual(["component:dialog"])
   const operation = { ...fixture, pages: [{ ...page, machine: { ...page.machine!, transitions: [...page.machine!.transitions, { transitionId: "op", from: "browsing", on: "save", target: "saving", effects: [{ kind: "start" as const, call: { kind: "operation" as const, operationId: "x" } }] }] } }] }
   expect(missingCapabilities(operation)).toEqual(["effect:start:operation"])
   const filtered = { ...fixture, dataBindings: fixture.dataBindings.map((binding) => ({ ...binding, query: { kind: "object_list" as const, filters: [{}], sort: [], page: { size: 1, maxSize: 1 } } })) }

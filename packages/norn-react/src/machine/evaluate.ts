@@ -73,7 +73,9 @@ export function lazyEngine(loader: () => Promise<CheckerEvaluator>): LazyEngine 
   let engine: CheckerEvaluator | null = null
   let loading: Promise<void> | null = null
   let failed = false
+  // A load after a failure asks the loader again: it reports `loading` until that attempt settles.
   const load = () => {
+    if (loading === null && ready === null) failed = false
     loading ??= loader().then(
       (checker) => {
         engine = checker
@@ -101,6 +103,6 @@ export function lazyEngine(loader: () => Promise<CheckerEvaluator>): LazyEngine 
       return wasmEvaluate(engine!)(expression, input as Parameters<Evaluate>[1])
     },
     load,
-    state: () => (ready !== null ? "ready" : failed ? "failed" : loading !== null ? "loading" : "idle"),
+    state: () => (ready !== null ? "ready" : loading !== null ? "loading" : failed ? "failed" : "idle"),
   }
 }

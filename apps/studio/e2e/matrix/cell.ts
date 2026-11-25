@@ -73,13 +73,17 @@ interface Held { readonly answer: Answer | null; readonly gate: Promise<void>; r
 function queue() {
   const pending: Held[] = []
   let inFlight: Held | undefined
+  /** Every request this route took, as sent (its scope is in the query). */
+  const urls: string[] = []
   return {
+    urls,
     push(answer: Answer | null) {
       let open = () => {}
       const gate = new Promise<void>((resolve) => { open = resolve })
       pending.push({ answer, gate, open })
     },
     async take(route: Route) {
+      urls.push(route.request().url())
       const next = pending.shift()
       if (next === undefined) return route.fulfill({ status: 404, body: "" })
       inFlight = next
@@ -96,15 +100,23 @@ function queue() {
   }
 }
 
+/** The same records as another workspace's cell holds them: other ids, other values. */
+export const RECORDS_ELSEWHERE = {
+  ...RECORDS,
+  records: [{ objectType: OBJECT_TYPE, id: "vp-9", scope: `${SCOPE.orgId}/ops`, version: 1, values: { id: "vp-9", label: "Ops policy", valuation_method: "lifo" } }],
+}
+
 /**
  * Stand in for the cell behind the matrix page: the session, the definitions (the demo set plus the
  * fixture widget), the action catalog, and the fixture's read and call, each answered from a queue.
+ * `environment` is the session's workspace as `/api/me` answers it now: a test that moves it moves the page.
  */
-export async function matrixCell(page: Page, definitions: readonly unknown[]) {
-  await session(page, SCOPE.environmentId)
+export async function matrixCell(page: Page, definitions: readonly unknown[], environment?: { current: string }) {
+  if (environment === undefined) await session(page, SCOPE.environmentId)
+  else await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: SCOPE.orgId, name: "Demo", role: "viewer" }, environmentId: environment.current } }))
   const reads = queue()
   const calls = queue()
-  const sent: { readonly idempotencyKey: string; readonly input: unknown }[] = []
+  const sent: { readonly idempotencyKey: string; readonly input: unknown; readonly url: string }[] = []
   // Lowest priority first: anything else the page asks is a route this cell does not serve.
   const escape = (text: string) => text.replaceAll(".", "\\.")
   await page.route(/\/api\/host\//, (route: Route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "Not served by this stand-in." } }))
@@ -116,7 +128,7 @@ export async function matrixCell(page: Page, definitions: readonly unknown[]) {
   await page.route(new RegExp(`/api/host/v1/actions/${escape(ACTION_ID)}(\\?|$)`), (route: Route) => {
     if (route.request().method() !== "POST") return route.fallback()
     const body = route.request().postDataJSON() as { idempotencyKey: string; input: unknown }
-    sent.push({ idempotencyKey: body.idempotencyKey, input: body.input })
+    sent.push({ idempotencyKey: body.idempotencyKey, input: body.input, url: route.request().url() })
     return calls.take(route)
   })
   return { reads, calls, sent }
