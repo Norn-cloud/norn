@@ -137,9 +137,10 @@ test("a message draws through the host's translations, and its source text when 
 })
 
 test("an unavailable workspace carries the shell's marker, with the host's Retry", () => {
+  const islands = Object.fromEntries((ux.catalog ?? []).map((entry) => [entry.entryId, () => null])) as IslandRegistry
   const markup = renderToStaticMarkup(
     <NornAppRenderer ux={ux} context={context} workspace={{ kind: "unavailable", error: new Error("The mode read failed.") }} calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
-      engine={() => Promise.reject(new Error("unused"))} objectTypeOf={() => undefined} actionIdOf={() => undefined} onRetryWorkspace={() => {}} />,
+      engine={() => Promise.reject(new Error("unused"))} islands={islands} objectTypeOf={() => undefined} actionIdOf={() => undefined} onRetryWorkspace={() => {}} />,
   )
   expect(markup).toContain("data-workspace-unavailable=\"\"")
   expect(markup).toContain(">Retry</button>")

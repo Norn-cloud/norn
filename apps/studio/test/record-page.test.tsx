@@ -497,9 +497,10 @@ test("the withheld chip counts the masked values in words: one, several, none, a
   expect(maskedWords(many, "de")).toBe("1.200 values masked")
 })
 
-// #1762 C2: the record page is the widget the cell serves, drawn by the renderer; a cell that serves
-// none says so, and Studio holds no second record page.
-test("the record page is the cell's: drawn by the renderer from the definitions read, or said to be not served", async () => {
+// #1762 C2: the record page is the widget the cell serves; a cell that serves none says so, and Studio
+// holds no second record page. (The renderer drawing it in the shell is the browser's to prove:
+// e2e/record-states.e2e.ts. Under bun test the renderer's React is its package's own copy.)
+test("the record page is the cell's: read from the definitions, or said to be not served", async () => {
   const widget = JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/studio/artifacts/norn.studio.record.widget.json"), "utf8")) as { artifactId: string }
   const definitions = (fixture("three-systems.definitions.json") as { document: { artifactId: string }[] }).document
   const others = definitions.filter((artifact) => artifact.artifactId !== widget.artifactId)
@@ -516,10 +517,6 @@ test("the record page is the cell's: drawn by the renderer from the definitions 
     await router.load()
     return renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><WorkspaceProvider workspace={RECORDED}><RouterProvider router={router} /></WorkspaceProvider></ViewProvider></QueryClientProvider>)
   }
-  const drawn = await render([...others, widget])
-  expect(drawn).toContain('data-norn-page="record"')
-  expect(drawn).toContain('aria-label="Record"')
-  expect(drawn).not.toContain("data-record-page")
   const none = await render(others)
   expect(none).toContain('data-record-page="not-served"')
   expect(none).toContain("serves no record page")
