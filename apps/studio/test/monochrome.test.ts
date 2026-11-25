@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { converter, parse } from "culori"
 import { INDEX_CSS, SKINS, resolve, skinVars, themePalettes } from "../scripts/theme-palettes.ts"
+import { MAX_CHROME_CHROMA, THEME_DATA_TOKEN } from "../src/lib/studio-theme.ts"
 
 /**
  * DESIGN.md 19.6, the monochrome rule (owner, 2026-11-25; measured against Polar's dashboard and the
@@ -15,9 +16,10 @@ import { INDEX_CSS, SKINS, resolve, skinVars, themePalettes } from "../scripts/t
  *   no hue: every chrome token's OKLCH chroma is below 0.02, which every accent fails by a wide margin
  *   (the old blue action was 0.20, a 7% violet glow 0.23).
  */
-const DATA = /^(chart-\d|dot-(live|held|bad)|success|warning|destructive(-foreground|-text)?|avatar-\d-(bg|fg)|mascot-body|tone-[a-z]+|tint-[a-z]+|edge(-active)?|node-[a-z]+|canvas-[a-z]+)$/
+// The exemptions and the limit are the theme contract's, so a served theme is held to the same rule.
+const DATA = THEME_DATA_TOKEN
 const WHY = "chart and canvas visualisation, status beside a word, avatar, the mascot, or a data highlight"
-const MAX_CHROMA = 0.02
+const MAX_CHROMA = MAX_CHROME_CHROMA
 const oklch = converter("oklch")
 const css = readFileSync(INDEX_CSS, "utf8")
 const palettes = themePalettes(css)

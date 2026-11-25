@@ -35,6 +35,7 @@ import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/wo
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 import { Mascot } from "@/components/system/mascot"
+import { WorkspaceThemeFeed } from "@/components/workspace-theme"
 
 const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
 
@@ -258,8 +259,9 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-meta text-muted-foreground">
               <span>Skin</span>
-              <span className="truncate capitalize text-foreground">{customTheme ? customTheme.name : skin}</span>
+              <span className="truncate capitalize text-foreground">{skin}</span>
             </div>
+            {customTheme && <p data-slot="skin-set-by-theme" className="text-meta text-muted-foreground">This workspace's theme, {customTheme.name}, sets the look; your skin applies when it has none.</p>}
             <div role="group" aria-label="Skin" className="grid grid-cols-2 gap-1.5">
               {SKINS.map((option) => (
                 <ChromeDockOption
@@ -300,15 +302,15 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <div className="h-px bg-border/80" />
           <button
             type="button"
-            data-slot="custom-theme-trigger"
+            data-slot="workspace-theme-trigger"
             onClick={openThemeDialog}
             className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-meta text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <span className="flex items-center gap-1.5">
               <Code2 aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-              <span>Custom theme JSON…</span>
+              <span>Workspace theme…</span>
             </span>
-            {customTheme && <span className="truncate text-meta text-muted-foreground">Active</span>}
+            <span className="truncate text-meta text-muted-foreground">{customTheme ? customTheme.name : "Default"}</span>
           </button>
         </div>
       </ChromeDockTray>
@@ -962,6 +964,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
               </header>
             )}
           <ConnectionBanner />
+          <WorkspaceThemeFeed />
           <div data-route={resolvedPathname} className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-12 sm:px-8"}>
             <Outlet />
           </div>

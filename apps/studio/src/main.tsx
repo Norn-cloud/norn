@@ -10,7 +10,6 @@ import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
 import { WorkspaceProvider } from "@/lib/workspace"
 import { applyAppearance, applyScheme, storedScheme, storedShellChrome, storedSkin } from "@/lib/appearance"
-import { storedCustomTheme } from "@/lib/studio-theme"
 import "./bones/registry.ts"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import {
@@ -170,9 +169,10 @@ const router = createRouter({
   defaultPendingMinMs: 0,
 })
 
-// Dark and light are peers: the reader's pinned scheme, else the system's, unless a custom theme pins an appearance.
+// Dark and light are peers: the reader's pinned scheme, else the system's. The workspace's served
+// theme (which may pin an appearance) paints once the shell has read it.
 applyScheme(storedScheme())
-applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
+applyAppearance(storedSkin(), storedShellChrome())
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyScheme(storedScheme()))
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.

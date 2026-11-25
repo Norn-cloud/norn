@@ -274,59 +274,6 @@ test("single-select ToggleGroup preserves radiogroup/radio ARIA semantics and ar
   await expect(list).toHaveAttribute("aria-checked", "false")
 })
 
-test("custom StudioTheme JSON dialog validates WCAG AA contrast, applies custom tokens across reload, and resets cleanly", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: "dark" })
-  await recorded(page)
-  await page.goto("/sources")
-  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-
-  await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
-  await page.locator('[data-slot="custom-theme-trigger"]').click()
-  const dialog = page.getByRole("dialog", { name: "Custom theme JSON" })
-  await expect(dialog).toBeVisible()
-  await capture(page, "polar-dark-custom-theme-dialog")
-
-  // Low-contrast JSON is rejected with WCAG AA contrast feedback before mutating :root.
-  const editor = dialog.getByRole("textbox", { name: "Theme JSON definition" })
-  await editor.fill(JSON.stringify({
-    version: 1,
-    name: "Too Faint",
-    baseSkin: "polar",
-    variants: { dark: { background: "#111113", foreground: "#222226" } },
-  }))
-  await dialog.getByRole("button", { name: "Apply theme" }).click()
-  await expect(dialog.locator('[data-slot="theme-validation-errors"]')).toContainText("WCAG AA")
-
-  // Selecting and applying the Graphite Terminal preset writes custom tokens and persists across reload.
-  await dialog.getByRole("button", { name: "Graphite Terminal" }).click()
-  await dialog.getByRole("button", { name: "Apply theme" }).click()
-  await expect(dialog).toBeHidden()
-  await expect.poll(() => page.evaluate(() => ({
-    customTheme: document.documentElement.dataset.customTheme,
-    bgVar: document.documentElement.style.getPropertyValue("--background").trim(),
-  }))).toEqual({
-    customTheme: "Graphite Terminal",
-    bgVar: "#0f1117",
-  })
-
-  await page.reload()
-  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.customTheme)).toBe("Graphite Terminal")
-
-  // Resetting clears every inline CSS variable cleanly.
-  await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
-  await page.locator('[data-slot="custom-theme-trigger"]').click()
-  await page.getByRole("button", { name: "Reset to built-in skin" }).click()
-  await expect.poll(() => page.evaluate(() => ({
-    customTheme: document.documentElement.dataset.customTheme,
-    bgVar: document.documentElement.style.getPropertyValue("--background"),
-  }))).toEqual({
-    customTheme: undefined,
-    bgVar: "",
-  })
-})
-
 test("Semantic Map (/map) renders monochrome islands, bundled bridges, zoom-in expansion, lenses, and provenance side sheet", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "dark" })

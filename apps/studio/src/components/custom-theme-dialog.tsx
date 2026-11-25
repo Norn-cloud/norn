@@ -1,19 +1,35 @@
 import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
-import { Check, Copy, Palette, RotateCcw, X } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
+import { Check, Copy, Loader2, Palette, RotateCcw, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppearance } from "@/lib/appearance"
+import { NO_DATA_CELL, type StudioScope } from "@/lib/definitions"
 import {
   STUDIO_THEME_PRESETS,
   exportStudioThemeJson,
-  parseStudioTheme,
-  type StudioThemeValidationIssue,
+  normalizeStudioTheme,
 } from "@/lib/studio-theme"
+import { applyWorkspaceTheme, resetWorkspaceTheme, servedThemeKey, useServedTheme, type ThemeApplyResult } from "@/lib/workspace-theme"
+
+/** One line under the editor: where it came from (Studio reading the JSON, or the cell), and what it said. */
+interface Problem {
+  readonly path: string | null
+  readonly message: string
+}
+
+const problemsOf = (result: ThemeApplyResult): readonly Problem[] => {
+  if (result.applied) return []
+  if ("findings" in result) return result.findings.map((finding) => ({ path: finding.pointer, message: finding.message }))
+  if ("conflict" in result) return [{ path: null, message: "Someone changed this workspace's theme since you opened it. Close and reopen to edit the current one." }]
+  return [{ path: null, message: result.message }]
+}
 
 /**
- * VS Code / T3 Code-style custom JSON theme editor dialog.
- * Allows operators and tenants to inspect, customize, paste, or export a declarative
- * `StudioTheme` JSON token file with instant WCAG AA contrast validation.
+ * The workspace theme editor (themes as data). The theme is the workspace's `theme` definition: the
+ * JSON here is applied through the definitions apply call, the cell's checker admits or refuses it
+ * (its refusal is shown in its own words), and the cell decides whether this reader may apply
+ * definitions at all. Every open page in the workspace repaints from what the cell then serves.
  */
 export function CustomThemeDialog({
   open,
@@ -22,27 +38,58 @@ export function CustomThemeDialog({
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
 }) {
-  const { skin, customTheme, setCustomTheme, clearCustomTheme } = useAppearance()
+  const queryClient = useQueryClient()
+  const { skin, customTheme, served } = useAppearance()
+  const { scope: liveScope } = useServedTheme()
+  const [scope, setScope] = useState<StudioScope | null>(null)
   const [draft, setDraft] = useState("")
-  const [issues, setIssues] = useState<readonly StudioThemeValidationIssue[]>([])
+  const [problems, setProblems] = useState<readonly Problem[]>([])
+  const [refusedBy, setRefusedBy] = useState<"studio" | "cell">("studio")
+  const [pending, setPending] = useState<"apply" | "reset" | null>(null)
   const [copied, setCopied] = useState(false)
+  const version = served.kind === "theme" || served.kind === "invalid" ? served.version : undefined
 
+  // The editor opens on the workspace's current theme, and writes stay bound to the workspace it opened in.
   useEffect(() => {
     if (!open) return
     setDraft(exportStudioThemeJson(skin, customTheme))
-    setIssues([])
+    setProblems([])
     setCopied(false)
-  }, [open, skin, customTheme])
+    setScope(liveScope)
+    // Only on open: a theme arriving on the feed while the editor is open never replaces the draft.
+  }, [open])
 
-  const applyDraft = () => {
-    const result = parseStudioTheme(draft)
-    if (!result.ok) {
-      setIssues(result.issues)
+  const settle = async (result: ThemeApplyResult) => {
+    if (result.applied) {
+      setProblems([])
+      await queryClient.invalidateQueries({ queryKey: servedThemeKey(scope) })
+      onOpenChange(false)
       return
     }
-    setIssues([])
-    setCustomTheme(result.theme)
-    onOpenChange(false)
+    setRefusedBy("cell")
+    setProblems(problemsOf(result))
+  }
+
+  const applyToWorkspace = async () => {
+    const read = normalizeStudioTheme(draft)
+    if (!read.ok) {
+      setRefusedBy("studio")
+      setProblems(read.issues.map((issue) => ({ path: issue.path, message: issue.message })))
+      return
+    }
+    if (scope === null) {
+      setRefusedBy("studio")
+      setProblems([{ path: null, message: NO_DATA_CELL }])
+      return
+    }
+    setPending("apply")
+    try { await settle(await applyWorkspaceTheme(scope, read.theme, version)) } finally { setPending(null) }
+  }
+
+  const reset = async () => {
+    if (scope === null || version === undefined) return
+    setPending("reset")
+    try { await settle(await resetWorkspaceTheme(scope, version)) } finally { setPending(null) }
   }
 
   const copyJson = async () => {
@@ -63,9 +110,9 @@ export function CustomThemeDialog({
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <DialogTitle className="text-body text-popover-foreground">Custom theme JSON</DialogTitle>
+            <DialogTitle className="text-body text-popover-foreground">Workspace theme</DialogTitle>
             <DialogDescription className="mt-0.5 text-meta text-muted-foreground">
-              Override semantic tokens in JSON (VS Code / T3 Code style). Every theme is checked against WCAG AA contrast before applying.
+              Semantic tokens as JSON, for everyone in this workspace. The cell checks every theme (WCAG AA contrast, monochrome chrome) before it applies; your light or dark choice stays yours.
             </DialogDescription>
           </div>
           <DialogClose
@@ -87,7 +134,7 @@ export function CustomThemeDialog({
                 size="xs"
                 onClick={() => {
                   setDraft(JSON.stringify(preset, null, 2))
-                  setIssues([])
+                  setProblems([])
                 }}
               >
                 <Palette aria-hidden className="size-3" />
@@ -106,18 +153,18 @@ export function CustomThemeDialog({
             value={draft}
             onChange={(event) => {
               setDraft(event.target.value)
-              if (issues.length > 0) setIssues([])
+              if (problems.length > 0) setProblems([])
             }}
             className="h-72 w-full resize-y rounded-xl border border-input bg-well p-3 font-mono text-meta leading-relaxed text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           />
 
-          {issues.length > 0 && (
-            <div role="alert" data-slot="theme-validation-errors" className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-meta text-destructive-text">
-              <div>Could not apply theme ({issues.length} {issues.length === 1 ? "issue" : "issues"}):</div>
+          {problems.length > 0 && (
+            <div role="alert" data-slot="theme-validation-errors" data-refused-by={refusedBy} className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-meta text-destructive-text">
+              <div>{refusedBy === "cell" ? "The cell refused this theme" : "This JSON is not a theme"} ({problems.length} {problems.length === 1 ? "issue" : "issues"}):</div>
               <ul className="list-disc space-y-0.5 ps-4">
-                {issues.map((issue, idx) => (
-                  <li key={`${issue.path}:${idx}`}>
-                    <span className="font-mono">{issue.path}</span>: {issue.message}
+                {problems.map((problem, idx) => (
+                  <li key={`${problem.path ?? ""}:${idx}`}>
+                    {problem.path && <><span className="font-mono">{problem.path}</span>: </>}{problem.message}
                   </li>
                 ))}
               </ul>
@@ -126,24 +173,18 @@ export function CustomThemeDialog({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3">
-          {customTheme ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                clearCustomTheme()
-                onOpenChange(false)
-              }}
-            >
-              <RotateCcw aria-hidden className="size-3.5" />Reset to built-in skin
+          {version !== undefined ? (
+            <Button type="button" variant="ghost" size="sm" disabled={pending !== null} onClick={() => void reset()}>
+              {pending === "reset" ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : <RotateCcw aria-hidden className="size-3.5" />}Reset to default
             </Button>
           ) : (
-            <span className="text-meta text-muted-foreground">Active skin: <span className="text-foreground capitalize">{skin}</span></span>
+            <span className="text-meta text-muted-foreground">This workspace uses the default theme (<span className="text-foreground capitalize">{skin}</span>).</span>
           )}
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="button" variant="default" size="sm" onClick={applyDraft}>Apply theme</Button>
+            <Button type="button" variant="default" size="sm" disabled={pending !== null} onClick={() => void applyToWorkspace()}>
+              {pending === "apply" && <Loader2 aria-hidden className="size-3.5 animate-spin" />}Use for this workspace
+            </Button>
           </div>
         </div>
       </DialogContent>

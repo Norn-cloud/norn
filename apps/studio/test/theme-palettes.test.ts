@@ -1,10 +1,15 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { INDEX_CSS, PALETTES_JSON, themePalettes } from "../scripts/theme-palettes.ts"
+import { INDEX_CSS, PALETTES_JSON, PALETTES_TS, palettesModule, themePalettes } from "../scripts/theme-palettes.ts"
 
 // #1705: the contrast gate's palettes are generated from index.css; regenerate with `bun scripts/theme-palettes.ts`.
 test("theme-palettes.json equals the palettes index.css paints, for every skin, scheme and token", () => {
   expect(JSON.parse(readFileSync(PALETTES_JSON, "utf8"))).toEqual(themePalettes(readFileSync(INDEX_CSS, "utf8")))
+})
+
+// The shared theme core (tools/norn-ts) imports the same palettes as a module: generated, never edited.
+test("the theme core's palettes module is generated from the same palettes", () => {
+  expect(readFileSync(PALETTES_TS, "utf8")).toBe(palettesModule(themePalettes(readFileSync(INDEX_CSS, "utf8"))))
 })
 
 test("the generator refuses a token it cannot resolve to a colour", () => {
