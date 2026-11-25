@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Filter, GitCompareArrows, Hourglass, RefreshCw, ShieldAlert, X } from "lucide-react"
+import { CheckCircle2, CircleDashed, Clock, Filter, GitCompareArrows, Hourglass, RefreshCw, ShieldAlert, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Chip, type Tone } from "@/components/chip"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
@@ -41,7 +41,7 @@ const VERDICT_TONE: Readonly<Record<Verdict, Tone>> = {
   gap: "amber",
 }
 
-const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring"
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 function rulesSummary(episode: Episode): { readonly text: string; readonly tone: Tone } {
@@ -138,8 +138,8 @@ function EpisodesPageContent() {
     }
     if (read.isError) {
       return (
-        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span>{read.error instanceof Error ? read.error.message : "Episodes could not be read."}</span>
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
+          <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><span>{read.error instanceof Error ? read.error.message : "Episodes could not be read."}</span>
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
         </div>
@@ -149,10 +149,10 @@ function EpisodesPageContent() {
     if (data?.kind === "unavailable") return <EmptyState icon={GitCompareArrows} title="Not served yet">{EPISODES_UNAVAILABLE}</EmptyState>
     if (data?.kind === "refused") {
       return (
-        <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          <p className="font-medium">{data.message}</p>
+        <div role="alert" className="grid gap-1 rounded-(--radius-well) border border-(--panel-border) bg-card px-4 py-3 text-body text-foreground">
+          <p className="flex items-center gap-2"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />{data.message}</p>
           {data.diagnostics.length > 0 && (
-            <ul className="list-disc pl-5 text-meta">
+            <ul className="list-disc ps-5 text-meta">
               {data.diagnostics.map((d, index) => <li key={`${d.code}:${index}`}>{d.message}{d.pointer ? ` (${d.pointer})` : ""}</li>)}
             </ul>
           )}
@@ -179,7 +179,7 @@ function EpisodesPageContent() {
                 <TableHead>Rules</TableHead>
                 <TableHead>Outcome & standing</TableHead>
                 <TableHead>Triage</TableHead>
-                <TableHead className="text-right">Decided</TableHead>
+                <TableHead className="text-end">Decided</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -187,7 +187,7 @@ function EpisodesPageContent() {
                 if (row.kind === "withheld") {
                   return (
                     <TableRow key={row.id} data-withheld="true">
-                      <TableCell className="font-mono text-xs text-muted-foreground">{row.id}</TableCell>
+                      <TableCell className="font-mono text-meta text-muted-foreground">{row.id}</TableCell>
                       <TableCell colSpan={5} className="text-muted-foreground">Withheld by cell policy</TableCell>
                     </TableRow>
                   )
@@ -195,9 +195,9 @@ function EpisodesPageContent() {
                 if (row.kind === "malformed") {
                   return (
                     <TableRow key={row.id} data-malformed="true">
-                      <TableCell className="font-mono text-xs">{row.id}</TableCell>
-                      <TableCell colSpan={5} className="text-destructive">
-                        <span className="inline-flex items-center gap-1.5"><AlertTriangle className="size-3.5" aria-hidden />Malformed episode ({row.problem})</span>
+                      <TableCell className="font-mono text-meta">{row.id}</TableCell>
+                      <TableCell colSpan={5} className="text-foreground">
+                        <span className="inline-flex items-center gap-1.5"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Malformed episode ({row.problem})</span>
                       </TableCell>
                     </TableRow>
                   )
@@ -211,10 +211,10 @@ function EpisodesPageContent() {
                   <TableRow key={e.id} data-episode-row={e.id}>
                     <TableCell className="max-w-md whitespace-normal">
                       <div className="grid gap-0.5 py-1">
-                        <Link to="/episodes/$id" params={{ id: e.id }} className="font-medium text-foreground underline-offset-4 hover:underline">
+                        <Link to="/episodes/$id" params={{ id: e.id }} className="text-foreground underline-offset-4 hover:underline">
                           {e.decision.question}
                         </Link>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-meta text-muted-foreground">
                           {flow} · {step}{technical && <> · <code className="font-mono">{e.id}</code></>}
                         </span>
                       </div>
@@ -230,17 +230,17 @@ function EpisodesPageContent() {
                         <Chip tone={OUTCOME_TONE[e.outcome.state]} icon={outcomeIcon}>
                           {e.outcome.state === "recorded" ? "Recorded" : e.outcome.state === "overdue" ? "Overdue" : "Open"}
                         </Chip>
-                        <span className="text-xs text-muted-foreground">{e.standing === "measured" ? "Measured" : "Context"}</span>
+                        <span className="text-meta text-muted-foreground">{e.standing === "measured" ? "Measured" : "Context"}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       {e.triage === null
-                        ? <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><CircleDashed className="size-3" aria-hidden />Not triaged</span>
+                        ? <span className="inline-flex items-center gap-1 text-meta text-muted-foreground"><CircleDashed className="size-3" aria-hidden />Not triaged</span>
                         : <Chip tone={VERDICT_TONE[e.triage.verdict]}>{VERDICT_LABEL[e.triage.verdict]}</Chip>}
                     </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
+                    <TableCell className="text-end text-muted-foreground">
                       <div>{e.decision.decidedBy}</div>
-                      <div className="text-xs">{when(e.decision.recordedAtMs)}</div>
+                      <div className="text-meta">{when(e.decision.recordedAtMs)}</div>
                     </TableCell>
                   </TableRow>
                 )
@@ -283,7 +283,7 @@ function EpisodesPageContent() {
               with route-produced fixtures.
             */}
             <div className="grid gap-3 sm:max-w-xs">
-              <label className="grid gap-1 text-xs text-muted-foreground">
+              <label className="grid gap-1 text-meta text-muted-foreground">
                 <span>Agreement</span>
                 <select aria-label="Filter by agreement" className={selectClass} value={filters.agreement ?? ""}
                   onChange={(e) => applyFilters({ ...filters, agreement: e.target.value === "" ? undefined : e.target.value as Agreement })}>
@@ -298,7 +298,7 @@ function EpisodesPageContent() {
             )}
             {echoed !== null && echoed.agreement !== undefined && (
               <div className="flex flex-wrap items-center gap-1.5" aria-label="Applied server filters">
-                <span className="text-xs text-muted-foreground">Applied by cell:</span>
+                <span className="text-meta text-muted-foreground">Applied by cell:</span>
                 <Chip tone="blue">agreement: {echoed.agreement}</Chip>
               </div>
             )}
@@ -306,7 +306,7 @@ function EpisodesPageContent() {
         </Panel>
       )}
 
-      {notice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">{notice}</p>}
+      {notice && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-body">{notice}</p>}
       {body}
     </div>
   )

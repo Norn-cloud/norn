@@ -196,7 +196,7 @@ for (const scheme of ["light", "dark"] as const) {
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("polar")
 
     const measureLayout = () => page.evaluate(() => {
-      const shell = document.querySelector<HTMLElement>('[data-slot="sidebar-wrapper"]')!
+      const shell = document.querySelector<HTMLElement>('[data-slot="sidebar"]')!
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!
       const panel = document.querySelector<HTMLElement>('[data-slot="panel"]')!
       const kpi = document.querySelector<HTMLElement>('[data-slot="kpi"]')!
@@ -245,36 +245,32 @@ for (const scheme of ["light", "dark"] as const) {
 
     const polar = await measureLayout()
 
-    // 1. Two-surface shell: rail/sidebar ground differs from the raised page surface, with radius, hairline & shadow.
-    expect(polar.shellBg).not.toBe(polar.pageBg)
-    expect(polar.pageRadius).toBeGreaterThanOrEqual(10)
-    expect(polar.pageBorder).toBeGreaterThanOrEqual(0.5)
-    expect(polar.pageShadow).not.toBe("none")
+    // 1. The content column is the unframed canvas (DESIGN.md 9.1): no radius, hairline or shadow around
+    // the page, so the ShellCards are the only frames. In polar the sidebar ground is the canvas itself.
+    expect(polar.pageRadius).toBe(0)
+    expect(polar.pageBorder).toBe(0)
+    expect(polar.pageShadow).toBe("none")
+    expect(polar.shellBg).toBe(polar.pageBg)
 
-    // Polar monochrome layers: shell < page (both), page < panel (dark), active segment > track.
-    const polarShellLum = luminance(rgb(polar.shellBg))
+    // Polar monochrome layers: cards lift off the canvas, active segment > track.
     const polarPageLum = luminance(rgb(polar.pageBg))
     const polarPanelLum = luminance(rgb(polar.panelBg))
     const polarTrackLum = luminance(rgb(polar.perspTrackBg))
     const polarActiveLum = luminance(rgb(polar.perspActiveBg))
-    expect(polarShellLum).toBeLessThan(polarPageLum)
+    expect(polar.panelBg).not.toBe(polar.pageBg)
     expect(polarActiveLum).toBeGreaterThan(polarTrackLum)
-    if (scheme === "dark") {
-      expect(polarPageLum).toBeLessThan(polarPanelLum)
-    }
+    expect(polarPageLum).not.toBe(polarPanelLum)
 
-    // 2. Polar flat monochrome geometry: crisp 12px (~10.8px at 90% root) panel radius and monochrome primary CTA.
-    expect(polar.panelRadius).toBeGreaterThanOrEqual(9)
-    expect(polar.panelRadius).toBeLessThanOrEqual(14)
-    expect(polar.kpiRadius).toBeGreaterThanOrEqual(9)
-    expect(polar.kpiRadius).toBeLessThanOrEqual(14)
+    // 2. Polar keeps the concentric double shell (DESIGN.md 5): 16px rim, 4px inset, 11px well, in px.
+    expect(polar.panelRadius).toBe(16)
+    expect(polar.kpiRadius).toBe(16)
+    expect(polar.kpiWellRadius).toBe(11)
 
-    // 3. Polar primary action button: strictly monochrome (no blue/purple tint), ~7-9px radius, >= 4.5:1 rest & hover, visible focus.
+    // 3. Polar primary action button: strictly monochrome (no blue/purple tint), a pill, >= 4.5:1 rest & hover, visible focus.
     const primary = page.locator('[data-slot="button"][data-variant="default"]').first()
     const [ppr, ppg, ppb] = rgb(polar.primaryBg)
     expect(Math.max(ppr, ppg, ppb) - Math.min(ppr, ppg, ppb)).toBeLessThanOrEqual(8)
-    expect(polar.primaryRadius).toBeGreaterThanOrEqual(6)
-    expect(polar.primaryRadius).toBeLessThanOrEqual(9)
+    expect(polar.primaryRadius).toBeGreaterThanOrEqual(16)
 
     const primaryRest = await measureRenderedContrast(primary)
     expect(primaryRest.ratio, `${scheme} polar primary rest contrast`).toBeGreaterThanOrEqual(4.5)
@@ -319,18 +315,16 @@ for (const scheme of ["light", "dark"] as const) {
       expect(openActiveLum).toBeGreaterThan(openTrackLum)
     }
     expect(open.kpiWellBg).not.toBe(open.pageBg)
-    expect(open.panelRadius).toBeGreaterThanOrEqual(14)
-    expect(open.panelRadius).toBeLessThanOrEqual(21)
-    expect(open.kpiRadius).toBeGreaterThanOrEqual(14)
-    expect(open.kpiRadius).toBeLessThanOrEqual(21)
-    expect(open.kpiWellRadius).toBeGreaterThanOrEqual(11)
-    expect(open.kpiWellRadius).toBeLessThanOrEqual(16)
+    expect(open.pageRadius).toBe(0)
+    expect(open.panelRadius).toBe(20)
+    expect(open.kpiRadius).toBe(20)
+    expect(open.kpiWellRadius).toBe(15)
     const [opr, opg, opb] = rgb(open.primaryBg)
     expect(opb).toBeGreaterThan(opr + 40)
     expect(opb).toBeGreaterThan(opg + 60)
   })
 
-  test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, selected Perspective button, active rail link and current sidebar item`, async ({ page }) => {
+  test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, selected Perspective button, current rail icon and current sidebar item`, async ({ page }) => {
     test.skip(Boolean(process.env.E2E_BASE), "uses deterministic record-cell stand-in")
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.emulateMedia({ colorScheme: scheme })
@@ -368,29 +362,32 @@ for (const scheme of ["light", "dark"] as const) {
     expect(hasVisibleShadow(perspState.boxShadow), "selected Perspective button keeps its selection shadow/ring").toBe(true)
     await shot(page, `focus-perspective-${scheme}`, page.locator("header").first())
 
-    // 3. Active rail link: navigate to Inbox (/decisions) so its rail link has data-status="active", then Tab + Arrow keys onto it.
+    // 3. Current rail icon: on Inbox (/decisions) collapse the sidebar to its 48px rail, then Tab and arrow onto
+    // the current destination; the 2px ring coexists with the neutral selection pill (no ring or bar of its own).
     await page.unrouteAll({ behavior: "ignoreErrors" })
     await recorded(page)
     await page.goto("/decisions")
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
-    const rail = page.getByRole("toolbar", { name: "Studio" })
-    const activeRail = rail.locator('a[href="/decisions"][data-status="active"]')
+    await page.getByRole("button", { name: "Sidebar", exact: true }).click()
+    const rail = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("toolbar")
+    const activeRail = rail.locator('a[href="/decisions"][aria-current="page"]')
     await expect(activeRail).toBeVisible()
-    await page.getByRole("link", { name: "Norn Studio home" }).focus()
+    await page.locator("[data-scope]").focus()
     await page.keyboard.press("Tab")
     try {
       await moveFocusWithKey(page, activeRail, "ArrowDown", 6)
     } catch {
       await moveFocusWithKey(page, activeRail, "ArrowUp", 6)
     }
-    const railState = await expectVisibleFocusOutline(activeRail)
-    expect(hasVisibleShadow(railState.boxShadow), "active rail link keeps its selection ring").toBe(true)
+    await expectVisibleFocusOutline(activeRail)
+    await expect(activeRail).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
     await shot(page, `focus-rail-active-${scheme}`, rail)
+    await page.getByRole("button", { name: "Sidebar", exact: true }).click()
 
     // 4. Current sidebar tree item: on /sources, Tab into Builder tree and ArrowDown onto aria-current="page".
     await page.goto("/sources")
     await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-    const currentTreeItem = page.locator('nav[aria-label="Builder"] [role="treeitem"][aria-current="page"]')
+    const currentTreeItem = page.locator('nav[aria-label="Studio navigation"] [role="tree"][aria-label="Builder pages"] [role="treeitem"][aria-current="page"]')
     await expect(currentTreeItem).toBeVisible()
     await page.locator("[data-scope]").focus()
     await page.keyboard.press("Tab")

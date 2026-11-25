@@ -3,25 +3,23 @@ import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
+// DESIGN.md 10 and 13: a neutral badge is an outline tag (SourceTag: step 1, --radius-chip, a --line ring,
+// no fill, muted text); a state is a 6px dot and its word in muted text. Nothing is a filled or tinted pill.
+const dot = "px-0 before:size-[6px] before:shrink-0 before:rounded-full before:content-['']"
 const badgeVariants = cva(
-  "group/badge inline-flex h-[1.375rem] w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3!",
+  "group/badge inline-flex h-[1.2rem] w-fit shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded-(--radius-chip) px-1.5 text-meta whitespace-nowrap text-muted-foreground transition-colors focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-invalid:ring-destructive [&>svg]:pointer-events-none [&>svg]:size-3!",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-action-hover",
-        secondary:
-          "bg-surface-subtle text-secondary-foreground ring-1 ring-inset ring-border/80 [a]:hover:bg-accent",
-        destructive:
-          "bg-tone-red/10 text-tone-red ring-1 ring-inset ring-tone-red/20 focus-visible:ring-destructive/20 dark:bg-tone-red/15 dark:ring-tone-red/25 dark:focus-visible:ring-destructive/40 [a]:hover:bg-tone-red/18",
-        outline:
-          "border-border bg-background/70 text-muted-foreground [a]:hover:bg-surface-subtle [a]:hover:text-foreground",
-        // States, as tinted detail pills on a neutral surface; callers pair each with its own icon so hue is never the only cue.
-        success: "bg-tone-green/10 text-tone-green ring-1 ring-inset ring-tone-green/20 dark:bg-tone-green/15 dark:ring-tone-green/25",
-        warning: "bg-tone-amber/12 text-tone-amber ring-1 ring-inset ring-tone-amber/22 dark:bg-tone-amber/15 dark:ring-tone-amber/25",
-        info: "bg-tone-violet/10 text-tone-violet ring-1 ring-inset ring-tone-violet/20 dark:bg-tone-violet/15 dark:ring-tone-violet/25",
-        ghost:
-          "hover:bg-accent hover:text-foreground dark:hover:bg-accent/60",
-        link: "text-action underline-offset-4 hover:underline",
+        default: "ring-1 ring-line ring-inset [a]:hover:text-foreground",
+        secondary: "ring-1 ring-line ring-inset [a]:hover:text-foreground",
+        outline: "ring-1 ring-line ring-inset [a]:hover:text-foreground",
+        destructive: cn(dot, "before:bg-dot-bad"),
+        success: cn(dot, "before:bg-dot-live"),
+        warning: cn(dot, "before:bg-dot-held"),
+        info: cn(dot, "before:bg-dot-accent"),
+        ghost: "hover:bg-accent hover:text-foreground",
+        link: "text-link underline-offset-4 hover:underline",
       },
     },
     defaultVariants: {

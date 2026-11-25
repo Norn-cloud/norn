@@ -276,7 +276,7 @@ function TypeSections({ types, list, scope: boundScope }: { readonly types: read
   return <>
     {held.map((type) => (
       <div key={type} className="space-y-3">
-        <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
+        <h2 className="text-heading font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
         <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} turn={turnOf(metric.name)} onSettled={settle.get(metric.name)!} scope={boundScope} />)}</div>
       </div>
     ))}

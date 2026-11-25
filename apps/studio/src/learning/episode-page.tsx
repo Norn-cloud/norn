@@ -44,8 +44,8 @@ function EpisodePageContent() {
   const result = read.data
   if (read.isPending) return <div className="mx-auto grid max-w-5xl gap-3" aria-label="Reading the episode"><Skeleton className="h-8 w-80" />{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 rounded-lg" />)}</div>
   if (read.isError) return (
-    <div role="alert" className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-      <span>{read.error instanceof Error ? read.error.message : "The episode could not be read."}</span><span className="flex-1" />
+    <div role="alert" className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
+      <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><span>{read.error instanceof Error ? read.error.message : "The episode could not be read."}</span><span className="flex-1" />
       <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
     </div>
   )
@@ -88,7 +88,7 @@ export const VERDICT_LABEL: Readonly<Record<Verdict, string>> = {
 /** A soft chip in one of the shared tints. */
 function TintChip({ tone, children, className }: { readonly tone: string; readonly children: ReactNode; readonly className?: string }) {
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs", className)}
+    <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-meta", className)}
       style={{ background: `color-mix(in oklab, var(--tint-${tone}) 13%, transparent)`, color: `color-mix(in oklab, var(--tint-${tone}) 78%, var(--foreground))` }}>
       {children}
     </span>
@@ -121,14 +121,14 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <ol aria-label="Episode" className="relative grid gap-3 before:absolute before:top-4 before:bottom-4 before:left-[1.15rem] before:w-px before:bg-border">
+        <ol aria-label="Episode" className="relative grid gap-3 before:absolute before:top-4 before:bottom-4 before:start-[1.15rem] before:w-px before:bg-border">
           <Band icon={Database} tone="state" title="What was known" aside={technical ? `generation ${e.context.definitionGeneration} · as of commit ${e.context.asOfCommitSeq}` : `as of ${when(e.decision.recordedAtMs)}`}>
             {e.context.subjects.length === 0
-              ? <p className="text-sm text-muted-foreground">No records were named as this decision's subjects.</p>
+              ? <p className="text-body text-muted-foreground">No records were named as this decision's subjects.</p>
               : <ul className="flex flex-wrap gap-2" aria-label="Subjects">{e.context.subjects.map((s) => (
                 <li key={`${s.objectType}:${s.id}`}>
-                  <Link to="/sources/$concept/$" params={{ concept: s.objectType, _splat: s.id }} className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-1 text-sm hover:bg-muted/60">
-                    {s.label ?? s.id}{technical && <span className="font-mono text-xs text-muted-foreground">{s.objectType}</span>}
+                  <Link to="/sources/$concept/$" params={{ concept: s.objectType, _splat: s.id }} className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-2.5 py-1 text-body hover:bg-muted/60">
+                    {s.label ?? s.id}{technical && <span className="font-mono text-meta text-muted-foreground">{s.objectType}</span>}
                   </Link>
                 </li>
               ))}</ul>}
@@ -136,22 +136,22 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
 
           <Band icon={Bot} tone="agent" title="What was suggested" aside={e.recommendation === null ? undefined : <TintChip tone="agent">{humanize(e.recommendation.producer.lifecycle)}</TintChip>}>
             {e.recommendation === null
-              ? <p className="text-sm text-muted-foreground">Nothing was suggested for this decision.</p>
-              : <div className="grid gap-1.5 text-sm">
-                <p><span className="text-muted-foreground">Suggested </span><span className="font-medium">{label(e.recommendation.pick)}</span></p>
+              ? <p className="text-body text-muted-foreground">Nothing was suggested for this decision.</p>
+              : <div className="grid gap-1.5 text-body">
+                <p><span className="text-muted-foreground">Suggested </span><span>{label(e.recommendation.pick)}</span></p>
                 {e.recommendation.rationale && <p className="text-muted-foreground">{e.recommendation.rationale}</p>}
-                <p className="text-meta text-muted-foreground">by {humanize(e.recommendation.producer.functionId)}{technical && <> · <code className="text-xs">{e.recommendation.producer.manifestPin}</code></>}</p>
+                <p className="text-meta text-muted-foreground">by {humanize(e.recommendation.producer.functionId)}{technical && <> · <code className="text-meta">{e.recommendation.producer.manifestPin}</code></>}</p>
               </div>}
           </Band>
 
           <Band icon={UserCheck} tone="ask" title="What was decided" aside={<TintChip tone={agreement.tone}>{agreement.label}</TintChip>} emphasis={e.agreement === "overridden"}>
-            <div className="grid gap-1.5 text-sm">
-              <p><span className="font-medium">{label(e.decision.choice)}</span><span className="text-muted-foreground"> · {e.decision.decidedBy}, {when(e.decision.recordedAtMs)}</span></p>
-              {e.decision.note && <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">{e.decision.note}</blockquote>}
+            <div className="grid gap-1.5 text-body">
+              <p><span>{label(e.decision.choice)}</span><span className="text-muted-foreground"> · {e.decision.decidedBy}, {when(e.decision.recordedAtMs)}</span></p>
+              {e.decision.note && <blockquote className="border-s-2 border-border ps-3 text-muted-foreground">{e.decision.note}</blockquote>}
               <p className="text-meta text-muted-foreground">{agreement.hint}</p>
               <ul className="mt-1 flex flex-wrap gap-1.5" aria-label="Options">
                 {e.decision.options.map((o) => (
-                  <li key={o.id} className={cn("rounded-md border px-2 py-0.5 text-xs", o.id === e.decision.choice ? "border-foreground/40 bg-muted font-medium" : "border-border text-muted-foreground")}>
+                  <li key={o.id} className={cn("rounded-md border px-2 py-0.5 text-meta", o.id === e.decision.choice ? "border-foreground/40 bg-muted " : "border-border text-muted-foreground")}>
                     {o.label}{o.id === e.recommendation?.pick && <span className="ms-1 text-[var(--tint-agent)]" aria-label="suggested">•</span>}
                   </li>
                 ))}
@@ -161,17 +161,17 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
 
           <Band icon={Scale} tone="law" title="Rules that applied" aside={e.ruleOutcomes.length === 0 ? undefined : `${e.ruleOutcomes.length}`}>
             {e.ruleOutcomes.length === 0
-              ? <p className="text-sm text-muted-foreground">No rule was checked for this decision.</p>
+              ? <p className="text-body text-muted-foreground">No rule was checked for this decision.</p>
               : <ul className="grid gap-2" aria-label="Rules">{e.ruleOutcomes.map((r) => {
                 // A waived block shows what actually happened, in the waiver's tone, not a bare "Blocked".
                 const s = r.waiver !== null && r.outcome === "blocked" ? WAIVED : RULE[r.outcome]
                 return (
-                  <li key={r.lawId} className="grid gap-1 rounded-lg border bg-background p-2.5 text-sm">
+                  <li key={r.lawId} className="grid gap-1 rounded-lg border bg-background p-2.5 text-body">
                     <div className="flex flex-wrap items-center gap-2">
                       <s.icon className="size-4 shrink-0" style={{ color: `var(--tint-${s.tone})` }} aria-hidden />
-                      <span className="font-medium">{r.title}</span><span className="flex-1" /><TintChip tone={s.tone}>{s.label}</TintChip>
+                      <span>{r.title}</span><span className="flex-1" /><TintChip tone={s.tone}>{s.label}</TintChip>
                     </div>
-                    {technical && <code className="text-xs text-muted-foreground">{r.lawId}</code>}
+                    {technical && <code className="text-meta text-muted-foreground">{r.lawId}</code>}
                     {r.waiver && <p className="text-meta text-muted-foreground">Waived by {r.waiver.by}: {r.waiver.reason}</p>}
                   </li>
                 )
@@ -179,7 +179,7 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
           </Band>
 
           <Band icon={outcome.icon} tone={outcome.tone} title="What happened" aside={<TintChip tone={outcome.tone}>{outcome.label}</TintChip>}>
-            <div className="grid gap-1.5 text-sm">
+            <div className="grid gap-1.5 text-body">
               <p className="text-muted-foreground">Measured by: {e.outcome.spec.title}{e.outcome.spec.within && <> · within {e.outcome.spec.within}</>}</p>
               {e.outcome.record === null
                 ? <p className="text-muted-foreground">{e.outcome.state === "overdue" ? "No outcome was recorded in the time allowed." : "No outcome has been recorded yet."}</p>
@@ -196,7 +196,7 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
             <Well className="grid gap-3 p-4">
               {e.triage === null
                 ? <p className="flex items-center gap-1.5 text-meta text-muted-foreground"><CircleDashed className="size-3.5" aria-hidden />Not triaged yet</p>
-                : <div className="grid gap-1 text-sm"><TintChip tone="agent" className="justify-self-start">{VERDICT_LABEL[e.triage.verdict]}</TintChip><p className="text-muted-foreground">{e.triage.reason}</p><p className="text-meta text-muted-foreground">{e.triage.curator}, {when(e.triage.atMs)}</p></div>}
+                : <div className="grid gap-1 text-body"><TintChip tone="agent" className="justify-self-start">{VERDICT_LABEL[e.triage.verdict]}</TintChip><p className="text-muted-foreground">{e.triage.reason}</p><p className="text-meta text-muted-foreground">{e.triage.curator}, {when(e.triage.atMs)}</p></div>}
               <div className="border-t pt-3">
                 <RecordActions
                   objectKind={EPISODE_TYPE}
@@ -213,7 +213,7 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
           </Panel>
           <Panel label="Receipts">
             <Well className="grid gap-3 p-4">
-              <dl className="grid gap-2 text-sm">
+              <dl className="grid gap-2 text-body">
                 <Receipt label="Decision" hash={e.decision.receiptHash} seq={e.decision.commitSeq} technical={technical} />
                 {e.recommendation && <Receipt label="Suggestion" hash={e.recommendation.producer.receiptHash} seq={e.recommendation.producer.commitSeq} technical={technical} />}
                 {e.outcome.record && <Receipt label="Outcome" hash={e.outcome.record.receiptHash} seq={e.outcome.record.commitSeq} technical={technical} />}
@@ -237,7 +237,7 @@ function Band({ icon: Icon, tone, title, aside, emphasis = false, children }: {
         <Icon className="size-4" aria-hidden />
       </span>
       <section aria-label={title} className={cn("grid gap-2 rounded-lg border bg-card p-4", emphasis ? "border-[color-mix(in_oklab,var(--tint-wait)_45%,var(--border))]" : "border-border")}>
-        <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-medium">{title}</h2><span className="flex-1" />{typeof aside === "string" ? <span className="text-meta text-muted-foreground tabular-nums">{aside}</span> : aside}</div>
+        <div className="flex flex-wrap items-center gap-2"><h2 className="text-body">{title}</h2><span className="flex-1" />{typeof aside === "string" ? <span className="text-meta text-muted-foreground tabular-nums">{aside}</span> : aside}</div>
         {children}
       </section>
     </li>
