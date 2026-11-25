@@ -580,6 +580,10 @@ test("Workspace unavailable shows once: the page's full state, or a one-line sta
         await expect(opened).toContainText("Storage migration is paused for this environment.")
         await expect(incidents, at).toHaveCount(1)
         await expect(opened.getByRole("button", { name: "Copy inc-shell-404" })).toBeVisible()
+        // Settled and on top of the page, not under the main island.
+        await expect(opened).toHaveCSS("opacity", "1")
+        const box = (await opened.boundingBox())!
+        expect(await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest("[data-connection-details]") !== null, [box.x + box.width / 2, box.y + box.height / 2])).toBe(true)
         if (SHOTS) await page.screenshot({ path: `${SHOTS}/islands-unavailable-details-390-light.png` })
         await page.keyboard.press("Escape")
         await expect(opened).toBeHidden()
