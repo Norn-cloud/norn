@@ -644,6 +644,166 @@ impl<E: SqlEngine> Loopback<'_, E> {
     }
 }
 
+impl<E: SqlEngine> Loopback<'_, E> {
+    /// A route-backed tool's call as its route's own request: each argument
+    /// where the tool's declaration puts it, under the caller's scope.
+    fn bind(&self, tool: &'static RouteTool, arguments: &RuntimeObject) -> Result<Routed, Refusal> {
+        let mut query = self.scope.pairs();
+        let mut segments = BTreeMap::new();
+        let mut body = RuntimeObject::new();
+        for argument in &tool.arguments {
+            let name = argument.name.as_str();
+            match argument.location {
+                Location::Local => {}
+                Location::Path => {
+                    segments.insert(name, segment(&required(arguments, name)?));
+                }
+                Location::Query => {
+                    if let Some(value) = query_value(argument, arguments)? {
+                        query.push((name, value));
+                    }
+                }
+                Location::Body => {
+                    if let Some(value) = body_value(argument, arguments)? {
+                        body.insert(argument.name.clone(), value);
+                    }
+                }
+            }
+        }
+        Ok(Routed {
+            method: tool.method.as_str(),
+            path: fill(&tool.path, &segments)?,
+            query,
+            body: match tool.method {
+                ToolMethod::Get => String::new(),
+                ToolMethod::Post => json_text(&RuntimeValue::Object(body))?,
+            },
+        })
+    }
+
+    /// The route of the manifest's tool `name`, called with `arguments`.
+    fn routed(&self, name: &str, arguments: &RuntimeObject) -> Result<Routed, Refusal> {
+        let tool = self
+            .manifest
+            .tool(name)
+            .ok_or_else(|| Refusal::host(format!("the tool manifest has no {name}")))?;
+        self.bind(tool, arguments)
+    }
+}
+
+/// `template` with each `{name}` replaced by its encoded segment.
+fn fill(template: &str, segments: &BTreeMap<&str, String>) -> Result<String, Refusal> {
+    let mut path = String::new();
+    let mut rest = template;
+    while let Some((head, tail)) = rest.split_once('{') {
+        let (name, after) = tail
+            .split_once('}')
+            .ok_or_else(|| Refusal::host(format!("{template} has an open segment")))?;
+        let value = segments
+            .get(name)
+            .ok_or_else(|| Refusal::host(format!("{template}: {name} is unbound")))?;
+        path.push_str(head);
+        path.push_str(value);
+        rest = after;
+    }
+    path.push_str(rest);
+    Ok(path)
+}
+
+/// The refusal of a missing or malformed argument: the declaration's own
+/// explanation, or that it must be `kind`.
+fn malformed(argument: &ToolArgument, kind: &str) -> Refusal {
+    Refusal::invalid(
+        argument
+            .refusal
+            .clone()
+            .unwrap_or_else(|| format!("{} must be {kind}", argument.name)),
+    )
+}
+
+/// A query argument's text, `None` when absent.
+fn query_value(
+    argument: &ToolArgument,
+    arguments: &RuntimeObject,
+) -> Result<Option<String>, Refusal> {
+    let name = argument.name.as_str();
+    match argument.encoding {
+        Encoding::Object => match arguments.get(name) {
+            None | Some(RuntimeValue::Null) => Ok(None),
+            Some(value @ RuntimeValue::Object(_)) => json_text(value).map(Some),
+            Some(
+                RuntimeValue::Bool(_)
+                | RuntimeValue::Number(_)
+                | RuntimeValue::String(_)
+                | RuntimeValue::Array(_),
+            ) => Err(malformed(argument, "an object")),
+        },
+        Encoding::Bucket => Ok(text(arguments, name)?.map(|bucket| bucket_key(&bucket))),
+        Encoding::Text | Encoding::Value | Encoding::Array | Encoding::Number => {
+            text(arguments, name)
+        }
+    }
+}
+
+/// A body argument that must hold one kind of value: itself, or `None` when
+/// it is optional and absent.
+fn shaped(
+    argument: &ToolArgument,
+    given: Option<&RuntimeValue>,
+    fits: fn(&RuntimeValue) -> bool,
+    kind: &str,
+) -> Result<Option<RuntimeValue>, Refusal> {
+    match given {
+        None if !argument.required => Ok(None),
+        Some(value) if fits(value) => Ok(Some(value.clone())),
+        None | Some(_) => Err(malformed(argument, kind)),
+    }
+}
+
+/// A body argument's value, `None` when it is optional and absent.
+fn body_value(
+    argument: &ToolArgument,
+    arguments: &RuntimeObject,
+) -> Result<Option<RuntimeValue>, Refusal> {
+    let name = argument.name.as_str();
+    let given = arguments.get(name);
+    match argument.encoding {
+        Encoding::Value => Ok(Some(given.cloned().unwrap_or_default())),
+        Encoding::Text | Encoding::Bucket => {
+            let value = if argument.required {
+                Some(required(arguments, name)?)
+            } else {
+                text(arguments, name)?
+            };
+            Ok(value.map(|value| {
+                RuntimeValue::String(if argument.encoding == Encoding::Bucket {
+                    bucket_key(&value)
+                } else {
+                    value
+                })
+            }))
+        }
+        Encoding::Array => shaped(
+            argument,
+            given,
+            |value| matches!(value, RuntimeValue::Array(_)),
+            "an array",
+        ),
+        Encoding::Number => shaped(
+            argument,
+            given,
+            |value| matches!(value, RuntimeValue::Number(_)),
+            "a number",
+        ),
+        Encoding::Object => shaped(
+            argument,
+            given,
+            |value| matches!(value, RuntimeValue::Object(_)),
+            "an object",
+        ),
+    }
+}
+
 fn parse_trace(value: &RuntimeValue) -> Result<norn_ir::TraceContext, Refusal> {
     let trace: norn_ir::TraceContext = norn_ir::runtime::decode(value)
         .map_err(|error| Refusal::invalid(format!("trace is malformed: {error}")))?;
