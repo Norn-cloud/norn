@@ -47,10 +47,10 @@ export function subscribable(path) {
   return { pathname: url.pathname, query: url.search.slice(1) };
 }
 
-/** Send one message; whether the socket took it. */
+/** Send one message (or a frame already encoded); whether the socket took it. */
 const send = (ws, message) => {
   try {
-    ws.send(JSON.stringify(message));
+    ws.send(typeof message === "string" ? message : JSON.stringify(message));
     return true;
   } catch {
     // A socket closing under us: its close handler cleans up.
@@ -119,13 +119,16 @@ export async function evaluate(ws, ask, only, tally, { quiet = false } = {}) {
     if (value === sub.digest) continue;
     sub.digest = value;
     changed = true;
-    let body = null;
+    // The body is the GET's own JSON text, byte for byte: re-encoding a parsed value would round a
+    // decimal beyond double precision. Text that is not JSON is sent as null.
+    let json = true;
     try {
-      body = JSON.parse(reply.body);
+      JSON.parse(reply.body);
     } catch {
-      body = null;
+      json = false;
     }
-    if (send(ws, { type: "snapshot", id, status: reply.status, digest: value, body }) && tally !== undefined) tally.sent += 1;
+    const frame = `{"type":"snapshot","id":${JSON.stringify(id)},"status":${JSON.stringify(reply.status)},"digest":${JSON.stringify(value)},"body":${json ? reply.body : "null"}}`;
+    if (send(ws, frame) && tally !== undefined) tally.sent += 1;
   }
   if (changed) ws.serializeAttachment(attachment);
   return true;

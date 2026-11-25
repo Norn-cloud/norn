@@ -1,23 +1,30 @@
 import { useQueryClient, type QueryKey } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { LiveClient, type LiveRefusal } from "../../../../packages/norn-sdk/src/index.ts"
-import { type StudioScope, useStudioScope } from "./definitions.ts"
+import { type StudioScope, studioScopeKey, useStudioScope } from "./definitions.ts"
 
 /**
- * Live reads (UI-LIVE-1): Studio holds one socket to the cell through its Worker
+ * Live reads (UI-LIVE-1): Studio holds one socket per scope to the cell through its Worker
  * (`/api/host/v1/subscribe`), which mints the host token for each upgrade. Pages never poll: when
  * the cell's answer to a route changes after a commit, the page reads it again through its usual
  * typed read, once. The socket carries nothing the GET would not.
  */
-let client: LiveClient | null = null
-let scopeOf: StudioScope | null = null
+const clients = new Map<string, LiveClient>()
 
-function live(scope: StudioScope): LiveClient {
-  if (client === null || scopeOf?.orgId !== scope.orgId || scopeOf.environmentId !== scope.environmentId) {
-    client?.close()
-    scopeOf = scope
+/**
+ * The page's live client for `scope`: one per scope, so a read of one scope never loses its socket
+ * to a read of another. Each client opens its socket for its first subscription and closes it when
+ * its last one leaves (`LiveClient`); a workspace switch unmounts the old scope's pages, so their
+ * socket closes with them. The Worker decides every upgrade: a scope the session no longer has is
+ * refused, and that client's readers are told `LIVE_UNAVAILABLE` once it stops reconnecting.
+ */
+export function live(scope: StudioScope): LiveClient {
+  const key = studioScopeKey(scope)
+  let client = clients.get(key)
+  if (client === undefined) {
     const query = new URLSearchParams({ orgId: scope.orgId, environmentId: scope.environmentId })
     client = new LiveClient({ url: () => `${location.origin.replace(/^http/, "ws")}/api/host/v1/subscribe?${query}` })
+    clients.set(key, client)
   }
   return client
 }
