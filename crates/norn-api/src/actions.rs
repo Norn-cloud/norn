@@ -19,8 +19,8 @@ use http::StatusCode;
 use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, engine::SqlEngine};
 use norn_ir::RuntimeValue;
 use norn_kernel::{
-    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Refusable,
-    TypeCatalog,
+    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Prepared,
+    Refusable, TypeCatalog,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -509,6 +509,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
             ("environmentId".into(), host.scope().environment_id.clone()),
         ]),
         actor: actor.to_owned(),
+        approved_intent: None,
         input: input.clone(),
         idempotency_key: request.idempotency_key.clone(),
         object_type: None,
@@ -563,6 +564,14 @@ fn commit_call<E: SqlEngine>(
     approval: Option<&str>,
     attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<ActionOutcome, Refusal> {
+    // APPROVAL-INTENT-1: an approved call commits only as the commit its
+    // approval was granted for.
+    let kernel_call = &norn_kernel::ActionCall {
+        approved_intent: approval
+            .map(|decision| crate::approvals::approved_intent(cell, decision))
+            .transpose()?,
+        ..kernel_call.clone()
+    };
     let kernel_authorizer = KernelAuthorizer(host.authorizer.as_ref());
     let commit = |cell: &mut crate::host::ActionCell<E>| {
         norn_kernel::commit_action(cell, catalog, kernel_call, &kernel_authorizer).map_err(
@@ -760,49 +769,29 @@ fn through_gate<E: SqlEngine>(
     let Some(gate) = gate else {
         return Ok(Gated::Commit(None));
     };
-    let mut dry_run = crate::approvals::WouldCommit::new(&*cell);
-    let dry = norn_kernel::commit_action(
-        &mut dry_run,
+    let prepared = norn_kernel::prepare_action_intent(
+        &*cell,
         catalog,
         kernel_call,
         &KernelAuthorizer(host.authorizer.as_ref()),
     );
-    let writes = dry_run.into_writes();
-    match dry {
-        Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
+    match prepared {
+        Ok(Prepared::Replayed(replayed)) => Ok(Gated::Replayed(replayed)),
         // APPROVAL-WHEN-1: a call whose record the gate's `when` excludes
         // commits as an ungated call does; an approved one still names the
         // approval it consumes (S6c), so its call reads committed.
-        Err(error)
-            if crate::approvals::would_have_committed(&error)
-                && !crate::approvals::applies(&gate, &writes, |object_type, property| {
-                    crate::approvals::semantics_in(cell.store().model(), object_type, property)
-                }) =>
+        Ok(Prepared::Commit(intent))
+            if !crate::approvals::applies(&gate, &intent.writes, |object_type, property| {
+                crate::approvals::semantics_in(cell.store().model(), object_type, property)
+            }) =>
         {
             Ok(Gated::Commit(approval))
         }
-        Err(error) if crate::approvals::would_have_committed(&error) => {
+        Ok(Prepared::Commit(intent)) => {
             if approval.is_some() {
                 return Ok(Gated::Commit(approval));
             }
-            let requester = host
-                .authorizer
-                .verified_principal(&kernel_call.actor)
-                .ok_or_else(action_denied)?;
-            // S5a: a call parks for a step attempt only while that attempt
-            // still waits on exactly this call, judged under this hold.
-            require_making(cell.store(), attempt, key)?;
-            let parked = crate::approvals::ParkedCall {
-                action: action_id.to_owned(),
-                input: kernel_call.input.clone(),
-                idempotency_key: kernel_call.idempotency_key.clone(),
-                requester,
-                action_digest: action_digest.clone(),
-                definitions_version,
-                // S6b: the step attempt making this call, recorded now.
-                attempt: attempt.cloned(),
-                trace: kernel_call.trace.clone(),
-            };
+            let parked = parked_call(host, cell, kernel_call, admitted, intent.digest)?;
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
                     crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
@@ -819,6 +808,39 @@ fn through_gate<E: SqlEngine>(
             ))
         }
     }
+}
+
+/// The call `kernel_call` parks as, past its gate: its requester's verified
+/// principal, which must name the accountable person an approval needs to be
+/// independent of (#618), and `intent_digest`, the digest of the commit it
+/// would make, which its approval is granted for (APPROVAL-INTENT-1).
+fn parked_call<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &crate::host::ActionCell<E>,
+    kernel_call: &norn_kernel::ActionCall<'_>,
+    admitted: &Admitted<'_>,
+    intent_digest: String,
+) -> Result<crate::approvals::ParkedCall, Refusal> {
+    let requester = host
+        .authorizer
+        .verified_principal(&kernel_call.actor)
+        .filter(|requester| requester.verified_accountable_person().is_some())
+        .ok_or_else(action_denied)?;
+    // S5a: a call parks for a step attempt only while that attempt
+    // still waits on exactly this call, judged under this hold.
+    require_making(cell.store(), admitted.attempt, &kernel_call.idempotency_key)?;
+    Ok(crate::approvals::ParkedCall {
+        action: kernel_call.action.action_id.clone(),
+        input: kernel_call.input.clone(),
+        idempotency_key: kernel_call.idempotency_key.clone(),
+        requester,
+        action_digest: admitted.action_digest.clone(),
+        definitions_version: admitted.definitions_version,
+        // S6b: the step attempt making this call, recorded now.
+        attempt: admitted.attempt.cloned(),
+        trace: kernel_call.trace.clone(),
+        intent_digest: Some(intent_digest),
+    })
 }
 
 /// The approval a call runs under, if one does: the approver's dispatch's

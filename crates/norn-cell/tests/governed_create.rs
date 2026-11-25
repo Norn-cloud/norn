@@ -274,6 +274,7 @@ fn call<'a>(action: &'a ActionRoot, actor: &str, input: Value, key: &str) -> Act
             ("environmentId".into(), "dev".into()),
         ]),
         actor: actor.into(),
+        approved_intent: None,
         input: serde_json::from_value(input).unwrap(),
         idempotency_key: key.into(),
         object_type: None,

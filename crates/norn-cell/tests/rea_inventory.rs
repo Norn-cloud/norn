@@ -313,6 +313,7 @@ impl Fixture {
             object_type: None,
             input: serde_json::from_value(input).unwrap(),
             actor: actor.into(),
+            approved_intent: None,
             scope: dimensions,
             idempotency_key: operation.into(),
             turn: DecisionTurn {

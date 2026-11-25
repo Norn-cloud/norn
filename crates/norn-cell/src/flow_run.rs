@@ -90,6 +90,20 @@ pub struct RunStarter {
     pub roles: Vec<String>,
     /// The declared role table the roles came from.
     pub role_table: String,
+    /// AUTH-INDEPENDENT-PERSON (#618): the accountable person the host's
+    /// verified principal named; absent on principals that name none and on
+    /// starters recorded before people were bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accountable_person: Option<String>,
+}
+
+impl RunStarter {
+    /// The accountable person behind this principal when it is a valid,
+    /// canonical identity; never the subject standing in for one.
+    #[must_use]
+    pub fn verified_accountable_person(&self) -> Option<&str> {
+        norn_kernel::validate_accountable_person(self.accountable_person.as_deref())
+    }
 }
 
 /// What a [`RUN_STARTED`] event records.

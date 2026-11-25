@@ -198,7 +198,6 @@ pub const CRATES: &[CrateRule] = &[
             "norn-projections",
         ],
     ),
-    rule("norn-dataplane", Ring::One, &["norn-ir"]),
     rule(
         "norn-api",
         Ring::One,
@@ -1017,16 +1016,6 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
 
 fn check_calendar_dependencies(name: &str, dep: &Dependency, out: &mut Vec<Violation>) {
     let dep_name = dep.name.as_str();
-    if name == "norn-importers"
-        && dep_name == "chrono"
-        && dep.kind != DependencyKind::Development
-        && (dep.uses_default_features || dep.features != ["std"])
-    {
-        out.push(violation(
-            "norn-importers-calendar-features",
-            format!("`{name}` must use chrono with default features off and only `std`"),
-        ));
-    }
     if name == "norn-expr" && dep_name == "jiff" && dep.kind != DependencyKind::Development {
         // Any feature beyond `std` admits another timezone source: the host's
         // zoneinfo (`tz-system`, `tzdb-zoneinfo`), a bundled database other

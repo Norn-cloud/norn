@@ -1,4 +1,5 @@
 //! Thin remote client: the server's live MCP catalog supplies every tool.
+use super::cell::Endpoint;
 use clap::{Args, Subcommand};
 use futures_util::StreamExt as _;
 use norn_ir::RuntimeValue;
@@ -103,6 +104,13 @@ fn request(command: &RemoteCommand, input: &str) -> Result<String, String> {
 }
 
 pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
+    // Every URL is parsed and checked, with or without a token: the HTTP
+    // client would otherwise turn userinfo into a Basic `Authorization`
+    // header, over plain HTTP too.
+    let endpoint = Endpoint::parse(&args.url).map_err(|e| format!("MCP {e}"))?;
+    if args.token_env.is_some() && !endpoint.is_https() {
+        return Err("bearer authentication requires an HTTPS endpoint".into());
+    }
     let mut input = String::new();
     if matches!(args.command, RemoteCommand::Call { .. }) {
         std::io::stdin()
@@ -114,9 +122,6 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         }
     }
     let body = request(&args.command, &input)?;
-    if args.token_env.is_some() && !args.url.starts_with("https://") {
-        return Err("bearer authentication requires an HTTPS endpoint".into());
-    }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(0)
@@ -287,5 +292,27 @@ mod tests {
             .is_err()
         );
         Ok(())
+    }
+
+    #[test]
+    fn userinfo_is_refused_without_a_token() {
+        for (url, token_env) in [
+            ("http://user:pass@example.com/mcp", None),
+            ("https://user:pass@example.com/mcp", None),
+            (
+                "http://example.com/mcp",
+                Some("NORN_TEST_UNSET_TOKEN".to_owned()),
+            ),
+        ] {
+            let args = RemoteArgs {
+                url: url.to_owned(),
+                org: "org".to_owned(),
+                env: "env".to_owned(),
+                token_env,
+                dev_actor: None,
+                command: RemoteCommand::List,
+            };
+            assert!(execute(&args).is_err(), "{url} must be refused");
+        }
     }
 }

@@ -60,15 +60,21 @@ export async function resolveActor(request: Request, auth: Auth): Promise<NornAc
   return { actorKind: "user", subjectId: session.user.id, orgId: member.organizationId, memberId: member.memberId, role: member.role, authMethod: method as NornActor["authMethod"] }
 }
 
-/** A short-lived signed token for the Norn host carrying exactly this actor (audience `norn-host`). */
+/**
+ * A short-lived signed token for the Norn host carrying exactly this actor (audience `norn-host`).
+ * A user's token names the person accountable for it (`accountablePerson`): the Better Auth user,
+ * the same for every session and connected assistant of that person, so the host never counts one
+ * person twice toward an approval. A service key names no person.
+ */
 export async function hostToken(auth: Auth, actor: NornActor, now = Math.floor(Date.now() / 1000)): Promise<string> {
+  const norn = { kind: actor.actorKind, org: actor.orgId, role: actor.role, amr: actor.authMethod }
   const { token } = await auth.api.signJWT({
     body: {
       payload: {
         sub: actor.subjectId,
         iat: now,
         exp: now + HOST_TOKEN_SECONDS,
-        norn: { kind: actor.actorKind, org: actor.orgId, role: actor.role, amr: actor.authMethod },
+        norn: actor.actorKind === "user" ? { ...norn, accountablePerson: actor.subjectId } : norn,
       },
     },
   })

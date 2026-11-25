@@ -411,6 +411,7 @@ fn call<'a>(action: &'a ActionRoot, actor: &str, key: &str) -> TestResult<Action
             ("environmentId".into(), "dev".into()),
         ]),
         actor: actor.into(),
+        approved_intent: None,
         input: serde_json::from_value(json!({"expense_id": "EXP-1"}))?,
         idempotency_key: key.into(),
         object_type: None,
