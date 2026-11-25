@@ -21,7 +21,6 @@ export const UI_SDK = {
         "debug",
         "defaultOpen",
         "dismissible",
-        "open",
         "pendingAnnouncement"
       ],
       "callbacks": [
@@ -44,7 +43,6 @@ export const UI_SDK = {
         "loop",
         "modal",
         "name",
-        "open",
         "openOnFocus",
         "presentation",
         "readOnly",
@@ -204,7 +202,6 @@ export const UI_SDK = {
         "modal",
         "multiple",
         "name",
-        "open",
         "pendingAnnouncement",
         "presentation",
         "query",
@@ -289,7 +286,6 @@ export const UI_SDK = {
         "monthFormat",
         "months",
         "name",
-        "open",
         "pageBy",
         "presentation",
         "readOnly",
@@ -316,7 +312,6 @@ export const UI_SDK = {
         "defaultOpen",
         "dismissible",
         "modal",
-        "open",
         "pendingAnnouncement",
         "presentation"
       ],
@@ -336,7 +331,6 @@ export const UI_SDK = {
         "driver",
         "expandOnScroll",
         "modal",
-        "open",
         "pendingAnnouncement",
         "preventEdgeSwipe",
         "side",
@@ -460,7 +454,6 @@ export const UI_SDK = {
         "itemShortcuts",
         "loop",
         "modal",
-        "open",
         "pendingAnnouncement",
         "presentation"
       ],
@@ -601,7 +594,6 @@ export const UI_SDK = {
         "delay",
         "dismissible",
         "modal",
-        "open",
         "openOnHover",
         "presentation"
       ],
@@ -713,7 +705,6 @@ export const UI_SDK = {
         "modal",
         "multiple",
         "name",
-        "open",
         "placeholder",
         "presentation",
         "query",
@@ -954,7 +945,6 @@ export const UI_SDK = {
         "debug",
         "dismissible",
         "loop",
-        "open",
         "pendingAnnouncement",
         "shortcut",
         "status"

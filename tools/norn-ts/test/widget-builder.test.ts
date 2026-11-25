@@ -79,6 +79,9 @@ test("a typed page lowers to the widget artifact the checker reads", () => {
   W.uiSdk("x", "alert-dialog", { props: { sideways: "true" } })
   // @ts-expect-error a callback is raised as an event, never bound
   W.uiSdk("x", "dialog", { props: { onOpenChange: "true" } })
+  // @ts-expect-error a layer with dismissal attempts is open in its `heldIn` states, never by `open`
+  W.uiSdk("x", "dialog", { props: { open: "true" } })
+  W.uiSdk("x", "collapsible", { props: { open: "true" } })
   // @ts-expect-error not a UI SDK primitive
   W.uiSdk("x", "no-such-primitive")
   expect(W.fromUiSdk("ask", "confirm-layer", "dialog", "onDismissAttempt").source).toEqual({ kind: "user", nodeId: "confirm-layer", emits: "onDismissAttempt" })

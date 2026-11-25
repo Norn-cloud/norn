@@ -2645,7 +2645,7 @@
   },
   {
     "code": "widget.layer.dismissal_refused_without_cause",
-    "fix": "Hold a layer that refuses a dismissal only in pending states, or in idle states with a way out: onDismissAttempt or a control inside the layer that reaches a state the layer is not held in without starting a call or entering a pending state. Say when a layer is open with heldIn, never with open; use defaultOpen only on a layer that refuses no dismissal and names no heldIn."
+    "fix": "Hold a layer that refuses a dismissal only in pending states, or in idle states with a way out: Escape (onOpenChange where Escape closes the layer, onDismissAttempt where it refuses Escape) or a control inside the layer, reaching a state the layer is not held in without starting a call or entering a pending state. Give a layer that refuses nothing the same way out of every state it is held in that is not pending. Say when a layer is open with heldIn, never with open; use defaultOpen only on a layer that refuses no dismissal and names no heldIn."
   },
   {
     "code": "widget.layer.notification_intrusive",

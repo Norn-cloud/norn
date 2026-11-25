@@ -9,19 +9,23 @@
 //!   without Escape). *Lock*: Escape still can, but an outside press or a swipe cannot (an alert
 //!   dialog, `closeOnOutsidePress: false`). Either is legal in a `pending` state, whose call has a
 //!   deadline and an exit on every outcome, and in an `idle` state with a *way out*: a path of
-//!   unguarded transitions on the person's own events (the layer's `onDismissAttempt`, as a dirty
-//!   form's "Discard changes?", or a control inside the layer, as Cancel) to a state the layer is
-//!   not held in, where no step starts a call or enters a pending state. Asking again into the same
-//!   state, or between held states, is no way out, and neither is a Confirm control that sends the
-//!   command. A layer that refuses dismissal with no `heldIn` state refuses it whenever a person
-//!   opens it: refused.
+//!   unguarded transitions on the person's own events to a state the layer is not held in, where no
+//!   step starts a call or enters a pending state. The person's events are Escape, which every
+//!   person can press (the layer's `onOpenChange` where Escape closes it; its `onDismissAttempt`,
+//!   as a dirty form's "Discard changes?", where it refuses Escape), and a control inside the
+//!   layer, as Cancel. Asking again into the same state, or between held states, is no way out, and
+//!   neither is a Confirm control that sends the command, nor an `onDismissAttempt` that only an
+//!   outside press or a swipe raises. A layer that refuses dismissal with no `heldIn` state refuses
+//!   it whenever a person opens it: refused.
 //!
 //!   `heldIn` is the one source of whether a layer is open. A prop reads only the machine's fields,
 //!   never its state, and UI SDK keeps a layer whose `open` is set as `open` says whatever Escape,
 //!   an outside press, a Close part or Cancel asks (its `.d.ts`: "Pass it to control the dialog";
 //!   a controlled component ignores `cancel()`, "since the next value comes from you"). So `open`
-//!   is refused on every layer, and `defaultOpen`, which opens it on load, on a layer that refuses a
-//!   dismissal or names `heldIn`.
+//!   is refused on every layer with dismissal attempts, and `defaultOpen`, which opens it on load,
+//!   on such a layer that refuses a dismissal or names `heldIn`. A held layer is controlled the
+//!   same way: it stays open as long as its state lasts, whatever Escape asks. So a layer that
+//!   refuses nothing also needs a way out of every state it is held in that is not pending.
 //! - **L3, notifications** (`widget.layer.notification_intrusive`). A toast never holds the page:
 //!   it is never held open or modal, never traps focus, and is dismissible or expires. How it is
 //!   announced is UI SDK's call (assertive is its default for an error). A native node that
@@ -65,6 +69,10 @@ pub const ACTION_OPERATIONS: [&str; 2] = ["call_action", "post_message"];
 
 /// The `onDismissAttempt` callback: a refused dismissal raised as a machine event.
 const DISMISS_ATTEMPT: &str = "onDismissAttempt";
+/// The `onOpenChange` callback: a dismissal the layer does not refuse, raised as a machine event.
+const OPEN_CHANGE: &str = "onOpenChange";
+/// How a finding names a way out (see [`way_out`]).
+const WAY_OUT: &str = "a way out: Escape (`onOpenChange` where Escape closes the layer, `onDismissAttempt` where it refuses Escape) or a control inside the layer, reaching a state it is not held in without starting a call or entering a pending state";
 const ANNOUNCE: &str = "platform/announce";
 const MODAL: &str = "popups/modal";
 
@@ -248,28 +256,40 @@ impl Layer<'_> {
             || (!outside_closes && primitive.dismiss_attempts.contains("outside-press"));
         self.opened(locks, findings);
         let id = &self.node.node_id;
-        if !locks {
+        let at = format!("{}/component/heldIn", self.pointer);
+        if self.held_in.is_empty() {
+            if locks {
+                findings.push(Finding {
+                    code: DISMISSAL_REFUSED,
+                    pointer: at,
+                    message: format!(
+                        "layer `{id}` refuses a dismissal whenever it is open: hold it (`heldIn`) only in a pending state, or in an idle state with {WAY_OUT}"
+                    ),
+                });
+            }
             return;
         }
-        let at = format!("{}/component/heldIn", self.pointer);
-        let Some(machine) = machine.filter(|_| !self.held_in.is_empty()) else {
-            findings.push(Finding {
-                code: DISMISSAL_REFUSED,
-                pointer: at,
-                message: format!(
-                    "layer `{id}` refuses a dismissal whenever it is open: hold it (`heldIn`) only in a pending state, or in an idle state with a way out (`onDismissAttempt` or a control inside the layer that reaches a state it is not held in, without starting a call)"
-                ),
-            });
-            return;
-        };
         let mut inside = BTreeSet::new();
         descendants(self.node, &mut inside);
+        // Escape is the dismissal every person can make: it closes the layer and raises
+        // `onOpenChange`, or it is refused and raises `onDismissAttempt`.
+        let escape = if escape_closes {
+            Some(OPEN_CHANGE)
+        } else {
+            primitive
+                .dismiss_attempts
+                .contains("escape-key")
+                .then_some(DISMISS_ATTEMPT)
+        };
         for (index, state_id) in self.held_in.iter().enumerate() {
-            let Some(state) = machine
-                .states
-                .iter()
-                .find(|state| &state.state_id == state_id)
-            else {
+            let held = machine.and_then(|machine| {
+                let state = machine
+                    .states
+                    .iter()
+                    .find(|state| &state.state_id == state_id)?;
+                Some((machine, state))
+            });
+            let Some((machine, state)) = held else {
                 findings.push(Finding {
                     code: DISMISSAL_REFUSED,
                     pointer: format!("{at}/{index}"),
@@ -277,26 +297,34 @@ impl Layer<'_> {
                 });
                 continue;
             };
-            let out = way_out(machine, id, &inside, self.held_in, state_id);
+            let out = way_out(machine, id, escape, &inside, self.held_in, state_id);
             let legal = match state.role {
                 WidgetStateRole::Pending => true,
                 WidgetStateRole::Idle => out,
-                WidgetStateRole::Error | WidgetStateRole::Terminal => false,
+                WidgetStateRole::Error | WidgetStateRole::Terminal => !locks && out,
             };
-            if !legal {
+            if legal {
+                continue;
+            }
+            let message = if locks {
                 let level = if escape_closes || out {
                     "locks out an outside press or swipe"
                 } else {
                     "cannot be dismissed at all"
                 };
-                findings.push(Finding {
-                    code: DISMISSAL_REFUSED,
-                    pointer: format!("{at}/{index}"),
-                    message: format!(
-                        "layer `{id}` {level} in `{state_id}`: that is legal only while a call is pending, or in an idle state with a way out (`onDismissAttempt` or a control inside the layer that reaches a state it is not held in, without starting a call or entering a pending state)"
-                    ),
-                });
-            }
+                format!(
+                    "layer `{id}` {level} in `{state_id}`: that is legal only while a call is pending, or in an idle state with {WAY_OUT}"
+                )
+            } else {
+                format!(
+                    "layer `{id}` is held open in `{state_id}`, so Escape or Close leaves it open unless a transition hears it: give it {WAY_OUT}"
+                )
+            };
+            findings.push(Finding {
+                code: DISMISSAL_REFUSED,
+                pointer: format!("{at}/{index}"),
+                message,
+            });
         }
     }
 
@@ -313,7 +341,9 @@ impl Layer<'_> {
                 ),
             });
         }
-        if self.props.contains_key("defaultOpen") && (locks || !self.held_in.is_empty()) {
+        let opens_on_load = self.props.contains_key("defaultOpen")
+            && !literal(self.props, "defaultOpen").is(&Value::Bool(false));
+        if opens_on_load && (locks || !self.held_in.is_empty()) {
             findings.push(Finding {
                 code: DISMISSAL_REFUSED,
                 pointer: at("defaultOpen"),
@@ -326,13 +356,14 @@ impl Layer<'_> {
 }
 
 /// Whether a person can leave a layer held in `held_in` from `start`: a path of unguarded
-/// transitions on the person's own events (the layer's `onDismissAttempt`, or a control inside the
+/// transitions on the person's own events (the layer's `escape` event, or a control inside the
 /// layer) to a state the layer is not held in, where no step starts a call or enters a pending
 /// state. A Confirm control that sends the command is not Cancel, and asking again into the same
 /// state, or between held states, never ends.
 fn way_out(
     machine: &WidgetMachine,
     layer: &str,
+    escape: Option<&str>,
     inside: &BTreeSet<&str>,
     held_in: &[String],
     start: &str,
@@ -347,7 +378,7 @@ fn way_out(
         machine.events.iter().any(|event| {
             event.event_id == on
                 && matches!(&event.source, WidgetMachineEventSource::User { node_id, emits }
-                    if (node_id == layer && emits.as_deref() == Some(DISMISS_ATTEMPT))
+                    if (node_id == layer && emits.is_some() && emits.as_deref() == escape)
                         || inside.contains(node_id.as_str()))
         })
     };
