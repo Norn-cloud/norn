@@ -86,10 +86,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 8,
         change: "#1533 Part 1: sparse markings omit empty '[]' rows from _norn_marking_current and _norn_marking_version (and omit _norn_marking_subject rows when no non-empty markings exist), pin each snapshot's non-empty slot count in _norn_marking_snapshot.nonempty_slots for fail-closed tamper detection, and drop the strictly redundant _norn_link_version/source and _norn_link_version/target prefix indexes",
     },
+    StorageVersion {
+        version: 9,
+        change: "#1533 Part 2 (EXPORT-RESIDUE-1): a steady-state main-world _norn_export_journal row stores a norn.cell.export-residue/1 residue (commit, previous hash, batch, storage version) naming its store format, model hashes, DDL and bindings by content address in the new _norn_export_context table; readers rebuild the record from it, its receipt and its ledger span, and check the unchanged record hash. Earlier journal rows are not rewritten",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 8;
+pub const STORAGE_VERSION: u32 = 9;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -351,7 +355,10 @@ fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
         // Version 7 (#1424 U1) adds the automation outbox, continuation,
         // trigger projection, and retained authority tables through the schema
         // statements that follow the chain. Previously committed rows are unchanged.
-        2..=7 => Ok(()),
+        // Version 9 (#1533 Part 2) adds `_norn_export_context` the same way,
+        // through the export journal's schema statements. Packed journal rows
+        // stay as written and decode beside residue rows.
+        2..=7 | 9 => Ok(()),
         // Version 8 (#1533 Part 1): sparse markings are backward-compatible with
         // legacy stored `'[]'` rows (no marking row is rewritten); add and
         // backfill `_norn_marking_snapshot.nonempty_slots`, and drop the two

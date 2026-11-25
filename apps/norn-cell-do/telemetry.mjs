@@ -82,7 +82,8 @@ const REFUSAL_CODES = new Set(Object.entries({
     "envelope_exceeded expired guard_error guard_false host idempotency_conflict invalid_output " +
     "invariant_budget_exceeded invariant_violation law_not_satisfied not_found not_in_slice " +
     "not_pending note_too_long object_exists object_missing overflow perform_outside_main " +
-    "read_only_world resolution_invalid resolved source_owned_target stale_state " +
+    "principal_input_unavailable read_only_world resolution_invalid resolved source_owned_target " +
+    "stale_state " +
     "turn_envelope_exceeded unknown_choice unknown_type unresolved_lifecycle",
   defs:
     "dev_sources_only live_data_refused live_data_unbounded live_data_unchecked live_data_violation " +

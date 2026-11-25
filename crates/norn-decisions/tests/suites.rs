@@ -24,5 +24,7 @@ mod explain;
 mod flow_vertical;
 #[path = "patch_fact.rs"]
 mod patch_fact;
+#[path = "principal_inputs.rs"]
+mod principal_inputs;
 #[path = "zen_corpus.rs"]
 mod zen_corpus;

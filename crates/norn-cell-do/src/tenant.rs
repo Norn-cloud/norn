@@ -234,7 +234,7 @@ impl<E: SqlEngine> Serving<E> {
             // here.
             // Not marked compiled on failure: the next request tries again,
             // so `/v1/access` never keeps the previous version's collections.
-            let served = norn_api::action_admission::prepare_action_model(&model)
+            let served = norn_api::action_admission::prepare_action_model_for(&model, &artifacts)
                 .map_err(|refusal| refusal.explanation)?;
             self.object_types = collections(served.object_types());
             let reveal = RevealPolicy::compile(&model, &artifacts, self.host.scope())
@@ -1196,7 +1196,7 @@ fn reopen<E: SqlEngine>(
             .map_err(|e| format!("active definitions: {e}"))?;
         // The serving model every install path checks against (DEFS-REOPEN-1):
         // the kernel's action types are part of it, as provisioned.
-        let model = norn_api::kernel_set::serving_model(&artifacts)
+        let model = norn_api::kernel_set::serving_model_installed(&artifacts, &active.model_hash)
             .map_err(|e| format!("active definitions: {e}"))?;
         CellStore::from_engine(engine, model).map_err(|e| format!("open: {e}"))
     })();

@@ -33,6 +33,7 @@
 pub mod actions;
 pub mod analytics;
 pub mod base;
+pub mod caller;
 pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connections;
@@ -45,6 +46,7 @@ pub mod olap;
 pub mod olapd;
 pub mod policy;
 pub mod principal;
+pub mod principal_inputs;
 pub mod questions;
 pub mod recorded;
 pub mod reveal;

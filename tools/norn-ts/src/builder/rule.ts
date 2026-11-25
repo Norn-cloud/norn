@@ -9,6 +9,7 @@
  * (graph shape, ZEN typing against the slice, declared transitions).
  */
 import type { Json } from "../canonical.ts"
+import type { ScopeDimension } from "./access.ts"
 import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from "./diagnostics.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 import type { ObjectSchema } from "./schema.ts"
@@ -63,6 +64,20 @@ export interface JdmGraph {
 
 export const JDM_CONTENT_TYPE = "application/vnd.gorules.decision"
 
+/**
+ * One declared principal input of a `decide` rule (PRINCIPAL-INPUT-1, #1091),
+ * mirroring `PrincipalInputDeclaration` in `crates/norn-ir/src/rule.rs`: the
+ * typed column `principal.<name>` of the decision input and what the host
+ * resolves it from. A request never supplies it.
+ */
+export interface PrincipalInputDecl {
+  readonly name: string
+  readonly kind:
+    | { readonly holdsRole: { readonly role: string; readonly at: "resource" | ReadonlyArray<ScopeDimension> } }
+    | { readonly roleProfile: { readonly profile: string } }
+    | { readonly attribute: { readonly name: string } }
+}
+
 export interface DecisionDef extends Localized {
   readonly _tag: "Decision"
   /** `ruleId`. */
@@ -76,6 +91,8 @@ export interface DecisionDef extends Localized {
   readonly dependencies: ReadonlyArray<DecisionDependencyPin>
   readonly triggers: ReadonlyArray<RuleTrigger>
   readonly slice: ReadonlyArray<SliceDecl>
+  /** The acting principal's attributes the decision reads; resolved by the host. */
+  readonly principalInputs: ReadonlyArray<PrincipalInputDecl>
   readonly input: ObjectSchema
   readonly output: ObjectSchema
   readonly scopeRequired: ReadonlyArray<string>
@@ -84,20 +101,21 @@ export interface DecisionDef extends Localized {
 }
 
 export function decision(
-  meta: Omit<DecisionDef, "_tag" | "at" | "triggers" | "slice" | "dependencies"> & {
+  meta: Omit<DecisionDef, "_tag" | "at" | "triggers" | "slice" | "principalInputs" | "dependencies"> & {
     readonly triggers?: ReadonlyArray<RuleTrigger>
     readonly slice?: ReadonlyArray<SliceDecl>
+    readonly principalInputs?: ReadonlyArray<PrincipalInputDecl>
     readonly dependencies?: ReadonlyArray<DecisionDef | DecisionDependencyPin>
     readonly at?: SourceLocation | undefined
   },
 ): DecisionDef {
-  const { at, triggers = [], slice = [], dependencies = [], ...rest } = meta
+  const { at, triggers = [], slice = [], principalInputs = [], dependencies = [], ...rest } = meta
   const pins = dependencies.map((dependency): DecisionDependencyPin => (
     "_tag" in dependency
       ? { artifactId: dependency.artifactId ?? dependency.id + ".rule", version: dependency.version }
       : { ...dependency }
   ))
-  return located({ _tag: "Decision" as const, ...rest, triggers: [...triggers], slice: [...slice], dependencies: pins }, at)
+  return located({ _tag: "Decision" as const, ...rest, triggers: [...triggers], slice: [...slice], principalInputs: [...principalInputs], dependencies: pins }, at)
 }
 
 export type DecisionBuildResult =
@@ -119,6 +137,7 @@ export function lowerDecision(def: DecisionDef, options: EnvelopeOptions): Decis
     triggers: omitEmpty(def.triggers),
     // The canonical form omits a false `optional` (Rust `SliceDeclaration`).
     slice: omitEmpty(def.slice.map(({ optional, ...entry }) => (optional === true ? { ...entry, optional } : entry))),
+    principalInputs: omitEmpty(def.principalInputs),
     inputSchema: def.input,
     outputSchema: def.output,
     scopeRequired: def.scopeRequired,

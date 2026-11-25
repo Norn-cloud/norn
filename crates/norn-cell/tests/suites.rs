@@ -60,6 +60,8 @@ mod model_interfaces;
 mod ontology_lending;
 #[path = "parent_rows.rs"]
 mod parent_rows;
+#[path = "principal_inputs.rs"]
+mod principal_inputs;
 #[path = "query_envelope.rs"]
 mod query_envelope;
 #[path = "query_lineage_sources.rs"]

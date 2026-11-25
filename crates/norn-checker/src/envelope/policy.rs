@@ -23,6 +23,7 @@ pub(super) fn validate_policy_payload(
         // AccessIR (#2879): its shape is checked by the strict typed root
         // (`typed_roots`); compilation to Cedar against the projected schema
         // happens at admission, in `norn-authz`.
+        crate::principal_inputs::validate_catalog(payload, diagnostics, artifact_id);
     } else if is_modern_policy_payload(payload) {
         validate_modern_policy_payload(payload, diagnostics, artifact_id);
     } else {

@@ -416,16 +416,29 @@ fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord
     })
 }
 
-/// Every verified export journal record, in commit order.
+/// Every verified export journal record, in commit order. The provable
+/// journal ends before commit `k` when its row is lost, and also when it is a
+/// residue (EXPORT-RESIDUE-1) its context, receipt or ledger rows no longer
+/// rebuild to its stored hash: the head and the ledger diagnosis still name
+/// `k`. Any other journal row that does not verify still refuses.
 fn journal(engine: &NativeEngine) -> Result<Vec<ExportRecord>, CellError> {
     let mut records = Vec::new();
-    while let Some(record) = crate::export_journal::read_record(
-        engine,
-        u64::try_from(records.len())
+    loop {
+        let commit_seq = u64::try_from(records.len())
             .unwrap_or(u64::MAX)
-            .saturating_add(1),
-    )? {
-        records.push(record);
+            .saturating_add(1);
+        let residue = crate::export_journal_residue::is_residue(engine, commit_seq)?;
+        match crate::export_journal::read_record(engine, commit_seq) {
+            Ok(Some(record)) => records.push(record),
+            Ok(None) => break,
+            Err(
+                CellError::LedgerCorrupt { .. }
+                | CellError::Json(_)
+                | CellError::Encoding(_)
+                | CellError::HistoricalValueUnproven(_),
+            ) if residue => break,
+            Err(error) => return Err(error),
+        }
     }
     Ok(records)
 }
