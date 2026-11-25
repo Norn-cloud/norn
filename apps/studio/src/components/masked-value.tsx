@@ -76,7 +76,7 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
       <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)} data-revealed="" onClick={(event) => event.stopPropagation()} title={`Revealed to you; receipt ${shown.receipt.commitSeq}${shown.receipt.purpose ? ` (${shown.receipt.purpose})` : ""}`}>
         <Eye className="size-3 shrink-0 text-muted-foreground" aria-hidden />
         <CopyId value={text} className="min-w-0" />
-        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">receipt #{shown.receipt.commitSeq}</span>
+        <span className="shrink-0 font-mono text-meta text-muted-foreground">receipt #{shown.receipt.commitSeq}</span>
       </span>
     )
   }
@@ -85,14 +85,14 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
   const chip = (
     <span title={maskHint(masked)} data-masked={masked.mode} style={tintOf(masked.mode === "pseudonym" ? "CUSTOMER" : undefined)}
       className={cn(
-        "inline-flex min-w-0 max-w-full items-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-0.5 text-xs",
+        "inline-flex min-w-0 max-w-full items-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-0.5 text-meta",
         compact ? "overflow-hidden" : "flex-wrap",
         TINTED,
       )}>
       <Icon className="size-3 shrink-0" aria-hidden />
       <span className={cn("min-w-0 font-mono", compact ? "truncate" : "[overflow-wrap:anywhere]", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{projection(masked, projected)}</span>
       {masked.revealable && <span className="sr-only">Masked; you may reveal it</span>}
-      <span data-mask-hint="" className={cn("text-[10px] font-normal opacity-75", compact ? "min-w-0 shrink-[4] truncate" : "whitespace-normal [overflow-wrap:anywhere]")}>{maskWord(masked)}</span>
+      <span data-mask-hint="" className={cn("text-meta font-normal opacity-75", compact ? "min-w-0 shrink-[4] truncate" : "whitespace-normal [overflow-wrap:anywhere]")}>{maskWord(masked)}</span>
     </span>
   )
   if (!masked.revealable) return <span className={cn("inline-flex min-w-0 max-w-full", className)}>{chip}</span>
@@ -116,11 +116,11 @@ function Reveal({ objectType, id, property, masked, projected, className, compac
         <PopoverTrigger asChild>
           <Button variant="outline" size="xs" data-reveal="">Reveal</Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-72 space-y-2 text-sm">
-          <p className="font-medium">Reveal {property.replaceAll("_", " ")}</p>
-          <p className="text-xs text-muted-foreground">The cell records who revealed it, when and why, before it shows the value.</p>
+        <PopoverContent align="start" className="w-72 space-y-2 text-body">
+          <p>Reveal {property.replaceAll("_", " ")}</p>
+          <p className="text-meta text-muted-foreground">The cell records who revealed it, when and why, before it shows the value.</p>
           <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} placeholder="Purpose (optional)" maxLength={500} aria-label="Purpose" />
-          {state.kind === "error" && <p role="alert" className="text-xs text-destructive">{state.message}</p>}
+          {state.kind === "error" && <p role="alert" className="text-meta text-destructive">{state.message}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
             <Button size="sm" onClick={() => void reveal()} disabled={state.kind === "busy"} data-confirm-reveal="">

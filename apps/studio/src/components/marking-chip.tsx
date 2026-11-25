@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Fingerprint, LockKeyhole, ShieldAlert } from "lucide-react"
 import { useMemo } from "react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { markingCatalog, markingLabel, projectionWords, type MarkingCatalog } from "@/lib/markings"
 import { transport } from "@/lib/transport"
 

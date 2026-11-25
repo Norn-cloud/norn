@@ -42,7 +42,7 @@ function ToolRow({ item }: { readonly item: Extract<Item, { kind: "tool" }> }) {
         {done ? <Check className="size-2.5" strokeWidth={3} /> : failed ? <X className="size-2.5" strokeWidth={3} /> : <LoaderCircle className="size-3.5 animate-spin" />}
       </span>
       <span className={cn(!done && !failed && "text-foreground")}>{toolWords(item.tool)}</span>
-      <Badge variant="outline" className="ms-auto font-mono text-[0.6875rem] font-normal">{item.tool}</Badge>
+      <Badge variant="outline" className="ms-auto font-mono text-meta font-normal">{item.tool}</Badge>
     </div>
   )
 }
@@ -52,7 +52,7 @@ function ViewCard({ delivery, host }: { readonly delivery: ViewDelivery; readonl
   if (view === null) return null
   return (
     <div className="enter overflow-hidden rounded-xl border bg-card" data-view={view}>
-      <Suspense fallback={<p className="p-3 text-sm text-muted-foreground">Drawing Norn's answer…</p>}>
+      <Suspense fallback={<p className="p-3 text-body text-muted-foreground">Drawing Norn's answer…</p>}>
         <DeliveryView view={view} delivery={{ input: delivery.input, result: delivery.result }} bridge={host} studio={window.location.origin} tool={delivery.tool} />
       </Suspense>
     </div>
@@ -60,8 +60,8 @@ function ViewCard({ delivery, host }: { readonly delivery: ViewDelivery; readonl
 }
 
 function Entry({ item, host }: { readonly item: Item; readonly host: ToolHost }) {
-  if (item.kind === "user") return <p className="ms-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-muted px-3 py-2 text-sm">{item.text}</p>
-  if (item.kind === "text") return <Streamdown className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{item.text}</Streamdown>
+  if (item.kind === "user") return <p className="ms-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-muted px-3 py-2 text-body">{item.text}</p>
+  if (item.kind === "text") return <Streamdown className="text-body [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{item.text}</Streamdown>
   if (item.kind === "tool") return <ToolRow item={item} />
   return <ViewCard delivery={item.delivery} host={host} />
 }
@@ -190,15 +190,15 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
           {transcript.length === 0 && (
             <div className="enter flex flex-col items-center gap-2 py-10 text-center">
               <span className="mb-1 flex size-11 items-center justify-center rounded-2xl bg-muted"><Sparkles className="size-5 text-muted-foreground" /></span>
-              <div className="text-base font-semibold">Ask Sidekick</div>
-              <p className="max-w-xs text-sm text-muted-foreground">It answers from your workspace through Norn, as you. What you can't see, it can't see either.</p>
+              <div className="text-body">Ask Sidekick</div>
+              <p className="max-w-xs text-body text-muted-foreground">It answers from your workspace through Norn, as you. What you can't see, it can't see either.</p>
             </div>
           )}
           {transcript.map((item) => <Entry key={item.id} item={item} host={host} />)}
-          {waiting && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{status === "connecting" ? "Connecting…" : "Thinking…"}</p>}
+          {waiting && <p role="status" className="flex items-center gap-2 text-body text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{status === "connecting" ? "Connecting…" : "Thinking…"}</p>}
           {error !== null && (
-            <div role="alert" className="rounded-xl border bg-card p-3 text-sm">
-              <p className="font-medium">Sidekick couldn't answer.</p>
+            <div role="alert" className="rounded-xl border bg-card p-3 text-body">
+              <p>Sidekick couldn't answer.</p>
               <p className="text-muted-foreground">{error}</p>
             </div>
           )}

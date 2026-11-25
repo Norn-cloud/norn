@@ -74,7 +74,7 @@ const ORDER_LABELS = {
 const SPECIMEN_LOCALE: Locale = (() => { const tag = new URLSearchParams(window.location.search).get("locale"); return isLocale(tag) ? tag : "en" })()
 function OrderFacts() {
   const concept = catalogOf([...DEFINITIONS as unknown as Artifact[], ORDER_LABELS], SPECIMEN_LOCALE).byName.get("commerce.SalesOrder")
-  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang} className="font-medium">{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
+  return concept ? <div className="space-y-2"><h2 lang={concept.titleLang}>{concept.title}</h2><FactsTable concept={concept} technical /></div> : null
 }
 
 // The lifecycle view's specimens: the purchase order's approval lifecycle, its counts as one
@@ -194,10 +194,10 @@ function Sheet() {
   const states = SHEET.filter(({ id }) => only === null || id === only)
   return (
     <main className="space-y-8 bg-background p-6 text-foreground">
-      {only === null && <h1 className="text-title font-semibold tracking-tight">Canvas: every state of every component</h1>}
+      {only === null && <h1 className="text-title font-medium tracking-tight">Canvas: every state of every component</h1>}
       {states.map((state) => (
         <section key={state.id} data-state={state.id} className="space-y-2">
-          {only === null && <header><div className="font-mono text-sm">{state.component} · {state.id}</div><p className="text-meta text-muted-foreground">{state.note}</p></header>}
+          {only === null && <header><div className="font-mono text-body">{state.component} · {state.id}</div><p className="text-meta text-muted-foreground">{state.note}</p></header>}
           <div className="rounded-lg border p-3">{SPECIMENS[state.id]?.() ?? <p className="text-destructive">MISSING specimen</p>}</div>
         </section>
       ))}

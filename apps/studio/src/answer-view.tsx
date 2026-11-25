@@ -3,7 +3,7 @@ import { NO_DATA_CELL, type StudioScope } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState, type ReactNode } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { cn } from "@/lib/utils"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
@@ -12,8 +12,8 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { chartEmpty, chartFrame } from "./lib/chart.ts"
@@ -79,11 +79,11 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale,
   const data = trace.data
   if (trace.isPending) return <LoadState status="pending" skeleton={compact ? "list" : "table"} loadingLabel="Reading records" onRetry={() => void trace.refetch()}>{() => null}</LoadState>
   if (trace.isError) return <LoadState status="error" error={trace.error} isFetching={trace.isFetching} onRetry={() => void trace.refetch()}>{() => null}</LoadState>
-  if (data === undefined || data.kind === "unavailable") return <p className="text-sm text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
+  if (data === undefined || data.kind === "unavailable") return <p className="text-body text-muted-foreground">{data?.kind === "unavailable" && data.reason === "no-cell" ? NO_DATA_CELL : "The live records could not be read."}</p>
   if (data.kind === "refused" && MOVED.has(data.refusal.code)) return (
-    <div role="status" className="space-y-2 rounded-md border p-3 text-sm">
-      <p><span className="font-medium">The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
-      {onStale ? <button type="button" className="font-medium underline underline-offset-4" onClick={onStale}>Ask again for the current number</button> : <p className="text-muted-foreground">Run the question again to trace the current number.</p>}
+    <div role="status" className="space-y-2 rounded-md border p-3 text-body">
+      <p><span>The data changed since this answer.</span> The cell committed new records, so this number may no longer be the current one and its records can't be traced as they were.</p>
+      {onStale ? <button type="button" className="underline underline-offset-4" onClick={onStale}>Ask again for the current number</button> : <p className="text-muted-foreground">Run the question again to trace the current number.</p>}
     </div>
   )
   if (data.kind === "refused") return <RefusedNote refusal={data.refusal} />
@@ -94,17 +94,17 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale,
       <ul className="divide-y divide-border/70">
         {read.document.contributions.map((contribution, index) => (
           <li key={`${contribution.fact.key}@${contribution.fact.version}`} className="flex h-[2.375rem] items-center justify-between gap-3 px-2">
-            <Link to="/sources/$concept/$" params={{ concept: contribution.fact.objectType, _splat: contribution.fact.key }} hash="lineage" className="min-w-0 truncate font-mono text-xs underline-offset-4 hover:underline" title="Open this record and where it came from">{contribution.fact.key}</Link>
+            <Link to="/sources/$concept/$" params={{ concept: contribution.fact.objectType, _splat: contribution.fact.key }} hash="lineage" className="min-w-0 truncate font-mono text-meta underline-offset-4 hover:underline" title="Open this record and where it came from">{contribution.fact.key}</Link>
             <span className="shrink-0">{amounts(read, index)}</span>
           </li>
         ))}
       </ul>
-      <div className="flex items-baseline justify-between gap-3 border-t border-border px-2 pt-2.5 pb-1"><span className="text-muted-foreground">{read.document.contributions.length} {read.document.contributions.length === 1 ? "record" : "records"}, added up exactly</span><span className="text-sm font-medium"><Exact value={bucket.value} totals={bucket.totals} /></span></div>
+      <div className="flex items-baseline justify-between gap-3 border-t border-border px-2 pt-2.5 pb-1"><span className="text-muted-foreground">{read.document.contributions.length} {read.document.contributions.length === 1 ? "record" : "records"}, added up exactly</span><span className="text-body"><Exact value={bucket.value} totals={bucket.totals} /></span></div>
     </div>
   )
   return (
     <TableCard><Table>
-      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
+      <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-end">Contributes</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
       <TableBody>
         {read.document.contributions.map((contribution, index) => (
           <TableRow key={`${contribution.fact.key}@${contribution.fact.version}`}>
@@ -112,13 +112,13 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale,
               <Link to="/sources/$concept/$" params={{ concept: contribution.fact.objectType, _splat: contribution.fact.key }} hash="lineage" className="underline-offset-4 hover:underline" title="Open this record and where it came from">{contribution.fact.key}</Link>
               {contribution.restricted && <Badge variant="outline" className="ms-2 font-sans" title="The server withheld this record's values from your role.">Values withheld</Badge>}
             </TableCell>
-            <TableCell className="text-right tabular-nums">{amounts(read, index)}</TableCell>
+            <TableCell className="text-end tabular-nums">{amounts(read, index)}</TableCell>
             <TableCell>{contribution.source.status === "resolved"
               ? contribution.source.provenance?.sourceRecordRef
-                ? <><div className="font-medium">{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-xs text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
+                ? <><div>{systemName(contribution.source.provenance.sourceRecordRef.system)}</div><div className="font-mono text-meta text-muted-foreground">{contribution.source.provenance.sourceRecordRef.record}</div></>
                 : <span className="text-muted-foreground">Resolved</span>
               : <span className="text-muted-foreground" title={contribution.source.status === "restricted" ? "Your role may not see where this record came from." : "The cell retains no source record for it."}>{contribution.source.status === "restricted" ? "Withheld" : "None retained"}</span>}</TableCell>
-            <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-xs text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
+            <TableCell>{contribution.receiptHash === null ? <span className="text-muted-foreground" title="The server withheld this receipt hash with the bucket's values: it commits to them.">Receipt withheld</span> : <CopyId value={contribution.receiptHash} short={10} />}<div className="text-meta text-muted-foreground">commit {contribution.commitSeq}</div></TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -155,8 +155,8 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
       ? refusal.message
       : undefined)
   return (
-    <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-sm">
-      <p><span className="font-medium">{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
+    <div role="status" className="grid gap-1.5 rounded-md border border-node-border bg-muted/40 p-3 text-body">
+      <p><span>{locale === "ar" ? "لا يمكن الإجابة: " : "Can't answer this: "}</span>{plain ?? <CodedMessage code={refusal.code} message={refusal.message} />}</p>
       {/* The law or rule that refused, as the server states it: the reason stays in view, not only under Technical. */}
       {serverReason && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]" dir="auto">{serverReason}</p>}
       <details open={view === "technical"} className="text-meta text-muted-foreground">
@@ -177,21 +177,21 @@ function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefi
         {bucket && <>
           <SheetHeader>
             <SheetTitle>{bucket.label}</SheetTitle>
-            <SheetDescription className="text-base"><Exact value={bucket.value} totals={bucket.totals} /></SheetDescription>
+            <SheetDescription className="text-body"><Exact value={bucket.value} totals={bucket.totals} /></SheetDescription>
           </SheetHeader>
           <div className="px-4">
-            <p className="pb-3 text-sm text-muted-foreground">The {bucket.members.length} records the server added up, exactly as it counted them.</p>
+            <p className="pb-3 text-body text-muted-foreground">The {bucket.members.length} records the server added up, exactly as it counted them.</p>
             {live ? <LiveRecords question={live.question} lineageRef={live.lineageRef} bucket={bucket} fetchTrace={live.fetchTrace} onStale={live.onStale} /> : <>
             <TableCard><Table>
-              <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-right">Contributes</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Record</TableHead><TableHead className="text-end">Contributes</TableHead></TableRow></TableHeader>
               <TableBody>
                 {bucket.members.map(({ id, amounts }) => (
-                  <TableRow key={id}><TableCell className="font-mono">{id}</TableCell><TableCell className={amounts === null ? "text-right text-muted-foreground" : "text-right tabular-nums"}>{contribution(amounts)}</TableCell></TableRow>
+                  <TableRow key={id}><TableCell className="font-mono">{id}</TableCell><TableCell className={amounts === null ? "text-end text-muted-foreground" : "text-end tabular-nums"}>{contribution(amounts)}</TableCell></TableRow>
                 ))}
               </TableBody>
-              <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-right"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
+              <TableFooter><TableRow><TableCell>Total</TableCell><TableCell className="text-end"><Exact value={bucket.value} totals={bucket.totals} /></TableCell></TableRow></TableFooter>
             </Table></TableCard>
-            <p className="pt-4 text-xs text-muted-foreground">The cell traces a number only when it answers it live; open a record for where it came from.</p>
+            <p className="pt-4 text-meta text-muted-foreground">The cell traces a number only when it answers it live; open a record for where it came from.</p>
             </>}
           </div>
         </>}
@@ -261,7 +261,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
     <span>{[engineOf(answer), `read ${stamp(answer.nowMs)}`].filter(Boolean).join(" · ")}</span>
     <Popover>
       <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label="How this number was read"><Info /></Button></PopoverTrigger>
-      <PopoverContent align="start" className="w-80 text-sm">
+      <PopoverContent align="start" className="w-80 text-body">
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 tabular-nums">
           <dt className="flex items-center gap-1.5 text-muted-foreground"><GitCommitHorizontal aria-hidden className="size-3.5" />Known after</dt><dd title="The cell's knowledge when it answered: its committed changes">{changes(answer.knownAsOf)}</dd>
           <dt className="flex items-center gap-1.5 text-muted-foreground"><Clock aria-hidden className="size-3.5" />Read</dt><dd title="The cell's clock when it answered">{stamp(answer.nowMs)}</dd>
@@ -276,7 +276,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
     <section className="space-y-5">
       <div className="space-y-2 px-1">
         {heading === "none" ? null : heading === "h1" ? <h1 className="text-title font-normal tracking-[-0.025em]">{named}</h1>
-          : heading === "h3" ? <h3 className="font-medium">{named}</h3>
+          : heading === "h3" ? <h3>{named}</h3>
           : <h2 className="text-heading font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
         <p className="text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
@@ -294,10 +294,10 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-5">
             <div className="min-w-0 space-y-2">
               <div className="text-meta text-muted-foreground">{lead.label}{lead.bucket.totals.length > 1 ? ` · ${lead.bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(lead.bucket.value)} exactly` : ""}</div>
-              {lead.bucket.suppressed ? <span className="block text-[3.5rem] leading-none font-light tracking-[-0.045em] text-muted-foreground">—</span> : (
-                <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+              {lead.bucket.suppressed ? <span className="block text-figure leading-none tracking-[-0.045em] text-muted-foreground">—</span> : (
+                <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
                   label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
-                  <span className="block text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[4rem]">{figure(lead.bucket, unit)}</span>
+                  <span className="block text-figure leading-none tracking-[-0.045em] tabular-nums sm:text-figure">{figure(lead.bucket, unit)}</span>
                 </AnswerProvenance>
               )}
               <div className="flex flex-wrap items-center gap-2 pt-1 text-meta text-muted-foreground tabular-nums">
@@ -306,8 +306,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
               </div>
             </div>
             {(peak || total) && <div className="flex flex-wrap gap-x-10 gap-y-3 sm:text-end">
-              {total && <div><div className="text-meta text-muted-foreground">{total.label}</div><div className="pt-1.5 text-[1.375rem] font-light tracking-[-0.02em] tabular-nums">{total.value}</div></div>}
-              {peak && <div><div className="text-meta text-muted-foreground">Peak {grain}</div><div className="pt-1.5 text-[1.375rem] font-light tracking-[-0.02em] tabular-nums">{figure(peak, unit)}</div><div className="text-xs text-muted-foreground">{peak.label.replace(/^\w+ of /, "")}</div></div>}
+              {total && <div><div className="text-meta text-muted-foreground">{total.label}</div><div className="pt-1.5 text-heading tracking-[-0.02em] tabular-nums">{total.value}</div></div>}
+              {peak && <div><div className="text-meta text-muted-foreground">Peak {grain}</div><div className="pt-1.5 text-heading tracking-[-0.02em] tabular-nums">{figure(peak, unit)}</div><div className="text-meta text-muted-foreground">{peak.label.replace(/^\w+ of /, "")}</div></div>}
             </div>}
           </div>
         ) : <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>}
@@ -335,7 +335,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       <div className={cn("grid gap-5", live && lead.bucket && !lead.bucket.suppressed && "lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]")}>
       <Panel icon={Rows3} label={grain ? (listed.length < rows.length ? `The latest ${listed.length} ${grain}s` : `Every ${grain}`) : "Every bucket"} action={rows.length === 0 ? undefined : `Select a ${grain ?? "bucket"} for its records`}>
         {rows.length === 0 ? <Well><EmptyState icon={Rows3}>{chartEmpty(rows)}</EmptyState></Well> : <TableCard><Table>
-          <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-right">Answer</TableHead>{ratio && <TableHead className="text-right max-sm:hidden">Exactly</TableHead>}<TableHead className="text-right max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>{grain ? "Period" : "Bucket"}</TableHead><TableHead className="text-end">Answer</TableHead>{ratio && <TableHead className="text-end max-sm:hidden">Exactly</TableHead>}<TableHead className="text-end max-sm:hidden">Records</TableHead><TableHead className="w-10"><span className="sr-only">Drill</span></TableHead></TableRow></TableHeader>
           <TableBody>
             {newestFirst.map((bucket) => (
               <TableRow key={bucket.key} className="cursor-pointer" onClick={() => setOpen(bucket)}>
@@ -344,15 +344,15 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                     {bucket.label.replace(/^\w+ of /, "")}
                   </button>
                 </TableCell>
-                <TableCell className="text-right tabular-nums">
+                <TableCell className="text-end tabular-nums">
                   <span className="inline-flex items-center justify-end gap-3">
                     {!bucket.suppressed && scale > 0 && <span aria-hidden className="relative hidden h-1 w-24 overflow-hidden rounded-full bg-border sm:inline-block"><span className={cn("absolute inset-y-0 start-0 rounded-full", bucket === lead.bucket ? "bg-action" : "bg-muted-foreground/70")} style={{ width: `${Math.max(2, Math.min(100, Number(bucket.value) / scale * 100))}%` }} /></span>}
                     {bucket.suppressed ? shown(bucket) : <AnswerProvenance label={bucket.label} value={figure(bucket, unit)} provenance={provenanceOf(bucket)} records={bucket.members.length} onTrace={() => setOpen(bucket)}>{figure(bucket, unit)}</AnswerProvenance>}
                   </span>
                 </TableCell>
-                {ratio && <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(bucket.value)}`}</TableCell>}
-                <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
-                <TableCell className="w-10 p-1 text-right"><DrillMenu bucket={bucket} question={question} live={live} originScope={originScope} onRecords={() => setOpen(bucket)} onDrill={setDrill} /></TableCell>
+                {ratio && <TableCell className="text-end text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(bucket.value)}`}</TableCell>}
+                <TableCell className="text-end text-muted-foreground tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
+                <TableCell className="w-10 p-1 text-end"><DrillMenu bucket={bucket} question={question} live={live} originScope={originScope} onRecords={() => setOpen(bucket)} onDrill={setDrill} /></TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -462,8 +462,8 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3", t
     return <LoadState status="error" error={run.error ?? new Error("The cell did not answer.")} isFetching={run.isFetching} onRetry={() => void run.refetch()}>{() => null}</LoadState>
   }
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
-  if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="font-medium">{message}</span> <span className="font-mono text-xs text-muted-foreground">{code}</span></div>)}</div>
-  if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
+  if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span>{message}</span> <span className="font-mono text-meta text-muted-foreground">{code}</span></div>)}</div>
+  if (result.kind !== "answer") return <p role="status" className="text-body text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
   const read: QuestionAnswer = { ...declared, question: readDocument<Question>(JSON.stringify(question), "live"), answer: result.read }
   return <AnswerView read={read} title={title} unit={unit} heading={heading} total={total} originScope={boundScope} onStale={() => void run.refetch()}
     fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, { knownAsOf: result.read.document.knownAsOf, nowMs: result.read.document.nowMs }, boundScope)} />

@@ -63,8 +63,8 @@ export function CustomThemeDialog({
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <DialogTitle className="text-body font-medium text-popover-foreground">Custom theme JSON</DialogTitle>
-            <DialogDescription className="mt-0.5 text-xs text-muted-foreground">
+            <DialogTitle className="text-body text-popover-foreground">Custom theme JSON</DialogTitle>
+            <DialogDescription className="mt-0.5 text-meta text-muted-foreground">
               Override semantic tokens in JSON (VS Code / T3 Code style). Every theme is checked against WCAG AA contrast before applying.
             </DialogDescription>
           </div>
@@ -78,7 +78,7 @@ export function CustomThemeDialog({
 
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="me-1 text-xs font-medium text-muted-foreground">Presets:</span>
+            <span className="me-1 text-meta text-muted-foreground">Presets:</span>
             {STUDIO_THEME_PRESETS.map((preset) => (
               <Button
                 key={preset.name}
@@ -108,12 +108,12 @@ export function CustomThemeDialog({
               setDraft(event.target.value)
               if (issues.length > 0) setIssues([])
             }}
-            className="h-72 w-full resize-y rounded-xl border border-input bg-well p-3 font-mono text-xs leading-relaxed text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="h-72 w-full resize-y rounded-xl border border-input bg-well p-3 font-mono text-meta leading-relaxed text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           />
 
           {issues.length > 0 && (
-            <div role="alert" data-slot="theme-validation-errors" className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive-text">
-              <div className="font-medium">Could not apply theme ({issues.length} {issues.length === 1 ? "issue" : "issues"}):</div>
+            <div role="alert" data-slot="theme-validation-errors" className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-meta text-destructive-text">
+              <div>Could not apply theme ({issues.length} {issues.length === 1 ? "issue" : "issues"}):</div>
               <ul className="list-disc space-y-0.5 ps-4">
                 {issues.map((issue, idx) => (
                   <li key={`${issue.path}:${idx}`}>
@@ -139,7 +139,7 @@ export function CustomThemeDialog({
               <RotateCcw aria-hidden className="size-3.5" />Reset to built-in skin
             </Button>
           ) : (
-            <span className="text-xs text-muted-foreground">Active skin: <span className="font-medium text-foreground capitalize">{skin}</span></span>
+            <span className="text-meta text-muted-foreground">Active skin: <span className="text-foreground capitalize">{skin}</span></span>
           )}
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>

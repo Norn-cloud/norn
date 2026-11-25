@@ -70,7 +70,7 @@ test("step: create, view, edit, delete, reconnect, undo/redo, validate, reopen",
   // edit the step's rule: a guard that does not parse is a typed finding on the step; clearing it clears the finding.
   await page.getByLabel("Guards").fill("self.total >")
   await page.getByLabel("Guards").blur()
-  await expect(page.getByText("lifecycle.validation.invalid_guard").first()).toBeVisible()
+  await expect(page.locator('[data-code="lifecycle.validation.invalid_guard"]').first()).toBeVisible()
   await page.getByLabel("Guards").fill("")
   await page.getByLabel("Guards").blur()
   await expect(page.getByText("Checker: no new findings")).toBeVisible()
@@ -92,7 +92,7 @@ test("state flags (port config): edit, undo/redo, validate, reopen", async ({ pa
   await (await shown(page, "draft")).click()
   await page.getByLabel("Initial").uncheck()
   await expect(page.getByText(/Checker: \d+ new finding/)).toBeVisible()
-  await expect(page.getByText("lifecycle.validation.empty_initial").first()).toBeVisible()
+  await expect(page.locator('[data-code="lifecycle.validation.empty_initial"]').first()).toBeVisible()
   await press(page, "z")
   await expect(page.getByLabel("Initial")).toBeChecked()
   await press(page, "Shift+z")
@@ -144,13 +144,28 @@ test("shortcuts: copy and select-all stay the browser's outside the canvas and o
   await expect(page.getByText("Copied 1 item.")).toBeVisible()
 })
 
-test("problems panel: lists each finding and jumps to the state it is on", async ({ page }) => {
+test("problems panel: lists each finding in plain words and jumps to the state it is on", async ({ page }) => {
   await open(page)
   await page.getByRole("button", { name: "State", exact: true }).click()
   await clear(page)
   await expect(page.getByTestId("problem")).toHaveCount(2)
+  // Each row reads as IssueCard does: the severity word beside its dot, then the message; no checker code.
+  for (const row of await page.getByTestId("problem").all()) {
+    await expect(row).toHaveAccessibleName(/^Problem /)
+    await expect(row).not.toContainText("lifecycle.validation.")
+  }
   await page.getByTestId("problem").first().click()
   await expect(page.getByLabel("Name")).toHaveValue("new_state")
+})
+
+test("problems panel in the Technical view: the checker code reads under the message", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("norn.studio.view", "technical"))
+  await open(page)
+  await page.getByRole("button", { name: "State", exact: true }).click()
+  await clear(page)
+  await expect(page.getByTestId("problem")).toHaveCount(2)
+  await expect(page.getByTestId("problem").first()).toHaveAccessibleName(/^Problem /)
+  await expect(page.getByTestId("problem").first().locator("bdi", { hasText: /^lifecycle\.validation\./ })).toBeVisible()
 })
 
 test("tidy up: lays the lifecycle out from its initial state, as one step undo puts back", async ({ page }) => {

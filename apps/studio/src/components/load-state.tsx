@@ -3,7 +3,7 @@ import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from 
 import { useEffect, useState, type ReactNode } from "react"
 import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
 import { CopyId } from "@/components/copy-id"
-import { EmptyState } from "@/components/panel"
+import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"

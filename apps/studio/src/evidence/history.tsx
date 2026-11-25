@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChevronRight, History as HistoryIcon, PencilLine, Workflow, Wrench, type LucideIcon } from "lucide-react"
 import { useState } from "react"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { CopyId } from "@/components/copy-id"
 import { HiddenWriter } from "@/components/hidden-writer"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -20,9 +20,9 @@ import { changedProperties, historyQueryKey, historyUnavailable, readHistory, ve
 function Writer({ version }: { readonly version: ObjectVersion }) {
   const writer = version.writer
   if (writer.kind === "mapping") {
-    return <span>Imported from {systemName(writer.lineage.sourceRecordRef.system)} record <code className="text-xs">{writer.lineage.sourceRecordRef.record}</code> by <code className="text-xs">{writer.lineage.mappingPin.artifactId}</code></span>
+    return <span>Imported from {systemName(writer.lineage.sourceRecordRef.system)} record <code className="text-meta">{writer.lineage.sourceRecordRef.record}</code> by <code className="text-meta">{writer.lineage.mappingPin.artifactId}</code></span>
   }
-  if (writer.kind === "action") return <span><span className="font-medium">{writer.actor}</span> ran <code className="text-xs">{writer.actionId}</code></span>
+  if (writer.kind === "action") return <span><span>{writer.actor}</span> ran <code className="text-meta">{writer.actionId}</code></span>
   return <HiddenWriter />
 }
 
@@ -116,7 +116,7 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
   const writer = version.writer
   return (
     <li>
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-start gap-2.5 px-3 py-2 text-start text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40">
+      <button type="button" aria-expanded={open} onClick={onToggle} className="flex w-full items-start gap-2.5 px-3 py-2 text-start text-body outline-none hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
         <ChevronRight aria-hidden className={cn("mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
         <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1">
@@ -124,14 +124,14 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
           <span className="block truncate text-meta text-muted-foreground">{first ? "Created" : changed.length === 0 ? "No value changed" : `${change(changed[0] ?? "")}${changed.length > 1 ? ` and ${changed.length - 1} more` : ""}`}</span>
         </span>
         <span className="shrink-0 text-end text-meta text-muted-foreground">
-          <span className={cn("block font-mono text-xs tabular-nums", time === "valid" && entry.valid === null && "italic")}>{when}</span>
+          <span className={cn("block font-mono text-meta tabular-nums", time === "valid" && entry.valid === null && "italic")}>{when}</span>
           <span className="block tabular-nums">commit {entry.commit}</span>
         </span>
       </button>
       {open && (
-        <div className="space-y-2 px-3 pb-3 ps-[3.25rem] text-sm">
+        <div className="space-y-2 px-3 pb-3 ps-[3.25rem] text-body">
           {changed.length > 0 && (
-            <table className="w-full text-sm">
+            <table className="w-full text-body">
               <tbody>
                 {changed.map((property) => (
                   <tr key={property}>
@@ -144,8 +144,8 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
             </table>
           )}
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 text-meta text-muted-foreground">
-            <dt>Known</dt><dd className="font-mono text-xs">{entry.known}</dd>
-            <dt>Valid</dt><dd className="font-mono text-xs">{entry.valid ?? "—"}</dd>
+            <dt>Known</dt><dd className="font-mono text-meta">{entry.known}</dd>
+            <dt>Valid</dt><dd className="font-mono text-meta">{entry.valid ?? "—"}</dd>
             {writer.kind === "mapping" && writer.lineage.documentDigest && <><dt>Source document</dt><dd><CopyId value={writer.lineage.documentDigest} short={12} /></dd></>}
           </dl>
         </div>

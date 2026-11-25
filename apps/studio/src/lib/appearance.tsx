@@ -1,4 +1,4 @@
-import { createContext, use, useEffect, useState, type ReactNode } from "react"
+import { createContext, use, useEffect, useState, useSyncExternalStore, type ReactNode } from "react"
 import {
   applyCustomTheme,
   effectiveBaseSkin,
@@ -44,8 +44,32 @@ export const SHELLS: readonly {
   { id: "dock", label: "Floating dock", detail: "Full-bleed canvas with bottom dock" },
 ]
 
+/**
+ * The reader's colour scheme: `system` follows the OS (the default); `light` and `dark` pin it. A
+ * custom theme that sets its own `appearance` wins over all three while it is applied.
+ */
+export type Scheme = "system" | "light" | "dark"
+
+export const SCHEMES: readonly { readonly id: Scheme; readonly label: string }[] = [
+  { id: "system", label: "Match system" },
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
+]
+
 const SKIN_KEY = "norn.studio.skin"
 const SHELL_KEY = "norn.studio.shell"
+const SCHEME_KEY = "norn.studio.scheme"
+
+export const isScheme = (value: unknown): value is Scheme => value === "system" || value === "light" || value === "dark"
+
+/** The scheme kept from the last visit, else `system`. */
+export function storedScheme(): Scheme {
+  try {
+    const kept = globalThis.localStorage?.getItem(SCHEME_KEY)
+    if (isScheme(kept)) return kept
+  } catch { /* storage blocked: fall through */ }
+  return "system"
+}
 
 export const isSkin = (value: unknown): value is Skin =>
   value === "polar" || value === "open" || value === "luma" || value === "glass"
@@ -81,6 +105,20 @@ function systemPrefersDark(): boolean {
   return globalThis.window.matchMedia("(prefers-color-scheme: dark)").matches
 }
 
+/** Whether a scheme paints dark now: pinned, or the OS preference for `system`. */
+export function schemeIsDark(scheme: Scheme): boolean {
+  return scheme === "dark" || (scheme === "system" && systemPrefersDark())
+}
+
+/** Paint the reader's scheme (`.dark`), unless a custom theme pins its own appearance. */
+export function applyScheme(scheme: Scheme, root: HTMLElement | undefined = globalThis.document?.documentElement) {
+  if (!root) return
+  root.dataset.scheme = scheme
+  const forced = root.dataset.forcedAppearance
+  if (forced === "dark" || forced === "light") return
+  root.classList?.toggle("dark", schemeIsDark(scheme))
+}
+
 /** Apply `data-skin`, `data-shell`, `.dark` (honoring forced custom theme appearance), and any custom JSON theme tokens. */
 export function applyAppearance(
   skin: Skin,
@@ -97,7 +135,8 @@ export function applyAppearance(
     } else if (customTheme?.appearance === "light") {
       root.classList.toggle("dark", false)
     } else if (root.dataset.forcedAppearance !== undefined) {
-      root.classList.toggle("dark", systemPrefersDark())
+      // The theme no longer pins a scheme: back to the reader's own.
+      root.classList.toggle("dark", schemeIsDark(storedScheme()))
     }
   }
   if (customTheme?.appearance) {
@@ -110,6 +149,8 @@ export function applyAppearance(
 }
 
 interface AppearanceContextValue {
+  readonly scheme: Scheme
+  readonly setScheme: (scheme: Scheme) => void
   readonly skin: Skin
   readonly setSkin: (skin: Skin) => void
   readonly shell: ShellChrome
@@ -120,6 +161,8 @@ interface AppearanceContextValue {
 }
 
 const AppearanceContext = createContext<AppearanceContextValue>({
+  scheme: "system",
+  setScheme: () => {},
   skin: "polar",
   setSkin: () => {},
   shell: "sidebar",
@@ -143,6 +186,7 @@ export function AppearanceProvider({
   // `initialSkin` and `initialShell` are the surface's defaults; the reader's stored choice wins over them.
   const [skin, setSkinState] = useState<Skin>(() => storedSkin(initialSkin))
   const [shell, setShellState] = useState<ShellChrome>(() => storedShellChrome(initialShell))
+  const [scheme, setSchemeState] = useState<Scheme>(storedScheme)
   const [customTheme, setCustomThemeState] = useState<StudioTheme | null>(
     () => (initialCustomTheme !== undefined ? initialCustomTheme : storedCustomTheme()),
   )
@@ -170,6 +214,12 @@ export function AppearanceProvider({
     try { globalThis.localStorage?.setItem(SKIN_KEY, next) } catch { /* not kept */ }
   }
 
+  const setScheme = (next: Scheme) => {
+    setSchemeState(next)
+    try { globalThis.localStorage?.setItem(SCHEME_KEY, next) } catch { /* not kept */ }
+    applyScheme(next)
+  }
+
   const setShell = (next: ShellChrome) => {
     setShellState(next)
     applyAppearance(skin, next, undefined, customTheme)
@@ -192,10 +242,27 @@ export function AppearanceProvider({
   }
 
   return (
-    <AppearanceContext value={{ skin, setSkin, shell, setShell, customTheme, setCustomTheme, clearCustomTheme }}>
+    <AppearanceContext value={{ scheme, setScheme, skin, setSkin, shell, setShell, customTheme, setCustomTheme, clearCustomTheme }}>
       {children}
     </AppearanceContext>
   )
 }
 
 export const useAppearance = () => use(AppearanceContext)
+
+/** Follow the scheme on screen (`.dark` on the root), whoever set it: the reader, the OS or a theme. */
+function subscribePainted(onChange: () => void): () => void {
+  const root = globalThis.document?.documentElement
+  if (!root || typeof MutationObserver === "undefined") return () => {}
+  const observer = new MutationObserver(onChange)
+  observer.observe(root, { attributes: true, attributeFilter: ["class"] })
+  return () => observer.disconnect()
+}
+
+export function usePaintedScheme(): "light" | "dark" {
+  return useSyncExternalStore(
+    subscribePainted,
+    () => (globalThis.document?.documentElement.classList.contains("dark") ? "dark" : "light"),
+    () => "light",
+  )
+}

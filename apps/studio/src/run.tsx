@@ -66,11 +66,11 @@ export function RunQuestion({ question, catalog, label = "Run", compact = false,
   return (
     <div className="space-y-3">
       <Button type="button" size="sm" variant={compact ? "outline" : "default"} disabled={run.isPending} onClick={() => run.mutate()}><Play />{run.isPending ? "Running…" : result || auto ? "Run again" : label}</Button>
-      {run.isError && <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : String(run.error)}</p>}
+      {run.isError && <p role="alert" className="text-body text-destructive">Not run: {run.error instanceof Error ? run.error.message : String(run.error)}</p>}
       {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} title={title} heading="h3" originScope={scope} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, answeredAt(result.read.document), scope)} onStale={() => run.mutate()} />}
       {result?.kind === "not-a-question" && <ValidationPanel title="The cell refused this question" issues={result.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer) }))} />}
       {result?.kind === "refused" && <RefusedNote refusal={result.refusal} />}
-      {result && result.kind !== "answer" && result.kind !== "refused" && result.kind !== "not-a-question" && <p role="status" className="text-sm text-muted-foreground">{notRun(result)}</p>}
+      {result && result.kind !== "answer" && result.kind !== "refused" && result.kind !== "not-a-question" && <p role="status" className="text-body text-muted-foreground">{notRun(result)}</p>}
     </div>
   )
 }

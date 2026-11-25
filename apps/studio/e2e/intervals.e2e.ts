@@ -56,7 +56,7 @@ test("view: only a core.TimeInterval type offers Timeline; its week shows the re
   })
   await expect(bars(page, "Equipment booking").filter({ hasText: "December service" })).toHaveCount(0)
   // A booking that began the week before is clipped at the window's start.
-  await expect(bars(page, "Equipment booking").filter({ hasText: "Inspection" })).toHaveClass(/rounded-l-none/)
+  await expect(bars(page, "Equipment booking").filter({ hasText: "Inspection" })).toHaveClass(/rounded-s-none/)
   // A record that names its zone reads its own times there.
   await expect(bars(page, "Equipment booking").filter({ hasText: "Warehouse move" })).toHaveAttribute("aria-label", /Warehouse move, Tue 24 Nov, 06:00 to Tue 24 Nov, 15:00 \(Asia\/Tokyo\)/)
   await shoot(page, "timeline-week")
@@ -119,6 +119,35 @@ test("open: arrows move between bars, Enter opens the record's drawer with only 
   await shoot(page, "timeline-drawer")
   await drawer.getByRole("button", { name: "Cancel booking" }).click()
   await expect(page.getByLabel("Booking id")).toHaveValue("booking/1")
+})
+
+test("Arabic: time runs right to left; a bar clipped at the window's start is flush with the right edge and squared there; arrows follow the axis", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("norn.studio.locale", "ar"))
+  await intervalCell(page)
+  await openTimeline(page, "facilities.EquipmentBooking", "Equipment booking")
+  await expect(page.locator("html")).toHaveAttribute("dir", "rtl")
+  const inspection = bars(page, "Equipment booking").filter({ hasText: "Inspection" })
+  // DESIGN.md section 14: a time axis runs in the reading direction, so the window's start is its right edge.
+  const [bar, track] = await Promise.all([inspection.boundingBox(), inspection.locator("xpath=..").boundingBox()])
+  expect(Math.abs(bar!.x + bar!.width - (track!.x + track!.width))).toBeLessThan(1)
+  const css = (name: string) => inspection.evaluate((el, property) => getComputedStyle(el).getPropertyValue(property), name)
+  // The clipped end (right) is squared and borderless; the end inside the window (left) keeps its border and radius.
+  expect(await css("border-right-width")).toBe("0px")
+  expect(await css("border-top-right-radius")).toBe("0px")
+  expect(await css("border-left-width")).toBe("1px")
+  expect(await css("border-top-left-radius")).not.toBe("0px")
+  // Later bars sit further left, and ArrowLeft moves to the later one.
+  const prototype = bars(page, "Equipment booking").filter({ hasText: "Prototype run" })
+  const warehouse = bars(page, "Equipment booking").filter({ hasText: "Warehouse move" })
+  const [early, late] = await Promise.all([prototype.boundingBox(), warehouse.boundingBox()])
+  expect(late!.x).toBeLessThan(early!.x)
+  await bars(page, "Equipment booking").first().focus()
+  await expect(page.locator(":focus")).toHaveAttribute("aria-label", /^Inspection,/)
+  await page.keyboard.press("ArrowLeft")
+  await expect(page.locator(":focus")).toHaveAttribute("aria-label", /^Prototype run,/)
+  await page.keyboard.press("ArrowRight")
+  await expect(page.locator(":focus")).toHaveAttribute("aria-label", /^Inspection,/)
+  await shoot(page, "timeline-rtl")
 })
 
 test("view: an unrelated type that is a TimeInterval through its own interface reads the same way", async ({ page }) => {

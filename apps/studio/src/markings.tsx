@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router"
 import { Fingerprint, ReceiptText } from "lucide-react"
-import { Chip } from "@/components/chip"
+import { Chip } from "@/components/system/chip"
 import { LoadState } from "@/components/load-state"
 import { MarkingChip, useMarkingCatalog } from "@/components/marking-chip"
-import { PageHeader, Panel } from "@/components/panel"
-import { TableCard } from "@/components/table-card"
+import { PageHeader } from "@/components/panel"
+import { Panel } from "@/components/system/panel"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { projectionWords, revealRoles } from "./lib/markings.ts"
 import { useCatalog } from "./sources.tsx"
@@ -52,7 +53,7 @@ export function MarkingsPage() {
                     <TableCell className="align-top">
                       <div className="flex flex-col items-start gap-1">
                         <MarkingChip marking={id} catalog={markings} />
-                        <span className="font-mono text-xs text-muted-foreground">{id}{decl?.severity ? ` · ${decl.severity}` : ""}</span>
+                        <span className="font-mono text-meta text-muted-foreground">{id}{decl?.severity ? ` · ${decl.severity}` : ""}</span>
                       </div>
                     </TableCell>
                     <TableCell className="align-top whitespace-normal">{projectionWords(decl)}</TableCell>
@@ -77,7 +78,7 @@ export function MarkingsPage() {
         )}
       </LoadState>
       <Panel icon={ReceiptText} label="Reveal receipts">
-        <p className="px-1 text-sm text-muted-foreground">
+        <p className="px-1 text-body text-muted-foreground">
           A reveal asks the cell, which writes a ledger receipt (who, which fact, when and why) before it answers; the receipt number shows beside the revealed value.
           A list of every reveal in this workspace is not served by the cell yet.
         </p>

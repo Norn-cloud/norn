@@ -67,12 +67,12 @@ export function FacetsRail({ objectType, fields, filter, scope, onFilter }: {
         const most = Math.max(1, ...facet.values.map(({ count }) => count))
         return (
           <section key={property} className="grid gap-0.5">
-            <h3 className="px-2 pb-0.5 text-xs font-medium text-muted-foreground">{label(field, property)}</h3>
+            <h3 className="px-2 pb-0.5 text-meta text-muted-foreground">{label(field, property)}</h3>
             {facet.values.map(({ value, count }) => {
               const on = held.includes(value)
               return (
                 <button key={String(value)} type="button" aria-pressed={on} onClick={() => onFilter(toggled(filter, property, value))}
-                  className={cn("relative flex h-row-scan items-center gap-2 overflow-hidden rounded-md px-2 text-start text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40", on && "bg-muted font-medium")}>
+                  className={cn("relative flex h-row-scan items-center gap-2 overflow-hidden rounded-md px-2 text-start text-body outline-none hover:bg-muted focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring", on && "bg-muted")}>
                   {/* The share is a hairline under the row, so a long list of values reads as text, not as a stack of bars. */}
                   <span aria-hidden className="absolute start-2 bottom-0.5 h-px bg-foreground/20" style={{ width: `calc((100% - 1rem) * ${count / most})` }} />
                   <span className="relative flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border bg-card">{on && <Check className="size-3" aria-hidden />}</span>

@@ -3,6 +3,7 @@ import { useCallback } from "react"
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStoreApi, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps } from "@xyflow/react"
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { StatusDot } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -94,18 +95,18 @@ function Branches({ editing, id, branches }: { readonly editing: Editing; readon
     <div className="space-y-2">
       <div className="text-meta text-muted-foreground">Branches, first match wins. Each branch leaves by its own exit; then otherwise, then next (continue after the route).</div>
       {branches.map((all, index) => (
-        <div key={`${id}:${index}:${formatCondition(all)}`} className="space-y-1 rounded-md border p-2">
+        <div key={`${id}:${index}:${formatCondition(all)}`} className="space-y-1 border-t border-node-border pt-2">
           <div className="flex items-center gap-1">
-            <span className="text-meta font-medium">{index === 0 ? "When" : "Else when"}</span>
-            <span className="font-mono text-[10px] text-muted-foreground" title="This branch's exit on the route">exit b{index}</span>
+            <span className="text-meta text-muted-foreground">{index === 0 ? "When" : "Else when"}</span>
+            <span className="font-mono text-meta text-muted-foreground" title="This branch's exit on the route">exit b{index}</span>
             <span className="ms-auto flex">
-              <Button size="icon" variant="ghost" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
-              <Button size="icon" variant="ghost" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
-              <Button size="icon" variant="ghost" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
+              <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Move b${index} up`} disabled={index === 0} onClick={() => swap(index - 1, index)}><ArrowUp /></Button>
+              <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Move b${index} down`} disabled={index === branches.length - 1} onClick={() => swap(index, index + 1)}><ArrowDown /></Button>
+              <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Delete b${index}`} onClick={() => set(indices.filter((at) => at !== index))}><Trash2 /></Button>
             </span>
           </div>
           {/* The whole condition stays readable: it wraps instead of clipping, and hovering shows it in full. */}
-          <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono text-xs break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
+          <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
             onBlur={(event) => {
               const parsed = parseCondition(event.target.value)
               // A part that is not `left op right` is refused, never kept as a mangled condition; the previous branch stays.
@@ -129,31 +130,31 @@ function Options({ editing, id, options, pick }: { readonly editing: Editing; re
     <div className="space-y-2">
       <div className="text-meta text-muted-foreground">Options, in the order the decider sees them</div>
       {options.map((option, index) => (
-        <div key={`${option.id}:${option.label}:${option.scope}:${JSON.stringify(option.effect ?? null)}`} className="space-y-1 rounded-md border p-2">
+        <div key={`${option.id}:${option.label}:${option.scope}:${JSON.stringify(option.effect ?? null)}`} className="space-y-1 border-t border-node-border pt-2">
           <div className="flex items-center gap-1">
-            <span className="text-meta font-medium">Option {index + 1}</span>
+            <span className="text-meta text-muted-foreground">Option {index + 1}</span>
             <span className="ms-auto flex">
-            <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => move(index, index - 1)}><ArrowUp /></Button>
-            <Button size="icon" variant="ghost" aria-label={`Move option ${index + 1} down`} disabled={index === options.length - 1} onClick={() => move(index, index + 1)}><ArrowDown /></Button>
-            <Button size="icon" variant="ghost" aria-label={`Duplicate option ${index + 1}`} onClick={() => set([...options.slice(0, index + 1), { ...option, id: nextOptionId(options), label: `${option.label} (copy)` }, ...options.slice(index + 1)])}><Copy /></Button>
-            <Button size="icon" variant="ghost" aria-label={`Delete option ${index + 1}`} onClick={() => set(options.filter((one) => one.id !== option.id))}><Trash2 /></Button>
+            <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => move(index, index - 1)}><ArrowUp /></Button>
+            <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Move option ${index + 1} down`} disabled={index === options.length - 1} onClick={() => move(index, index + 1)}><ArrowDown /></Button>
+            <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Duplicate option ${index + 1}`} onClick={() => set([...options.slice(0, index + 1), { ...option, id: nextOptionId(options), label: `${option.label} (copy)` }, ...options.slice(index + 1)])}><Copy /></Button>
+            <Button size="icon" variant="ghost" className="max-sm:size-[44px]" aria-label={`Delete option ${index + 1}`} onClick={() => set(options.filter((one) => one.id !== option.id))}><Trash2 /></Button>
             </span>
           </div>
           {/* The label gets the full width, so it reads whole; hovering shows it too. */}
           <Input aria-label={`Option ${index + 1} label`} title={option.label} defaultValue={option.label} onBlur={(event) => { const label = event.target.value.trim(); if (label && label !== option.label) set(options.map((one) => one.id === option.id ? { ...one, label } : one)) }} />
           <div className="flex gap-1">
-            <select aria-label={`Option ${index + 1} starts`} className="rounded-md border bg-background px-2 py-1 text-xs" value={effectOf(option)?.kind ?? "binding"}
+            <select aria-label={`Option ${index + 1} starts`} className="h-9 shrink-0 rounded-(--radius) border border-input bg-card px-2 text-body max-sm:min-h-[44px]" value={effectOf(option)?.kind ?? "binding"}
               onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: event.target.value === "action" ? { action: effectOf(one)?.ref ?? "" } : { binding: effectOf(one)?.ref ?? "" } } : one))}>
               <option value="binding">Tool binding</option><option value="action">Action</option>
             </select>
             {effectOf(option)?.kind === "action"
-              ? <Input aria-label={`Option ${index + 1} action`} className="text-xs" placeholder="action id, e.g. billing.send_reminder" defaultValue={effectOf(option)?.ref} onBlur={(event) => { const ref = event.target.value.trim(); if (ref !== effectOf(option)?.ref) set(options.map((one) => one.id === option.id ? { ...one, effect: { action: ref } } : one)) }} />
-              : <select aria-label={`Option ${index + 1} tool binding`} className="w-full rounded-md border bg-background px-2 py-1 text-xs" value={effectOf(option)?.ref ?? ""} onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: { binding: event.target.value } } : one))}>
+              ? <Input aria-label={`Option ${index + 1} action`} placeholder="action id, e.g. billing.send_reminder" defaultValue={effectOf(option)?.ref} onBlur={(event) => { const ref = event.target.value.trim(); if (ref !== effectOf(option)?.ref) set(options.map((one) => one.id === option.id ? { ...one, effect: { action: ref } } : one)) }} />
+              : <select aria-label={`Option ${index + 1} tool binding`} className="h-9 w-full min-w-0 rounded-(--radius) border border-input bg-card px-2 text-body max-sm:min-h-[44px]" value={effectOf(option)?.ref ?? ""} onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: { binding: event.target.value } } : one))}>
                 <option value="">Choose a tool binding</option>
                 {RECORDED_TOOLS.map(({ id: tool }) => <option key={tool} value={tool}>{tool}</option>)}
               </select>}
           </div>
-          <Input aria-label={`Option ${index + 1} scope`} className="text-xs" placeholder="Who it reaches, e.g. #incidents only" defaultValue={option.scope} onBlur={(event) => { const scope = event.target.value.trim(); if (scope !== option.scope) set(options.map((one) => one.id === option.id ? { ...one, scope } : one)) }} />
+          <Input aria-label={`Option ${index + 1} scope`} placeholder="Who it reaches, e.g. #incidents only" defaultValue={option.scope} onBlur={(event) => { const scope = event.target.value.trim(); if (scope !== option.scope) set(options.map((one) => one.id === option.id ? { ...one, scope } : one)) }} />
           <label className="flex items-center gap-2 text-meta"><input type="radio" name={`${id}:pick`} aria-label={`Agent's pick: option ${index + 1}`} checked={pick === option.id} onChange={() => edit(g.configureNode(graph, id, { agentPick: option.id }))} />Agent's pick</label>
         </div>
       ))}
@@ -191,17 +192,17 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
   if (!node) return null
   const tool = RECORDED_TOOLS.find(({ id }) => id === node.config.tool)
   const field = (label: string, key: string, value: string | undefined, onSave: (text: string) => void, extra: { type?: string; placeholder?: string } = {}) => (
-    <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">{label}</span>
+    <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">{label}</span>
       <Input aria-label={label} key={`${node.id}:${key}:${value ?? ""}`} defaultValue={value} onBlur={(event) => onSave(event.target.value)} {...extra} /></label>
   )
   return (
     <>
       <InspectorHead kind={node.kind} kindLabel={STEP_KINDS[node.kind as keyof typeof STEP_KINDS]} id={node.id} />
-      {issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}
+      {issues.some((issue) => issue.node === node.id) && <div className="space-y-3">{issues.filter((issue) => issue.node === node.id).map((issue, index) => <IssueCard key={index} issue={issue} />)}</div>}
       {node.kind === "start" && <p className="text-muted-foreground">Every automation has one start. Connect it to the first step.</p>}
       {node.kind === "perform" && <>
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Tool</span>
-          <select aria-label="Tool" className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
+        <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">Tool</span>
+          <select aria-label="Tool" className="h-9 w-full rounded-(--radius) border border-input bg-card px-2.5 text-body shadow-xs outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" value={node.config.tool} onChange={(event) => edit(g.configureNode(graph, node.id, { tool: event.target.value, input: "{}" }))}>
             {!tool && <option value={node.config.tool}>{node.config.tool} (not connected)</option>}
             {RECORDED_TOOLS.map(({ id }) => <option key={id} value={id}>{id}</option>)}
           </select></label>
@@ -214,21 +215,21 @@ function Inspector({ editing, issues }: { readonly editing: Editing; readonly is
       {node.kind === "decide" && <>
         <InspectorSection title="The ask">
         {field("Question", "question", node.config.question, (text) => edit(g.configureNode(graph, node.id, { question: text.trim() })), { placeholder: "What should I do?" })}
-        <label className="block space-y-1.5"><span className="text-xs font-medium text-foreground/80">Risk</span>
-          <select aria-label="Risk" className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
+        <label className="block space-y-1.5"><span className="text-meta text-muted-foreground">Risk</span>
+          <select aria-label="Risk" className="h-9 w-full rounded-(--radius) border border-input bg-card px-2.5 text-body shadow-xs outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" value={node.config.risk ?? "medium"} onChange={(event) => edit(g.configureNode(graph, node.id, { risk: event.target.value }))}>
             {RISKS.map((risk) => <option key={risk} value={risk}>{words(risk)}</option>)}
           </select></label>
         </InspectorSection>
         <InspectorSection title="Who decides">
         {field("Who decides (roles, comma separated)", "roles", node.config.deciderRoles, (text) => edit(g.configureNode(graph, node.id, { deciderRoles: text.split(",").map((role) => role.trim()).filter(Boolean).join(",") })))}
-        {field("Under law (optional)", "law", node.config.deciderLaw, (text) => edit(g.configureNode(graph, node.id, { deciderLaw: text.trim() })), { placeholder: "the law that makes this a person's call" })}
+        {field("Under law (optional)", "law", node.config.deciderLaw, (text) => edit(g.configureNode(graph, node.id, { deciderLaw: text.trim() })), { placeholder: "A law id" })}
         {field("Expires after (hours, optional)", "expires", node.config.expiresInMs ? String(Number(node.config.expiresInMs) / 3_600_000) : "", (text) => edit(g.configureNode(graph, node.id, { expiresInMs: /^\d+(\.\d+)?$/.test(text.trim()) ? String(Math.round(Number(text) * 3_600_000)) : "" })), { type: "number" })}
         </InspectorSection>
         <Options editing={editing} id={node.id} options={optionsOf(node)} pick={node.config.agentPick ?? ""} />
       </>}
       {node.kind === "sleep" && field("Wait (milliseconds)", "millis", node.config.millis, (text) => edit(g.configureNode(graph, node.id, { millis: text })), { type: "number" })}
       {node.kind === "succeed" && field("Outcome", "outcome", node.config.outcome, (text) => edit(g.configureNode(graph, node.id, { outcome: text })))}
-      {node.kind !== "start" && <div className="border-t border-node-border pt-3"><Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={remove}><Trash2 />Delete</Button></div>}
+      {node.kind !== "start" && <div className="border-t border-node-border pt-3"><Button size="sm" variant="destructive" onClick={remove}><Trash2 />Delete</Button></div>}
     </>
   )
 }
@@ -270,11 +271,13 @@ export function automationFrame(issues: CanvasFrameProps["issues"], initial: g.G
     },
     newEdge: ({ source, target, sourceHandle, targetHandle }: Connection, graph) =>
       ({ id: g.freshName(graph.edges.map(({ id }) => id), `${source}.${sourceHandle ?? "next"}`), source, target, sourcePort: sourceHandle ?? "next", targetPort: targetHandle ?? "in", config: {} }),
-    palette: ({ graph, edit, select }) => Object.keys(DEFAULTS).map((kind) => (
-      <Button key={kind} size="sm" variant="ghost" className="gap-1.5 pl-1.5" onClick={() => {
+    palette: ({ graph, edit, select, spot }) => Object.keys(DEFAULTS).map((kind) => (
+      <Button key={kind} size="sm" variant="ghost" className="gap-1.5 ps-1.5" onClick={() => {
         const base = graph.nodes.some((node) => node.kind === "start") ? graph : g.addNode(graph, { id: "start", kind: "start", position: { x: 0, y: 120 }, config: {} })
         const id = g.freshId(base, kind === "perform" ? "call" : kind)
-        edit(g.addNode(base, { id, kind, position: { x: 40, y: 360 + graph.nodes.length * 10 }, config: { ...DEFAULTS[kind] } }))
+        // It lands wholly inside the part of the canvas in view, clear of the steps there.
+        const step: g.CanvasNode = { id, kind, position: { x: 40, y: 360 + graph.nodes.length * 10 }, config: { ...DEFAULTS[kind] } }
+        edit(g.addNode(base, { ...step, position: spot?.(step) ?? step.position }))
         select({ nodes: [id], edges: [] })
       }}><KindChip kind={kind} className="size-5 rounded-md" />{STEP_KINDS[kind as keyof typeof STEP_KINDS]}</Button>
     )),
@@ -293,12 +296,12 @@ export function AutomationEditor() {
     const { lowered, problems } = lower(graph, RECORDED_TOOLS, META, RECORDED_SCOPE)
     const own: Issue[] = problems.map(({ code, message, node }) => ({ code, message, ...(node ? { node } : {}) }))
     if (!lowered) return { issues: own, status: <Badge variant="destructive">{own.length} {own.length === 1 ? "finding" : "findings"}</Badge> }
-    if (checker.isError) return { issues: own, status: <span className="text-destructive" role="alert">Checker not loaded: lowering findings only</span> }
+    if (checker.isError) return { issues: own, status: <StatusDot tone="bad" role="alert">Checker not loaded: lowering findings only</StatusDot> }
     if (!checker.data) return { issues: own, status: <span role="status">Lowered; loading the checker…</span> }
     // The checker's findings name generated states; each state belongs to the step that lowered to it.
     const owner = (message: string) => [...lowered.states].find(([, states]) => states.some((name) => message.includes(`"${name}"`)))?.[0]
-    const found: Issue[] = checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message }) => ({ code, message, ...(owner(message) ? { node: owner(message) } : {}) }))
-    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no findings</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
+    const found: Issue[] = checker.data(lowered.artifacts).diagnostics.diagnostics.map(({ code, message, severity }) => ({ code, message, severity, ...(owner(message) ? { node: owner(message) } : {}) }))
+    return { issues: found, status: found.length === 0 ? <Badge variant="success">Checker: no findings</Badge> : <Badge variant="destructive">Checker: {found.length} {found.length === 1 ? "finding" : "findings"}</Badge> }
   }, [checker.isError, checker.data])
   return (
     <div className="space-y-2">

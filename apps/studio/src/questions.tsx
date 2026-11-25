@@ -2,17 +2,18 @@ import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { CalendarRange, ChartLine, Clock, Database, ListTree, Plus, Rows3, Sigma, X } from "lucide-react"
-import { FactChip } from "@/components/chip"
+import { FactChip } from "@/components/system/chip"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { KpiTile, StatStrip } from "@/components/system/kpi-tile"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { useView } from "@/lib/view"
-import { TableCard } from "@/components/table-card"
+import { TableCard } from "@/components/system/table-card"
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { conceptTitle } from "./lib/catalog.ts"
@@ -92,12 +93,12 @@ function MetricCard({ metric, turn, onSettled, scope: boundScope }: {
     // One question, one section: its title, its controls, then the answer's own surfaces (no card around cards).
     <section ref={ref} data-slot="panel" className="min-w-0 space-y-4">
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
-        <h2 className="text-[1.625rem] font-normal tracking-[-0.025em]">{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {timeLabel(metric)}</span>}</h2>
-        {view === "technical" && <span className="font-mono text-xs text-muted-foreground" title={metric.name}>{metric.kind}</span>}
+        <h2 className="text-heading font-normal tracking-[-0.025em]">{what}{metric.timeProperty !== null && <span className="text-muted-foreground"> · by {timeLabel(metric)}</span>}</h2>
+        {view === "technical" && <span className="font-mono text-meta text-muted-foreground" title={metric.name}>{metric.kind}</span>}
       </header>
       <div className="space-y-4">
         {profile.isPending && (!seen || !turn
-          ? <p className="text-sm text-muted-foreground">{!seen ? "Waits until you scroll to it." : "Waits for the questions above it."}</p>
+          ? <p className="text-body text-muted-foreground">{!seen ? "Waits until you scroll to it." : "Waits for the questions above it."}</p>
           : <LoadState status="pending" skeleton="panel" loadingLabel={`Reading ${conceptTitle(metric.objectType).toLowerCase()} records`} onRetry={() => void profile.refetch()}>{() => null}</LoadState>)}
         {profile.isError && !late && <LoadState status="error" error={profile.error} isFetching={profile.isFetching} onRetry={() => void profile.refetch()}>{() => null}</LoadState>}
         {profile.data && profile.data.document.rows === 0 && (
@@ -109,7 +110,7 @@ function MetricCard({ metric, turn, onSettled, scope: boundScope }: {
             <span className="block pt-1 text-meta">Checked with the cell at {new Date(profile.dataUpdatedAt).toLocaleTimeString(undefined, { timeStyle: "short" })}.</span>
           </EmptyState>
         )}
-        {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
+        {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-body text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
           <div className="flex flex-wrap items-start gap-2">
             <FactChip icon={CalendarRange} label={`Per ${window.grain}`} className="h-8" title={assumed ? (late ? "The cell's profile of this type didn't arrive in time, so Studio asks the latest 52 weeks." : "The cell sent no range for this date, so Studio asks the latest 52 weeks.") : "Every date its records carry."}>{assumed ? "Latest 52 weeks" : `${day(window.start)} – ${day(Date.parse(window.end) - 86_400_000)}`}</FactChip>
@@ -153,7 +154,7 @@ export function UnitGroups({ asked, grain, sources, title, declared, picked, onP
   if (run.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel="Reading metric totals" onRetry={() => void run.refetch()}>{() => null}</LoadState>
   if (run.isError || result === undefined) return <LoadState status="error" error={run.error ?? new Error("The cell did not answer.")} isFetching={run.isFetching} onRetry={() => void run.refetch()}>{() => null}</LoadState>
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
-  if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "not-a-question" ? result.findings.map(({ message }) => message).join(" ") : result.kind === "too-large" || result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
+  if (result.kind !== "answer") return <p role="status" className="text-body text-muted-foreground">{result.kind === "not-a-question" ? result.findings.map(({ message }) => message).join(" ") : result.kind === "too-large" || result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
   const rows = buckets({ question: totals, metrics: [], objectType: declared.objectType.document }, { answer: result.read.document, numbers: result.read.numbers, at: "" })
   const groups = unitGroups(sources, rows)
   // One group is not a choice: its answer per period opens with it.
@@ -165,13 +166,13 @@ export function UnitGroups({ asked, grain, sources, title, declared, picked, onP
         <div className="space-y-2">
           <p className={groups.length === 1 ? "sr-only" : "text-meta text-muted-foreground"}>{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${grain}.`}</p>
           <TableCard><Table>
-            <TableHeader><TableRow><TableHead>Unit</TableHead><TableHead className="text-right">{title}</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Unit</TableHead><TableHead className="text-end">{title}</TableHead><TableHead className="text-end">Records</TableHead></TableRow></TableHeader>
             <TableBody>
               {groups.map((group) => (
                 <TableRow key={group.key} data-state={open?.key === group.key ? "selected" : undefined} className="cursor-pointer" onClick={() => onPick(open?.key === group.key ? null : group)}>
-                  <TableCell><Button type="button" variant="link" size="sm" className="h-auto px-0 font-medium text-foreground" aria-pressed={open?.key === group.key} onClick={(event) => { event.stopPropagation(); onPick(open?.key === group.key ? null : group) }}>{group.unit ?? "No unit"}</Button></TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{figure(group.bucket, group.unit)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{group.bucket.members.length.toLocaleString("en")}</TableCell>
+                  <TableCell><Button type="button" variant="link" size="sm" className="h-auto px-0 text-foreground" aria-pressed={open?.key === group.key} onClick={(event) => { event.stopPropagation(); onPick(open?.key === group.key ? null : group) }}>{group.unit ?? "No unit"}</Button></TableCell>
+                  <TableCell className="text-end tabular-nums">{figure(group.bucket, group.unit)}</TableCell>
+                  <TableCell className="text-end tabular-nums">{group.bucket.members.length.toLocaleString("en")}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -182,7 +183,7 @@ export function UnitGroups({ asked, grain, sources, title, declared, picked, onP
       {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none" onSettled={onSettled} scope={scope}
         placeholder={groups.length === 1 ? <div data-slot="answer-total" className="rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:p-7">
           <div className="text-meta text-muted-foreground">Total, {period(totals.window)}</div>
-          <div className="pt-2 text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums">{figure(open.bucket, open.unit)}</div>
+          <div className="pt-2 text-figure leading-none tracking-[-0.045em] tabular-nums">{figure(open.bucket, open.unit)}</div>
           <div className="pt-3 text-meta text-muted-foreground">{open.bucket.members.length.toLocaleString("en")} records · reading each {grain}…</div>
         </div> : undefined}
         total={{ label: `Total, ${period(totals.window)}`, value: figure(open.bucket, open.unit) }} />}
@@ -201,7 +202,7 @@ function Conditions({ fields, conditions, onChange }: { readonly fields: readonl
     <div className="space-y-2">
       {conditions.length > 0 && (
         // One row per condition on a shared grid, so fields, values and the remove control line up.
-        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-2 text-sm">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-2 text-body">
           {conditions.map((condition, index) => (
             <Fragment key={index}>
               <span className="text-muted-foreground">{index === 0 ? "Only where" : "and"}</span>
@@ -285,8 +286,8 @@ function TypeSections({ types, list, scope: boundScope }: { readonly types: read
         <Well className="p-1.5">
           <ul className="divide-y divide-border/70">
             {without.map((type) => (
-              <li key={type} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-2.5 py-2 text-sm">
-                <Link to="/objects/$type" params={{ type }} className="font-medium underline-offset-4 hover:underline">{conceptTitle(type)}</Link>
+              <li key={type} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-2.5 py-2 text-body">
+                <Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link>
                 <span className="min-w-0 text-meta text-muted-foreground">{list.filter(({ objectType }) => objectType === type).map((metric) => metricHeading(metric, "period", view)).join(" · ")}</span>
                 {(() => {
                   const profile = profiles[types.indexOf(type)]?.data?.document
