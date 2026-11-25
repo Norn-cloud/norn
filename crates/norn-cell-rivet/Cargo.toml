@@ -61,6 +61,10 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 
+[dev-dependencies]
+# Signs host tokens in the router gate tests (tests/router_gate.rs).
+ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+
 [features]
 # Local smoke and test builds only: fixture principals (norn-cell-do's
 # `fixtures`), served only on a smoke or test stage.

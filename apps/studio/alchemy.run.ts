@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
 import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, cloudflareCredentials, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, STUDIO_WORKER_COMPATIBILITY_FLAGS, useCloudflareCredentials } from "./deploy-target.ts"
+import { authDeploy, cellHost, cellHostUrl, cloudflareCredentials, DEFAULT_ENVIRONMENTS, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, STUDIO_WORKER_COMPATIBILITY_FLAGS, useCloudflareCredentials } from "./deploy-target.ts"
 import { billingModeStatement } from "./worker/billing.ts"
 import { polarConfig } from "./worker/polar-config.ts"
 
@@ -36,6 +36,8 @@ const auth = authDeploy(process.env, target)
 // Preview binds the Norn cell Worker as NORN_HOST by script name; the script must already exist.
 const host = cellHost(target)
 if (host !== undefined) await requireWorkerScript(host, credentials)
+// The alpha reaches its self-hosted Rivet runners over HTTPS instead (worker/http-host.ts).
+const hostUrl = cellHostUrl(target)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
@@ -87,6 +89,8 @@ export const studio = await Vite("studio", {
     // Invite-only sign-up (worker/index.ts signUpEmails): required on every stage.
     STUDIO_SIGNUP_EMAILS: auth.signUpEmails.join(","),
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
+    ...hostUrl === undefined ? {} : { NORN_HOST_URL: hostUrl },
+    ...DEFAULT_ENVIRONMENTS[target.stage] === undefined ? {} : { STUDIO_DEFAULT_ENVIRONMENT_ID: DEFAULT_ENVIRONMENTS[target.stage] },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
     ...otel === undefined ? {} : {
       OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,
