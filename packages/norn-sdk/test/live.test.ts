@@ -284,6 +284,71 @@ test("same-tick subscribers to a locally refused path each receive the refusal o
   stopSecond()
 })
 
+// #1700 S9: once the client stops reconnecting, every subscriber is told, and so is any that subscribes after.
+test("losing the live connection for good tells each subscriber, so a view can offer to read again", async () => {
+  const { client, sockets, timers, flush } = harness()
+  const told: LiveRefusal[] = []
+  const stop = client.subscribe("/v1/objects/a:facets", () => {}, { onRefused: (refusal) => told.push(refusal) })
+  await flush()
+  sockets[0]!.emit("open")
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    sockets.at(-1)!.emit("close", { code: 1006 })
+    timers.shift()?.()
+    await flush()
+  }
+  expect(client.state).toBe("unavailable")
+  expect(told).toEqual([LIVE_UNAVAILABLE])
+  const later: LiveRefusal[] = []
+  const stopLater = client.subscribe("/v1/objects/b:facets", () => {}, { onRefused: (refusal) => later.push(refusal) })
+  await flush()
+  expect(later).toEqual([LIVE_UNAVAILABLE])
+  stopLater()
+  stop()
+})
+
+// #1700 R5: a cell that accepts and then sheds the socket (1013) before any answer never resets the
+// retry budget, so repeated open/close cycles still end in `unavailable` and the view offers Refresh.
+test("repeated opens closed with 1013 before the first answer exhaust the retry budget", async () => {
+  const { client, sockets, timers, flush } = harness()
+  const told: LiveRefusal[] = []
+  const stop = client.subscribe("/v1/objects/a:facets", () => {}, { onRefused: (refusal) => told.push(refusal) })
+  await flush()
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const socket = sockets.at(-1)!
+    socket.emit("open")
+    expect(socket.sent).toEqual([{ type: "subscribe", id: "s1", path: "/v1/objects/a:facets" }])
+    socket.emit("close", { code: 1013 })
+    timers.shift()?.()
+    await flush()
+  }
+  expect(client.state).toBe("unavailable")
+  expect(told).toEqual([LIVE_UNAVAILABLE])
+  stop()
+})
+
+test("an answer on a connection restores the full retry budget", async () => {
+  const { client, sockets, timers, flush } = harness()
+  const stop = client.subscribe("/v1/objects/a:facets", () => {})
+  await flush()
+  // Two shed accepts use two of three attempts...
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    sockets.at(-1)!.emit("open")
+    sockets.at(-1)!.emit("close", { code: 1013 })
+    timers.shift()?.()
+    await flush()
+  }
+  // ...then the cell answers: the connection was usable, so the next losses start a fresh budget.
+  sockets.at(-1)!.emit("open")
+  sockets.at(-1)!.snapshot("s1", "d1", { rows: 1 })
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    sockets.at(-1)!.emit("close", { code: 1013 })
+    timers.shift()?.()
+    await flush()
+  }
+  expect(client.state).toBe("connecting")
+  stop()
+})
+
 test("a snapshot's body is also read exactly, and a failing one carries its refusal only when it is the route's Refusal@2", async () => {
   const { client, sockets, flush } = harness()
   const seen: LiveSnapshot[] = []
@@ -311,29 +376,6 @@ test("a snapshot's body is also read exactly, and a failing one carries its refu
     frame(status, body)
     expect([status, body, seen.at(-1)!.status, seen.at(-1)!.refusal]).toEqual([status, body, status, undefined])
   }
-})
-
-// #1700 S9 (the `LIVE_UNAVAILABLE` contract, as #1720 adds it): once the client stops reconnecting,
-// every subscriber is told, and so is any that subscribes after.
-test("losing the live connection for good tells each subscriber, so a view can offer to read again", async () => {
-  const { client, sockets, timers, flush } = harness()
-  const told: LiveRefusal[] = []
-  const stop = client.subscribe("/v1/objects/a:facets", () => {}, { onRefused: (refusal) => told.push(refusal) })
-  await flush()
-  sockets[0]!.emit("open")
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    sockets.at(-1)!.emit("close", { code: 1006 })
-    timers.shift()?.()
-    await flush()
-  }
-  expect(client.state).toBe("unavailable")
-  expect(told).toEqual([LIVE_UNAVAILABLE])
-  const later: LiveRefusal[] = []
-  const stopLater = client.subscribe("/v1/objects/b:facets", () => {}, { onRefused: (refusal) => later.push(refusal) })
-  await flush()
-  expect(later).toEqual([LIVE_UNAVAILABLE])
-  stopLater()
-  stop()
 })
 
 test("the cell's live host sends the GET's own bytes, so a pushed decimal reaches `exact` with every digit", async () => {

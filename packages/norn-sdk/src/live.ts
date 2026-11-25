@@ -217,9 +217,15 @@ export class LiveClient {
     this.#socket = socket
     socket.addEventListener("open", () => {
       if (this.#socket !== socket) return
-      this.#failures = 0
       this.#setState("open")
       for (const entry of this.#entries.values()) this.#sendSubscribe(entry)
+    })
+    // A failed open is any loss before the cell has sent a frame on this socket, an accept included:
+    // a cell shedding excess readers accepts, then closes with 1013. Only a frame from the cell
+    // proves the connection usable and restores the retry budget, so open/close cycles still end
+    // in `unavailable` (and the view's Refresh) instead of retrying forever.
+    socket.addEventListener("message", () => {
+      if (this.#socket === socket) this.#failures = 0
     })
     socket.addEventListener("message", (event) => {
       if (this.#socket !== socket || typeof event.data !== "string") return
