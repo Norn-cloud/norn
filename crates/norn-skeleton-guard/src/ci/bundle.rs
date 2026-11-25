@@ -61,8 +61,14 @@ struct Model {
 
 impl Model {
     fn load() -> Result<Self, String> {
-        let table: Durations = serde_json::from_str(DURATIONS)
-            .map_err(|error| format!("bundle-durations.json: {error}"))?;
+        Self::parse(DURATIONS)
+    }
+
+    /// The model of a duration table: refused unless it names its measured runs, statistic
+    /// and generator, and times exactly the planner's tasks.
+    fn parse(raw: &str) -> Result<Self, String> {
+        let table: Durations =
+            serde_json::from_str(raw).map_err(|error| format!("bundle-durations.json: {error}"))?;
         if table.runs.is_empty() || table.statistic.is_empty() || table.generated_by.is_empty() {
             return Err("bundle-durations.json names no measured runs".into());
         }
@@ -753,6 +759,61 @@ mod tests {
             assert_eq!(packed(&plan), planned(&plan), "{mask:#x}");
             mask = mask.saturating_add(37_777);
         }
+    }
+
+    #[test]
+    fn duration_tables_are_refused_unless_complete() {
+        let table: serde_json::Value = serde_json::from_str(DURATIONS).expect("duration table");
+        assert!(Model::parse(DURATIONS).is_ok());
+        let refused = |edit: &dyn Fn(&mut serde_json::Value), expected: &str| {
+            let mut edited = table.clone();
+            edit(&mut edited);
+            let error = Model::parse(&edited.to_string())
+                .err()
+                .unwrap_or_else(|| panic!("accepted a table that should fail with {expected:?}"));
+            assert!(
+                error.contains(expected),
+                "{error} does not name {expected:?}"
+            );
+        };
+        refused(
+            &|table| {
+                table["task_seconds"]
+                    .as_object_mut()
+                    .expect("task seconds")
+                    .remove("phase/browser");
+            },
+            "has no seconds for phase/browser",
+        );
+        refused(
+            &|table| table["task_seconds"]["phase/unknown"] = 1.into(),
+            "times a task the planner does not know",
+        );
+        refused(
+            &|table| table["runs"] = serde_json::json!([]),
+            "names no measured runs",
+        );
+        refused(
+            &|table| table["statistic"] = "".into(),
+            "names no measured runs",
+        );
+        refused(
+            &|table| table["generated_by"] = "".into(),
+            "names no measured runs",
+        );
+        refused(
+            &|table| table["note"] = "edited".into(),
+            "unknown field `note`",
+        );
+        refused(
+            &|table| {
+                table
+                    .as_object_mut()
+                    .expect("table")
+                    .remove("wasm_pkg_seconds");
+            },
+            "missing field `wasm_pkg_seconds`",
+        );
     }
 
     #[test]

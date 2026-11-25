@@ -17,10 +17,12 @@ log line. The table is the median over those runs of:
   profile", less the rebuild every later test shard of the same bundle still pays (its
   median, which stays in each task's own time);
 - `wasm_pkg_seconds`: the checker WASM package build, from the start of the tasks that begin
-  with it (`phase/browser`, `phase/integration-wasm`) to the package's size report;
+  with it (`phase/browser`, `phase/integration-wasm`) to the package's size report. Only the
+  first of a bundle's package tasks builds it; the later ones reuse it and log no report;
 - `task_seconds`: each task's own time, net of the shared builds above (a Test-group task net
-  of its measured build; a WASM-package task net of its measured build, or of the median
-  package build for `phase/integration-authoring`, which overlaps it with native builds).
+  of its measured build; the first WASM-package task of a bundle net of its measured build,
+  or of the median package build for `phase/integration-authoring`, which overlaps it with
+  native builds; a later WASM-package task, which reuses the package, as measured).
 
 The packer (bundle.rs, and the hosted planner in scripts/ci/core.sh) charges each shared
 build once per bundle that holds a task of its group, so a cold bundle costs exactly what
@@ -75,7 +77,8 @@ def parse(log: str) -> list[tuple[str, int, list[tuple[float, str]]]]:
         match = STAMP.match(ANSI.sub("", raw))
         if not match:
             continue
-        seconds = datetime.fromisoformat(match[1]).timestamp() + float(f"0.{match[2] or 0}")
+        # The runner stamps every line in UTC (`Z`), whatever the reader's local zone.
+        seconds = datetime.fromisoformat(f"{match[1]}+00:00").timestamp() + float(f"0.{match[2] or 0}")
         line = match[3]
         if group := GROUP.match(line):
             current = (group[1], [(seconds, line)])
@@ -99,7 +102,9 @@ def table(runs: list[int]) -> dict[str, object]:
     cold_tests, warm_rebuilds, wasm_builds, overlapped = [], [], [], []
     for run in runs:
         for log in bundle_logs(run):
-            previous = None
+            # bundle.rs runs a bundle's WASM-package tasks back to back without pruning, so
+            # only the first builds the package; the rest reuse it.
+            previous, wasm_built = None, False
             for task, seconds, lines in parse(log):
                 own = float(seconds)
                 tests = task.startswith("test/") or task == "phase/test-shards"
@@ -110,15 +115,16 @@ def table(runs: list[int]) -> dict[str, object]:
                     continue
                 if task.startswith("test/"):
                     warm_rebuilds.append(elapsed(lines, TEST_BUILT) or 0.0)
-                if task in WASM_FIRST:
+                if task in WASM_FIRST + WASM_OVERLAPPED and not wasm_built:
+                    wasm_built = True
+                    if task in WASM_OVERLAPPED:
+                        overlapped.append((task, own))
+                        continue
                     build = elapsed(lines, WASM_BUILT)
                     if build is None:
                         sys.exit(f"run {run}: {task} logged no checker WASM size report")
                     wasm_builds.append(build)
                     own -= build
-                elif task in WASM_OVERLAPPED:
-                    overlapped.append((task, own))
-                    continue
                 net.setdefault(task, []).append(own)
     if not cold_tests or not warm_rebuilds or not wasm_builds:
         sys.exit("no cold test, warm test or WASM package build measured")
