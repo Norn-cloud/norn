@@ -569,10 +569,7 @@ impl RuntimeValue {
             let token = token.replace("~1", "/").replace("~0", "~");
             match value {
                 Self::Object(entries) => entries.get(&token),
-                Self::Array(items) => token
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|index| items.get(index)),
+                Self::Array(items) => array_index(&token).and_then(|index| items.get(index)),
                 Self::Null | Self::Bool(_) | Self::Number(_) | Self::String(_) => None,
             }
         })
@@ -590,6 +587,14 @@ impl RuntimeValue {
             message: error.to_string(),
         })
     }
+}
+
+/// An RFC 6901 array index: `0` or ASCII digits without a leading zero, so
+/// `01`, `+1` and `-1` select nothing (they still name object members).
+fn array_index(token: &str) -> Option<usize> {
+    let canonical = token.bytes().all(|byte| byte.is_ascii_digit())
+        && (token == "0" || !token.starts_with('0'));
+    if canonical { token.parse().ok() } else { None }
 }
 
 impl From<Decimal> for RuntimeValue {

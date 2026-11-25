@@ -1,7 +1,7 @@
 import type { Answer } from "./transport.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { isAnswer, isTrace, type Fetch, type LiveRead, type Refusal, type Trace } from "./live.ts"
-import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, StudioScopeError, defaultFetch, resolveWriteScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Running a question built in Studio (F2b, CELL-DO's final shape, query/evaluate
@@ -58,9 +58,12 @@ export async function untilNotPending<T>(ask: () => Promise<T>, pending: (result
 }
 
 type PostResult = { readonly status: number; readonly text: string } | { readonly noCell: true } | { readonly scopeStatus: number } | undefined
-async function post(path: string, body: unknown, fetcher: Fetch): Promise<PostResult> {
+async function post(path: string, body: unknown, fetcher: Fetch, boundScope?: StudioScope | null): Promise<PostResult> {
   try {
-    const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+    // Capture the originating scope ONCE before entering the analytics queue/retry loop so retries
+    // never reread a newer displayed workspace mid-flight.
+    const captured = await resolveWriteScope(fetcher, boundScope)
+    const scoped = scopedHostFetch(fetcher, "/api/host", async () => captured)
     return await inAnalyticsLane(() => untilNotPending(async () => {
       const response = await scoped(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
       return { status: response.status, text: await response.text() }
@@ -82,8 +85,8 @@ const isRefusal = (body: unknown): body is Refusal => {
     && (!("explanation" in body) || typeof body.explanation === "string")
 }
 
-export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch): Promise<Evaluation> {
-  const response = await post("/v1/questions:evaluate", { question }, fetcher)
+export async function evaluateQuestion(question: unknown, fetcher: Fetch = defaultFetch, boundScope?: StudioScope | null): Promise<Evaluation> {
+  const response = await post("/v1/questions:evaluate", { question }, fetcher, boundScope)
   if (response === undefined) return { kind: "unavailable", status: 0 }
   if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
   if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
@@ -109,9 +112,9 @@ export async function evaluateQuestion(question: unknown, fetcher: Fetch = fetch
 }
 
 /** One bucket's records for a question built in Studio: POST /v1/questions:trace, passing lineageRef back exactly as received. */
-export async function traceQuestion(question: unknown, lineageRef: string, bucket: string, fetcher: Fetch = fetch, answered?: { readonly knownAsOf: number; readonly nowMs: number }): Promise<LiveRead<Trace>> {
+export async function traceQuestion(question: unknown, lineageRef: string, bucket: string, fetcher: Fetch = defaultFetch, answered?: { readonly knownAsOf: number; readonly nowMs: number }, boundScope?: StudioScope | null): Promise<LiveRead<Trace>> {
   // With the answer's knownAsOf and nowMs the cell traces the answer as it was given, even after later commits.
-  const response = await post("/v1/questions:trace", { question, lineageRef, bucket, ...answered ?? {} }, fetcher)
+  const response = await post("/v1/questions:trace", { question, lineageRef, bucket, ...answered ?? {} }, fetcher, boundScope)
   if (response === undefined) return { kind: "unavailable", status: 0 }
   if ("noCell" in response) return { kind: "unavailable", status: 0, reason: "no-cell" }
   if ("scopeStatus" in response) return { kind: "unavailable", status: response.scopeStatus }
