@@ -533,8 +533,13 @@ where
     let mut consumes = prepared.consumes;
     let receipt_delivery = match receipt {
         Some(acceptance) => {
-            let delivery =
-                consume_receipt::<H::Error>(consumes.is_some(), &acceptance, &writes, &mut reads)?;
+            let delivery = consume_receipt::<H::Error>(
+                catalog,
+                consumes.is_some(),
+                &acceptance,
+                &writes,
+                &mut reads,
+            )?;
             consumes = Some(delivery.clone());
             Some(delivery)
         }

@@ -8,7 +8,10 @@
 //!   context records the caller names, and any marked value of the cell that
 //!   occurs in the text (a bounded scan of the cell's marked properties). The
 //!   cell knows which values are personal from the declared markings, so
-//!   this needs no guessing. Equal values share one token.
+//!   this needs no guessing. Equal values share one token. Free text is
+//!   matched only against values the caller may reveal, and a context field
+//!   it may not reveal is tokenized by its identity alone (GUARD-ORACLE-1),
+//!   so the prompt never confirms a guess.
 //! - **Then a detector pass** over the remaining free text for email
 //!   addresses, phone numbers and payment card numbers (Luhn-checked).
 //! - **The token map stays in the cell.** The guard commits a
@@ -24,6 +27,8 @@
 //! pseudonym, or the placeholder). A detected literal is restored only to
 //! the reader who typed it.
 
+mod detect;
+
 use std::collections::BTreeMap;
 
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
@@ -38,6 +43,7 @@ use crate::{
     refusal::Refusal,
     scope::ScopeQuery,
 };
+use detect::{detect, occurrences};
 
 /// The longest prompt the guard takes, in characters.
 pub const MAX_PROMPT_CHARS: usize = 20_000;
@@ -209,7 +215,10 @@ const GUARDED: &str = "privacy.guarded";
 
 /// A marked value found for tokenizing.
 struct Candidate {
+    /// The value as text; empty when it is not text (`text` is false).
     value: String,
+    /// Whether the value is text (a string or a number) the text may name.
+    text: bool,
     kind: String,
     label: String,
     row: ObjectRecord,
@@ -286,6 +295,7 @@ fn marked_fields<E: SqlEngine>(
             .filter_map(|(property, value)| {
                 text_of(value).map(|value| Candidate {
                     value,
+                    text: true,
                     kind: field_kind(catalog, &[], property),
                     label: title_case(&field_kind(catalog, &[], property)),
                     row: row.clone(),
@@ -303,6 +313,7 @@ fn marked_fields<E: SqlEngine>(
             let kind = field_kind(catalog, ids, property);
             Some(Candidate {
                 value,
+                text: true,
                 label: title_case(&kind),
                 kind,
                 row: row.clone(),
@@ -313,131 +324,44 @@ fn marked_fields<E: SqlEngine>(
         .collect())
 }
 
-/// Every occurrence of `needle` in `haystack` (ASCII case-insensitive), as
-/// byte ranges.
-fn occurrences(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
-    let (h, n) = (haystack.to_lowercase(), needle.to_lowercase());
-    if n.is_empty() || h.len() != haystack.len() || n.len() != needle.len() {
-        // Lower-casing changed byte lengths: match exactly instead.
-        return haystack
-            .match_indices(needle)
-            .map(|(at, _)| (at, at.saturating_add(needle.len())))
-            .collect();
-    }
-    h.match_indices(&n)
-        .map(|(at, _)| (at, at.saturating_add(n.len())))
+/// GUARD-ORACLE-1: every marked field of a context `row`, whatever its value
+/// (null, a flag, a list or a record as much as text), so a field the caller
+/// may not reveal is tokenized from its identity alone. Unavailable markings
+/// (`None`) mark every field.
+fn context_candidates(
+    catalog: &MarkingCatalog,
+    row: &ObjectRecord,
+    markings: Option<&BTreeMap<String, Vec<String>>>,
+) -> Vec<Candidate> {
+    let unmarked: &[String] = &[];
+    let marked: BTreeMap<&String, &[String]> = match markings {
+        Some(markings) => markings
+            .iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(property, ids)| (property, ids.as_slice()))
+            .collect(),
+        None => row
+            .values
+            .keys()
+            .map(|property| (property, unmarked))
+            .collect(),
+    };
+    marked
+        .into_iter()
+        .map(|(property, ids)| {
+            let value = row.values.get(property).and_then(text_of);
+            let kind = field_kind(catalog, ids, property);
+            Candidate {
+                text: value.is_some(),
+                value: value.unwrap_or_default(),
+                label: title_case(&kind),
+                kind,
+                row: row.clone(),
+                property: property.clone(),
+                markings: ids.to_vec(),
+            }
+        })
         .collect()
-}
-
-/// A detector match: kind and byte range.
-fn detect(text: &str) -> Vec<(&'static str, usize, usize)> {
-    let mut found = emails(text);
-    found.extend(digit_runs(text));
-    found
-}
-
-/// Email addresses: `local@domain.tld` around each `@`.
-fn emails(text: &str) -> Vec<(&'static str, usize, usize)> {
-    let bytes = text.as_bytes();
-    let local = |b: u8| b.is_ascii_alphanumeric() || b"._%+-".contains(&b);
-    let domain = |b: u8| b.is_ascii_alphanumeric() || b".-".contains(&b);
-    let mut found = Vec::new();
-    for (at, _) in text.match_indices('@') {
-        let mut start = at;
-        while let Some(previous) = start.checked_sub(1)
-            && bytes.get(previous).copied().is_some_and(local)
-        {
-            start = previous;
-        }
-        let host_start = at.saturating_add(1);
-        let mut end = host_start;
-        while bytes.get(end).copied().is_some_and(domain) {
-            end = end.saturating_add(1);
-        }
-        while end > host_start && end.checked_sub(1).and_then(|last| bytes.get(last)) == Some(&b'.')
-        {
-            end = end.saturating_sub(1);
-        }
-        let host = text.get(host_start..end).unwrap_or("");
-        if start < at && host.contains('.') && !host.starts_with('.') {
-            found.push(("EMAIL", start, end));
-        }
-    }
-    found
-}
-
-/// Digit runs with separators: payment cards (13 to 19 digits, Luhn-valid)
-/// and phone numbers (8 to 15 digits, written with `+` or separators).
-fn digit_runs(text: &str) -> Vec<(&'static str, usize, usize)> {
-    let bytes = text.as_bytes();
-    let mut found = Vec::new();
-    let mut index = 0_usize;
-    while index < bytes.len() {
-        let preceded = index
-            .checked_sub(1)
-            .and_then(|previous| bytes.get(previous))
-            .is_some_and(u8::is_ascii_alphanumeric);
-        let starts = bytes
-            .get(index)
-            .is_some_and(|b| b.is_ascii_digit() || *b == b'+')
-            && !preceded;
-        if !starts {
-            index = index.saturating_add(1);
-            continue;
-        }
-        let mut end = index;
-        let mut digits = String::new();
-        while let Some(&b) = bytes.get(end) {
-            if b.is_ascii_digit() {
-                digits.push(char::from(b));
-            } else if !(b" -().".contains(&b) || (b == b'+' && end == index)) {
-                break;
-            }
-            end = end.saturating_add(1);
-        }
-        // Do not end on a separator.
-        while end > index
-            && !end
-                .checked_sub(1)
-                .and_then(|last| bytes.get(last))
-                .is_some_and(u8::is_ascii_digit)
-        {
-            end = end.saturating_sub(1);
-        }
-        let card = (13..=19).contains(&digits.len()) && luhn(&digits);
-        let phone = !card
-            && (8..=15).contains(&digits.len())
-            && (bytes.get(index) == Some(&b'+')
-                || text
-                    .get(index..end)
-                    .is_some_and(|run| run.contains([' ', '-', '('])));
-        if card {
-            found.push(("CARD", index, end));
-        } else if phone {
-            found.push(("PHONE", index, end));
-        }
-        index = end.max(index.saturating_add(1));
-    }
-    found
-}
-
-fn luhn(digits: &str) -> bool {
-    let mut sum = 0_u32;
-    for (position, c) in digits.chars().rev().enumerate() {
-        let d = c.to_digit(10).unwrap_or(0);
-        let weighted = if position % 2 == 1 {
-            let doubled = d.saturating_mul(2);
-            if doubled > 9 {
-                doubled.saturating_sub(9)
-            } else {
-                doubled
-            }
-        } else {
-            d
-        };
-        sum = sum.saturating_add(weighted);
-    }
-    sum.is_multiple_of(10)
 }
 
 /// The tokens assigned so far, numbered per kind.
@@ -457,10 +381,31 @@ impl Tokens {
         value: &str,
         make: impl FnOnce(String) -> Entry,
     ) -> String {
-        let key = (
-            kind.to_owned(),
-            format!("{space}\u{0}{}", value.to_lowercase()),
+        let key = format!("{space}\u{0}{}", value.to_lowercase());
+        self.assign(kind, key, make)
+    }
+
+    /// GUARD-ORACLE-1: the token of a field the caller may not reveal, keyed
+    /// by its exact identity (never its value, never case-folded), so two
+    /// fields share a token only when they are the same field.
+    fn sealed(
+        &mut self,
+        kind: &str,
+        field: &FieldRef,
+        make: impl FnOnce(String) -> Entry,
+    ) -> String {
+        let (object_type, id, property) = field;
+        let key = format!(
+            "sealed\u{0}{}\u{0}{object_type}\u{0}{}\u{0}{id}\u{0}{property}",
+            object_type.len(),
+            id.len()
         );
+        self.assign(kind, key, make)
+    }
+
+    /// The token under `key` in `kind`'s numbering, assigned on first use.
+    fn assign(&mut self, kind: &str, key: String, make: impl FnOnce(String) -> Entry) -> String {
+        let key = (kind.to_owned(), key);
         if let Some(token) = self.by_value.get(&key) {
             return token.clone();
         }
@@ -506,12 +451,10 @@ struct Tokenized {
 struct Candidates {
     /// The context rows.
     rows: Vec<ObjectRecord>,
-    /// Their marked text fields.
+    /// Their marked fields, whatever their values.
     context_fields: Vec<Candidate>,
     /// Marked text values elsewhere in the cell (bounded).
     scanned: Vec<Candidate>,
-    /// Every marked property of the context rows, whatever its type.
-    marked: std::collections::BTreeSet<FieldRef>,
 }
 
 fn read_candidates<E: SqlEngine>(
@@ -571,33 +514,20 @@ fn read_candidates<E: SqlEngine>(
         }
     }
     let mut fields = Vec::new();
-    let mut marked = std::collections::BTreeSet::new();
     for row in &context {
-        fields.extend(marked_fields(&reader, &catalog, row)?);
         let markings = privacy::row_markings(&reader, &catalog, row)?;
-        for property in row.values.keys() {
-            let is_marked = markings
-                .as_ref()
-                .is_none_or(|markings| markings.get(property).is_some_and(|ids| !ids.is_empty()));
-            if is_marked {
-                marked.insert((row.object_type.clone(), row.id.clone(), property.clone()));
-            }
-        }
+        fields.extend(context_candidates(&catalog, row, markings.as_ref()));
     }
     Ok(Candidates {
         rows: context,
         context_fields: fields,
         scanned,
-        marked,
     })
 }
 
-/// Replace marked values (context fields first, then any marked value the
-/// text names) and detected identifiers with numbered tokens.
-fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> Tokenized {
-    let mut tokens = Tokens::default();
-    let mut withheld = Vec::new();
-    let entry_of = |candidate: &Candidate, token: String| Entry {
+/// A field token's entry: its record, property and markings, never its value.
+fn field_entry(candidate: &Candidate, token: String) -> Entry {
+    Entry {
         token,
         kind: candidate.kind.clone(),
         label: candidate.label.clone(),
@@ -608,29 +538,68 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
         version: Some(candidate.row.version),
         markings: candidate.markings.clone(),
         literal: None,
-    };
-    // Context fields first, so their tokens number from 1 in reading order.
+    }
+}
+
+/// The context fields' tokens, in reading order, and the fields withheld.
+/// GUARD-ORACLE-1: a text field the caller may reveal shares its value's
+/// token; any other is keyed by its exact identity alone, so neither its
+/// token nor its `withheld` entry says anything of its value or its type.
+fn context_tokens(
+    tokens: &mut Tokens,
+    context_fields: &[Candidate],
+    revealed: &dyn Fn(&Candidate) -> bool,
+) -> (BTreeMap<FieldRef, String>, Vec<String>) {
     let mut field_tokens: BTreeMap<FieldRef, String> = BTreeMap::new();
+    let mut withheld = Vec::new();
     for candidate in context_fields {
-        let token = tokens.token(("field", &candidate.kind), &candidate.value, |token| {
-            entry_of(candidate, token)
-        });
-        field_tokens.insert(
-            (
-                candidate.row.object_type.clone(),
-                candidate.row.id.clone(),
-                candidate.property.clone(),
-            ),
-            token,
-        );
-        withheld.push(format!(
+        let field = format!(
             "{}/{}.{}",
             candidate.row.object_type, candidate.row.id, candidate.property
-        ));
+        );
+        let identity = (
+            candidate.row.object_type.clone(),
+            candidate.row.id.clone(),
+            candidate.property.clone(),
+        );
+        let make = |token| field_entry(candidate, token);
+        let token = if candidate.text && revealed(candidate) {
+            tokens.token(("field", &candidate.kind), &candidate.value, make)
+        } else {
+            tokens.sealed(&candidate.kind, &identity, make)
+        };
+        field_tokens.insert(identity, token);
+        withheld.push(field);
     }
-    // 1. Marked values in the text (longest first, never inside a token).
+    (field_tokens, withheld)
+}
+
+/// Whether `actor` may reveal `candidate`'s value: every one of its markings
+/// allows it, and it has at least one.
+fn revealable<E: SqlEngine>(host: &DevHost<E>, actor: &str, candidate: &Candidate) -> bool {
+    !candidate.markings.is_empty() && candidate.markings.iter().all(|id| host.reveals(actor, id))
+}
+
+/// Replace marked values (context fields first, then any marked value the
+/// text names) and detected identifiers with numbered tokens.
+///
+/// GUARD-ORACLE-1 (#1702): a context field the caller may not reveal is
+/// tokenized by its identity alone, never by its value, and free text is
+/// matched only against `revealed` values: so the prompt reads the same
+/// whether a guess in the text equals such a field or not.
+fn tokenize(
+    text: &str,
+    context_fields: &[Candidate],
+    revealed: &dyn Fn(&Candidate) -> bool,
+    scanned: &[Candidate],
+) -> Tokenized {
+    let mut tokens = Tokens::default();
+    // Context fields first, so their tokens number from 1 in reading order.
+    let (field_tokens, mut withheld) = context_tokens(&mut tokens, context_fields, revealed);
+    // 1. Revealable marked values in the text (longest first, never inside a token).
     let mut values: Vec<&Candidate> = context_fields
         .iter()
+        .filter(|candidate| candidate.text && revealed(candidate))
         .chain(scanned.iter())
         .filter(|candidate| candidate.value.chars().count() >= MIN_MATCH_CHARS)
         .collect();
@@ -656,7 +625,7 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
                     .is_some_and(char::is_alphanumeric);
             if bounded && !overlaps(&spans, start, end) {
                 let token = tokens.token(("field", &candidate.kind), &candidate.value, |token| {
-                    entry_of(candidate, token)
+                    field_entry(candidate, token)
                 });
                 let field = format!(
                     "{}/{}.{}",
@@ -700,30 +669,32 @@ fn tokenize(text: &str, context_fields: &[Candidate], scanned: &[Candidate]) -> 
 }
 
 /// The context block: each record's fields, marked ones as tokens.
-fn context_block(
-    rows: &[ObjectRecord],
-    marked: &std::collections::BTreeSet<FieldRef>,
-    field_tokens: &BTreeMap<FieldRef, String>,
-) -> String {
+/// Every marked property, stored or not and whatever its type, shows as its
+/// token (GUARD-ORACLE-1); the rest as stored.
+fn context_block(rows: &[ObjectRecord], field_tokens: &BTreeMap<FieldRef, String>) -> String {
     let mut block = String::new();
-    // The context block: each record's fields, marked ones as tokens.
     for row in rows {
         block.push_str("\n\nRecord ");
         block.push_str(&row.object_type);
         block.push(' ');
         block.push_str(&row.id);
         block.push(':');
-        for (property, value) in &row.values {
-            let shown = field_tokens
-                .get(&(row.object_type.clone(), row.id.clone(), property.clone()))
-                .cloned()
-                .or_else(|| {
-                    // Any marked property, whatever its type, is withheld.
-                    let field = (row.object_type.clone(), row.id.clone(), property.clone());
-                    (!marked.contains(&field))
-                        .then(|| text_of(value).unwrap_or_else(|| format!("{value:?}")))
-                })
-                .unwrap_or_else(|| "[WITHHELD]".to_owned());
+        let mut properties: std::collections::BTreeSet<&str> =
+            row.values.keys().map(String::as_str).collect();
+        properties.extend(
+            field_tokens
+                .keys()
+                .filter(|(object_type, id, _)| *object_type == row.object_type && *id == row.id)
+                .map(|(_, _, property)| property.as_str()),
+        );
+        for property in properties {
+            let field = (row.object_type.clone(), row.id.clone(), property.to_owned());
+            let shown = field_tokens.get(&field).cloned().unwrap_or_else(|| {
+                row.values.get(property).map_or_else(
+                    || "[WITHHELD]".to_owned(),
+                    |value| text_of(value).unwrap_or_else(|| format!("{value:?}")),
+                )
+            });
             block.push_str("\n- ");
             block.push_str(property);
             block.push_str(": ");
@@ -731,6 +702,23 @@ fn context_block(
         }
     }
     block
+}
+
+/// A guard request's bounds; its idempotency key when they hold.
+fn checked_key(request: &NornGuardRequest) -> Result<&str, Refusal> {
+    if request.text.chars().count() > MAX_PROMPT_CHARS {
+        return Err(bad(format!(
+            "text is at most {MAX_PROMPT_CHARS} characters"
+        )));
+    }
+    if request.context.len() > MAX_CONTEXT {
+        return Err(bad(format!("at most {MAX_CONTEXT} context records")));
+    }
+    let key = request.idempotency_key.as_str();
+    if key.is_empty() || key.len() > 128 {
+        return Err(bad("idempotencyKey must be 1..=128 bytes"));
+    }
+    Ok(key)
 }
 
 /// PRIVACY-GUARD-1: tokenize a prompt for a model call (see the module docs).
@@ -746,35 +734,24 @@ pub fn guard<E: SqlEngine>(
     request: &NornGuardRequest,
     access: &dyn ObjectAccess,
 ) -> Result<NornGuarded, Refusal> {
-    if request.text.chars().count() > MAX_PROMPT_CHARS {
-        return Err(bad(format!(
-            "text is at most {MAX_PROMPT_CHARS} characters"
-        )));
-    }
-    if request.context.len() > MAX_CONTEXT {
-        return Err(bad(format!("at most {MAX_CONTEXT} context records")));
-    }
-    let key = request.idempotency_key.as_str();
-    if key.is_empty() || key.len() > 128 {
-        return Err(bad("idempotencyKey must be 1..=128 bytes"));
-    }
+    let key = checked_key(request)?;
     let actor = actor.ok_or_else(crate::authz::read_denied)?;
     scope_gate(host, scope, actor)?;
     let Candidates {
         rows,
         context_fields,
         scanned,
-        marked,
     } = read_candidates(host, request)?;
     // Only values this caller may reveal are matched in free text: matching
     // any other would confirm a value (and name its record) to someone who
-    // may only see its pseudonym. Those fall to the detector pass.
+    // may only see its pseudonym. Those fall to the detector pass. A context
+    // field is no exception (GUARD-ORACLE-1): reading its row is not
+    // revealing its value.
+    let revealed = |candidate: &Candidate| revealable(host, actor, candidate);
     let scanned: Vec<Candidate> = scanned
         .into_iter()
         .filter(|candidate| {
-            !candidate.markings.is_empty()
-                && row_readable(host, access, actor, &candidate.row)
-                && candidate.markings.iter().all(|id| host.reveals(actor, id))
+            revealed(candidate) && row_readable(host, access, actor, &candidate.row)
         })
         .collect();
     for row in &rows {
@@ -787,8 +764,8 @@ pub fn guard<E: SqlEngine>(
         withheld,
         field_tokens,
         mut safe_prompt,
-    } = tokenize(&request.text, &context_fields, &scanned);
-    safe_prompt.push_str(&context_block(&rows, &marked, &field_tokens));
+    } = tokenize(&request.text, &context_fields, &revealed, &scanned);
+    safe_prompt.push_str(&context_block(&rows, &field_tokens));
     let event = Guarded {
         kind: GUARDED.to_owned(),
         actor: actor.to_owned(),
@@ -1129,19 +1106,5 @@ fn restore_one<E: SqlEngine>(
                 None => kept(),
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{detect, luhn};
-
-    #[test]
-    fn the_detector_finds_emails_phones_and_luhn_valid_cards() {
-        let text = "Reach sofia.r@fastmail.com or +1 415 555 0132; card 4539 1488 0343 6467, order 20241024.";
-        let kinds: Vec<&str> = detect(text).into_iter().map(|(kind, _, _)| kind).collect();
-        assert_eq!(kinds, ["EMAIL", "PHONE", "CARD"]);
-        assert!(luhn("4539148803436467"));
-        assert!(!luhn("4539148803436468"));
     }
 }

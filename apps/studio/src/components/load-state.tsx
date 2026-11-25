@@ -211,7 +211,7 @@ export interface LoadStateProps<T> {
   readonly onRetry?: () => void
   /** Named boneyard-js UI-shape skeleton capture from `src/bones/registry.ts`. */
   readonly bone?: StudioBoneName
-  /** Skeleton shape while loading (or fallback when `bone` is unregistered), or a custom ReactNode. */
+  /** Skeleton shape while loading when no `bone` is named, or a custom ReactNode. */
   readonly skeleton?: SkeletonKind | ReactNode
   /** Accessible label for the skeleton region. */
   readonly loadingLabel?: string
@@ -285,14 +285,14 @@ export function LoadState<T>({
         </div>
       )
     }
-    const fallbackSkeleton = typeof skeleton === "string"
+    const skeletonBlock = typeof skeleton === "string"
       ? <SkeletonBlock kind={skeleton as SkeletonKind} label={loadingLabel} />
       : skeleton
     return (
       <div className="space-y-2.5" data-load-state={wait === "slow" ? "slow" : "loading"}>
         {bone
-          ? <BoneSkeleton name={bone} loading label={loadingLabel} fallback={fallbackSkeleton} />
-          : fallbackSkeleton}
+          ? <BoneSkeleton name={bone} loading label={loadingLabel} />
+          : skeletonBlock}
         {wait === "slow" && (
           <div role="status" className="flex flex-wrap items-center gap-2 px-1 text-meta text-muted-foreground">
             <Clock aria-hidden className="size-3.5 shrink-0" />

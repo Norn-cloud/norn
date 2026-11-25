@@ -251,7 +251,7 @@
                 {
                   "_description": "awaiting_perform_load on result: perform billing.notify → awaiting_perform_remind",
                   "_id": "awaiting_perform_load/result/3",
-                  "c_when": "slice.run.status == 'awaiting_perform_load' and event.kind == 'result' and event.runId == slice.run.run_id and event.step == 'load' and event.attempt == 1 and not (event.results.load.status == 'paid') and not (event.results.load.status == 'draft') and ((event.results.load.overdue == true) and (event.results.load.amountMinor > 0))",
+                  "c_when": "slice.run.status == 'awaiting_perform_load' and event.kind == 'result' and event.runId == slice.run.run_id and event.step == 'load' and event.attempt == 1 and not (event.results.load.status == 'paid') and not (event.results.load.status == 'draft') and (event.results.load.status == 'open') and ((event.results.load.overdue == true) and (event.results.load.amountMinor > 0))",
                   "o_commands": "[{kind: 'perform', runId: slice.run.run_id, step: 'remind', function: 'billing.notify', functionVersion: '1.0.0', idempotencyKey: slice.run.run_id + ':remind', attempt: 1, input: {remind: {invoiceId: event.results.load.id, outcome: 'overdue'}}}]",
                   "o_facts": "[{op: 'set', objectType: 'billing.RouteRun', key: slice.run.run_id, property: 'slots', value: {bindings: {invoice: event.results.load}}}, {op: 'transition', objectType: 'billing.RouteRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_awaiting_perform_remind'}]",
                   "o_timers": "[]"
@@ -259,7 +259,23 @@
                 {
                   "_description": "awaiting_perform_load on result: complete → completed",
                   "_id": "awaiting_perform_load/result/4",
-                  "c_when": "slice.run.status == 'awaiting_perform_load' and event.kind == 'result' and event.runId == slice.run.run_id and event.step == 'load' and event.attempt == 1 and not (event.results.load.status == 'paid') and not (event.results.load.status == 'draft') and not ((event.results.load.overdue == true) and (event.results.load.amountMinor > 0))",
+                  "c_when": "slice.run.status == 'awaiting_perform_load' and event.kind == 'result' and event.runId == slice.run.run_id and event.step == 'load' and event.attempt == 1 and not (event.results.load.status == 'paid') and not (event.results.load.status == 'draft') and (event.results.load.status == 'open') and not ((event.results.load.overdue == true) and (event.results.load.amountMinor > 0))",
+                  "o_commands": "[]",
+                  "o_facts": "[{op: 'set', objectType: 'billing.RouteRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'open'}}}, {op: 'transition', objectType: 'billing.RouteRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_completed'}]",
+                  "o_timers": "[]"
+                },
+                {
+                  "_description": "awaiting_perform_load on result: perform billing.notify → awaiting_perform_remind",
+                  "_id": "awaiting_perform_load/result/5",
+                  "c_when": "slice.run.status == 'awaiting_perform_load' and event.kind == 'result' and event.runId == slice.run.run_id and event.step == 'load' and event.attempt == 1 and not (event.results.load.status == 'paid') and not (event.results.load.status == 'draft') and not (event.results.load.status == 'open') and ((event.results.load.overdue == true) and (event.results.load.amountMinor > 0))",
+                  "o_commands": "[{kind: 'perform', runId: slice.run.run_id, step: 'remind', function: 'billing.notify', functionVersion: '1.0.0', idempotencyKey: slice.run.run_id + ':remind', attempt: 1, input: {remind: {invoiceId: event.results.load.id, outcome: 'overdue'}}}]",
+                  "o_facts": "[{op: 'set', objectType: 'billing.RouteRun', key: slice.run.run_id, property: 'slots', value: {bindings: {invoice: event.results.load}}}, {op: 'transition', objectType: 'billing.RouteRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_awaiting_perform_remind'}]",
+                  "o_timers": "[]"
+                },
+                {
+                  "_description": "awaiting_perform_load on result: complete → completed",
+                  "_id": "awaiting_perform_load/result/6",
+                  "c_when": "slice.run.status == 'awaiting_perform_load' and event.kind == 'result' and event.runId == slice.run.run_id and event.step == 'load' and event.attempt == 1 and not (event.results.load.status == 'paid') and not (event.results.load.status == 'draft') and not (event.results.load.status == 'open') and not ((event.results.load.overdue == true) and (event.results.load.amountMinor > 0))",
                   "o_commands": "[]",
                   "o_facts": "[{op: 'set', objectType: 'billing.RouteRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'open'}}}, {op: 'transition', objectType: 'billing.RouteRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_completed'}]",
                   "o_timers": "[]"
