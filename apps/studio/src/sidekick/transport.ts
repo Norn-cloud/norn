@@ -79,6 +79,7 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     const pending = this.approvals.get(approvalId)
     if (pending === undefined) return false
     this.approvals.delete(approvalId)
+    this.turn?.answered(approvalId, approved)
     pending.resolve({ outcome: { outcome: "selected", optionId: approved ? pending.allow : pending.reject } })
     if (!approved) this.turn?.denied(pending.toolCallId)
     return true

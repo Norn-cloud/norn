@@ -1327,9 +1327,10 @@ checklist: `ListChecks`; theme presets: `Palette`).
   - AI SDK (`ai` 7.0.169): a custom `ChatTransport` (`sidekick/transport.ts`) maps each ACP update to a
     UI message chunk (`sidekick/transcript.ts`). AI Elements is typed against the same `UIMessage` and
     `ToolUIPart`, so no type glue. Approvals map one to one: the bridge's `session/request_permission`
-    is pending inside the running turn, and `addToolApprovalResponse` while the chat is streaming only
-    updates the live part, with no new request (`ai/dist/index.js`, `addToolApprovalResponse`), so the
-    transport answers the pending question in place.
+    is pending inside the running turn, and the UI stream takes `tool-approval-request` and
+    `tool-approval-response` chunks mid-turn with no new request (`ai/dist/index.js`), so the transport
+    answers the pending question in place and records the person's answer in the same stream, in
+    order with what the bridge sends next.
   - TanStack AI (`@tanstack/ai-react` 1.0.2, `@tanstack/ai-client` 1.1.0): approvals resume through
     interrupts, which call the connection again with the resolutions
     (`chat-client.js`, `resumeInterruptsUnsafeForGeneration`), a second request ACP has no place

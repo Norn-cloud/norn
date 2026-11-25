@@ -134,7 +134,7 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
   const transport = useMemo(() => new SidekickTransport({ scope: pinned.current !== undefined ? pinned.current : getDisplayedScope() }), [scopeKey, epoch])
   useEffect(() => () => transport.close(), [transport])
   const chat = useChat<SidekickMessage>({ id: `sidekick:${scopeKey ?? ""}:${epoch}`, transport })
-  const { messages, status, error, stop, regenerate, sendMessage, addToolApprovalResponse } = chat
+  const { messages, status, error, stop, regenerate, sendMessage } = chat
   const assistant = useAssistant()
   const working = status === "submitted" || status === "streaming"
 
@@ -153,10 +153,11 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
     send(text)
   }, [assistant, scopeKey, send, working])
 
+  // The answer goes to the bridge and into the running turn as a tool-approval-response chunk, so the
+  // part records it in stream order (no race with what the bridge sends next).
   const answer = useCallback((approvalId: string, approved: boolean) => {
-    void addToolApprovalResponse({ id: approvalId, approved })
     transport.respond(approvalId, approved)
-  }, [addToolApprovalResponse, transport])
+  }, [transport])
 
   const host = useMemo<ToolHost>(() => ({
     callTool: (name, args) => transport.callTool(name, args),

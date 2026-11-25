@@ -134,6 +134,12 @@ export class Turn {
     this.emit({ type: "tool-approval-request", approvalId, toolCallId: call.toolCallId })
   }
 
+  /** The person's answer, recorded in the turn itself so the tool part shows it whatever arrives next. */
+  answered(approvalId: string, approved: boolean) {
+    if (this.finished) return
+    this.emit({ type: "tool-approval-response", approvalId, approved })
+  }
+
   /** The person declined: the call never ran. */
   denied(toolCallId: string) {
     if (this.finished) return

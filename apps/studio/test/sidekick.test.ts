@@ -103,6 +103,7 @@ test("approval: the bridge's question waits for the person; Allow and Decline an
       seen.push(next.value)
     }
     expect(answer).toEqual({ outcome: { outcome: "selected", optionId: approved ? "allow" : "reject" } })
+    expect(seen).toContainEqual({ type: "tool-approval-response", approvalId: request.approvalId, approved })
     expect(seen.map((chunk) => chunk.type)).toContain(approved ? "tool-output-available" : "tool-output-denied")
   }
 })
