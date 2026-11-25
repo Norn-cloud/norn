@@ -8,8 +8,8 @@
 // reported as a violation (for telemetry), never forwarded. The component has no fetch, no storage
 // and no DOM outside its frame; calls and navigation happen only through the page machine.
 
-import type { Evaluate, Fields, Machine, MachineField, Snapshot } from "../machine/machine.ts"
-import { init, update } from "../machine/machine.ts"
+import type { Evaluate, Fields, Machine, MachineField, Snapshot } from "../../../norn-react/src/machine/machine.ts"
+import { init, update } from "../../../norn-react/src/machine/machine.ts"
 
 export type Trust = "native" | "contract_checked" | "opaque_island"
 
