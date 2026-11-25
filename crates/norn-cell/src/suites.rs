@@ -37,6 +37,8 @@ mod exact_question;
 mod exact_values;
 #[path = "../tests/export_journal.rs"]
 mod export_journal;
+#[path = "../tests/export_residue.rs"]
+mod export_residue;
 #[path = "../tests/flow_keys.rs"]
 mod flow_keys;
 #[path = "../tests/flow_run.rs"]
