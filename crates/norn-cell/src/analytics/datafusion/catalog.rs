@@ -156,14 +156,38 @@ pub(super) fn clear_segments(tx: &Transaction<'_>, table: &str, world: &str) -> 
     .map(drop)
 }
 
-/// Whether any segment names the object at `path`.
+/// Whether any record names the object at `path`: a segment, or a record
+/// (a dataset's or a landing's files) whose value holds its path.
 pub(super) fn named(conn: &Connection, path: &Path) -> Outcome<bool> {
     let count: i64 = sql(conn.query_row(
-        "SELECT count(*) FROM segment WHERE path = ?1",
+        "SELECT (SELECT count(*) FROM segment WHERE path = ?1) \
+         + (SELECT count(*) FROM meta WHERE instr(value, ?1) > 0)",
         [path.to_string_lossy()],
         |row| row.get(0),
     ))?;
     Ok(count > 0)
+}
+
+/// #1765: remove every object in `objects` no record names: what a reset
+/// unnamed, and what a crash or a refused publish left installed. Run only
+/// after the commit that unnamed them, and while the tenant is held, so no
+/// object being installed is swept; the number removed.
+pub(super) fn sweep(conn: &Connection, objects: &Path) -> Outcome<usize> {
+    let Ok(entries) = std::fs::read_dir(objects) else {
+        return Ok(0);
+    };
+    let mut removed = 0_usize;
+    for entry in entries {
+        let path = io(entry)?.path();
+        let object = path
+            .extension()
+            .is_some_and(|extension| extension == "parquet");
+        if object && !named(conn, &path)? {
+            io(std::fs::remove_file(&path))?;
+            removed = removed.saturating_add(1);
+        }
+    }
+    Ok(removed)
 }
 
 /// `key`'s value in `conn`.

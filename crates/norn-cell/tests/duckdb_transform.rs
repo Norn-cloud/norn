@@ -1,5 +1,7 @@
 //! VIEW-ENGINE-1: an admitted transform returns the same rows and row lineage
-//! from embedded `DuckDB` as from the exact interpreter over one snapshot.
+//! from an analytical engine (embedded `DuckDB`, or `DataFusion` through
+//! `duckdb_transform_datafusion`) as from the exact interpreter over one
+//! snapshot, and a plan outside the lowered subset refuses before any read.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::expect_used,
@@ -10,7 +12,10 @@
 )]
 
 use norn_cell::test_door::TestCommit as _;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+
+use super::transform_backend::{ENGINE, evaluate};
 
 use norn_cell::compute::Engine;
 use norn_cell::compute::transform::{RowAccess, TransformResult};
@@ -265,12 +270,12 @@ fn load(store: &mut CellStore, customers: &[(u8, bool)], orders: &[Order]) {
         .expect("commit");
 }
 
-fn same(exact: Result<TransformResult, CellError>, duck: Result<TransformResult, CellError>) {
+fn same(exact: Result<TransformResult, CellError>, engine: Result<TransformResult, CellError>) {
     let exact = exact.expect("exact");
-    let mut duck = duck.expect("duckdb");
-    assert_eq!(duck.engine, Engine::Duckdb);
-    duck.engine = Engine::Cell;
-    assert_eq!(exact, duck);
+    let mut engine = engine.expect("the analytical engine");
+    assert_eq!(engine.engine, ENGINE);
+    engine.engine = Engine::Cell;
+    assert_eq!(exact, engine);
 }
 
 proptest! {
@@ -296,7 +301,7 @@ proptest! {
         for plan in plans() {
             same(
                 store.evaluate_transform(&plan, WORLD, SCOPE, access),
-                store.evaluate_transform_duckdb(&plan, WORLD, SCOPE, access),
+                evaluate(&store, &plan, (WORLD, SCOPE), access),
             );
         }
     }
@@ -331,9 +336,42 @@ fn a_normalized_key_join_refuses_the_lowering_not_the_answer() {
             .is_ok()
     );
     assert!(matches!(
-        store.evaluate_transform_duckdb(&keyed, WORLD, SCOPE, |_| Ok(RowAccess::Read)),
+        evaluate(&store, &keyed, (WORLD, SCOPE), |_| Ok(RowAccess::Read)),
         Err(CellError::ComputeRefused("core.compute.unsupported_engine"))
     ));
+}
+
+/// VIEW-ENGINE-1: a plan outside the lowered subset (here, a group by a
+/// timestamp without a grain) refuses before the snapshot is read: no row is offered to the
+/// reader's access check.
+#[test]
+fn an_unsupported_plan_refuses_before_any_read() {
+    let compared = plan(
+        "late",
+        json!({
+            "order": {"op": "scan", "input": "order"},
+            "late": {"op": "aggregate", "input": "order",
+                "groupBy": [{"column": "placed_at"}],
+                "measures": [{"name": "n", "fn": "count"}]}
+        }),
+    );
+    let mut store = store();
+    load(&mut store, &[(0, true)], &[(100, 1, 1, 1, None, Some(0))]);
+    let offered = Cell::new(0_usize);
+    let refused = evaluate(&store, &compared, (WORLD, SCOPE), |_| {
+        offered.set(offered.get() + 1);
+        Ok(RowAccess::Read)
+    });
+    assert!(matches!(
+        refused,
+        Err(CellError::ComputeRefused("core.compute.unsupported_engine"))
+    ));
+    assert_eq!(offered.get(), 0, "nothing was read");
+    assert!(
+        store
+            .evaluate_transform(&compared, WORLD, SCOPE, |_| Ok(RowAccess::Read))
+            .is_ok()
+    );
 }
 
 /// VIEW-AGG-1 / METRIC-UNIT-PARTITION-1 parity: quantities aggregated per
@@ -410,7 +448,7 @@ fn quantities_grouped_by_unit_and_currency_lower_identically() {
     for plan in [&grouped, &running] {
         same(
             store.evaluate_transform(plan, WORLD, SCOPE, |_| Ok(RowAccess::Read)),
-            store.evaluate_transform_duckdb(plan, WORLD, SCOPE, |_| Ok(RowAccess::Read)),
+            evaluate(&store, plan, (WORLD, SCOPE), |_| Ok(RowAccess::Read)),
         );
     }
     // Kilograms in dollars are summed apart from pounds in either currency.

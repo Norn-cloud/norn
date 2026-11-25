@@ -12,6 +12,7 @@
 
 use std::io::BufRead;
 
+use super::super::EngineRefusal;
 use super::files::Meter;
 use super::{EXHAUSTED, Outcome, engine_error, refusal};
 
@@ -43,8 +44,9 @@ struct Parse<'m> {
     width: usize,
     content: bool,
     /// The most fields the record may have (B1): past it the record refuses
-    /// before another field is allocated.
+    /// (with `over`) before another field is allocated.
     max_fields: usize,
+    over: &'m dyn Fn() -> EngineRefusal,
 }
 
 impl Parse<'_> {
@@ -58,7 +60,7 @@ impl Parse<'_> {
 
     fn end_field(&mut self) -> Outcome<()> {
         if self.fields.len() >= self.max_fields {
-            return Err(engine_error("a CSV row has more fields than its header"));
+            return Err((self.over)());
         }
         self.fields.push(std::mem::take(&mut self.field));
         self.state = State::Start;
@@ -125,9 +127,33 @@ pub(super) fn next_record(
     meter: &Meter,
     max_fields: usize,
 ) -> Outcome<Option<Record>> {
+    next_bounded(reader, meter, max_fields, &|| {
+        engine_error("a CSV row has more fields than its header")
+    })
+}
+
+/// NB5 (#1765): the header record, of at most `max_fields` fields: a header
+/// of more is refused as a Parquet file declaring as many fields is.
+pub(super) fn next_header(
+    reader: &mut impl BufRead,
+    meter: &Meter,
+    max_fields: usize,
+) -> Outcome<Option<Record>> {
+    next_bounded(reader, meter, max_fields, &|| {
+        refusal("bulk.unsupported_encoding", super::files::STRUCTURE)
+    })
+}
+
+fn next_bounded(
+    reader: &mut impl BufRead,
+    meter: &Meter,
+    max_fields: usize,
+    over: &dyn Fn() -> EngineRefusal,
+) -> Outcome<Option<Record>> {
     let mut parse = Parse {
         meter,
         max_fields,
+        over,
         fields: Vec::new(),
         field: Vec::new(),
         state: State::Start,
@@ -187,6 +213,7 @@ mod tests {
         Caps {
             cell: bytes,
             chunk: bytes,
+            flush: bytes,
             total: u64::MAX,
             footer: 1 << 20,
             deadline: Duration::from_secs(60),

@@ -715,6 +715,22 @@ pub fn bucket(value: &Value, ty: &Type, grain: TimeGrain) -> Result<Value, EvalE
     Ok(Value::String(format!("{year:04}-{month:02}-{day:02}")))
 }
 
+/// [`bucket`] of a date's or timestamp's text: the first day of its
+/// bucket, `YYYY-MM-DD`, for engines that bucket outside this interpreter.
+///
+/// # Errors
+/// As [`bucket`].
+pub fn bucket_text(text: &str, ty: &Type, grain: TimeGrain) -> Result<String, EvalError> {
+    match bucket(&Value::String(text.to_owned()), ty, grain)? {
+        Value::String(day) => Ok(day),
+        other @ (Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::Array(_)
+        | Value::Object(_)) => Err(EvalError::Input(format!("{other:?} is not a date"))),
+    }
+}
+
 type GroupSpec = (String, Option<TimeGrain>, Type);
 type MeasureSpec = (String, AggregateFn, Option<String>, Option<Type>);
 

@@ -9,6 +9,7 @@
 //! byte-bounded batches, never a buffer of the whole file, a sort or a join.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -121,8 +122,54 @@ fn write_typed(sink: &mut Sink, table: &TableSchema, rows: &[TypedRow]) -> Outco
     sink.write(&columnar::batch(&schema, arrays)?)
 }
 
-/// Append held rows to a held-set sink.
+/// A held row's text bytes.
+pub(super) fn held_bytes(row: &HeldRow) -> usize {
+    row.values
+        .iter()
+        .flatten()
+        .fold(row.reason.len(), |total, text| {
+            total.saturating_add(text.len())
+        })
+}
+
+/// Append held rows to a held-set sink. NB3 (#1765): in slices of at most
+/// [`columnar::MAX_BATCH_BYTES`] text bytes ([`held_slices`]), so many
+/// rules' findings on wide rows never overflow a `Utf8` array's `i32`
+/// offsets.
 pub(super) fn write_held(sink: &mut Sink, table: &TableSchema, rows: &[HeldRow]) -> Outcome<()> {
+    for slice in held_slices(rows, columnar::MAX_BATCH_BYTES)? {
+        write_held_slice(sink, table, rows.get(slice).unwrap_or_default())?;
+    }
+    Ok(())
+}
+
+/// The consecutive slices of `rows` each holding at most `bound` text
+/// bytes; one row past the bound alone refuses.
+pub(super) fn held_slices(rows: &[HeldRow], bound: usize) -> Outcome<Vec<Range<usize>>> {
+    let mut slices = Vec::new();
+    let (mut start, mut bytes) = (0_usize, 0_usize);
+    for (at, row) in rows.iter().enumerate() {
+        let size = held_bytes(row);
+        if size > bound {
+            return Err(refusal(
+                super::EXHAUSTED,
+                "a held row is wider than the load's bound",
+            ));
+        }
+        if at > start && bytes.saturating_add(size) > bound {
+            slices.push(start..at);
+            (start, bytes) = (at, 0);
+        }
+        bytes = bytes.saturating_add(size);
+    }
+    if start < rows.len() {
+        slices.push(start..rows.len());
+    }
+    Ok(slices)
+}
+
+/// Append one slice of held rows, within the batch bound, as one batch.
+fn write_held_slice(sink: &mut Sink, table: &TableSchema, rows: &[HeldRow]) -> Outcome<()> {
     let schema = held_schema(table);
     let mut arrays: Vec<ArrayRef> = vec![
         Arc::new(UInt64Array::from_iter_values(rows.iter().map(|r| r.row))),
@@ -241,10 +288,10 @@ pub(super) fn stage(
             millis: 0,
         },
     };
-    let mut typed_sink = Sink::create(&staged.typed, &typed_schema(table))?;
-    let mut typing_sink = Sink::create(&staged.typing, &held_schema(table))?;
+    let mut typed_sink = Sink::staged(&staged.typed, &typed_schema(table))?;
+    let mut typing_sink = Sink::staged(&staged.typing, &held_schema(table))?;
     let findings_path = staged.findings.first().cloned().unwrap_or_default();
-    let mut findings_sink = Sink::create(&findings_path, &held_schema(table))?;
+    let mut findings_sink = Sink::staged(&findings_path, &held_schema(table))?;
     let bound =
         usize::try_from(MAX_RESIDUE_PAGES.saturating_mul(RESIDUE_PAGE_ROWS)).unwrap_or(usize::MAX);
     files::read_source(request, file, caps, &mut |chunk| {
