@@ -10,7 +10,7 @@
  * validates every one; nothing here is a second type authority.
  */
 import type { PropertyType } from "./entity.ts"
-import type { Json } from "../canonical.ts"
+import { canonicalJson, type Json } from "../canonical.ts"
 
 export type ValueSchema = StringSchema | ScalarSchema | ArraySchema | ObjectSchema | NullableSchema | JsonValueSchema
 
@@ -70,6 +70,11 @@ export type NullableSchema =
   | (Omit<ArraySchema, "type"> & { readonly type: readonly ["array", "null"] })
   | (Omit<ObjectSchema, "type"> & { readonly type: readonly ["object", "null"] })
 
+/** Strip the null member of the two-type nullable form only. */
+export function nonNull(schema: ValueSchema): ValueSchema {
+  return Array.isArray(schema.type) && schema.type.length === 2 ? { ...schema, type: schema.type[0] } as ValueSchema : schema
+}
+
 export function nullable(schema: ValueSchema): ValueSchema {
   if (schema.type === "null" || Array.isArray(schema.type)) return schema
   return { ...schema, type: [schema.type, "null"] } as NullableSchema
@@ -125,6 +130,13 @@ export function literalSchema(value: Json): ValueSchema | undefined {
  * a record field present on one side only becomes optional.
  */
 export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueSchema | string {
+  if ((Array.isArray(a.type) && a.type.length > 2) || (Array.isArray(b.type) && b.type.length > 2)) return jsonValue
+  if (a.type === "null") return nullable(b)
+  if (b.type === "null") return nullable(a)
+  if (Array.isArray(a.type) || Array.isArray(b.type)) {
+    const merged = mergeSchemas(nonNull(a), nonNull(b), path)
+    return typeof merged === "string" ? merged : nullable(merged)
+  }
   if (a.type === "string" && b.type === "string") {
     if (a.enum === undefined || b.enum === undefined) return text()
     return text([...new Set([...a.enum, ...b.enum])])
@@ -132,7 +144,7 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
   if (isNumeric(a) && isNumeric(b)) {
     const exactA = "nornType" in a ? a.nornType : undefined
     const exactB = "nornType" in b ? b.nornType : undefined
-    if (exactA !== undefined || exactB !== undefined) return JSON.stringify(exactA) === JSON.stringify(exactB) ? a : `${path}: different exact numeric contracts`
+    if (exactA !== undefined || exactB !== undefined) return exactA && exactB && canonicalJson(exactA) === canonicalJson(exactB) ? a : `${path}: different exact numeric contracts`
     return a.type === b.type ? a : number
   }
   if (a.type !== b.type) return `${path}: ${a.type} and ${b.type} have no closed union`
@@ -172,24 +184,4 @@ export function hasExact(schema: ValueSchema): boolean {
   if ("nornType" in schema && schema.nornType !== undefined) return true
   if ("properties" in schema) return Object.values(schema.properties).some(hasExact)
   return "items" in schema && hasExact(schema.items)
-}
-
-/** FOLD-OPERANDS: every value admitted by actual also satisfies expected. */
-export function acceptsSchema(expected: ValueSchema, actual: ValueSchema): boolean {
-  const nonnull = (s: ValueSchema): ValueSchema => Array.isArray(s.type) ? { ...s, type: s.type[0] } as ValueSchema : s
-  if (actual.type === "null") return expected.type === "null" || Array.isArray(expected.type)
-  if (Array.isArray(actual.type)) return Array.isArray(expected.type) && acceptsSchema(nonnull(expected), nonnull(actual))
-  if (Array.isArray(expected.type)) return acceptsSchema(nonnull(expected), actual)
-  if (expected.type === "number" && actual.type === "integer") return true
-  if (expected.type !== actual.type) return false
-  if (expected.type === "string" && actual.type === "string") {
-    const values = expected.enum
-    return values === undefined || (actual.enum !== undefined && actual.enum.every(v => values.includes(v)))
-  }
-  if (expected.type === "array" && actual.type === "array") return acceptsSchema(expected.items, actual.items)
-  if (expected.type === "object" && actual.type === "object") {
-    return (expected.required ?? []).every(k => actual.required?.includes(k))
-      && Object.entries(actual.properties).every(([k, v]) => expected.properties[k] !== undefined && acceptsSchema(expected.properties[k], v))
-  }
-  return true
 }

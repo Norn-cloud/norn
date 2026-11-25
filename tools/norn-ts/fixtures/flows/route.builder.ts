@@ -8,6 +8,7 @@ export default flow({ id: "billing.route", version: "1.0.0" }, [
   route([
     { when: X.eq(X.ref("invoice", "status"), X.lit("paid")), then: [succeed(X.record({ outcome: X.lit("already-paid") }))] },
     { when: X.eq(X.ref("invoice", "status"), X.lit("draft")), then: [succeed(X.record({ outcome: X.lit("not-issued") }))] },
+    { when: X.eq(X.ref("invoice", "status"), X.lit("open")), then: [] },
   ]),
   route(
     [

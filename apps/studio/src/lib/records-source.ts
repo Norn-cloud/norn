@@ -3,7 +3,7 @@ import { CellUnavailable, parseUnavailableDetail, readStudioScope, scopedHostFet
 import { readDocument, type Read } from "./exact.ts"
 import { nextCursor, recordsPath, servedQuery, snapshotMoved, totalOf, type RecordsQuery, type Served, type Total } from "./records-query.ts"
 import { currentMode } from "./live-transport.ts"
-import { transport, type ObjectPage } from "./transport.ts"
+import { recordedTransport, type ObjectPage } from "./transport.ts"
 
 /** One diagnostic of a refusal, its pointer into the request (`/sort/0`, `/filter/all/1/value`, `/after`). */
 export type QueryDiagnostic = Diagnostic
@@ -34,10 +34,14 @@ export interface RecordsDeps {
   readonly recorded: (objectType: string, after?: string) => Promise<Read<ObjectPage> | null>
 }
 
-/** The recording is read only when no cell is connected: a connected cell's 404 is its answer, never replaced. */
+/**
+ * The recording is read only when no cell is connected: a connected cell's 404 is its answer, never
+ * replaced. It is read from the recording itself, never through the mode-deciding transport, so a
+ * mode decided live between the check and the read cannot answer here unscoped.
+ */
 const defaults: RecordsDeps = {
   fetcher: (input, init) => fetch(input, init),
-  recorded: async (objectType, after) => (await currentMode()).kind === "live" ? null : transport.objectPage(objectType, after),
+  recorded: async (objectType, after) => (await currentMode()).kind === "live" ? null : recordedTransport.objectPage(objectType, after),
 }
 
 function recordedPage(read: Read<ObjectPage> | null): RecordsRead {

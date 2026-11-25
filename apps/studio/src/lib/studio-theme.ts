@@ -1,4 +1,6 @@
 import type { Skin } from "./appearance.tsx"
+import { canonicalColor, contrastOn, fade, over, parseColor, type Color } from "./color.ts"
+import PALETTES from "./theme-palettes.json"
 
 /**
  * Semantic CSS custom properties a custom StudioTheme JSON may override.
@@ -105,153 +107,11 @@ const APPLIED_TOKENS_ATTR = "customThemeTokens"
 /** Effective built-in base skin used identically for validation and rendering. */
 export const effectiveBaseSkin = (theme: Pick<StudioTheme, "baseSkin">): Skin => theme.baseSkin ?? "polar"
 
-/** Complete base token palettes matching `apps/studio/src/index.css` for accurate WCAG AA validation. */
-const BASE_PALETTES: Record<Skin, Record<"light" | "dark", Record<string, string>>> = {
-  polar: {
-    light: {
-      shell: "#f6f6f8", canvas: "#f6f6f8", background: "#ffffff", foreground: "#18181b",
-      card: "#ffffff", "card-foreground": "#18181b", well: "#f7f7f9",
-      popover: "#ffffff", "popover-foreground": "#18181b",
-      primary: "#18181b", "primary-foreground": "#fafafa",
-      action: "#18181b", "action-hover": "#2c2c32", "action-foreground": "#fafafa",
-      secondary: "#f4f4f6", "secondary-foreground": "#18181b",
-      muted: "#f4f4f6", "muted-foreground": "#585861",
-      accent: "#ededf0", "accent-foreground": "#18181b", "surface-subtle": "#f5f5f7",
-      sidebar: "#f6f6f8", "sidebar-foreground": "#18181b",
-      "sidebar-accent": "#ebebef", "sidebar-accent-foreground": "#18181b",
-      ring: "#52525b", link: "#18181b", border: "#e5e5ea",
-      destructive: "#b83228", "destructive-foreground": "#ffffff", "destructive-text": "#b83228",
-      success: "#1f7a4d", warning: "#8a5600", knot: "#5b52f0",
-      "dock-surface": "#1d1d20", "dock-well": "#34343a", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#e4e4e7",
-    },
-    dark: {
-      shell: "#0a0a0b", canvas: "#0a0a0b", background: "#111113", foreground: "#fafafa",
-      card: "#161618", "card-foreground": "#fafafa", well: "#1b1b1e",
-      popover: "#1c1c20", "popover-foreground": "#fafafa",
-      primary: "#f4f4f5", "primary-foreground": "#141416",
-      action: "#f4f4f5", "action-hover": "#e4e4e7", "action-foreground": "#141416",
-      secondary: "#202024", "secondary-foreground": "#fafafa",
-      muted: "#202024", "muted-foreground": "#9d9da6",
-      accent: "#26262b", "accent-foreground": "#fafafa", "surface-subtle": "#1c1c1f",
-      sidebar: "#0a0a0b", "sidebar-foreground": "#fafafa",
-      "sidebar-accent": "#1d1d21", "sidebar-accent-foreground": "#fafafa",
-      ring: "#a1a1aa", link: "#e4e4e7", border: "#26262b",
-      destructive: "#eb7168", "destructive-foreground": "#0b0b0e", "destructive-text": "#f07b73",
-      success: "#3ccf8e", warning: "#f0b04a", knot: "#7c74ff",
-      "dock-surface": "#222226", "dock-well": "#3a3a41", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#93b4ff",
-    },
-  },
-  open: {
-    light: {
-      shell: "#f6f6f7", canvas: "#ffffff", background: "#ffffff", foreground: "#1b1b1d",
-      card: "#ffffff", "card-foreground": "#1b1b1d", well: "#f5f5f5",
-      popover: "#ffffff", "popover-foreground": "#1b1b1d",
-      primary: "#2e60e0", "primary-foreground": "#ffffff",
-      action: "#2e60e0", "action-hover": "#2451c7", "action-foreground": "#ffffff",
-      secondary: "#f5f5f5", "secondary-foreground": "#1b1b1d",
-      muted: "#f5f5f5", "muted-foreground": "#5c5c63",
-      accent: "#eeeeee", "accent-foreground": "#1b1b1d", "surface-subtle": "#f5f5f5",
-      sidebar: "#f6f6f7", "sidebar-foreground": "#1b1b1d",
-      "sidebar-accent": "#ececef", "sidebar-accent-foreground": "#1b1b1d",
-      ring: "#2e60e0", link: "#2451c7", border: "#ebebeb",
-      destructive: "#b83228", "destructive-foreground": "#ffffff", "destructive-text": "#b83228",
-      success: "#1f7a4d", warning: "#8a5600", knot: "#5b52f0",
-      "dock-surface": "#1d1d20", "dock-well": "#34343a", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#93b4ff",
-    },
-    dark: {
-      shell: "#09090a", canvas: "#0d0d0e", background: "#0d0d0e", foreground: "#ececee",
-      card: "#151517", "card-foreground": "#ececee", well: "#1c1c1f",
-      popover: "#19191c", "popover-foreground": "#ececee",
-      primary: "#2e60e0", "primary-foreground": "#ffffff",
-      action: "#6b98ff", "action-hover": "#2451c7", "action-foreground": "#ffffff",
-      secondary: "#1c1c1f", "secondary-foreground": "#ececee",
-      muted: "#1c1c1f", "muted-foreground": "#9b9ba3",
-      accent: "#232327", "accent-foreground": "#ececee", "surface-subtle": "#1c1c1f",
-      sidebar: "#09090a", "sidebar-foreground": "#ececee",
-      "sidebar-accent": "#18181b", "sidebar-accent-foreground": "#ececee",
-      ring: "#5b8cff", link: "#7da4ff", border: "#232326",
-      destructive: "#eb7168", "destructive-foreground": "#0b0b0e", "destructive-text": "#f07b73",
-      success: "#3ccf8e", warning: "#f0b04a", knot: "#7c74ff",
-      "dock-surface": "#222226", "dock-well": "#3a3a41", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#93b4ff",
-    },
-  },
-  luma: {
-    light: {
-      shell: "#f3f4f6", canvas: "#f3f4f6", background: "#ffffff", foreground: "#1b1b1d",
-      card: "#fafafb", "card-foreground": "#1b1b1d", well: "#fafafb",
-      popover: "#ffffff", "popover-foreground": "#1b1b1d",
-      primary: "#554ce8", "primary-foreground": "#ffffff",
-      action: "#554ce8", "action-hover": "#4940dc", "action-foreground": "#ffffff",
-      secondary: "#f5f5f5", "secondary-foreground": "#1b1b1d",
-      muted: "#f1f2f5", "muted-foreground": "#5c5c63",
-      accent: "#eceef2", "accent-foreground": "#1b1b1d", "surface-subtle": "#f4f5f7",
-      sidebar: "#f3f4f6", "sidebar-foreground": "#1b1b1d",
-      "sidebar-accent": "#e8eaf0", "sidebar-accent-foreground": "#1b1b1d",
-      ring: "#554ce8", link: "#4f46e5", border: "#e4e5ea",
-      destructive: "#b83228", "destructive-foreground": "#ffffff", "destructive-text": "#b83228",
-      success: "#1f7a4d", warning: "#8a5600", knot: "#5b52f0",
-      "dock-surface": "#1d1d20", "dock-well": "#34343a", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#93b4ff",
-    },
-    dark: {
-      shell: "#0b0b0e", canvas: "#0b0b0e", background: "#111115", foreground: "#ececee",
-      card: "#17171d", "card-foreground": "#ececee", well: "#17171d",
-      popover: "#1f1f27", "popover-foreground": "#ececee",
-      primary: "#6258ec", "primary-foreground": "#ffffff",
-      action: "#7c74ff", "action-hover": "#5349db", "action-foreground": "#ffffff",
-      secondary: "#1c1c1f", "secondary-foreground": "#ececee",
-      muted: "#1d1d24", "muted-foreground": "#9b9ba3",
-      accent: "#23232d", "accent-foreground": "#ececee", "surface-subtle": "#1c1c23",
-      sidebar: "#0b0b0e", "sidebar-foreground": "#ececee",
-      "sidebar-accent": "#18181f", "sidebar-accent-foreground": "#ececee",
-      ring: "#7c74ff", link: "#938cff", border: "#262730",
-      destructive: "#eb7168", "destructive-foreground": "#0b0b0e", "destructive-text": "#f07b73",
-      success: "#3ccf8e", warning: "#f0b04a", knot: "#7c74ff",
-      "dock-surface": "#222226", "dock-well": "#3a3a41", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#93b4ff",
-    },
-  },
-  glass: {
-    light: {
-      shell: "#eef1f8", canvas: "#eef1f8", background: "rgb(255 255 255 / 0.74)", foreground: "#1b1b1d",
-      card: "rgb(255 255 255 / 0.62)", "card-foreground": "#1b1b1d", well: "rgb(244 246 252 / 0.65)",
-      popover: "rgb(255 255 255 / 0.88)", "popover-foreground": "#1b1b1d",
-      primary: "#2e60e0", "primary-foreground": "#ffffff",
-      action: "#2e60e0", "action-hover": "#2451c7", "action-foreground": "#ffffff",
-      secondary: "#f5f5f5", "secondary-foreground": "#1b1b1d",
-      muted: "rgb(236 240 250 / 0.72)", "muted-foreground": "#5c5c63",
-      accent: "rgb(228 233 248 / 0.78)", "accent-foreground": "#1b1b1d", "surface-subtle": "rgb(241 244 252 / 0.68)",
-      sidebar: "rgb(246 248 254 / 0.62)", "sidebar-foreground": "#1b1b1d",
-      "sidebar-accent": "rgb(255 255 255 / 0.72)", "sidebar-accent-foreground": "#1b1b1d",
-      ring: "#2e60e0", link: "#2451c7", border: "#d8e0f2",
-      destructive: "#b83228", "destructive-foreground": "#ffffff", "destructive-text": "#b83228",
-      success: "#1f7a4d", warning: "#8a5600", knot: "#5b52f0",
-      "dock-surface": "rgb(24 26 36 / 0.82)", "dock-well": "#34343a", "dock-foreground": "#ffffff",
-      "dock-muted": "#babac2", "dock-ring": "#93b4ff",
-    },
-    dark: {
-      shell: "#0b0d17", canvas: "#0b0d17", background: "rgb(18 21 34 / 0.72)", foreground: "#ececee",
-      card: "rgb(24 28 44 / 0.58)", "card-foreground": "#ececee", well: "rgb(30 35 54 / 0.62)",
-      popover: "rgb(26 30 48 / 0.88)", "popover-foreground": "#ececee",
-      primary: "#2e60e0", "primary-foreground": "#ffffff",
-      action: "#6b98ff", "action-hover": "#2451c7", "action-foreground": "#ffffff",
-      secondary: "#1c1c1f", "secondary-foreground": "#ececee",
-      muted: "rgb(30 34 54 / 0.68)", "muted-foreground": "#9b9ba3",
-      accent: "rgb(42 48 74 / 0.72)", "accent-foreground": "#ececee", "surface-subtle": "rgb(30 35 54 / 0.62)",
-      sidebar: "rgb(15 18 30 / 0.6)", "sidebar-foreground": "#ececee",
-      "sidebar-accent": "rgb(255 255 255 / 0.09)", "sidebar-accent-foreground": "#ececee",
-      ring: "#5b8cff", link: "#7da4ff", border: "#2b314a",
-      destructive: "#eb7168", "destructive-foreground": "#0b0b0e", "destructive-text": "#f07b73",
-      success: "#3ccf8e", warning: "#f0b04a", knot: "#7c74ff",
-      "dock-surface": "rgb(18 20 34 / 0.8)", "dock-well": "#3a3a41", "dock-foreground": "#ffffff",
-      "dock-muted": "#a5a5ad", "dock-ring": "#93b4ff",
-    },
-  },
-}
+/**
+ * Every built-in skin's painted palette, generated from `index.css` by `scripts/theme-palettes.ts`
+ * (`test/theme-palettes.test.ts` fails on drift), so the gate validates the colours Studio renders.
+ */
+const BASE_PALETTES = PALETTES as unknown as Record<Skin, Record<"light" | "dark", Record<StudioThemeToken, string>>>
 
 /** Curated starter JSON themes users can apply, inspect, customize, or export. */
 export const STUDIO_THEME_PRESETS: readonly StudioTheme[] = [
@@ -370,92 +230,19 @@ export const STUDIO_THEME_PRESETS: readonly StudioTheme[] = [
   },
 ]
 
-const HEX_SHORT = /^#([0-9a-fA-F]{3})$/
-const HEX_FULL = /^#([0-9a-fA-F]{6})$/
-const RGB_FUNC = /^rgba?\(\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})(?:\s*[,/]\s*([01](?:\.\d+)?|\.\d+))?\s*\)$/
-const SAFE_COLOR_CHARS = /^[#a-zA-Z0-9(),.%/\s-]+$/
-
-interface Rgba {
-  readonly r: number
-  readonly g: number
-  readonly b: number
-  readonly a: number
-}
-
-const OPAQUE_LIGHT: Rgba = { r: 255, g: 255, b: 255, a: 1 }
-const OPAQUE_DARK: Rgba = { r: 0, g: 0, b: 0, a: 1 }
-
-/** Parse hex (`#rgb` or `#rrggbb`) or `rgb(...)` / `rgba(...)` into sRGB channels. */
-export function parseColorRgba(raw: string): Rgba | null {
-  const value = raw.trim()
-  const short = HEX_SHORT.exec(value)
-  if (short) {
-    const [r, g, b] = short[1]!.split("").map((ch) => Number.parseInt(ch + ch, 16))
-    return { r: r!, g: g!, b: b!, a: 1 }
-  }
-  const full = HEX_FULL.exec(value)
-  if (full) {
-    const hex = full[1]!
-    return {
-      r: Number.parseInt(hex.slice(0, 2), 16),
-      g: Number.parseInt(hex.slice(2, 4), 16),
-      b: Number.parseInt(hex.slice(4, 6), 16),
-      a: 1,
-    }
-  }
-  const rgb = RGB_FUNC.exec(value)
-  if (rgb) {
-    const r = Number(rgb[1])
-    const g = Number(rgb[2])
-    const b = Number(rgb[3])
-    const a = rgb[4] !== undefined ? Number(rgb[4]) : 1
-    if (r > 255 || g > 255 || b > 255 || Number.isNaN(a) || a < 0 || a > 1) return null
-    return { r, g, b, a }
-  }
-  return null
-}
-
-function compositeOver(fg: Rgba, bg: Rgba): Rgba {
-  if (fg.a >= 1) return fg
-  const inv = 1 - fg.a
-  return {
-    r: Math.round(fg.r * fg.a + bg.r * inv),
-    g: Math.round(fg.g * fg.a + bg.g * inv),
-    b: Math.round(fg.b * fg.a + bg.b * inv),
-    a: 1,
-  }
-}
-
-function relativeLuminance({ r, g, b }: Rgba): number {
-  const toLin = (v: number) => {
-    const s = v / 255
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b)
-}
-
-/** WCAG 2.1 contrast ratio between two opaque or alpha-composited colors. */
-export function colorContrastRatio(fg: Rgba, bg: Rgba): number {
-  const flatFg = compositeOver(fg, bg)
-  const l1 = relativeLuminance(flatFg)
-  const l2 = relativeLuminance(bg)
-  const [hi, lo] = l1 >= l2 ? [l1, l2] : [l2, l1]
-  return (hi + 0.05) / (lo + 0.05)
-}
+const OPAQUE_LIGHT = parseColor("#ffffff")!
+const OPAQUE_DARK = parseColor("#000000")!
+const DARK_INK = parseColor("#141416")!
+const LIGHT_INK = parseColor("#fafafa")!
 
 /** Pick crisp dark or light foreground ink for a shorthand `accent` override. */
-function autoInkFor(color: Rgba): string {
-  const darkInk: Rgba = { r: 20, g: 20, b: 22, a: 1 }
-  const lightInk: Rgba = { r: 250, g: 250, b: 250, a: 1 }
-  return colorContrastRatio(lightInk, color) >= colorContrastRatio(darkInk, color) ? "#fafafa" : "#141416"
+function autoInkFor(color: Color): string {
+  return contrastOn(LIGHT_INK, color) >= contrastOn(DARK_INK, color) ? "#fafafa" : "#141416"
 }
 
-/** Validate a single CSS color token value — strictly hex or rgb()/rgba() to guarantee WCAG AA verifiability and zero CSS injection. */
-function isSafeThemeColor(value: unknown): value is string {
-  if (typeof value !== "string") return false
-  const trimmed = value.trim()
-  if (trimmed === "" || trimmed.length > 64 || !SAFE_COLOR_CHARS.test(trimmed)) return false
-  return parseColorRgba(trimmed) !== null
+/** A theme colour in canonical CSS (`#rrggbb` or `rgba(…)`), or null when it isn't a CSS colour. */
+function themeColor(value: unknown): string | null {
+  return typeof value === "string" ? canonicalColor(value) : null
 }
 
 function validateTokenMap(
@@ -465,7 +252,7 @@ function validateTokenMap(
 ): StudioThemeTokenMap {
   if (input === undefined) return {}
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    issues.push({ path: pathPrefix, message: "Expected an object mapping semantic token names to hex or rgb() colors." })
+    issues.push({ path: pathPrefix, message: "Expected an object mapping semantic token names to CSS colors." })
     return {}
   }
   const clean: Record<string, string> = {}
@@ -475,11 +262,12 @@ function validateTokenMap(
       issues.push({ path: `${pathPrefix}.${rawKey}`, message: `Unknown or disallowed theme token "${rawKey}".` })
       continue
     }
-    if (!isSafeThemeColor(rawVal)) {
-      issues.push({ path: `${pathPrefix}.${key}`, message: `Invalid color value for "${key}". Use #rrggbb, #rgb, or rgb(...).` })
+    const color = themeColor(rawVal)
+    if (color === null) {
+      issues.push({ path: `${pathPrefix}.${key}`, message: `Invalid color value for "${key}". Use a CSS color such as #rrggbb, rgb(…), hsl(…) or oklch(…).` })
       continue
     }
-    clean[key] = rawVal.trim()
+    clean[key] = color
   }
   return clean
 }
@@ -492,7 +280,7 @@ export function resolveCustomThemeTokens(theme: StudioTheme, scheme: "light" | "
     overrides.shell = theme.canvas
   }
   if (theme.accent) {
-    const parsed = parseColorRgba(theme.accent)
+    const parsed = parseColor(theme.accent)
     const ink = parsed ? autoInkFor(parsed) : "#ffffff"
     overrides.primary = theme.accent
     overrides["primary-foreground"] = ink
@@ -508,94 +296,115 @@ export function resolveCustomThemeTokens(theme: StudioTheme, scheme: "light" | "
   return overrides
 }
 
-/** Verify WCAG AA contrast ratios across all rendered surface/foreground pairs & button hover states. */
+/**
+ * One surface as Studio paints it: its layers from the bottom up, each a token at an optional
+ * alpha (Tailwind's `/p` modifier, per scheme when `dark:` changes it), over the scheme's canvas.
+ */
+type Alpha = number | { readonly light: number; readonly dark: number }
+type Surface = readonly (StudioThemeToken | readonly [StudioThemeToken, Alpha])[]
+
+const SHELL: Surface = ["canvas", "shell"]
+const BG: Surface = [...SHELL, "background"]
+const CARD: Surface = [...BG, "card"]
+const POPOVER: Surface = [...BG, "popover"]
+const SIDEBAR: Surface = [...SHELL, "sidebar"]
+const DOCK: Surface = [...BG, "dock-surface"]
+
+/**
+ * The ink/surface pairs Studio renders (from the components' `bg-*`/`text-*` pairs), each with its
+ * WCAG floor: 4.5:1 for text, 3:1 for focus rings and status icons. A partial-alpha fill sits
+ * between its host and the full fill, so gating both ends covers it.
+ */
+const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] = [
+  ["foreground", "background", BG, 4.5],
+  ["foreground", "card", CARD, 4.5],
+  ["foreground", "well", [...CARD, "well"], 4.5],
+  ["foreground", "well-hover", [...CARD, "well-hover"], 4.5],
+  // The map's node cards: `hover:bg-well-hover` replaces their `bg-card`, so the hover lies on the page.
+  ["foreground", "well-hover over background", [...BG, "well-hover"], 4.5],
+  // A hovered row inside a well: a translucent `well-hover` lies over the well, not the card.
+  ["foreground", "well-hover over well", [...CARD, "well", "well-hover"], 4.5],
+  ["foreground", "muted", [...CARD, "muted"], 4.5],
+  ["foreground", "popover", POPOVER, 4.5],
+  ["foreground", "secondary", [...BG, "secondary"], 4.5],
+  ["foreground", "accent", [...BG, "accent"], 4.5],
+  ["foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
+  ["foreground", "surface-subtle over card", [...CARD, "surface-subtle"], 4.5],
+  ["foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["card-foreground", "card", CARD, 4.5],
+  ["popover-foreground", "popover", POPOVER, 4.5],
+  ["muted-foreground", "background", BG, 4.5],
+  ["muted-foreground", "card", CARD, 4.5],
+  ["muted-foreground", "well", [...CARD, "well"], 4.5],
+  ["muted-foreground", "well-hover", [...CARD, "well-hover"], 4.5],
+  ["muted-foreground", "well-hover over background", [...BG, "well-hover"], 4.5],
+  ["muted-foreground", "well-hover over well", [...CARD, "well", "well-hover"], 4.5],
+  ["muted-foreground", "muted", [...CARD, "muted"], 4.5],
+  ["muted-foreground", "popover", POPOVER, 4.5],
+  ["muted-foreground", "accent", [...BG, "accent"], 4.5],
+  ["muted-foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
+  ["muted-foreground", "sidebar", SIDEBAR, 4.5],
+  ["muted-foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["secondary-foreground", "secondary", [...BG, "secondary"], 4.5],
+  ["secondary-foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
+  ["accent-foreground", "accent", [...BG, "accent"], 4.5],
+  ["sidebar-foreground", "sidebar", SIDEBAR, 4.5],
+  ["sidebar-foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["sidebar-accent-foreground", "sidebar-accent", [...SIDEBAR, "sidebar-accent"], 4.5],
+  ["primary-foreground", "primary", [...BG, "primary"], 4.5],
+  ["primary-foreground", "action-hover", [...BG, "action-hover"], 4.5],
+  ["action", "background", BG, 4.5],
+  ["action", "card", CARD, 4.5],
+  ["action", "popover", POPOVER, 4.5],
+  ["action", "sidebar", SIDEBAR, 4.5],
+  // The rail's active and hover items: `bg-action/12 hover:bg-action/15 dark:bg-action/18`.
+  ["action", "action/15 over sidebar", [...SIDEBAR, ["action", { light: 0.15, dark: 0.18 }]], 4.5],
+  ["link", "background", BG, 4.5],
+  ["link", "card", CARD, 4.5],
+  ["link", "popover", POPOVER, 4.5],
+  // The assistant's done/failed status icons (a check or a cross beside the step's words).
+  ["background", "success status icon", [...BG, "success"], 3],
+  ["background", "destructive status icon", [...BG, "destructive"], 3],
+  ["destructive-foreground", "destructive", [...BG, "destructive"], 4.5],
+  ["destructive", "destructive/10 over popover", [...POPOVER, ["destructive", 0.1]], 4.5],
+  ["destructive-text", "background", BG, 4.5],
+  ["destructive-text", "card", CARD, 4.5],
+  ["destructive-text", "popover", POPOVER, 4.5],
+  ["destructive-text", "destructive/10 over background", [...BG, ["destructive", 0.1]], 4.5],
+  ["destructive-text", "destructive/10 over card", [...CARD, ["destructive", 0.1]], 4.5],
+  ["destructive-text", "destructive/10 over popover", [...POPOVER, ["destructive", 0.1]], 4.5],
+  ["dock-foreground", "dock-surface", DOCK, 4.5],
+  ["dock-foreground", "dock-well", [...DOCK, "dock-well"], 4.5],
+  ["dock-foreground", "dock-active", [...DOCK, "dock-active"], 4.5],
+  ["dock-muted", "dock-surface", DOCK, 4.5],
+  ["dock-muted", "dock-well", [...DOCK, "dock-well"], 4.5],
+  ["ring", "background", BG, 3],
+  ["dock-ring", "dock-surface", DOCK, 3],
+]
+
+/** The effective palette a theme paints for one scheme: the base skin's rendered palette under its overrides. */
+export function effectiveThemePalette(theme: StudioTheme, scheme: "light" | "dark"): Readonly<Record<StudioThemeToken, string>> {
+  return { ...BASE_PALETTES[effectiveBaseSkin(theme)][scheme], ...resolveCustomThemeTokens(theme, scheme) }
+}
+
+/** Verify WCAG AA contrast for every ink/surface pair Studio renders, in each scheme the theme applies to. */
 export function validateStudioThemeContrast(theme: StudioTheme): readonly StudioThemeValidationIssue[] {
   const issues: StudioThemeValidationIssue[] = []
-  const baseSkin = effectiveBaseSkin(theme)
   const schemes: readonly ("light" | "dark")[] = theme.appearance ? [theme.appearance] : ["light", "dark"]
-
   for (const scheme of schemes) {
-    const overrides = resolveCustomThemeTokens(theme, scheme)
-    const effective = { ...BASE_PALETTES[baseSkin][scheme], ...overrides }
-    const osBackdrop = scheme === "dark" ? OPAQUE_DARK : OPAQUE_LIGHT
-    const at = (token: string, backdrop: Rgba): Rgba => compositeOver(parseColorRgba(effective[token]!)!, backdrop)
-
-    // `body` paints `bg-canvas` (`index.css`), so translucent shell/background layers composite over `canvas`.
-    const canvas = at("canvas", osBackdrop)
-    const shell = at("shell", canvas)
-    const bg = at("background", shell)
-    const card = at("card", bg)
-    const well = at("well", card)
-    const muted = at("muted", card)
-    const popover = at("popover", bg)
-    const secondary = at("secondary", bg)
-    const accent = at("accent", bg)
-    const sidebar = at("sidebar", shell)
-    const sidebarAccent = at("sidebar-accent", sidebar)
-    const primary = at("primary", bg)
-    const actionHover = at("action-hover", bg)
-    const destructive = at("destructive", bg)
-    const destructiveRaw = parseColorRgba(effective.destructive!)!
-    const destructiveTintBg = compositeOver({ ...destructiveRaw, a: destructiveRaw.a * 0.1 }, bg)
-    const destructiveTintCard = compositeOver({ ...destructiveRaw, a: destructiveRaw.a * 0.1 }, card)
-    const destructiveTintPopover = compositeOver({ ...destructiveRaw, a: destructiveRaw.a * 0.1 }, popover)
-    const dockSurface = at("dock-surface", bg)
-    const dockWell = at("dock-well", dockSurface)
-
-    const checks: [string, string, Rgba, number][] = [
-      ["foreground (on background)", effective.foreground!, bg, 4.5],
-      ["foreground (on card)", effective.foreground!, card, 4.5],
-      ["foreground (on well)", effective.foreground!, well, 4.5],
-      ["foreground (on muted)", effective.foreground!, muted, 4.5],
-      ["foreground (on popover)", effective.foreground!, popover, 4.5],
-      ["foreground (on secondary)", effective.foreground!, secondary, 4.5],
-      ["foreground (on accent)", effective.foreground!, accent, 4.5],
-      ["foreground (on sidebar-accent)", effective.foreground!, sidebarAccent, 4.5],
-      ["card-foreground (on card)", effective["card-foreground"]!, card, 4.5],
-      ["popover-foreground (on popover)", effective["popover-foreground"]!, popover, 4.5],
-      ["muted-foreground (on background)", effective["muted-foreground"]!, bg, 4.5],
-      ["muted-foreground (on card)", effective["muted-foreground"]!, card, 4.5],
-      ["muted-foreground (on well)", effective["muted-foreground"]!, well, 4.5],
-      ["muted-foreground (on muted)", effective["muted-foreground"]!, muted, 4.5],
-      ["muted-foreground (on popover)", effective["muted-foreground"]!, popover, 4.5],
-      ["muted-foreground (on sidebar)", effective["muted-foreground"]!, sidebar, 4.5],
-      ["secondary-foreground (on secondary)", effective["secondary-foreground"]!, secondary, 4.5],
-      ["accent-foreground (on accent)", effective["accent-foreground"]!, accent, 4.5],
-      ["sidebar-foreground (on sidebar)", effective["sidebar-foreground"]!, sidebar, 4.5],
-      ["sidebar-foreground (on sidebar-accent)", effective["sidebar-foreground"]!, sidebarAccent, 4.5],
-      ["sidebar-accent-foreground (on sidebar-accent)", effective["sidebar-accent-foreground"]!, sidebarAccent, 4.5],
-      ["primary-foreground (on primary)", effective["primary-foreground"]!, primary, 4.5],
-      ["primary-foreground (on action-hover)", effective["primary-foreground"]!, actionHover, 4.5],
-      ["action (on background)", effective.action!, bg, 4.5],
-      ["action (on card)", effective.action!, card, 4.5],
-      ["action (on popover)", effective.action!, popover, 4.5],
-      ["link (on background)", effective.link!, bg, 4.5],
-      ["link (on card)", effective.link!, card, 4.5],
-      ["link (on popover)", effective.link!, popover, 4.5],
-      ["destructive-foreground (on destructive)", effective["destructive-foreground"]!, destructive, 4.5],
-      ["destructive-text (on background)", effective["destructive-text"]!, bg, 4.5],
-      ["destructive-text (on card)", effective["destructive-text"]!, card, 4.5],
-      ["destructive-text (on popover)", effective["destructive-text"]!, popover, 4.5],
-      ["destructive-text (on destructive/10 over background)", effective["destructive-text"]!, destructiveTintBg, 4.5],
-      ["destructive-text (on destructive/10 over card)", effective["destructive-text"]!, destructiveTintCard, 4.5],
-      ["destructive-text (on destructive/10 over popover)", effective["destructive-text"]!, destructiveTintPopover, 4.5],
-      ["dock-foreground (on dock-surface)", effective["dock-foreground"]!, dockSurface, 4.5],
-      ["dock-foreground (on dock-well)", effective["dock-foreground"]!, dockWell, 4.5],
-      ["dock-muted (on dock-surface)", effective["dock-muted"]!, dockSurface, 4.5],
-      ["ring (on background)", effective.ring!, bg, 3.0],
-      ["dock-ring (on dock-surface)", effective["dock-ring"]!, dockSurface, 3.0],
-    ]
-    if (overrides["action-foreground"] !== undefined) {
-      checks.push(["action-foreground (on action)", effective["action-foreground"]!, at("action", bg), 4.5])
-    }
-    for (const [label, fgRaw, host, floor] of checks) {
-      const fg = parseColorRgba(fgRaw)
-      if (!fg) continue
-      const ratio = colorContrastRatio(fg, host)
+    const palette = effectiveThemePalette(theme, scheme)
+    const color = (token: StudioThemeToken): Color => parseColor(palette[token])!
+    // `body` paints `bg-canvas` over the browser's opaque page, so every layer composites from there.
+    const paint = (surface: Surface): Color => surface.reduce<Color>((below, layer) => {
+      const [token, alpha] = typeof layer === "string" ? [layer, 1] : layer
+      return over(fade(color(token), typeof alpha === "number" ? alpha : alpha[scheme]), below)
+    }, scheme === "dark" ? OPAQUE_DARK : OPAQUE_LIGHT)
+    for (const [ink, label, surface, floor] of PAIRS) {
+      const ratio = contrastOn(color(ink), paint(surface))
       if (ratio < floor) {
         issues.push({
-          path: `contrast.${scheme}.${label}`,
-          message: `${scheme} ${label} contrast is ${ratio.toFixed(2)}:1 (WCAG AA requires >= ${floor.toFixed(1)}:1).`,
+          path: `contrast.${scheme}.${ink} (on ${label})`,
+          message: `${scheme} ${ink} (on ${label}) contrast is ${ratio.toFixed(2)}:1 (WCAG AA requires >= ${floor.toFixed(1)}:1).`,
         })
       }
     }
@@ -647,19 +456,15 @@ export function parseStudioTheme(raw: string | unknown): StudioThemeParseResult 
   }
   let accent: string | undefined
   if (obj.accent !== undefined) {
-    if (!isSafeThemeColor(obj.accent)) {
-      issues.push({ path: "accent", message: "accent must be a valid hex or rgb() color." })
-    } else {
-      accent = obj.accent.trim()
-    }
+    const color = themeColor(obj.accent)
+    if (color === null) issues.push({ path: "accent", message: "accent must be a CSS color such as #rrggbb, rgb(…) or oklch(…)." })
+    else accent = color
   }
   let canvas: string | undefined
   if (obj.canvas !== undefined) {
-    if (!isSafeThemeColor(obj.canvas)) {
-      issues.push({ path: "canvas", message: "canvas must be a valid hex or rgb() color." })
-    } else {
-      canvas = obj.canvas.trim()
-    }
+    const color = themeColor(obj.canvas)
+    if (color === null) issues.push({ path: "canvas", message: "canvas must be a CSS color such as #rrggbb, rgb(…) or oklch(…)." })
+    else canvas = color
   }
 
   const colors = validateTokenMap(obj.colors, "colors", issues)
@@ -714,9 +519,10 @@ export function applyCustomTheme(
   }
   const scheme: "light" | "dark" = theme.appearance ?? (isDark ? "dark" : "light")
   const tokens = resolveCustomThemeTokens(theme, scheme)
-  const keys = Object.keys(tokens)
+  // Only allowlisted tokens, each written as the canonical CSS of its parsed colour, ever reach the page.
+  const keys = Object.keys(tokens).filter((key) => ALLOWED_TOKENS.has(key) && canonicalColor(tokens[key]!) !== null)
   for (const key of keys) {
-    root.style.setProperty(`--${key}`, tokens[key]!)
+    root.style.setProperty(`--${key}`, canonicalColor(tokens[key]!)!)
   }
   root.dataset[APPLIED_TOKENS_ATTR] = keys.join(",")
   root.dataset.customTheme = theme.name
