@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
-import { studioScopeQuery } from "../src/lib/definitions.ts"
-import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, syncStudioScopeChange } from "../src/lib/live-transport.ts"
+import { CellUnavailable, studioScopeQuery } from "../src/lib/definitions.ts"
+import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, scopeAnswered, syncStudioScopeChange } from "../src/lib/live-transport.ts"
 
 const realFetch = globalThis.fetch
 afterEach(() => {
@@ -687,6 +687,123 @@ test("a settled session outage clears once /api/me answers for the page: the wor
     await expect(currentMode()).resolves.toMatchObject({ kind: "live", scope: scopeA })
     expect(definitionReads).toHaveLength(1)
   } finally {
+    fetch.mockRestore()
+    client.clear()
+  }
+})
+
+/**
+ * `useMode` without React: the scope query and the mode query it shows, with the options `useMode`
+ * computes from the scope result, and its effect ({@link scopeAnswered}) run when its dependencies change.
+ * As in React, the effect runs before the mode observer takes its new options.
+ */
+function mountUseMode(client: QueryClient) {
+  const scopeObs = new QueryObserver(client, studioScopeQuery())
+  const options = () => {
+    const scope = scopeObs.getCurrentResult()
+    const outage = scope.isError && scope.error instanceof CellUnavailable && (scope.error.status === 0 || scope.error.status >= 500)
+    const active = scope.isSuccess ? scope.data : null
+    return { ...modeQuery(outage ? undefined : active, !scope.isPending, outage ? client : undefined), retryDelay: 0 }
+  }
+  let effectDeps: readonly unknown[] = []
+  const render = () => {
+    const scope = scopeObs.getCurrentResult()
+    const active = scope.isSuccess ? scope.data : null
+    const deps = [scope.isSuccess, options().queryKey[1], active]
+    if (deps.some((dep, index) => !Object.is(dep, effectDeps[index]))) {
+      effectDeps = deps
+      if (scope.isSuccess) scopeAnswered(client, active)
+    }
+    modeObs.setOptions(options())
+  }
+  const modeObs = new QueryObserver(client, options())
+  const offMode = modeObs.subscribe(() => {})
+  const offScope = scopeObs.subscribe(render)
+  return { scopeObs, modeObs, unmount: () => { offMode(); offScope() } }
+}
+
+/** Resolves once `observer`'s result satisfies `ready` (no fixed sleep: it waits on the observer's own updates). */
+function until<R>(observer: { getCurrentResult(): R; subscribe(listener: (result: R) => void): () => void }, ready: (result: R) => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    if (ready(observer.getCurrentResult())) return resolve()
+    const off = observer.subscribe((result) => {
+      if (!ready(result)) return
+      off()
+      resolve()
+    })
+  })
+}
+
+const settled = (result: { readonly isError: boolean; readonly isFetching: boolean }) => result.isError && !result.isFetching
+
+test.each([
+  ["case M: the Retry settles on /api/me itself", "session"],
+  ["case Q: the Retry's recovery discovers A and A refuses", "workspace"],
+] as const)("a settle recorded with no active workspace clears when the scope query answers, even when A's mode is cached (#1731 %s)", async (_name, outage) => {
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  // /api/me answers from this script first (one entry per read), then `sessionDown` decides.
+  const meScript: Array<"down" | "up"> = []
+  let sessionDown = false
+  let aRefuses = false
+  let meReads = 0
+  const definitionReads: string[] = []
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") {
+      meReads += 1
+      const scripted = meScript.shift()
+      return (scripted === undefined ? sessionDown : scripted === "down")
+        ? new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+        : Response.json(ME)
+    }
+    definitionReads.push(url)
+    return aRefuses
+      ? Response.json({ code: "cell.unopenable", retryable: false, incidentId: "inc-workspace-a", explanation: "workspace A cannot open" }, { status: 503 })
+      : new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  const client = new QueryClient()
+  const page = mountUseMode(client)
+  try {
+    // 1. A is live, and its mode is cached.
+    await until(page.modeObs, (result) => result.isSuccess)
+    await expect(currentMode()).resolves.toMatchObject({ kind: "live", scope: scopeA })
+
+    // 2. The session server goes down. The scope query's refetch fails, the page shows the outage query,
+    //    and it settles. A is still the active workspace, so nothing is recorded.
+    sessionDown = true
+    await page.scopeObs.refetch()
+    await until(page.modeObs, settled)
+
+    // 3. The user retries while the session server is still down. Retry makes no workspace active; the
+    //    scope refetch fails again, and the outage query settles again, now recording its failure: for case M
+    //    the session server's own 502, for case Q A's refusal (recovery's own /api/me read answered A).
+    if (outage === "workspace") {
+      meScript.push("down", "up")
+      aRefuses = true
+    }
+    await retryMode(client)
+    await until(page.modeObs, settled)
+    expect(page.modeObs.getCurrentResult().error).toMatchObject(outage === "session" ? { status: 502 } : { incidentId: "inc-workspace-a" })
+
+    // 4. The session server and A recover, and the scope query answers A. The page shows A's cached live mode.
+    sessionDown = false
+    aRefuses = false
+    await page.scopeObs.refetch()
+    await until(page.modeObs, (result) => result.isSuccess && !result.isFetching)
+    expect(page.modeObs.getCurrentResult().data).toMatchObject({ kind: "live", scope: scopeA })
+
+    // 5. Page reads through the transport are A's live mode, not the recorded failure: one /api/me read and
+    //    one definitions read for all three, as when nothing was recorded.
+    const meBefore = meReads
+    const definitionsBefore = definitionReads.length
+    for (let read = 0; read < 3; read += 1) {
+      await expect(currentMode()).resolves.toMatchObject({ kind: "live", scope: scopeA })
+    }
+    expect(meReads - meBefore).toBe(1)
+    expect(definitionReads.length - definitionsBefore).toBe(1)
+  } finally {
+    page.unmount()
     fetch.mockRestore()
     client.clear()
   }

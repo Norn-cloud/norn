@@ -294,16 +294,20 @@ let unkeyedMode: ModeProbe | undefined
  * is known): then it is bound either to the workspace recovery discovered and was refused by, or, when
  * `/api/me` itself never answered, to no workspace at all (a settled session outage).
  *
- * Until the user retries (`retryMode` → `refreshMode`) or a mode read succeeds, page reads through the
- * transport reuse it instead of starting their own `/v1/definitions` probe, so a settled "Workspace
- * unavailable" issues no further automatic catalog reads:
+ * While it holds, page reads through the transport reuse it instead of starting their own
+ * `/v1/definitions` probe, so a settled "Workspace unavailable" issues no further automatic catalog reads:
  * - bound to the active workspace: rejected at once, with no `/api/me` or definitions read;
  * - bound to a workspace while none is active: rejected only after the reader's own `/api/me` discovery
  *   returns that same workspace (one `/api/me` read, no definitions read);
- * - a session outage while none is active: rejected at once, until Retry, or until `/api/me` answers
- *   for the page itself (the scope query succeeds and makes a workspace active, or a mode read succeeds).
- * Any scope switch clears it, and a read that resolves to another scope or generation never sees it (no
- * refusal detail, such as an incident ID, crosses workspaces).
+ * - a session outage while none is active: rejected at once, with no `/api/me` or definitions read.
+ *
+ * It clears on Retry (`retryMode` → `refreshMode`), on any keyed scope switch, and on a mode read that
+ * succeeds in its generation for its workspace (or, for a session outage, any such read: the session
+ * server answered it). The two records stored while no workspace is active also clear as soon as the
+ * page's scope query answers ({@link scopeAnswered}), whichever workspace it names: the page then shows
+ * that workspace's own mode query, which may read nothing when its mode is cached. A read that resolves
+ * to another scope or generation never sees a record (no refusal detail, such as an incident ID, crosses
+ * workspaces).
  */
 type SettledModeFailure = { readonly error: unknown } & DefinitionsTarget
 let settledModeFailure: SettledModeFailure | undefined
@@ -559,17 +563,31 @@ export function useMode() {
   const key = scopeOutage ? "outage" : studioScopeKey(activeScope)
 
   useEffect(() => {
-    if (!scope.isSuccess) return
-    const prev = lastObservedScope.get(client)
-    lastObservedScope.set(client, key)
-    if (prev !== undefined && prev !== key) {
-      if (activeModeScopeKey !== key) refreshMode()
-      purgeStaleScopeQueries(client, key)
-      maybeInvalidateSession(client, activeScope)
-    }
+    if (scope.isSuccess) scopeAnswered(client, activeScope)
   }, [client, scope.isSuccess, key, activeScope])
 
   return useQuery(modeQuery(scopeOutage ? undefined : activeScope, scopeReady, scopeOutage ? client : undefined))
+}
+
+/**
+ * What {@link useMode} does each time the page's scope query answers `scope` (`["studio-scope"]` succeeds).
+ *
+ * The answer ends outage recovery for the page: from now on the page shows `scope`'s own mode query, which
+ * may already hold that workspace's mode and then reads nothing. So a failure the outage query settled while
+ * no workspace was active (a session outage, or a refusal from the workspace recovery discovered) is dropped
+ * here, whichever workspace the scope names. A failure settled for the active workspace is kept: it is that
+ * workspace's own, and only Retry or a scope switch clears it.
+ */
+export function scopeAnswered(client: QueryClient, scope: StudioScope | null): void {
+  if (activeModeScopeKey === null) settledModeFailure = undefined
+  const key = studioScopeKey(scope)
+  const prev = lastObservedScope.get(client)
+  lastObservedScope.set(client, key)
+  if (prev !== undefined && prev !== key) {
+    if (activeModeScopeKey !== key) refreshMode()
+    purgeStaleScopeQueries(client, key)
+    maybeInvalidateSession(client, scope)
+  }
 }
 
 export function modeQuery(scope: StudioScope | null | undefined, enabled = true, recoveryClient?: QueryClient) {
