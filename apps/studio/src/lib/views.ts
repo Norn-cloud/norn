@@ -147,8 +147,12 @@ export const UNREADABLE_VIEW = "The cell's answer for this view could not be rea
  */
 export const VIEW_READ_CONCURRENCY = 6
 
-/** `read` over `items` in order, with at most `limit` in flight; the first failure stops further reads and rejects. */
+/**
+ * `read` over `items` in order, with at most `limit` in flight; the first failure stops further reads and rejects.
+ * A limit below one (or not a number) would start no reader and answer holes, so it is refused.
+ */
 export async function mapBounded<T, R>(items: readonly T[], limit: number, read: (item: T) => Promise<R>): Promise<R[]> {
+  if (!(limit >= 1)) throw new RangeError(`mapBounded needs a limit of at least 1, got ${limit}`)
   const results: R[] = new Array<R>(items.length)
   let next = 0
   let failed = false
@@ -164,7 +168,7 @@ export async function mapBounded<T, R>(items: readonly T[], limit: number, read:
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.max(0, Math.min(limit, items.length)) }, worker))
+  await Promise.all(Array.from({ length: Math.min(Math.floor(limit), items.length) }, worker))
   return results
 }
 

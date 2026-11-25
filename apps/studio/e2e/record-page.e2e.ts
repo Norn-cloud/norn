@@ -114,13 +114,21 @@ test("markings: a reveal answered after the cell withdrew the reveal is never sh
   await page.getByRole("button", { name: "Read again" }).click()
   await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
   // The late answer lands; the page waits past it and still shows only the projection.
-  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
-  release()
-  await answered
-  await page.waitForTimeout(300)
+  await revealSettled(page, release)
   await expect(name.locator("[data-revealed]")).toHaveCount(0)
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
 })
+
+/**
+ * Release a held reveal and wait until the page has read its answer to the end and painted twice
+ * since: whatever the page does with a late answer, it has done by then.
+ */
+async function revealSettled(page: Page, release: () => void) {
+  const finished = page.waitForEvent("requestfinished", (request) => new URL(request.url()).pathname.endsWith("/reveal"))
+  release()
+  await finished
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+}
 
 const refocus = (page: Page) => page.evaluate(() => {
   for (const visibility of ["hidden", "visible"]) {
@@ -152,12 +160,35 @@ test("markings: a reveal answered after a workspace switch is never shown, and t
   await refocus(page)
   await expect.poll(() => cell.readScopes.includes("org_demo/staging")).toBe(true)
   await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
-  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
-  release()
-  await answered
-  await page.waitForTimeout(300)
+  await revealSettled(page, release)
   await expect(name.locator("[data-revealed]")).toHaveCount(0)
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+  expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
+})
+
+// #1720 R3: a record page whose mode read failed reads nothing until the mode is decided; its Retry
+// decides the mode again, and the record is then read and revealed at the workspace it came from.
+test("markings: after a failed mode read, the page's Retry reads and reveals the record at its source workspace", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  let down = true
+  await page.route("**/api/host/v1/definitions**", (route) => down
+    ? route.fulfill({ status: 503, json: { code: "cell.unopenable", message: "The workspace cell could not be opened.", retryable: false } })
+    : route.fallback())
+  await page.goto(PARTY)
+  const unavailable = page.locator("[data-workspace-unavailable]")
+  await expect(unavailable).toBeVisible()
+  // Nothing was read while no mode was decided: no read without a workspace.
+  expect(cell.readScopes).toEqual([])
+  // The cell recovers; the page's own Retry decides the mode and then reads the record at its scope.
+  down = false
+  await unavailable.getByRole("button", { name: "Retry" }).click()
+  const name = fact(page, "display_name")
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  await expect(page.locator('[data-connection="unavailable"]')).toHaveCount(0)
+  await expect(page.locator("#record-history")).toBeVisible()
+  await askReveal(page)
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  expect(new Set(cell.readScopes)).toEqual(new Set(["org_demo/analytics"]))
   expect(cell.revealScopes).toEqual([{ at: "org_demo/analytics", expected: "org_demo/analytics" }])
 })
 
@@ -177,10 +208,7 @@ test("markings: a reveal asked under a projection, answered after it changed and
   await page.getByRole("button", { name: "Read again" }).click()
   await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
   // The answer to the first ask lands: it belonged to the discarded instance, and is not shown.
-  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
-  release()
-  await answered
-  await page.waitForTimeout(300)
+  await revealSettled(page, release)
   await expect(name.locator("[data-revealed]")).toHaveCount(0)
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
 })

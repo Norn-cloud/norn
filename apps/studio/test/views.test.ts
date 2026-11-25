@@ -1041,6 +1041,8 @@ test("a failed detail read stops further reads and fails the listing", async () 
   expect(failed).toBeInstanceOf(CellUnavailable)
   expect(started.length).toBeLessThan(8)
   expect(await mapBounded([], 6, async (value: number) => value)).toEqual([])
+  // A limit below one would start no reader and answer holes: it is refused instead.
+  for (const limit of [0, -1, Number.NaN]) await expect(mapBounded([1, 2], limit, async (value) => value)).rejects.toBeInstanceOf(RangeError)
 })
 
 // #1700 S8: the list follows the cell's cursor past ten pages; a repeated cursor is an error, not success.
