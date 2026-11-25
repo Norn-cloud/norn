@@ -1451,10 +1451,7 @@ fn advance_sibling(path: &Path, receipt: &FunctionReceipt, millis: u64) {
             writes: vec![put(
                 FactKey::new(RUN, run.as_str()),
                 FactVersion::ABSENT,
-                &[
-                    ("run_id", run.as_str()),
-                    ("status", "awaiting_perform_confirm"),
-                ],
+                &[("run_id", run.as_str()), ("status", "started")],
             )],
             ..CellCommit::empty()
         })
