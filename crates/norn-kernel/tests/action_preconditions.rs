@@ -1149,38 +1149,74 @@ impl TimeMaterializeFixture {
                 })),
             },
         });
-        seed.writes.push(FactWrite {
-            key: FactKey::new("time.WorkingWindow", "ww-mon"),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: object(json!({
-                    "id": "ww-mon",
-                    "weekday": "monday",
-                    "start_local": "09:00",
-                    "end_local": "17:00"
-                })),
-            },
-        });
-        seed.links.push(norn_kernel::LinkWrite {
-            key: LinkKey::new(
-                FactKey::new("time.WorkingWindow", "ww-mon"),
-                "calendar",
-                FactKey::new("time.Calendar", "cal-ny"),
-            ),
-            expected: FactVersion::ABSENT,
-            mutation: norn_kernel::LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        });
-        host.commit(seed).expect("seed calendar and monday window");
+        // A same-day window written without `end_day_offset` takes its default 0.
+        push_working_window(&mut seed, "ww-mon", "monday", "09:00", "17:00", None);
+        push_working_window(
+            &mut seed,
+            "ww-fri-night",
+            "friday",
+            "22:00",
+            "06:00",
+            Some(json!(1)),
+        );
+        push_working_window(
+            &mut seed,
+            "ww-sun-night",
+            "sunday",
+            "22:00",
+            "06:00",
+            Some(json!(1)),
+        );
+        push_working_window(
+            &mut seed,
+            "ww-sat-day",
+            "saturday",
+            "08:00",
+            "08:00",
+            Some(json!(1)),
+        );
+        for (id, weekday, end_local) in [
+            ("ww-wed-night", "wednesday", "06:00"),
+            ("ww-thu-night", "thursday", "06:00"),
+            ("ww-sat-fold", "saturday", "01:30"),
+        ] {
+            push_working_window(&mut seed, id, weekday, "22:00", end_local, Some(json!(1)));
+        }
+        host.commit(seed)
+            .expect("seed calendar and working windows");
         host
     }
 
     fn edt_workday_call(&self, id: &str, calendar_date: &str) -> ActionCall<'_> {
+        self.call(
+            id,
+            "ww-mon",
+            calendar_date,
+            [
+                &format!("{calendar_date}T09:00:00"),
+                &format!("{calendar_date}T17:00:00"),
+            ],
+            [
+                &format!("{calendar_date}T13:00:00Z"),
+                &format!("{calendar_date}T21:00:00Z"),
+            ],
+        )
+    }
+
+    /// Materialize `window` on `calendar_date` with local `[start, end]` wall
+    /// timestamps and the claimed UTC `[starts_at, ends_at]`.
+    fn call(
+        &self,
+        id: &str,
+        window: &str,
+        calendar_date: &str,
+        [start_local_at, end_local_at]: [&str; 2],
+        [starts_at, ends_at]: [&str; 2],
+    ) -> ActionCall<'_> {
         ActionCall {
             action: &self.action,
             action_artifact_id: "time.window.materialize_interval.action",
-            action_version: "0.1.0",
+            action_version: "0.2.0",
             scope: BTreeMap::from([
                 ("orgId".to_owned(), "org_demo".to_owned()),
                 ("environmentId".to_owned(), "dev".to_owned()),
@@ -1189,12 +1225,12 @@ impl TimeMaterializeFixture {
             input: object(json!({
                 "id": id,
                 "calendar_id": "cal-ny",
-                "working_window_id": "ww-mon",
+                "working_window_id": window,
                 "calendar_date": calendar_date,
-                "start_local_at": format!("{calendar_date}T09:00:00"),
-                "end_local_at": format!("{calendar_date}T17:00:00"),
-                "starts_at": format!("{calendar_date}T13:00:00Z"),
-                "ends_at": format!("{calendar_date}T21:00:00Z"),
+                "start_local_at": start_local_at,
+                "end_local_at": end_local_at,
+                "starts_at": starts_at,
+                "ends_at": ends_at,
                 "timezone": "America/New_York",
                 "dst_policy": "reject",
                 "tzdb_version": "2025b"
@@ -1212,7 +1248,48 @@ impl TimeMaterializeFixture {
     }
 }
 
+fn push_working_window(
+    seed: &mut CellCommit<FactEvent, JsonObject, JsonObject>,
+    id: &str,
+    weekday: &str,
+    start_local: &str,
+    end_local: &str,
+    end_day_offset: Option<serde_json::Value>,
+) {
+    let mut values = json!({
+        "id": id,
+        "weekday": weekday,
+        "start_local": start_local,
+        "end_local": end_local
+    });
+    if let Some(offset) = end_day_offset {
+        values["end_day_offset"] = offset;
+    }
+    seed.writes.push(FactWrite {
+        key: FactKey::new("time.WorkingWindow", id),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: object(values),
+        },
+    });
+    seed.links.push(norn_kernel::LinkWrite {
+        key: LinkKey::new(
+            FactKey::new("time.WorkingWindow", id),
+            "calendar",
+            FactKey::new("time.Calendar", "cal-ny"),
+        ),
+        expected: FactVersion::ABSENT,
+        mutation: norn_kernel::LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    });
+}
+
 fn assert_window_links_exist(host: &Cell, window_id: &str, expected: bool) {
+    assert_materialized_links(host, window_id, "ww-mon", expected);
+}
+
+fn assert_materialized_links(host: &Cell, window_id: &str, working_window: &str, expected: bool) {
     let key = FactKey::new("time.MaterializedWindow", window_id);
     assert_eq!(host.load(&key).expect("window target").exists(), expected);
     assert_eq!(
@@ -1229,7 +1306,7 @@ fn assert_window_links_exist(host: &Cell, window_id: &str, expected: bool) {
         host.load_link(&LinkKey::new(
             key,
             "working_window",
-            FactKey::new("time.WorkingWindow", "ww-mon"),
+            FactKey::new("time.WorkingWindow", working_window),
         ))
         .expect("working_window link")
         .exists(),
@@ -1263,4 +1340,308 @@ fn time_window_materialize_interval_refuses_weekday_mismatch_without_writes_or_l
         .expect("monday date must commit cleanly");
     assert!(matches!(committed, ActionOutcome::Committed { .. }));
     assert_window_links_exist(&host, "mw-mon", true);
+}
+
+/// Materialize `window` and return the refusal code, or `None` when it committed
+/// with both outgoing links.
+fn materialize(
+    host: &mut Cell,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    working_window: &str,
+) -> Option<&'static str> {
+    let Some(id) = call.idempotency_key.strip_prefix("materialize-") else {
+        panic!("fixture idempotency key: {}", call.idempotency_key);
+    };
+    let before = host.ledger().len();
+    match commit_action(host, catalog, call, &Allow) {
+        Ok(outcome) => {
+            assert!(matches!(outcome, ActionOutcome::Committed { .. }));
+            assert_materialized_links(host, id, working_window, true);
+            None
+        }
+        Err(refusal) => {
+            assert_eq!(host.ledger().len(), before, "a refusal writes nothing");
+            assert_materialized_links(host, id, working_window, false);
+            Some(refusal.code())
+        }
+    }
+}
+
+#[test]
+fn time_window_materialize_interval_crosses_local_midnight_with_end_day_offset() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // Friday 2026-06-12 22:00 EDT -> Saturday 06:00 EDT is an 8 h interval on the next UTC day.
+    let overnight = fixture.call(
+        "mw-fri-night",
+        "ww-fri-night",
+        "2026-06-12",
+        ["2026-06-12T22:00:00", "2026-06-13T06:00:00"],
+        ["2026-06-13T02:00:00Z", "2026-06-13T10:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &overnight, "ww-fri-night"),
+        None
+    );
+
+    // The end wall time must sit on calendar_date + end_day_offset: binding it to the
+    // start date (as offset 0 would) or two days later refuses with no writes.
+    let same_date_end = fixture.call(
+        "mw-fri-night-same-date",
+        "ww-fri-night",
+        "2026-06-12",
+        ["2026-06-12T22:00:00", "2026-06-12T06:00:00"],
+        ["2026-06-13T02:00:00Z", "2026-06-12T10:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &same_date_end, "ww-fri-night"),
+        Some("action.precondition_failed")
+    );
+    let two_days_later = fixture.call(
+        "mw-fri-night-two-days",
+        "ww-fri-night",
+        "2026-06-12",
+        ["2026-06-12T22:00:00", "2026-06-14T06:00:00"],
+        ["2026-06-13T02:00:00Z", "2026-06-14T10:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &two_days_later, "ww-fri-night"),
+        Some("action.precondition_failed")
+    );
+
+    // A same-day window (default offset 0) cannot be stretched into the next civil day.
+    let stretched = fixture.call(
+        "mw-mon-stretched",
+        "ww-mon",
+        "2026-06-15",
+        ["2026-06-15T09:00:00", "2026-06-16T17:00:00"],
+        ["2026-06-15T13:00:00Z", "2026-06-16T21:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &stretched, "ww-mon"),
+        Some("action.precondition_failed")
+    );
+}
+
+#[test]
+fn time_window_materialize_interval_anchors_weekday_to_start_date_across_week_rollover() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // Sunday 2026-06-14 22:00 EDT -> Monday 2026-06-15 06:00 EDT.
+    let sunday_night = fixture.call(
+        "mw-sun-night",
+        "ww-sun-night",
+        "2026-06-14",
+        ["2026-06-14T22:00:00", "2026-06-15T06:00:00"],
+        ["2026-06-15T02:00:00Z", "2026-06-15T10:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &sunday_night, "ww-sun-night"),
+        None
+    );
+
+    // calendar_date is the start date: anchoring the Sunday window on its Monday end date refuses.
+    let monday_anchor = fixture.call(
+        "mw-sun-night-monday",
+        "ww-sun-night",
+        "2026-06-15",
+        ["2026-06-15T22:00:00", "2026-06-16T06:00:00"],
+        ["2026-06-16T02:00:00Z", "2026-06-16T10:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &monday_anchor, "ww-sun-night"),
+        Some("action.precondition_failed")
+    );
+}
+
+#[test]
+fn time_window_materialize_interval_full_civil_day_spans_23_or_25_hours_across_dst() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // 08:00 -> 08:00 next day is one civil day. Across the 2026-03-08 spring-forward
+    // gap it is 23 elapsed hours (EST -> EDT) ...
+    let spring = fixture.call(
+        "mw-sat-spring",
+        "ww-sat-day",
+        "2026-03-07",
+        ["2026-03-07T08:00:00", "2026-03-08T08:00:00"],
+        ["2026-03-07T13:00:00Z", "2026-03-08T12:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &spring, "ww-sat-day"),
+        None
+    );
+    // ... and a claimed 24 h end does not match the checked tzdb resolution.
+    let spring_24h = fixture.call(
+        "mw-sat-spring-24h",
+        "ww-sat-day",
+        "2026-03-07",
+        ["2026-03-07T08:00:00", "2026-03-08T08:00:00"],
+        ["2026-03-07T13:00:00Z", "2026-03-08T13:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &spring_24h, "ww-sat-day"),
+        Some("action.precondition_failed")
+    );
+
+    // Across the 2026-11-01 fall-back fold it is 25 elapsed hours (EDT -> EST).
+    let fall = fixture.call(
+        "mw-sat-fall",
+        "ww-sat-day",
+        "2026-10-31",
+        ["2026-10-31T08:00:00", "2026-11-01T08:00:00"],
+        ["2026-10-31T12:00:00Z", "2026-11-01T13:00:00Z"],
+    );
+    assert_eq!(materialize(&mut host, &catalog, &fall, "ww-sat-day"), None);
+    let fall_24h = fixture.call(
+        "mw-sat-fall-24h",
+        "ww-sat-day",
+        "2026-10-31",
+        ["2026-10-31T08:00:00", "2026-11-01T08:00:00"],
+        ["2026-10-31T12:00:00Z", "2026-11-01T12:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &fall_24h, "ww-sat-day"),
+        Some("action.precondition_failed")
+    );
+}
+
+#[test]
+fn time_working_window_law_refuses_empty_or_out_of_range_end_day_offset() {
+    let fixture = TimeMaterializeFixture::load();
+    let mut host = fixture.seeded_host();
+    let refused = |host: &mut Cell, id: &str, start: &str, end: &str, offset: serde_json::Value| {
+        let mut seed = CellCommit::empty();
+        push_working_window(&mut seed, id, "tuesday", start, end, Some(offset));
+        let error = host
+            .commit(seed)
+            .expect_err("window must be refused by its law");
+        assert_eq!(error.code(), "core.laws.violated", "{id}: {error}");
+    };
+    // Equal endpoints on the same civil day are empty.
+    refused(&mut host, "ww-empty", "08:00", "08:00", json!(0));
+    // Only the start day (0) or the next civil day (1) may hold the end.
+    refused(&mut host, "ww-prev-day", "09:00", "17:00", json!(-1));
+    refused(&mut host, "ww-two-days", "22:00", "06:00", json!(2));
+    // A submitted null is kept, not replaced by the default, and the law refuses it.
+    refused(
+        &mut host,
+        "ww-null",
+        "22:00",
+        "06:00",
+        serde_json::Value::Null,
+    );
+
+    let mut seed = CellCommit::empty();
+    push_working_window(
+        &mut seed,
+        "ww-tue-day",
+        "tuesday",
+        "08:00",
+        "08:00",
+        Some(json!(1)),
+    );
+    host.commit(seed)
+        .expect("equal endpoints with offset 1 cover one civil day");
+}
+
+#[test]
+fn time_window_materialize_interval_end_date_rolls_over_month_year_and_leap_day() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // Thursday 2026-12-31 22:00 EST -> Friday 2027-01-01 06:00 EST crosses the year.
+    let new_year = fixture.call(
+        "mw-new-year",
+        "ww-thu-night",
+        "2026-12-31",
+        ["2026-12-31T22:00:00", "2027-01-01T06:00:00"],
+        ["2027-01-01T03:00:00Z", "2027-01-01T11:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &new_year, "ww-thu-night"),
+        None
+    );
+
+    // Wednesday 2024-02-28 -> leap day 2024-02-29; skipping the leap day to 03-01 is two days.
+    let leap_day = fixture.call(
+        "mw-leap-day",
+        "ww-wed-night",
+        "2024-02-28",
+        ["2024-02-28T22:00:00", "2024-02-29T06:00:00"],
+        ["2024-02-29T03:00:00Z", "2024-02-29T11:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &leap_day, "ww-wed-night"),
+        None
+    );
+    let skips_leap_day = fixture.call(
+        "mw-skips-leap-day",
+        "ww-wed-night",
+        "2024-02-28",
+        ["2024-02-28T22:00:00", "2024-03-01T06:00:00"],
+        ["2024-02-29T03:00:00Z", "2024-03-01T11:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &skips_leap_day, "ww-wed-night"),
+        Some("action.precondition_failed")
+    );
+
+    // Saturday 2026-02-28 -> Sunday 2026-03-01 in a common year; 2026-02-29 is no date.
+    let common_year = fixture.call(
+        "mw-common-year",
+        "ww-sat-day",
+        "2026-02-28",
+        ["2026-02-28T08:00:00", "2026-03-01T08:00:00"],
+        ["2026-02-28T13:00:00Z", "2026-03-01T13:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &common_year, "ww-sat-day"),
+        None
+    );
+    let no_such_date = fixture.call(
+        "mw-no-such-date",
+        "ww-sat-day",
+        "2026-02-28",
+        ["2026-02-28T08:00:00", "2026-02-29T08:00:00"],
+        ["2026-02-28T13:00:00Z", "2026-03-01T13:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &no_such_date, "ww-sat-day"),
+        Some("action.precondition_failed")
+    );
+}
+
+#[test]
+fn time_window_materialize_interval_refuses_overnight_end_in_dst_fold_under_reject() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // 2026-11-01T01:30 occurs twice in America/New_York; the calendar's `reject`
+    // policy refuses the ambiguous overnight end, whichever instant is claimed.
+    for (id, ends_at) in [
+        ("mw-fold-edt", "2026-11-01T05:30:00Z"),
+        ("mw-fold-est", "2026-11-01T06:30:00Z"),
+    ] {
+        let fold = fixture.call(
+            id,
+            "ww-sat-fold",
+            "2026-10-31",
+            ["2026-10-31T22:00:00", "2026-11-01T01:30:00"],
+            ["2026-11-01T02:00:00Z", ends_at],
+        );
+        assert_eq!(
+            materialize(&mut host, &catalog, &fold, "ww-sat-fold"),
+            Some("action.precondition_failed")
+        );
+    }
 }

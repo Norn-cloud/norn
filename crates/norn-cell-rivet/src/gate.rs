@@ -17,8 +17,9 @@ use norn_api::scope::CellScope;
 use norn_cell_do::principal::IssuerKeys;
 use tokio::sync::OnceCell;
 
-use crate::actor::{now_ms, outbound_client};
+use crate::actor::now_ms;
 use crate::config::HostConfig;
+use crate::egress::outbound_client;
 use crate::jwks::fetch_jwks;
 
 /// What the gate says about one request.

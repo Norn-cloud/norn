@@ -5,13 +5,13 @@
       "artifactId": "time.WorkingWindow.entity",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ],
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times with start_local strictly before end_local.",
+  "name": "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times and end_day_offset must be 0 or 1; with offset 0 start_local must be strictly before end_local, with offset 1 the window ends on the next civil day.",
   "namespace": "time",
   "payload": {
     "id": "time.WorkingWindow.valid_local_window",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/time/calendars.ts"
     },
-    "rationale": "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times with start_local strictly before end_local.",
+    "rationale": "WorkingWindow start_local and end_local must be strict HH:MM or HH:MM:SS wall times and end_day_offset must be 0 or 1; with offset 0 start_local must be strictly before end_local, with offset 1 the window ends on the next civil day.",
     "response": {
-      "expression": "((len(self.start_local) in [5, 8]) and (len(self.end_local) in [5, 8])) and (resolve_local_timestamp('2026-01-01T' + take(take(self.start_local, 8) + ':00', 8), 'UTC', 'reject') < resolve_local_timestamp('2026-01-01T' + take(take(self.end_local, 8) + ':00', 8), 'UTC', 'reject'))",
+      "expression": "(((len(self.start_local) in [5, 8]) and (len(self.end_local) in [5, 8])) and (self.end_day_offset in [0, 1])) and (resolve_local_timestamp('2026-01-01T' + take(take(self.start_local, 8) + ':00', 8), 'UTC', 'reject') < add_seconds(resolve_local_timestamp('2026-01-01T' + take(take(self.end_local, 8) + ':00', 8), 'UTC', 'reject'), (self.end_day_offset == 1) ? 86400 : 0))",
       "kind": "predicate"
     },
     "scope": {
@@ -46,5 +46,5 @@
     "sourcePath": "registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
