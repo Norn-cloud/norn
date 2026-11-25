@@ -28,7 +28,7 @@ norn-kernel = { path = "../norn-kernel" }
 http = "1.5.0"
 norn-ir = { path = "../norn-ir" }
 serde = "1.0.228"
-serde_json = "1.0.150"
+serde_json = { version = "1.0.150", features = ["raw_value"] }
 # Upload digests and SigV4 request signing.
 sha2 = "0.10.9"
 # SYNC-URL-1: base URLs parsed as the host's `fetch` parses them (WHATWG).

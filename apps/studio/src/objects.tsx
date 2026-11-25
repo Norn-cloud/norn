@@ -24,14 +24,14 @@ import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
 import { retryMode, useMode } from "./lib/live-transport.ts"
-import { recordRead } from "./lib/record-read.ts"
+import { findingsQuery, recordRead } from "./lib/record-read.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { historyQueryKey, historyQueryPrefix, readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
+import { historyQueryKey, historyQueryPrefix, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
@@ -72,9 +72,12 @@ export function ObjectPage() {
   // at (checked before and after the read), cached under it, and its reveals go to it. The same id
   // in another workspace is another record, never this one's cached read. Nothing is read until the
   // mode is decided: a failed mode read waits for Retry rather than reading without a workspace.
-  // Until then the read's key is the recording's, which no live answer reaches (#1740).
+  // Until then the read's key is the recording's, which no live answer reaches (#1740). Only a
+  // decided mode binds the page: after a failed refetch TanStack keeps the last answer, which is
+  // no longer current (#1745).
   const mode = useMode()
-  const sourceScope = mode.data?.kind === "live" ? mode.data.scope : undefined
+  const decided = mode.isSuccess ? mode.data : undefined
+  const sourceScope = decided?.kind === "live" ? decided.scope : undefined
   const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })
   const modeError = mode.isError ? mode.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
@@ -88,12 +91,15 @@ export function ObjectPage() {
     void catalogRead.refetch()
     if (mode.isSuccess) void reads.refetch()
   }
-  const live = mode.data?.kind === "live"
+  const live = decided?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
-  const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
-  const evidence = review.data?.document.evidence ?? []
-  const broken = review.data?.document.findings.filter(({ status }) => status === "open") ?? []
-  const heldBack = review.data?.document.quarantined === true
+  // Read and cached at the record's source workspace, and shown only while the mode is decided: no
+  // findings from another workspace, or from before the mode failed, show beside Workspace unavailable (#1745).
+  const review = useQuery(findingsQuery(name, id, sourceScope))
+  const reviewed = mode.isSuccess ? review.data?.document : undefined
+  const evidence = reviewed?.evidence ?? []
+  const broken = reviewed?.findings.filter(({ status }) => status === "open") ?? []
+  const heldBack = reviewed?.quarantined === true
   const corrections = useEvidenceActions(name, id)
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
@@ -166,7 +172,7 @@ export function ObjectPage() {
         </LoadState>
       )}
       {reads.isSuccess && data === null && (live
-        ? <QuarantinedRecord objectType={name} id={id} onDone={readAgain} />
+        ? <QuarantinedRecord objectType={name} id={id} scope={sourceScope} onDone={readAgain} />
         : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
@@ -187,7 +193,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
+                {live && <Findings objectType={name} id={id} scope={sourceScope} actionFor={corrections.actionFor} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}

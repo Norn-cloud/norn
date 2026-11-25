@@ -13,13 +13,15 @@ import { LawsPanel } from "../laws.tsx"
 import { ProfilePanel } from "./profile-panel.tsx"
 import { QuarantinePanel } from "./quarantine-panel.tsx"
 import type { StoredView } from "../lib/views.ts"
-import { RecordsGrid, type DisplayedGridQuery } from "./records-grid.tsx"
+import { DecidedRecordsGrid, RecordsGrid, type DisplayedGridQuery, type GridMode } from "./records-grid.tsx"
 import { offersTimeline } from "../lib/timeline.ts"
 import { ViewsBar, openedQuery } from "./views-bar.tsx"
 
-function ScopedRecordsTabs({ concept, scope, scopeKey, initialTab, timeline }: {
+function ScopedRecordsTabs({ concept, scope, mode, scopeKey, initialTab, timeline }: {
   readonly concept: Concept
   readonly scope: StudioScope | undefined
+  /** The page's mode read: with no session scope, a live row's drawer shows its state and its Retry. */
+  readonly mode: GridMode
   readonly scopeKey: string
   readonly initialTab: string
   readonly timeline: boolean
@@ -35,7 +37,7 @@ function ScopedRecordsTabs({ concept, scope, scopeKey, initialTab, timeline }: {
       <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger><TabsTrigger value="rules">Rules</TabsTrigger></TabsList>
       <TabsContent value="records" className="grid gap-3 pt-3">
         <ViewsBar objectType={concept.name} scope={scope} open={view} query={query} onOpen={setView} />
-        <RecordsGrid key={`${concept.name}:${scopeKey}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} scope={scope} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
+        <RecordsGrid key={`${concept.name}:${scopeKey}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} scope={scope} mode={mode} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
       </TabsContent>
       <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
       <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>
@@ -52,10 +54,9 @@ export function RecordsPage() {
   const scopeRead = useStudioScope()
   const activeScope = scopeRead.data ?? undefined
   const scopeKey = studioScopeKey(activeScope)
-  // A recorded catalog's grid is still bound to the decided mode's workspace when there is one; while
-  // none is decided, a live row's drawer reads nothing (#1740).
+  // A recorded catalog's grid is still bound to the decided mode's workspace when there is one, and is
+  // shown only once the mode is decided (#1740, #1745).
   const mode = useMode()
-  const decided = mode.data?.kind === "live" ? mode.data.scope : undefined
   const concept = catalog?.byName.get(type)
   // A `core.TimeInterval` (through any parent) can be read as a timeline too; the catalog says which types are.
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
@@ -82,8 +83,8 @@ export function RecordsPage() {
               <PageHeader title={concept.title} lang={concept.titleLang} meta={<span className="font-mono">{concept.name}</span>}
                 actions={<Button asChild variant="ghost" size="sm"><Link to="/sources/$concept" params={{ concept: concept.name }}>Definition</Link></Button>} />
               {live
-                ? <ScopedRecordsTabs key={`${concept.name}:${scopeKey}:${initialTab}`} concept={concept} scope={activeScope} scopeKey={scopeKey} initialTab={initialTab} timeline={timeline} />
-                : <RecordsGrid key={`${concept.name}:${studioScopeKey(decided)}`} concept={concept} timeline={timeline} scope={decided} mode={mode} />}
+                ? <ScopedRecordsTabs key={`${concept.name}:${scopeKey}:${initialTab}`} concept={concept} scope={activeScope} mode={mode} scopeKey={scopeKey} initialTab={initialTab} timeline={timeline} />
+                : <DecidedRecordsGrid concept={concept} timeline={timeline} mode={mode} />}
             </>}
           </>
         )}

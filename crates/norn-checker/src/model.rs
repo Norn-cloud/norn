@@ -35,6 +35,8 @@ use norn_ir::{
     PropertyTypeDef, TrustLevel,
 };
 
+use crate::artifact_set::scope_finding;
+use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::object_types::{MEMBER_ID_GRAMMAR, OBJECT_NAME_GRAMMAR};
 use crate::property_types::{Decimal, matches_grammar};
@@ -698,11 +700,19 @@ pub(crate) fn check_model_set(
     if models.is_empty() {
         return Vec::new();
     }
-    let catalog = Catalog::of(artifacts.iter().chain(base));
+    let owners = crate::entity_scopes::entity_object_type_owners(artifacts, base);
+    let mut views = ScopedViews::new(artifacts, base, &BTreeSet::new());
     let mut findings = Vec::new();
     for (artifact, root) in &models {
-        check_predictions(&catalog, root, artifact, &mut findings);
+        let catalog = &Catalog::of(views.of(artifact).pool());
+        check_predictions(catalog, &owners, root, artifact, &mut findings);
         let input = root.input.object_type().as_str();
+        if let Some(owner) = owners.get(input)
+            && let Some(error) = scope_finding(artifact, owner, "/payload/input/objectType")
+        {
+            findings.push(error);
+            continue;
+        }
         let Some(members) = catalog.members(input) else {
             findings.push(finding(
                 UNKNOWN_INPUT,
@@ -780,6 +790,7 @@ pub(crate) fn check_model_set(
 /// nullability (see [`norn_ir::ModelPredictions`]).
 fn check_predictions(
     catalog: &Catalog,
+    owners: &BTreeMap<String, &ArtifactEnvelope>,
     root: &ModelRoot,
     artifact: &ArtifactEnvelope,
     findings: &mut Vec<Diagnostic>,
@@ -788,6 +799,12 @@ fn check_predictions(
         return;
     };
     let name = predictions.object_type.as_str();
+    if let Some(owner) = owners.get(name)
+        && let Some(error) = scope_finding(artifact, owner, "/payload/predictions/objectType")
+    {
+        findings.push(error);
+        return;
+    }
     let mut push = |message: String, pointer: String| {
         findings.push(finding(PREDICTION_TYPE, message, pointer, artifact));
     };

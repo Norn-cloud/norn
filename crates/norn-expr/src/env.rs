@@ -58,6 +58,13 @@ pub const TYPE_ENV_ID: &str = "norn.expr.env";
 /// only in newly admitted policies.
 pub const TYPE_ENV_VERSION: u32 = 3;
 
+/// Identifier of an admission receipt's commitment to one type environment
+/// per consumer scope, pinned when the scopes of a set see different ones.
+pub const SCOPED_TYPE_ENV_ID: &str = "norn.expr.env.scoped";
+
+/// Version of the [`SCOPED_TYPE_ENV_ID`] commitment layout.
+pub const SCOPED_TYPE_ENV_VERSION: u32 = 1;
+
 mod version;
 pub use version::TypeEnvVersion;
 

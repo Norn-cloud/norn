@@ -15,7 +15,7 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { CellUnavailable, NO_DATA_CELL, readAtScope, readStudioScope, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, readAtScope, readStudioScope, studioScopeKey, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, readRecordsAtScope, type RecordsRead } from "../lib/records-source.ts"
@@ -103,6 +103,30 @@ export function visibleDrawerRow(openedId: string | null, rows: readonly GridRow
 
 /** The page's own mode read, for a grid shown before the mode is decided: what a live row's drawer says meanwhile. */
 export type GridMode = Pick<UseQueryResult<Mode>, "isPending" | "isError" | "error" | "isFetching">
+
+/**
+ * A type page's records, shown only once the page's mode is decided (#1745): a live cell's grid is
+ * bound to the workspace the mode was read at, and with no cell connected the grid reads the
+ * recording. While the mode is read the Records section shows the grid's skeleton; after a failed
+ * mode read (including a refetch that failed after an earlier answer) it shows Workspace
+ * unavailable with the mode's own Retry, never a grid read without a workspace.
+ */
+export function DecidedRecordsGrid({ concept, mode, timeline = false }: {
+  readonly concept: Concept
+  readonly mode: UseQueryResult<Mode>
+  readonly timeline?: boolean
+}) {
+  const queries = useQueryClient()
+  if (!mode.isSuccess) {
+    return (
+      <Shell>
+        <LoadState status={mode.status} error={mode.error} isFetching={mode.isFetching} onRetry={() => void retryMode(queries)} bone="records-table" loadingLabel="Reading the records">{() => null}</LoadState>
+      </Shell>
+    )
+  }
+  const scope = mode.data.kind === "live" ? mode.data.scope : undefined
+  return <RecordsGrid key={`${concept.name}:${studioScopeKey(scope)}`} concept={concept} scope={scope} mode={mode} timeline={timeline} />
+}
 
 export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, timeline = false }: {
   readonly concept: Concept
@@ -509,11 +533,11 @@ function NewRecord({ title, creates, off, pending, onPick }: {
  * shows the shared Workspace unavailable state with the mode's own Retry; once it is decided, the
  * page passes its scope and the drawer reads there.
  */
-function UndecidedWorkspace({ mode }: { readonly mode: GridMode | undefined }) {
+export function UndecidedWorkspace({ mode }: { readonly mode: GridMode | undefined }) {
   const queries = useQueryClient()
   if (mode?.isError) return <WorkspaceUnavailable compact error={mode.error} isFetching={mode.isFetching} onRetry={() => void retryMode(queries)} />
   if (mode?.isPending) return <Skeleton className="h-5" aria-label="Deciding the workspace" />
-  return <p className="text-meta text-muted-foreground">{"This record's links are read only in a decided workspace."}</p>
+  return <p className="text-meta text-muted-foreground">{"This record's links show once its workspace is confirmed."}</p>
 }
 
 function RecordDrawer({ concept, fields, row, origin, scope, mode, actions, actionsOff, onClose, onAction }: {
