@@ -133,16 +133,36 @@ function SidebarProvider({
 }
 
 /**
+ * Whether an Escape belongs to a layer open inside the phone sheet rather than to the sheet. The
+ * workspace switcher and account menus (UI SDK) open in place in the top layer (`popover`), so Base
+ * UI's dismiss reads their Escape as the sheet's; a layer that already took it marks it handled.
+ */
+function escapeIsInnerLayers(event: Event): boolean {
+  if (event.defaultPrevented) return true
+  return event.target instanceof Element && event.target.closest("[popover]") !== null
+}
+
+/**
  * The sidebar: a flat column on the start side with a hairline on its inline-end edge, or below 640px
  * a modal sheet (Base UI `Dialog`: focus is trapped, the page is inert, Escape closes it and focus
- * returns to the toggle), named "Navigation".
+ * returns to the toggle), named "Navigation". Escape closes the innermost layer first: a menu open
+ * inside the sheet closes alone, and the next Escape closes the sheet.
  */
 function Sidebar({ className, children, ...props }: React.ComponentProps<"div">) {
   const { isMobile, state, openMobile, setOpenMobile, triggerRef } = useSidebar()
 
   if (isMobile) {
     return (
-      <Dialog.Root open={openMobile} onOpenChange={setOpenMobile}>
+      <Dialog.Root
+        open={openMobile}
+        onOpenChange={(next, details) => {
+          if (!next && details.reason === "escape-key" && escapeIsInnerLayers(details.event)) {
+            details.cancel()
+            return
+          }
+          setOpenMobile(next)
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Backdrop
             data-slot="sidebar-backdrop"

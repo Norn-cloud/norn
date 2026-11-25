@@ -287,6 +287,8 @@ test("sidebar below 640px: the workspace switcher and the account menu open from
   const sheet = page.getByRole("dialog", { name: "Navigation" })
   await expect(sheet).toBeVisible()
   const focusInMenu = () => page.evaluate(() => document.activeElement?.closest('[role="menu"]') !== null)
+  // Still open, not merely still painted: a closing sheet stays visible through its exit transition.
+  const stillOpen = page.locator("#studio-sidebar-sheet[data-open]:not([data-ending-style])")
 
   // The workspace switcher, by pointer: its menu opens over the sheet with focus inside it.
   const scope = sheet.locator("[data-scope]")
@@ -295,10 +297,10 @@ test("sidebar below 640px: the workspace switcher and the account menu open from
   await expect(menu).toBeVisible()
   await expect(menu.getByRole("menuitemradio").first()).toBeVisible()
   await expect.poll(focusInMenu).toBe(true)
-  // Escape closes the menu only: the sheet stays, and focus is back on the switcher.
+  // Escape closes the menu only: the sheet stays open, and focus is back on the switcher.
   await page.keyboard.press("Escape")
   await expect(menu).toHaveCount(0)
-  await expect(sheet).toBeVisible()
+  await expect(stillOpen).toHaveCount(1)
   await expect(scope).toBeFocused()
 
   // The account menu, by keyboard: Sign out is shown and reachable from inside the sheet.
@@ -309,7 +311,7 @@ test("sidebar below 640px: the workspace switcher and the account menu open from
   await expect.poll(focusInMenu).toBe(true)
   await page.keyboard.press("Escape")
   await expect(menu).toHaveCount(0)
-  await expect(sheet).toBeVisible()
+  await expect(stillOpen).toHaveCount(1)
   await expect(account).toBeFocused()
   // A second Escape closes the sheet itself and returns focus to the toggle.
   await page.keyboard.press("Escape")
