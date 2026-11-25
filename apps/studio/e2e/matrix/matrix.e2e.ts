@@ -39,21 +39,38 @@ interface Variant { readonly theme: "light" | "dark"; readonly width: 1280 | 390
 const DEFAULT: Variant = { theme: "light", width: 1280, dir: "ltr" }
 const localeOf = (variant: Variant) => (variant.dir === "rtl" ? "ar" : "en")
 
-async function open(page: Page, variant: Variant = DEFAULT, notServed: NotServed = "404") {
+type Cell = Awaited<ReturnType<typeof matrixCell>>
+
+/** Queue the stand-in's answer to each call `step` starts: the next step's outcome, or none (held). */
+function queueFor(cell: Cell, step: Walk["steps"][number] | undefined, next: Msg | undefined, notServed: NotServed) {
+  for (const effect of step?.transition.effects ?? []) {
+    if (effect.kind !== "start") continue
+    const kind = effect.call.kind === "read" ? "read" : "action"
+    // A call the walk never answers is held, never left to the stand-in: an instant answer would move the page past the state asserted.
+    ;(kind === "read" ? cell.reads : cell.calls).push(next?.kind === "outcome" ? answerFor(next, kind, notServed) : null)
+  }
+}
+
+/** Open the matrix page; the page's own `page_opened` starts its first read, so that answer is queued first. */
+async function open(page: Page, walk: Walk, variant: Variant, notServed: NotServed) {
   await page.setViewportSize({ width: variant.width, height: 900 })
   const cell = await matrixCell(page, definitions)
+  if (walk.steps[0]?.msg.kind === "page_opened") queueFor(cell, walk.steps[0], walk.steps[1]?.msg, notServed)
   await page.clock.install({ time: new Date("2026-11-25T09:00:00Z") })
   await page.goto(`/matrix.html?widget=${MATRIX_WIDGET_ID}&theme=${variant.theme}&dir=${variant.dir}&locale=${localeOf(variant)}`)
   const root = page.locator("[data-norn-page]")
-  await expect(root).toHaveAttribute("data-state", "opening")
   await expect(root).toHaveAttribute("data-engine", "ready", { timeout: ENGINE_MS })
-  return { root, cell, notServed }
+  return { root, cell }
 }
 
 /** The label a control node shows in `variant`'s locale. */
 function labelOf(nodeId: string, variant: Variant): string {
   const component = nodes.get(nodeId)?.component
   if (component?.kind === "control") return component.label[localeOf(variant)] ?? component.label.en ?? nodeId
+  if (component?.kind === "action") {
+    const placement = ux.actionPlacements.find((candidate) => candidate.placementId === component.placementId)
+    return placement?.label[localeOf(variant)] ?? placement?.label.en ?? nodeId
+  }
   return nodeId === "meter-node" ? "Pick" : nodeId
 }
 
@@ -69,24 +86,21 @@ async function agentAct(page: Page, label: string, action: string, args: readonl
 
 /** Replay `walk`: a person's events through the page agent (a confirm-marked one by a person), outcomes from the stand-in. */
 async function replay(page: Page, walk: Walk, variant: Variant = DEFAULT, notServed: NotServed = "404") {
-  const { root, cell } = await open(page, variant, notServed)
+  const { root, cell } = await open(page, walk, variant, notServed)
   for (const [index, { msg, transition }] of walk.steps.entries()) {
-    const next = walk.steps[index + 1]?.msg
     const where = `${walk.transitionId}: step ${index + 1} (${transition.transitionId})`
-    for (const effect of transition.effects ?? []) {
-      if (effect.kind !== "start") continue
-      // The answer a started call gets is the next step's outcome; a call the walk never answers is held.
-      const queue = effect.call.kind === "read" ? cell.reads : cell.calls
-      queue.push(next?.kind === "outcome" ? answerFor(next, effect.call.kind === "read" ? "read" : "action", notServed) : null)
+    // The page opened itself; every later step's calls get the next step's outcome, queued before the step.
+    if (msg.kind !== "page_opened") {
+      queueFor(cell, walk.steps[index], walk.steps[index + 1]?.msg, notServed)
+      await act(page, msg, transition.from, variant, cell)
     }
-    await act(page, msg, transition.from, variant, cell)
     if (msg.kind === "outcome" && msg.outcome === "timeout") await page.clock.runFor(machine.states.find((state) => state.stateId === transition.from)?.deadlineMs ?? 0)
     await expect(root, where).toHaveAttribute("data-state", transition.target)
   }
   return { root, cell }
 }
 
-async function act(page: Page, msg: Msg, from: string, variant: Variant, cell: Awaited<ReturnType<typeof matrixCell>>) {
+async function act(page: Page, msg: Msg, from: string, variant: Variant, cell: Cell) {
   if (msg.kind === "outcome") {
     // The answer to the call the state awaits; released once the page has sent it, never early.
     const held = machine.states.find((state) => state.stateId === from)?.awaits?.kind === "action" ? cell.calls : cell.reads
@@ -103,11 +117,11 @@ async function act(page: Page, msg: Msg, from: string, variant: Variant, cell: A
     return
   }
   const label = labelOf(nodeId, variant)
-  if (nodeId === "confirm-node") {
-    // A ledgered action needs a person (L6, `data-agent-confirm`): the agent is refused, a person presses.
+  if ((await page.locator(`[data-node="${nodeId}"][data-agent-confirm]`).count()) > 0) {
+    // A press that starts a ledgered action needs a person (L6, `data-agent-confirm`): the agent is refused, a person presses.
     const refused = await agentAct(page, label, "press")
-    expect(refused.ok, "the agent may not press a ledgered confirm").toBe(false)
-    await page.getByRole("button", { name: label, exact: true }).click()
+    expect(refused.ok, `the agent may not press ${label}`).toBe(false)
+    await page.locator(`[data-node="${nodeId}"]`).click()
     return
   }
   const result = nodes.get(nodeId)?.component.kind === "control" && (nodes.get(nodeId)!.component as { input: string }).input === "text"
@@ -119,7 +133,9 @@ async function act(page: Page, msg: Msg, from: string, variant: Variant, cell: A
 test("the matrix walks every transition and reaches every declared state", () => {
   expect(matrix.walks.map((walk) => walk.transitionId)).toEqual(machine.transitions.map((transition) => transition.transitionId))
   expect(matrix.unreached).toEqual([])
-  expect(matrix.outcomes.length).toBeGreaterThanOrEqual(14)
+  expect(matrix.transient).toEqual([machine.initialStateId])
+  // Every pending state's outcomes: the read's six, the save's six.
+  expect(matrix.outcomes.length).toBe(12)
 })
 
 for (const walk of matrix.walks) {
@@ -185,7 +201,7 @@ test("ARIA: the open layer passes UI SDK's alertdialog pattern check", async ({ 
   expect(problems).toBeNull()
 })
 
-interface Cell { readonly state: string; readonly variant: string; readonly reached: boolean; readonly overflow: number; readonly hitMisses: readonly string[]; readonly axe: readonly { readonly id: string; readonly impact: string | null; readonly nodes: number }[] }
+interface VerifyCell { readonly state: string; readonly variant: string; readonly reached: boolean; readonly overflow: number; readonly hitMisses: readonly string[]; readonly axe: readonly { readonly id: string; readonly impact: string | null; readonly nodes: number }[] }
 
 /** Buttons a pointer at their centre does not reach (inside the open layer when there is one). */
 const hitMisses = (page: Page) => page.evaluate(() => {
@@ -203,7 +219,7 @@ test("verify: every state × light/dark × desktop/390 × LTR/RTL, plus axe", as
   test.setTimeout(900_000)
   const variants: Variant[] = []
   for (const theme of ["light", "dark"] as const) for (const width of [1280, 390] as const) for (const dir of ["ltr", "rtl"] as const) variants.push({ theme, width, dir })
-  const cells: Cell[] = []
+  const cells: VerifyCell[] = []
   for (const [state, walk] of matrix.states) {
     for (const variant of variants) {
       const name = `${variant.theme}/${variant.width}/${variant.dir}`

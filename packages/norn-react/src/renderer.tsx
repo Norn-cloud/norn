@@ -11,7 +11,7 @@
  * The renderer holds no permission logic: it reflects the server's answers (reads, refusals,
  * projections, approvals) and the admitted document, nothing else.
  */
-import { useMemo, type ReactNode } from "react"
+import { useMemo, useRef, type ReactNode } from "react"
 import type { ActionEffects } from "./agent.ts"
 import { missingCapabilities } from "./capabilities.ts"
 import { islandsOf, type IslandRegistry } from "./islands.ts"
@@ -98,7 +98,9 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
     ...(props.navigate === undefined ? {} : { navigate: props.navigate }),
     ...(props.clock === undefined ? {} : { clock: props.clock }),
   })
+  const raisedBy = useRef<string | null>(null)
   const scope: PageScope = {
+    raisedBy,
     ux,
     page,
     machine,
@@ -110,8 +112,8 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
   }
   const role = machine.states.find((state) => state.stateId === runtime.snapshot.stateId)?.role
   return (
-    <section
-      aria-label={page.name}
+    // Not a landmark itself: the page's own root node names its region, so no two regions share a name.
+    <div
       dir={props.dir ?? "ltr"}
       lang={props.locale ?? "en"}
       className="grid gap-4"
@@ -122,7 +124,7 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
       data-workspace={reader.kind}
     >
       <Node scope={scope} node={page.root} />
-    </section>
+    </div>
   )
 }
 

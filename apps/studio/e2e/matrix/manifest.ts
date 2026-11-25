@@ -14,13 +14,17 @@ export interface Matrix {
   readonly states: ReadonlyMap<string, Walk>
   /** Every (pending state, outcome) pair the machine handles. */
   readonly outcomes: readonly { readonly state: string; readonly outcome: string; readonly transitionId: string }[]
+  /** The initial state when opening the page leaves it at once: drawn for no frame a person sees. */
+  readonly transient: readonly string[]
   /** Declared states no walk reaches (the suite asserts there are none). */
   readonly unreached: readonly string[]
 }
 
 export function matrixOf(machine: Machine, evaluate: Evaluate, payloadFor?: (transition: MachineTransition, event: MachineEvent, snapshot: Snapshot) => readonly Fields[] | undefined): Matrix {
   const all = walks(machine, evaluate, payloadFor)
-  const states = new Map<string, Walk>([[machine.initialStateId, { transitionId: "(opened)", steps: [] }]])
+  // A page is never seen in its initial state when opening it fires a transition at once.
+  const opens = machine.transitions.some((transition) => transition.from === machine.initialStateId && machine.events.find((event) => event.eventId === transition.on)?.source.kind === "page_opened")
+  const states = new Map<string, Walk>(opens ? [] : [[machine.initialStateId, { transitionId: "(opened)", steps: [] }]])
   for (const walk of [...all].sort((a, b) => a.steps.length - b.steps.length)) {
     const target = walk.steps.at(-1)?.transition.target
     if (target !== undefined && !states.has(target)) states.set(target, walk)
@@ -29,7 +33,8 @@ export function matrixOf(machine: Machine, evaluate: Evaluate, payloadFor?: (tra
     const source = machine.events.find((event) => event.eventId === transition.on)?.source
     return source?.kind === "outcome" ? [{ state: transition.from, outcome: source.outcome, transitionId: transition.transitionId }] : []
   })
-  return { walks: all, states, outcomes, unreached: machine.states.map((state) => state.stateId).filter((state) => !states.has(state)) }
+  const transient = opens ? [machine.initialStateId] : []
+  return { walks: all, states, outcomes, transient, unreached: machine.states.map((state) => state.stateId).filter((state) => !states.has(state) && !transient.includes(state)) }
 }
 
 /** Every node of a page tree, by id. */

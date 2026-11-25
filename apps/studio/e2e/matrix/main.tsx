@@ -96,6 +96,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={client}>
       <WorkspaceProvider>
         <main className="mx-auto grid max-w-3xl gap-4 p-4 sm:p-8">
+          <h1 className="sr-only">Widget state matrix</h1>
           <MatrixPage />
         </main>
       </WorkspaceProvider>

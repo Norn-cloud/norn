@@ -7,11 +7,11 @@
  * becomes the machine's declared `user` event; nothing here calls the server or decides permission.
  * Values carry the agent marks the server's projection implies (`agent.ts`, L6).
  */
-import { AlertDialog, AlertDialogContent, AlertDialogTitle } from "@ui-sdk/react/alert-dialog"
+import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@ui-sdk/react/alert-dialog"
 import { Button } from "@ui-sdk/react/button"
-import { Dialog, DialogContent, DialogTitle } from "@ui-sdk/react/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
 import { Input } from "@ui-sdk/react/input"
-import type { ReactNode } from "react"
+import { useRef, type ReactNode } from "react"
 import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
@@ -21,7 +21,7 @@ import type { Fields, Machine, MachineEvent } from "./machine/machine.ts"
 import { messageOf, type BindingCallState, type BindingReadState } from "./reads.ts"
 import type { MachineRuntime } from "./runtime.ts"
 import { matchActionState, matchReadState } from "./state.ts"
-import { text, type PropertyRef, type WidgetNode, type WidgetPage, type WidgetUx } from "./ux.ts"
+import { nodesOf, text, type PropertyRef, type WidgetNode, type WidgetPage, type WidgetUx } from "./ux.ts"
 
 /** Everything a node needs from its page. */
 export interface PageScope {
@@ -33,6 +33,8 @@ export interface PageScope {
   readonly locale: string
   readonly actionEffects: (actionId: string) => ActionEffects | undefined
   readonly navigate: (itemId: string) => void
+  /** The node whose event a person or agent raised last: where focus returns when a layer it opened closes. */
+  readonly raisedBy: { current: string | null }
 }
 
 const BUTTON = "inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-border bg-background px-4 text-body text-foreground outline-none transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-45 aria-disabled:opacity-45 max-sm:min-h-[44px]"
@@ -58,6 +60,7 @@ function raise(scope: PageScope, node: WidgetNode, payload: Fields = {}, emits?:
   if (event === undefined) return
   const declared = new Set((event.payload ?? []).map((member) => member.fieldId))
   const kept = Object.fromEntries(Object.entries(payload).filter(([member]) => declared.has(member)))
+  scope.raisedBy.current = node.nodeId
   scope.runtime.send({ kind: "user", eventId: event.eventId, payload: kept })
 }
 
@@ -188,7 +191,8 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
     )
   }
   return (
-    <Button {...mark} className={BUTTON} data-node={node.nodeId} disabled={!on} data-engine={waiting ? "waiting" : undefined} onClick={() => raise(scope, node)}>
+    // Focusable while disabled: a layer whose controls all wait on a call keeps focus inside it.
+    <Button {...mark} className={BUTTON} data-node={node.nodeId} disabled={!on} focusableWhenDisabled data-engine={waiting ? "waiting" : undefined} onClick={() => raise(scope, node)}>
       {label}
     </Button>
   )
@@ -201,6 +205,19 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   const props = propsOf(scope, node)
   const title = node.children.find((child) => child.component.kind === "section")
   const titled = title?.component.kind === "section" ? text(title.component.section.label, scope.locale) : scope.page.name
+  // The layer's message: the confirmation message of the action it asks about (an alert dialog points at it).
+  const asked = nodesOf(node).flatMap((child) => (child.component.kind === "action" ? [child.component.placementId] : []))
+  const message = scope.ux.actionPlacements.find((placement) => asked.includes(placement.placementId))?.confirmation.message
+  // Where focus returns when the machine closes the layer: what had it when the layer opened.
+  const wasOpen = useRef(false)
+  const returnTo = useRef<HTMLElement | null>(null)
+  if (open && !wasOpen.current && typeof document !== "undefined") {
+    // What had focus, or (an agent presses without focusing) the control whose event opened it.
+    const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+    returnTo.current = active ?? document.querySelector<HTMLElement>(`[data-node="${scope.raisedBy.current ?? ""}"]`)
+  }
+  wasOpen.current = open
+  const finalFocus = () => returnTo.current
   const options = {
     open,
     ...(typeof props.dismissible === "boolean" ? { dismissible: props.dismissible } : {}),
@@ -213,15 +230,17 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   const panel = "m-auto w-[min(28rem,calc(100vw-2rem))] rounded-[var(--radius-popup)] border border-border bg-popover p-5 text-popover-foreground shadow-lg backdrop:bg-black/40"
   return primitive === "alert-dialog" ? (
     <AlertDialog {...options}>
-      <AlertDialogContent className={panel} data-node={node.nodeId} data-layer={primitive}>
+      <AlertDialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <AlertDialogTitle className="text-heading font-medium">{titled}</AlertDialogTitle>
+        {message !== undefined && <AlertDialogDescription className={MUTED}>{text(message, scope.locale)}</AlertDialogDescription>}
         {children}
       </AlertDialogContent>
     </AlertDialog>
   ) : (
     <Dialog {...options}>
-      <DialogContent className={panel} data-node={node.nodeId} data-layer={primitive}>
+      <DialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <DialogTitle className="text-heading font-medium">{titled}</DialogTitle>
+        {message !== undefined && <DialogDescription className={MUTED}>{text(message, scope.locale)}</DialogDescription>}
         {children}
       </DialogContent>
     </Dialog>

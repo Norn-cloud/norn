@@ -29,7 +29,7 @@ function scope(stateId: string, reads: ReadonlyMap<string, BindingReadState>, ca
   const engine = lazyEngine(() => Promise.reject(new Error("markup only")))
   const runtime: MachineRuntime = { snapshot: { stateId, fields: { note: "" }, entry: 1 }, engine: "idle", evaluate: engine.evaluate, send: () => {}, reads, calls }
   return {
-    ux, page, machine, runtime, islands: {}, locale: "en", navigate: () => {},
+    ux, page, machine, runtime, islands: {}, locale: "en", navigate: () => {}, raisedBy: { current: null },
     actionEffects: (artifactId) => (artifactId === ACTION.id ? { irreversible: false, destructive: false, money: [], ledgered } : undefined),
   }
 }
@@ -76,6 +76,7 @@ test("every read state draws through matchReadState, and a call's state through 
 test("a control is enabled exactly when the current state can take its event", () => {
   const browsing = renderToStaticMarkup(<Node scope={scope("browsing", ok)} node={node("save-node")} />)
   const saving = renderToStaticMarkup(<Node scope={scope("saving", ok)} node={node("save-node")} />)
-  expect(browsing).not.toMatch(/ disabled=""/)
-  expect(saving).toMatch(/ disabled=""/)
+  // Disabled but focusable (`aria-disabled`), so focus never falls out of a waiting layer.
+  expect(browsing).not.toMatch(/aria-disabled="true"/)
+  expect(saving).toMatch(/aria-disabled="true"/)
 })

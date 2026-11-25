@@ -326,7 +326,7 @@ test("CODEGEN-TS-ISLANDS: a widget's islands are typed, tiered and digested; a s
   const { matrixArtifact } = await import("../../../packages/norn-react/test/fixtures/matrix-page.ts")
   const generated = generateTypes([matrixArtifact()])
   // The fixture's checked-in registry is exactly codegen's (packages/norn-react/test/islands.types.ts compiles against it).
-  expect(readFileSync(join(REPO, "packages/norn-react/test/fixtures/matrix-page.d.ts"), "utf8")).toBe(generated)
+  expect(readFileSync(join(REPO, "packages/norn-react/test/fixtures/matrix-islands.d.ts"), "utf8")).toBe(generated)
   expect(generated).toContain('readonly "fixture-meter": { readonly tier: "presentational"; readonly props: { readonly "caption": string }; readonly events: { readonly "pick": Readonly<Record<string, never>> } }')
   expect(generated).toContain('readonly "fixture-status": { readonly tier: "stateful"')
   expect(generated).toContain("export type RequiredCatalogRegistry<W extends keyof WidgetIslands, States> = {")

@@ -520,7 +520,11 @@ fn renderer_capabilities_match_the_ui_checker() {
         .collect();
     let output = json_of(&renderer_capabilities_json(&ux_json).expect("capabilities"));
     assert_eq!(output, serde_json::json!(expected));
-    assert!(expected.iter().any(|capability| capability == "agent:redaction"));
+    assert!(
+        expected
+            .iter()
+            .any(|capability| capability == "agent:redaction")
+    );
     assert!(renderer_capabilities_json("{}").is_err());
 }
 

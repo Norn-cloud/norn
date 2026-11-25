@@ -13,11 +13,12 @@ const wasm = pkg
 wasm?.initSync({ module: readFileSync(join(pkg ?? "", "norn_checker_wasm_bg.wasm")) })
 if (!wasm && process.env.NORN_CHECKER_WASM_REQUIRED) throw new Error("NORN_CHECKER_WASM_PKG is required")
 type Checked = { readonly diagnostics: { readonly diagnostics: readonly { readonly severity: string; readonly code: string; readonly message: string; readonly pointer?: string }[] } }
-const checker = wasm === null ? null : { checkArtifactSet: (artifacts: readonly unknown[]) => JSON.parse(wasm.checkArtifactSet(JSON.stringify(artifacts), "null")) as Checked }
+// The demo definitions are the installed base; the fixture widget is the candidate set checked against it.
+const checker = wasm === null ? null : { checkArtifactSet: (artifacts: readonly unknown[], base: readonly unknown[]) => JSON.parse(wasm.checkArtifactSet(JSON.stringify(artifacts), JSON.stringify({ base }))) as Checked }
 
 test.skipIf(!checker)("the checker admits the fixture page: every outcome handled, every law held", () => {
   const artifact = matrixArtifact()
-  const checked = checker!.checkArtifactSet([...demoDefinitions(), artifact])
+  const checked = checker!.checkArtifactSet([artifact], demoDefinitions())
   const errors = checked.diagnostics.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer ?? ""}: ${diagnostic.message}`)
   expect(errors).toEqual([])
 })

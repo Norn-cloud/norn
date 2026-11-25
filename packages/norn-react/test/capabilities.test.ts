@@ -37,7 +37,7 @@ describe.skipIf(checker === null)("the capability walk is the checker's", () => 
 test("the declared behaviours are the pinned catalog's for the primitives drawn", () => {
   const catalog = JSON.parse(readFileSync(join(ROOT, "crates/norn-ui-checker/catalog/ui-sdk.json"), "utf8")) as { primitives: Record<string, { behaviors: string[] }> }
   const expected = [...new Set(RENDERED_PRIMITIVES.flatMap((name) => catalog.primitives[name]!.behaviors))].sort()
-  expect([...RENDERED_BEHAVIORS]).toEqual(expected)
+  expect([...RENDERED_BEHAVIORS] as string[]).toEqual(expected)
 })
 
 test("the fixture is drawn whole; every capability it needs is declared", () => {

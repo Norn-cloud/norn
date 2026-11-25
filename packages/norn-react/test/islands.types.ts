@@ -1,12 +1,12 @@
 /**
  * #1762 milestone C: a renderer's islands are the registry `norn codegen --ts` emits for the widget
- * (`fixtures/matrix-page.d.ts`), or the page does not compile. `bun run typecheck` checks every
+ * (`fixtures/matrix-islands.d.ts`), or the page does not compile. `bun run typecheck` checks every
  * `@ts-expect-error` row: if the registry ever accepted a missing, extra or mismatched island, the
  * directive would be unused and the typecheck would fail.
  */
 import type { IslandStates } from "../src/islands.ts"
 import { matchReadState } from "../src/state.ts"
-import type { RequiredCatalogRegistry } from "./fixtures/matrix-page.d.ts"
+import type { RequiredCatalogRegistry } from "./fixtures/matrix-islands.d.ts"
 
 type Registry = RequiredCatalogRegistry<"fixture.matrix.widget", IslandStates>
 

@@ -51,7 +51,8 @@ export const matrixWidget: W.WidgetDef = W.widget({
           props: { pendingAnnouncement: '"Saving"' },
           children: [
             { nodeId: "confirm-title", component: { kind: "section", section: { sectionId: "confirm", kind: "section", label: label("Save this record?", "حفظ هذا السجل؟"), fields: [], order: 2 } } },
-            control("confirm-node", "Confirm", "تأكيد"),
+            // The save call's one placement: a person's press on it is the machine's `confirm`.
+            { nodeId: "confirm-node", component: { kind: "action", placementId: "confirm-save" } },
             control("cancel-node", "Cancel", "إلغاء"),
           ],
         }),
@@ -121,6 +122,11 @@ export const matrixWidget: W.WidgetDef = W.widget({
   }],
   contract: {
     dataBindings: [{ bindingId: "records", object: ENTITY, query: { kind: "object_list", filters: [], sort: [], page: { size: 20, maxSize: 50 } } }],
+    // The save call's one placement, inside its dialog scope; the page machine starts it.
+    actionPlacements: [{
+      placementId: "confirm-save", bindingId: "save", label: label("Confirm", "تأكيد"), location: "toolbar", order: 1,
+      selectionInputMapping: {}, confirmation: { severity: "safe", strength: "none", message: label("Saving records the change in the ledger.", "الحفظ يسجّل التغيير في الدفتر.") },
+    }],
     fields: [
       { fieldId: "label-field", target: { kind: "property", property: { bindingId: "records", propertyId: "label" } }, label: label("Name", "الاسم"), control: "display" },
       { fieldId: "method-field", target: { kind: "property", property: { bindingId: "records", propertyId: "valuation_method" } }, label: label("Method", "الطريقة"), control: "display" },

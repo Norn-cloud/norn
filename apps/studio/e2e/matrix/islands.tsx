@@ -1,6 +1,6 @@
 /**
  * The fixture page's catalog islands, one per tier, typed by the registry `norn codegen --ts` emits
- * for the fixture widget (`packages/norn-react/test/fixtures/matrix-page.d.ts`): a missing island,
+ * for the fixture widget (`packages/norn-react/test/fixtures/matrix-islands.d.ts`): a missing island,
  * an extra one, or one whose props or events differ from its entry does not compile.
  *
  * - `fixture-meter` (Tier 1, presentational): its caption prop and a `pick` event, nothing else.
@@ -9,7 +9,7 @@
  */
 import { Button } from "@ui-sdk/react/button"
 import { matchActionState, matchReadState, type IslandStates } from "../../../../packages/norn-react/src/index.ts"
-import type { RequiredCatalogRegistry } from "../../../../packages/norn-react/test/fixtures/matrix-page.d.ts"
+import type { RequiredCatalogRegistry } from "../../../../packages/norn-react/test/fixtures/matrix-islands.d.ts"
 
 const MUTED = "text-meta text-muted-foreground"
 
