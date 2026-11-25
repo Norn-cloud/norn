@@ -482,8 +482,7 @@ fn arguments(
     let properties: BTreeSet<&str> = input_schema
         .get("properties")
         .and_then(JsonValue::as_object)
-        .map(|properties| properties.keys().map(String::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|properties| properties.keys().map(String::as_str).collect());
     let required: BTreeSet<&str> = input_schema
         .get("required")
         .and_then(JsonValue::as_array)
