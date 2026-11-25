@@ -458,6 +458,9 @@ PY
       )
       ;;
     guards)
+      python3 scripts/test_kernel_inline_verus.py
+      scripts/bootstrap-verification-tools.sh --verus-only
+      bash scripts/verify-kernel-inline-verus.sh all
       crates/norn-skeleton-guard/scripts/zen-dependency-tree.sh
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"

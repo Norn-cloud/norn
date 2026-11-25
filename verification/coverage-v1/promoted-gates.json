@@ -32,6 +32,21 @@
       "generatedArtifacts": []
     },
     {
+      "id": "kernel-inline-verus",
+      "profile": "fast",
+      "command": "bash scripts/verify-kernel-inline-verus.sh all",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "source-enrollment-regressions",
       "profile": "fast",
       "command": "python3 scripts/test_proof_enrollment.py",
@@ -857,6 +872,21 @@
       "classifications": [
         {
           "subsystem": "core-physics",
+          "layer": "proof"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "kernel-version-kani",
+      "profile": "full",
+      "command": "bash scripts/verify-kernel-version-kani.sh",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
           "layer": "proof"
         }
       ],
