@@ -205,13 +205,15 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
         meter.step()?;
         graph.links(node)?;
         nonnegative(node, quantity)?;
-        amounts.insert(node.clone(), quantity.clone());
+        Q::accumulate(amounts.entry(node.clone()).or_default(), quantity)?;
     }
     let order = graph.order(&mut meter)?;
     let mut unit_rollups: BTreeMap<N, Part<Q>> = BTreeMap::new();
     for node in order.iter().rev() {
         meter.step()?;
         let mut rolled = bom.parts.get(node).ok_or(Error::Invariant)?.clone();
+        let mut cost = Q::Sum::default();
+        Q::accumulate(&mut cost, &rolled.cost)?;
         let mut child_time = Q::zero();
         if let Some(children) = lines.get(node) {
             for line in children {
@@ -220,14 +222,15 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
                     continue;
                 }
                 let child = unit_rollups.get(&line.child).ok_or(Error::Invariant)?;
-                rolled.cost = rolled.cost.add(&line.quantity.mul(&child.cost)?)?;
+                Q::accumulate(&mut cost, &line.quantity.mul(&child.cost)?)?;
                 child_time = child_time.max(child.lead_time.clone());
             }
         }
+        rolled.cost = Q::finish(cost)?;
         rolled.lead_time = rolled.lead_time.add(&child_time)?;
         unit_rollups.insert(node.clone(), rolled);
     }
-    let mut total_cost = Q::zero();
+    let mut total_cost = Q::Sum::default();
     let mut lead_time = Q::zero();
     for (node, quantity) in demand {
         meter.step()?;
@@ -235,15 +238,16 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
             continue;
         }
         let rolled = unit_rollups.get(node).ok_or(Error::Invariant)?;
-        total_cost = total_cost.add(&quantity.mul(&rolled.cost)?)?;
+        Q::accumulate(&mut total_cost, &quantity.mul(&rolled.cost)?)?;
         lead_time = lead_time.max(rolled.lead_time.clone());
     }
     let mut requirements = BTreeMap::new();
     for node in &order {
         meter.step()?;
-        let Some(amount) = amounts.get(node).cloned() else {
+        let Some(sum) = amounts.remove(node) else {
             continue;
         };
+        let amount = Q::finish(sum)?;
         if amount == Q::zero() {
             continue;
         }
@@ -254,8 +258,7 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
                     continue;
                 }
                 let increment = amount.mul(&line.quantity)?;
-                let next = amounts.entry(line.child.clone()).or_insert_with(Q::zero);
-                *next = next.add(&increment)?;
+                Q::accumulate(amounts.entry(line.child.clone()).or_default(), &increment)?;
             }
         } else {
             requirements.insert(node.clone(), amount);
@@ -263,7 +266,7 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
     }
     Ok(Explosion {
         requirements,
-        total_cost,
+        total_cost: Q::finish(total_cost)?,
         lead_time,
         unit_rollups,
     })
@@ -311,16 +314,23 @@ pub fn hierarchical_rollup<N: Ord + Clone, Q: Quantity>(
     let mut result: BTreeMap<N, Q> = BTreeMap::new();
     for node in order.iter().rev() {
         meter.step()?;
-        let mut aggregate = value(values, node)?.clone();
-        for child in &graph.links(node)?.out {
+        let own = value(values, node)?;
+        let mut children = graph.links(node)?.out.iter().map(|child| {
             meter.step()?;
-            let child_value = result.get(child).ok_or(Error::Invariant)?;
-            aggregate = match aggregation {
-                Aggregation::Sum => aggregate.add(child_value)?,
-                Aggregation::Min => aggregate.min(child_value.clone()),
-                Aggregation::Max => aggregate.max(child_value.clone()),
-            };
-        }
+            result.get(child).ok_or(Error::Invariant)
+        });
+        let aggregate = match aggregation {
+            Aggregation::Sum => {
+                let mut sum = Q::Sum::default();
+                Q::accumulate(&mut sum, own)?;
+                for child in children {
+                    Q::accumulate(&mut sum, child?)?;
+                }
+                Q::finish(sum)?
+            }
+            Aggregation::Min => children.try_fold(own, |a, b| b.map(|b| a.min(b)))?.clone(),
+            Aggregation::Max => children.try_fold(own, |a, b| b.map(|b| a.max(b)))?.clone(),
+        };
         result.insert(node.clone(), aggregate);
     }
     Ok(result)

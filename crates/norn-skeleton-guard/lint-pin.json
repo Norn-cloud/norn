@@ -177,7 +177,8 @@
       },
       "unexpected_cfgs": {
         "check-cfg": [
-          "cfg(kani)"
+          "cfg(kani)",
+          "cfg(verus_keep_ghost)"
         ],
         "level": "warn"
       },

@@ -245,6 +245,7 @@ fn host(tenant: Tenant<Counting>, calls: Rc<Cell<u64>>) -> Host {
             URL_SAFE_NO_PAD.encode([7_u8; 32])
         ))
         .unwrap(),
+        norn_cell::analytics::AnalyticalEngineId::DuckDb,
     );
     let tokens = Counted {
         inner: TokenPrincipals::new(

@@ -29,6 +29,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
+use super::analytics_backend::ENGINE_ID as ENGINE;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use norn_api::analytics_routes::{EngineCall, Transport as _};
@@ -105,6 +106,7 @@ fn daemon_with(issuers: &[&Issuer], seam: Arc<dyn Seam>) -> Daemon {
             memory_limit: "256MB".to_owned(),
             threads: 1,
         },
+        engine: ENGINE,
     };
     let serving = Arc::clone(&clock);
     std::thread::spawn(move || serve_with(&listener, config, serving, seam));
@@ -137,9 +139,17 @@ impl Daemon {
     }
 
     fn database_exists(&self, tenant: &TenantId) -> bool {
-        self.root
-            .join(format!("{}.duckdb", tenant.as_str()))
-            .exists()
+        match ENGINE {
+            norn_cell::analytics::AnalyticalEngineId::DuckDb => {
+                self.root.join(format!("{}.duckdb", tenant.as_str()))
+            }
+            norn_cell::analytics::AnalyticalEngineId::DataFusion => self
+                .root
+                .join("t")
+                .join(tenant.as_str())
+                .join("catalog.sqlite3"),
+        }
+        .exists()
     }
 
     /// The landing attempts of `of` on disk.
@@ -375,7 +385,7 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
     let exchange = Exchange::new(
         issuer("k1", 7),
         a.clone(),
-        norn_cell::analytics::EngineCapabilities::DUCKDB,
+        norn_cell::analytics::EngineCapabilities::of(ENGINE),
     );
     let call = EngineCall {
         op: "frontier".to_owned(),

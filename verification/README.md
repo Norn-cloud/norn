@@ -8,12 +8,13 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 |---|---|
 | `coverage-v1/` | The coverage manifest (`manifest/`), the promoted gate list (`promoted-gates.json`), trusted assumptions, the result schema, and the validators (`validate.py`, `validate_result.py`, `negative_canaries.py`) |
 | `stripmine-2026-08-22/` | Quint models (`models/`), Lean, Kani and F* proofs (`proofs/`), and the obligation registry (`obligations.json`) for authority, artifact governance, authorization and quantity ledger rules |
-| `kernel-l1/` | Lean reference for the kernel, Kani harnesses, and the Verus version spike (`version_verus.rs`) |
+| `kernel-l1/` | Lean reference for the kernel, Aeneas version proof and direct-source Kani harnesses |
 | `kernel-proof-v1/` | Lean proofs over Aeneas extractions of kernel commit, binding and decider code |
 | `kernel-v2/` | Quint models of commit admission, quantity ledger and projection trust, their ITF traces (`traces/`) and `results.json` |
 | `semantics-v1/` | Shared Lean semantics (`NornSem`) and checker proofs, with pinned statements and axioms |
 | `exact-arith-v1/` | Lean proofs over Aeneas extractions of the exact decimal, rational and ledger arithmetic |
 | `authz-v1/`, `ontology-v1/`, `linear-conservation-v1/`, `query-compute-v1/`, `specialisation-v1/`, `quantity-batch-atomicity-v1/`, `quantity-unit-dimension-v1/`, `core-physics-v1/` | Lean proofs and Quint models for one subsystem each |
+| `owl-time-v1/` | Lean reference proof of Allen's thirteen interval relations over half-open intervals, a Kani harness over the Rust classifier in `crates/norn-expr/src/temporal/allen.rs`, and the list of temporal boundary laws with their evidence (`README.md`) |
 | `cell-protocol-v1/` | Hand-written Quint models of cell protocols, TLC liveness harnesses, traces and `results.json`. Not a promoted gate. |
 | `canonical-values-v1/`, `cell-profile-v1/`, `ordered-fold-v1/`, `parameters/`, `values-v1/` | Kani harnesses and contracts. Crates include some of them under `#[cfg(kani)]`. |
 | `ontology/` | Ontology packs, registry and their validator |
@@ -25,10 +26,10 @@ Formal models and proofs for parts of Norn, and the scripts that check them. Thi
 
 `scripts/verify-promoted-subsystems.sh [fast|full]` runs every promoted gate in order. Each gate is one `run_gate` line with a profile, an id and a command.
 
-1. Install the pinned tools: `scripts/bootstrap-verification-tools.sh` (Lean, Quint 0.32.0, Apalache 0.56.1, Kani 0.67.0, Z3, Java), `scripts/bootstrap-ontology-tools.sh` and `scripts/bootstrap-rust-extraction-tools.sh`.
+1. Install the pinned tools: `scripts/bootstrap-verification-tools.sh` (Verus, Lean, Quint 0.32.0, Apalache 0.56.1, Kani 0.67.0, Z3, Java), `scripts/bootstrap-ontology-tools.sh` and `scripts/bootstrap-rust-extraction-tools.sh`.
 2. Run `scripts/verify-promoted-subsystems.sh full`. This is what `scripts/ci/core.sh formal` does.
 
-- **`fast`** runs only the gates marked `fast`: Quint, Lean, tool-version, registry and ontology checks. It writes no result record.
+- **`fast`** runs only the gates marked `fast`: Verus, Quint, Lean, tool-version, registry and ontology checks. It writes no result record.
 - **`full`** runs every gate, including Kani, the Aeneas correspondence gates and the F* extraction. It requires the tools under `target/verification-tools`, writes `target/verification-results/formal-results.json`, and checks that file with `coverage-v1/validate_result.py`.
 
 Each gate's log is `target/verification-results/logs/<gate-id>.log`.
@@ -40,9 +41,9 @@ What the gates use:
 | Lean | `*-lean` gates, plus the proofs inside the Aeneas gates |
 | Quint + Apalache | `*-quint` gates (bounded model checks, mostly `--max-steps 8`) and `*-quint-typecheck` |
 | Charon + Aeneas | nine `*-correspondence` gates. Each extracts production Rust and proves the Lean translation against a spec (`scripts/verify-*-aeneas.sh`). |
-| Kani | `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`) |
+| Kani | `kernel-version-kani` (five direct-source version harnesses), `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`), `owl-time-allen-kani` (`owl-time-v1/allen_kani.rs`) |
 | F* (via hax) | `artifact-governance-rust-extraction` (`scripts/verify-artifact-governance-extraction.sh`) |
-| Verus | none; see [The Verus spike](#the-verus-spike) |
+| Verus | `kernel-inline-verus` checks the successor and committed-deletion predicates in the shipped version module and runs their two mutants |
 
 ## Quint/Apalache execution policy
 
@@ -60,9 +61,11 @@ Every `quint verify --backend apalache` gate runs through `scripts/quint_apalach
 
 ## Where the formal checks run
 
-**The formal checks do not run in GitHub CI.** CI runs `scripts/ci/core.sh` phase by phase and leaves out the `formal` phase: `core.sh plan` drops it ("formal remains a Boat gate"), and `.github/workflows/ci-policy.yml` says CI runs every phase "but formal". No workflow calls `verify-promoted-subsystems.sh`. So Lean, Quint/Apalache, Kani, Aeneas and F* are run by hand on Boat sandboxes, and the results are recorded in the pull request.
+**The full formal profile runs on Boat.** CI runs `scripts/ci/core.sh` phase by phase and leaves out the `formal` phase: `core.sh plan` drops it ("formal remains a Boat gate"), and `.github/workflows/ci-policy.yml` says CI runs every phase "but formal". No workflow calls `verify-promoted-subsystems.sh`. So Lean, Quint/Apalache, Kani, Aeneas and F* are run by hand on Boat sandboxes, and the results are recorded in the pull request.
 
-What CI does run, on every plan:
+Every CI plan also runs the following checks.
+
+- In `guards`: install the pinned Verus bundle with `scripts/bootstrap-verification-tools.sh --verus-only`, then run `bash scripts/verify-kernel-inline-verus.sh all`. The gate checks the approved statement digests before running Verus. It compares each checked executable body’s typed operations, resolved callees and local types with the THIR emitted by Cargo for the production kernel library (D107). The decoder accepts the scalar module’s current expression forms and refuses unrecognized constructs. The module denies Clippy’s numeric fallback lint. Each mutant must fail its own named postcondition. The separate Aeneas successor theorem and Kani harnesses target the ordinary Rust source.
 
 - In `cheap`: `scripts/proof_enrollment.py` and its tests (registry checks over the proof sources), and `coverage-v1/negative_canaries.py --workflow-contract`. These check the registries, not the proofs.
 - In the test shards: `crates/norn-cell/tests/kernel_quint.rs` replays the Quint ITF traces committed in `kernel-v2/traces/` against the Rust kernel. It reads the traces; it does not run Quint.
@@ -81,10 +84,31 @@ No complete `verify-promoted-subsystems.sh full` pass is recorded. The records a
 | `verify-promoted-subsystems.sh full` | **failed** at `artifact-governance-rust-extraction` (the sccache compiler probe sent C input to the hax Rust driver, exit 101), identically on base `2f9bd4507` and the head; the Quint and Lean gates before it passed | head `24487efd4b` | #372, merged as `7388b7a09b` |
 | `cell-protocol-v1` Quint models (Apalache bounded checks, 200k simulated traces each) and TLC liveness | no counterexample at the stated depths; TLC finished for one harness of three | 2026-11-11 | #1240, merged as `c746a98b4c`; `cell-protocol-v1/results.json` |
 
-## The Verus spike
+## Exact sum
 
-`kernel-l1/version_verus.rs` is a copy of the body of `checked_next_version` from `crates/norn-kernel/src/version_check.rs`, with a Verus `ensures` clause added. It is a model beside the code, not a proof of the shipped module: Verus checks the copy, not the compiled kernel.
+`ExactSum` accepts every `i128` coefficient and at most `u32::MAX` terms. Verus checks the signed result, sum of magnitudes, capacity, retraction and permutation laws in the production source. Posting admission separately requires a reversible `Amount`.
 
-`scripts/verify-kernel-l1-version-body.py` ties the copy to production by text: it matches both files against fixed patterns and fails unless the two function bodies are equal after removing whitespace. Its own docstring says this is "textual source correspondence, not Rust/Verus compiler equivalence". No gate in `verify-promoted-subsystems.sh` calls it, and no script in the repository runs Verus.
+Boat checked commit `75906e03d23664afcd8449afe09bcb8c803ea4f1` with Verus `0.2026.11.22.1ce6a59`, rustc `1.100.0` and Kani `0.67.0`. The accumulator source SHA-256 was `f6d6cda5e0e0a6f94e05b648c46e39619fd7798374ac12e0c79b07e0dc175ecc`. Verus discharged 18 obligations. D107 compared the standalone Verus VIR with release Cargo THIR from `norn-graph`, which compiles the same source into the shipped graph crate. All ten verified executable bodies matched, including the two derived clones. Across those bodies, 310 distinct expression-span/type pairs, 33 typed bindings (including parameters) and 18 call targets matched. The comparison normalizes compiler-inserted wrappers and compares calls and bindings with multiplicity. The CI `guards` phase runs the inline Verus runner for `version_check` only; ExactSum is not enrolled there yet, so the commands below are run by hand. The final-head rerun is recorded on [#1716](https://github.com/Norn-cloud/norn/pull/1716).
 
-The same function's proof about the production source is the `kernel-l1-version-correspondence` gate: `scripts/verify-kernel-l1-aeneas.sh` extracts `crates/norn-kernel/src/version_check.rs` itself with Charon and Aeneas and checks the Lean proof against that extraction.
+Run from the repository root with the pinned tools on `PATH`. A fresh output directory also gives Cargo a distinct compiler invocation on a warm build.
+
+```bash
+set -euo pipefail
+out=$(mktemp -d)
+RUSTUP_TOOLCHAIN=1.100.0 verus --edition=2024 --crate-type lib --log vir \
+    --log vir-option=no_fn_details --log-dir "$out/vir" \
+    -o "$out/libexact_sum.rlib" crates/norn-ir/src/exact_sum.rs
+RUSTC_BOOTSTRAP=norn_graph cargo +1.100.0 rustc --locked --release -p norn-graph --lib -- \
+    -Zunpretty=thir-tree "-Zdump-mir-dir=$out/mir" | \
+    awk '/^DefId\(/{keep=($0 ~ /::exact_sum::/)} keep' > "$out/exact.thir"
+python3 -B verification/exact-arith-v1/compare_exact_sum_ir.py \
+    "$out/vir/crate.vir" "$out/exact.thir"
+```
+
+Kani's full-width state transition passed 162 checks. The publication harness uses independent symbolic positive and negative subtotals; it passed 71 checks and reached both sides of `MAX_SUM`. The retraction harness (`retracting_an_admitted_add_restores_the_original_total`) passed 126 checks. None of the harnesses reported unreachable checks. Removing the magnitude guard from `decide` caused its decision assertion to fail.
+
+```bash
+kani verification/query-compute-v1/arithmetic_kani.rs --harness full_width_operations
+kani verification/query-compute-v1/arithmetic_kani.rs --harness sum_never_wraps
+kani verification/query-compute-v1/arithmetic_kani.rs --harness retracting_an_admitted_add_restores_the_original_total
+```

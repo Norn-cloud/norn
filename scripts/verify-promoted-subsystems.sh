@@ -382,6 +382,8 @@ run_gate fast tool-versions "scripts/check-verification-tools.sh" command \
   scripts/check-verification-tools.sh
 run_gate full extraction-tool-versions "scripts/check-rust-extraction-tools.sh" command \
   scripts/check-rust-extraction-tools.sh
+run_gate fast kernel-inline-verus "bash scripts/verify-kernel-inline-verus.sh all" command \
+  bash scripts/verify-kernel-inline-verus.sh all
 run_gate fast source-enrollment-regressions "python3 scripts/test_proof_enrollment.py" command \
   python3 scripts/test_proof_enrollment.py
 run_gate fast coverage-manifest "python3 verification/coverage-v1/validate.py" command \
@@ -413,6 +415,10 @@ run_gate fast assurance-specialisation-lean \
   "lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean" \
   command \
   lean -DwarningAsError=true verification/specialisation-v1/Specialisation.lean
+run_gate fast owl-time-allen-lean \
+  "lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean" \
+  command \
+  lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \
@@ -664,6 +670,8 @@ run_gate fast core-value-ledger-lean \
   command \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
+run_gate full kernel-version-kani "bash scripts/verify-kernel-version-kani.sh" command \
+  bash scripts/verify-kernel-version-kani.sh
 run_gate full quantity-kani \
   "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs" \
   command \
@@ -671,6 +679,13 @@ run_gate full quantity-kani \
     KANI_HOME=target/verification-tools/kani-home \
     kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
     verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs
+run_gate full owl-time-allen-kani \
+  "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/owl-time-v1/allen_kani.rs" \
+  command \
+  env RUSTUP_HOME=target/verification-tools/rustup \
+    KANI_HOME=target/verification-tools/kani-home \
+    kani --fail-fast --output-format terse --target-dir "$result_root/kani-target" \
+    verification/owl-time-v1/allen_kani.rs
 
 run_gate full ontology-runtime-rust \
   "cargo test --locked -p norn-checker --test suites -- ontology_pack:: ontology_registry:: quantity_unit_ontology_pack::" \

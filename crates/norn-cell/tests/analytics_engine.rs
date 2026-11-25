@@ -19,7 +19,7 @@ use std::io::Write as _;
 
 use proptest::strategy::Strategy as _;
 
-use norn_cell::analytics::engine::{Engine, Settings};
+use super::analytics_backend::{Engine, Settings};
 use norn_cell::analytics::{
     EvaluateResponse, FileFormat, FileSource, GroupKey, LandRequest, LoadRequest, MembersRequest,
     MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
@@ -92,6 +92,11 @@ fn ask(
             r.code
         }
     })?;
+    // D137: the answer is the engine under test's, never another's.
+    assert_eq!(
+        response.provenance.engine,
+        super::analytics_backend::ENGINE_ID
+    );
     store
         .analytics_answer(prepared, response)
         .map_err(|e| code(&e))
@@ -119,7 +124,10 @@ fn compare(
     let answered = ask(store, engine, plan, context.clone());
     match (exact, answered) {
         (Ok(exact), Ok(mut answered)) => {
-            assert_eq!(answered.engine, norn_cell::compute::Engine::Duckdb);
+            assert_eq!(
+                answered.engine,
+                norn_cell::compute::Engine::from(super::analytics_backend::ENGINE_ID)
+            );
             answered.engine = norn_cell::compute::Engine::Cell;
             assert_eq!(answered, exact);
             Some(exact)
@@ -441,6 +449,7 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
                     group: group.clone(),
                     after: after.clone(),
                     limit: 2,
+                    model_pin: Some(prepared.request().model_pin.clone()),
                 })
                 .expect("page")
                 .members;
@@ -519,7 +528,7 @@ fn the_engine_names_its_snapshot_and_refuses_another_model()
     let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
     assert_eq!(
         response.provenance.engine,
-        norn_cell::analytics::AnalyticalEngineId::DuckDb
+        super::analytics_backend::ENGINE_ID
     );
     store.analytics_answer(prepared, response)?;
     other.model_pin = "another model".into();
@@ -571,7 +580,6 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
             threads: 1,
         })?)
     };
-    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
     let (mut store, _plan, _context) = by_metal(true, 100);
     commit(
         &mut store,
@@ -592,12 +600,10 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
         ));
         assert_eq!(eng.frontier(frontier_req).map_err(|r| r.detail)?, *expected);
         drop(eng);
-        let conn = ::duckdb::Connection::open(&database)?;
-        let rows: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM \"m:{TYPE}\""), [], |r| {
-            r.get(0)
-        })?;
-        assert_eq!(rows, 0);
-        drop(conn);
+        assert_eq!(
+            super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE),
+            0
+        );
         reopen()
     };
     let mut other_schema = batch.clone();
@@ -612,6 +618,225 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
     let reset = engine.frontier(&mirror).map_err(|r| r.detail)?;
     let _engine = assert_refused_and_empty(engine, &batch, &mirror, &reset)?;
     Ok(())
+}
+
+/// D137 crash safety: a refused update publishes nothing. Once a batch is
+/// visible, a later batch of another generation is refused and every
+/// previously visible row stays exactly as it was, and the frontier stays.
+#[test]
+fn a_refused_update_preserves_every_visible_row() -> Result<(), Box<dyn std::error::Error>> {
+    let (dir, engine) = engine();
+    let (mut store, plan, context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let before = ask(&store, &engine, &plan, context.clone())?;
+    let visible = super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE);
+    assert_ne!(visible, 0);
+    let mirror = store.analytics_frontier(&tenant(), WORLD)?;
+    let frontier = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    commit(
+        &mut store,
+        vec![row("B", 2000, Some(500), TIMES[1], "silver")],
+    );
+    let mut update = store
+        .analytics_delta(&tenant(), WORLD, frontier.frontier, 10)?
+        .request;
+    assert_ne!(update.rows.len(), 0);
+    for pin in update.schema_pins.values_mut() {
+        pin.push('x');
+    }
+    assert_eq!(
+        engine.sync(&update).map_err(|r| r.code),
+        Err("core.compute.stale_input".to_owned())
+    );
+    assert_eq!(
+        super::analytics_backend::mirror_rows(dir.path(), &tenant(), TYPE),
+        visible
+    );
+    assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, frontier);
+    let prepared = store.analytics_prepare(&plan, context, &tenant())?;
+    let refused = engine
+        .evaluate(prepared.request())
+        .map(|_| ())
+        .map_err(|r| r.code);
+    assert_eq!(refused, Err("analytics.frontier_behind".to_owned()));
+    drop(before);
+    Ok(())
+}
+
+/// N6.3: both engines read a CSV as `DuckDB`'s strict reader does: a quote
+/// inside an unquoted field is part of its text, a quoted field may hold
+/// commas and doubled quotes, and a UTF-8 byte-order mark is not part of the
+/// first header.
+#[test]
+fn csv_quoting_is_strict_and_a_byte_order_mark_is_skipped() {
+    let (_dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let header = "metal,occurred_at,input,recovered,loss";
+    let (inner, inner_sha) = csv(&engine, &[header, "go\"ld,2026-10-23T12:00:00Z,1.5,1.25,0"]);
+    let loaded = engine
+        .load(&load_request(&plan, "load-inner", inner_sha), inner.path())
+        .expect("a quote inside an unquoted field");
+    assert_eq!(loaded.rows.saturating_add(loaded.rejected), 1);
+    let marked = format!("\u{feff}{header}");
+    let (good, good_sha) = csv(
+        &engine,
+        &[
+            &marked,
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+            "\"silver\",\"2026-10-23T12:00:00Z\",2,1,0",
+        ],
+    );
+    let loaded = engine
+        .load(&load_request(&plan, "load-good", good_sha), good.path())
+        .expect("a marked, quoted CSV");
+    assert_eq!((loaded.rows, loaded.rejected), (2, 0));
+}
+
+/// D137 (B5): a mirrored number its column cannot store refuses the sync,
+/// as the storage cast refuses it, and the frontier does not move.
+#[test]
+fn a_sync_with_an_uncastable_number_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, engine) = engine();
+    let (mut store, _plan, _context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let mirror = store.analytics_frontier(&tenant(), WORLD)?;
+    let initial = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    let mut batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
+    let value = batch
+        .rows
+        .iter_mut()
+        .filter_map(|row| row.values.as_mut())
+        .flatten()
+        .find(|value| matches!(value, norn_cell::analytics::Value::Number(_)))
+        .expect("a number");
+    *value = norn_cell::analytics::Value::Number("not a number".to_owned());
+    assert!(engine.sync(&batch).is_err(), "the cast refuses the batch");
+    assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, initial);
+    Ok(())
+}
+
+/// D137 (B2): a mirror synced one commit at a time answers exactly as the
+/// cell does at every frontier, however many batches it took; the engine
+/// that compacts keeps its segment count bounded.
+#[test]
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "a generated history's arithmetic"
+)]
+fn many_small_syncs_answer_exactly_and_stay_compacted() {
+    let (dir, engine) = engine();
+    let (mut store, plan, context) = by_metal(true, 100);
+    for index in 0..24_i64 {
+        let id = format!("R{}", index % 7);
+        let metal = if index % 3 == 0 { "gold" } else { "silver" };
+        let at = TIMES[usize::try_from(index % 5).expect("index")];
+        commit(
+            &mut store,
+            vec![row(&id, 1000 + index, Some(400 + index), at, metal)],
+        );
+        sync(&store, &engine, WORLD);
+        if index % 6 == 5 {
+            compare(&store, &engine, &plan, &context);
+        }
+    }
+    if let Some(segments) = super::analytics_backend::mirror_segments(dir.path(), &tenant(), TYPE) {
+        assert!(segments <= 9, "{segments} segments");
+    }
+}
+
+/// D137 (B4, N6.2): a Parquet float, double or zoned timestamp loads into a
+/// text column as the text `DuckDB` casts it to, in both engines: every row
+/// admitted with the same text.
+#[cfg(feature = "duckdb")]
+#[test]
+fn parquet_floats_load_as_duckdb_casts_them() {
+    use norn_cell::analytics::{Column, ColumnKind, PageRequest, TableSchema, Value};
+    let (_dir, engine) = engine();
+    let path = engine
+        .scratch(&tenant())
+        .expect("scratch")
+        .join("floats.parquet");
+    let conn = ::duckdb::Connection::open_in_memory().expect("duckdb");
+    let values = "(1, 0.1::FLOAT, 0.1::DOUBLE), (2, 1e-5::FLOAT, 1e-5::DOUBLE), \
+        (3, 1e16::FLOAT, 1e16::DOUBLE), (4, 1e15::FLOAT, 1e15::DOUBLE), (5, 0.0::FLOAT, 0.0::DOUBLE), \
+        (6, -0.0::FLOAT, -0.0::DOUBLE), (7, 'nan'::FLOAT, 'nan'::DOUBLE), \
+        (8, 'inf'::FLOAT, 'inf'::DOUBLE), (9, '-inf'::FLOAT, '-inf'::DOUBLE)";
+    conn.execute_batch(&format!(
+        "COPY (SELECT f, d, CAST(TIMESTAMP '2024-01-01 10:00:00.5' + to_seconds(n) AS TIMESTAMPTZ) AS z \
+         FROM (VALUES {values}) AS t(n, f, d) ORDER BY n) TO '{}' (FORMAT parquet)",
+        path.display()
+    ))
+    .expect("fixture");
+    let mut oracle = conn
+        .prepare(&format!(
+            "SELECT CAST(f AS VARCHAR), CAST(d AS VARCHAR), CAST(z AS VARCHAR) FROM read_parquet('{}', file_row_number = true) ORDER BY file_row_number",
+            path.display()
+        ))
+        .expect("oracle");
+    let expected: Vec<(String, String, String)> = oracle
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("oracle rows")
+        .map(|row| row.expect("row"))
+        .collect();
+    assert_eq!(expected.len(), 9);
+    let text = |id: &str| Column {
+        id: id.to_owned(),
+        kind: ColumnKind::Text,
+        nullable: true,
+        laws: Vec::new(),
+    };
+    let table = TableSchema {
+        name: "t.Floats".to_owned(),
+        columns: vec![text("f"), text("d"), text("z")],
+        pin: "floats".to_owned(),
+    };
+    let request = LoadRequest {
+        tenant: tenant(),
+        table,
+        load: "floats-1".to_owned(),
+        file: FileSource {
+            url: "file:".to_owned(),
+            uri: "s3://synthetic/floats.parquet".to_owned(),
+            sha256: norn_cell::analytics::hex_digest(&std::fs::read(&path).expect("read")),
+            format: FileFormat::Parquet,
+        },
+        headers: BTreeMap::new(),
+    };
+    let loaded = engine.load(&request, &path).expect("load");
+    assert_eq!((loaded.rows, loaded.rejected), (9, 0));
+    let page = engine
+        .page(&PageRequest {
+            tenant: tenant(),
+            source: Source::Dataset {
+                table: "t.Floats".to_owned(),
+                load: "floats-1".to_owned(),
+            },
+            filters: Vec::new(),
+            sort: Vec::new(),
+            ids: Vec::new(),
+            offset: 0,
+            limit: 200,
+            model_pin: None,
+        })
+        .expect("page");
+    let got: Vec<(String, String, String)> = page
+        .rows
+        .iter()
+        .map(|row| {
+            let text = |id: &str| match row.values.get(id) {
+                Some(Value::Text(text)) => text.clone(),
+                other => panic!("{id}: {other:?}"),
+            };
+            (text("f"), text("d"), text("z"))
+        })
+        .collect();
+    assert_eq!(got, expected);
 }
 
 /// A CSV in the tenant's scratch directory, the only place its load reads.
@@ -721,7 +946,6 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
 /// and the refused load has no lineage record.
 #[test]
 fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
-    use duckdb::OptionalExt as _;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let (first, first_sha) = csv(
@@ -742,18 +966,9 @@ fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
     let request = load_request(&plan, "load-1", first_sha);
     let table = request.table.name.clone();
     engine.load(&request, first.path()).expect("first load");
-    // Inject the failure: the tenant's metadata table refuses one key.
+    // Inject the failure: the tenant's metadata refuses one key.
     drop(engine);
-    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
-    let open = || ::duckdb::Connection::open(&database).expect("tenant database");
-    open()
-        .execute_batch(
-            "CREATE TABLE \":kept\" AS SELECT * FROM \":meta\"; DROP TABLE \":meta\"; \
-             CREATE TABLE \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL, \
-             CHECK (key <> 'lineage:load-2')); \
-             INSERT INTO \":meta\" SELECT * FROM \":kept\"; DROP TABLE \":kept\";",
-        )
-        .expect("refusing metadata table");
+    super::analytics_backend::refuse_meta_key(dir.path(), &tenant(), "lineage:load-2");
     let engine = Engine::new(Settings {
         root: dir.path().to_path_buf(),
         memory_limit: "256MB".into(),
@@ -764,23 +979,15 @@ fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
         .load(&load_request(&plan, "load-2", second_sha), second.path())
         .expect_err("the lineage write is refused");
     drop(engine);
-    let conn = open();
-    let meta = |key: &str| -> Option<String> {
-        conn.query_row("SELECT value FROM \":meta\" WHERE key = ?", [key], |row| {
-            row.get(0)
-        })
-        .optional()
-        .expect("meta")
-    };
+    let meta = |key: &str| super::analytics_backend::meta(dir.path(), &tenant(), key);
     assert_eq!(meta(&format!("load:{table}")).as_deref(), Some("load-1"));
     assert!(meta("lineage:load-1").is_some());
     assert_eq!(meta("lineage:load-2"), None);
-    let rows: u64 = conn
-        .query_row(&format!("SELECT count(*) FROM \"d:{table}\""), [], |row| {
-            row.get(0)
-        })
-        .expect("dataset rows");
-    assert_eq!(rows, 1, "the replacement dataset did not commit");
+    assert_eq!(
+        super::analytics_backend::dataset_rows(dir.path(), &tenant(), &table),
+        1,
+        "the replacement dataset did not commit"
+    );
 }
 
 proptest::proptest! {
@@ -1068,6 +1275,7 @@ fn bulk_path_measurements() {
                 "loss".into(),
             ],
             format: norn_cell::analytics::ExportFormat::Parquet,
+            model_pin: None,
         })
         .expect("export");
     let parquet_bytes = std::fs::metadata(&parquet).expect("size").len();
@@ -1470,6 +1678,7 @@ mod scales {
     /// day, across an ISO week that spans a year end, and at instants swept
     /// through 2024.
     #[test]
+    #[cfg(feature = "duckdb")]
     #[allow(clippy::arithmetic_side_effects, reason = "instant sweep fixture")]
     fn grain_labels_equal_duckdb_date_trunc() {
         use norn_checker::metric::compute::contribution::period_start;
@@ -1935,6 +2144,7 @@ mod sources_pack {
                 ids: Vec::new(),
                 offset: 0,
                 limit: 10,
+                model_pin: Some(store.model().model_hash().to_owned()),
             })
             .expect("page");
         assert_eq!(page.total, 2);
@@ -1944,6 +2154,7 @@ mod sources_pack {
                 source,
                 columns: exported,
                 format: ExportFormat::Jsonl,
+                model_pin: Some(store.model().model_hash().to_owned()),
             })
             .expect("export");
         std::fs::remove_file(path).expect("scratch export");
@@ -2089,6 +2300,7 @@ mod alias_names {
                     ids: vec!["k1".into(), "k0".into(), "k2".into()],
                     offset: 1,
                     limit: 1,
+                    model_pin: Some(store.model().model_hash().to_owned()),
                 })
                 .expect("page");
             assert_eq!((page.total, page.rows.len()), (3, 1), "{id}");
@@ -2107,6 +2319,7 @@ mod alias_names {
                 ids: Vec::new(),
                 offset: 0,
                 limit: 10,
+                model_pin: Some(store.model().model_hash().to_owned()),
             })
             .expect("label page");
         assert_eq!(text.total, 1);
@@ -2117,6 +2330,7 @@ mod alias_names {
                     source: source.clone(),
                     columns: columns.clone(),
                     format,
+                    model_pin: Some(store.model().model_hash().to_owned()),
                 })
                 .expect("export");
             assert!(std::fs::metadata(&path).expect("exported").len() > 0);
@@ -2151,7 +2365,7 @@ mod known_at {
 
     fn on_engine(
         store: &norn_cell::CellStore,
-        engine: &norn_cell::analytics::engine::Engine,
+        engine: &super::Engine,
         plan: &QuestionPlan,
         context: &norn_cell::compute::QueryContext,
         cutoff: KnowledgeCutoff,
@@ -2219,7 +2433,10 @@ mod known_at {
                 let got = on_engine(&store, &engine, &plan, &context, cutoff);
                 match (want, got) {
                     (Ok(want), Ok(mut got)) => {
-                        proptest::prop_assert_eq!(got.result.engine, Answered::Duckdb);
+                        proptest::prop_assert_eq!(
+                            got.result.engine,
+                            Answered::from(super::super::analytics_backend::ENGINE_ID)
+                        );
                         got.result.engine = Answered::Cell;
                         proptest::prop_assert_eq!(
                             serde_json::to_value(&got).expect("wire"),
@@ -2544,7 +2761,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
     for load in [cache.as_str(), "land-1"] {
         assert_eq!(
             ask(&engine, load).expect_err("not stored").code,
-            norn_cell::analytics::engine::DATASET_COLD
+            super::analytics_backend::DATASET_COLD
         );
     }
     let stored = store(&engine, &store_request(&request, &response)).expect("stored");
@@ -2622,7 +2839,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
 /// the engine never minted is refused alike.
 #[test]
 fn a_store_never_removes_an_attempt_it_does_not_hold() {
-    use norn_cell::analytics::engine::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
+    use super::analytics_backend::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let request = landing_request(&plan);
@@ -2723,7 +2940,7 @@ fn a_store_never_removes_an_attempt_it_does_not_hold() {
 /// changes nothing a later honest replay reads.
 #[test]
 fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
-    use norn_cell::analytics::engine::ATTEMPT_UNKNOWN;
+    use super::analytics_backend::ATTEMPT_UNKNOWN;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let request = landing_request(&plan);

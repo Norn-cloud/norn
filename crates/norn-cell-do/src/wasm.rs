@@ -260,14 +260,27 @@ impl NornCell {
         reason = "wasm-bindgen passes an optional string by value"
     )]
     #[wasm_bindgen(js_name = enableAnalytics)]
-    pub fn enable_analytics(&mut self, signing_key: Option<String>) -> Result<(), JsValue> {
+    pub fn enable_analytics(
+        &mut self,
+        signing_key: Option<String>,
+        engine: Option<String>,
+    ) -> Result<(), JsValue> {
+        // D136: the engine the deployment selected (`NORN_OLAP_ENGINE`);
+        // its answers alone are accepted.
+        let engine = norn_cell::analytics::AnalyticalEngineId::from_name(
+            engine
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("duckdb"),
+        )
+        .map_err(|e| JsValue::from_str(&e))?;
         let issuer = norn_api::olap_credential::Issuer::parse(
             signing_key
                 .as_deref()
                 .ok_or_else(|| JsValue::from_str("NORN_OLAP_SIGNING_KEY is required"))?,
         )
         .map_err(|e| JsValue::from_str(&format!("NORN_OLAP_SIGNING_KEY: {e}")))?;
-        self.tenant.enable_analytics(issuer);
+        self.tenant.enable_analytics(issuer, engine);
         Ok(())
     }
 

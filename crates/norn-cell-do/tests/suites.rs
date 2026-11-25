@@ -19,14 +19,26 @@ mod action_steps;
 #[path = "actions.rs"]
 mod actions;
 #[cfg(feature = "duckdb")]
+#[path = "analytics_backend.rs"]
+mod analytics_backend;
+#[cfg(feature = "duckdb")]
 #[path = "analytics_profile.rs"]
 mod analytics_profile;
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "analytics_profile_datafusion.rs"]
+mod analytics_profile_datafusion;
 #[cfg(feature = "duckdb")]
 #[path = "analytics_records.rs"]
 mod analytics_records;
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "analytics_records_datafusion.rs"]
+mod analytics_records_datafusion;
 #[cfg(feature = "duckdb")]
 #[path = "analytics_sources.rs"]
 mod analytics_sources;
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "analytics_sources_datafusion.rs"]
+mod analytics_sources_datafusion;
 #[path = "answers.rs"]
 mod answers;
 #[path = "approval_fencing_quint.rs"]
@@ -76,6 +88,9 @@ mod observations_load;
 #[cfg(feature = "duckdb")]
 #[path = "olapd_credentials.rs"]
 mod olapd_credentials;
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "olapd_credentials_datafusion.rs"]
+mod olapd_credentials_datafusion;
 #[path = "provision.rs"]
 mod provision;
 #[path = "read_policy.rs"]

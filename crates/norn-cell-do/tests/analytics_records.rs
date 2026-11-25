@@ -18,9 +18,9 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use super::analytics_backend::{Engine, Settings};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadRecord, Uploads};
 use norn_api::host::DevHost;
-use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     Column, ColumnKind, LandRequest, PointLaw, SettleRequest, StoreRequest, TableSchema, hex_digest,
 };
@@ -36,7 +36,7 @@ const VIEWER: Option<&str> = Some("Bearer fixture:guest@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
 /// The in-process engine, plus loads of files this test wrote (`file://`).
-struct Loading(InProcess, Mutex<BTreeMap<String, Vec<u8>>>);
+struct Loading(InProcess<Engine>, Mutex<BTreeMap<String, Vec<u8>>>);
 
 impl Transport for Loading {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
@@ -701,7 +701,7 @@ struct PanicTransport;
 
 impl Transport for PanicTransport {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
-        norn_cell::analytics::EngineCapabilities::DUCKDB
+        norn_cell::analytics::EngineCapabilities::of(super::analytics_backend::ENGINE_ID)
     }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
@@ -810,7 +810,10 @@ fn dataset_markings_enforce_post_load_additions_and_profile_refusal() {
     );
     assert!(routed && profile_v1.status == 200, "{}", profile_v1.body);
     let profile_v1_doc: Value = serde_json::from_str(&profile_v1.body).unwrap();
-    assert_eq!(profile_v1_doc["engine"], "duckdb");
+    assert_eq!(
+        profile_v1_doc["engine"],
+        super::analytics_backend::ENGINE_ID.as_str()
+    );
     assert_eq!(profile_v1_doc["rows"], 2);
 
     let dq_v1 = DerivedQuestions::new([7; 32], scope.clone());

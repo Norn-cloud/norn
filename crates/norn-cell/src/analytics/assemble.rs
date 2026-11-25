@@ -73,6 +73,8 @@ pub struct Prepared {
     schema_pin: Option<String>,
     /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
     known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
+    /// D136: the engine the answer must name, when the host pinned one.
+    engine: Option<super::AnalyticalEngineId>,
 }
 
 impl Prepared {
@@ -80,6 +82,13 @@ impl Prepared {
     #[must_use]
     pub const fn request(&self) -> &EvaluateRequest {
         &self.request
+    }
+
+    /// D136: accept an answer only from `engine` (the deployment's selection).
+    #[must_use]
+    pub const fn expecting(mut self, engine: Option<super::AnalyticalEngineId>) -> Self {
+        self.engine = engine;
+        self
     }
 }
 
@@ -234,6 +243,7 @@ impl<E: SqlEngine> CellStore<E> {
             definition_pin,
             schema_pin,
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
+            engine: None,
         })
     }
 
@@ -361,6 +371,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.check_prepared(&prepared)?;
         let request = &prepared.request;
         response.provenance.verify(
+            prepared.engine,
             &request.tenant,
             &request.source,
             &request.model_pin,
@@ -528,8 +539,48 @@ fn coefficient_sum(text: &str) -> Result<i128, CellError> {
     Ok(sum)
 }
 
-/// One bucket's row: the exact totals (refusing a sum whose partial sums
-/// could leave the bounded profile), the ratio, and either the members or
+/// Recover the positive and negative subtotals of a summarized operand.
+fn publish_reported(total: &str, magnitude: &str, non_null: u64) -> Result<i128, CellError> {
+    let total = coefficient_sum(total)?;
+    let magnitude = coefficient_sum(magnitude)?;
+    // From T=P-N and M=P+N recover the two nonnegative subtotals
+    // without forming M+T, which could overflow for an invalid response.
+    let excess = magnitude
+        .checked_sub(
+            total
+                .checked_abs()
+                .ok_or_else(|| refused("core.compute.bound_exceeded"))?,
+        )
+        .filter(|v| *v >= 0 && v & 1 == 0)
+        .ok_or_else(|| CellError::Engine("inconsistent bucket magnitude".into()))?;
+    let lesser = excess >> 1;
+    let greater = magnitude
+        .checked_sub(lesser)
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+    let (pos, neg) = if total < 0 {
+        (lesser, greater)
+    } else {
+        (greater, lesser)
+    };
+    let limit = u128::from(math::MAX_VALUE.unsigned_abs());
+    let minimum_members = pos
+        .unsigned_abs()
+        .div_ceil(limit)
+        .checked_add(neg.unsigned_abs().div_ceil(limit))
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+    if minimum_members > u128::from(non_null) {
+        return Err(CellError::Engine(
+            "bucket subtotals exceed member capacity".into(),
+        ));
+    }
+    let sum = norn_ir::ExactSum::ZERO
+        .add(pos)
+        .and_then(|s| s.add(neg.wrapping_neg()))
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+    math::decide(sum).map_err(CellError::from)
+}
+
+/// One bucket's row: magnitude-bounded totals, the ratio, and either the members or
 /// their count and digest.
 fn assemble_row(
     bucket: &BucketTotals,
@@ -543,15 +594,21 @@ fn assemble_row(
     {
         return Err(CellError::Engine("operand arity".to_owned()));
     }
+    if bucket.count > u64::from(u32::MAX) {
+        return Err(refused("core.compute.bound_exceeded"));
+    }
     let mut totals = Vec::with_capacity(arity);
-    for (total, magnitude) in bucket.totals.iter().zip(&bucket.magnitude) {
-        let total = coefficient_sum(total)?;
-        // Every partial sum is bounded by the magnitude; past the profile's
-        // bound the order-dependent exact refusal cannot be ruled out.
-        if coefficient_sum(magnitude)? > math::MAX_SUM {
-            return Err(refused("core.compute.bound_exceeded"));
-        }
-        totals.push(total);
+    for ((total, magnitude), nulls) in bucket
+        .totals
+        .iter()
+        .zip(&bucket.magnitude)
+        .zip(&bucket.nulls)
+    {
+        let non_null = bucket
+            .count
+            .checked_sub(*nulls)
+            .ok_or_else(|| CellError::Engine("null count exceeds bucket count".into()))?;
+        totals.push(publish_reported(total, magnitude, non_null)?);
     }
     let value_number = match totals.as_slice() {
         [sum] => Some(decimal(*sum)?),
@@ -610,12 +667,19 @@ fn check_members(members: &[MemberRow], bucket: &BucketTotals) -> Result<(), Cel
         .windows(2)
         .all(|w| matches!(w, [a, b] if a.id < b.id));
     let count = u64::try_from(members.len()).unwrap_or(u64::MAX);
-    let mut sums = vec![0i128; bucket.totals.len()];
+    let mut sums = vec![norn_ir::ExactSum::ZERO; bucket.totals.len()];
+    // Members without a coefficient for an operand: a null measurement or a
+    // row outside that operand. A bucket can report at most that many nulls.
+    let mut valueless = vec![0_u64; sums.len()];
     for member in members {
-        for (sum, amount) in sums.iter_mut().zip(&member.amounts) {
-            *sum = sum
-                .checked_add(i128::from(amount.unwrap_or(0)))
-                .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+        if member.amounts.len() != sums.len() {
+            return Err(CellError::Engine("member operand arity".into()));
+        }
+        for ((sum, valueless), amount) in sums.iter_mut().zip(&mut valueless).zip(&member.amounts) {
+            match amount {
+                Some(amount) => *sum = math::add(*sum, *amount)?,
+                None => *valueless = valueless.saturating_add(1),
+            }
         }
     }
     let totals = bucket
@@ -626,11 +690,156 @@ fn check_members(members: &[MemberRow], bucket: &BucketTotals) -> Result<(), Cel
     if !ordered
         || count != bucket.count
         || MembershipDigest::of(members) != bucket.digest
-        || sums != totals
+        || bucket.nulls.len() != valueless.len()
+        || bucket
+            .nulls
+            .iter()
+            .zip(&valueless)
+            .any(|(nulls, valueless)| nulls > valueless)
+        || sums.iter().zip(&bucket.magnitude).any(|(sum, reported)| {
+            reported
+                .parse::<u128>()
+                .ok()
+                .map(norn_ir::exact_sum::U160::from_u128)
+                != Some(sum.magnitude())
+        })
+        || sums
+            .into_iter()
+            .map(math::decide)
+            .collect::<Result<Vec<_>, _>>()?
+            != totals
     {
         return Err(CellError::Engine(
             "inline members disagree with their bucket".to_owned(),
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod exact_sum_tests {
+    use super::*;
+
+    #[allow(clippy::expect_used, reason = "bounded witness size")]
+    fn bucket(members: Vec<MemberRow>, magnitude: i128) -> BucketTotals {
+        BucketTotals {
+            group: GroupKey::Null,
+            totals: vec!["0".into()],
+            magnitude: vec![magnitude.to_string()],
+            nulls: vec![0],
+            count: members.len().try_into().expect("test count"),
+            digest: MembershipDigest::of(&members),
+            members: Some(members),
+        }
+    }
+
+    #[test]
+    fn summarized_bucket_needs_members_for_both_subtotals() {
+        let mut reported = bucket(Vec::new(), 2);
+        reported.members = None;
+        reported.count = 1;
+        assert!(
+            matches!(assemble_row(&reported, RuntimeValue::Null, 1, false),
+            Err(CellError::Engine(reason)) if reason == "bucket subtotals exceed member capacity")
+        );
+        reported.count = 2;
+        assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_ok());
+        reported.nulls = vec![1];
+        assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_err());
+    }
+
+    #[test]
+    fn inline_nulls_are_bounded_by_valueless_members() {
+        for (amount, nulls, admitted) in [
+            (Some(0), 1, false),
+            (None, 1, true),
+            (None, 0, true),
+            (None, 2, false),
+        ] {
+            let mut bucket = bucket(
+                vec![MemberRow {
+                    id: "a".into(),
+                    version: 1,
+                    amounts: vec![amount],
+                }],
+                0,
+            );
+            bucket.nulls = vec![nulls];
+            let row = assemble_row(&bucket, RuntimeValue::Null, 1, true);
+            assert_eq!(
+                row.is_ok(),
+                admitted,
+                "amount {amount:?}, nulls {nulls}: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inline_member_must_have_exact_operand_arity() {
+        for amounts in [vec![], vec![Some(0), Some(17)]] {
+            let bucket = bucket(
+                vec![MemberRow {
+                    id: "a".into(),
+                    version: 1,
+                    amounts,
+                }],
+                0,
+            );
+            assert!(
+                matches!(assemble_row(&bucket, RuntimeValue::Null, 1, true), Err(CellError::Engine(reason)) if reason == "member operand arity")
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "bounded arithmetic witnesses")]
+    fn magnitude_bound_agrees_for_alternating_and_sorted_pairs() {
+        for pairs in [500usize, 501] {
+            let mut terms: Vec<_> = (0..pairs)
+                .flat_map(|_| [math::MAX_VALUE, -math::MAX_VALUE])
+                .collect();
+            for sorted in [false, true] {
+                if sorted {
+                    terms.sort_unstable();
+                }
+                let sum = terms
+                    .iter()
+                    .try_fold(norn_ir::ExactSum::ZERO, |s, t| math::add(s, *t))
+                    .expect("bounded coefficients");
+                let members = terms
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| MemberRow {
+                        id: format!("{i:04}"),
+                        version: 1,
+                        amounts: vec![Some(*t)],
+                    })
+                    .collect();
+                let magnitude = i128::from(math::MAX_VALUE)
+                    .checked_mul(i128::try_from(terms.len()).expect("length"))
+                    .expect("bounded");
+                let bucket = bucket(members, magnitude);
+                let admitted = pairs == 500;
+                assert_eq!(
+                    math::decide(sum),
+                    if admitted {
+                        Ok(0)
+                    } else {
+                        Err(math::BoundExceeded)
+                    }
+                );
+                for inline in [false, true] {
+                    let row = assemble_row(&bucket, RuntimeValue::Null, 1, inline);
+                    if admitted {
+                        assert!(row.is_ok());
+                    } else {
+                        assert!(matches!(
+                            row,
+                            Err(CellError::ComputeRefused("core.compute.bound_exceeded"))
+                        ));
+                    }
+                }
+            }
+        }
+    }
 }
