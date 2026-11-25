@@ -32,9 +32,12 @@ const PURCHASE_WIDGET_ID = "commerce.submit_order.widget"
 
 /** Build the real stuck-widget artifact set from `crates/norn-checker/tests/ui_lifecycle.rs`, plus Arabic labels. */
 function purchaseOrderArtifacts(): unknown[] {
+  const scope = { orgId: "org_demo", environmentId: "analytics" }
   const entity = readFixture("fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json") as {
+    scope: Record<string, string>
     payload: { objectType: { lifecycles: { property: string; transitions: { id: string; from: string[] }[] }[] } }
   }
+  entity.scope = scope
   for (const lifecycle of entity.payload.objectType.lifecycles) {
     if (lifecycle.property !== "status") continue
     for (const transition of lifecycle.transitions) {
@@ -42,10 +45,11 @@ function purchaseOrderArtifacts(): unknown[] {
     }
   }
   const rule = readFixture("fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json")
+  rule.scope = scope
   const action = {
     irVersion: "0.1", artifactId: PURCHASE_ACTION_ID, kind: "action",
     namespace: "commerce", name: PURCHASE_ACTION_ID, version: "0.1.0", lifecycle: "draft",
-    scope: { orgId: "org_demo", environmentId: "analytics" },
+    scope,
     dependencies: [], provenance: { source: "authoring_sdk" },
     payload: {
       actionId: "commerce.submit_purchase_order", scopeRequired: ["orgId", "environmentId"],
@@ -60,7 +64,7 @@ function purchaseOrderArtifacts(): unknown[] {
   const widget = {
     irVersion: "0.1", artifactId: PURCHASE_WIDGET_ID, kind: "widget",
     namespace: "commerce", name: PURCHASE_WIDGET_ID, version: "0.1.0", lifecycle: "draft",
-    scope: { orgId: "org_demo", environmentId: "analytics" },
+    scope,
     dependencies: [{ artifactId: PURCHASE_ACTION_ID, kind: "action", version: "0.1.0", required: true }],
     provenance: { source: "authoring_sdk" },
     payload: {

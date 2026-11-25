@@ -1944,6 +1944,7 @@ fn preflight_definition_install<E: SqlEngine>(
     install: &DefinitionInstallContext<'_>,
     actual_version: Option<u64>,
     retained: Option<&crate::export::ExportRecord>,
+    cell_scope: Option<&str>,
 ) -> Result<DefinitionPreflight, CellError> {
     if install
         .expected_version
@@ -1984,33 +1985,30 @@ fn preflight_definition_install<E: SqlEngine>(
     } else if let Some(receipt) = &install.input.admission_receipt {
         verify_admission_receipt(receipt, &install.input.receipt_sha256)?;
     }
+    let scope_ref = crate::definition_scope::preflight_candidate(
+        engine,
+        &install.input.canonical_set,
+        install.candidate_model,
+        cell_scope,
+    )?;
     install
         .candidate_model
         .check_governing_laws(&install.input.canonical_set)?;
+    let prev_set = previous
+        .as_ref()
+        .map(|installed| installed.canonical_set.as_str());
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,
         install.candidate_model,
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
+        prev_set,
         &install.input.canonical_set,
         retained,
+        &scope_ref,
     )?;
     preflight_marking_definition_changes(engine, previous_model, install.candidate_model)?;
-    preflight_mask_policy_changes(
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
-        &install.input.canonical_set,
-    )?;
-    preflight_source_marking_changes(
-        engine,
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
-        &install.input.canonical_set,
-    )?;
+    preflight_mask_policy_changes(prev_set, &install.input.canonical_set)?;
+    preflight_source_marking_changes(engine, prev_set, &install.input.canonical_set)?;
     let version = actual_version
         .unwrap_or(0)
         .checked_add(1)
@@ -2497,13 +2495,8 @@ impl<E: SqlEngine> CellStore<E> {
                 });
             }
         }
-        if let Some(active) = Self::read_active_definitions(conn)?
-            && (active.model_hash != model.model_hash() || active.ddl_hash != model.ddl_hash())
-        {
-            return Err(CellError::SchemaMismatch {
-                expected: format!("{} {}", model.ddl_hash(), model.model_hash()),
-                found: format!("{} {}", active.ddl_hash, active.model_hash),
-            });
+        if let Some(active) = Self::read_active_definitions(conn)? {
+            crate::definition_scope::check_active_model(model, &active)?;
         }
         Ok(())
     }
@@ -2554,6 +2547,9 @@ impl<E: SqlEngine> CellStore<E> {
                 store.require_cell_id(expected)?;
             }
             let verified = store.verify_history(&pass)?;
+            if let Some(active) = Self::read_active_definitions(&store.conn)? {
+                crate::definition_scope::verify_active(&store.conn, &store.model, &active)?;
+            }
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), verified.head.commits)?;
             // An upgrading open verified from genesis, so record its checkpoint inside this tx.
@@ -3089,17 +3085,12 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    /// Check a definition candidate against the current version and live
-    /// values, returning the exact version/layout preview installation would
-    /// retain. This performs SQL reads only and does not enter a transaction.
-    ///
-    /// # Errors
-    /// A version conflict, unsafe live-data migration, or store error.
-    pub fn check_definitions(
+    pub(crate) fn check_definitions_inner(
         &self,
         candidate_model: &Model,
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
+        scope: Option<&str>,
     ) -> Result<InstalledDefinitionSet, CellError> {
         self.read().check_live()?;
         let install = DefinitionInstallContext {
@@ -3111,8 +3102,14 @@ impl<E: SqlEngine> CellStore<E> {
             committed: None,
         };
         let actual_version = active_definition_version(&self.conn)?;
-        let preflight =
-            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?;
+        let preflight = preflight_definition_install(
+            &self.conn,
+            &self.model,
+            &install,
+            actual_version,
+            None,
+            scope,
+        )?;
         self.law_checked.set(preflight.migration.law_checked);
         Ok(preflight.installed)
     }
@@ -3187,14 +3184,17 @@ impl<E: SqlEngine> CellStore<E> {
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),
                     );
-                    let active = Self::read_active_definitions(&self.conn)?;
-                    if binding("binding:provision")?.as_deref() != Some(identity)
-                        || binding("binding:scope")?.as_deref() != Some(batch.scope.as_str())
-                        || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
+                    let active = Self::read_active_definitions(&self.conn)?.filter(|set| {
+                        set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()
+                    });
+                    let (Some(active), true) = (active, binding("binding:provision")?.as_deref() == Some(identity)
+                        && binding("binding:scope")?.as_deref() == Some(batch.scope.as_str()))
+                    else {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
-                    }
+                    };
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
+                    crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
                     self.finish_open_scrub(upgrading, &verified)?;
                     self.transparency.replace(verified.transparency);
@@ -3218,7 +3218,9 @@ impl<E: SqlEngine> CellStore<E> {
                     install,
                     actual_version,
                     retained,
+                    Some(batch.scope.as_str()),
                 )?;
+                crate::definition_scope::bind_cell_scope(&self.conn, batch.scope.as_str())?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
                     &self.conn,
@@ -3851,11 +3853,7 @@ mod identity_history_tests {
             name: "Legacy".into(),
             version: "0.1.0".into(),
             lifecycle: norn_ir::ArtifactLifecycle::Draft,
-            scope: norn_ir::ScopeRef {
-                org_id: Some("org_demo".into()),
-                environment_id: Some("dev".into()),
-                ..Default::default()
-            },
+            scope: norn_ir::ScopeRef::default(),
             dependencies: vec![],
             provenance: norn_ir::ArtifactProvenance {
                 source: norn_ir::ProvenanceSource::AuthoringSdk,

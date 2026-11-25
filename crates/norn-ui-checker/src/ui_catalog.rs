@@ -121,6 +121,97 @@ pub(crate) fn check(
             }
         }
     }
+    diagnostics(owner, findings)
+}
+
+/// The declaration findings (`/payload/ux/catalog/…`) of every catalog entry
+/// page `index` of `ux` places: `owner`'s own entries and, through
+/// `composed`, other widgets'.
+#[must_use]
+pub(crate) fn placed_entry_findings(
+    owner: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    index: usize,
+    composed: &ComposedUx<'_>,
+) -> Vec<Diagnostic> {
+    let mut placed = BTreeSet::new();
+    if let Some(page) = ux.pages.get(index) {
+        collect_entries(&page.root, &mut placed);
+    }
+    let mut findings = Vec::new();
+    for (widget, entry_id) in placed {
+        match widget {
+            None => findings.extend(entry_findings(owner, ux, &entry_id)),
+            Some((id, version)) => {
+                let reference = norn_ir::WidgetArtifactRef { id, version };
+                if let Some(declaring) = composed(&reference) {
+                    findings.extend(entry_findings(owner, &declaring, &entry_id));
+                }
+            }
+        }
+    }
+    findings
+}
+
+type PlacedEntry = (Option<(String, String)>, String);
+
+fn collect_entries(node: &WidgetNode, placed: &mut BTreeSet<PlacedEntry>) {
+    if let WidgetComponent::Catalog { entry, .. } = &node.component {
+        let widget = entry
+            .widget
+            .as_ref()
+            .map(|widget| (widget.id.clone(), widget.version.clone()));
+        placed.insert((widget, entry.entry_id.clone()));
+    }
+    for child in &node.children {
+        collect_entries(child, placed);
+    }
+}
+
+/// The declaration and machine error findings of the catalog entries of
+/// `ux` named `entry_id`, and every renderer conflict one of them is in.
+fn entry_findings(owner: &ArtifactEnvelope, ux: &WidgetUx, entry_id: &str) -> Vec<Diagnostic> {
+    let at = |pointer: &str| {
+        let index = pointer
+            .strip_prefix("/payload/ux/catalog/")?
+            .split('/')
+            .next()?
+            .parse::<usize>()
+            .ok()?;
+        ux.catalog.get(index)
+    };
+    let placed = |entry: &WidgetCatalogEntry| entry.entry_id == entry_id;
+    let renders = |entry: &WidgetCatalogEntry| {
+        entry.renders.is_some()
+            && ux
+                .catalog
+                .iter()
+                .any(|other| placed(other) && other.renders == entry.renders)
+    };
+    let mut declared = Vec::new();
+    check_entries(ux, &mut declared);
+    declared.retain(|finding| {
+        at(&finding.pointer).is_some_and(|entry| {
+            placed(entry) || (finding.code == DUPLICATE_RENDERER && renders(entry))
+        })
+    });
+    let machines = crate::ui_machine::check(owner, ux)
+        .into_iter()
+        .filter(|finding| {
+            finding.is_error()
+                && finding
+                    .span
+                    .as_ref()
+                    .and_then(|span| at(&span.pointer))
+                    .is_some_and(placed)
+        });
+    diagnostics(owner, declared)
+        .into_iter()
+        .chain(machines)
+        .collect()
+}
+
+fn diagnostics(owner: &ArtifactEnvelope, findings: Vec<Finding>) -> Vec<Diagnostic> {
     findings
         .into_iter()
         .map(|finding| Diagnostic {

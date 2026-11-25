@@ -7,6 +7,7 @@
 )]
 use norn_cell::compute::{QueryContext, Watermark};
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::{
     EffectiveCatalog,
     metric::compute::{QuestionPlan, admit},
@@ -49,7 +50,8 @@ pub(crate) fn fixture() -> (CellStore, QuestionPlan, QueryContext) {
     artifact["provenance"] = json!({"source":"import","sourcePath":"synthetic:scrap-yield-k1.csv"});
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
     let artifact: ArtifactEnvelope = serde_json::from_value(artifact).expect("typed artifact");
-    let catalog = EffectiveCatalog::from_artifacts(&[artifact]);
+    let catalog =
+        ScopedView::uniform(&[artifact], &std::collections::BTreeSet::new()).into_catalog();
     let model = Model::from_definitions(&[object], &[]).expect("model");
     let mut out: MetricDefinition = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/metrics/net-sales.definition.json"
@@ -256,8 +258,10 @@ pub(crate) fn loss_plan() -> QuestionPlan {
     artifact["name"] = json!(TYPE);
     artifact["namespace"] = json!("demo");
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":store.model().object_types().next().expect("conversion")});
-    let catalog =
-        EffectiveCatalog::from_artifacts(&[serde_json::from_value(artifact).expect("typed model")]);
+    let decoded = serde_json::from_value::<norn_ir::ArtifactEnvelope>(artifact);
+    assert!(decoded.is_ok(), "typed model: {decoded:?}");
+    let typed: Vec<_> = decoded.into_iter().collect();
+    let catalog = ScopedView::uniform(&typed, &std::collections::BTreeSet::new()).into_catalog();
     let mut metric = base
         .definitions()
         .iter()
@@ -312,7 +316,8 @@ pub(crate) fn admit_on(
         .expect("tree"),
     )
     .expect("payload");
-    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts[..1]);
+    let catalog =
+        ScopedView::uniform(&artifacts[..1], &std::collections::BTreeSet::new()).into_catalog();
     norn_checker::metric::compute::admit(definitions, question, &catalog, 100).expect("admitted")
 }
 pub(crate) type QualityHost = norn_cell::SqliteCell<
@@ -332,7 +337,7 @@ pub(crate) fn quality_fixture() -> (QualityHost, QuestionPlan, QueryContext) {
     encoded["invariants"] = json!([{"id":"recovery_bound","expression":"self.recovered <= self.input","message":"Recovered mass exceeds source input"}]);
     object = serde_json::from_value(encoded).expect("invariant");
     let model = Model::from_definitions(&[object.clone()], &[]).expect("model");
-    let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let artifact = json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
     let mut store = CellStore::open_in_memory(model.clone()).expect("store");
     store
         .install_definitions(
@@ -474,7 +479,7 @@ pub(crate) mod fanout {
                 artifact
             })
             .collect();
-        EffectiveCatalog::from_artifacts(&artifacts)
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog()
     }
     pub(crate) fn fanout_fixture() -> Fixture {
         let (seed, seed_plan, mut context) = fixture();

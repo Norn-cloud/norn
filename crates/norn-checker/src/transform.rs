@@ -27,6 +27,7 @@ use norn_ir::{
 use norn_ir::metric::TimeGrain;
 
 use crate::entity_instance::{EffectiveCatalog, EffectiveKind};
+use crate::entity_scopes::{ScopedView, ScopedViews};
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
 /// Stable codes of `ViewIR` v1 admission. The metric layer's additivity codes
@@ -464,22 +465,19 @@ pub fn check_transform_set(
     if !artifacts.iter().any(is_relational) {
         return Vec::new();
     }
-    let pool: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-    let context = Context::new(&pool, registry);
-    artifacts
-        .iter()
-        .filter(|artifact| is_relational(artifact))
-        .flat_map(|artifact| match context.admit(artifact) {
-            Ok(_plan) => Vec::new(),
-            Err(findings) => findings
-                .into_iter()
-                .map(|mut finding| {
-                    finding.artifact_id = Some(artifact.artifact_id.clone());
-                    finding
-                })
-                .collect(),
-        })
-        .collect()
+    let mut views = ScopedViews::new(artifacts, base, registry);
+    let mut findings = Vec::new();
+    for artifact in artifacts.iter().filter(|artifact| is_relational(artifact)) {
+        for mut finding in Context::new(views.of(artifact))
+            .admit(artifact)
+            .err()
+            .unwrap_or_default()
+        {
+            finding.artifact_id = Some(artifact.artifact_id.clone());
+            findings.push(finding);
+        }
+    }
+    findings
 }
 
 /// Admit one relational view against the artifact pool it is installed with.
@@ -492,24 +490,23 @@ pub fn admit(
     pool: &[ArtifactEnvelope],
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<TransformPlan, Vec<Diagnostic>> {
-    Context::new(pool, registry).admit(artifact)
+    Context::new(&ScopedView::of(artifact, pool, &[], registry)).admit(artifact)
 }
 
 struct Context<'a> {
     pool: &'a [ArtifactEnvelope],
-    catalog: EffectiveCatalog,
-    env: Option<ZenTypeEnv>,
+    catalog: &'a EffectiveCatalog,
+    env: Option<&'a ZenTypeEnv>,
     limits: ResourceLimitProfile,
 }
 
 impl<'a> Context<'a> {
-    fn new(pool: &'a [ArtifactEnvelope], registry: &BTreeSet<PropertyTypeName>) -> Self {
-        let limits = ResourceLimitProfile::norn_limits_v1();
+    fn new(view: &'a ScopedView<'_>) -> Self {
         Self {
-            pool,
-            catalog: EffectiveCatalog::from_artifacts_with_registry(pool, registry),
-            env: crate::derive_type_env(&[], pool, &limits).ok(),
-            limits,
+            pool: view.pool(),
+            catalog: view.catalog(),
+            env: view.env(),
+            limits: ResourceLimitProfile::norn_limits_v1(),
         }
     }
 
@@ -906,7 +903,7 @@ impl Builder<'_, '_> {
             );
             return None;
         }
-        let Some(env) = &self.context.env else {
+        let Some(env) = self.context.env else {
             self.fail(
                 codes::INVALID_PLAN,
                 "the input types have no supported expression environment",
@@ -1030,7 +1027,7 @@ impl Builder<'_, '_> {
     }
 
     fn env_for(&mut self, schema: &NodeSchema, at: &str) -> Option<ZenTypeEnv> {
-        let Some(base) = self.context.env.as_ref() else {
+        let Some(base) = self.context.env else {
             self.fail(
                 codes::INVALID_PLAN,
                 "the input types have no supported expression environment",
