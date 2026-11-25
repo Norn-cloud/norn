@@ -55,6 +55,17 @@ impl Serving {
     }
 }
 
+impl<E: norn_cell::engine::SqlEngine> crate::host::DevHost<E> {
+    /// What this host's open cell serves. A host that installs a revision
+    /// builds its candidate model from this, so the column a cell already
+    /// records is kept (DEFS-REOPEN-1).
+    /// # Errors
+    /// The cell is fenced or its lock is poisoned.
+    pub fn serving(&self) -> Result<Serving, Refusal> {
+        Ok(Serving::of(self.cell()?.store().model()))
+    }
+}
+
 /// [`prepare_action_model`] for the definitions `artifacts`. When a decide
 /// rule of the set declares principal inputs (PRINCIPAL-INPUT-1, #1091) the
 /// call record also keeps `principalInputs`. A set that declares none is

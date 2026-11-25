@@ -941,8 +941,10 @@ impl Authorizer for ReadPolicy {
         &self,
         request: &norn_kernel::PrincipalInputsRequest<'_>,
     ) -> Result<norn_kernel::ActionPrincipalInputs, norn_kernel::UnresolvedPrincipalInput> {
-        // A recorded principal acting for a run or an approved call carries
-        // the roles of an earlier request: nothing resolves for it.
+        // A run's recorded starter acting at a flow step (`as_principal`)
+        // carries the roles of an earlier request: nothing resolves for it.
+        // An approved call is released only on its requester's own live
+        // request (`as_present`), so it resolves from that request's caller.
         let caller = self
             .member(request.actor)
             .filter(|_| !self.caller.is_acting());

@@ -95,7 +95,15 @@ pub(crate) fn bind_source_schemas(artifacts: &[Value]) -> Vec<Value> {
 
 /// Admit `artifacts` with the shared checker. Any `core.` or `std.` artifact is
 /// the retained trusted base, as the cell host treats it.
-pub(crate) fn admit(artifacts: &[Value], installed_at: u64) -> Result<Admitted, Refused> {
+///
+/// `keeps` is whether the live cell already records the call record's
+/// `principalInputs` column ([`keeps`]): the candidate model keeps it then,
+/// so a set that no longer declares principal inputs still installs.
+pub(crate) fn admit(
+    artifacts: &[Value],
+    installed_at: u64,
+    keeps: bool,
+) -> Result<Admitted, Refused> {
     let artifacts = &bind_source_schemas(artifacts)[..];
     let envelopes: Vec<ArtifactEnvelope> = serde_json::from_value(Value::Array(artifacts.to_vec()))
         .map_err(|error| {
@@ -150,6 +158,7 @@ pub(crate) fn admit(artifacts: &[Value], installed_at: u64) -> Result<Admitted, 
                 .collect(),
         });
     }
+    let definitions = checked_definitions(&envelopes)?;
     let text = |bytes: Vec<u8>| {
         String::from_utf8(bytes)
             .map_err(|error| Refused::one("norn.dev.receipt", error.to_string()))
@@ -178,14 +187,74 @@ pub(crate) fn admit(artifacts: &[Value], installed_at: u64) -> Result<Admitted, 
         installed_at,
         layout: None,
     };
-    let model = model_of(&envelopes).map_err(|message| Refused::one("norn.dev.model", message))?;
+    let model = serving(&definitions, &envelopes, keeps)
+        .map_err(|message| Refused::one("norn.dev.model", message))?;
     Ok(Admitted { model, input })
 }
 
-/// The cell model of an admitted set: its entity roots and governing laws,
-/// with the kernel's action receipt and owned-row types. A reopened cell
-/// rebuilds the same model from its retained set (HOST-REOPEN-1).
-pub(crate) fn model_of(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> {
+/// The model of the admitted set's own definitions. As the hosted admission
+/// does, a principal catalog the action policy could not compile is refused
+/// here, before anything is installed.
+fn checked_definitions(envelopes: &[ArtifactEnvelope]) -> Result<Model, Refused> {
+    use norn_api::kernel_set::{KernelRefusal, check_principal_catalog};
+    let definitions =
+        definitions_model(envelopes).map_err(|message| Refused::one("norn.dev.model", message))?;
+    check_principal_catalog(envelopes, &definitions).map_err(|refusal| match refusal {
+        KernelRefusal::Refused(findings) => Refused {
+            diagnostics: findings
+                .iter()
+                .map(norn_checker::Diagnostic::to_json)
+                .collect(),
+        },
+        KernelRefusal::Invalid(detail) => Refused::one("norn.dev.model", detail),
+    })?;
+    Ok(definitions)
+}
+
+/// Whether the cell `serving` holds already records the call record's
+/// `principalInputs` column. Every later revision keeps it (PRINCIPAL-INPUT-1).
+pub(crate) fn keeps(serving: &super::http::Serving) -> bool {
+    serving.read().is_ok_and(|guard| {
+        guard
+            .as_ref()
+            .and_then(|host| host.serving().ok())
+            .is_some_and(|served| served.principal_inputs)
+    })
+}
+
+/// HOST-REOPEN-1: the model a restarted dev host reopens `active` under: the
+/// one its recorded model hash names, with or without the kept
+/// `principalInputs` column.
+pub(crate) fn installed_model(active: &norn_cell::InstalledDefinitionSet) -> Result<Model, String> {
+    let artifacts = retained_envelopes(&active.canonical_set)?;
+    let definitions = definitions_model(&artifacts)?;
+    let model = serving(&definitions, &artifacts, false)?;
+    if model.model_hash() == active.model_hash {
+        return Ok(model);
+    }
+    let kept = serving(&definitions, &artifacts, true)?;
+    Ok(if kept.model_hash() == active.model_hash {
+        kept
+    } else {
+        model
+    })
+}
+
+/// `definitions` with the kernel's action receipt and owned-row types, and
+/// the call record's `principalInputs` column when the set declares principal
+/// inputs or the cell already `keeps` it.
+fn serving(
+    definitions: &Model,
+    artifacts: &[ArtifactEnvelope],
+    keeps: bool,
+) -> Result<Model, String> {
+    norn_api::action_admission::prepare_action_model_keeping(definitions, artifacts, keeps)
+        .map_err(|refusal| refusal.message)
+}
+
+/// The cell model of an admitted set's entity roots and governing laws,
+/// before the kernel's own types are added.
+fn definitions_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> {
     let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
     for artifact in artifacts
         .iter()
@@ -209,11 +278,9 @@ pub(crate) fn model_of(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> 
             }
         }
     }
-    let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
+    Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
         .and_then(|model| model.with_governing_laws(artifacts))
-        .map_err(|error| error.to_string())?;
-    norn_api::action_admission::prepare_action_model_for(&model, artifacts)
-        .map_err(|refusal| refusal.message)
+        .map_err(|error| error.to_string())
 }
 
 /// The envelopes of a retained canonical set.
@@ -261,3 +328,7 @@ pub(crate) fn source_mapped(diagnostics: Vec<Value>, source_map: &[Value]) -> Ve
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "principal_inputs_tests.rs"]
+mod principal_inputs_tests;

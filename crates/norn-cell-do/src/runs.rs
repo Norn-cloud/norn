@@ -351,7 +351,8 @@ impl<E: SqlEngine> Steps<'_, E> {
         let acting = acting_caller(principal, slot.current().as_ref())?;
         // Marked as acting: it carries the roles recorded when it was
         // verified, so nothing that needs this request's own principal
-        // (PRINCIPAL-INPUT-1) resolves for it.
+        // (PRINCIPAL-INPUT-1) resolves for it. `as_present` never marks:
+        // an approved call runs as the request's own verified caller.
         let _restore = Restore {
             slot,
             previous: slot.replace(Some(acting), true),

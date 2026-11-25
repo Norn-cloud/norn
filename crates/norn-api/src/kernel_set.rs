@@ -150,7 +150,12 @@ fn admit_with(
 /// action policy from the installed set; a catalog that cannot compile there
 /// would leave the cell serving no action, so it is refused here, before
 /// anything is installed. A set that declares no catalog is not checked.
-fn check_principal_catalog(
+/// `model` is the set's model before the kernel's own types are added.
+///
+/// # Errors
+/// The catalog disagrees with the access rules, as one
+/// `artifact_set.policy.principal_catalog_conflict` finding.
+pub fn check_principal_catalog(
     artifacts: &[ArtifactEnvelope],
     model: &Model,
 ) -> Result<(), KernelRefusal> {

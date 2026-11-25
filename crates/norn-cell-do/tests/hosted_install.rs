@@ -854,184 +854,10 @@ fn a_change_moves_a_gate_and_replaces_it() {
     assert_eq!(twice.status, 422, "two gates on one action: {}", twice.body);
 }
 
-// PRINCIPAL-INPUT-1 (#1091): a synthetic review pack on the hosted cell. A
-// document is recorded, then approved by an action whose pinned decision
-// writes `confirmed = principal.isAdmin`.
-const DOCUMENT: &str = "review.Document";
-const APPROVE: &str = "review.document.approve";
-
-fn review_artifact(
-    kind: &str,
-    id: &str,
-    version: &str,
-    dependencies: &Value,
-    payload: &Value,
-) -> Value {
-    json!({ "artifactId": id, "dependencies": dependencies, "irVersion": "0.1", "kind": kind,
-        "lifecycle": "active", "name": id, "namespace": "review", "payload": payload,
-        "provenance": { "source": "system", "sourcePath": "tests/hosted_install.rs" },
-        "scope": {}, "version": version })
-}
-
-/// The document type and the access policy, with `catalog` as its principal
-/// attribute catalog, and the action that records a document.
-fn review_base(catalog: &Value) -> Vec<Value> {
-    let entity = json!({ "entityVersion": "2.0", "objectType": {
-        "identity": [{ "name": "primary", "properties": ["id"] }],
-        "name": DOCUMENT,
-        "properties": [
-            { "id": "id", "type": { "kind": "text" } },
-            { "id": "owner", "type": { "kind": "text" } },
-            { "id": "confirmed", "type": { "kind": "boolean" }, "default": false },
-            { "id": "status", "type": { "kind": "enum",
-                "values": [{ "value": "draft" }, { "value": "approved" }] }, "default": "draft" }
-        ],
-        "lifecycles": [{ "property": "status", "initial": ["draft"], "terminal": ["approved"],
-            "transitions": [{ "id": "approve", "from": ["draft"], "to": "approved" }] }] } });
-    let policy = json!({ "accessVersion": "0.1", "policyId": "review.access",
-        "rules": [{ "ruleId": "staff", "actions": ["review.document.record", APPROVE],
-            "resourceType": DOCUMENT, "scope": { "dimensions": ["org", "environment"] },
-            "allOf": [{ "role": { "anyOf": ["member", "admin", "owner"] } }] }],
-        "principalCatalog": catalog });
-    let record = json!({ "actionId": "review.document.record", "title": "Record a document",
-        "description": "Record a document for review.",
-        "scopeRequired": ["orgId", "environmentId"], "idempotent": true, "ledgered": true,
-        "access": { "artifactId": "review.access.policy", "version": "0.1.0" },
-        "inputSchema": { "type": "object", "additionalProperties": false,
-            "required": ["id", "owner"],
-            "properties": { "id": { "type": "string", "title": "Document number" },
-                "owner": { "type": "string", "title": "Owner" } } },
-        "outputSchema": { "type": "object", "additionalProperties": false, "required": ["id"],
-            "properties": { "id": { "type": "string" } } },
-        "effectProgram": { "kind": "upsert_input_object", "entityArtifactId": "review.Document.entity",
-            "entityArtifactVersion": "0.1.0", "objectKind": DOCUMENT, "objectIdField": "id" },
-        "writes": [{ "change": "created", "entityKind": DOCUMENT },
-            { "change": "modified", "entityKind": DOCUMENT }] });
-    vec![
-        review_artifact(
-            "entity",
-            "review.Document.entity",
-            "0.1.0",
-            &json!([]),
-            &entity,
-        ),
-        review_artifact(
-            "policy",
-            "review.access.policy",
-            "0.1.0",
-            &json!([]),
-            &policy,
-        ),
-        review_artifact(
-            "action",
-            "review.document.record.action",
-            "0.1.0",
-            &json!([]),
-            &record,
-        ),
-    ]
-}
-
-fn admin_role() -> Value {
-    json!([{ "name": "admin", "type": "bool", "source": { "kind": "role" } }])
-}
-
-/// The approval action at `version`, pinning the decision at `rule` if any.
-fn approve_action(version: &str, rule: Option<&str>) -> Value {
-    let mut payload = json!({ "actionId": APPROVE, "title": "Approve a document",
-        "description": "Approve a recorded document.",
-        "scopeRequired": ["orgId", "environmentId"], "idempotent": true, "ledgered": true,
-        "access": { "artifactId": "review.access.policy", "version": "0.1.0" },
-        "inputSchema": { "type": "object", "additionalProperties": false, "required": ["id"],
-            "properties": { "id": { "type": "string", "title": "Document number" } } },
-        "outputSchema": { "type": "object", "additionalProperties": false, "required": ["id"],
-            "properties": { "id": { "type": "string" } } },
-        "effectProgram": { "kind": "fire_transition", "entityArtifactId": "review.Document.entity",
-            "entityArtifactVersion": "0.1.0", "objectKind": DOCUMENT, "objectIdField": "id",
-            "lifecycle": "status", "transition": "approve" },
-        "writes": [{ "change": "modified", "entityKind": DOCUMENT }] });
-    let mut dependencies = json!([]);
-    if let Some(rule) = rule {
-        payload["synchronousRule"] =
-            json!({ "artifactId": "review.approval.decide.rule", "version": rule });
-        dependencies = json!([{ "artifactId": "review.approval.decide.rule", "kind": "rule",
-            "required": true, "version": rule }]);
-    }
-    review_artifact(
-        "action",
-        "review.document.approve.action",
-        version,
-        &dependencies,
-        &payload,
-    )
-}
-
-/// The approval decision at `version`: with principal inputs it writes
-/// `confirmed = principal.isAdmin`; without, it declares and reads nothing
-/// about the principal and writes `confirmed = false`.
-fn approval_rule(version: &str, principal_inputs: bool) -> Value {
-    let empty = json!({ "type": "array", "items": { "type": "object",
-        "additionalProperties": false, "properties": {} } });
-    let event = json!({ "type": "object", "additionalProperties": false,
-        "required": ["input", "actor", "operationId"],
-        "properties": { "actor": { "type": "string" }, "operationId": { "type": "string" },
-            "input": { "type": "object", "additionalProperties": false, "required": ["id"],
-                "properties": { "id": { "type": "string" } } } } });
-    let value = if principal_inputs {
-        "principal.isAdmin"
-    } else {
-        "false"
-    };
-    let mut payload = json!({ "ruleVersion": "2.0", "ruleId": "review.approval.decide",
-        "contract": "decide", "scopeRequired": ["orgId", "environmentId"],
-        "inputSchema": { "type": "object", "additionalProperties": false,
-            "required": ["slice", "event"],
-            "properties": { "event": event,
-                "slice": { "type": "object", "additionalProperties": false, "properties": {} } } },
-        "outputSchema": { "type": "object", "additionalProperties": false,
-            "required": ["facts", "commands", "timers"],
-            "properties": { "commands": empty, "timers": empty,
-                "facts": { "type": "array", "items": { "type": "object",
-                    "additionalProperties": false,
-                    "required": ["op", "objectType", "key", "property", "value"],
-                    "properties": { "op": { "type": "string", "enum": ["set"] },
-                        "objectType": { "type": "string", "enum": [DOCUMENT] },
-                        "key": { "type": "string" },
-                        "property": { "type": "string", "enum": ["confirmed"] },
-                        "value": { "type": "boolean" } } } } } },
-        "graph": { "contentType": "application/vnd.gorules.decision",
-            "nodes": [
-                { "id": "in", "type": "inputNode", "name": "input" },
-                { "id": "decision", "type": "decisionTableNode", "name": "decision", "content": {
-                    "hitPolicy": "first",
-                    "inputs": [{ "id": "condition", "name": "condition", "type": "expression" }],
-                    "outputs": [
-                        { "field": "facts", "id": "out_facts", "name": "facts" },
-                        { "field": "commands", "id": "out_commands", "name": "commands" },
-                        { "field": "timers", "id": "out_timers", "name": "timers" }],
-                    "rules": [{ "_id": "row_0", "condition": "",
-                        "out_facts": format!("[{{op: 'set', objectType: 'review.Document', key: event.input.id, property: 'confirmed', value: {value}}}]"),
-                        "out_commands": "[]", "out_timers": "[]" }] } },
-                { "id": "out", "type": "outputNode", "name": "output" }],
-            "edges": [
-                { "id": "edge_0", "sourceId": "in", "targetId": "decision", "type": "edge" },
-                { "id": "edge_1", "sourceId": "decision", "targetId": "out", "type": "edge" }] } });
-    if principal_inputs {
-        payload["principalInputs"] = json!([{ "name": "isAdmin",
-            "kind": { "holdsRole": { "role": "admin", "at": "resource" } } }]);
-        payload["inputSchema"]["required"] = json!(["slice", "event", "principal"]);
-        payload["inputSchema"]["properties"]["principal"] = json!({ "type": "object",
-            "additionalProperties": false, "required": ["isAdmin"],
-            "properties": { "isAdmin": { "type": "boolean" } } });
-    }
-    review_artifact(
-        "rule",
-        "review.approval.decide.rule",
-        version,
-        &json!([]),
-        &payload,
-    )
-}
+// PRINCIPAL-INPUT-1 (#1091): the synthetic review pack on the hosted cell.
+#[path = "support/review_pack.rs"]
+mod review_pack;
+use review_pack::{APPROVE, DOCUMENT, admin_role, approval_rule, approve_action, review_base};
 
 impl Cell {
     fn applied(&mut self, artifacts: &[Value], expected: u64) {
@@ -1306,4 +1132,205 @@ fn a_catalog_that_disagrees_with_the_access_rules_is_refused_before_install() {
         "record-r1",
     );
     assert_eq!(recorded.status, 200, "{}", recorded.body);
+}
+
+/// `lowerFlow`'s output for the melt flow (a decision, then one
+/// `norn.action@1` step), retargeted at the review pack: the owner decides,
+/// and the step approves document `r1`.
+fn approval_flow() -> Value {
+    let lowered = include_str!("../../../tools/norn-ts/fixtures/flows/melt.ir.json")
+        .replace("constitution.melt.convert", APPROVE)
+        .replace(
+            "{id: 'melt-7', input_fine_g: '12', output_fine_g: '10'}",
+            "{id: 'r1'}",
+        )
+        .replace("decider: {roles: ['admin']}", "decider: {roles: ['owner']}");
+    let mut artifacts: Vec<Value> = serde_json::from_str(&lowered).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+    }
+    artifacts[1]["payload"]["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+        ["properties"]["convert"]["properties"]["input"] = json!({ "type": "object",
+        "additionalProperties": false, "required": ["id"],
+        "properties": { "id": { "type": "string" } } });
+    json!({ "kind": "flow", "id": "ops.approve_melt", "payload": {
+        "flow": { "id": "ops.approve_melt", "version": "1.0.0", "title": "Approve a document" },
+        "artifacts": artifacts } })
+}
+
+impl Cell {
+    /// The review pack whose approval pins the decision that reads
+    /// `principal.isAdmin`, installed with `approvals`, and document `r1`
+    /// recorded.
+    fn ruled(&mut self, approvals: &[Value]) {
+        let base = self.version();
+        let mut pack = review_base(&admin_role());
+        pack.extend([
+            approval_rule("0.1.0", true),
+            approve_action("0.2.0", Some("0.1.0")),
+        ]);
+        let owner = user("owner");
+        let mut approvals = approvals.to_vec();
+        let planned = json!({ "artifacts": pack, "approvals": approvals });
+        let planned = self.call("POST", PLAN_PATH, Some(&owner), &planned.to_string());
+        assert_eq!(planned.status, 200, "{}", planned.body);
+        for (index, approval) in approvals.iter_mut().enumerate() {
+            let sha = json_of(&planned)["approvals"][index]["restatementSha256"].clone();
+            approval["signoff"] = json!({ "restatementSha256": sha });
+        }
+        let body = json!({ "artifacts": pack, "approvals": approvals, "expectedVersion": base });
+        let applied = self.call("POST", APPLY_PATH, Some(&owner), &body.to_string());
+        assert_eq!(applied.status, 200, "{}", applied.body);
+        let recorded = self.act(
+            "review.document.record",
+            "member",
+            &json!({ "id": "r1", "owner": "user:member-of-org_a" }),
+            "record-r1",
+        );
+        assert_eq!(recorded.status, 200, "{}", recorded.body);
+    }
+
+    /// The owner approves decision `id`.
+    fn decided(&mut self, id: &str) -> Value {
+        let decided = self.call(
+            "POST",
+            &format!("/v1/decisions/{id}:decide"),
+            Some(&user("owner")),
+            &json!({ "choice": "approve", "idempotencyKey": "owner-1" }).to_string(),
+        );
+        assert_eq!(decided.status, 200, "{}", decided.body);
+        json_of(&decided)
+    }
+
+    /// Whether any stored call record of `action` keeps principal inputs.
+    fn recorded_principal_inputs(&mut self, action: &str) -> Vec<Value> {
+        let path = format!("/v1/objects/{}", norn_kernel::ACTION_CALL_TYPE);
+        let page = self.call("GET", &path, Some(&user("admin")), "");
+        assert_eq!(page.status, 200, "{}", page.body);
+        json_of(&page)["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["values"]["actionId"] == action)
+            .filter_map(|record| record["values"].get("principalInputs").cloned())
+            .collect()
+    }
+}
+
+/// F2: an approved call is released only on its requester's own request
+/// (`as_present`, APPROVAL-RECOVERY-1), never on the approver's, so its
+/// principal inputs resolve from that request's verified principal. Here an
+/// admin's approval waits for the owner; the owner's decide runs nothing; the
+/// admin's retry commits with `isAdmin` resolved for the admin.
+#[test]
+fn an_approved_call_resolves_principal_inputs_on_its_requesters_own_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    cell.ruled(&[
+        json!({ "kind": "approval", "id": "review.document.approve_approval", "payload": {
+        "action": APPROVE, "decider": { "roles": ["owner"] },
+        "question": "Approve this document?", "risk": "high" } }),
+    ]);
+
+    let parked = cell.act(APPROVE, "admin", &json!({ "id": "r1" }), "a1");
+    assert_eq!(parked.status, 202, "the call waits: {}", parked.body);
+    let id = json_of(&parked)["decision"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The approver's request is not the requester's: it runs nothing, and
+    // nothing is resolved for the approver.
+    let decided = cell.decided(&id);
+    assert_eq!(
+        cell.stored(DOCUMENT, "r1")["values"]["status"],
+        "draft",
+        "{decided}"
+    );
+    assert_eq!(cell.recorded_principal_inputs(APPROVE), Vec::<Value>::new());
+
+    // The requester's own retry: its live, verified principal is resolved.
+    let released = cell.act(APPROVE, "admin", &json!({ "id": "r1" }), "a1");
+    assert_eq!(released.status, 200, "{}", released.body);
+    assert_eq!(
+        json_of(&released)["outcome"],
+        "committed",
+        "{}",
+        released.body
+    );
+    let document = cell.stored(DOCUMENT, "r1");
+    assert_eq!(document["values"]["status"], "approved", "{document}");
+    assert_eq!(document["values"]["confirmed"], true, "{document}");
+    let recorded = cell.recorded_principal_inputs(APPROVE);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(
+        recorded[0]["principal"], "user:admin-of-org_a",
+        "{recorded:?}"
+    );
+    assert_eq!(recorded[0]["values"], json!({ "isAdmin": true }));
+}
+
+/// Flow steps fail closed, through the whole wiring: the run's starter is an
+/// admin, the owner's decide drives the `norn.action@1` step, and the step
+/// calls the approval as the recorded starter (`Steps::as_principal`). That
+/// caller carries the roles of an earlier request, so `ReadPolicy` resolves
+/// nothing, the kernel refuses `decision.principal_input_unavailable`, and
+/// nothing is committed, although the starter does hold the role.
+#[test]
+fn a_flow_step_calling_for_its_starter_resolves_no_principal_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    cell.ruled(&[]);
+    let owner = user("owner");
+    let mut flow = approval_flow();
+    let admitted = cell.call(
+        "POST",
+        "/v1/definitions:admit",
+        Some(&owner),
+        &flow.to_string(),
+    );
+    assert_eq!(admitted.status, 200, "{}", admitted.body);
+    flow["signoff"] = json!({ "restatementSha256": json_of(&admitted)["restatementSha256"] });
+    let installed = cell.call(
+        "POST",
+        "/v1/definitions:install",
+        Some(&owner),
+        &flow.to_string(),
+    );
+    assert_eq!(installed.status, 200, "{}", installed.body);
+
+    let admin = user("admin");
+    let started = cell.call(
+        "POST",
+        "/v1/runs",
+        Some(&admin),
+        &json!({ "flow": "ops.approve_melt", "runId": "run-1" }).to_string(),
+    );
+    assert_eq!(started.status, 201, "{}", started.body);
+    let pending = cell.call("GET", "/v1/decisions", Some(&owner), "");
+    assert_eq!(pending.status, 200, "{}", pending.body);
+    let id = json_of(&pending)["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let decided = cell.decided(&id);
+
+    let run = cell.call("GET", "/v1/runs/run-1", Some(&admin), "");
+    assert_eq!(run.status, 200, "{}", run.body);
+    let run = json_of(&run);
+    assert_eq!(run["state"], "failed_refused", "{decided}\n{run}");
+    let step = &run["steps"][1];
+    assert_eq!(
+        (&step["id"], &step["status"]),
+        (&json!("convert"), &json!("failed")),
+        "{run}"
+    );
+    assert!(
+        run.to_string()
+            .contains("decision.principal_input_unavailable"),
+        "{run}"
+    );
+    let document = cell.stored(DOCUMENT, "r1");
+    assert_eq!(document["values"]["status"], "draft", "{document}");
+    assert_eq!(document["values"]["confirmed"], false, "{document}");
+    assert_eq!(cell.recorded_principal_inputs(APPROVE), Vec::<Value>::new());
 }
