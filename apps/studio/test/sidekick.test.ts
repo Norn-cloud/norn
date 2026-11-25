@@ -159,3 +159,14 @@ test("fetchGrant sends pinned scope headers via defaultFetch even after displaye
     globalThis.fetch = original
   }
 })
+
+test("close ends the session; a later send opens a new one (a remount or a new chat never strands the chat)", async () => {
+  let opened = 0
+  const bridge = fakeSession(async () => "end_turn")
+  const transport = new SidekickTransport({ open: async (events) => { opened += 1; return bridge.open(events) } })
+  await drain(await transport.sendMessages(send([user("one")])))
+  transport.close()
+  const chunks = await drain(await transport.sendMessages(send([user("two")])))
+  expect(opened).toBe(2)
+  expect(chunks.at(-1)).toEqual({ type: "finish" })
+})

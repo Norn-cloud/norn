@@ -1,7 +1,7 @@
 import { useChat } from "@ai-sdk/react"
 import type { DynamicToolUIPart } from "ai"
 import { RotateCcw, SquarePen } from "lucide-react"
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react"
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAssistant } from "@/assistant-slot"
 import { Confirmation, ConfirmationAccepted, ConfirmationAction, ConfirmationActions, ConfirmationRejected, ConfirmationRequest, ConfirmationTitle } from "@/components/ai-elements/confirmation"
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation"
@@ -128,7 +128,10 @@ function AssistantMessage({ message, pose, host, onAnswer }: { readonly message:
 export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | null; readonly scopeKey?: string } = {}) {
   // A new chat, or another workspace, is a new transport (a new session) and a new chat id.
   const [epoch, setEpoch] = useState(0)
-  const transport = useMemo(() => new SidekickTransport({ scope: scope !== undefined ? scope : getDisplayedScope() }), [scope, scopeKey, epoch])
+  // The shell hands a new scope object on every render; the chat is pinned to the scope it opened with.
+  const pinned = useRef(scope)
+  pinned.current = scope
+  const transport = useMemo(() => new SidekickTransport({ scope: pinned.current !== undefined ? pinned.current : getDisplayedScope() }), [scopeKey, epoch])
   useEffect(() => () => transport.close(), [transport])
   const chat = useChat<SidekickMessage>({ id: `sidekick:${scopeKey ?? ""}:${epoch}`, transport })
   const { messages, status, error, stop, regenerate, sendMessage, addToolApprovalResponse } = chat

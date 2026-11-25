@@ -35,13 +35,15 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
   private turn: Turn | null = null
   private readonly approvals = new Map<string, Pending>()
   private approvalCount = 0
-  private disposed = false
+  /** Bumped by `close`: a session that finishes opening for an older generation is closed, not used. */
+  private generation = 0
 
   constructor(private readonly options: { readonly scope?: StudioScope | null; readonly open?: Open } = {}) {}
 
   private async connect(): Promise<SidekickSession> {
     if (this.session !== null && !this.session.closed) return this.session
     if (this.opening !== null) return this.opening
+    const generation = this.generation
     const open: Open = this.options.open ?? (async (events, options) => (await import("./client.ts")).SidekickSession.open(events, options))
     this.opening = open({
       update: (notification) => this.turn?.update(notification),
@@ -51,7 +53,7 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     }, this.options.scope === undefined ? {} : { scope: this.options.scope })
     try {
       const session = await this.opening
-      if (this.disposed) { session.close(); throw new Error("Chat closed.") }
+      if (generation !== this.generation) { session.close(); throw new Error("Chat closed.") }
       this.session = session
       return session
     } finally {
@@ -129,9 +131,9 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     return session.callTool(name, args)
   }
 
-  /** End the chat: the session closes and nothing it sends later is drawn. */
+  /** End the chat's session: it closes and nothing it sends later is drawn; a later send opens a new one. */
   close() {
-    this.disposed = true
+    this.generation += 1
     this.cancelApprovals()
     this.turn = null
     this.session?.close()
