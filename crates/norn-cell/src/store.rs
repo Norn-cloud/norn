@@ -2013,31 +2013,21 @@ fn preflight_definition_install<E: SqlEngine>(
     install
         .candidate_model
         .check_governing_laws(&install.input.canonical_set)?;
+    let prev_set = previous
+        .as_ref()
+        .map(|installed| installed.canonical_set.as_str());
     let migration = crate::migration::preflight_model_migration(
         engine,
         previous_model,
         install.candidate_model,
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
+        prev_set,
         &install.input.canonical_set,
         retained,
         &scope_ref,
     )?;
     preflight_marking_definition_changes(engine, previous_model, install.candidate_model)?;
-    preflight_mask_policy_changes(
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
-        &install.input.canonical_set,
-    )?;
-    preflight_source_marking_changes(
-        engine,
-        previous
-            .as_ref()
-            .map(|installed| installed.canonical_set.as_str()),
-        &install.input.canonical_set,
-    )?;
+    preflight_mask_policy_changes(prev_set, &install.input.canonical_set)?;
+    preflight_source_marking_changes(engine, prev_set, &install.input.canonical_set)?;
     let version = actual_version
         .unwrap_or(0)
         .checked_add(1)
