@@ -14,6 +14,7 @@
  */
 import { readFileSync } from "node:fs"
 import { join, relative, resolve as resolvePath, sep } from "node:path"
+import { returns, terminator } from "./compiler/cfg.ts"
 import ts from "typescript"
 import {
   type AdmittedSymbol,
@@ -61,7 +62,6 @@ const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", 
 /** `Norn.law(name, spec)` members whose values are predicates over the subject. */
 const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually", "may"])
 /** Element names that would shadow a Norn expression binding or a zen keyword. */
-export const RESERVED_CLOSURE_NAMES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "as"])
 
 interface Ctx {
   /**
@@ -336,7 +336,6 @@ class FileWalk {
   private readonly diagnostics: Diagnostic[] = []
   private readonly uses: SymbolUse[] = []
   /** Element names of the enclosing array closures, innermost last. */
-  private readonly closureParams: string[] = []
   private readonly jsonData = new Map<ts.VariableDeclaration, boolean>()
   private readonly boundedJsonData = new Set<ts.VariableDeclaration>()
   private jsonDataDepthExceeded = false
@@ -736,9 +735,12 @@ class FileWalk {
         clause.expression.kind !== ts.SyntaxKind.FalseKeyword
       ) {
         this.report(clause.expression, "NORN-FLOW-ROUTE", "case labels must be literals")
-      } else covered.add(this.typeOf(clause.expression))
-      const last = clause.statements[clause.statements.length - 1]
-      if (!last || !(ts.isReturnStatement(last) || ts.isBreakStatement(last))) {
+      } else {
+        const label = this.typeOf(clause.expression)
+        if (covered.has(label)) this.report(clause.expression, "NORN-FLOW-ROUTE", "duplicate switch label")
+        covered.add(label)
+      }
+      if (clause.statements.length && terminator(clause, clause === clauses.at(-1)) === "fallthrough") {
         this.report(clause, "NORN-FLOW-ROUTE", "clause falls through; end it with return or break")
       }
       clause.statements.forEach((st, i) => { this.statement(st, ctx, i === clause.statements.length - 1) })
@@ -1185,8 +1187,7 @@ class FileWalk {
   /**
    * `xs.some(x => ...)`, `.every`, `.filter`, `.map` (A2, #1176): norn-zen/6
    * closures. Only in a pure expression callback (a law, guard, derivation or
-   * decision), with one inline arrow whose single plain parameter is not
-   * already bound by an enclosing closure and whose body is an expression.
+   * decision), with one inline arrow with one plain element parameter and an expression body.
    */
   private arrayClosure(call: ts.CallExpression, callee: ts.PropertyAccessExpression, ctx: Ctx): void {
     const name = callee.name.text
@@ -1200,11 +1201,8 @@ class FileWalk {
     if (!param || extra.length > 0 || !ts.isIdentifier(param.name) || param.initializer || param.dotDotDotToken) {
       return this.report(fn, "NORN-FLOW-UNSUPPORTED-SYNTAX", `a \`.${name}\` callback takes one plain parameter (the element); the index and array arguments are not admitted`)
     }
-    if (RESERVED_CLOSURE_NAMES.has(param.name.text)) return this.report(param, "NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${param.name.text}\` names a Norn expression binding; call the element something else`)
-    if (this.closureParams.includes(param.name.text)) return this.report(param, "NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${param.name.text}\` is already the element of an enclosing closure; give the inner element another name`)
     if (ts.isBlock(fn.body)) return this.report(fn.body, "NORN-FLOW-UNSUPPORTED-SYNTAX", `a \`.${name}\` callback body is one expression; write \`x => ...\` without braces`)
-    this.closureParams.push(param.name.text)
-    try { this.expr(fn.body, ctx) } finally { this.closureParams.pop() }
+    this.expr(fn.body, ctx)
   }
 
   /** Both operands are parsed temporal values of one kind, which norn-zen/7 orders semantically. */
@@ -1266,21 +1264,7 @@ class FileWalk {
 
   /** Every path through the statements ends in a `return` (bare returns are reported separately). */
   private alwaysReturns(statements: ReadonlyArray<ts.Statement>): boolean {
-    return statements.some((s) => this.terminates(s))
-  }
-
-  private terminates(s: ts.Statement): boolean {
-    if (ts.isReturnStatement(s) || ts.isThrowStatement(s)) return true
-    if (ts.isBlock(s)) return this.alwaysReturns(s.statements)
-    if (ts.isIfStatement(s)) return s.elseStatement !== undefined && this.terminates(s.thenStatement) && this.terminates(s.elseStatement)
-    if (ts.isSwitchStatement(s)) {
-      // Coverage and fall-through are NORN-FLOW-ROUTE; here every clause must end in a return.
-      return s.caseBlock.clauses.every((c) => {
-        const last = c.statements[c.statements.length - 1]
-        return last !== undefined && this.terminates(last)
-      })
-    }
-    return false
+    return statements.some(returns)
   }
 
   private admittedCall(id: string, call: ts.CallExpression, callCtx: Ctx): void {
