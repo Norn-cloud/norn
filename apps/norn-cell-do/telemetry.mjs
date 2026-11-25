@@ -35,8 +35,8 @@ const REFUSAL_CODES = new Set(Object.entries({
     "slice_unavailable target_not_found transition_binding_mismatch transition_protocol_conflict " +
     "unsupported_effect write_mode_failed effect_kind_mismatch",
   analytics:
-    "dataset_cold engine frontier_behind frontier_moved invalid too_large unauthorized unavailable " +
-    "unconfigured unknown unsettled",
+    "dataset_cold engine frontier_behind frontier_moved invalid resource_exhausted too_large " +
+    "unauthorized unavailable unconfigured unknown unsettled",
   approval:
     "attempt_ended consumption_invalid definition_changed expired refusal_invalid refused rejected " +
     "would_commit",
@@ -59,8 +59,10 @@ const REFUSAL_CODES = new Set(Object.entries({
     "schema.scope_type",
   bulk:
     "above_max attempt_busy attempt_unknown below_min digest_mismatch invalid_finding " +
-    "missing_column out_of_range residue_exceeded unmapped unreadable unsupported_encoding " +
-    "unsupported_law unsupported_mapping unsupported_marking unwritable",
+    "missing_column not_boolean not_date not_decimal not_in_enum not_integer not_timestamp " +
+    "out_of_range required residue_exceeded scale_exceeded too_long too_short unmapped " +
+    "unreadable unsupported_encoding unsupported_law unsupported_mapping unsupported_marking " +
+    "unwritable",
   cell:
     "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
     "fenced scope_conflict sqlite unopenable verifying",

@@ -98,6 +98,9 @@ pub struct HostConfig {
     /// credentials with (OLAP-CRED-1). Not a connection variable, so no
     /// connector ever sees it.
     pub olap_signing_key: Option<String>,
+    /// `NORN_OLAP_ENGINE`: the analytics engine the deployment runs
+    /// (`duckdb`, the default, or `datafusion`); only its answers count.
+    pub olap_engine: Option<String>,
     /// `NORN_STAGE`.
     pub stage: Option<String>,
     /// `NORN_TENANT_ENVIRONMENTS`.
@@ -109,6 +112,26 @@ pub struct HostConfig {
     /// The conformance seams are served: a `conformance` build with
     /// `NORN_STAGE=test` and `NORN_CONFORMANCE=synthetic`.
     pub conformance: bool,
+}
+
+/// What the cell needs to call the tenant analytics engine.
+#[derive(Clone)]
+pub struct Olap {
+    /// `NORN_OLAP_SIGNING_KEY`.
+    pub signing_key: Option<String>,
+    /// `NORN_OLAP_ENGINE`.
+    pub engine: Option<String>,
+}
+
+impl HostConfig {
+    /// The analytics engine settings the cell is opened with.
+    #[must_use]
+    pub fn olap(&self) -> Olap {
+        Olap {
+            signing_key: self.olap_signing_key.clone(),
+            engine: self.olap_engine.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for HostConfig {
@@ -164,6 +187,7 @@ impl HostConfig {
             connect_vars: connect_vars.to_string(),
             olap_url: var("NORN_OLAP_URL"),
             olap_signing_key: var("NORN_OLAP_SIGNING_KEY"),
+            olap_engine: var("NORN_OLAP_ENGINE"),
             stage,
             environments,
             allowed_origins: var("ALLOWED_ORIGINS")

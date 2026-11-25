@@ -981,8 +981,12 @@ fn outsiders_cannot_tell_a_vacant_scope_from_a_tenant_with_live_questions() {
     let mut vacant = opened(&directory.path().join("vacant.sqlite"));
     let issuer =
         || norn_api::olap_credential::Issuer::parse(&format!("k1:{}", "A".repeat(43))).unwrap();
-    served.tenant.enable_analytics(issuer());
-    vacant.tenant.enable_analytics(issuer());
+    served
+        .tenant
+        .enable_analytics(issuer(), norn_cell::analytics::AnalyticalEngineId::DuckDb);
+    vacant
+        .tenant
+        .enable_analytics(issuer(), norn_cell::analytics::AnalyticalEngineId::DuckDb);
     assert!(served.tenant.is_provisioned() && !vacant.tenant.is_provisioned());
     let question = json!({ "question": sale_question("shop.amount") }).to_string();
     let outsiders: [Option<String>; 5] = [
