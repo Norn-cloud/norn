@@ -182,6 +182,32 @@ async function raw(response) {
   return { status: response.status, headers: [...response.headers].sort(), body: response.status === 101 ? null : await response.text() };
 }
 
+/**
+ * Two sequential router.fetch calls can straddle a UTC second boundary, shifting the body's
+ * `"decidedAt":"<UTC second>"` field by 1 s (e.g. 03:40:21Z vs 03:40:22Z) while every other byte
+ * is identical. Validate both timestamps as calendar-valid ISO UTC seconds within a 2 s window,
+ * replace ONLY that matched value with a fixed placeholder in both bodies, then assert exact
+ * equality on { status, headers, body } — preserving byte-for-byte comparison on every other field.
+ */
+function expectSameRefusal(actual, expected) {
+  const pattern = /"decidedAt":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"/;
+  const stamp = (body, label) => {
+    const match = body.match(pattern);
+    expect(match, `${label} body must contain a "decidedAt":"<UTC second>" field`).not.toBeNull();
+    const value = match[0].slice('"decidedAt":"'.length, -1);
+    const ms = Date.parse(value);
+    expect(Number.isNaN(ms), `${label} decidedAt "${value}" must parse as a UTC timestamp`).toBe(false);
+    expect(`${new Date(ms).toISOString().slice(0, 19)}Z`, `${label} decidedAt "${value}" must be a calendar-valid UTC timestamp`).toBe(value);
+    return ms;
+  };
+  const tsActual = stamp(actual.body, "actual");
+  const tsExpected = stamp(expected.body, "expected");
+  expect(Math.abs(tsActual - tsExpected)).toBeLessThanOrEqual(2_000);
+  const placeholder = '"decidedAt":"<utc-second>"';
+  const normalise = (r) => ({ ...r, body: r.body.replace(pattern, placeholder) });
+  expect(normalise(actual)).toEqual(normalise(expected));
+}
+
 const B = ["org_b", "prod"];
 const NOWHERE = ["org_c", "prod"];
 const keyOf = ([org, environment]) => `${org}/${environment}`;
@@ -226,7 +252,7 @@ describe("the real Wasm gate at the Worker boundary", () => {
       expect([...objects.keys()].sort()).toEqual([keyOf(B), keyOf(NOWHERE)]);
       const atB = await raw(await router.fetch(request(B, outsider, { method, path, body }), env));
       const atNowhere = await raw(await router.fetch(request(NOWHERE, outsider, { method, path, body }), env));
-      expect(atB).toEqual(atNowhere);
+      expectSameRefusal(atB, atNowhere);
       expect(atB.status).toBeGreaterThanOrEqual(400);
       expect(JSON.parse(atB.body).format).toBe("norn/refusal@2");
       for (const o of objects.values()) expect(o.touched).toEqual([]);
@@ -262,7 +288,7 @@ describe("the real Wasm gate at the Worker boundary", () => {
     const forged = (await token("org_b")).slice(0, -4) + "AAAA";
     const atB = await raw(await router.fetch(request(B, forged), env));
     const outsider = await raw(await router.fetch(request(B, await token("org_a")), env));
-    expect(atB).toEqual(outsider);
+    expectSameRefusal(atB, outsider);
     for (const o of objects.values()) expect(o.touched).toEqual([]);
   });
 });
