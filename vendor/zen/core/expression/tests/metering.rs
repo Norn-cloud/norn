@@ -6,7 +6,7 @@
 use serde_json::json;
 use zen_expression::meter::{BudgetExhausted, Meter};
 use zen_expression::vm::VMError;
-use zen_expression::{Isolate, IsolateError};
+use zen_expression::{evaluate_expression, Isolate, IsolateError};
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -131,6 +131,87 @@ fn large_interval_is_charged_before_it_is_materialized() {
         .run_standard("count([0..1000000000], # > 0)")
         .unwrap_err();
     assert!(exhausted(err).used > 1_000_000_000);
+}
+
+const HUGE_INTERVALS: [&str; 5] = [
+    "[0..1000000000]",
+    "[-9223372036854775808..9223372036854775807]",
+    "(-9223372036854775808..9223372036854775807)",
+    "[0..9223372036854775807]",
+    "(-9223372036854775808..0]",
+];
+
+fn too_large(err: Option<IsolateError>) -> bool {
+    matches!(
+        err,
+        Some(IsolateError::VMError {
+            source: VMError::IntervalTooLarge { .. }
+        })
+    )
+}
+
+/// Norn (#1711): an interval is charged its logical element count (saturating at
+/// `u64::MAX`, independent of `usize`) before anything else, so a budget that cannot
+/// pay for it is `BudgetExhausted` on every target, wasm32 included.
+#[test]
+fn huge_intervals_exhaust_the_budget_on_every_target() {
+    for interval in HUGE_INTERVALS {
+        let expression = format!("count({interval}, # > 0)");
+        let meter = Meter::new(1_000);
+        let Some(err) = isolate(&meter).run_standard(&expression).err() else {
+            panic!("{expression} must exhaust the budget");
+        };
+        assert!(exhausted(err).used > 1_000_000_000, "{expression}");
+    }
+}
+
+/// Norn (#1711): past the materialization ceiling, an unmetered run (the public
+/// `evaluate_expression`) and a metered run that could pay are both refused with
+/// `IntervalTooLarge` before any allocation; the ceiling itself materializes.
+#[test]
+fn huge_intervals_are_refused_before_materialization() {
+    for interval in HUGE_INTERVALS {
+        let expression = format!("count({interval}, # > 0)");
+        let unmetered = evaluate_expression(&expression, json!({}).into()).err();
+        assert!(too_large(unmetered), "{expression}");
+    }
+    let meter = Meter::new(u64::MAX);
+    let metered = isolate(&meter)
+        .run_standard("count([0..1000000000], # > 0)")
+        .err();
+    assert!(too_large(metered));
+    assert!(meter.used() > 1_000_000_000, "the count is charged first");
+    let past = evaluate_expression("count([0..1000000], true)", json!({}).into()).err();
+    assert!(too_large(past), "1,000,001 elements");
+    let at = evaluate_expression("count([1..1000000], true)", json!({}).into())
+        .map(|value| value.to_value());
+    assert_eq!(at.ok(), Some(json!(1_000_000)));
+}
+
+/// Norn (#1711): open bounds at the `i64` limits enumerate without overflowing.
+#[test]
+fn open_interval_bounds_at_the_i64_limits_do_not_overflow() {
+    const MIN: &str = "-9223372036854775808";
+    const MAX: &str = "9223372036854775807";
+    for (expression, expected) in [
+        (format!("count(({MAX}..{MAX}], true)"), json!(0)),
+        (format!("count([{MIN}..{MIN}), true)"), json!(0)),
+        (format!("count([{MAX}..{MIN}], true)"), json!(0)),
+        (format!("map(({MAX}..{MAX}], #)"), json!([])),
+        (format!("map([{MAX}..{MAX}], #)"), json!([i64::MAX])),
+        (
+            format!("map(({MIN}..-9223372036854775806), #)"),
+            json!([i64::MIN + 1]),
+        ),
+    ] {
+        let meter = Meter::new(1_000);
+        let result = isolate(&meter).run_standard(&expression);
+        assert_eq!(
+            result.map(|value| value.to_value()).ok(),
+            Some(expected),
+            "{expression}"
+        );
+    }
 }
 
 fn cost_with(expression: &str, env: serde_json::Value) -> u64 {
