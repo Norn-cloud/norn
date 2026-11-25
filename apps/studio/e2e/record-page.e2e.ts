@@ -177,6 +177,7 @@ test("markings: after a failed mode read, the page's Retry reads and reveals the
   await page.goto(PARTY)
   const unavailable = page.locator("[data-workspace-unavailable]")
   await expect(unavailable).toBeVisible()
+  await shoot(page, "party-mode-unavailable")
   // Nothing was read while no mode was decided: no read without a workspace.
   expect(cell.readScopes).toEqual([])
   // The cell recovers; the page's own Retry decides the mode and then reads the record at its scope.

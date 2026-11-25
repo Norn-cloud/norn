@@ -90,6 +90,7 @@ export function ObjectPage() {
   const mode = useMode()
   const sourceScope = mode.data?.kind === "live" ? mode.data.scope : undefined
   const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })
+  const modeError = mode.isError ? mode.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
   // read again reads both, so neither is left from an earlier read.
   const queries = useQueryClient()
@@ -101,7 +102,6 @@ export function ObjectPage() {
     void catalogRead.refetch()
     if (mode.isSuccess) void reads.refetch()
   }
-  const modeError = mode.isError ? mode.error : null
   const live = mode.data?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
@@ -115,7 +115,9 @@ export function ObjectPage() {
   const { locale } = useLocale()
   const data = reads.data
   const lineage = data?.source?.document
-  const problem = readProblem(catalogRead, reads)
+  // A failed mode read is the workspace's state, not this read's: it shows Workspace unavailable
+  // with the page's Retry (below) instead of a bare message.
+  const problem = mode.isError ? undefined : readProblem(catalogRead, reads)
   const { icon: TypeIcon, text } = KINDS.objectType
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
@@ -168,7 +170,7 @@ export function ObjectPage() {
       {problem === undefined && (reads.isPending || catalogRead.isPending || reads.isError || catalogRead.isError) && (
         <LoadState
           status={reads.isError || catalogRead.isError || modeError !== null ? "error" : "pending"}
-          error={reads.error ?? modeError ?? catalogRead.error}
+          error={modeError ?? reads.error ?? catalogRead.error}
           isFetching={reads.isFetching || catalogRead.isFetching || mode.isFetching}
           onRetry={retry}
           skeleton="detail"
