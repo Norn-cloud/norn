@@ -125,8 +125,8 @@ const REFUSAL_CODES = new Set(Object.entries({
   scope: "denied missing",
   source:
     "auth_unsupported bound cell_busy connector_missing http_status ingest no_cell not_running " +
-    "profile_invalid profile_missing response_shape seal secret_missing sqlite sync_running " +
-    "token_refused unknown",
+    "profile_invalid profile_missing response_shape scope_mismatch seal secret_missing " +
+    "secret_unbound sqlite sync_running token_refused unknown",
   subscription: "empty_bound over_profile unknown_type",
   transform: "not_found row_not_found snapshot_moved",
   upload:
