@@ -230,6 +230,28 @@ fn binary_conversion_never_reparses_through_serde_json() {
 }
 
 #[test]
+fn a_pointer_selects_an_array_item_only_by_an_rfc_6901_index() {
+    let items = RuntimeValue::from_json_text(r#"["a","b"]"#).expect("parses");
+    let at = |pointer: &str| items.pointer(pointer).cloned();
+    assert_eq!(at("/0"), Some(RuntimeValue::String("a".to_owned())));
+    assert_eq!(at("/1"), Some(RuntimeValue::String("b".to_owned())));
+    // #1706: `01` and `+1` selected `"b"`.
+    for pointer in ["/01", "/+1", "/-1", "/00", "/", "/2"] {
+        assert_eq!(at(pointer), None, "{pointer}");
+    }
+    // `01` is still an object member's name.
+    let object = RuntimeValue::from_json_text(r#"{"01":"x","1":"y"}"#).expect("parses");
+    assert_eq!(
+        object.pointer("/01").cloned(),
+        Some(RuntimeValue::String("x".to_owned()))
+    );
+    assert_eq!(
+        object.pointer("/1").cloned(),
+        Some(RuntimeValue::String("y".to_owned()))
+    );
+}
+
+#[test]
 fn fact_changes_decode_exactly_and_refuse_foreign_members_even_when_null() {
     use norn_ir::FactChange;
     let set: FactChange = serde_json::from_str(
