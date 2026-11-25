@@ -383,7 +383,7 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
           </ul>}
       </Well>
       <Sheet open={table !== null} onOpenChange={(next) => { if (!next) setTable(null) }}>
-        <SheetContent className="w-[48rem] overflow-y-auto">
+        <SheetContent className="overflow-y-auto data-[side=right]:w-[48rem]">
           <SheetHeader><SheetTitle>{table?.label}</SheetTitle><SheetDescription>The records on the first page the cell returned, read one by one.</SheetDescription></SheetHeader>
           <div className="px-4 pb-6">{table && from && <LinkedRecords from={from} ids={table.ids} parent={id} />}</div>
         </SheetContent>

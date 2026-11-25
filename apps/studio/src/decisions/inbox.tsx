@@ -46,6 +46,26 @@ function inboxRefusalError(refusal: CellReadRefusal): Error {
   return new CellRefusal(refusal.status, refusal.code, refusal.message, { explanation, incidentId, retryable, category, decidedAt })
 }
 
+/**
+ * A requested call's status dot: held while it waits; live once approved and run (or approved with
+ * nothing left to run); the accent while an approval waits for the reader to run it; bad when the
+ * decider rejected it or the cell refused the approved call; quiet when it expired or was withdrawn.
+ */
+export function requestDot(item: Pick<RequestedDecision, "status" | "canRun" | "call">): string {
+  switch (item.status) {
+    case "pending": return "bg-dot-held"
+    case "rejected": return "bg-dot-bad"
+    case "expired":
+    case "withdrawn": return "bg-dot-quiet"
+    case "approved": {
+      const state = item.call.state?.state
+      if (state === "refused") return "bg-dot-bad"
+      if (state === "committed") return "bg-dot-live"
+      return item.canRun ? "bg-dot-accent" : "bg-dot-live"
+    }
+  }
+}
+
 /** `/decisions`: what waits on you, soonest deadline first, in the cell's order. */
 export function DecisionsPage() {
   const client = useQueryClient()
@@ -159,8 +179,8 @@ function RequestedCalls() {
       <ol data-slot="well" className="grid gap-px p-1.5" aria-label="Your requests">
         {items.map((item) => (
           <li key={item.id} className="flex min-h-12 flex-wrap items-center gap-3 rounded-(--radius-row) px-3 py-2.5">
-            {/* Dot-first (DESIGN.md 12): approved is live, pending is held; the words below say which. */}
-            <span aria-hidden data-status={item.status} className={item.status === "approved" ? "size-[6px] shrink-0 rounded-full bg-dot-live" : "size-[6px] shrink-0 rounded-full bg-dot-held"} />
+            {/* Dot-first (DESIGN.md 4.3, 12): one dot per outcome; the words below say which. */}
+            <span aria-hidden data-status={item.status} className={`size-[6px] shrink-0 rounded-full ${requestDot(item)}`} />
             <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 rounded-(--radius-row) text-start outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
               <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
                 <span>{requestedAction(actions, item).title}</span>

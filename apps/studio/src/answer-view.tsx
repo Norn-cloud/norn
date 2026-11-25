@@ -371,7 +371,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </div>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
       <Sheet open={drill !== undefined} onOpenChange={(next) => { if (!next) setDrill(undefined) }}>
-        <SheetContent className="w-[56rem] overflow-y-auto">
+        <SheetContent className="overflow-y-auto data-[side=right]:w-[56rem]">
           {drill && <>
             <SheetHeader>
               <SheetTitle>{named}, {drill.label.charAt(0).toLowerCase() + drill.label.slice(1)}</SheetTitle>

@@ -383,6 +383,10 @@ test("proposals lifecycle: server-filter list, draft, edit, withdraw + undo, sub
   await dialog(page).getByRole("button", { name: "Draft proposal", exact: true }).click()
   await dialog(page).getByRole("button", { name: "Done" }).click()
   await table.getByRole("link", { name: "Add remittance grace window" }).click()
+  // The detail page's empty replay, read once the route has moved: until then the list (whose
+  // un-replayed rows say the same words) is still on screen.
+  await expect(page).toHaveURL(/\/learning\/proposals\/[^/]+$/)
+  await expect(page.getByRole("group", { name: "Proposal actions" })).toBeVisible()
   await expect(page.getByText("Not replayed yet")).toBeVisible()
 
   // Edit draft, withdraw + Undo (returns to draft), then submit → replay populates.

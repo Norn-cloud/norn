@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
-import { Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
+import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/kit"
 import { Inspector, InspectorProvider } from "@/lib/inspector"
@@ -1186,7 +1186,9 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
   const navRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const wasOpenRef = useRef(open)
-  const focusWasInNavRef = useRef(false)
+  // Where focus last was inside the sidebar (anywhere: header, list or footer), so a collapse that
+  // unmounts that control can hand focus to its rail counterpart.
+  const lastInSidebarRef = useRef<{ readonly scope: boolean; readonly label: string | null } | null>(null)
   const pendingFocusSectionRef = useRef<string | null>(null)
   const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
   const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
@@ -1200,26 +1202,32 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
   useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target
-      focusWasInNavRef.current = target instanceof Node && Boolean(navRef.current?.contains(target))
+      lastInSidebarRef.current = target instanceof HTMLElement && document.getElementById(SIDEBAR_ID)?.contains(target)
+        ? { scope: target.closest("[data-scope]") !== null, label: target.getAttribute("aria-label") }
+        : null
     }
     document.addEventListener("focusin", onFocusIn)
     return () => document.removeEventListener("focusin", onFocusIn)
   }, [])
 
-  // Focus is never stranded: collapsing moves it from the list to the current rail icon (else the toggle);
-  // expanding from a rail destination with no page moves it onto that destination's row.
+  // Focus is never stranded: when a collapse unmounts the focused control, focus moves to its rail
+  // counterpart (the workspace disc, the assistant, the account), else to the current rail icon, else
+  // to the toggle. A collapse that starts outside the sidebar leaves focus where it is.
   useEffect(() => {
     const wasOpen = wasOpenRef.current
     wasOpenRef.current = open
     if (isMobile) return
     if (wasOpen && !open) {
+      const last = lastInSidebarRef.current
+      const sidebar = document.getElementById(SIDEBAR_ID)
       const active = document.activeElement
       const lost = active === null || active === document.body || !active.isConnected || (navRef.current?.contains(active) ?? false)
-      if (lost && focusWasInNavRef.current) {
-        const railTarget = navRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
-        ;(railTarget ?? triggerRef.current)?.focus()
+      if (last !== null && lost) {
+        const counterpart = last.scope
+          ? sidebar?.querySelector<HTMLElement>("[data-scope]")
+          : last.label !== null ? sidebar?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(last.label)}"]`) : null
+        ;(counterpart ?? navRef.current?.querySelector<HTMLElement>('[aria-current="page"]') ?? triggerRef.current)?.focus()
       }
-      focusWasInNavRef.current = false
       return
     }
     if (!wasOpen && open && pendingFocusSectionRef.current !== null) {

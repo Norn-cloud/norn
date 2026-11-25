@@ -207,7 +207,7 @@ export function TileAnswer({ tile, catalog, scope }: { readonly tile: Pick<Tile,
         <Button type="button" variant="ghost" size="sm" className="ms-auto" onClick={() => { setTracing(undefined); setDetails(true) }}><Maximize2 />Details</Button>
       </div>
       <Sheet open={details} onOpenChange={setDetails}>
-        <SheetContent className="w-[56rem] overflow-y-auto">
+        <SheetContent className="overflow-y-auto data-[side=right]:w-[56rem]">
           <SheetHeader>
             <SheetTitle>{tile.title}</SheetTitle>
             <SheetDescription>Every bucket the cell answered, and the records behind each one.</SheetDescription>

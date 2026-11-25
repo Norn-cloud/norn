@@ -72,11 +72,22 @@ test("sidebar: the default is polar + sidebar, 232px with one landmark, one curr
   const rest = await style(home, "color")
   expect(rest).toBe(await painted(page, await token(page, "muted-foreground")))
   await home.hover()
-  await expect.poll(() => style(home, "color")).toBe(rest)
-  const ground = await style(column(page), "background-color")
-  const wash = await style(home, "background-color").then((color) => painted(page, color))
-  expect(wash).not.toBe(await painted(page, ground))
-  expect(wash).not.toBe(await painted(page, await token(page, "sidebar-accent")))
+  // The wash fades in over 150ms, so it is read once it has painted: half the pill over the ground.
+  const ground = await painted(page, await style(column(page), "background-color"))
+  const pillColor = await painted(page, await token(page, "sidebar-accent"))
+  const half = await page.evaluate(() => {
+    const probe = document.createElement("span")
+    probe.style.color = "color-mix(in oklab, var(--sidebar-accent) 50%, transparent)"
+    document.body.append(probe)
+    const color = getComputedStyle(probe).color
+    probe.remove()
+    return color
+  })
+  const wash = await painted(page, half)
+  await expect.poll(() => style(home, "background-color").then((color) => painted(page, color))).toBe(wash)
+  expect(wash).not.toBe(ground)
+  expect(wash).not.toBe(pillColor)
+  expect(await style(home, "color")).toBe(rest)
 
   // A group header is a quiet step-1 label at 400 in sentence case with a 32px disclosure target.
   const space = nav(page).locator('[role="treeitem"][aria-expanded]', { hasText: "Data" }).first()
@@ -112,6 +123,14 @@ test("sidebar: the toggle and ⌘B collapse it to a 48px rail of 32px icons and 
   // The rail keeps one landmark and every destination; spaces become hairline-led groups.
   await expect(rail.getByRole("group").first()).toHaveAttribute("aria-label", /.+/)
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/sidebar-rail-light.png` })
+
+  // A collapse from the footer hands focus to the same control on the rail.
+  await toggle(page).click()
+  await expect.poll(async () => (await column(page).boundingBox())?.width).toBe(232)
+  await page.locator('[data-slot="sidebar"]').getByRole("button", { name: "Account" }).focus()
+  await page.keyboard.press("Control+b")
+  await expect.poll(async () => (await column(page).boundingBox())?.width).toBe(48)
+  await expect(page.locator('[data-slot="sidebar"]').getByRole("button", { name: "Account" })).toBeFocused()
 
   // The reader's choice is kept per browser.
   await page.reload()
