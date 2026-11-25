@@ -477,7 +477,8 @@ test("findings: correcting a quarantined record reads its findings again, so the
   const read = Date.now()
   await shoot(page, "party-quarantined")
 
-  await page.getByRole("button", { name: CORRECT_CONTACT.title }).click()
+  // Exact: the History panel names its entries by the action's title too ("Verify contact by …").
+  await page.getByRole("button", { name: CORRECT_CONTACT.title, exact: true }).click()
   const sheet = page.getByRole("dialog")
   await sheet.getByLabel("Contact email").fill("contact@example.com")
   await sheet.getByRole("button", { name: CORRECT_CONTACT.title }).click()
