@@ -310,7 +310,19 @@ async fn refused_cell_restores(damage: &str) {
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4, "{damage}");
     assert_eq!(diagnosis.proven_through, 3, "{damage}");
-    if damage == "journal" || damage == "all-logs" {
+    // Commit 4's journal row is a residue rebuilt from its receipt
+    // (EXPORT-RESIDUE-1), so a lost receipt ends the journal there too.
+    if damage == "receipt" {
+        assert_eq!(diagnosis.journal_commits, 3);
+        let unproven = diagnosis
+            .first_unproven
+            .as_ref()
+            .expect("the refused entry");
+        assert_eq!(
+            (unproven.commit_seq, unproven.op.as_deref()),
+            (4, Some("created"))
+        );
+    } else if damage == "journal" || damage == "all-logs" {
         assert_eq!(diagnosis.journal_commits, 3);
         assert_eq!(diagnosis.first_unproven, None);
     } else {

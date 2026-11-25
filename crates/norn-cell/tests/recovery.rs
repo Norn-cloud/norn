@@ -483,10 +483,12 @@ fn a_receipt_below_the_exact_integer_range_is_refused_on_reopen() {
 
 #[test]
 fn orphan_ledger_events_are_refused_on_reopen() {
-    // Dropping receipt 2 leaves events 4 and 5 without a receipt.
+    // Dropping receipt 2 leaves events 4 and 5 without a receipt, and commit
+    // 2's residue journal row without the receipt it is rebuilt from
+    // (EXPORT-RESIDUE-1): whichever the open reads first refuses it.
     let reopened = reopen_after("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = 2");
     assert!(
-        matches!(reopened, Err(CellError::LedgerCorrupt { seq: 4, .. })),
+        matches!(reopened, Err(CellError::LedgerCorrupt { seq: 2 | 4, .. })),
         "{reopened:?}"
     );
     // Moving an event to another commit breaks its receipt's span.

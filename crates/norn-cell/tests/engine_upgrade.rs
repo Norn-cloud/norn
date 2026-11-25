@@ -40,6 +40,34 @@ const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 const STORAGE_V5: &str = include_str!("fixtures/engine-storage-v5.json");
 const STORAGE_V6: &str = include_str!("fixtures/engine-storage-v6.json");
 const STORAGE_V7: &str = include_str!("fixtures/engine-storage-v7.json");
+const STORAGE_V8: &str = include_str!("fixtures/engine-storage-v8.json");
+
+/// What storage versions 8 and 9 change in an older cell's image.
+fn apply_v9_upgrade(image: &mut Value) {
+    apply_v8_sparse_markings_upgrade(image);
+    add_export_context_table(image);
+}
+
+/// Storage version 9 (#1533 Part 2, EXPORT-RESIDUE-1) adds the empty
+/// content-addressed `_norn_export_context` table; no journal row is rewritten.
+fn add_export_context_table(image: &mut Value) {
+    image["schema"]
+        .as_array_mut()
+        .expect("schema")
+        .push(serde_json::json!({
+            "type": "table",
+            "name": "_norn_export_context",
+            "table": "_norn_export_context",
+            "sql": "CREATE TABLE \"_norn_export_context\" (\n  \"hash\" TEXT NOT NULL PRIMARY KEY,\n  \"store_format\" TEXT NOT NULL,\n  \"ddl_hash\" TEXT NOT NULL,\n  \"model_hash\" TEXT NOT NULL,\n  \"ddl_sql\" TEXT NOT NULL,\n  \"bindings\" TEXT NOT NULL\n)",
+        }));
+    image["tables"].as_object_mut().expect("tables").insert(
+        "_norn_export_context".to_owned(),
+        serde_json::json!({
+            "columns": ["rowid", "hash", "store_format", "ddl_hash", "model_hash", "ddl_sql", "bindings"],
+            "rows": [],
+        }),
+    );
+}
 
 /// Storage version 8 (#1533 Part 1) adds `_norn_marking_snapshot.nonempty_slots`
 /// (backfilled from non-empty rows) and drops the strictly redundant
@@ -733,7 +761,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v8_sparse_markings_upgrade(&mut expected);
+    apply_v9_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -865,7 +893,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v8_sparse_markings_upgrade(&mut expected);
+    apply_v9_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -968,7 +996,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v8_sparse_markings_upgrade(&mut expected);
+    apply_v9_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1041,7 +1069,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v8_sparse_markings_upgrade(&mut expected);
+    apply_v9_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1114,7 +1142,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v8_sparse_markings_upgrade(&mut expected);
+    apply_v9_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1215,7 +1243,7 @@ fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
     add_function_receipt_table(&mut expected);
-    apply_v8_sparse_markings_upgrade(&mut expected);
+    apply_v9_upgrade(&mut expected);
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(path);
     by_name(&mut actual);
@@ -1779,7 +1807,7 @@ fn apply_v8_marked_fixture_upgrade(image: &mut Value) -> Result<(), Box<dyn std:
         .ok_or_else(|| std::io::Error::other("v7 fixture missing engine stamp"))?;
     stamp_row[2] = stamp.into();
     image["storage"] = STORAGE_VERSION.into();
-    apply_v8_sparse_markings_upgrade(image);
+    apply_v9_upgrade(image);
     let rows = image["tables"]["_norn_marking_snapshot"]["rows"]
         .as_array_mut()
         .ok_or_else(|| std::io::Error::other("v7 fixture missing snapshot rows"))?;
@@ -1931,6 +1959,173 @@ fn a_storage_v7_cell_opens_on_this_engine_and_backfills_nonempty_slots()
             .read()
             .effective_markings("main", "fixture.MarkedItem", "m2", None)?,
         None
+    );
+    Ok(())
+}
+
+/// The `_norn_export_journal` rows of `image`: commit, hash and stored text.
+fn journal_rows(image: &Value) -> Vec<(u64, String, String)> {
+    rows(image, "_norn_export_journal")
+        .as_array()
+        .expect("journal rows")
+        .iter()
+        .map(|row| {
+            (
+                row[1].as_u64().expect("commit"),
+                row[2].as_str().expect("hash").to_owned(),
+                row[3].as_str().expect("record").to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// Storage version 8 → 9 (#1533 Part 2, EXPORT-RESIDUE-1): the genuine
+/// storage-v8 fixture opens with only the empty `_norn_export_context` table
+/// and the stamp added, its packed journal rows unchanged. Steady-state
+/// commits after the upgrade store residues beside them, and the mixed
+/// journal exports, verifies and restores with every record hash unchanged.
+#[tokio::test]
+async fn a_storage_v8_cell_upgrades_and_exports_packed_and_residue_rows_alike()
+-> Result<(), Box<dyn std::error::Error>> {
+    const V8_COMMITS: u64 = 5;
+    let image: Value = serde_json::from_str(STORAGE_V8)?;
+    assert_eq!(image["storage"], 8);
+    let packed = journal_rows(&image);
+    assert_eq!(u64::try_from(packed.len())?, V8_COMMITS);
+    assert!(
+        packed
+            .iter()
+            .all(|(.., record)| record.starts_with("norn.cell.payload-storage/1:"))
+    );
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("v8.sqlite");
+    engine_fixture::load(&image, &path);
+    assert_eq!(
+        engine_release::admission(&raw(&path))?,
+        Admission::Upgrade { from: 8 }
+    );
+    let model = engine_fixture::v7_marked_model()?;
+    let mut store = CellStore::open(
+        &path,
+        model.clone(),
+        engine_fixture::checkpoint_fixture_options(),
+    )?;
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
+    let receipts = store.read().receipts()?;
+    drop(store);
+
+    let expected = upgraded_v8_image(image.clone())?;
+    let mut actual = engine_fixture::image_of(&path);
+    by_name(&mut actual);
+    assert_eq!(
+        actual, expected,
+        "v9 adds the empty context table and restamps"
+    );
+
+    store = CellStore::open(
+        &path,
+        model.clone(),
+        engine_fixture::checkpoint_fixture_options(),
+    )?;
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
+    for (commit, hash, _) in &packed {
+        let record = store.export_record(*commit)?.ok_or("packed record")?;
+        assert_eq!(
+            &record.hash()?,
+            hash,
+            "packed commit {commit} reads as written"
+        );
+    }
+    for (index, qty) in [11_i64, 12].into_iter().enumerate() {
+        let mut next = engine_fixture::batches()[1].clone();
+        next.idempotency_key = Some(format!("after-v8-upgrade-{index}"));
+        next.logical_time = 6_000 + u64::try_from(index)?;
+        if let Some(norn_cell::FactWriteRow::Put { values, .. }) = next.writes.first_mut() {
+            values.insert("qty".to_owned(), norn_ir::RuntimeValue::from(qty));
+        }
+        assert!(matches!(store.commit(&next)?, CommitOutcome::Committed(_)));
+    }
+    let head = store.export_commit_count()?;
+    assert_eq!(head, V8_COMMITS + 2);
+    let mut exporter = Exporter::local(&dir.path().join("export"))?;
+    export_all(&store, &mut exporter).await;
+    let receipts = [receipts, store.read().receipts()?.split_off(5)].concat();
+    drop(store);
+
+    let mixed = journal_rows(&engine_fixture::image_of(&path));
+    assert_eq!(
+        &mixed[..packed.len()],
+        packed.as_slice(),
+        "no packed row is rewritten"
+    );
+    for (.., record) in &mixed[packed.len()..] {
+        assert!(
+            record.starts_with("norn.cell.export-residue/1:"),
+            "{record:.80}"
+        );
+    }
+    let manifest = exporter.verify().await?;
+    assert_eq!(manifest.head_commit_seq, head);
+    assert_restores_hashes(
+        dir.path(),
+        &mut exporter,
+        &manifest,
+        model,
+        &receipts,
+        &mixed,
+    )
+    .await
+}
+
+/// The storage-v8 image as this engine leaves it: restamped, with the empty
+/// context table, sorted by name.
+fn upgraded_v8_image(mut expected: Value) -> Result<Value, Box<dyn std::error::Error>> {
+    let stamp = serde_json::to_string(&EngineStamp::current())?;
+    let stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .and_then(|rows| rows.iter_mut().find(|row| row[1] == STAMP_KEY))
+        .ok_or("v8 fixture missing engine stamp")?;
+    stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    add_export_context_table(&mut expected);
+    by_name(&mut expected);
+    Ok(expected)
+}
+
+/// Restore `exporter`'s verified export and prove every replayed record
+/// keeps its original hash and receipt.
+async fn assert_restores_hashes(
+    dir: &Path,
+    exporter: &mut Exporter,
+    manifest: &norn_cell::export::ExportManifest,
+    model: Model,
+    receipts: &[norn_cell::Receipt],
+    mixed: &[(u64, String, String)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let restored_path = dir.join("restored.sqlite");
+    CellStore::restore_from(
+        exporter,
+        &restored_path,
+        model.clone(),
+        engine_fixture::SCOPE,
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await?;
+    let restored = CellStore::open(&restored_path, model, StoreOptions::default())?;
+    assert_eq!(restored.read().receipts()?, receipts);
+    drop(restored);
+    let replayed = journal_rows(&engine_fixture::image_of(&restored_path));
+    assert_eq!(
+        replayed
+            .iter()
+            .map(|(commit, hash, _)| (*commit, hash.clone()))
+            .collect::<Vec<_>>(),
+        mixed
+            .iter()
+            .map(|(commit, hash, _)| (*commit, hash.clone()))
+            .collect::<Vec<_>>(),
+        "a restore replays every record to its original hash"
     );
     Ok(())
 }

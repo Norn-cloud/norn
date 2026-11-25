@@ -105,6 +105,12 @@ fn check_scope(engine: &impl SqlEngine, scope: &str) -> Result<(), CellError> {
     Ok(())
 }
 
+/// [`check_scope`] of a batch's own spelling of its scope, as a packed
+/// record checks it before storing a body (EXPORT-RESIDUE-1).
+pub(crate) fn check_batch_scope(engine: &impl SqlEngine, scope: &str) -> Result<(), CellError> {
+    check_scope(engine, &normalized(scope)?)
+}
+
 fn store(
     engine: &impl SqlEngine,
     scope: &str,
@@ -353,11 +359,31 @@ struct Packed {
     references: Vec<AtPath>,
 }
 
-pub(crate) const EXPORT_BYTES: &str = r#"(octet_length(record) + COALESCE((
+/// A journal row's logical byte bound. A residue row (EXPORT-RESIDUE-1) is
+/// also charged every row it is rebuilt from: its receipt, each ledger entry
+/// with its referenced body, and its context, with a per-entry allowance for
+/// the field names the rebuilt record spells out, and twice the raw DDL
+/// for the escapes its JSON string takes.
+pub(crate) const EXPORT_BYTES: &str = r#"(octet_length("_norn_export_journal"."record") + COALESCE((
     SELECT SUM(octet_length(b."body")) FROM "_norn_export_payload" AS p
     JOIN "_norn_payload" AS b ON b."hash"=p."hash"
     WHERE p."commit_seq"="_norn_export_journal"."commit_seq"
-),0))"#;
+),0) + CASE WHEN substr("_norn_export_journal"."record",1,27)='norn.cell.export-residue/1:' THEN 512 + COALESCE((
+    SELECT octet_length(r."receipt") + octet_length(r."receipt_hash") FROM "_norn_receipt" AS r
+    WHERE r."commit_seq"="_norn_export_journal"."commit_seq"
+),0) + COALESCE((
+    SELECT SUM(128 + octet_length(l."world") + octet_length(l."event") + octet_length(l."prev_hash")
+        + octet_length(l."hash") + COALESCE((
+            SELECT octet_length(b."body") FROM "_norn_ledger_payload" AS lp
+            JOIN "_norn_payload" AS b ON b."hash"=lp."hash" WHERE lp."seq"=l."seq"
+        ),0))
+    FROM "_norn_ledger" AS l WHERE l."commit_seq"="_norn_export_journal"."commit_seq"
+),0) + COALESCE((
+    SELECT octet_length(c."store_format") + octet_length(c."ddl_hash") + octet_length(c."model_hash")
+        + 2 * octet_length(c."ddl_sql") + octet_length(c."bindings")
+    FROM "_norn_export_context" AS c
+    WHERE c."hash"=json_extract(substr("_norn_export_journal"."record",28),'$.context')
+),0) ELSE 0 END)"#;
 
 /// One value's canonical body and its children's, in the value's own order
 /// (an object's members by key, an array's elements by index).
@@ -856,6 +882,9 @@ pub(crate) fn decode_export(
     encoded: &str,
     expected_commit: u64,
 ) -> Result<crate::export::ExportRecord, CellError> {
+    if let Some(residue) = encoded.strip_prefix(crate::export_journal_residue::PREFIX) {
+        return crate::export_journal_residue::decode(engine, residue, expected_commit);
+    }
     let Some(encoded) = encoded.strip_prefix(PREFIX) else {
         return Ok(serde_json::from_str(encoded)?);
     };

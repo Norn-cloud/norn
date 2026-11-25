@@ -416,15 +416,21 @@ fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord
     })
 }
 
-/// Every verified export journal record, in commit order.
+/// Every verified export journal record, in commit order. A residue whose
+/// receipt row is lost ends the journal as a lost journal row does
+/// (EXPORT-RESIDUE-1): its record is rebuilt from that row.
 fn journal(engine: &NativeEngine) -> Result<Vec<ExportRecord>, CellError> {
     let mut records = Vec::new();
-    while let Some(record) = crate::export_journal::read_record(
-        engine,
-        u64::try_from(records.len())
+    loop {
+        let commit_seq = u64::try_from(records.len())
             .unwrap_or(u64::MAX)
-            .saturating_add(1),
-    )? {
+            .saturating_add(1);
+        if crate::export_journal_residue::lost_with_its_receipt(engine, commit_seq)? {
+            break;
+        }
+        let Some(record) = crate::export_journal::read_record(engine, commit_seq)? else {
+            break;
+        };
         records.push(record);
     }
     Ok(records)

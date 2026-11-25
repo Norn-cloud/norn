@@ -47,6 +47,7 @@ pub mod engine_release;
 pub mod error;
 pub mod export;
 mod export_journal;
+mod export_journal_residue;
 pub mod flow_run;
 pub mod fork;
 pub mod function_receipt;
