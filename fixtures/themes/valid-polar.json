@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "Polar Monochrome",
+  "baseSkin": "polar",
+  "variants": {
+    "light": {
+      "canvas": "#f6f6f8",
+      "background": "#ffffff",
+      "card": "#ffffff",
+      "foreground": "#18181b",
+      "muted-foreground": "#585861",
+      "primary": "#18181b",
+      "primary-foreground": "#fafafa",
+      "action": "#18181b",
+      "action-hover": "#2c2c32",
+      "action-foreground": "#fafafa",
+      "ring": "#52525b"
+    },
+    "dark": {
+      "canvas": "#0a0a0b",
+      "background": "#111113",
+      "card": "#161618",
+      "foreground": "#fafafa",
+      "muted-foreground": "#9d9da6",
+      "primary": "#f4f4f5",
+      "primary-foreground": "#141416",
+      "action": "#f4f4f5",
+      "action-hover": "#e4e4e7",
+      "action-foreground": "#141416",
+      "ring": "#a1a1aa"
+    }
+  }
+}

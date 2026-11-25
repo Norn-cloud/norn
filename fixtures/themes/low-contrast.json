@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "Washed Out",
+  "baseSkin": "luma",
+  "colors": {
+    "muted-foreground": "#c8c8c8"
+  }
+}
