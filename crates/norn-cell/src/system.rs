@@ -575,8 +575,8 @@ pub(crate) fn persist_sparse_marking_rows<E: SqlEngine>(
             upsert_marking_slot(engine, false, &slot, &encoded)?;
         }
     }
-    let nonempty_slots =
-        i64::try_from(markings.len()).map_err(|_| CellError::OutOfRange("marking slot count"))?;
+    let nonempty_slots = i64::try_from(markings.len())
+        .map_err(|_err| CellError::OutOfRange("marking slot count"))?;
     engine.execute(
         &format!(
             "DELETE FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"

@@ -4703,7 +4703,11 @@ fn legacy_explicit_empty_marking_rows_open_read_and_clean_up_on_rewrite()
     );
     reopened.commit(&batch(
         2,
-        vec![put("marking.Unmarked", "bob", &[("a", "1-v2")])],
+        vec![put(
+            "marking.Unmarked",
+            "bob",
+            &[("a", "1-v2"), ("b", "2"), ("c", "3")],
+        )],
     ))?;
     for version in [None, Some(1), Some(2)] {
         assert_eq!(
@@ -4734,7 +4738,11 @@ fn sparse_markings_tamper_detection_fails_closed_on_snapshot_row_or_version_mism
     store.commit(&batch(
         1,
         vec![
-            put("marking.Unmarked", "u1", &[("a", "1")]),
+            put(
+                "marking.Unmarked",
+                "u1",
+                &[("a", "1"), ("b", "2"), ("c", "3")],
+            ),
             put(
                 "marking.Mixed",
                 "m1",

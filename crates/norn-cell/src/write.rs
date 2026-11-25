@@ -42,6 +42,9 @@ struct NamingCounterAttribution {
     current: u64,
 }
 
+/// Stored current-table property keys paired with their non-empty label sets.
+type CurrentMarkings = (BTreeSet<String>, BTreeMap<String, BTreeSet<String>>);
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NamingSeriesCounterSeededEvent {
@@ -1246,7 +1249,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         &self,
         object_type: &str,
         subject: Option<i64>,
-    ) -> Result<(BTreeSet<String>, BTreeMap<String, BTreeSet<String>>), CellError> {
+    ) -> Result<CurrentMarkings, CellError> {
         let Some(subject) = subject else {
             return Ok((BTreeSet::new(), BTreeMap::new()));
         };
