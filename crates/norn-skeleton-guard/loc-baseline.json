@@ -74,7 +74,7 @@
     "crates/norn-kernel/src/action_commit/slice.rs": 1166,
     "crates/norn-kernel/src/action_commit/types.rs": 1009,
     "crates/norn-kernel/src/cell_host.rs": 1413,
-    "crates/norn-kernel/src/commit_check.rs": 1336,
+    "crates/norn-kernel/src/commit_check.rs": 2940,
     "crates/norn-kernel/src/decision_commit.rs": 3421,
     "crates/norn-kernel/src/result_reconciliation.rs": 1177,
     "crates/norn-kernel/src/snapshot_observe.rs": 2835,
