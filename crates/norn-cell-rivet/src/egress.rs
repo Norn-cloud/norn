@@ -7,7 +7,11 @@
 //! `NORN_SOURCE_ALLOWED_HOSTS`), and connects only to the addresses it
 //! checked: there is no second lookup to rebind. It uses no proxy (a proxy
 //! would resolve the name again) and follows no redirect, as the connection
-//! egress client does (`norn_cell_do::connections::egress`).
+//! egress client does (`norn_cell_do::connections::egress`). A URL whose
+//! host is an IP literal is never resolved, so this resolver never sees it;
+//! it is covered by the configuration-time check of the base URL's literal
+//! host (SYNC-URL-1), which refuses an internal address the operator does
+//! not list.
 //!
 //! Every other outbound call (the issuer's keys, the analytics engine,
 //! presigned storage reads) goes to an endpoint the operator configured, on

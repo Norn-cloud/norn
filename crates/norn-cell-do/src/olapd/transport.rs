@@ -1,9 +1,11 @@
-//! #1710: `norn-olapd`'s bounded HTTP/1.1 transport. No peer holds a
-//! worker for long: the head must arrive within [`HEAD_DEADLINE`] of the
+//! #1710: `norn-olapd`'s bounded HTTP/1.1 transport. Every read and write
+//! has an absolute deadline, never a per-read timeout a trickling peer could
+//! renew forever: the head must arrive within [`HEAD_DEADLINE`] of the
 //! accept and within [`MAX_HEAD_BYTES`], read no further than that budget;
-//! a body, like every answer, has an absolute deadline sized to its length
-//! ([`transfer_budget`]), not a per-read timeout a trickling peer could renew
-//! forever; and a body's buffer grows only as its bytes arrive.
+//! a body earns its time by the bytes that arrived ([`TRANSFER_GRACE`] plus
+//! those at [`MIN_READ_BYTES_PER_SEC`]), never by the length it declares;
+//! an answer gets [`write_budget`] for its length. A body's buffer grows
+//! only as its bytes arrive and never past its declared length.
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpStream;
@@ -20,12 +22,16 @@ pub(super) const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// #1710: the whole request head must arrive within this of the accept,
 /// however slowly its bytes trickle in.
 pub(super) const HEAD_DEADLINE: Duration = Duration::from_secs(10);
-/// #1710: the time any transfer is granted besides its length: a body
-/// arrives, or an answer is sent, within this plus its length at
-/// [`MIN_BYTES_PER_SEC`].
+/// #1710: the time any transfer is granted besides its bytes.
 const TRANSFER_GRACE: Duration = Duration::from_secs(10);
-/// #1710: the slowest transfer rate a peer may hold a worker at.
-const MIN_BYTES_PER_SEC: u64 = 1024 * 1024;
+/// #1710: the slowest rate a body may arrive at: by the time it has sent
+/// `n` bytes, it has had [`TRANSFER_GRACE`] plus `n` at this rate.
+const MIN_READ_BYTES_PER_SEC: u64 = 1024 * 1024;
+/// #1710: the slowest rate an answer may be taken at, once the call was
+/// admitted: low enough for a slow legitimate download (20 MiB over 4 Mbit/s).
+const MIN_WRITE_BYTES_PER_SEC: u64 = 128 * 1024;
+/// The most a body is read in one step, and the least its buffer grows by.
+const BODY_STEP: usize = 64 * 1024;
 /// The longest any one read or write may wait for the peer.
 const IDLE: Duration = Duration::from_secs(30);
 /// What is read and discarded after an early refusal, so closing with the
@@ -117,12 +123,21 @@ fn deadline_in(budget: Duration) -> std::io::Result<Instant> {
     })
 }
 
-/// What a transfer of `bytes` is granted: [`TRANSFER_GRACE`] plus its
-/// length at [`MIN_BYTES_PER_SEC`].
-pub(super) fn transfer_budget(bytes: impl TryInto<u64>) -> Duration {
+/// What sending an answer of `bytes` is granted: [`TRANSFER_GRACE`] plus
+/// its length at [`MIN_WRITE_BYTES_PER_SEC`].
+pub(super) fn write_budget(bytes: impl TryInto<u64>) -> Duration {
+    budget(TRANSFER_GRACE, bytes, MIN_WRITE_BYTES_PER_SEC)
+}
+
+/// `grace` plus `bytes` at `rate` bytes a second.
+fn budget(grace: Duration, bytes: impl TryInto<u64>, rate: u64) -> Duration {
     let bytes = bytes.try_into().unwrap_or(u64::MAX);
-    TRANSFER_GRACE.saturating_add(Duration::from_secs(
-        bytes.checked_div(MIN_BYTES_PER_SEC).unwrap_or(u64::MAX),
+    let millis = u128::from(bytes)
+        .saturating_mul(1000)
+        .checked_div(u128::from(rate))
+        .unwrap_or(u128::MAX);
+    grace.saturating_add(Duration::from_millis(
+        u64::try_from(millis).unwrap_or(u64::MAX),
     ))
 }
 
@@ -171,7 +186,7 @@ pub(super) fn read_head(
         method.to_owned(),
         target.split('?').next().unwrap_or_default().to_owned(),
     );
-    let (mut length, mut authorization) = (0_usize, None);
+    let (mut length, mut authorization) = (None::<usize>, None);
     loop {
         next(reader, &mut line)?;
         let header = line.trim_end();
@@ -180,10 +195,22 @@ pub(super) fn read_head(
         }
         if let Some((name, value)) = header.split_once(':') {
             if name.eq_ignore_ascii_case("content-length") {
-                length = value
-                    .trim()
-                    .parse()
-                    .map_err(|e| invalid(format!("content-length: {e}")))?;
+                // A repeated or signed length makes the body boundary
+                // ambiguous between this reader and any proxy before it.
+                let value = value.trim();
+                if length.is_some() {
+                    return Err(invalid("content-length is repeated".to_owned()));
+                }
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(invalid("content-length is not a decimal length".to_owned()));
+                }
+                length = Some(
+                    value
+                        .parse()
+                        .map_err(|e| invalid(format!("content-length: {e}")))?,
+                );
+            } else if name.eq_ignore_ascii_case("transfer-encoding") {
+                return Err(invalid("transfer-encoding is not accepted".to_owned()));
             } else if name.eq_ignore_ascii_case("authorization") {
                 authorization = Some(value.trim().to_owned());
             }
@@ -193,16 +220,28 @@ pub(super) fn read_head(
         method,
         path,
         authorization,
-        length,
+        length: length.unwrap_or(0),
     })
 }
 
 /// #1710: read the body `head` declares (at most [`MAX_BODY_BYTES`],
-/// checked by the caller) within its own deadline. The buffer grows only as
-/// bytes arrive, so a declared length alone allocates nothing.
+/// checked by the caller). The body earns its time as it arrives: by the
+/// time `n` bytes came, it has had [`TRANSFER_GRACE`] plus `n` at
+/// [`MIN_READ_BYTES_PER_SEC`], so a peer declaring a large body and
+/// trickling it is cut off near the grace, not after the time its declared
+/// length would earn. The buffer grows in steps, doubling at most and never
+/// past the declared length, so a declared length alone allocates nothing.
 pub(super) fn read_body(
     reader: &mut BufReader<Deadlined<'_>>,
     head: Head,
+) -> Result<Request, (u16, EngineRefusal)> {
+    read_body_within(reader, head, TRANSFER_GRACE)
+}
+
+fn read_body_within(
+    reader: &mut BufReader<Deadlined<'_>>,
+    head: Head,
+    grace: Duration,
 ) -> Result<Request, (u16, EngineRefusal)> {
     let short = |detail: String| {
         (
@@ -213,15 +252,32 @@ pub(super) fn read_body(
             ),
         )
     };
-    reader
-        .get_mut()
-        .renew(transfer_budget(head.length))
-        .map_err(|e| short(e.to_string()))?;
-    let mut body = Vec::with_capacity(head.length.min(MAX_HEAD_BYTES));
-    reader
-        .take(u64::try_from(head.length).unwrap_or(u64::MAX))
-        .read_to_end(&mut body)
-        .map_err(|e| short(e.to_string()))?;
+    let started = Instant::now();
+    let mut body = Vec::new();
+    while body.len() < head.length {
+        let earned = budget(grace, body.len(), MIN_READ_BYTES_PER_SEC);
+        reader.get_mut().deadline = started
+            .checked_add(earned)
+            .ok_or_else(|| short("the host clock cannot bound this body".to_owned()))?;
+        if body.len() == body.capacity() {
+            let grown = body.len().saturating_mul(2).max(BODY_STEP).min(head.length);
+            body.reserve_exact(grown.saturating_sub(body.len()));
+        }
+        // Never more than the spare capacity: the read cannot grow the buffer.
+        let step = body
+            .capacity()
+            .saturating_sub(body.len())
+            .min(head.length.saturating_sub(body.len()))
+            .min(BODY_STEP);
+        let read = reader
+            .by_ref()
+            .take(u64::try_from(step).unwrap_or(u64::MAX))
+            .read_to_end(&mut body)
+            .map_err(|e| short(e.to_string()))?;
+        if read == 0 {
+            break;
+        }
+    }
     if body.len() != head.length {
         return Err(short(format!("{} of {} bytes", body.len(), head.length)));
     }
@@ -342,17 +398,115 @@ mod tests {
     }
 
     #[test]
-    fn a_transfer_is_granted_its_grace_and_its_length_at_the_floor_rate() {
-        assert_eq!(transfer_budget(0_usize), TRANSFER_GRACE);
+    fn a_transfer_is_granted_its_grace_and_its_bytes_at_the_floor_rate() {
+        assert_eq!(write_budget(0_usize), TRANSFER_GRACE);
+        // An answer: 20 MiB at 128 KiB/s is 160 s, plus the grace.
         assert_eq!(
-            transfer_budget(MAX_BODY_BYTES),
+            write_budget(20_971_520_usize),
+            TRANSFER_GRACE.saturating_add(Duration::from_secs(160))
+        );
+        assert_eq!(
+            write_budget(u64::MAX),
+            TRANSFER_GRACE.saturating_add(Duration::from_millis(u64::MAX))
+        );
+        // A body: what arrived, at 1 MiB/s.
+        assert_eq!(
+            budget(TRANSFER_GRACE, MAX_BODY_BYTES, MIN_READ_BYTES_PER_SEC),
             TRANSFER_GRACE.saturating_add(Duration::from_secs(64))
         );
         assert_eq!(
-            transfer_budget(u64::MAX),
-            TRANSFER_GRACE.saturating_add(Duration::from_secs(
-                u64::MAX.checked_div(MIN_BYTES_PER_SEC).unwrap()
-            ))
+            budget(TRANSFER_GRACE, 524_288_usize, MIN_READ_BYTES_PER_SEC),
+            TRANSFER_GRACE.saturating_add(Duration::from_millis(500))
         );
+    }
+
+    /// A peer declaring the largest body and trickling it is cut off near
+    /// the grace, not after the minute its declared length would earn.
+    #[test]
+    fn a_trickled_large_body_is_cut_off_near_its_grace() {
+        let (mut client, server) = pair();
+        let declared =
+            format!("POST /v1/sync HTTP/1.1\r\ncontent-length: {MAX_BODY_BYTES}\r\n\r\n");
+        client.write_all(declared.as_bytes()).unwrap();
+        let trickle = std::thread::spawn(move || {
+            for _ in 0..200 {
+                if client.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let mut reader = BufReader::new(Deadlined::new(&server, Duration::from_secs(5)).unwrap());
+        let head = read_head(&mut reader).unwrap();
+        let started = Instant::now();
+        let refused = detail(read_body_within(
+            &mut reader,
+            head,
+            Duration::from_millis(300),
+        ));
+        assert!(refused.starts_with("400 the body is shorter"), "{refused}");
+        assert!(started.elapsed() < Duration::from_secs(2), "{refused}");
+        drop(server);
+        trickle.join().unwrap();
+    }
+
+    /// A body sent at speed is read whole, and its buffer is never more
+    /// than its declared length.
+    #[test]
+    fn a_fast_body_is_read_whole_into_a_buffer_of_its_length() {
+        let (mut client, server) = pair();
+        let length = 3_145_745_usize;
+        let sender = std::thread::spawn(move || {
+            let head = format!("POST /v1/sync HTTP/1.1\r\ncontent-length: {length}\r\n\r\n");
+            client.write_all(head.as_bytes()).unwrap();
+            client.write_all(&vec![7_u8; length]).unwrap();
+            client
+        });
+        let mut reader = BufReader::new(Deadlined::new(&server, Duration::from_secs(5)).unwrap());
+        let head = read_head(&mut reader).unwrap();
+        let request = read_body_within(&mut reader, head, Duration::from_secs(5)).unwrap();
+        assert_eq!(request.body.len(), length);
+        assert!(request.body.iter().all(|byte| *byte == 7));
+        assert_eq!(request.body.capacity(), length);
+        drop(sender.join().unwrap());
+    }
+
+    /// A head whose body boundary is ambiguous is refused: a repeated or
+    /// signed length, a length that is not decimal, or a transfer coding.
+    #[test]
+    fn an_ambiguous_body_boundary_is_refused() {
+        for (headers, why) in [
+            (
+                "content-length: 3\r\ncontent-length: 3\r\n",
+                "content-length is repeated",
+            ),
+            (
+                "content-length: +3\r\n",
+                "content-length is not a decimal length",
+            ),
+            (
+                "content-length: \r\n",
+                "content-length is not a decimal length",
+            ),
+            (
+                "content-length: 0x3\r\n",
+                "content-length is not a decimal length",
+            ),
+            (
+                "transfer-encoding: chunked\r\n",
+                "transfer-encoding is not accepted",
+            ),
+        ] {
+            let (mut client, server) = pair();
+            let head = format!("POST /v1/sync HTTP/1.1\r\n{headers}\r\nabc");
+            client.write_all(head.as_bytes()).unwrap();
+            let mut reader =
+                BufReader::new(Deadlined::new(&server, Duration::from_secs(5)).unwrap());
+            assert_eq!(
+                detail(read_head(&mut reader)),
+                format!("400 {why}"),
+                "{headers}"
+            );
+        }
     }
 }

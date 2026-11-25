@@ -17,8 +17,13 @@
 //! expired, minted for another operation or body, another tenant, a body
 //! naming no tenant, any method but `POST`, an unknown path) gets the same
 //! `401`, and no tenant database is opened, so a caller learns nothing about
-//! whether another tenant exists; a `400` or `404` is reachable only with a
-//! credential the cell minted for that exact request. Residual timing: every
+//! whether another tenant exists. A `400` about the request's own parse or a
+//! `404` is reachable only with a credential the cell minted for that exact
+//! request; the transport's own refusals come earlier and say nothing about
+//! any tenant: a malformed head is a `400` before any credential is read,
+//! and a body over the bound (`413`) or shorter than its declared length
+//! (`400`) is answered to any well-formed, live credential naming a key id
+//! the keyring holds, before its signature is checked. Residual timing: every
 //! request pays the keyring read; only a well-formed, live credential naming
 //! a key id the keyring holds gets its body read and digested and pays the
 //! signature check (and, when it verifies, the scope check), so response
@@ -26,12 +31,17 @@
 //! nothing about any tenant (whether it exists, what it holds) changes the
 //! time of a refusal.
 //!
-//! #1710: no peer holds a worker for long. The head must arrive within
-//! `HEAD_DEADLINE` and within `MAX_HEAD_BYTES`, read no further than
-//! that budget; a credential that cannot verify (none, malformed, an unknown
-//! key, expired) is refused before any body is read or allocated; and a
-//! body, like every answer, has an absolute deadline sized to its length,
-//! not a per-read timeout a trickling peer could renew forever.
+//! #1710: every connection's reads and writes run against absolute
+//! deadlines (`transport`), so how long one peer holds a worker is bounded.
+//! The head must arrive within `HEAD_DEADLINE` and within `MAX_HEAD_BYTES`,
+//! read no further than that budget; a credential that cannot verify (none,
+//! malformed, an unknown key, expired) is refused before any body is read
+//! or allocated; a body earns its time by the bytes that arrived, not the
+//! length it declares; and an answer has a deadline sized to its length.
+//! This bounds each connection, not the pool: peers opening connections
+//! faster than the deadlines free them can still keep every worker busy
+//! before any credential is verified; the pool itself is not yet admitted
+//! per caller.
 //!
 //! The cell still authorizes every request before it sends it and checks
 //! every answer. The daemon holds no storage credentials; a load reads a
@@ -69,7 +79,7 @@ mod transport;
 
 use transport::{
     Deadlined, HEAD_DEADLINE, Head, MAX_BODY_BYTES, Request, drain, read_body, read_head,
-    transfer_budget,
+    write_budget,
 };
 
 /// Largest dataset file a load downloads, in bytes.
@@ -437,7 +447,7 @@ fn respond(stream: &TcpStream, status: u16, kind: &str, body: &[u8]) -> std::io:
     bytes.extend_from_slice(head.as_bytes());
     bytes.extend_from_slice(body);
     stream.set_nodelay(true)?;
-    let mut out = Deadlined::new(stream, transfer_budget(bytes.len()))?;
+    let mut out = Deadlined::new(stream, write_budget(bytes.len()))?;
     out.write_all(&bytes)?;
     out.flush()
 }
@@ -804,7 +814,7 @@ fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()>
         let mut file = std::fs::File::open(&path)?;
         let length = file.metadata()?.len();
         // #1710: the whole answer is sent within its own deadline.
-        let mut out = Deadlined::new(stream, transfer_budget(length))?;
+        let mut out = Deadlined::new(stream, write_budget(length))?;
         write!(
             out,
             "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncache-control: no-store\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
