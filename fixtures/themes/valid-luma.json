@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "Luma Neutral",
+  "baseSkin": "luma",
+  "variants": {
+    "light": {
+      "shell": "#f6f6f6",
+      "canvas": "#ffffff",
+      "background": "#ffffff",
+      "card": "#ffffff",
+      "well": "#f6f6f6",
+      "foreground": "#171717",
+      "muted-foreground": "#616161",
+      "primary": "#181818",
+      "primary-foreground": "#fafafa",
+      "action": "#181818",
+      "action-hover": "#333333",
+      "action-foreground": "#fafafa",
+      "ring": "#737373",
+      "link": "#171717"
+    },
+    "dark": {
+      "shell": "#111111",
+      "canvas": "#0a0a0a",
+      "background": "#111111",
+      "card": "#161616",
+      "well": "#1c1c1c",
+      "foreground": "#fafafa",
+      "muted-foreground": "#a3a3a3",
+      "primary": "#f4f4f4",
+      "primary-foreground": "#141414",
+      "action": "#f4f4f4",
+      "action-hover": "#e4e4e4",
+      "action-foreground": "#141414",
+      "ring": "#a3a3a3",
+      "link": "#fafafa"
+    }
+  }
+}

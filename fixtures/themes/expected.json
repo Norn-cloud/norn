@@ -1,0 +1,11 @@
+{
+  "bad-color.json": ["theme.validation.invalid_color"],
+  "colored-chrome.json": ["theme.validation.monochrome"],
+  "dark-only-contrast.json": ["theme.validation.contrast"],
+  "low-contrast.json": ["theme.validation.contrast"],
+  "missing-name.json": ["theme.validation.schema"],
+  "unknown-skin.json": ["theme.validation.unknown_skin"],
+  "unknown-token.json": ["theme.validation.unknown_token"],
+  "valid-luma.json": [],
+  "valid-polar.json": []
+}
