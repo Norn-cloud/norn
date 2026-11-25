@@ -188,6 +188,228 @@ fn a_declared_link_join_grouped_by_week_lowers_admits_and_evaluates() {
 }
 
 #[test]
+fn a_group_key_aliased_onto_a_source_id_is_refused_never_grouped_by_the_id() {
+    // #1706: the scan's `id` passed through in place of `id = input.region`,
+    // so two customers in one region came back as two rows with `n = 1`.
+    refused(
+        "SELECT region AS id, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
+        SQL_UNSUPPORTED,
+    );
+    // A joined source's id unaliased is named `id` too, never the base id.
+    refused(
+        "SELECT c.id, COUNT(*) AS n FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id GROUP BY c.id",
+        SQL_UNSUPPORTED,
+    );
+    // A group key named like a measure's own value column.
+    refused(
+        "SELECT o.note AS total_value, SUM(o.amount) AS total FROM \"shop.Order\" o GROUP BY o.note",
+        SQL_UNSUPPORTED,
+    );
+    // Grouping by an id under its own name is still the id.
+    compile("SELECT id, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY id").expect("grouped by id");
+}
+
+#[test]
+fn a_group_key_aliased_onto_another_input_column_groups_by_the_expression() {
+    let (_, plan) =
+        compile("SELECT region AS email, COUNT(*) AS n FROM \"shop.Customer\" c GROUP BY region")
+            .expect("admitted");
+    assert_eq!(plan.output_schema().grain, ["email"]);
+    let customers = vec![
+        row("c1", &[("email", s("a@x")), ("region", s("north"))]),
+        row("c2", &[("email", s("b@x")), ("region", s("north"))]),
+    ];
+    let input = TransformInput {
+        rows: BTreeMap::from([("c".to_owned(), customers)]),
+        links: BTreeMap::new(),
+    };
+    let out = evaluate(&plan, &input).expect("evaluated");
+    assert_eq!(out.rows.len(), 1);
+    assert_eq!(out.rows[0].values["email"], s("north"));
+    assert_eq!(out.rows[0].values["n"], num("2"));
+}
+
+#[test]
+fn a_window_modifier_without_a_typed_field_is_refused_never_dropped() {
+    // #1706: `DISTINCT` was dropped, so `[5, 5]` summed to 10.
+    for sql in [
+        "SELECT id, amount, SUM(DISTINCT amount) OVER (ORDER BY id) AS total FROM \"shop.Order\"",
+        "SELECT id, LAG(DISTINCT amount) OVER (ORDER BY id) AS before FROM \"shop.Order\"",
+        "SELECT id, ROW_NUMBER(*) OVER (ORDER BY id) AS n FROM \"shop.Order\"",
+    ] {
+        refused(sql, SQL_UNSUPPORTED);
+    }
+    compile("SELECT id, amount, SUM(amount) OVER (ORDER BY id) AS total FROM \"shop.Order\"")
+        .expect("a running sum is still lowered");
+}
+
+#[test]
+fn a_window_reads_a_column_only_where_it_carries_that_value() {
+    // #1706 r1: `c.email` was read by its bare name, `email`, which holds the region.
+    for sql in [
+        "SELECT c.region AS email, LAG(c.email) OVER (ORDER BY c.id) AS prior FROM \"shop.Customer\" c",
+        "SELECT c.region AS email, ROW_NUMBER() OVER (PARTITION BY c.email ORDER BY c.id) AS n FROM \"shop.Customer\" c",
+        "SELECT c.region AS email, ROW_NUMBER() OVER (ORDER BY c.email, c.id) AS n FROM \"shop.Customer\" c",
+    ] {
+        refused(sql, SQL_UNSUPPORTED);
+    }
+    // The same source column under another name is read through that name.
+    let (artifact, _) = compile(
+        "SELECT c.region AS place, LAG(region) OVER (PARTITION BY c.region ORDER BY id) AS prior FROM \"shop.Customer\" c",
+    )
+    .expect("admitted");
+    let window = artifact["payload"]["calc"]["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .find(|node| node["op"] == "window")
+        .expect("a window node");
+    assert_eq!(window["columns"][0]["column"], "place");
+    assert_eq!(window["partitionBy"], json!(["place"]));
+    assert_eq!(window["orderBy"][0]["column"], "id");
+}
+
+#[test]
+fn a_source_column_is_never_read_through_another_sources_flattened_name() {
+    // #1706 r2: `o.c_region` does not exist; flattened it was `c.region`.
+    let joined = "FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id";
+    refused(
+        &format!(
+            "SELECT c.region AS place, LAG(o.c_region) OVER (ORDER BY o.id, c.id) AS prior {joined}"
+        ),
+        SQL_UNSUPPORTED,
+    );
+    refused(
+        &format!("SELECT o.c_region AS place {joined}"),
+        SQL_UNSUPPORTED,
+    );
+    let (artifact, _) = compile(&format!(
+        "SELECT c.region AS place, LAG(c.region) OVER (ORDER BY o.id, c.id) AS prior {joined}"
+    ))
+    .expect("admitted");
+    let window = artifact["payload"]["calc"]["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .find(|node| node["op"] == "window")
+        .expect("a window node");
+    assert_eq!(window["columns"][0]["column"], "place");
+}
+
+#[test]
+fn a_joined_column_is_read_only_from_a_source_that_has_it() {
+    // #1706 r3: Customer has no `at`; `placed."at"` flattened to Order's `placed_at`.
+    let joined = "FROM \"shop.Order\" o JOIN \"shop.Customer\" placed ON o.customer = placed.id";
+    refused(
+        &format!("SELECT placed.\"at\" AS at_time {joined}"),
+        SQL_UNSUPPORTED,
+    );
+    // Order's own `placed_at` is still read: no Customer column flattens onto it.
+    let (_, plan) = compile(&format!(
+        "SELECT o.placed_at AS placed_time, placed.region AS region {joined}"
+    ))
+    .expect("admitted");
+    assert!(plan.output_schema().column("placed_time").is_some());
+}
+
+#[test]
+fn an_unqualified_column_in_a_join_reads_the_one_source_that_has_it() {
+    // #1706 r4: both sources have `id`; it silently read `o.id`.
+    let joined = "FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id";
+    refused(&format!("SELECT id AS picked {joined}"), SQL_UNSUPPORTED);
+    refused(
+        &format!("SELECT missing AS picked {joined}"),
+        SQL_UNSUPPORTED,
+    );
+    // Only Customer has `region`: unqualified, it is `c.region`.
+    let (artifact, _) = compile(&format!("SELECT region AS place {joined}")).expect("admitted");
+    let projected = artifact["payload"]["calc"]["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .find(|node| node["op"] == "project")
+        .expect("a projection");
+    assert!(
+        projected["columns"]
+            .as_array()
+            .expect("columns")
+            .iter()
+            .any(|column| column["name"] == "place" && column["expression"] == "input.c_region"),
+        "{projected:#}"
+    );
+}
+
+#[test]
+fn a_join_on_a_declared_key_named_id_is_refused() {
+    // #1706 r4: a key named `id` reads as the row id in the plan, so
+    // `ON o.id = c.email` would join on the customer's id instead.
+    let mut pool = pool();
+    pool[0] = entity(
+        "shop.Customer",
+        json!({
+            "properties": [
+                {"id": "email", "type": {"kind": "text"}},
+                {"id": "region", "type": {"kind": "text"}}
+            ],
+            "identity": [{"name": "id", "properties": ["email"]}]
+        }),
+    );
+    let found = sql_artifact(
+        "SELECT o.amount AS amount FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.id = c.email",
+        &SqlMeta {
+            id: "shop.sql_view",
+            title: "SQL view",
+            version: "0.1.0",
+            scope: json!({"orgId": "org_demo", "environmentId": "dev"}),
+        },
+        &pool,
+        &BTreeSet::new(),
+    )
+    .expect_err("refused");
+    assert!(
+        found
+            .iter()
+            .any(|d| d.code == SQL_UNSUPPORTED && d.message.contains("named \"id\"")),
+        "{found:#?}"
+    );
+}
+
+/// Every query is refused with `SQL_UNSUPPORTED`.
+#[track_caller]
+fn assert_unsupported(queries: &[&str]) {
+    for sql in queries {
+        let found = compile(sql).expect_err("refused");
+        assert!(
+            found.iter().any(|d| d.code == SQL_UNSUPPORTED),
+            "{sql}: {found:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_modifier_on_a_group_key_or_coalesce_is_refused_never_dropped() {
+    assert_unsupported(&[
+        // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
+        "SELECT COUNT(*) AS n FROM \"shop.Order\" o GROUP BY DATE_TRUNC('week', o.placed_at) OVER (ORDER BY o.id)",
+        "SELECT COUNT(*) AS n FROM \"shop.Order\" o GROUP BY DATE_TRUNC(DISTINCT 'week', o.placed_at)",
+        // #1706 r1: `DISTINCT` and `OVER` on COALESCE were dropped by the parser.
+        "SELECT COUNT(*) AS n FROM \"shop.Customer\" c GROUP BY COALESCE(DISTINCT c.region, c.email)",
+        "SELECT COALESCE(c.region, c.email) OVER (ORDER BY c.id) AS k FROM \"shop.Customer\" c",
+    ]);
+}
+
+#[test]
+fn a_group_key_or_column_selected_under_two_names_is_refused_never_dropped() {
+    assert_unsupported(&[
+        // #1706 r1: `b` was silently left out of the output.
+        "SELECT region AS a, region AS b, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
+        // #1706 r2: the same key under one name twice dropped the second `a`.
+        "SELECT region AS a, region AS a, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
+        "SELECT c.region AS a, c.email AS a FROM \"shop.Customer\" c",
+    ]);
+}
+
+#[test]
 fn a_key_join_and_windows_lower_to_typed_operators() {
     compile(
         "SELECT l.email AS email, l.source AS source, c.region AS region
