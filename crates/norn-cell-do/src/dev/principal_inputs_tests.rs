@@ -235,9 +235,15 @@ fn a_dev_cell_keeps_principal_inputs_through_a_rollback_and_a_restart() {
     // revision recorded, with the kept column and its value.
     drop(session);
     drop(serving);
-    let (reopened, _loaded) = crate::dev::reopen(&path, &scope(), (ACTOR, &crate::dev::policy::NamedPrincipals::default()), &[], &actions)
-        .map_err(|failure| failure.message)
-        .expect("the cell reopens");
+    let (reopened, _loaded) = crate::dev::reopen(
+        &path,
+        &scope(),
+        (ACTOR, &crate::dev::policy::NamedPrincipals::default()),
+        &[],
+        &actions,
+    )
+    .map_err(|failure| failure.message)
+    .expect("the cell reopens");
     let host = reopened.expect("an installed cell");
     assert!(host.serving().expect("serving").principal_inputs);
     assert_eq!(

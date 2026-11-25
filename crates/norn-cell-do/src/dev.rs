@@ -175,14 +175,19 @@ fn named_principals(dev: &ManifestDev) -> Result<policy::NamedPrincipals, Failur
         roles.dedup();
         if roles.is_empty()
             || roles.len() != principal.roles.len()
-            || roles.iter().any(|role| role.trim().is_empty() || role.trim() != role)
+            || roles
+                .iter()
+                .any(|role| role.trim().is_empty() || role.trim() != role)
         {
             return Err(invalid(format!(
                 "dev.principals {:?} must hold at least one role, each a non-empty name, none twice",
                 principal.actor
             )));
         }
-        if named.insert(principal.actor.clone(), principal.roles.clone()).is_some() {
+        if named
+            .insert(principal.actor.clone(), principal.roles.clone())
+            .is_some()
+        {
             return Err(invalid(format!(
                 "dev.principals names {:?} twice",
                 principal.actor
@@ -382,11 +387,13 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         ),
     ];
     sessions.extend(
-        token
-            .principals
-            .iter()
-            .cloned()
-            .zip(manifest.dev.principals.iter().map(|principal| principal.actor.clone())),
+        token.principals.iter().cloned().zip(
+            manifest
+                .dev
+                .principals
+                .iter()
+                .map(|principal| principal.actor.clone()),
+        ),
     );
     let principals = DevPrincipals::new(sessions).with_named(Arc::clone(&named));
     let questions = DevMetrics::new(token.handle_key, scope.clone());

@@ -350,8 +350,11 @@ impl PrincipalResolver for DevPrincipals {
             }
         }
         // Every request records first, possibly nobody.
-        self.slot
-            .record(found.as_deref().map(|actor| local_caller(actor, &self.named)));
+        self.slot.record(
+            found
+                .as_deref()
+                .map(|actor| local_caller(actor, &self.named)),
+        );
         found
     }
     fn end_request(&self) {
