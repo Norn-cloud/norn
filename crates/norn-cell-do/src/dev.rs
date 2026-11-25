@@ -1258,7 +1258,7 @@ mod tests {
         (dir, root)
     }
 
-    fn dev(principals: Value) -> ManifestDev {
+    fn dev(principals: &Value) -> ManifestDev {
         serde_json::from_value(
             json!({ "port": 0, "actor": "local:developer", "principals": principals }),
         )
@@ -1272,7 +1272,7 @@ mod tests {
         let none: ManifestDev =
             serde_json::from_value(json!({ "port": 0, "actor": "local:developer" })).unwrap();
         assert!(named_principals(&none).unwrap().is_empty());
-        let named = named_principals(&dev(json!([
+        let named = named_principals(&dev(&json!([
             { "actor": "clerk:hana", "roles": ["warehouse_clerk"] },
             { "actor": "ops:omar", "roles": ["ops_manager", "planner"] },
         ])))
@@ -1298,7 +1298,7 @@ mod tests {
             json!([{ "actor": "a", "roles": [""] }]),
             json!([{ "actor": "a", "roles": ["x"] }, { "actor": "a", "roles": ["y"] }]),
         ] {
-            let refused = named_principals(&dev(principals.clone())).err();
+            let refused = named_principals(&dev(&principals)).err();
             assert_eq!(
                 refused.map(|failure| failure.code),
                 Some("norn.project.invalid_manifest"),
@@ -1308,7 +1308,7 @@ mod tests {
         let many: Vec<Value> = (0..=MAX_PRINCIPALS)
             .map(|index| json!({ "actor": format!("p{index}"), "roles": ["r"] }))
             .collect();
-        assert!(named_principals(&dev(Value::Array(many))).is_err());
+        assert!(named_principals(&dev(&Value::Array(many))).is_err());
         assert!(
             serde_json::from_value::<ManifestDev>(json!({ "port": 0, "actor": "a", "principals": [{ "actor": "b", "roles": ["r"], "admin": true }] }))
                 .is_err(),
