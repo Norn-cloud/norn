@@ -680,8 +680,9 @@ impl<E: SqlEngine> Tenant<E> {
     /// credential it mints for this cell's own tenant.
     pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer) {
         let tenant = norn_cell::analytics::TenantId::of_scope(&self.scope.key());
+        let capabilities = norn_cell::analytics::EngineCapabilities::DUCKDB;
         self.engine
-            .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant));
+            .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant, capabilities));
     }
 
     /// Re-enter with the engine's answer to the call the last request ended with.
