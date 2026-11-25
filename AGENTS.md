@@ -113,7 +113,7 @@ rewrite other entries. The subsystem id is its directory name.
 
 ## Studio UI
 
-Before building or reviewing UI in `apps/studio/` or `@norn/ui`, read [the Studio design & UI architecture contract](apps/studio/DESIGN.md). It governs the open-canvas aesthetic (zero box-in-box), Tailwind v4 + CSS variable skinning, the Base UI + Vercel UI SDK primitive stack (no Radix in first-party code), the 3-layer checked UI contract, honest status precedence, Semantic Map / Ripple UX, domain-agnostic Studio rules, and Boat browser-proof requirements.
+Before building or reviewing any Norn UI (`apps/studio/`, `@norn/ui`, first-party apps built on Norn, and generated or custom Norn apps), read [the Norn design system](apps/studio/DESIGN.md). It governs tokens per skin and scheme, the concentric ShellCard + StatWell double shell (the only nesting pattern), the locked five-step type scale and calm 400/500 weights, dot-first status, the dock and sidebar shell modes, the list → floating DetailSheet pattern, honest loading/unavailable/refusal/receipt states, first-class RTL, the Base UI + Vercel UI SDK primitive stack (no Radix in first-party code), the 3-layer checked UI contract, domain-agnostic Studio rules, and the contrast and Boat browser-proof gates.
 
 ## Norn authoring
 
