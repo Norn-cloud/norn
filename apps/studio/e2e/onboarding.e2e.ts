@@ -312,7 +312,7 @@ test("#1643: stale action form stays pinned to its opening workspace and refuses
     }
     if (url.pathname.endsWith("/v1/actions") && req.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
-      return route.fulfill({ json: { items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
     }
     if (url.pathname.includes("/v1/actions/") && req.method() === "POST") {
       const headerOrg = req.headers()["x-norn-expected-org"] ?? null
@@ -321,7 +321,7 @@ test("#1643: stale action form stays pinned to its opening workspace and refuses
       const queryEnv = url.searchParams.get("environmentId")
       if ((headerOrg !== null && headerOrg !== cur.id) || (queryOrg !== null && queryOrg !== cur.id) || (headerEnv !== null && headerEnv !== cur.environmentId)) {
         staleAttempts.push({ queryOrg, queryEnv, headerOrg, headerEnv, activeAtTime: cur.id })
-        return route.fulfill({ status: 409, json: { code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE, error: WORKSPACE_CHANGED_MESSAGE } })
+        return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: WORKSPACE_CHANGED_MESSAGE, explanation: "", error: WORKSPACE_CHANGED_MESSAGE } })
       }
       if (cur.id === "org_beta") committedBeta += 1
       return route.fulfill({ json: { outcome: "committed", objectType: "canon.Holding", objectId: "demo/holding/0001", version: 2, receipt: { receiptHash: "c".repeat(64), commitSeq: 2, recordedAtMs: Date.now() } } })
