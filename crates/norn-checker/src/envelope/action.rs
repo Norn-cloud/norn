@@ -47,6 +47,7 @@ pub(super) fn validate_action_payload(
             "quantityEffect",
             "createLinks",
             "synchronousRule",
+            "independentOf",
         ],
         "payload",
         diagnostics,
