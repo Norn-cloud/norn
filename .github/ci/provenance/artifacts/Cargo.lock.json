@@ -15,7 +15,6 @@
     "crates/norn-checker/Cargo.toml",
     "crates/norn-cli/Cargo.toml",
     "crates/norn-datalog/Cargo.toml",
-    "crates/norn-dataplane/Cargo.toml",
     "crates/norn-decisions/Cargo.toml",
     "crates/norn-expr/Cargo.toml",
     "crates/norn-formats/Cargo.toml",

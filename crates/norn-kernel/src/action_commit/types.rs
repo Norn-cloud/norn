@@ -15,7 +15,6 @@ use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
 use crate::principal_inputs::UnresolvedPrincipalInput;
 
-pub use super::parameter::ActionParameterPin;
 pub use super::receipt::ActionReferenceReads;
 
 /// Object type of the kernel's idempotency records of action calls (registered by host, #2911).

@@ -2,7 +2,7 @@ use norn_ir::{FactChange, ObjectTypeName, ResourceLimitProfile};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::decision_commit::{FactEvent, TypeCatalog};
-use crate::limits::SliceMeter;
+use crate::limits::{EnvelopeLimits, SliceMeter};
 
 use super::input::check_action_record_size;
 use super::receipt::resolve_receipt_effect;
