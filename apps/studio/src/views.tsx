@@ -1065,7 +1065,7 @@ export function ViewEditor({
       </div>
 
       <Panel label={`Live preview${previewPage?.total ? ` · ${totalText(previewPage.total)}` : ""}`}>
-        <div className="border-t px-4 py-3" data-view-preview="">
+        <div className="border-t px-4 py-3">
         {workspaceAlert
           ? <p className="text-body text-destructive">{workspaceAlert}</p>
           : matchWorkspaceState(workspace, {
