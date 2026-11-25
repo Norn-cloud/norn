@@ -147,6 +147,10 @@ fn admit_with(
 /// An entity root outside the supported profile, or a model that does not
 /// project.
 pub fn kernel_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, KernelRefusal> {
+    let scope_findings = norn_checker::entity_scopes::check_entity_reference_scopes_all(artifacts);
+    if !scope_findings.is_empty() {
+        return Err(KernelRefusal::Refused(scope_findings));
+    }
     let (mut objects, mut interfaces, mut properties) = (Vec::new(), Vec::new(), Vec::new());
     for artifact in artifacts
         .iter()

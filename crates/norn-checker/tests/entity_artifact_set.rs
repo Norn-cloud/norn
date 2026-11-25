@@ -370,13 +370,37 @@ fn layer_scope_mismatch_is_reported_at_the_scope() {
     let registry = registry_layer();
 
     // A tenant-scoped artifact in a registry layer.
+    // Mutating an unreferenced type reports only LAYER_SCOPE_MISMATCH.
     let mut set = registry.clone();
-    set[1]["scope"]["tenantId"] = json!("tenant_acme");
+    set[3]["scope"]["tenantId"] = json!("tenant_acme");
     one(
         &check_set(&set, &[], None),
-        "party.Party.interface.v2",
+        "retail.Sku.entity.v2",
         LAYER_SCOPE_MISMATCH,
         "/scope/tenantId",
+    );
+
+    // Mutating an interface implemented by a registry type reports both
+    // LAYER_SCOPE_MISMATCH on the interface and INCOMPATIBLE_SCOPE on the
+    // implementing registry type.
+    let mut iface_set = registry.clone();
+    iface_set[1]["scope"]["tenantId"] = json!("tenant_acme");
+    let iface_findings = check_set(&iface_set, &[], None);
+    assert!(
+        iface_findings.iter().any(|(artifact, code, pointer)| {
+            artifact == "party.Party.interface.v2"
+                && code == LAYER_SCOPE_MISMATCH
+                && pointer == "/scope/tenantId"
+        }),
+        "expected LAYER_SCOPE_MISMATCH on party.Party: {iface_findings:#?}"
+    );
+    assert!(
+        iface_findings.iter().any(|(artifact, code, pointer)| {
+            artifact == "purchasing.Supplier.entity.v2"
+                && code == norn_checker::artifact_set::codes::INCOMPATIBLE_SCOPE
+                && pointer == "/payload/objectType/implements/0"
+        }),
+        "expected INCOMPATIBLE_SCOPE on purchasing.Supplier: {iface_findings:#?}"
     );
 
     // A tenant-layer artifact without a tenant.

@@ -5,7 +5,8 @@
 //! and text is an uninterpreted identity. Queries omit `(check-sat)`, which
 //! belongs to the solver driver. Anything else stays a visible Unknown reason.
 use super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource, finite, transition};
-use crate::{EffectiveCatalog, EffectiveKind, EffectiveObjectType, EffectiveProperty};
+use crate::entity_scopes::{ScopedView, ScopedViews};
+use crate::{EffectiveKind, EffectiveObjectType, EffectiveProperty};
 use norn_ir::verification::translation::TranslationStatus;
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ConstraintClass, EntityRootV2, LawIR, LawModality, LawResponse,
@@ -78,13 +79,7 @@ impl ApprovedContract {
         registry: &BTreeSet<norn_ir::PropertyTypeName>,
     ) -> Result<Batch, ChallengeError> {
         let challenge = self.challenge(source, registry)?;
-        let pool: Vec<_> = source
-            .base
-            .iter()
-            .chain(&source.artifacts)
-            .cloned()
-            .collect();
-        let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool, registry);
+        let mut views = ScopedViews::new(&source.artifacts, &source.base, registry);
         let laws = challenge.body().get("lawStatements");
         let goals = challenge
             .body()
@@ -103,7 +98,18 @@ impl ApprovedContract {
                     .and_then(|index| usize::try_from(index).ok())
                     .and_then(|index| laws?.get(index)?.get("artifactId")?.as_str())
                     .ok_or(ChallengeError::Closure)?;
-                Ok((id.to_owned(), lower(&pool, &catalog, id)))
+                let law = source
+                    .base
+                    .iter()
+                    .chain(&source.artifacts)
+                    .find(|artifact| {
+                        artifact.kind() == ArtifactKind::Law && artifact.artifact_id == id
+                    });
+                let lowered = law.map_or_else(
+                    || Err("governing law artifact absent".into()),
+                    |law| lower(views.of(law), id),
+                );
+                Ok((id.to_owned(), lowered))
             })
             .collect::<Result<_, ChallengeError>>()?;
         Ok(Batch { challenge, goals })
@@ -289,7 +295,8 @@ fn translated(
     Ok(after)
 }
 
-fn lower(pool: &[ArtifactEnvelope], catalog: &EffectiveCatalog, id: &str) -> Lowered<Queries> {
+fn lower(view: &ScopedView<'_>, id: &str) -> Lowered<Queries> {
+    let (pool, catalog) = (view.pool(), view.catalog());
     let artifact = pool
         .iter()
         .find(|a| a.kind() == ArtifactKind::Law && a.artifact_id == id)

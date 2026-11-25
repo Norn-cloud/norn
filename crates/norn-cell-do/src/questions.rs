@@ -23,6 +23,7 @@ use norn_cell::compute::QueryContext;
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellStore, InstalledDefinitionSet, ObjectRecord};
 use norn_checker::EffectiveCatalog;
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::metric::derive::{MetricSpace, derive_metric_space};
 use norn_ir::{ArtifactEnvelope, LawRoot, MetricDefinition};
@@ -135,13 +136,13 @@ fn derive(
         serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
     // The dev checker admits against an empty registry (`admit.rs`); derive
     // against the same, at the cell's own law scope.
-    let space = derive_metric_space(&artifacts, &BTreeSet::new(), &LawRoot::Cell(scope.key()))
-        .map_err(|findings| {
-            Refusal::host(format!(
-                "the active revision's metric space does not derive: {} finding(s)",
-                findings.len()
-            ))
-        })?;
+    let view = ScopedView::bound(&scope.as_scope_ref(), &artifacts, &[], &BTreeSet::new());
+    let space = derive_metric_space(&view, &LawRoot::Cell(scope.key())).map_err(|findings| {
+        Refusal::host(format!(
+            "the active revision's metric space does not derive: {} finding(s)",
+            findings.len()
+        ))
+    })?;
     Ok(Derived {
         receipt,
         definitions: space

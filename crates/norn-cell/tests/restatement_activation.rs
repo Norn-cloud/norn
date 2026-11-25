@@ -56,45 +56,10 @@ fn setup(path: &Path) -> (CellStore, QuestionPlan, QueryContext, Model) {
     let (base, plan, mut context) = fixture();
     let mut types: Vec<_> = base.model().object_types().cloned().collect();
     types.push(entity());
-    let properties: Vec<Value> = [
-        "actionId",
-        "actionArtifactId",
-        "actionVersion",
-        "effectKind",
-        "object",
-        "input",
-        "effectiveInput",
-        "derivedValues",
-        "preconditionOutcomes",
-        "actor",
-        "turn",
-        "transition",
-        "from",
-        "to",
-        "rowOperations",
-    ]
-    .into_iter()
-    .map(|id| {
-        let kind = if [
-            "object",
-            "input",
-            "effectiveInput",
-            "derivedValues",
-            "preconditionOutcomes",
-            "rowOperations",
-        ]
-        .contains(&id)
-        {
-            "json-ext"
-        } else {
-            "text"
-        };
-        json!({"id":id,"type":{"kind":kind},"constraints":{"nullable":true}})
-    })
-    .collect();
-    types.push(
-        serde_json::from_value(json!({"name":ACTION_CALL_TYPE,"properties":properties}))
-            .expect("action receipt schema"),
+    types.extend(
+        norn_cell::kernel_record_types()
+            .into_iter()
+            .filter(|record| record.name.as_str() == ACTION_CALL_TYPE),
     );
     let interface: Value = serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.analytics.RestatementEvidence.interface.json"

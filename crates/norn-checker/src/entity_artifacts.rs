@@ -50,15 +50,19 @@
 //! #2387); [`crate::check_artifact_set`] resolves a set and then runs
 //! [`check_entity_artifacts`] over it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity, EntityRoot,
     ExtensionNamespace, InterfaceDef, ObjectTypeDef, ObjectTypeExtension, PropertyTypeDef,
-    PropertyTypeName,
+    PropertyTypeName, ScopeRef,
 };
 
 use crate::entity_model::{EntityContext, EntityModel, check_entity_model};
+use crate::entity_scopes::{
+    ScopeKey, check_cross_scope_duplicates, check_entity_reference_scopes,
+    is_redundant_unknown_after_scope, scope_key, scope_visible, scoped_path_equation_findings,
+};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 /// Diagnostic codes emitted by [`check_artifact_set_entity_model`].
@@ -105,9 +109,22 @@ pub fn check_artifact_set_entity_model(
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
     let mut out = check_layer_scopes(artifacts, context.tenant.map(|tenant| tenant.tenant_id));
+    let scope_errors = check_entity_reference_scopes(artifacts, context.base);
+    let scope_sites: BTreeSet<(String, String)> = scope_errors
+        .iter()
+        .filter_map(|diagnostic| {
+            Some((
+                diagnostic.artifact_id.clone()?,
+                diagnostic.span.as_ref()?.pointer.clone(),
+            ))
+        })
+        .collect();
+    out.extend(scope_errors);
+    out.extend(check_cross_scope_duplicates(artifacts, context.base));
 
-    let mut local = Layer::default();
     let mut findings = Vec::new();
+    let mut decoded_local: Vec<(usize, EntityRoot)> = Vec::new();
+    let mut scope_groups: BTreeMap<ScopeKey, (&ScopeRef, BTreeSet<&str>)> = BTreeMap::new();
     for (index, artifact) in artifacts.iter().enumerate() {
         match decode_v2(artifact) {
             Decoded::NotV2 => {}
@@ -120,34 +137,72 @@ pub fn check_artifact_set_entity_model(
                 "/payload",
                 ));
             }
-            Decoded::Root(root) => local.push(index, *root),
+            Decoded::Root(root) => {
+                decoded_local.push((index, *root));
+                let entry = scope_groups
+                    .entry(scope_key(&artifact.scope))
+                    .or_insert_with(|| (&artifact.scope, BTreeSet::new()));
+                entry.1.insert(artifact.artifact_id.as_str());
+            }
         }
     }
-    let mut base = Layer::default();
-    for (index, artifact) in context.base.iter().enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            base.push(index, *root);
-        }
-    }
-
-    // The catalog: base definitions first, so a local definition that
-    // repeats a base name is the one reported.
-    let catalog: Vec<PropertyTypeDef> = base
-        .catalog
+    let decoded_base: Vec<(usize, EntityRoot)> = context
+        .base
         .iter()
-        .chain(&local.catalog)
-        .map(|(_, def)| def.clone())
+        .enumerate()
+        .filter_map(|(index, artifact)| match decode_v2(artifact) {
+            Decoded::Root(root) => Some((index, *root)),
+            Decoded::NotV2 | Decoded::Invalid => None,
+        })
         .collect();
-    let entity_context = EntityContext {
-        catalog: &catalog,
-        registry: context.registry,
-        base: base.as_model(),
-        tenant: context.tenant.map(|tenant| tenant.namespace),
-    };
-    findings.extend(catalog_findings(
-        &catalog, context, &base, &local, artifacts,
-    ));
-    findings.extend(model_findings(&entity_context, &local, artifacts));
+
+    for (consumer_scope, owned_ids) in scope_groups.into_values() {
+        let mut local = Layer::default();
+        for (index, root) in &decoded_local {
+            if artifacts
+                .get(*index)
+                .is_some_and(|artifact| scope_visible(consumer_scope, &artifact.scope))
+            {
+                local.push(*index, root.clone());
+            }
+        }
+        let mut base = Layer::default();
+        for (index, root) in &decoded_base {
+            if context
+                .base
+                .get(*index)
+                .is_some_and(|artifact| scope_visible(consumer_scope, &artifact.scope))
+            {
+                base.push(*index, root.clone());
+            }
+        }
+
+        // The catalog: base definitions first, so a local definition that
+        // repeats a base name is the one reported.
+        let catalog: Vec<PropertyTypeDef> = base
+            .catalog
+            .iter()
+            .chain(&local.catalog)
+            .map(|(_, def)| def.clone())
+            .collect();
+        let entity_context = EntityContext {
+            catalog: &catalog,
+            registry: context.registry,
+            base: base.as_model(),
+            tenant: context.tenant.map(|tenant| tenant.namespace),
+        };
+        let group_findings = catalog_findings(&catalog, context, &base, &local, artifacts)
+            .into_iter()
+            .chain(model_findings(&entity_context, &local, artifacts))
+            .filter(|diagnostic| {
+                let belongs_here = diagnostic
+                    .artifact_id
+                    .as_deref()
+                    .is_none_or(|id| owned_ids.contains(id));
+                belongs_here && !is_redundant_unknown_after_scope(diagnostic, &scope_sites)
+            });
+        findings.extend(group_findings);
+    }
 
     out.extend(findings);
     out
@@ -172,18 +227,11 @@ pub(crate) fn check_entity_layer_set_findings(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    let complete: Vec<_> = context.base.iter().chain(artifacts).cloned().collect();
-    let path_findings = crate::consistency::lower_path_equations(&complete, context.registry)
-        .err()
-        .unwrap_or_default();
+    let path_findings = scoped_path_equation_findings(artifacts, context.base, context.registry);
     check_artifact_set_entity_model(artifacts, context)
         .into_iter()
         .chain(crate::markings::check_references(artifacts, context.base))
-        .chain(path_findings.into_iter().filter(|finding| {
-            artifacts.iter().any(|artifact| {
-                finding.artifact_id.as_deref() == Some(artifact.artifact_id.as_str())
-            })
-        }))
+        .chain(path_findings)
         .collect()
 }
 

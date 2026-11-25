@@ -72,10 +72,7 @@ use norn_ir::mapping::{
     ObjectMap,
 };
 use norn_ir::source_schema::{ConstraintKind, NormalizedType, Origin, SourceField, SourceSchemaIr};
-use norn_ir::{
-    ArtifactEnvelope, EntityRoot, InterfaceName, MarkingId, ObjectTypeName, ResourceLimitProfile,
-    ZenExpression,
-};
+use norn_ir::{EntityRoot, InterfaceName, MarkingId, ObjectTypeName, ZenExpression};
 
 use compile::compile_mapping;
 pub use compile::{
@@ -86,9 +83,9 @@ pub use set::{check_mapping_artifacts, compile_mapping_artifact, mapping_key};
 pub use snapshot_lint::lint_observed_deviations;
 
 use crate::entity_artifacts::{Decoded, decode_v2};
-use crate::entity_instance::EffectiveCatalog;
+use crate::entity_scopes::ScopedView;
 use crate::property_types::error;
-use crate::receipt::{codes::ENVIRONMENT_UNDERIVABLE, derive_type_env};
+use crate::receipt::codes::ENVIRONMENT_UNDERIVABLE;
 use crate::{Diagnostic, Span};
 
 /// Stable `mapping.validation.*` (T2) and `mapping.model.*` (T3) codes.
@@ -532,32 +529,29 @@ struct ModelLifecycle {
 }
 
 impl MappingModel {
-    /// The model of a set of `entity` artifacts (base layer included).
-    /// Object types unavailable in the effective catalog (because of a
-    /// finding on an artifact they depend on) implement nothing, so a
-    /// mapping that targets one fails closed.
+    /// The model of the entity definitions `view`'s consumer sees. Object
+    /// types unavailable in the effective catalog (because of a finding on
+    /// an artifact they depend on) implement nothing, so a mapping that
+    /// targets one fails closed.
     ///
     /// # Errors
     ///
     /// The type environment's derivation errors, as
     /// `artifact_set.expression.environment_underivable` findings.
-    pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Result<Self, Vec<Diagnostic>> {
-        let env = derive_type_env(artifacts, &[], &ResourceLimitProfile::norn_limits_v1())
-            .map_err(|errors| {
-                errors
-                    .into_iter()
-                    .map(|reason| {
-                        error(
-                            ENVIRONMENT_UNDERIVABLE,
-                            format!(
-                                "the mapping model's type environment cannot be derived: {reason}"
-                            ),
-                            Span::pointer(""),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })?;
-        let catalog = EffectiveCatalog::from_artifacts(artifacts);
+    pub fn of(view: &ScopedView<'_>) -> Result<Self, Vec<Diagnostic>> {
+        let env = view.limited_env().map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|reason| {
+                    error(
+                        ENVIRONMENT_UNDERIVABLE,
+                        format!("the mapping model's type environment cannot be derived: {reason}"),
+                        Span::pointer(""),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })?;
+        let (artifacts, catalog) = (view.pool(), view.catalog());
         let mut types = BTreeMap::new();
         for artifact in artifacts {
             if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {

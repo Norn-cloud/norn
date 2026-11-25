@@ -16,11 +16,12 @@
 
 use std::collections::BTreeSet;
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::lifecycle_writes::codes;
 use norn_checker::lifecycles::codes::UNDECLARED_WRITE;
 use norn_checker::{
-    Diagnostic, EffectiveCatalog, EntityArtifactSetContext, check_action_firing,
-    check_artifact_json, check_artifact_set,
+    Diagnostic, EntityArtifactSetContext, check_action_firing, check_artifact_json,
+    check_artifact_set,
 };
 use norn_ir::{ActionEffectProgram, ActionRoot, ArtifactEnvelope, JsonObject, PropertyTypeName};
 use serde_json::{Value, json};
@@ -490,7 +491,7 @@ fn effective_lifecycles_are_the_declared_list_narrowed_along_inheritance() {
         envelope(purchase_order_entity()),
         envelope(rush_purchase_order_entity()),
     ];
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let order = catalog
         .object_type("commerce.PurchaseOrder.entity")
         .expect("defined")
@@ -824,7 +825,7 @@ fn an_action_fires_from_the_source_states_of_the_objects_own_lifecycle() {
         envelope(purchase_order_entity()),
         envelope(rush_purchase_order_entity()),
     ];
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let effective = |artifact_id: &str| {
         catalog
             .object_type(artifact_id)

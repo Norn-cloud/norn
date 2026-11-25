@@ -716,7 +716,7 @@ fn install_input(model: &norn_cell::Model, version: &str) -> norn_cell::Installe
                 "name": name,
                 "version": version,
                 "lifecycle": "draft",
-                "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                "scope": {"orgId": "fixture", "environmentId": "dev"},
                 "dependencies": [],
                 "provenance": {"source": "authoring_sdk"},
                 "payload": {"entityVersion": "2.0", "objectType": object_type}
