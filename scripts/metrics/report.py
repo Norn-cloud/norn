@@ -43,6 +43,10 @@ FAMILIES = {
     "fork": "Cell forks", "sim": "Deterministic simulation", "proof": "Proof gates",
     "tests": "Test counts", "ci": "CI task times (GitHub-hosted, never ratcheted)",
     "checker": "Checker test suite", "boat": "Boat usage",
+    "studio": "Studio frontend bundle", "binary": "Binary & WASM sizes",
+    "cell": "Cell engine core", "decision": "Decision evaluator",
+    "expr": "Expression evaluator", "analytics": "Analytics & lake",
+    "host": "Cell host latency & memory", "authz": "Authorization PDP",
 }
 
 

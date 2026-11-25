@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "comment": "Explicit, dated infrastructure unit prices and capacity assumptions for scripts/metrics/unit_economics.py. Every price records its source and as_of date so FP&A models (e.g. macro.com) can audit or override assumptions without touching code.",
+  "currency": "USD",
+  "hours_per_month": 730.0,
+  "compute": {
+    "hetzner_cpx62": {
+      "region": "EU (NBG1)",
+      "vcpu": 16,
+      "ram_gib": 30.0,
+      "nvme_gb": 610.0,
+      "monthly_eur": 130.49,
+      "eur_to_usd": 1.1724,
+      "monthly_usd": 152.99,
+      "source": "Hetzner Cloud published EU (NBG1) tariff for CPX62 (16 vCPU, 32 GB / ~30 GiB usable RAM, 640 GB / ~610 GB usable NVMe): EUR 130.49/mo excl. VAT, incl. IPv4, converted at 1.1724 USD/EUR reference FX (= $152.99/mo) — https://www.hetzner.com/cloud/regular-performance/",
+      "as_of": "2026-11-24"
+    }
+  },
+  "storage": {
+    "hetzner_volume_usd_per_gb_month": {
+      "value": 0.052,
+      "unit": "USD/GB-month",
+      "source": "Hetzner Cloud Volumes published EU list pricing (EUR 0.044/GB-mo converted at ~1.18 USD/EUR reference rate, before VAT)",
+      "as_of": "2026-11-24"
+    },
+    "cloudflare_r2_storage_usd_per_gb_month": {
+      "value": 0.015,
+      "unit": "USD/GB-month",
+      "source": "Cloudflare R2 published standard storage pricing ($0.015/GB-month, zero egress)",
+      "as_of": "2026-11-24"
+    },
+    "cloudflare_r2_class_a_usd_per_million": {
+      "value": 4.5,
+      "unit": "USD/1M-ops",
+      "source": "Cloudflare R2 published Class A (write/PUT/LIST) operation pricing ($4.50 per million)",
+      "as_of": "2026-11-24"
+    },
+    "cloudflare_r2_class_b_usd_per_million": {
+      "value": 0.36,
+      "unit": "USD/1M-ops",
+      "source": "Cloudflare R2 published Class B (read/GET/HEAD) operation pricing ($0.36 per million)",
+      "as_of": "2026-11-24"
+    }
+  },
+  "bandwidth": {
+    "cdn_egress_usd_per_gb": {
+      "value": 0.085,
+      "unit": "USD/GB",
+      "source": "Conservative commercial CDN egress reference rate (AWS CloudFront US/EU standard list tier $0.085/GB; Cloudflare Pages/R2 egress is $0.00/GB)",
+      "as_of": "2026-11-24"
+    },
+    "cloudflare_r2_egress_usd_per_gb": {
+      "value": 0.0,
+      "unit": "USD/GB",
+      "source": "Cloudflare R2/Pages published zero-egress pricing",
+      "as_of": "2026-11-24"
+    }
+  },
+  "ci": {
+    "boat_vm_usd_per_hour": {
+      "value": 0.037,
+      "unit": "USD/VM-hour",
+      "source": "Observed Boat VM billing in Norn #1533 ($0.07 for 1.89 VM-hours ~= $0.037/VM-hr)",
+      "as_of": "2026-11-24"
+    },
+    "effective_parallel_vms": {
+      "value": 3.0,
+      "unit": "VMs",
+      "source": "Planning assumption for mean concurrent Boat/runner VMs across a full ci.core wall-clock run; override with actual bundle VM-hour logs when available",
+      "as_of": "2026-11-24"
+    }
+  },
+  "utilization": {
+    "cpu_target": {
+      "value": 0.5,
+      "unit": "ratio",
+      "source": "Production CPU headroom target (50% sustained utilization ceiling)",
+      "as_of": "2026-11-24"
+    },
+    "ram_ceiling": {
+      "value": 0.7,
+      "unit": "ratio",
+      "source": "Production RAM headroom ceiling (70% max resident tenant allocation, 30% OS/page-cache/headroom)",
+      "as_of": "2026-11-24"
+    },
+    "disk_ceiling": {
+      "value": 0.75,
+      "unit": "ratio",
+      "source": "Production local NVMe disk headroom ceiling (75% max tenant storage allocation)",
+      "as_of": "2026-11-24"
+    },
+    "ha_replication_factor": {
+      "value": 3,
+      "unit": "copies",
+      "source": "3x HA replication factor for production Rivet cell clusters",
+      "as_of": "2026-11-24"
+    }
+  },
+  "workload_assumptions": {
+    "active_tenant_commits_per_month": {
+      "value": 100000,
+      "unit": "commits/month",
+      "source": "Reference active SMB/mid-market tenant workload (100k governed commits/month)",
+      "as_of": "2026-11-24"
+    },
+    "peak_to_average_cpu_ratio": {
+      "value": 5.0,
+      "unit": "ratio",
+      "source": "Burstiness multiplier from monthly average commit rate to peak-hour CPU sizing",
+      "as_of": "2026-11-24"
+    },
+    "hot_cell_retention_months": {
+      "value": 12.0,
+      "unit": "months",
+      "source": "Reference hot-cell retention window on local NVMe for disk-density sizing (12 months of active_tenant_commits_per_month)",
+      "as_of": "2026-11-24"
+    }
+  }
+}
