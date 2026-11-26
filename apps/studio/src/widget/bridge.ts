@@ -57,7 +57,13 @@ export class Bridge {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new HostTimeout(`${method} got no answer from the host.`)) }, timeoutMs)
       this.pending.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value as T) }, reject: (error) => { clearTimeout(timer); reject(error) } })
-      this.host.postMessage({ jsonrpc: "2.0", id, method, params }, "*")
+      try {
+        this.host.postMessage({ jsonrpc: "2.0", id, method, params }, "*")
+      } catch (error) {
+        clearTimeout(timer)
+        this.pending.delete(id)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
     })
   }
 

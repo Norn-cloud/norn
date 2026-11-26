@@ -393,3 +393,48 @@ test("a question names its tool by the bridge's own identity and redraws the par
   expect(inputs.at(-1)).toMatchObject({ input: PERMISSION.toolCall.rawInput, title: "Call an action by id" })
   expect(chunks.at(-1)).toEqual({ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "t2" })
 })
+
+test("close() during an in-flight open clears opening so an immediate reconnect opens a fresh session", async () => {
+  let opens = 0
+  let resolveFirst!: (session: SidekickSession) => void
+  let closedFirst = false
+  const secondPrompts: string[] = []
+  const transport = new SidekickTransport({
+    settleMs: 20,
+    open: async () => {
+      opens += 1
+      if (opens === 1) {
+        return new Promise<SidekickSession>((resolve) => { resolveFirst = resolve })
+      }
+      return {
+        sessionId: "s2",
+        closed: false,
+        prompt: async (text: string) => { secondPrompts.push(text); return "end_turn" },
+        cancel: () => {},
+        callTool: async () => ({ content: [] }),
+        close: () => {},
+      } as unknown as SidekickSession
+    },
+  })
+  const firstStream = await transport.sendMessages(send([user("first")]))
+  const firstDrain = drain(firstStream)
+  await Bun.sleep(5)
+  transport.close()
+  const secondStream = await transport.sendMessages(send([user("second")]))
+  const secondDrain = drain(secondStream)
+  // Resolve the superseded first open while the second turn is already running: it must close
+  // the stale session and must not clobber the newer session or open promise.
+  resolveFirst({
+    sessionId: "s1",
+    closed: false,
+    prompt: async () => "end_turn",
+    cancel: () => {},
+    callTool: async () => ({ content: [] }),
+    close: () => { closedFirst = true },
+  } as unknown as SidekickSession)
+  const [secondChunks] = await Promise.all([secondDrain, firstDrain])
+  expect(opens).toBe(2)
+  expect(closedFirst).toBe(true)
+  expect(secondPrompts).toEqual(["second"])
+  expect(secondChunks.some((chunk) => chunk.type === "finish")).toBe(true)
+})

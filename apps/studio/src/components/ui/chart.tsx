@@ -56,7 +56,7 @@ function ChartContainer({
   }
 }) {
   const uniqueId = React.useId()
-  const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`
+  const chartId = sanitizeChartId(`chart-${id ?? uniqueId.replace(/:/g, "")}`)
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -80,37 +80,44 @@ function ChartContainer({
   )
 }
 
+const SAFE_CHART_IDENT = /^[A-Za-z0-9_-]+$/
+const SAFE_CSS_COLOR = /^(?:#[0-9a-fA-F]{3,8}|var\(--[A-Za-z0-9_-]+\)|(?:rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|color-mix)\([A-Za-z0-9\s.,/%+-]+\)|[a-zA-Z]{1,32})$/
+
+const sanitizeChartId = (id: string): string => (SAFE_CHART_IDENT.test(id) ? id : "chart")
+const isSafeChartColor = (color: string): boolean => SAFE_CSS_COLOR.test(color.trim())
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
+  const safeId = sanitizeChartId(id)
   const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme ?? config.color
+    ([key, itemConfig]) => SAFE_CHART_IDENT.test(key) && (itemConfig.theme ?? itemConfig.color)
   )
 
   if (!colorConfig.length) {
     return null
   }
 
-  return (
-    <style
-      dangerouslySetInnerHTML={{
-        __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
-${colorConfig
-  .map(([key, itemConfig]) => {
-    const color =
-      itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ??
-      itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
-  })
-  .join("\n")}
-}
-`
-          )
-          .join("\n"),
-      }}
-    />
-  )
+  const rules = Object.entries(THEMES)
+    .map(([theme, prefix]) => {
+      const declarations = colorConfig
+        .map(([key, itemConfig]) => {
+          const color =
+            itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ??
+            itemConfig.color
+          return color && isSafeChartColor(color) ? `  --color-${key}: ${color.trim()};` : null
+        })
+        .filter((line): line is string => line !== null)
+      return declarations.length > 0
+        ? `${prefix} [data-chart="${safeId}"] {\n${declarations.join("\n")}\n}`
+        : null
+    })
+    .filter((block): block is string => block !== null)
+    .join("\n")
+
+  if (!rules) {
+    return null
+  }
+
+  return <style>{rules}</style>
 }
 
 const ChartTooltip = RechartsPrimitive.Tooltip

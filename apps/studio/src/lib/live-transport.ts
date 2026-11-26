@@ -209,7 +209,7 @@ export class ScopeSupersededError extends Error {
 
 let modeGeneration = 0
 let activeModeScopeKey: string | null = null
-type ModeProbe = { readonly controller: AbortController; readonly result: Promise<Mode> }
+type ModeProbe = { readonly controller: AbortController; readonly result: Promise<Mode>; observers: number; settled: boolean }
 const modeByScope = new Map<string, ModeProbe>()
 let unkeyedMode: ModeProbe | undefined
 /**
@@ -256,16 +256,58 @@ const browserFetch: Fetch = (input, init) => fetch(input, init)
 function startModeProbe(read: (signal: AbortSignal) => Promise<Mode>): ModeProbe {
   const controller = new AbortController()
   pendingModeControllers.add(controller)
-  const result = read(controller.signal).finally(() => { pendingModeControllers.delete(controller) })
-  return { controller, result }
+  const probe: ModeProbe = {
+    controller,
+    observers: 0,
+    settled: false,
+    result: read(controller.signal).finally(() => {
+      probe.settled = true
+      pendingModeControllers.delete(controller)
+    }),
+  }
+  return probe
+}
+
+function abortErrorOf(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted.", "AbortError")
 }
 
 function observeModeProbe(probe: ModeProbe, signal?: AbortSignal): Promise<Mode> {
-  if (signal === undefined) return probe.result
-  const abort = () => probe.controller.abort(signal.reason)
-  if (signal.aborted) abort()
-  else signal.addEventListener("abort", abort, { once: true })
-  return probe.result.finally(() => signal.removeEventListener("abort", abort))
+  if (signal === undefined) {
+    probe.observers += 1
+    return probe.result
+  }
+  if (signal.aborted) {
+    return Promise.reject(abortErrorOf(signal))
+  }
+  probe.observers += 1
+  return new Promise<Mode>((resolve, reject) => {
+    let done = false
+    const release = () => {
+      if (done) return
+      done = true
+      signal.removeEventListener("abort", onAbort)
+      probe.observers = Math.max(0, probe.observers - 1)
+    }
+    const onAbort = () => {
+      release()
+      if (!probe.settled && probe.observers === 0) probe.controller.abort(signal.reason)
+      reject(abortErrorOf(signal))
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    probe.result.then(
+      (mode) => {
+        if (done) return
+        release()
+        resolve(mode)
+      },
+      (error: unknown) => {
+        if (done) return
+        release()
+        reject(error)
+      },
+    )
+  })
 }
 
 /**

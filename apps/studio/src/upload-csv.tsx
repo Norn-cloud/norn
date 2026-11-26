@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ChartLine, Database, FileUp, Rows3, Upload } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -36,43 +36,64 @@ export function UploadCsv() {
   const [choices, setChoices] = useState<Readonly<Record<string, Choice>>>({})
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const client = useQueryClient()
+  const attempt = useRef(0)
   // Pin the workspace scope when the upload dialog opens and carry it through upload -> define -> load.
   const pinnedScope = usePinnedScope(open)
   const sent = useMutation({
-    mutationFn: (chosen: File) => upload(chosen, undefined, pinnedScope),
-    onSuccess: ({ completed }) => setChoices(Object.fromEntries(completed.columns.map((column, index) => {
-      const type = kindOf(column.inferred)
-      return [columnId(column), { include: true, key: index === 0, type, measure: type === "decimal" && index !== 0 }]
-    }))),
+    mutationFn: async (chosen: File) => {
+      const seq = attempt.current
+      const uploaded = await upload(chosen, undefined, pinnedScope)
+      return { seq, uploaded }
+    },
+    onSuccess: ({ seq, uploaded: { completed } }) => {
+      if (seq !== attempt.current) return
+      setChoices(Object.fromEntries(completed.columns.map((column, index) => {
+        const type = kindOf(column.inferred)
+        return [columnId(column), { include: true, key: index === 0, type, measure: type === "decimal" && index !== 0 }]
+      })))
+    },
   })
-  const completed: Completed | undefined = sent.data?.completed
+  const uploaded = sent.data?.seq === attempt.current ? sent.data.uploaded : undefined
+  const completed: Completed | undefined = uploaded?.completed
   const columns = (): readonly DefineColumn[] => (completed?.columns ?? []).map((column) => {
     const id = columnId(column)
     const choice = choices[id] ?? { include: true, key: false, type: kindOf(column.inferred), measure: false }
     return { id, type: choice.type, include: choice.include, measure: choice.include && numeric(choice.type) && choice.measure }
   })
   const key = () => Object.entries(choices).filter(([, { key: inKey, include }]) => inKey && include).map(([id]) => id)
-  const settle = async () => { refreshMode(); await client.invalidateQueries() }
+  const settle = async () => {
+    refreshMode()
+    await client.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "session" && query.queryKey[0] !== "auth-config" })
+  }
   const asDataset = useMutation({
     mutationFn: async () => {
-      if (!sent.data || !completed) throw new Error("Upload a file first.")
-      const workflowScope = sent.data.scope
-      const { objectType } = await define(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256, workflowScope)
-      const loaded = await loadDataset(sent.data.uploadId, objectType, workflowScope)
-      return loaded === "no-engine" ? { kind: "no-engine", objectType } as const : { kind: "dataset", objectType, loaded } as const
+      if (!uploaded || !completed) throw new Error("Upload a file first.")
+      const seq = attempt.current
+      const workflowScope = uploaded.scope
+      const { objectType } = await define(uploaded.uploadId, typeName.trim(), key(), columns(), completed.sha256, workflowScope)
+      const loaded = await loadDataset(uploaded.uploadId, objectType, workflowScope)
+      const outcomeValue: Outcome = loaded === "no-engine" ? { kind: "no-engine", objectType } : { kind: "dataset", objectType, loaded }
+      return { seq, outcome: outcomeValue }
     },
-    onSuccess: async (result) => { setOutcome(result); await settle() },
+    onSuccess: async ({ seq, outcome: result }) => {
+      await settle()
+      if (seq === attempt.current) setOutcome(result)
+    },
   })
   const asRecords = useMutation({
     mutationFn: async () => {
-      if (!sent.data || !completed) throw new Error("Upload a file first.")
-      const { objectType } = await loadRecords(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256, sent.data.scope)
-      return { kind: "records", objectType } as const
+      if (!uploaded || !completed) throw new Error("Upload a file first.")
+      const seq = attempt.current
+      const { objectType } = await loadRecords(uploaded.uploadId, typeName.trim(), key(), columns(), completed.sha256, uploaded.scope)
+      return { seq, outcome: { kind: "records", objectType } as Outcome }
     },
-    onSuccess: async (result) => { setOutcome(result); await settle() },
+    onSuccess: async ({ seq, outcome: result }) => {
+      await settle()
+      if (seq === attempt.current) setOutcome(result)
+    },
   })
   const choose = (id: string, change: Partial<Choice>) => setChoices((current) => ({ ...current, [id]: { ...current[id] ?? { include: true, key: false, type: "text", measure: false }, ...change } }))
-  const reset = () => { setFile(null); setTypeName(""); setChoices({}); setOutcome(null); sent.reset(); asDataset.reset(); asRecords.reset() }
+  const reset = () => { attempt.current += 1; setFile(null); setTypeName(""); setChoices({}); setOutcome(null); sent.reset(); asDataset.reset(); asRecords.reset() }
   const busy = asDataset.isPending || asRecords.isPending
   const problem = asDataset.error ?? asRecords.error
   return (
@@ -87,7 +108,7 @@ export function UploadCsv() {
           <div className="space-y-3">
             <Input type="file" accept=".csv,text/csv" aria-label="CSV file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             <Button type="button" disabled={file === null || sent.isPending} onClick={() => file && sent.mutate(file)}><FileUp />{sent.isPending ? "Uploading…" : "Upload"}</Button>
-            {sent.isError && <p role="alert" className="text-body text-destructive">{sent.error.message}</p>}
+            {sent.isError && <p role="alert" className="text-body text-destructive-text">{sent.error.message}</p>}
           </div>
         )}
         {completed && outcome === null && (
@@ -126,7 +147,7 @@ export function UploadCsv() {
                 })}
               </TableBody>
             </Table></TableCard>
-            {problem && <p role="alert" className="text-body text-destructive">{problem.message}</p>}
+            {problem && <p role="alert" className="text-body text-destructive-text">{problem.message}</p>}
             <DialogFooter className="flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={reset} disabled={busy}>Start over</Button>
               <Button type="button" variant="outline" disabled={busy} onClick={() => asRecords.mutate()} title="Each row is written through the cell and checked against its laws, one at a time.">

@@ -43,8 +43,17 @@ function Widget() {
       if (!(anchor instanceof HTMLAnchorElement)) return
       event.preventDefault()
       const href = anchor.getAttribute("href") ?? ""
-      if (studio !== null && href.startsWith("/")) bridge.openLink(new URL(href, studio).href)
-      else if (/^https:\/\//.test(href)) bridge.openLink(href)
+      if (studio !== null && href.startsWith("/") && !href.startsWith("//")) {
+        try {
+          const studioOrigin = new URL(studio).origin
+          const resolved = new URL(href, studio)
+          if (resolved.origin === studioOrigin) bridge.openLink(resolved.href)
+        } catch {
+          // Ignore malformed studio origin or href.
+        }
+      } else if (/^https:\/\//.test(href)) {
+        bridge.openLink(href)
+      }
     }
     document.addEventListener("click", follow, true)
     return () => document.removeEventListener("click", follow, true)

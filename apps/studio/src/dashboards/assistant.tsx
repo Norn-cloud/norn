@@ -7,7 +7,7 @@ import { Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { dashboardField, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope, type Tile } from "@/lib/definitions"
+import { CELL_FETCH_TIMEOUT_MS, dashboardField, defaultFetch, fetchWithTimeout, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { usePinnedScope } from "@/lib/session"
 import { plainMetricLabel } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
@@ -43,15 +43,21 @@ const BASE = "/api/agent/dashboards"
 async function call<T>(path: string, init?: RequestInit, boundScope?: StudioScope | null): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase()
   const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
-  const scope = !write ? undefined : boundScope !== undefined ? boundScope : getDisplayedScope()
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      accept: "application/json",
-      ...init?.body ? { "content-type": "application/json" } : {},
-      ...scopeHeaders(scope),
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
+  const response = await fetchWithTimeout(
+    defaultFetch,
+    `${BASE}${path}`,
+    {
+      ...init,
+      credentials: "same-origin",
+      headers: {
+        accept: "application/json",
+        ...init?.body ? { "content-type": "application/json" } : {},
+        ...scopeHeaders(write ? scope : scope),
+      },
     },
-  })
+    CELL_FETCH_TIMEOUT_MS,
+  )
   const body = await response.json().catch(() => null) as (T & { error?: string; message?: string }) | null
   if (!response.ok || body === null) throw new Error(body?.error ?? body?.message ?? (response.status === 401 ? "Sign in again." : response.status === 404 ? "The assistant isn't served here." : `The server did not answer (${response.status}).`))
   return body
@@ -169,8 +175,8 @@ export function ProposalCard({ proposal, catalog, preview }: { readonly proposal
         : proposal.verdict.note && <p className="text-body">{proposal.verdict.note}</p>}
       <Verdict proposal={proposal} catalog={catalog} />
       {proposal.verdict.admitted && proposal.state !== "declined" && preview(proposal.definition)}
-      {accept.isError && <p role="alert" className="text-body text-destructive">Not accepted. {accept.error.message}</p>}
-      {decline.isError && <p role="alert" className="text-body text-destructive">Not declined. {decline.error.message}</p>}
+      {accept.isError && <p role="alert" className="text-body text-destructive-text">Not accepted. {accept.error.message}</p>}
+      {decline.isError && <p role="alert" className="text-body text-destructive-text">Not declined. {decline.error.message}</p>}
       <footer className="flex flex-wrap items-center gap-2 border-t pt-3">
         <span className="text-meta text-muted-foreground">{proposal.model} · {dollars(proposal.costMicroUsd)}</span>
         {proposal.state === "accepted" && proposal.installed && <Button asChild size="sm" variant="outline" className="ms-auto"><Link to="/dashboards/$id" params={{ id: proposal.installed.id }}>Open version {proposal.installed.version}</Link></Button>}
@@ -195,7 +201,7 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
   const client = useQueryClient()
   const [request, setRequest] = useState("")
   const pinnedScope = usePinnedScope(dashboardId ?? "new")
-  const listing = useQuery({ queryKey: ["dashboard-proposals"], queryFn: () => call<Listing>(""), retry: false })
+  const listing = useQuery({ queryKey: ["dashboard-proposals"], queryFn: ({ signal }) => call<Listing>("", { signal }, pinnedScope), retry: false })
   const ask = useMutation({
     mutationFn: (text: string) => call<Proposal>("", { method: "POST", body: JSON.stringify({ request: text, ...dashboardId ? { dashboardId } : {} }) }, pinnedScope),
     onSuccess: () => { setRequest(""); void client.invalidateQueries({ queryKey: ["dashboard-proposals"] }) },
@@ -237,10 +243,10 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
           </div>
         )}
         {capped && <p role="status" className="text-body text-muted-foreground">The assistant has reached its spending cap.</p>}
-        {ask.isError && <p role="alert" className="text-body text-destructive">{ask.error.message}</p>}
+        {ask.isError && <p role="alert" className="text-body text-destructive-text">{ask.error.message}</p>}
         {listing.isError && <p role="status" className="text-body text-muted-foreground">{listing.error.message}</p>}
       </div>
-      {ask.isPending && <div className="h-24 animate-pulse rounded-xl border bg-muted/40" aria-label="Proposing" />}
+      {ask.isPending && <div className="h-24 animate-pulse motion-reduce:animate-none rounded-xl border bg-muted/40" aria-label="Proposing" />}
       {latest && <ProposalCard key={latest.id} proposal={latest} catalog={catalog} preview={preview} />}
       {earlier.length > 0 && (
         <details className="rounded-xl border bg-card p-3 text-body">
