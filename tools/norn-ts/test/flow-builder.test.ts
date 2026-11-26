@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { X, flow, lowerFlow, perform, retry, succeed } from "../src/builder/index.ts"
+import { typeOf } from "../src/builder/expr.ts"
 import type { FlowDef } from "../src/builder/index.ts"
 import { NonJsonValue, canonicalJson, toJson } from "../src/canonical.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -222,5 +223,46 @@ describe("canonical JSON", () => {
 
   test("sorts keys, so insertion order never changes the bytes", () => {
     expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe(canonicalJson({ a: { c: 3, d: 2 }, b: 1 }))
+  })
+})
+
+describe("expression record inference", () => {
+  test("accepts Object.prototype property names and still rejects genuine duplicate keys", () => {
+    const scope = new Map()
+    const inferred = typeOf(
+      {
+        _tag: "Record",
+        fields: [
+          ["toString", { _tag: "Literal", value: "ok" }],
+          ["valueOf", { _tag: "Literal", value: 1 }],
+          ["constructor", { _tag: "Literal", value: true }],
+          ["hasOwnProperty", { _tag: "Literal", value: "yes" }],
+        ],
+      },
+      scope,
+    )
+    expect(inferred).toEqual({
+      type: "object",
+      properties: {
+        toString: { type: "string" },
+        valueOf: { type: "integer" },
+        constructor: { type: "boolean" },
+        hasOwnProperty: { type: "string" },
+      },
+      required: ["toString", "valueOf", "constructor", "hasOwnProperty"],
+      additionalProperties: false,
+    } as const)
+    expect(() =>
+      typeOf(
+        {
+          _tag: "Record",
+          fields: [
+            ["toString", { _tag: "Literal", value: "a" }],
+            ["toString", { _tag: "Literal", value: "b" }],
+          ],
+        },
+        scope,
+      ),
+    ).toThrow("record key toString is repeated")
   })
 })

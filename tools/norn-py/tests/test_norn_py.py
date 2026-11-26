@@ -1844,6 +1844,53 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
         with self.assertRaises(TypeError):
             dep.worker_endpoints["x@1.0.0"] = "https://x.example"  # type: ignore[index]
 
+    def test_sandbox_rejects_dataclasses_and_callback_attribute_calls_on_non_symbolic_receivers(self) -> None:
+        # `dataclasses` is rejected at Layer 1 preflight instead of passing Layer 1 and failing inside Layer 2.
+        with self.assertRaises(NornTracingError) as c_dc:
+            preflight_source(
+                "from dataclasses import dataclass\n\n@dataclass\nclass Bad:\n    x: int\n",
+                "bad_dc.py",
+            )
+        self.assertEqual(c_dc.exception.code, "NORN-PY-FORBIDDEN-IMPORT")
+
+        # Attribute method calls (.eq/.ne/.is_null/.is_not_null) MUST only target symbolic expressions.
+        class _Trap:
+            called = False
+
+            def eq(self, _other: object) -> object:
+                self.called = True
+                return None
+
+            def is_null(self) -> object:
+                self.called = True
+                return None
+
+            def __add__(self, _other: object) -> object:
+                self.called = True
+                return self
+
+        trap = _Trap()
+        holder = types.SimpleNamespace(trap=trap)
+        bad_callbacks = [
+            lambda s: trap.eq(s.hours),  # noqa: E731
+            lambda s: holder.trap.is_null(),  # noqa: E731
+            lambda s: (trap + s.hours).eq(Decimal("1")),  # noqa: E731
+        ]
+        for cb in bad_callbacks:
+            with self.assertRaises(NornTracingError) as c_attr:
+                validate_callback_ast(cb)
+            self.assertEqual(c_attr.exception.code, "NORN-PY-FORBIDDEN-CALL")
+        self.assertFalse(trap.called)
+
+        # Symbolic receivers (parameter attributes, arithmetic with Decimal/literals, lit()) still pass.
+        good_callbacks = [
+            lambda s: s.hours.eq(Decimal("8")),  # noqa: E731
+            lambda s: (s.hours + Decimal("1")).eq(Decimal("9")),  # noqa: E731
+            lambda s: lit("ok").eq(s.status),  # noqa: E731
+        ]
+        for cb in good_callbacks:
+            validate_callback_ast(cb)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -450,10 +450,17 @@ function infer(expr: Expr, scope: Scope, binders: Binders): ValueSchema {
     }
     case "Record": {
       const fields: Record<string, ValueSchema> = {}
+      const seen = new Set<string>()
       for (const [name, value] of expr.fields) {
         zenKey(name)
-        if (name in fields) throw new ExprError("NORN-FLOW-EXPRESSION", `record key ${name} is repeated`)
-        fields[name] = infer(value, scope, binders)
+        if (seen.has(name)) throw new ExprError("NORN-FLOW-EXPRESSION", `record key ${name} is repeated`)
+        seen.add(name)
+        Object.defineProperty(fields, name, {
+          value: infer(value, scope, binders),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
       }
       return recordSchema(fields)
     }

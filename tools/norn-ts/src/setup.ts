@@ -402,6 +402,9 @@ function parsePaxRecords(data: Uint8Array, assetName: string): Record<string, st
     if (key === "linkpath" && value.length > 0) {
       throw new Error(`refusing PAX linkpath '${value}' in ${assetName}`)
     }
+    if ((key === "path" || key === "size" || key === "linkpath") && Object.hasOwn(records, key)) {
+      throw new Error(`refusing duplicate PAX key '${key}' in ${assetName}`)
+    }
     records[key] = value
     offset += recordLen
   }
@@ -470,6 +473,9 @@ export function inspectTarGzArchive(
       if (consecutiveZeroBlocks >= 2) break
       continue
     }
+    if (consecutiveZeroBlocks > 0) {
+      throw new Error(`refusing unexpected archive header after zero block in ${assetName}`)
+    }
     consecutiveZeroBlocks = 0
 
     if (!verifyTarChecksum(block)) {
@@ -499,15 +505,35 @@ export function inspectTarGzArchive(
       }
       const parsed = parsePaxRecords(tar.subarray(dataStart, dataEnd), assetName)
       if (typeChar === "g") {
+        if (nextPax !== undefined || nextGnuLongName !== undefined) {
+          throw new Error(`refusing global PAX header interrupting extended entry header in ${assetName}`)
+        }
+        for (const forbidden of ["path", "linkpath", "size"] as const) {
+          if (parsed[forbidden] !== undefined) {
+            throw new Error(`refusing global PAX ${forbidden} override in ${assetName}`)
+          }
+        }
         Object.assign(globalPax, parsed)
       } else {
-        nextPax = Object.assign(Object.create(null) as Record<string, string>, nextPax, parsed)
+        if (nextGnuLongName !== undefined) {
+          throw new Error(`refusing ambiguous archive entry with both GNU longname and PAX header in ${assetName}`)
+        }
+        if (nextPax !== undefined) {
+          throw new Error(`refusing duplicate PAX extended header in ${assetName}`)
+        }
+        nextPax = parsed
       }
       offset = paddedEnd
       continue
     }
 
     if (typeChar === "L") {
+      if (nextPax !== undefined) {
+        throw new Error(`refusing ambiguous archive entry with both PAX header and GNU longname in ${assetName}`)
+      }
+      if (nextGnuLongName !== undefined) {
+        throw new Error(`refusing duplicate GNU longname header in ${assetName}`)
+      }
       if (rawSize > MAX_GNU_LONGNAME_BYTES) {
         throw new Error(`oversized GNU longname (${rawSize} bytes) in ${assetName}`)
       }
@@ -531,7 +557,8 @@ export function inspectTarGzArchive(
     const gnuLong = nextGnuLongName
     nextGnuLongName = undefined
 
-    const entryPath = pax.path ?? gnuLong ?? (rawPrefix ? `${rawPrefix}/${rawName}` : rawName)
+    const rawPath = rawPrefix ? `${rawPrefix}/${rawName}` : rawName
+    const entryPath = pax.path ?? gnuLong ?? rawPath
 
     let entrySize = rawSize
     if (pax.size !== undefined) {
@@ -541,6 +568,11 @@ export function inspectTarGzArchive(
       const parsedSize = Number(pax.size)
       if (!Number.isSafeInteger(parsedSize)) {
         throw new Error(`archive ${assetName} entry '${entryPath}' exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
+      }
+      if (rawSize !== 0 && rawSize !== parsedSize) {
+        throw new Error(
+          `refusing conflicting PAX and USTAR entry sizes (${parsedSize} vs ${rawSize}) for '${entryPath}' in ${assetName}`,
+        )
       }
       entrySize = parsedSize
     }
@@ -570,6 +602,10 @@ export function inspectTarGzArchive(
 
     const isDir = typeChar === "5"
     assertSafeArchiveEntryPath(entryPath, isDir, assetName)
+    if ((pax.path !== undefined || gnuLong !== undefined) && rawPath.length > 0) {
+      // Defense-in-depth against extractors that ignore extended path headers.
+      assertSafeArchiveEntryPath(rawPath, true, assetName)
+    }
 
     entryCount++
     if (entryCount > maxEntries) {
@@ -592,6 +628,9 @@ export function inspectTarGzArchive(
     offset = nextOffset
   }
 
+  if (nextPax !== undefined || nextGnuLongName !== undefined) {
+    throw new Error(`refusing orphaned extended tar header at end of ${assetName}`)
+  }
   if (entryCount === 0) {
     throw new Error(`archive ${assetName} contains no entries`)
   }

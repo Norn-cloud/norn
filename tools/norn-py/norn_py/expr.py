@@ -24,7 +24,7 @@ import linecache
 import os
 import re
 import stat
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -1439,12 +1439,74 @@ def validate_callback_node(node: ast.FunctionDef | ast.Lambda, filename: str) ->
     _validate_callback_expr_ast(body[0].value, filename)
 
 
+def _resolve_callback_name(
+    name: str,
+    closure_map: Mapping[str, object],
+    fn_globals: Mapping[str, object] | None,
+) -> tuple[bool, object]:
+    if name in closure_map:
+        return True, closure_map[name]
+    if isinstance(fn_globals, Mapping) and name in fn_globals:
+        return True, fn_globals[name]
+    return False, None
+
+
+def _is_safe_receiver_subexpr(
+    node: ast.AST,
+    param_name: str,
+    closure_map: Mapping[str, object],
+    fn_globals: Mapping[str, object] | None,
+) -> bool:
+    if _is_symbolic_receiver(node, param_name, closure_map, fn_globals):
+        return True
+    if isinstance(node, ast.Constant):
+        return node.value is None or type(node.value) in (bool, int, str)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Decimal":
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        return _is_safe_receiver_subexpr(node.operand, param_name, closure_map, fn_globals)
+    if isinstance(node, ast.Name):
+        found, value = _resolve_callback_name(node.id, closure_map, fn_globals)
+        return found and (value is None or type(value) in (bool, int, str, Decimal))
+    return False
+
+
+def _is_symbolic_receiver(
+    node: ast.AST,
+    param_name: str,
+    closure_map: Mapping[str, object],
+    fn_globals: Mapping[str, object] | None,
+) -> bool:
+    """Return True iff `node` is statically guaranteed to evaluate to a symbolic Norn expression."""
+    if isinstance(node, ast.Name):
+        return node.id == param_name
+    if isinstance(node, ast.Attribute):
+        return _is_symbolic_receiver(node.value, param_name, closure_map, fn_globals)
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name):
+            return node.func.id in _ALLOWED_CALLBACK_BINDINGS and node.func.id != "Decimal"
+        if isinstance(node.func, ast.Attribute):
+            return _is_symbolic_receiver(node.func.value, param_name, closure_map, fn_globals)
+        return False
+    if isinstance(node, ast.UnaryOp):
+        return _is_symbolic_receiver(node.operand, param_name, closure_map, fn_globals)
+    if isinstance(node, ast.BinOp):
+        left_sym = _is_symbolic_receiver(node.left, param_name, closure_map, fn_globals)
+        right_sym = _is_symbolic_receiver(node.right, param_name, closure_map, fn_globals)
+        return (
+            (left_sym or right_sym)
+            and _is_safe_receiver_subexpr(node.left, param_name, closure_map, fn_globals)
+            and _is_safe_receiver_subexpr(node.right, param_name, closure_map, fn_globals)
+        )
+    return False
+
+
 def _verify_callback_call_bindings(
     fn: Callable[..., object],
     node: ast.FunctionDef | ast.Lambda,
     filename: str,
 ) -> None:
-    """Verify every allowlisted call name in `node` resolves to the exact Norn operator object."""
+    """Verify every allowlisted call in `node` resolves to a canonical Norn operator or symbolic receiver."""
     code = getattr(fn, "__code__", None)
     fn_globals = getattr(fn, "__globals__", None)
     closure = getattr(fn, "__closure__", None)
@@ -1473,26 +1535,31 @@ def _verify_callback_call_bindings(
         expr_root = body[0].value
 
     for sub in ast.walk(expr_root):
-        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
+        if not isinstance(sub, ast.Call):
+            continue
+        call_span = SourceSpan(filename, getattr(sub, "lineno", node.lineno), getattr(sub, "col_offset", 0))
+        if isinstance(sub.func, ast.Name):
             callee_name = sub.func.id
             expected = _ALLOWED_CALLBACK_BINDINGS.get(callee_name)
-            call_span = SourceSpan(filename, getattr(sub, "lineno", node.lineno), getattr(sub, "col_offset", 0))
             if callee_name == param_name:
                 raise NornTracingError(
                     "NORN-PY-FORBIDDEN-CALL",
                     f"callback parameter {param_name!r} cannot shadow allowlisted operator {callee_name}()",
                     call_span,
                 )
-            if callee_name in closure_map:
-                actual = closure_map[callee_name]
-            elif isinstance(fn_globals, dict) and callee_name in fn_globals:
-                actual = fn_globals[callee_name]
-            else:
-                actual = None
+            _, actual = _resolve_callback_name(callee_name, closure_map, fn_globals)
             if actual is not expected:
                 raise NornTracingError(
                     "NORN-PY-FORBIDDEN-CALL",
                     f"call target {callee_name}() does not resolve to the canonical norn_py operator",
+                    call_span,
+                )
+        elif isinstance(sub.func, ast.Attribute):
+            if not _is_symbolic_receiver(sub.func.value, param_name, closure_map, fn_globals):
+                raise NornTracingError(
+                    "NORN-PY-FORBIDDEN-CALL",
+                    f"method .{sub.func.attr}() may only be called on a symbolic expression "
+                    f"derived from callback parameter {param_name!r}",
                     call_span,
                 )
 
