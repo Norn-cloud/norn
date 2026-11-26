@@ -512,7 +512,7 @@ fn duplicate_property_types_and_case_colliding_columns_fail_closed() {
     }));
     assert_eq!(
         project_sqlite_ddl(&SqliteDdlInput {
-            object_types: &[colliding_cols.clone()],
+            object_types: std::slice::from_ref(&colliding_cols),
             property_types: &[],
         }),
         Err(SqliteDdlError::NameCollision {
