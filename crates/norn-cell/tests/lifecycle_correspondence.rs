@@ -71,7 +71,7 @@ fn native_for(
         world: World::Main,
         consumes: None,
     };
-    let accepted = match commit_decision(
+    let (accepted, invariant_refused) = match commit_decision(
         &mut cell,
         catalog,
         &slice,
@@ -83,21 +83,53 @@ fn native_for(
             timers: vec![],
         },
     ) {
-        Ok(_) => true,
+        Ok(_) => (true, false),
+        Err(DecisionRefusal::InvariantViolation { .. }) => (false, true),
         Err(
             DecisionRefusal::NotFromState { .. }
             | DecisionRefusal::InvalidInitialState { .. }
             | DecisionRefusal::GuardFalse { .. }
-            | DecisionRefusal::InvariantViolation { .. }
             | DecisionRefusal::Law {
                 reason: norn_kernel::governing_laws::LawEvaluationError::Violated(_),
                 ..
             },
-        ) => false,
+        ) => (false, false),
         Err(error) => panic!("unexpected native error, not a correspondence refusal: {error:?}"),
     };
     if !accepted {
-        assert_eq!(prior, cell.store().read().dump().expect("atomic refusal"));
+        let after_dump = cell.store().read().dump().expect("atomic refusal");
+        if invariant_refused {
+            // Invariant refusals record a ledger-only attempt journal commit
+            // (`FactEvent::InvariantRefused`); business facts, links, effects,
+            // and timers remain identical to `prior`.
+            for (table, before_rows) in &prior {
+                if matches!(
+                    table.as_str(),
+                    "_norn_clock"
+                        | "_norn_export_context"
+                        | "_norn_export_journal"
+                        | "_norn_ledger"
+                        | "_norn_receipt"
+                ) {
+                    continue;
+                }
+                assert_eq!(
+                    after_dump.get(table),
+                    Some(before_rows),
+                    "invariant refusal must not mutate table {table}"
+                );
+            }
+            assert_eq!(
+                after_dump.get("_norn_ledger").map_or(0, Vec::len),
+                prior
+                    .get("_norn_ledger")
+                    .map_or(0, Vec::len)
+                    .saturating_add(1),
+                "invariant refusal appends exactly one attempt-journal ledger event"
+            );
+        } else {
+            assert_eq!(prior, after_dump);
+        }
     }
     (accepted, cell.load(&key).expect("after").values)
 }

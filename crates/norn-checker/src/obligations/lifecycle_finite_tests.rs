@@ -465,8 +465,8 @@ fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
     .collect();
     base.push(json!({
         "irVersion": "0.1", "kind": "entity",
-        "artifactId": "test.core_markings.entity", "version": "0.1.0",
-        "namespace": "test", "name": "core_markings", "lifecycle": "active",
+        "artifactId": "test.CoreMarkings.entity", "version": "0.1.0",
+        "namespace": "test", "name": "CoreMarkings", "lifecycle": "active",
         "scope": {}, "dependencies": [],
         "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
         "payload": {
