@@ -19,14 +19,20 @@ import sys
 import time
 import traceback
 
+import pandas as pd
+
 from .cell import Cell, check_regression
 
 FIELDS = ("request", "object_type", "target", "features")
 
 
 def present(value) -> str | None:
-    """A stored value, or None when it is absent (null, or NaN after a dataframe read)."""
-    return None if value is None or (isinstance(value, float) and value != value) else str(value)
+    """A stored value, or None when it is absent (null, NA, or NaN after a dataframe read)."""
+    if value is None:
+        return None
+    if not isinstance(value, str) and bool(pd.isna(value)):
+        return None
+    return str(value)
 
 
 def report(cell: Cell, request: dict, status: str, spec: str | None = None, error: str | None = None) -> None:
@@ -38,7 +44,7 @@ def report(cell: Cell, request: dict, status: str, spec: str | None = None, erro
 def run(cell: Cell, request: dict) -> str:
     report(cell, request, "running")
     try:
-        features = [name for name in str(request["features"]).split(",") if name]
+        features = [name.strip() for name in str(request["features"]).split(",") if name.strip()]
         result = check_regression(str(request["object_type"]), str(request["target"]), features, cell=cell,
                                   order=present(request.get("order_field")), request=str(request["request"]))
     except Exception as error:  # the reason goes to the request, where Studio shows it
@@ -61,18 +67,18 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="run what is queued now, then exit")
     parser.add_argument("--interval", type=float, default=5.0, help="seconds between polls (Studio allows 120 requests a minute per key)")
     args = parser.parse_args()
-    cell = Cell.from_project(args.project) if args.project else Cell.from_env()
-    while True:
-        try:
-            for request in queued(cell):
-                print(f"{request['request']}: {run(cell, request)}", flush=True)
-        except Exception:
-            traceback.print_exc()
+    with (Cell.from_project(args.project) if args.project else Cell.from_env()) as cell:
+        while True:
+            try:
+                for request in queued(cell):
+                    print(f"{request['request']}: {run(cell, request)}", flush=True)
+            except Exception:
+                traceback.print_exc()
+                if args.once:
+                    return 1
             if args.once:
-                return 1
-        if args.once:
-            return 0
-        time.sleep(args.interval)
+                return 0
+            time.sleep(args.interval)
 
 
 if __name__ == "__main__":
