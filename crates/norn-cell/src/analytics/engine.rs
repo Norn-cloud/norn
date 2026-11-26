@@ -578,16 +578,10 @@ impl Engine {
             if !same {
                 return Err(refusal(STALE, "the batch is of another mirror generation"));
             }
-            db(conn.execute_batch("BEGIN TRANSACTION"))?;
-            let applied = apply_sync(conn, request)
-                .and_then(|()| set_meta(conn, &key, &request.through.to_string()));
-            match applied {
-                Ok(()) => db(conn.execute_batch("COMMIT"))?,
-                Err(error) => {
-                    let _rolled_back = conn.execute_batch("ROLLBACK");
-                    return Err(error);
-                }
-            }
+            in_transaction(conn, |conn| {
+                apply_sync(conn, request)?;
+                set_meta(conn, &key, &request.through.to_string())
+            })?;
             Ok(FrontierResponse {
                 frontier: request.through,
             })
@@ -783,13 +777,7 @@ impl Engine {
         let landed = self.with(&load_request.tenant, |conn| {
             let landed = (|| {
                 let load = load_locked(conn, &staged_load, &file, bytes, started, Lineage::Skip)?;
-                db(conn.execute_batch("BEGIN TRANSACTION"))?;
-                let checked = check_rules(conn, &staged_table, request);
-                if checked.is_err() {
-                    let _rolled_back = conn.execute_batch("ROLLBACK");
-                }
-                checked?;
-                db(conn.execute_batch("COMMIT"))?;
+                in_transaction(conn, |conn| check_rules(conn, &staged_table, request))?;
                 residue_fits(conn, &staged_table, request.residue_page)?;
                 set_meta(
                     conn,
@@ -851,13 +839,7 @@ impl Engine {
                         .ok_or_else(|| refusal(STALE, "the landing attempt is unknown"))?,
                 )
                 .map_err(|e| refusal("analytics.engine", e.to_string()))?;
-                db(conn.execute_batch("BEGIN TRANSACTION"))?;
-                let settled = settle_rows(conn, &staged_table, request);
-                if settled.is_err() {
-                    let _rolled_back = conn.execute_batch("ROLLBACK");
-                }
-                settled?;
-                db(conn.execute_batch("COMMIT"))?;
+                in_transaction(conn, |conn| settle_rows(conn, &staged_table, request))?;
                 Self::landing(conn, &lease.dir, land, load)
             })();
             if settled.is_err() {
@@ -1093,15 +1075,11 @@ impl Engine {
         // here, once residue has settled and both files are sent, so a
         // landing refused before its store leaves none behind.
         self.with(tenant, |conn| {
-            db(conn.execute_batch("BEGIN TRANSACTION"))?;
-            let written = set_meta(conn, &format!("landing:{cache}"), &record)
-                .and_then(|()| set_meta(conn, &receipt_key(&land.attempt), &receipt))
-                .and_then(|()| set_lineage(conn, &land.load));
-            if written.is_err() {
-                let _rolled_back = conn.execute_batch("ROLLBACK");
-                return written;
-            }
-            db(conn.execute_batch("COMMIT"))
+            in_transaction(conn, |conn| {
+                set_meta(conn, &format!("landing:{cache}"), &record)?;
+                set_meta(conn, &receipt_key(&land.attempt), &receipt)?;
+                set_lineage(conn, &land.load)
+            })
         })?;
         drop(lease);
         Ok(StoreAnswer {
@@ -1430,14 +1408,30 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Outcome<()> {
     Ok(())
 }
 
+fn in_transaction<T>(
+    conn: &Connection,
+    body: impl FnOnce(&Connection) -> Outcome<T>,
+) -> Outcome<T> {
+    db(conn.execute_batch("BEGIN TRANSACTION"))?;
+    match body(conn) {
+        Ok(value) => {
+            db(conn.execute_batch("COMMIT"))?;
+            Ok(value)
+        }
+        Err(error) => {
+            let _rolled_back = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
 fn reset_mirror(
     conn: &Connection,
     tables: &[TableSchema],
     links: &[String],
     model_pin: &str,
 ) -> Outcome<()> {
-    db(conn.execute_batch("BEGIN TRANSACTION"))?;
-    let reset = (|| {
+    in_transaction(conn, |conn| {
         let mut statement = db(conn.prepare(
             "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'm:%' OR table_name LIKE 'k:%'",
         ))?;
@@ -1491,14 +1485,7 @@ fn reset_mirror(
         set_meta(conn, "links", &links.join("\n"))?;
         set_meta(conn, "model_pin", model_pin)?;
         Ok(())
-    })();
-    match reset {
-        Ok(()) => db(conn.execute_batch("COMMIT")),
-        Err(error) => {
-            let _rolled_back = conn.execute_batch("ROLLBACK");
-            Err(error)
-        }
-    }
+    })
 }
 
 fn schema_text(table: &TableSchema) -> Outcome<String> {
@@ -3174,31 +3161,22 @@ fn load_locked(
     started: Instant,
     lineage: Lineage,
 ) -> Outcome<LoadResponse> {
-    db(conn.execute_batch("BEGIN TRANSACTION"))?;
-    let loaded = load_file(conn, request, file).and_then(|loaded| {
+    let (rows, reasons) = in_transaction(conn, |conn| {
+        let loaded = load_file(conn, request, file)?;
         if lineage == Lineage::Write {
             set_lineage(conn, request)?;
         }
         Ok(loaded)
-    });
-    match loaded {
-        Ok((rows, reasons)) => {
-            db(conn.execute_batch("COMMIT"))?;
-            let rejected = reasons.values().sum();
-            Ok(LoadResponse {
-                load: request.load.clone(),
-                rows,
-                rejected,
-                reasons,
-                bytes,
-                millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            })
-        }
-        Err(error) => {
-            let _rolled_back = conn.execute_batch("ROLLBACK");
-            Err(error)
-        }
-    }
+    })?;
+    let rejected = reasons.values().sum();
+    Ok(LoadResponse {
+        load: request.load.clone(),
+        rows,
+        rejected,
+        reasons,
+        bytes,
+        millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    })
 }
 
 /// The quarantine (held-set) table: each held-back source row with its
@@ -4146,13 +4124,7 @@ fn hydrate(conn: &Connection, table: &str, load: &str) -> Outcome<()> {
     }
     verify_object(&kept.data.path, &kept.data.sha256)?;
     verify_object(&kept.held.path, &kept.held.sha256)?;
-    db(conn.execute_batch("BEGIN TRANSACTION"))?;
-    let rebuilt = rebuild(conn, &kept, load);
-    if rebuilt.is_err() {
-        let _rolled_back = conn.execute_batch("ROLLBACK");
-        return rebuilt;
-    }
-    db(conn.execute_batch("COMMIT"))
+    in_transaction(conn, |conn| rebuild(conn, &kept, load))
 }
 
 /// The cache table and quarantine of a kept landing, from its files.
