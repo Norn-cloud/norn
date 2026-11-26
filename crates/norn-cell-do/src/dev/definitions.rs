@@ -956,9 +956,21 @@ mod read_tests {
             10_000,
         );
         assert!(synced.events.is_empty(), "{synced:?}");
-        let codes: Vec<&Value> = synced.refused.iter().map(|f| &f["code"]).collect();
-        assert_eq!(codes, [&json!(norn_api::refusal::codes::AUTHZ_DENIED)]);
-        assert_eq!(synced.refused[0]["definitionId"], json!(QUESTION));
+        // The read of the question is refused, and so is each kind's retire pass.
+        let refused: Vec<(&Value, &Value)> = synced
+            .refused
+            .iter()
+            .map(|finding| (&finding["definitionId"], &finding["code"]))
+            .collect();
+        let denied = json!(norn_api::refusal::codes::AUTHZ_DENIED);
+        assert_eq!(
+            refused,
+            [
+                (&json!(QUESTION), &denied),
+                (&json!("dashboard"), &denied),
+                (&json!("question"), &denied)
+            ]
+        );
         assert!(host.retained_definition(QUESTION).unwrap().is_none());
         assert_eq!(version(&host), base, "nothing was written");
     }
