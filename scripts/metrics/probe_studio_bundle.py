@@ -63,8 +63,11 @@ def _resolve_local_assets(dist_dir: Path, urls: list[str]) -> list[Path]:
         if not rel:
             continue
         raw_path = root / rel
-        if raw_path.is_symlink():
-            raise RuntimeError(f"entry asset referenced by index.html is a symlink: {raw_url!r}")
+        cur = root
+        for part in Path(rel).parts:
+            cur = cur / part
+            if cur.is_symlink():
+                raise RuntimeError(f"entry asset referenced by index.html is a symlink: {raw_url!r}")
         candidate = raw_path.resolve()
         if not candidate.is_relative_to(root):
             raise RuntimeError(f"entry asset escapes dist directory: {raw_url!r}")
@@ -107,15 +110,19 @@ def measure_dist(dist_dir: Path) -> list[dict]:
     gzip_cache: dict[Path, int] = {}
 
     for path in sorted(p for p in dist_dir.rglob("*") if p.is_file() and not p.is_symlink()):
-        data = path.read_bytes()
-        raw = len(data)
-        total_dist_bytes += raw
-        total_files += 1
         rel = path.relative_to(dist_dir).as_posix()
         suffix = path.suffix.lower()
-        if suffix in JS_SUFFIXES:
+        if suffix in JS_SUFFIXES or suffix in CSS_SUFFIXES:
+            data = path.read_bytes()
+            raw = len(data)
             gz = gzip_size(data)
             gzip_cache[path.resolve()] = gz
+        else:
+            raw = path.stat().st_size
+            gz = 0
+        total_dist_bytes += raw
+        total_files += 1
+        if suffix in JS_SUFFIXES:
             js_raw_total += raw
             js_gzip_total += gz
             js_count += 1
@@ -126,8 +133,6 @@ def measure_dist(dist_dir: Path) -> list[dict]:
                 largest_gzip = gz
                 largest_gzip_name = rel
         elif suffix in CSS_SUFFIXES:
-            gz = gzip_size(data)
-            gzip_cache[path.resolve()] = gz
             css_gzip_total += gz
             css_count += 1
 
@@ -211,6 +216,7 @@ def build_studio(studio_dir: Path) -> None:
         stdout=sys.stderr,
         stderr=sys.stderr,
         check=False,
+        timeout=600,
     )
     if completed.returncode != 0:
         raise RuntimeError(f"`bun run build` in {studio_dir} exited {completed.returncode}")

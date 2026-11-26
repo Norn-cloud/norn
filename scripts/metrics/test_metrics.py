@@ -378,6 +378,53 @@ class Probes(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("FAIL slow prepare exceeded 1 s", out.getvalue())
 
+    def test_malformed_metric_line_emits_no_partial_metrics(self):
+        run_probes = _sibling("run_probes")
+        out = io.StringIO()
+        probe = {
+            "name": "bad_json",
+            "requires": [],
+            "run": 'echo \'METRIC {"metric": "a.b", "value": 1, "unit": "s", "statistic": "single"}\'; echo "METRIC {not-json"',
+            "timed": {"metric": "proof.gate.bad.s", "unit": "s", "statistic": "single"},
+            "caveats": "c",
+        }
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            ok = run_probes.run_probe(probe, HERE)
+        self.assertFalse(ok)
+        self.assertFalse(any(line.startswith("METRIC ") for line in out.getvalue().splitlines()))
+        self.assertIn("FAIL bad_json printed a malformed METRIC line", out.getvalue())
+
+    def test_auth_env_never_leaks_token_and_non_finite_rejected(self):
+        schema = record.load_schema()
+        self.assertTrue(record.record_errors(sample(value=float("inf")), schema))
+        self.assertTrue(record.record_errors(sample(metric="sim.cell.serial_s\n"), schema))
+        with self.assertRaises(ValueError):
+            ratchet.judge([10, 10, 10, float("nan")], "lower", 10)
+        with self.assertRaises(ValueError):
+            ratchet.judge([10, 10, 10, 10], "lower", 10, confirm=0)
+        self.assertEqual(
+            report._source_md("https://example.test/a(b)|c"),
+            "[link](https://example.test/a%28b%29%7Cc)",
+        )
+        old = os.environ.get("METRICS_PUSH_TOKEN")
+        old_count = os.environ.get("GIT_CONFIG_COUNT")
+        os.environ["METRICS_PUSH_TOKEN"] = "ghp_super_secret_test_token"
+        os.environ["GIT_CONFIG_COUNT"] = "2"
+        try:
+            env = record._auth_env()
+            self.assertEqual(env["GIT_CONFIG_COUNT"], "3")
+            self.assertEqual(env["GIT_CONFIG_KEY_2"], "http.https://github.com/.extraheader")
+            self.assertIn("AUTHORIZATION: basic ", env["GIT_CONFIG_VALUE_2"])
+        finally:
+            if old is None:
+                os.environ.pop("METRICS_PUSH_TOKEN", None)
+            else:
+                os.environ["METRICS_PUSH_TOKEN"] = old
+            if old_count is None:
+                os.environ.pop("GIT_CONFIG_COUNT", None)
+            else:
+                os.environ["GIT_CONFIG_COUNT"] = old_count
+
     def test_shipped_probes_are_well_formed(self):
         probes = json.loads((HERE / "probes.json").read_text())
         self.assertTrue(probes["snapshot"])

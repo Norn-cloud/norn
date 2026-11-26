@@ -10,7 +10,8 @@ import type { Cell, CellAnswer } from "./cell-call.ts"
  * the Worker gains no right of its own. Used by server-side routes (the
  * question catalog and check, the dashboard agent).
  */
-export type { Cell, CellAnswer } from "./cell-call.ts"
+export type { Cell, CellAnswer, Finding } from "./cell-call.ts"
+export { findingsOf } from "./cell-call.ts"
 
 export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedScope?: ValidatedWriteScope): Cell {
   const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<CellAnswer> => {

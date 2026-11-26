@@ -23,5 +23,3 @@ export const WORKSPACES: readonly Workspace[] = [
   // The synthetic recorded world: one recorded question, its answers and the three systems that feed it (fixtures/demo).
   { id: "recorded-demo", name: "Recorded demo", group: "First-party", detail: "Recorded · synthetic data", recorded: true },
 ]
-
-export const WORKSPACE_GROUPS = [...new Set(WORKSPACES.map(({ group }) => group))]

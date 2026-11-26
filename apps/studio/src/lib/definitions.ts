@@ -558,7 +558,7 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: Scop
     return response
   }
 }
-const findingsOf = (body: unknown): readonly Finding[] => {
+export const findingsOf = (body: unknown): readonly Finding[] => {
   const diagnostics = (body as { diagnostics?: unknown } | null)?.diagnostics
   return Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; law?: unknown; span?: { pointer?: unknown } | null }) => ({ code: String(d.code ?? ""), message: String(d.message ?? ""), law: typeof d.law === "string" ? d.law : null, pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null })) : []
 }

@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import io
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -39,6 +40,7 @@ class Release(http.server.SimpleHTTPRequestHandler):
 class InstallTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.release = self.tmp / "release"
         self.release.mkdir()
         self.bin = self.tmp / "bin"
@@ -119,6 +121,41 @@ class InstallTest(unittest.TestCase):
         result = self.run_install()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unsupported CPU riscv64", result.stderr)
+
+    def test_refuses_symlink_norn_and_invalid_repo_or_version(self):
+        self.platform("Linux", "x86_64")
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo("norn")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "/bin/sh"
+            tar.addfile(info)
+        self.publish("norn-linux-x64.tar.gz", buffer.getvalue())
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("regular file", result.stderr)
+        self.assertFalse(self.installed)
+
+        for bad in ("evil/repo/../../x", "../evil", "owner/..", "./repo", "owner/."):
+            env = {
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "HOME": str(self.tmp / "home"),
+                "NORN_REPO": bad,
+                "NORN_INSTALL_DIR": str(self.tmp / "install"),
+            }
+            bad_repo = subprocess.run(["sh", str(INSTALL)], env=env, capture_output=True, text=True)
+            self.assertNotEqual(bad_repo.returncode, 0, bad)
+            self.assertIn("invalid NORN_REPO", bad_repo.stderr, bad)
+        for bad_ver in (".", "..", "v1..2"):
+            env = {
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "HOME": str(self.tmp / "home"),
+                "NORN_VERSION": bad_ver,
+                "NORN_INSTALL_DIR": str(self.tmp / "install"),
+            }
+            bad_version = subprocess.run(["sh", str(INSTALL)], env=env, capture_output=True, text=True)
+            self.assertNotEqual(bad_version.returncode, 0, bad_ver)
+            self.assertIn("invalid NORN_VERSION", bad_version.stderr, bad_ver)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react"
 import { DirectionProvider } from "@base-ui/react/direction-provider"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 /**
  * The reader's language. Ids, codes and evidence never change with it; only
@@ -53,11 +52,3 @@ export function LocaleProvider({ children, initial }: { readonly children: React
 }
 
 export const useLocale = () => use(LocaleContext)
-
-export function LocaleToggle({ locale, onChange }: { readonly locale: Locale; readonly onChange: (locale: Locale) => void }) {
-  return (
-    <ToggleGroup type="single" variant="outline" size="sm" aria-label="Language" value={locale} onValueChange={(next) => { if (isLocale(next)) onChange(next) }}>
-      {LOCALES.map(({ tag, name }) => <ToggleGroupItem key={tag} value={tag} lang={tag} className="px-3">{name}</ToggleGroupItem>)}
-    </ToggleGroup>
-  )
-}

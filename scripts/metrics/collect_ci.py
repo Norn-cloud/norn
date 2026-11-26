@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 REPOSITORY = "Norn-cloud/norn"
 WORKFLOW = "ci-policy.yml"
@@ -58,7 +59,7 @@ def _sibling(name, directory=None):
 
 def gh_lines(path: str, jq: str) -> list[dict]:
     out = subprocess.run(["gh", "api", "--paginate", path, "--jq", jq],
-                         capture_output=True, text=True, check=True).stdout
+                         capture_output=True, text=True, check=True, timeout=120).stdout
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
@@ -69,7 +70,8 @@ def toolchain(repo: Path, sha: str) -> dict:
 
 def run_records(run: dict, jobs: list[dict], notices: dict[int, list[str]], repo: Path) -> list[dict]:
     sha, attempt = run["head_sha"], run["run_attempt"]
-    commit = {"sha": sha, "date": run["head_commit"]["timestamp"], "ref": "main"}
+    head_commit = run.get("head_commit") or {}
+    commit = {"sha": sha, "date": head_commit.get("timestamp") or run.get("created_at"), "ref": "main"}
     env = {"runner": "github-hosted", "vm_type": "ubuntu-24.04", "vcpu": 4, "ram_gib": 16, "os": "Ubuntu 24.04"}
     tools = toolchain(repo, sha)
     if tools:
@@ -107,10 +109,11 @@ def run_records(run: dict, jobs: list[dict], notices: dict[int, list[str]], repo
 
 
 def collect(since: str, repo: Path, limit: int | None = None) -> list[dict]:
+    encoded_since = quote(since, safe="")
     runs = gh_lines(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW}/runs?branch=main&event=push"
-                    f"&status=completed&per_page=100&created=%3E%3D{since}", ".workflow_runs[]")
+                    f"&status=completed&per_page=100&created=%3E%3D{encoded_since}", ".workflow_runs[]")
     records = []
-    for run in runs[:limit] if limit else runs:
+    for run in runs[:limit] if limit is not None else runs:
         jobs = gh_lines(f"repos/{REPOSITORY}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100", ".jobs[]")
         notices = {}
         for job in jobs:

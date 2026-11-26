@@ -13,3 +13,17 @@ export interface Cell {
   get(path: string): Promise<CellAnswer>
   post(path: string, body: unknown): Promise<CellAnswer>
 }
+
+export interface Finding {
+  readonly code: string
+  readonly message: string
+  readonly pointer: string | null
+}
+
+/** Decode checker diagnostics from a cell refusal/admission payload into typed findings. */
+export const findingsOf = (diagnostics: unknown): Finding[] =>
+  (Array.isArray(diagnostics) ? diagnostics : []).map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) => ({
+    code: String(d.code ?? ""),
+    message: String(d.message ?? ""),
+    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null,
+  }))

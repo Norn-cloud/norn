@@ -1,58 +1,34 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { readFileSync, readdirSync } from "node:fs"
-import { join } from "node:path"
 import { EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
 import { commitAcceptInvitation, commitActivateSession, commitClearActiveSession, commitCreateApiKey, createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE, type ProvisionDb } from "../auth.ts"
 import { billingModeStatement } from "../billing.ts"
-import worker, { type Env } from "../index.ts"
+import type { Env } from "../index.ts"
 import type { WorkspacesDocument } from "../workspaces.ts"
+import { cookieOf, createMigratedDb, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 const ORIGIN = "https://studio-alpha.norn.cloud"
-const MIGRATIONS = join(import.meta.dir, "../migrations")
-
-function migratedDb(): Database {
-  const db = new Database(":memory:")
-  for (const file of readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).sort()) {
-    db.exec(readFileSync(join(MIGRATIONS, file), "utf8"))
-  }
-  return db
-}
 
 function stage(options: { host?: Fetcher; defaultEnvironmentId?: string; billing?: boolean } = {}) {
-  const db = migratedDb()
+  const db = createMigratedDb("all")
   db.run(billingModeStatement(options.billing === true))
-  const env: Env = {
-    ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
-    AUTH_DB: db as unknown as D1Database,
-    BETTER_AUTH_SECRET: "t".repeat(40),
-    BETTER_AUTH_URL: ORIGIN,
-    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
-    ...options.host === undefined ? {} : { NORN_HOST: options.host },
-    ...options.defaultEnvironmentId === undefined ? {} : { STUDIO_DEFAULT_ENVIRONMENT_ID: options.defaultEnvironmentId },
-  }
-  return { db, env }
+  return createWorkerEnv({
+    db,
+    origin: ORIGIN,
+    assetsHtml: "studio",
+    overrides: {
+      ...options.host === undefined ? {} : { NORN_HOST: options.host },
+      ...options.defaultEnvironmentId === undefined ? {} : { STUDIO_DEFAULT_ENVIRONMENT_ID: options.defaultEnvironmentId },
+    },
+  })
 }
 
 const stubHost = { fetch: async () => Response.json({ artifacts: [] }) } as unknown as Fetcher
 
-let ipCounter = 0
-const call = (env: Env, path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers)
-  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", `198.51.100.${++ipCounter % 250}`)
-  return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
-}
-const mutate = (env: Env, method: "POST" | "PATCH" | "DELETE", path: string, body?: unknown, headers: HeadersInit = {}) =>
-  call(env, path, {
-    method,
-    ...body === undefined ? {} : { body: JSON.stringify(body) },
-    headers: { origin: ORIGIN, ...body === undefined ? {} : { "content-type": "application/json" }, ...headers },
-  })
-const cookieOf = (response: Response) => response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
+const { call, mutate, enroll: enrollResponse } = createWorkerClient(ORIGIN)
 
 async function enroll(env: Env, email: string, name = email.split("@")[0] ?? "User") {
-  expect((await mutate(env, "POST", "/api/auth/sign-up/email", { email, password: "correct horse battery", name })).status).toBe(200)
-  const signedIn = await mutate(env, "POST", "/api/auth/sign-in/email", { email, password: "correct horse battery" })
+  const signedIn = await enrollResponse(env, email, name)
   expect(signedIn.status).toBe(200)
   const db = env.AUTH_DB as unknown as Database
   const { id: userId } = db.query(`select "id" from "user" where "email" = ?`).get(email) as { id: string }
