@@ -344,6 +344,13 @@ pub(super) fn declared(
         _ => Operand::Unresolved,
     }
 }
+fn singleton_currency(values: &[String]) -> Option<String> {
+    let [code] = values else {
+        return None;
+    };
+    (code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())).then(|| code.clone())
+}
+
 fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Option<String> {
     fn record_currency<'a>(
         env: &'a ZenTypeEnv,
@@ -360,10 +367,7 @@ fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Opti
         else {
             return None;
         };
-        let [code] = values.as_slice() else {
-            return None;
-        };
-        (code.len() == 3 && code.bytes().all(|c| c.is_ascii_uppercase())).then(|| code.clone())
+        singleton_currency(values)
     }
     if let Some(owner) = owner {
         return record_currency(env, owner, path);
@@ -372,10 +376,8 @@ fn currency(env: &ZenTypeEnv, owner: Option<&str>, path: &DimensionPath) -> Opti
     if path.links.is_empty()
         && let Some(Type::Enum { values }) = env.variables().get(path.property.as_str())
     {
-        let [code] = values.as_slice() else {
-            return None;
-        };
-        candidates.push(code.clone());
+        let code = singleton_currency(values)?;
+        candidates.push(code);
     }
     for name in ["input", "self"] {
         if let Some(Type::Record(record)) = env.variables().get(name)
@@ -550,6 +552,37 @@ mod tests {
             }
             assert!(join(a, b).is_none());
             assert!(!destination(a, b));
+        }
+    }
+
+    #[test]
+    fn variable_currency_fallback_enforces_iso_4217_uppercase_code() {
+        let path = DimensionPath {
+            links: Vec::new(),
+            property: norn_ir::PropertyId("currency".to_owned()),
+        };
+        let valid = ZenTypeEnv::input_only(BTreeMap::new(), crate::EnvOptions::default())
+            .unwrap()
+            .bind_operand(
+                "currency",
+                Type::Enum {
+                    values: vec!["USD".to_owned()],
+                },
+            )
+            .unwrap();
+        assert_eq!(currency(&valid, None, &path), Some("USD".to_owned()));
+
+        for invalid_code in ["usd", "US", "USDD", "not-a-currency"] {
+            let env = ZenTypeEnv::input_only(BTreeMap::new(), crate::EnvOptions::default())
+                .unwrap()
+                .bind_operand(
+                    "currency",
+                    Type::Enum {
+                        values: vec![invalid_code.to_owned()],
+                    },
+                )
+                .unwrap();
+            assert_eq!(currency(&env, None, &path), None, "{invalid_code}");
         }
     }
 }
