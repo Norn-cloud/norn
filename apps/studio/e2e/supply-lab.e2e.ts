@@ -55,9 +55,17 @@ async function open(page: Page, actor: string, path: string) {
 
 /** Pick the record `id` in a record picker field. */
 async function pick(page: Page, field: string, id: string) {
-  await sheet(page).getByRole("combobox", { name: field, exact: true }).click()
-  await page.getByRole("combobox", { name: /^Search .* records$/ }).fill(id)
-  await page.getByRole("option", { name: new RegExp(id) }).first().click()
+  const trigger = sheet(page).getByRole("combobox", { name: field, exact: true })
+  await trigger.click()
+  const search = page.getByRole("combobox", { name: /^Search .* records$/ })
+  await expect(search).toBeFocused()
+  await search.fill(id)
+  const list = page.getByRole("listbox", { name: / records$/ })
+  await expect(list.getByRole("option").first()).toContainText(id)
+  await page.keyboard.press("Enter")
+  // One field at a time: the list closes and the pick shows in its own field before the next.
+  await expect(list).toBeHidden()
+  await expect(trigger).toContainText(id)
 }
 
 test("sources: each system the pack maps, and its object types, read live from the cell", async ({ page }) => {
