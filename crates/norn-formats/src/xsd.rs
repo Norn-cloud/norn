@@ -793,7 +793,7 @@ fn admit(
         }
         let digest = computed_pins
             .and_then(|pins| pins.get(index))
-            .filter(|pin| pin.path == file.path)
+            .filter(|pin| pin.name == file.path)
             .map_or_else(
                 || std::borrow::Cow::Owned(sha256_hex(file.bytes)),
                 |pin| std::borrow::Cow::Borrowed(pin.sha256.as_str()),
