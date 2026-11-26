@@ -157,7 +157,7 @@ fn collect_sod_facts(set: &ExtractedSet) -> Facts {
             }
             Some(
                 ActionEffectProgram::UpsertInputObject {
-                    write_mode: UpsertWriteMode::UpdateOnly,
+                    write_mode: UpsertWriteMode::UpdateOnly | UpsertWriteMode::DraftOnly { .. },
                     ..
                 }
                 | ActionEffectProgram::MutateParentWithRows { .. },
