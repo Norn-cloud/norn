@@ -11,8 +11,8 @@
  *
  * It decides nothing and holds no policy: the dev host is the only authority.
  */
-import { existsSync, readFileSync } from "node:fs"
-import { isAbsolute, join, relative, resolve } from "node:path"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { ProjectError, readProject } from "./project.ts"
 
 const LOOPBACK_URL = /^http:\/\/(127\.0\.0\.1|\[::1\]):\d{1,5}$/
@@ -26,25 +26,56 @@ export interface SeedSession {
   readonly tokens: ReadonlyMap<string, string>
 }
 
-/** The running `norn dev` of `root`, as its descriptor (`norn-dev/1`) names it. */
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** Whether `path`, with every symlink resolved, is inside the project root `realRoot`. */
+function insideProject(realRoot: string, path: string): boolean {
+  let real: string
+  try { real = realpathSync(path) }
+  catch { return false } // a dangling link resolves nowhere, so not inside the project
+  return real.startsWith(realRoot + sep)
+}
+
+/**
+ * The running `norn dev` of `root`, as its descriptor (`norn-dev/1`) names it.
+ * A token file is read only when it resolves, symlinks and all, inside the
+ * project: a bearer token is never read from anywhere else.
+ */
 export function seedSession(root: string): SeedSession {
   const path = join(root, ".norn/dev.json")
   if (!existsSync(path)) throw new ProjectError("cli.project.io", `No running norn dev in ${root}: start it there first (${path} is missing).`, 3)
-  const descriptor = JSON.parse(readFileSync(path, "utf8")) as Record<string, any>
-  if (descriptor["format"] !== "norn-dev/1" || typeof descriptor["url"] !== "string" || !LOOPBACK_URL.test(descriptor["url"])) {
-    throw new ProjectError("cli.project.io", `${path} is not a loopback norn-dev/1 descriptor.`, 3)
-  }
+  const invalid = (why: string) => new ProjectError("cli.project.io", `${path} is not a loopback norn-dev/1 descriptor: ${why}.`, 3)
+  let descriptor: unknown
+  try { descriptor = JSON.parse(readFileSync(path, "utf8")) }
+  catch { throw invalid("it is not JSON") }
+  if (!isRecord(descriptor) || descriptor["format"] !== "norn-dev/1") throw invalid("its format is not norn-dev/1")
+  const { url, scope, actor } = descriptor
+  if (typeof url !== "string" || !LOOPBACK_URL.test(url)) throw invalid("its url is not a loopback address")
+  if (!isRecord(scope) || typeof scope["orgId"] !== "string" || typeof scope["environmentId"] !== "string") throw invalid("it names no scope")
+  if (typeof actor !== "string" || actor === "") throw invalid("it names no actor")
+  const realRoot = realpathSync(root)
   const token = (file: unknown): string => {
-    if (typeof file !== "string") throw new ProjectError("cli.project.io", `${path} names a session without a token file.`, 3)
+    if (typeof file !== "string") throw invalid("a session names no token file")
     const at = resolve(root, file)
     const inside = relative(resolve(root), at)
     if (inside.startsWith("..") || isAbsolute(inside)) throw new ProjectError("cli.project.io", `The token file ${file} is outside the project.`, 3)
+    if (!existsSync(at)) throw new ProjectError("cli.project.io", `The token file ${file} is missing: restart norn dev in ${root}.`, 3)
+    if (!insideProject(realRoot, at)) throw new ProjectError("cli.project.io", `The token file ${file} is outside the project.`, 3)
     return readFileSync(at, "utf8").trim()
   }
-  const tokens = new Map<string, string>([[descriptor["actor"], token(descriptor["tokenFile"])]])
-  if (descriptor["reviewer"]) tokens.set(descriptor["reviewer"].actor, token(descriptor["reviewer"].tokenFile))
-  for (const principal of (descriptor["principals"] ?? []) as Array<{ actor: string; tokenFile: string }>) tokens.set(principal.actor, token(principal.tokenFile))
-  return { url: descriptor["url"], scope: descriptor["scope"], developer: descriptor["actor"], tokens }
+  const sessionOf = (value: unknown): { actor: string; tokenFile: unknown } => {
+    if (!isRecord(value) || typeof value["actor"] !== "string" || value["actor"] === "") throw invalid("a session names no actor")
+    return { actor: value["actor"], tokenFile: value["tokenFile"] }
+  }
+  const tokens = new Map<string, string>([[actor, token(descriptor["tokenFile"])]])
+  if (descriptor["reviewer"] !== undefined) {
+    const reviewer = sessionOf(descriptor["reviewer"])
+    tokens.set(reviewer.actor, token(reviewer.tokenFile))
+  }
+  const principals = descriptor["principals"] ?? []
+  if (!Array.isArray(principals)) throw invalid("its principals are not a list")
+  for (const principal of principals.map(sessionOf)) tokens.set(principal.actor, token(principal.tokenFile))
+  return { url, scope: { orgId: scope["orgId"], environmentId: scope["environmentId"] }, developer: actor, tokens }
 }
 
 export interface SeedCall {
@@ -80,7 +111,11 @@ export async function seed(session: SeedSession, calls: readonly SeedCall[], fet
       body: JSON.stringify({ input: call.input, idempotencyKey: call.idempotencyKey }),
     })
     const text = await response.text()
-    if (response.status !== 200) return { ok: false, step: `${call.action} as ${call.actor} (${call.idempotencyKey})`, status: response.status, refusal: text ? JSON.parse(text) : null }
+    if (response.status !== 200) {
+      let refusal: unknown = text === "" ? null : text
+      try { if (text !== "") refusal = JSON.parse(text) } catch { /* not JSON: the body as the server sent it */ }
+      return { ok: false, step: `${call.action} as ${call.actor} (${call.idempotencyKey})`, status: response.status, refusal }
+    }
   }
   return { ok: true, calls: calls.length }
 }

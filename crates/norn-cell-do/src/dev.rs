@@ -164,7 +164,15 @@ fn named_principals(dev: &ManifestDev) -> Result<policy::NamedPrincipals, Failur
             dev.principals.len()
         )));
     }
-    let reserved = [dev.actor.clone(), policy::reviewer(&dev.actor)];
+    // `developer` and `reviewer` also name the built-in principals to the
+    // local Studio (`--as developer`, `--as reviewer`), so no named principal
+    // takes either name.
+    let reserved = [
+        dev.actor.clone(),
+        policy::reviewer(&dev.actor),
+        "developer".to_owned(),
+        "reviewer".to_owned(),
+    ];
     let mut named = std::collections::BTreeMap::new();
     for principal in &dev.principals {
         let actor = principal.actor.trim();
@@ -204,6 +212,34 @@ fn named_principals(dev: &ManifestDev) -> Result<policy::NamedPrincipals, Failur
 /// The session token file of the `index`th named principal (from 1).
 fn principal_token_file(index: usize) -> String {
     format!(".norn/dev.principal.{index}.token")
+}
+
+/// Remove every named principal's token file in `state` past the first
+/// `named`: a principal the manifest no longer names keeps no token on
+/// disk. A symlink is removed, never followed.
+fn remove_stale_principal_tokens(state: &Path, named: usize) -> Result<(), Failure> {
+    let failed = |error: std::io::Error| {
+        Failure::setup("norn.dev.io", format!("{}: {error}", state.display()))
+    };
+    for entry in std::fs::read_dir(state).map_err(failed)? {
+        let entry = entry.map_err(failed)?;
+        let name = entry.file_name();
+        let stale = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("dev.principal."))
+            .and_then(|rest| rest.strip_suffix(".token"))
+            .filter(|index| !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|index| index.parse::<usize>().ok())
+            .is_some_and(|index| index == 0 || index > named);
+        if stale {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(failed(error)),
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A setup or usage failure: a stable code, an actionable message and the
@@ -333,6 +369,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             &format!("{bearer}\n"),
         )?;
     }
+    remove_stale_principal_tokens(&state, token.principals.len())?;
     let scope = CellScope {
         org_id: manifest.scope.org_id.clone(),
         environment_id: manifest.scope.environment_id.clone(),
@@ -793,6 +830,7 @@ impl Session<'_> {
             .unwrap_or_default();
         // DEV-DEFINITIONS-ATOMIC-1: the set, its approvals and the action
         // policy commit together under the serving write lock.
+        let before = current.as_ref().map(|set| set.version);
         let result = match current {
             Some(set) => {
                 let guard = serving.write().map_err(|_poisoned| {
@@ -816,12 +854,18 @@ impl Session<'_> {
         };
         match result {
             Ok(definitions::Committed::Unchanged) => {
-                out.emit(
-                    &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
-                    "· unchanged (same definitions)",
-                );
-                self.served(out, serving, &definitions);
-                Ok(None)
+                // A question or dashboard the save changed installs (or
+                // retires) as the next definitions version: that is a new
+                // revision to report, never "unchanged".
+                let after = self.served(out, serving, &definitions)?;
+                if after.as_ref().map(|set| set.version) == before {
+                    out.emit(
+                        &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
+                        "· unchanged (same definitions)",
+                    );
+                    return Ok(None);
+                }
+                Ok(after)
             }
             Ok(definitions::Committed::Installed(installed, events)) => {
                 if let Some(loaded) = self.loaded.take() {
@@ -831,8 +875,13 @@ impl Session<'_> {
                     );
                 }
                 Self::definitions(out, &events);
-                self.served(out, serving, &definitions);
-                Ok(Some(*installed))
+                // The revision reported is the one serving after the reads
+                // synced over it, so `.norn/dev.json` and the events name the
+                // version a client pins.
+                Ok(Some(
+                    self.served(out, serving, &definitions)?
+                        .unwrap_or(*installed),
+                ))
             }
             Err(definitions::Rejected { phase, diagnostics }) => {
                 Self::rejected(out, serving, event, phase, &diagnostics);
@@ -872,10 +921,18 @@ impl Session<'_> {
     }
 
     /// A revision serves: report its access, then sync the sources'
-    /// questions and dashboards over it.
-    fn served(&self, out: &mut Events, serving: &http::Serving, definitions: &[Value]) {
+    /// questions and dashboards over it. Returns the active revision after
+    /// the sync, which each install or retirement moved to its next
+    /// definitions version.
+    fn served(
+        &self,
+        out: &mut Events,
+        serving: &http::Serving,
+        definitions: &[Value],
+    ) -> Result<Option<InstalledDefinitionSet>, Failure> {
         self.access(out, serving);
         self.sync_reads(out, serving, definitions);
+        active(serving).map_err(|message| Failure::setup("norn.cell.unreadable", message))
     }
 
     /// DEV-READ-DEFINITIONS-1: install the sources' changed questions and
@@ -1340,11 +1397,46 @@ mod tests {
 
     /// DEV-PRINCIPALS-1: a named principal never takes the developer's or the
     /// reviewer's name, holds at least one role, and is named once.
+    /// A manifest that names fewer principals than the last session leaves
+    /// no token file of the dropped ones; the kept ones and every other
+    /// session file stay.
+    #[test]
+    fn dropped_principals_keep_no_token_file() {
+        let (_dir, root) = project();
+        let state = private_dir(&root).unwrap();
+        for file in [
+            "dev.principal.1.token",
+            "dev.principal.2.token",
+            "dev.principal.3.token",
+            "dev.token",
+            "dev.principal.x.token",
+        ] {
+            write_private(&state.join(file), "secret\n").unwrap();
+        }
+        symlink(root.join("outside"), state.join("dev.principal.4.token")).unwrap();
+        remove_stale_principal_tokens(&state, 1).unwrap();
+        let mut left: Vec<String> = std::fs::read_dir(&state)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "dev.principal.1.token",
+                "dev.principal.x.token",
+                "dev.token"
+            ]
+        );
+    }
+
     #[test]
     fn invalid_named_principals_refuse() {
         for principals in [
             json!([{ "actor": "local:developer", "roles": ["planner"] }]),
             json!([{ "actor": "local:developer+reviewer", "roles": ["planner"] }]),
+            json!([{ "actor": "developer", "roles": ["planner"] }]),
+            json!([{ "actor": "reviewer", "roles": ["planner"] }]),
             json!([{ "actor": " ", "roles": ["planner"] }]),
             json!([{ "actor": "a", "roles": [] }]),
             json!([{ "actor": "a", "roles": ["planner", "planner"] }]),

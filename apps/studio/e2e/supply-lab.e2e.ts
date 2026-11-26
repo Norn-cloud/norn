@@ -153,6 +153,8 @@ test("questions and dashboard: the bundled dashboard's tiles answer over the see
   await shoot(page, "dashboard")
   await open(page, CLERK, "/metrics")
   await expect(page.getByText("Computed by the cell's exact engine").first()).toBeVisible({ timeout: 30_000 })
+  // The pack's combined metrics (its fill rate, a ratio of two others) are listed on their own.
+  await expect(page.locator("[data-combined-metrics]")).toBeVisible()
   await shoot(page, "metrics")
 })
 

@@ -219,18 +219,27 @@ function cellOwned(artifacts: ReadonlyArray<Json>): Json[] {
  * definitions, and the cell-owned types a mapping needs.
  */
 export function compileProjectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean } = {}): PackResult {
+  return projectPack(root, manifest, options).pack
+}
+
+/**
+ * `compileProjectPack`, with the sources' questions and dashboards
+ * (DEV-READ-DEFINITIONS-1) from the same one read of the JSON sources: the
+ * dev host installs them once a revision serves, and approvals ride the set.
+ */
+function projectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean }): { readonly pack: PackResult; readonly reads: SourceDefinitionDoc[] } {
   const pack = compilePack(root, {
     modules: projectModules(root, manifest),
     scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId },
     root,
     ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
   })
-  if (!pack.ok) return pack
+  if (!pack.ok) return { pack, reads: [] }
   const files = projectArtifacts(root, manifest) as Json[]
   const owned = cellOwned([...files, ...pack.artifacts])
   const sources = new Map(pack.sources)
-  const refused = (construct: string, message: string): PackResult =>
-    ({ ok: false, profile: pack.profile, failures: [{ file: ".", diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct, message }] }] })
+  const refused = (construct: string, message: string): { readonly pack: PackResult; readonly reads: SourceDefinitionDoc[] } =>
+    ({ pack: { ok: false, profile: pack.profile, failures: [{ file: ".", diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct, message }] }] }, reads: [] })
   for (const artifact of files) {
     const id = artifactId(artifact)
     if (sources.has(id)) return refused(id, `artifact ${id} is declared by a JSON source and by ${sources.get(id)}`)
@@ -247,24 +256,18 @@ export function compileProjectPack(root: string, manifest: Project, options: { r
   const duplicate = definitions.find((definition) => ids.has(definition.id))
   if (duplicate) return refused(duplicate.id, `definition ${duplicate.id} is declared by a JSON source and by a module`)
   // Approvals ride the set wherever it is applied; questions and dashboards are
-  // the dev host's to install once it serves (`readDefinitions`).
+  // the dev host's to install once it serves (`reads`).
   const approvals = definitions.filter((definition): definition is RetainedDefinitionDoc => definition.kind === "approval")
-  return { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...approvals] }
-}
-
-/**
- * The sources' questions and dashboards (DEV-READ-DEFINITIONS-1): the dev
- * host installs them once a revision serves. `compileProjectPack` has already
- * refused a malformed or duplicated one.
- */
-function readDefinitions(root: string, manifest: Project): SourceDefinitionDoc[] {
-  return projectDefinitions(root, manifest).filter((definition) => definition.kind !== "approval")
+  return {
+    pack: { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...approvals] },
+    reads: definitions.filter((definition) => definition.kind !== "approval"),
+  }
 }
 
 /** Compile every top-level module of every source directory as one set. */
 export function compileProject(root: string, manifest: Project, gen: number): CompiledEvent {
   const digest = sourceDigest(root, manifest)
-  const pack = compileProjectPack(root, manifest)
+  const { pack, reads } = projectPack(root, manifest, {})
   if (!pack.ok) {
     const diagnostics = pack.failures.flatMap((failure) => failure.diagnostics.map((diagnostic) => ({
       ...diagnostic,
@@ -274,7 +277,7 @@ export function compileProject(root: string, manifest: Project, gen: number): Co
   }
   return {
     event: "compiled", gen, sourceDigest: digest, ok: true,
-    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: [...pack.retained, ...readDefinitions(root, manifest)], sourceMap: pack.sourceMap, warnings: pack.warnings,
+    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: [...pack.retained, ...reads], sourceMap: pack.sourceMap, warnings: pack.warnings,
   }
 }
 

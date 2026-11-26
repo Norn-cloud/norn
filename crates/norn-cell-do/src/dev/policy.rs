@@ -29,14 +29,20 @@
 //! as on a cell that grants those roles. Each has its own session token
 //! (`.norn/dev.principal.<n>.token`, listed in `.norn/dev.json`). Like the
 //! developer and the reviewer it reads everything on this loopback cell;
-//! only what it may *do* is narrowed.
+//! only what it may *do* is narrowed: each call by the active policy, each
+//! decision by its declared decider roles, and every hosted-admin operation
+//! (writing definitions, syncing sources, managing connections, provisioning,
+//! starting runs) by the hosted grant table over its declared roles, so a
+//! pack role that table does not name holds none of them.
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use crate::actions::ActionPolicy;
-use crate::policy::{Caller, CallerSlot, DEMO_GRANTS};
+use crate::policy::{Caller, CallerSlot, DEMO_GRANTS, RUN_STARTERS};
 use crate::principal::PrincipalResolver;
-use norn_api::authz::{AccessRequest, Authorizer, DenyAll, ReadRequest, RefusalDetailRequest};
+use norn_api::authz::{
+    AccessRequest, Authorizer, DenyAll, Operation, ReadRequest, RefusalDetailRequest,
+};
 use norn_api::definition_routes::DefinitionKinds;
 use norn_api::refusal::Refusal;
 use norn_cell::flow_run::RunStarter;
@@ -293,10 +299,44 @@ impl Authorizer for LocalDeveloper {
         Ok(norn_api::authz::VerifiedAutomationGrant { parent_grant_ids })
     }
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
-        if request.actor.is_some_and(|actor| self.is(actor)) {
+        if request
+            .actor
+            .is_some_and(|actor| self.grants(actor, &request.operation))
+        {
             Ok(())
         } else {
             DenyAll.authorize(request)
+        }
+    }
+}
+
+impl LocalDeveloper {
+    /// Whether the local `actor` may perform `operation`. The developer and
+    /// the reviewer hold every grant of the loopback cell (DEV-LOOPBACK-1).
+    /// A named principal (DEV-PRINCIPALS-1) holds only what its declared
+    /// roles hold, decided as a hosted cell's [`crate::policy::ReadPolicy`]
+    /// decides them: it reads and calls (the active policy still decides each
+    /// governed call), decides only a decision one of its roles may decide,
+    /// and writes definitions, syncs sources, manages connections, provisions
+    /// or starts runs only when the hosted grant table gives its roles that.
+    fn grants(&self, actor: &str, operation: &Operation) -> bool {
+        if !self.is(actor) {
+            return false;
+        }
+        let Some(roles) = self.named.get(actor) else {
+            return true;
+        };
+        match operation {
+            Operation::ReadDefinitions | Operation::CallAction(_) => true,
+            Operation::Decide {
+                roles: deciders, ..
+            } => roles.iter().any(|held| deciders.contains(held)),
+            Operation::WriteDefinitions
+            | Operation::SyncSource(_)
+            | Operation::ManageConnection(_)
+            | Operation::RevokeConnectionGrant(_) => DEMO_GRANTS.writes_definitions(roles),
+            Operation::ProvisionCell => DEMO_GRANTS.provisions(roles),
+            Operation::StartRun(_) => RUN_STARTERS.starts(&DEMO_GRANTS, roles),
         }
     }
 }
@@ -392,7 +432,7 @@ pub(super) mod tests {
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
 
-    const ACTOR: &str = "dev@example";
+    pub(in crate::dev) const ACTOR: &str = "dev@example";
     const BEARER: &str = "test-bearer-0123456789";
     const TYPE: &str = "shop.Sale";
 
@@ -405,7 +445,7 @@ pub(super) mod tests {
 
     /// A test project's one type. `amount` and `quantity` are flows, so they
     /// are declared additive; `price` is their declared ratio.
-    fn artifacts(additive: bool) -> Vec<Value> {
+    pub(in crate::dev) fn artifacts(additive: bool) -> Vec<Value> {
         let flow = |scale: u64| {
             if additive {
                 json!({"kind": "decimal", "scale": scale, "additivity": {"kind": "additive"}})
@@ -556,7 +596,7 @@ pub(super) mod tests {
         )
     }
 
-    fn question(metric: &str) -> Value {
+    pub(in crate::dev) fn question(metric: &str) -> Value {
         json!({
             "irVersion": "0.1", "name": "dev.daily", "objectSet": TYPE,
             "aggregate": [{"metric": metric}],
@@ -568,7 +608,7 @@ pub(super) mod tests {
         })
     }
 
-    fn metric(
+    pub(in crate::dev) fn metric(
         metrics: &DevMetrics,
         host: &DevHost<NativeEngine>,
         property: &str,
@@ -916,3 +956,13 @@ pub(super) mod tests {
         assert_ne!(status, 200);
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "named-principal scenarios"
+)]
+#[path = "principals_tests.rs"]
+mod principals_tests;

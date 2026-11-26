@@ -104,7 +104,7 @@ test("supply_lab_workspace: init, dev and seed admit the pack, seed the referenc
 
     const scope = `orgId=${created.manifest.scope.orgId}&environmentId=${created.manifest.scope.environmentId}`
     const token = (actor: string) => {
-      const file = actor === ready!.actor ? ready!.tokenFile : ready!.principals.find((principal: { actor: string }) => principal.actor === actor).tokenFile
+      const file = actor === ready!.actor ? ready!.tokenFile : actor === ready!.reviewer.actor ? ready!.reviewer.tokenFile : ready!.principals.find((principal: { actor: string }) => principal.actor === actor).tokenFile
       return readFileSync(join(dir, file), "utf8").trim()
     }
     const http = async (actor: string, method: string, path: string, body?: unknown) => {
@@ -145,6 +145,31 @@ test("supply_lab_workspace: init, dev and seed admit the pack, seed the referenc
     const retireBy = Date.now() + 60_000
     while (!events.slice(from).some((event) => event.event === "definition" && event.id === "supply.received_weekly" && event.lifecycle === "retired") && Date.now() < retireBy) await Bun.sleep(250)
     expect(events.slice(from).some((event) => event.event === "definition" && event.id === "supply.received_weekly" && event.lifecycle === "retired")).toBe(true)
+
+    // DEV-PRINCIPALS-1: a named principal holds only its roles' grants. An approval that only an
+    // `admin` decides gates drafting an order: the planner's draft waits on it, the clerk neither
+    // lists nor decides it, and the reviewer (every hosted role) does.
+    const gated = events.length
+    writeFileSync(join(dir, "definitions/questions/lab.po_gate.json"), JSON.stringify({ kind: "approval", id: "lab.po_gate", payload: {
+      action: "supply.po.create", decider: { roles: ["admin"] }, question: "Draft this purchase order?", risk: "high" } }))
+    const gateBy = Date.now() + 60_000
+    const gateActive = () => events.slice(gated).some((event) => event.event === "definition" && event.id === "lab.po_gate" && event.lifecycle === "active")
+    while (!gateActive() && Date.now() < gateBy) await Bun.sleep(250)
+    expect({ active: gateActive(), rejected: events.slice(gated).filter((event) => event.event === "rejected") }).toEqual({ active: true, rejected: [] })
+    const waiting = await http("planner:amal", "POST", "/v1/actions/supply.po.create", { input: { ...order, po_id: "PO-GATED" }, idempotencyKey: "live-5" })
+    expect(waiting.status).toBe(202)
+    const decision = waiting.body.decision.id as string
+    const pending = async (actor: string) => (await http(actor, "GET", "/v1/decisions?state=pending")).body.total
+    expect(await pending("clerk:hana")).toBe(0)
+    const decide = (actor: string) => http(actor, "POST", `/v1/decisions/${decision}:decide`, { choice: "approve", idempotencyKey: `decide-${actor}` })
+    expect((await decide("clerk:hana")).status).toBe(404)
+    expect(await pending(ready.reviewer.actor)).toBe(1)
+    // Loading observations is a source write, the hosted admins' grant: the clerk is answered as
+    // someone outside the cell; the developer reaches the loader, which refuses an empty load.
+    const load = { profile: "synthetic-erpnext-three/1", snapshot: [] }
+    const outsider = await fetch(`${ready.url}/v1/observations:load?${scope}`, { method: "POST", body: JSON.stringify(load) })
+    expect((await http("clerk:hana", "POST", "/v1/observations:load", load)).status).toBe(outsider.status)
+    expect((await http(ready.actor, "POST", "/v1/observations:load", load)).status).toBe(400)
   } finally {
     child.kill("SIGTERM")
     await exited

@@ -35,8 +35,8 @@
  * another way (a `--load`, a loader script, a CLI call). Only a changed answer
  * is sent. It reads nothing else and decides nothing.
  */
-import { existsSync, readFileSync, statSync } from "node:fs"
-import { isAbsolute, join, relative, resolve } from "node:path"
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { Cell } from "../worker/cell-call.ts"
 import { questions } from "../worker/questions.ts"
 
@@ -56,6 +56,16 @@ export interface DevSession {
 export class LocalCellError extends Error {}
 
 const LOOPBACK_URL = /^http:\/\/(127\.0\.0\.1|\[::1\]):\d{1,5}$/
+
+/** Whether `path`, with every symlink resolved, is inside `project`: a token is never read from elsewhere. */
+function resolvesInside(project: string, path: string): boolean {
+  try {
+    const root = realpathSync(project)
+    return realpathSync(path).startsWith(root + sep)
+  } catch {
+    return false // a dangling link resolves nowhere, so not inside the project
+  }
+}
 
 /**
  * The running `norn dev` session of `project`, as its descriptor (`norn-dev/1`)
@@ -88,6 +98,8 @@ export function readSession(project: string, as: string = "developer"): DevSessi
   const tokenPath = resolve(project, tokenFile)
   const inside = relative(resolve(project), tokenPath)
   if (inside.startsWith("..") || isAbsolute(inside)) throw new LocalCellError(`The token file ${tokenFile} is outside the project.`)
+  if (!existsSync(tokenPath)) throw new LocalCellError(`The token file ${tokenFile} is missing: restart norn dev in ${project}.`)
+  if (!resolvesInside(project, tokenPath)) throw new LocalCellError(`The token file ${tokenFile} is outside the project.`)
   const name = (() => {
     try { const manifest = JSON.parse(readFileSync(join(project, "norn.json"), "utf8")) as { name?: unknown }; return typeof manifest.name === "string" ? manifest.name : undefined }
     catch { return undefined }

@@ -37,10 +37,14 @@ function object(value: unknown, keys: readonly string[]): value is Record<string
 function text(value: unknown): value is string { return typeof value === "string" && value.trim().length > 0 }
 /** Exact names: non-empty, no surrounding space. */
 function name(value: unknown): value is string { return text(value) && value.trim() === value }
-/** `dev.principals`: at most 16, each a distinct actor other than the developer and reviewer, with distinct roles. */
+/**
+ * `dev.principals`: at most 16, each a distinct actor other than the developer and reviewer, with
+ * distinct roles. `developer` and `reviewer` are reserved too: they name the built-in principals to
+ * the local Studio (`--as developer`, `--as reviewer`).
+ */
 function principals(value: unknown, actor: string): value is DevPrincipal[] {
   if (!Array.isArray(value) || value.length > 16) return false
-  const actors = new Set<string>([actor, `${actor}+reviewer`])
+  const actors = new Set<string>([actor, `${actor}+reviewer`, "developer", "reviewer"])
   return value.every((principal) => {
     if (!object(principal, ["actor", "roles"]) || !name(principal.actor) || actors.has(principal.actor)) return false
     actors.add(principal.actor)

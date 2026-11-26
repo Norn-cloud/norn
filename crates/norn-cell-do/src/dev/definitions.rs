@@ -746,3 +746,279 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "read-definition fixtures"
+)]
+mod read_tests {
+    //! DEV-READ-DEFINITIONS-1: the sources' questions and dashboards install
+    //! over the serving revision, a re-sync appends nothing, a changed one
+    //! appends its next revision, a refused one keeps its active revision, an
+    //! id of another kind is refused, and a dropped dashboard retires before
+    //! a dropped question. Each install or retirement is a definitions
+    //! version, which the revision `norn dev` reports names.
+    use super::*;
+    use crate::dev::policy::tests::{ACTOR, artifacts, host, metric, question, scope};
+    use crate::dev::policy::{DevMetrics, dev_actions, dev_kinds};
+    use crate::dev::{Events, Manifest, Session};
+    use norn_cell::engine::NativeEngine;
+    use std::cell::RefCell;
+
+    const QUESTION: &str = "dev.amount_by_region";
+    const DASHBOARD: &str = "dev.board";
+
+    fn question_def(metric: &str, end: &str) -> Value {
+        let mut payload = question(metric);
+        payload["name"] = json!(QUESTION);
+        payload["window"]["end"] = json!(end);
+        json!({ "kind": "question", "id": QUESTION, "payload": payload })
+    }
+
+    fn dashboard_def(metric: &str) -> Value {
+        json!({ "kind": "dashboard", "id": DASHBOARD, "payload": {
+            "title": "Sales", "origin": { "by": "code" },
+            "tiles": [{ "id": "t1", "title": "Amount by region", "question": question(metric),
+                "view": { "kind": "table" }, "layout": { "x": 0, "y": 0, "w": 2, "h": 1 } }] } })
+    }
+
+    fn sync(host: &DevHost<NativeEngine>, definitions: &[Value], now_ms: u64) -> Synced {
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let runtime = metrics.questions(host).expect("runtime");
+        let questions: &dyn AdHocQuestions<NativeEngine> = &runtime;
+        sync_reads(
+            host,
+            ACTOR,
+            &dev_kinds(),
+            Some(questions),
+            definitions,
+            now_ms,
+        )
+    }
+
+    fn version(host: &DevHost<NativeEngine>) -> u64 {
+        host.active_definitions().unwrap().unwrap().version
+    }
+
+    fn revision(host: &DevHost<NativeEngine>, id: &str) -> (u64, RetainedLifecycle) {
+        let record = host.retained_definition(id).unwrap().expect("a revision");
+        (record.definition.revision, record.definition.lifecycle)
+    }
+
+    fn summary(synced: &Synced) -> Vec<(String, String, u64, String)> {
+        synced
+            .events
+            .iter()
+            .map(|event| {
+                (
+                    event["kind"].as_str().unwrap().to_owned(),
+                    event["id"].as_str().unwrap().to_owned(),
+                    event["version"].as_u64().unwrap(),
+                    event["lifecycle"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    fn row(kind: &str, id: &str, version: u64, lifecycle: &str) -> (String, String, u64, String) {
+        (kind.into(), id.into(), version, lifecycle.into())
+    }
+
+    #[test]
+    fn reads_install_once_update_and_retire_dashboards_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let amount = metric(&metrics, &host, "amount", false);
+        let base = version(&host);
+        let declared = [
+            question_def(&amount, "2026-11-08T00:00:00Z"),
+            dashboard_def(&amount),
+        ];
+
+        // Install: each is its next definitions version.
+        let installed = sync(&host, &declared, 10_000);
+        assert!(installed.refused.is_empty(), "{:?}", installed.refused);
+        assert_eq!(
+            summary(&installed),
+            [
+                row("question", QUESTION, 1, "active"),
+                row("dashboard", DASHBOARD, 1, "active")
+            ]
+        );
+        assert_eq!(version(&host), base + 2);
+
+        // The same sources again append nothing.
+        let again = sync(&host, &declared, 11_000);
+        assert!(
+            again.events.is_empty() && again.refused.is_empty(),
+            "{again:?}"
+        );
+        assert_eq!(version(&host), base + 2);
+
+        // A changed question appends its next revision; the dashboard stays.
+        let changed = [
+            question_def(&amount, "2026-11-15T00:00:00Z"),
+            dashboard_def(&amount),
+        ];
+        let updated = sync(&host, &changed, 12_000);
+        assert!(updated.refused.is_empty(), "{:?}", updated.refused);
+        assert_eq!(summary(&updated), [row("question", QUESTION, 2, "active")]);
+        assert_eq!(version(&host), base + 3);
+
+        // Dropping both retires the dashboard before the question.
+        let dropped = sync(&host, &[], 13_000);
+        assert!(dropped.refused.is_empty(), "{:?}", dropped.refused);
+        assert_eq!(
+            summary(&dropped),
+            [
+                row("dashboard", DASHBOARD, 2, "retired"),
+                row("question", QUESTION, 3, "retired")
+            ]
+        );
+        assert_eq!(revision(&host, QUESTION), (3, RetainedLifecycle::Retired));
+    }
+
+    #[test]
+    fn a_refused_question_keeps_its_active_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let amount = metric(&metrics, &host, "amount", false);
+        let first = sync(
+            &host,
+            &[question_def(&amount, "2026-11-08T00:00:00Z")],
+            10_000,
+        );
+        assert!(first.refused.is_empty(), "{:?}", first.refused);
+        let base = version(&host);
+
+        let unknown = question_def("analysis.no_such_metric", "2026-11-15T00:00:00Z");
+        let refused = sync(&host, &[unknown], 11_000);
+        assert!(refused.events.is_empty(), "{refused:?}");
+        assert!(!refused.refused.is_empty(), "the unknown metric is refused");
+        assert!(
+            refused
+                .refused
+                .iter()
+                .all(|finding| finding["definitionId"] == json!(QUESTION)),
+            "{:?}",
+            refused.refused
+        );
+        assert_eq!(revision(&host, QUESTION), (1, RetainedLifecycle::Active));
+        assert_eq!(version(&host), base, "nothing was written");
+    }
+
+    #[test]
+    fn an_id_of_another_kind_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let amount = metric(&metrics, &host, "amount", false);
+        let first = sync(
+            &host,
+            &[question_def(&amount, "2026-11-08T00:00:00Z")],
+            10_000,
+        );
+        assert!(first.refused.is_empty(), "{:?}", first.refused);
+        let base = version(&host);
+
+        let mut board = dashboard_def(&amount);
+        board["id"] = json!(QUESTION);
+        let refused = sync(&host, &[board], 11_000);
+        assert!(refused.events.is_empty(), "{refused:?}");
+        let codes: Vec<&Value> = refused.refused.iter().map(|f| &f["code"]).collect();
+        assert_eq!(codes, [&json!("norn.dev.definition_kind")]);
+        assert_eq!(revision(&host, QUESTION), (1, RetainedLifecycle::Active));
+        assert_eq!(version(&host), base);
+    }
+
+    /// The revision `norn dev` reports (and writes to `.norn/dev.json`) after
+    /// a save is the one serving once the reads synced: a save that changes
+    /// only a question is a new revision, and a save that installs a set and
+    /// a question names the version after both.
+    #[test]
+    fn a_save_reports_the_version_after_its_reads() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cell.sqlite");
+        let serving: crate::dev::http::Serving = std::sync::Arc::new(std::sync::RwLock::new(None));
+        let manifest: Manifest = serde_json::from_value(json!({
+            "format": "norn-project/1", "name": "shop", "sources": [],
+            "scope": { "orgId": scope().org_id, "environmentId": scope().environment_id },
+            "dev": { "port": 0, "actor": ACTOR }, "cell": "cell.sqlite"
+        }))
+        .unwrap();
+        let cell_scope = scope();
+        let session = Session {
+            loads: &[],
+            loaded: RefCell::new(None),
+            root: directory.path(),
+            manifest: &manifest,
+            named: std::sync::Arc::default(),
+            metrics: DevMetrics::new([7_u8; 32], cell_scope.clone()),
+            scope: &cell_scope,
+            url: "http://127.0.0.1:0",
+            started_at: 0,
+            actions: dev_actions(),
+            ungoverned: RefCell::new(None),
+        };
+        let save = |artifacts: &[Value], definitions: &[Value]| {
+            let event = json!({ "ok": true, "gen": 1, "sourceDigest": "test",
+                "artifacts": artifacts, "sourceMap": [], "definitions": definitions });
+            session
+                .compiled(&mut Events { json: true }, &serving, &path, &event)
+                .map_err(|failure| failure.message)
+                .expect("the save does not end the session")
+        };
+        let active = || {
+            serving
+                .read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .active_definitions()
+                .unwrap()
+                .unwrap()
+                .version
+        };
+        let first = save(&artifacts(true), &[]).expect("provisioned");
+        let amount = {
+            let guard = serving.read().unwrap();
+            metric(&session.metrics, guard.as_ref().unwrap(), "amount", false)
+        };
+
+        // The set is unchanged; only a question is new.
+        let asked = save(
+            &artifacts(true),
+            &[question_def(&amount, "2026-11-08T00:00:00Z")],
+        )
+        .expect("a new question is a new revision");
+        assert_eq!(asked.version, first.version + 1);
+        assert_eq!(asked.version, active());
+        assert!(
+            save(
+                &artifacts(true),
+                &[question_def(&amount, "2026-11-08T00:00:00Z")]
+            )
+            .is_none()
+        );
+
+        // A new set and a changed question: the version after both.
+        let mut edited = artifacts(true);
+        edited[0]["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "note", "type": {"kind": "text"}}));
+        let both =
+            save(&edited, &[question_def(&amount, "2026-11-15T00:00:00Z")]).expect("installed");
+        assert_eq!(both.version, active());
+        assert_eq!(
+            both.version,
+            asked.version + 2,
+            "the set, then the question"
+        );
+    }
+}

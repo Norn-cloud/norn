@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { LIVE_PROTOCOL, LiveHub, LocalCellError, localStudio, readSession, serveLocal, subscribable, type DevSession, type LiveSocket } from "../scripts/local-cell.ts"
@@ -33,6 +33,27 @@ test("--as <actor> is one of the descriptor's named principals, with its token a
   expect(readSession(root, "clerk:a")).toEqual({ url: "http://127.0.0.1:4174", token: "clerk-token", actor: "clerk:a", as: "principal", roles: ["clerk"], orgId: "local", environmentId: "dev", project: "shop" })
   expect(() => readSession(root, "planner:b")).toThrow("names no principal planner:b")
   expect(() => readSession(project({ ...DESCRIPTOR, principals: [{ actor: "x", roles: ["r"], tokenFile: "../../t" }] }), "x")).toThrow("outside the project")
+})
+
+test("a token file is read only when it resolves inside the project, symlinks and all", () => {
+  const outside = mkdtempSync(join(temp, "outside-"))
+  writeFileSync(join(outside, "secret"), "outside-secret\n")
+  // Lexically inside `.norn`, really a link to a file outside the project.
+  const linkedFile = project(DESCRIPTOR)
+  rmSync(join(linkedFile, ".norn/dev.token"))
+  symlinkSync(join(outside, "secret"), join(linkedFile, ".norn/dev.token"))
+  expect(() => readSession(linkedFile)).toThrow("outside the project")
+  // A symlinked directory leading out of the project.
+  const linkedDir = project({ ...DESCRIPTOR, principals: [{ actor: "clerk:a", roles: ["clerk"], tokenFile: "linked/secret" }] })
+  symlinkSync(outside, join(linkedDir, "linked"))
+  expect(() => readSession(linkedDir, "clerk:a")).toThrow("outside the project")
+  // A link inside the project still reads; a missing file says so.
+  const linkedInside = project(DESCRIPTOR)
+  writeFileSync(join(linkedInside, ".norn/real.token"), "inside-token\n")
+  rmSync(join(linkedInside, ".norn/dev.token"))
+  symlinkSync(join(linkedInside, ".norn/real.token"), join(linkedInside, ".norn/dev.token"))
+  expect(readSession(linkedInside).token).toBe("inside-token")
+  expect(() => readSession(project({ ...DESCRIPTOR, tokenFile: ".norn/none.token" }))).toThrow("is missing")
 })
 
 test("the session is the descriptor's: loopback url, project token, scope, actor and project name", () => {
