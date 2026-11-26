@@ -234,3 +234,53 @@ fn a_decision_that_declares_nothing_accepts_no_principal() -> TestResult {
     assert_eq!(output.facts, []);
     Ok(())
 }
+
+#[test]
+fn bind_principal_and_evaluate_reject_mismatched_decision_or_principal_schema() -> TestResult {
+    let decision_a = admit(rule_json())??;
+    let mut other_id = rule_json();
+    *other_id.pointer_mut("/ruleId").ok_or("ruleId")? = json!("document.other.decide");
+    let decision_other = admit(other_id)??;
+
+    let (_slice_other, event_other) = typed(&decision_other)?;
+    let foreign_bind = decision_a
+        .bind_principal(
+            event_other,
+            Value::object([("isReviewer", Value::Bool(true))]),
+        )
+        .expect_err("foreign event must not bind to decision_a");
+    assert!(
+        matches!(foreign_bind, DecisionError::InputBinding { .. }),
+        "{foreign_bind}"
+    );
+
+    // Same ruleId and event schema, different principal schema.
+    let mut v2 = rule_json();
+    *v2.pointer_mut("/principalInputs/0/name").ok_or("name")? = json!("isOwner");
+    v2.pointer_mut("/inputSchema/properties/principal")
+        .ok_or("principal")?
+        .as_object_mut()
+        .ok_or("principal obj")?
+        .insert("required".to_owned(), json!(["isOwner"]));
+    *v2.pointer_mut("/inputSchema/properties/principal/properties")
+        .ok_or("props")? = json!({"isOwner": {"type": "boolean"}});
+    *v2.pointer_mut("/graph/nodes/1/content/rules/0/out_facts")
+        .ok_or("cell")? = json!("[]");
+    let decision_v2 = admit(v2)??;
+
+    let (slice_a, event_a) = typed(&decision_a)?;
+    let bound_v2 =
+        decision_v2.bind_principal(event_a, Value::object([("isOwner", Value::Bool(true))]))?;
+    let mismatch = evaluate(
+        &decision_a,
+        &slice_a,
+        &bound_v2,
+        EvaluationBudget::default(),
+    )
+    .expect_err("principal bound under v2 schema must not evaluate against v1");
+    assert!(
+        matches!(mismatch, DecisionError::InputBinding { .. }),
+        "{mismatch}"
+    );
+    Ok(())
+}

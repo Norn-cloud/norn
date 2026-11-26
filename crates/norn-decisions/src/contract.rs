@@ -2,11 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_expr::Value;
 use norn_ir::rule::{DECIDE_OPTIONAL_INPUT_MEMBERS, DECIDE_PRINCIPAL_MEMBER};
 use norn_ir::{
-    DECIDE_INPUT_MEMBERS, DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, RuleRoot,
+    DECIDE_INPUT_MEMBERS, DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonValue,
+    RuleRoot, RuntimeObject, RuntimeValue,
 };
 
+use crate::convert::{value_from_ir, value_from_runtime};
 use crate::error::AdmissionError;
 use crate::schema::Schema;
 
@@ -153,4 +156,104 @@ pub(crate) fn decide_output(rule: &RuleRoot) -> Result<Schema, AdmissionError> {
         }
     }
     Ok(schema)
+}
+
+pub(crate) fn defaults(
+    rule: &RuleRoot,
+    output: &Schema,
+    exact: Option<&RuntimeObject>,
+) -> Result<BTreeMap<String, Value>, AdmissionError> {
+    if let Some(exact) = exact {
+        let rule_defaults = rule.defaults.as_ref();
+        if let Some(extra) = exact
+            .keys()
+            .find(|key| rule_defaults.is_none_or(|map| !map.contains_key(key.as_str())))
+        {
+            return Err(AdmissionError::InvalidDefault {
+                rule_id: rule.rule_id.clone(),
+                member: extra.clone(),
+                reason: "the exact default does not match the decoded artifact".to_owned(),
+            });
+        }
+    }
+    let mut defaults = BTreeMap::new();
+    for (member, value) in rule.defaults.iter().flatten() {
+        let invalid = |reason: String| AdmissionError::InvalidDefault {
+            rule_id: rule.rule_id.clone(),
+            member: member.clone(),
+            reason,
+        };
+        let value = if let Some(exact) = exact {
+            let source = exact.get(member).ok_or_else(|| {
+                invalid("the exact default does not match the decoded artifact".to_owned())
+            })?;
+            if !same_up_to_f64(value, source) {
+                return Err(invalid(
+                    "the exact default does not match the decoded artifact".to_owned(),
+                ));
+            }
+            value_from_runtime(source).map_err(|error| invalid(error.to_string()))?
+        } else {
+            value_from_ir(value).map_err(|error| invalid(error.to_string()))?
+        };
+        let schema = output
+            .properties()
+            .and_then(|properties| properties.get(member))
+            .ok_or_else(|| invalid("is not a declared output member".to_owned()))?;
+        schema
+            .check(&value, member)
+            .map_err(|violation| invalid(format!("{}: {}", violation.path, violation.reason)))?;
+        defaults.insert(member.clone(), value);
+    }
+    Ok(defaults)
+}
+
+const fn f64_bits(value: f64) -> u64 {
+    let bits = value.to_bits();
+    if bits == (-0.0_f64).to_bits() {
+        0
+    } else {
+        bits
+    }
+}
+
+/// Whether the exact `source` decodes to the IR value `decoded`: the same
+/// shape, and every number's `f64` (nearest, as JSON decoding gives) equal.
+pub(crate) fn same_up_to_f64(decoded: &JsonValue, source: &RuntimeValue) -> bool {
+    let mut stack = vec![(decoded, source)];
+    while let Some((decoded, source)) = stack.pop() {
+        match (decoded, source) {
+            (JsonValue::Null, RuntimeValue::Null) => {}
+            (JsonValue::Bool(left), RuntimeValue::Bool(right)) if left == right => {}
+            // IR decoding reads numbers with `serde_json`'s historical parser
+            // (`norn_ir::JsonNumber`); a correctly rounded parse is also
+            // accepted, so no spelling of this artifact's own number is refused.
+            (JsonValue::Number(left), RuntimeValue::Number(right)) => {
+                let left_bits = f64_bits(*left);
+                let text = right.canonical();
+                let historical = norn_ir::JsonNumber::parse_literal(&text)
+                    .is_ok_and(|number| f64_bits(number.as_f64()) == left_bits);
+                let rounded = text
+                    .parse::<f64>()
+                    .is_ok_and(|parsed| f64_bits(parsed) == left_bits);
+                if !(historical || rounded) {
+                    return false;
+                }
+            }
+            (JsonValue::String(left), RuntimeValue::String(right)) if left == right => {}
+            (JsonValue::Array(left), RuntimeValue::Array(right)) if left.len() == right.len() => {
+                stack.extend(left.iter().zip(right));
+            }
+            (JsonValue::Object(left), RuntimeValue::Object(right)) if left.len() == right.len() => {
+                for ((left_key, left_val), (right_key, right_val)) in left.iter().zip(right) {
+                    if left_key != right_key {
+                        return false;
+                    }
+                    stack.push((left_val, right_val));
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
 }
