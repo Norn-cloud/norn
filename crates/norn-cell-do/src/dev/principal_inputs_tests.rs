@@ -28,7 +28,7 @@ use crate::dev::{Events, Manifest, Session};
 use crate::server::Request;
 
 #[path = "../../tests/support/review_pack.rs"]
-mod review_pack;
+pub(in crate::dev) mod review_pack;
 use review_pack::{APPROVE, admin_role, approval_rule, approve_action, review_base};
 
 const ACTOR: &str = "local:developer";

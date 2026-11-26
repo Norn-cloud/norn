@@ -23,10 +23,9 @@ use crate::dev::{Events, Manifest, Session};
 use crate::principal::PrincipalResolver as _;
 use crate::server::Request;
 
-#[path = "../../tests/support/review_pack.rs"]
-#[allow(dead_code, reason = "the shared pack fixture serves other tests too")]
-mod review_pack;
-use review_pack::{APPROVE, admin_role, approve_action, review_base};
+use crate::dev::admit::principal_inputs_tests::review_pack::{
+    self, APPROVE, admin_role, approve_action, review_base,
+};
 
 const ACTOR: &str = "local:developer";
 const RECORD: &str = "review.document.record";
@@ -317,10 +316,10 @@ fn a_named_principal_holds_no_hosted_admin_operation_its_roles_lack() {
     );
     let (status, refused) = lab.call(Some(ACTOR), "POST", "/v1/observations:load", &load);
     assert_eq!(status, 400, "the developer reaches the loader: {refused}");
-    let admit = gate().to_string();
-    let (status, refused) = lab.call(Some(CLERK), "POST", "/v1/definitions:admit", &admit);
+    let approval = gate().to_string();
+    let (status, refused) = lab.call(Some(CLERK), "POST", "/v1/definitions:admit", &approval);
     assert_eq!(status, 403, "{refused}");
-    let (status, admitted) = lab.call(Some(ACTOR), "POST", "/v1/definitions:admit", &admit);
+    let (status, admitted) = lab.call(Some(ACTOR), "POST", "/v1/definitions:admit", &approval);
     assert_eq!(status, 200, "{admitted}");
 }
 
@@ -353,11 +352,9 @@ fn the_resolver_records_each_principals_own_roles() {
         "{developer:?}"
     );
     let bare = LocalDeveloper::for_actor(ACTOR, policy::dev_actions());
+    let cell = scope();
     let request = |actor: &'static str| AccessRequest {
-        scope: &CellScope {
-            org_id: "org_demo".into(),
-            environment_id: "dev".into(),
-        },
+        scope: &cell,
         actor: Some(actor),
         operation: Operation::ReadDefinitions,
     };

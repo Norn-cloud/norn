@@ -215,9 +215,9 @@ fn principal_token_file(index: usize) -> String {
 }
 
 /// Remove every named principal's token file in `state` past the first
-/// `named`: a principal the manifest no longer names keeps no token on
+/// `keep`: a principal the manifest no longer names keeps no token on
 /// disk. A symlink is removed, never followed.
-fn remove_stale_principal_tokens(state: &Path, named: usize) -> Result<(), Failure> {
+fn remove_stale_principal_tokens(state: &Path, keep: usize) -> Result<(), Failure> {
     let failed = |error: std::io::Error| {
         Failure::setup("norn.dev.io", format!("{}: {error}", state.display()))
     };
@@ -230,7 +230,7 @@ fn remove_stale_principal_tokens(state: &Path, named: usize) -> Result<(), Failu
             .and_then(|rest| rest.strip_suffix(".token"))
             .filter(|index| !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
             .and_then(|index| index.parse::<usize>().ok())
-            .is_some_and(|index| index == 0 || index > named);
+            .is_some_and(|index| index == 0 || index > keep);
         if stale {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => {}
@@ -854,18 +854,7 @@ impl Session<'_> {
         };
         match result {
             Ok(definitions::Committed::Unchanged) => {
-                // A question or dashboard the save changed installs (or
-                // retires) as the next definitions version: that is a new
-                // revision to report, never "unchanged".
-                let after = self.served(out, serving, &definitions)?;
-                if after.as_ref().map(|set| set.version) == before {
-                    out.emit(
-                        &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
-                        "· unchanged (same definitions)",
-                    );
-                    return Ok(None);
-                }
-                Ok(after)
+                self.unchanged(out, serving, event, &definitions, before)
             }
             Ok(definitions::Committed::Installed(installed, events)) => {
                 if let Some(loaded) = self.loaded.take() {
@@ -901,6 +890,29 @@ impl Session<'_> {
                 Ok(None)
             }
         }
+    }
+
+    /// The set is unchanged: sync the sources' reads over it. A question or
+    /// dashboard the save changed installs (or retires) as the next
+    /// definitions version, so that is a new revision to report, never
+    /// "unchanged".
+    fn unchanged(
+        &self,
+        out: &mut Events,
+        serving: &http::Serving,
+        event: &Value,
+        definitions: &[Value],
+        before: Option<u64>,
+    ) -> Result<Option<InstalledDefinitionSet>, Failure> {
+        let after = self.served(out, serving, definitions)?;
+        if after.as_ref().map(|set| set.version) == before {
+            out.emit(
+                &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
+                "· unchanged (same definitions)",
+            );
+            return Ok(None);
+        }
+        Ok(after)
     }
 
     /// Report each approval revision a commit appended.
