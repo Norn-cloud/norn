@@ -16,7 +16,10 @@ names the generator turns into Python identifiers; every wire shape is kept:
   tagged newtype variant) becomes the one object with both property sets, because the
   generator cannot read an `allOf` inside a union. The wire shape is the same object.
 """
-import json, re, sys
+import json
+import re
+import sys
+
 TAGS = {
     "crate::actions": "actions",
     "crate::definition_routes": "definitions",
@@ -30,17 +33,18 @@ TAGS = {
     "crate::run_routes": "runs",
 }
 src, dst = sys.argv[1], sys.argv[2]
-doc = json.load(open(src))
+with open(src, encoding="utf-8") as handle:
+    doc = json.load(handle)
 for item in doc["paths"].values():
     for op in item.values():
-        if isinstance(op, dict) and "tags" in op:
+        if not isinstance(op, dict):
+            continue
+        if "tags" in op:
             unknown = [t for t in op["tags"] if t not in TAGS and not re.fullmatch(r"crate::[a-z][a-z0-9_]*", t)]
             if unknown:
                 sys.exit(f"unmapped tag {unknown}: add it to TAGS")
             op["tags"] = sorted({TAGS.get(t) or re.sub(r"_routes$", "", t.removeprefix("crate::")) for t in op["tags"]})
-for item in doc["paths"].values():
-    for op in item.values():
-        for response in (op.get("responses") or {}).values() if isinstance(op, dict) else []:
+        for response in (op.get("responses") or {}).values():
             content = response.get("content")
             if isinstance(content, dict):
                 kept = {media: body for media, body in content.items() if media == "application/json" or media.endswith("+json")}
@@ -61,9 +65,10 @@ def flatten(schema):
         extra = set(variant) - {"allOf", "description"}
         if extra or set(base) - {"type", "description", "required", "properties", "additionalProperties"} or set(tag) - {"type", "required", "properties"}:
             sys.exit(f"cannot flatten the allOf variant {index} of a oneOf: unexpected keys")
+        description = variant.get("description", base.get("description"))
         schema["oneOf"][index] = {
             "type": "object",
-            "description": variant.get("description", base.get("description")),
+            **({"description": description} if description is not None else {}),
             "required": [*base.get("required", []), *tag.get("required", [])],
             "properties": {**base.get("properties", {}), **tag.get("properties", {})},
             **({"additionalProperties": base["additionalProperties"]} if "additionalProperties" in base else {}),
@@ -74,7 +79,9 @@ for schema in schemas.values():
 hoisted = {}
 def hoist(owner, schema):
     for key in ("oneOf", "anyOf"):
-        for index, variant in enumerate(schema.get(key, [])):
+        for variant in schema.get(key, []):
+            if not isinstance(variant, dict):
+                continue
             for prop, sub in (variant.get("properties") or {}).items():
                 # Any inline object, including a free-form one (additionalProperties: true).
                 if isinstance(sub, dict) and sub.get("type") == "object":
@@ -87,5 +94,6 @@ for name, schema in list(schemas.items()):
     if isinstance(schema, dict):
         hoist(name, schema)
 schemas.update(hoisted)
-json.dump(doc, open(dst, "w"), indent=2, sort_keys=False)
+with open(dst, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, indent=2, sort_keys=False)
 print(f"tags mapped; hoisted {sorted(hoisted)}")

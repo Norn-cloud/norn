@@ -71,8 +71,13 @@ function spin(ms) {
 function parseHold(value) {
   if (value === null) return null;
   const [at, arg, ms] = value.split(":");
-  if (at === "stmt") return { at, n: Number(arg), ms: ms === undefined ? undefined : Number(ms) };
-  if (at === "turn-end") return { at, ms: arg === undefined ? undefined : Number(arg) };
+  const parseNonNeg = (raw) => {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || raw.trim() === "") throw new Error(`invalid hold ${value}`);
+    return n;
+  };
+  if (at === "stmt") return { at, n: parseNonNeg(arg ?? ""), ms: ms === undefined ? undefined : parseNonNeg(ms) };
+  if (at === "turn-end") return { at, ms: arg === undefined ? undefined : parseNonNeg(arg) };
   throw new Error(`unknown hold ${value}`);
 }
 
@@ -142,8 +147,10 @@ export class Cell extends ProductionCell {
     this.constructedAt = Date.now();
   }
   serve(request, body) {
-    const now = Number(request.headers.get(NOW_HEADER));
-    if (request.headers.get(NOW_HEADER) === null || !Number.isFinite(now)) return super.serve(request, body);
+    const raw = request.headers.get(NOW_HEADER);
+    if (raw === null || raw.trim() === "") return super.serve(request, body);
+    const now = Number(raw);
+    if (!Number.isFinite(now)) return super.serve(request, body);
     const url = new URL(request.url);
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, now, body);
   }

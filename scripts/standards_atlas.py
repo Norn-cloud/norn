@@ -51,8 +51,12 @@ class AtlasError(Exception):
 
 
 def _resolve(schema: dict, root: dict) -> dict:
+    seen: set[str] = set()
     while "$ref" in schema:
         ref = schema["$ref"]
+        if ref in seen:
+            raise AtlasError(f"schema: cyclic $ref {ref}")
+        seen.add(ref)
         if not ref.startswith("#/"):
             raise AtlasError(f"schema: only local $ref is supported, got {ref}")
         node = root
@@ -133,6 +137,7 @@ def known_concepts(root: Path) -> set[str]:
             for suffix in KIND_SUFFIXES:
                 if artifact_id.endswith(suffix):
                     artifact_id = artifact_id[: -len(suffix)]
+                    break
             concepts.add(artifact_id)
     return concepts
 
@@ -238,8 +243,21 @@ def entry_rules(entry: dict, where: str, concepts: set[str], root: Path) -> list
             errors.append(f"{where}: a {mapping} mapping cites mappingEvidence")
     elif norn["mappingEvidence"]:
         errors.append(f"{where}: mappingEvidence is only for partial or done mappings")
+    resolved_root = root.resolve()
     for evidence in norn["mappingEvidence"]:
-        if ".." in Path(evidence).parts or not (root / evidence).exists():
+        rel = Path(evidence)
+        if rel.is_absolute() or ".." in rel.parts:
+            errors.append(f"{where}: mappingEvidence {evidence} does not exist")
+            continue
+        cur = root
+        has_symlink = False
+        for part in rel.parts:
+            cur = cur / part
+            if cur.is_symlink():
+                has_symlink = True
+                break
+        target = root / rel
+        if has_symlink or not target.exists() or not target.resolve().is_relative_to(resolved_root):
             errors.append(f"{where}: mappingEvidence {evidence} does not exist")
     licence = entry["licence"]
     if "NOASSERTION" in licence["spdx"] and licence["status"] == "verified":

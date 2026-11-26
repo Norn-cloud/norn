@@ -45,11 +45,12 @@ scrubbed_environment = _quint_apalache.scrubbed_environment
 
 def verdict(primary, oracle, returncode, timed_out, expected):
     """PROOF-QUINT-RUN-1: only complete, agreeing backend results qualify."""
-    if timed_out or oracle.get("errors") != []:
+    if timed_out or not isinstance(primary, dict) or not isinstance(oracle, dict) or oracle.get("errors") != []:
         return "unknown"
     if returncode == 0 and primary.get("status") == "success" and primary.get("distinctStates") == expected and oracle.get("status") == "ok":
         return "ok"
-    primary_shape = trace_shape(primary.get("violation", {}).get("trace"))
+    violation = primary.get("violation")
+    primary_shape = trace_shape(violation.get("trace") if isinstance(violation, dict) else None)
     if returncode == 12 and primary.get("status") == "invariant-violation" and primary_shape and oracle.get("status") == "violation" and primary_shape == trace_shape(oracle.get("trace")):
         return "violation"
     return "unknown"
@@ -109,7 +110,7 @@ def oracle_verdict(returncode, stdout):
 def arithmetic_qualified(model):
     # Each expanded writer expression and law expression has at most 4096
     # scalar leaves. Laws can add derived post-state coefficients again.
-    magnitudes = [abs(int(n)) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model)]
+    magnitudes = [int(n) for n in re.findall(r"(?<![A-Za-z_0-9])\d+", model, re.ASCII)]
     return max(magnitudes, default=0) * 4096 * 4096 <= 2_147_483_647
 
 
@@ -191,12 +192,23 @@ def compile_process(command, environment, work, deadline):
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        process.wait(timeout=max(0, deadline - time.monotonic()))
+        try:
+            process.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
 
 
 def oracle_record(status, trace_raw):
     """Commit exact scalar states; tool metadata and diagnostic logs are run-local."""
     trace = oracle_trace(json.loads(trace_raw)) if trace_raw else None
+    return _oracle_record_from_trace(status, trace)
+
+
+def _oracle_record_from_trace(status, trace):
     return json.dumps({"status": status, "trace": trace}, sort_keys=True, separators=(",", ":"))
 
 
@@ -233,7 +245,8 @@ def run(args):
     root = args.tools.resolve()
     environment = scrubbed_environment(os.environ.copy())
     environment["QUINT_HOME"] = str(root / "quint-home")
-    environment["PATH"] = str(root / "bin") + os.pathsep + environment["PATH"]
+    existing_path = environment.get("PATH", "")
+    environment["PATH"] = str(root / "bin") + (os.pathsep + existing_path if existing_path else "")
     jar = root / "quint-home/apalache-dist-0.56.1/apalache/lib/apalache.jar"
     if hashlib.sha256(jar.read_bytes()).hexdigest() != "4753c0ebb2cbb266e2c6ac19ab5ca3827d726cc80fd1fc5d7c1eeb64736cd60b":
         raise ValueError("Apalache compiler digest mismatch")
@@ -245,8 +258,12 @@ def run(args):
         tla_bytes, compilation = compile_tla(args, root, environment, work)
         tla = work / "generated.tla"
         primary_path = work / "primary.json"
-        subprocess.run([str(args.bun), "run", str(ROOT / "tools/norn-proofs/check.ts"), str(tla), str(primary_path), str(work), str(args.seed)],
-                       env=environment, capture_output=True, check=True, timeout=120)
+        bun_run = compile_process(
+            [str(args.bun), "run", str(ROOT / "tools/norn-proofs/check.ts"), str(tla), str(primary_path), str(work), str(args.seed)],
+            environment, work, time.monotonic() + 120,
+        )
+        if bun_run.returncode != 0:
+            raise subprocess.CalledProcessError(bun_run.returncode, bun_run.args, bun_run.stdout, bun_run.stderr)
         primary_raw = primary_path.read_text()
         primary = json.loads(primary_raw)
         oracle_directory = work / "oracle-run"
@@ -257,8 +274,9 @@ def run(args):
         ], environment, work, time.monotonic() + 120)
         status = oracle_verdict(checked.returncode, checked.stdout.decode())
         trace_raw = (oracle_directory / "violation.itf.json").read_text() if status == "violation" else None
-        oracle = {"status": status, "errors": [], "trace": oracle_trace(json.loads(trace_raw)) if trace_raw else None}
-        oracle_raw = oracle_record(status, trace_raw)
+        parsed_trace = oracle_trace(json.loads(trace_raw)) if trace_raw else None
+        oracle = {"status": status, "errors": [], "trace": parsed_trace}
+        oracle_raw = _oracle_record_from_trace(status, parsed_trace)
         expected = 1 if args.step == "idle" else args.expected_states
         status = verdict(primary, oracle, checked.returncode, False, expected)
         return {"status": status, "errors": [], "reason": "backend parity" if status != "unknown" else "unqualified or disagreeing backend verdicts",

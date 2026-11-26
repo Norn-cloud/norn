@@ -105,6 +105,19 @@ impl Drop for Lease<'_> {
     }
 }
 
+fn is_full(
+    attempts: &BTreeMap<(TenantId, String), Held>,
+    tenant: &TenantId,
+    memory: usize,
+) -> bool {
+    let byte_cap = u64::try_from(memory).unwrap_or(u64::MAX).saturating_mul(64);
+    let mine = attempts.keys().filter(|(owner, _)| owner == tenant).count();
+    let bytes = attempts
+        .values()
+        .fold(0_u64, |total, held| total.saturating_add(held.bytes));
+    attempts.len() >= MAX_ATTEMPTS || mine >= MAX_TENANT_ATTEMPTS || bytes > byte_cap
+}
+
 /// Evict idle attempts past their time to live, then refuse a new one while
 /// `tenant` or the engine is at a bound (in attempts or bytes on disk): a
 /// live landing is never evicted to make room.
@@ -120,14 +133,7 @@ fn make_room(engine: &Engine, tenant: &TenantId) -> Outcome<()> {
     for key in expired {
         removed.extend(attempts.remove(&key).map(|held| held.dir));
     }
-    let byte_cap = u64::try_from(engine.memory)
-        .unwrap_or(u64::MAX)
-        .saturating_mul(64);
-    let mine = attempts.keys().filter(|(owner, _)| owner == tenant).count();
-    let bytes = attempts
-        .values()
-        .fold(0_u64, |total, held| total.saturating_add(held.bytes));
-    let full = attempts.len() >= MAX_ATTEMPTS || mine >= MAX_TENANT_ATTEMPTS || bytes > byte_cap;
+    let full = is_full(&attempts, tenant, engine.memory);
     drop(attempts);
     remove_dirs(removed);
     if full {
@@ -165,6 +171,14 @@ pub(super) fn begin<'e>(
         .to_owned();
     let key = (tenant.clone(), token);
     let mut attempts = engine.attempts();
+    if is_full(&attempts, tenant, engine.memory) {
+        drop(attempts);
+        let _removed = std::fs::remove_dir_all(&dir);
+        return Err(refusal(
+            EXHAUSTED,
+            "the engine holds as many landings as it may",
+        ));
+    }
     if attempts.contains_key(&key) {
         drop(attempts);
         let _removed = std::fs::remove_dir_all(&dir);

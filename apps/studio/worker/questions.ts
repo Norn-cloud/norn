@@ -1,4 +1,4 @@
-import type { Cell } from "./cell.ts"
+import { findingsOf, type Cell } from "./cell.ts"
 
 /**
  * `/api/questions/*`: what Studio's question builders are built from, and the
@@ -102,9 +102,6 @@ export function planOf(question: QuestionShape, metrics: readonly CellMetric[]) 
     : metric.type_params?.expr ? [{ metric: metric.name, property: metric.type_params.expr }] : [])
   return { grain: typeof question.objectSet === "string" ? question.objectSet : "", question, sums, metrics: selected.map(({ name, label }) => ({ name, label })) }
 }
-
-interface Diagnostic { readonly code?: unknown; readonly message?: unknown; readonly span?: { readonly pointer?: unknown } | null }
-const findingsOf = (diagnostics: unknown) => (Array.isArray(diagnostics) ? diagnostics as Diagnostic[] : []).map((d) => ({ code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null }))
 
 /** A definition id for checking a question: its own name when that is a valid id. */
 const checkId = (name: unknown) => typeof name === "string" && /^[a-z][a-z0-9._-]{0,127}$/.test(name) ? name : "studio.question.check"

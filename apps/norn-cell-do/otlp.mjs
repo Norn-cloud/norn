@@ -83,7 +83,9 @@ const FIELD_VALUE = /^[\x20-\x7e\x80-\xff]{0,4096}$/;
 
 /** Whether `hostname` (as URL parses it) is this machine. */
 export function isLoopback(hostname) {
-  return hostname === "localhost" || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+  if (hostname === "localhost" || hostname === "[::1]") return true;
+  const match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+  return match !== null && Number(match[1]) <= 255 && Number(match[2]) <= 255 && Number(match[3]) <= 255;
 }
 
 /** A string setting, trimmed; "" when unset or not a string. */
@@ -174,6 +176,12 @@ export class Telemetry {
     this.dropped = 0;
     this.sending = null;
     this.waiting = null;
+    const resource = { "service.name": this.config.service, "service.instance.id": this.instance, "telemetry.sdk.name": "norn-otlp", "telemetry.sdk.language": "webjs" };
+    for (const [key, value] of this.config.resource) if (RESOURCE_KEYS.has(key) && ENVIRONMENTS.has(value)) resource[key] = value;
+    this.resourcePayload = { attributes: keyValues(resource) };
+    const headers = Object.fromEntries(Object.entries(this.config.headers).filter(([k]) => k.toLowerCase() !== "content-type"));
+    headers["content-type"] = "application/json";
+    this.postHeaders = headers;
   }
 
   series(name, kind, unit, input, bounds) {
@@ -270,9 +278,7 @@ export class Telemetry {
   }
 
   resource() {
-    const resource = { "service.name": this.config.service, "service.instance.id": this.instance, "telemetry.sdk.name": "norn-otlp", "telemetry.sdk.language": "webjs" };
-    for (const [key, value] of this.config.resource) if (RESOURCE_KEYS.has(key) && ENVIRONMENTS.has(value)) resource[key] = value;
-    return { attributes: keyValues(resource) };
+    return this.resourcePayload;
   }
 
   /** The buffered data as OTLP payloads, resetting the buffers (delta temporality). */
@@ -281,11 +287,13 @@ export class Telemetry {
     const start = this.windowStart;
     this.windowStart = end;
     this.lastFlush = end;
+    const startNano = nanos(start);
+    const endNano = nanos(end);
     const metrics = [];
     for (const [name, metric] of this.metrics) {
       const dataPoints = [];
       for (const point of metric.series.values()) {
-        const base = { attributes: keyValues(point.attrs), startTimeUnixNano: nanos(start), timeUnixNano: nanos(end) };
+        const base = { attributes: keyValues(point.attrs), startTimeUnixNano: startNano, timeUnixNano: endNano };
         if (metric.kind === "sum") dataPoints.push({ ...base, asDouble: point.value });
         else if (point.count > 0) dataPoints.push({ ...base, count: String(point.count), sum: point.sum, min: point.min, max: point.max, bucketCounts: point.counts.map(String), explicitBounds: metric.bounds });
       }
@@ -295,7 +303,7 @@ export class Telemetry {
         : { name, unit: metric.unit, histogram: { aggregationTemporality: 1, dataPoints } });
     }
     if (this.dropped > 0) {
-      metrics.push({ name: "norn_otel_dropped_total", unit: "1", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [{ attributes: [], startTimeUnixNano: nanos(start), timeUnixNano: nanos(end), asDouble: this.dropped }] } });
+      metrics.push({ name: "norn_otel_dropped_total", unit: "1", sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [{ attributes: [], startTimeUnixNano: startNano, timeUnixNano: endNano, asDouble: this.dropped }] } });
     }
     const spans = this.spans;
     this.metrics = new Map();
@@ -303,7 +311,7 @@ export class Telemetry {
     this.spans = [];
     this.dropped = 0;
     const scope = { name: "norn", version: "1" };
-    const resource = this.resource();
+    const resource = this.resourcePayload;
     return {
       metrics: metrics.length === 0 ? null : { resourceMetrics: [{ resource, scopeMetrics: [{ scope, metrics }] }] },
       traces: spans.length === 0 ? null : { resourceSpans: [{ resource, scopeSpans: [{ scope, spans }] }] },
@@ -324,7 +332,7 @@ export class Telemetry {
       try {
         const response = await send(`${this.config.endpoint}${path}`, {
           method: "POST",
-          headers: { ...this.config.headers, "content-type": "application/json" },
+          headers: this.postHeaders,
           body: JSON.stringify(body),
           redirect: "manual",
           signal: AbortSignal.timeout(SEND_TIMEOUT_MS),

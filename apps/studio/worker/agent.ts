@@ -1,4 +1,5 @@
-import type { Cell } from "./cell.ts"
+import { findingsOf, type Cell, type Finding } from "./cell.ts"
+export type { Finding }
 import type { Answer, Ask, Model } from "./model.ts"
 import { QUESTION_DEFAULTS, enumValues, populationOf, readCellCatalog, type CellCatalog, type CellMetric } from "./questions.ts"
 
@@ -220,11 +221,7 @@ export function editableDashboard(payload: unknown): Proposed | null {
   return { title: payload.title, note: "", tiles }
 }
 
-export interface Finding { readonly code: string; readonly message: string; readonly pointer: string | null }
 export interface Verdict { readonly admitted: boolean; readonly findings: readonly Finding[]; readonly restatement: string | null; readonly restatementSha256: string | null }
-
-const findingsOf = (diagnostics: unknown): Finding[] => (Array.isArray(diagnostics) ? diagnostics : []).map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) =>
-  ({ code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null }))
 
 /** The cell's checker on a definition, as the person: admitted (with its restatement) or refused (with its findings). */
 export async function admit(cell: Cell, id: string, definition: unknown): Promise<Verdict | { readonly unavailable: string }> {

@@ -674,22 +674,30 @@ fn member(alias: &str, id: &str, version: u64) -> Result<String, CellError> {
 
 fn load(conn: &Connection, plan: &TransformPlan, input: &TransformInput) -> Result<(), CellError> {
     for scan in plan.inputs.values() {
-        let Some(rows) = input.rows.get(&scan.alias) else {
-            continue;
-        };
-        let schema = plan
+        let Some(schema) = plan
             .nodes
             .values()
             .find(|node| matches!(&node.step, Step::Scan { alias } if alias == &scan.alias))
             .map(|node| &node.schema)
-            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
+        else {
+            continue;
+        };
+        let Some(rows) = input.rows.get(&scan.alias) else {
+            return Err(CellError::Engine(format!(
+                "missing transform input `{}`",
+                scan.alias
+            )));
+        };
         let mut columns = Vec::new();
         let mut placeholders = Vec::new();
+        let mut is_timestamp = Vec::with_capacity(schema.columns.len());
         for column in &schema.columns {
             let kind = kind(&column.ty)?;
             columns.push(format!("{} {}", quote(&column.name), duck_type(kind)));
             placeholders.push(format!("CAST(? AS {})", duck_type(kind)));
-            if kind == Kind::Timestamp {
+            let timestamp = kind == Kind::Timestamp;
+            is_timestamp.push(timestamp);
+            if timestamp {
                 columns.push(format!("{} HUGEINT", key_column(&column.name)));
                 placeholders.push("CAST(? AS HUGEINT)".to_owned());
             }
@@ -707,14 +715,13 @@ fn load(conn: &Connection, plan: &TransformPlan, input: &TransformInput) -> Resu
             placeholders.join(", ")
         )))?;
         for row in rows {
-            let mut values: Vec<Option<String>> = Vec::new();
-            for column in &schema.columns {
+            let mut values: Vec<Option<String>> = Vec::with_capacity(placeholders.len());
+            for (column, &timestamp) in schema.columns.iter().zip(&is_timestamp) {
                 let value = if column.name == "id" {
                     Some(row.id.clone())
                 } else {
                     bound(row.values.get(&column.name))?
                 };
-                let timestamp = kind(&column.ty)? == Kind::Timestamp;
                 let key = if timestamp {
                     Some(timestamp_key(value.as_deref())?)
                 } else {
@@ -792,7 +799,7 @@ fn execute(
 ) -> Result<TransformOutput, CellError> {
     let conn = db(Connection::open_in_memory())?;
     db(conn.execute_batch(
-        "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1;",
+        "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; SET enable_external_access=false; SET threads=1; SET memory_limit='256MB';",
     ))?;
     load(&conn, plan, input)?;
     // Every node's volume first: a node past the bound refuses the whole

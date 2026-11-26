@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
-import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defaultFetch, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type StudioScope, type Tile } from "@/lib/definitions"
+import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defaultFetch, duplicateDashboard, saveDashboard, studioScopeKey, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
 import { DashboardAssistant } from "./dashboards/assistant.tsx"
@@ -90,7 +90,7 @@ export function DashboardsPage() {
     },
     onSuccess: refresh,
   })
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const scopeKey = scope.data ? studioScopeKey(scope.data) : ""
   const [removed, setRemoved] = useState<Removed>()
   useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({
@@ -205,7 +205,6 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       if ("saved" in result) { setAt(result.saved); editor.markSaved(dashboard); onSaved?.(result.saved) }
     },
   })
-  // While the question sheet is open, its builder owns undo and redo.
   // One save at a time, from the shortcut or the toolbar; an ordinary save of an unchanged dashboard does nothing.
   const saving = useRef(false)
   const requestSave = (next: Dashboard, overwrite = false) => {
@@ -357,7 +356,7 @@ export function DashboardBoardPage() {
     },
     onSuccess: (copied) => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards/$id", params: { id: copied } }) },
   })
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const scopeKey = scope.data ? studioScopeKey(scope.data) : ""
   const [removed, setRemoved] = useState<Removed>()
   useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({

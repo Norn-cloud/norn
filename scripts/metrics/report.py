@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -50,13 +51,11 @@ FAMILIES = {
 }
 
 
-def _key(record: dict) -> tuple:
-    store = _sibling("record")
-    return store.series_key(record)
-
-
 def _source_md(url: str) -> str:
-    return f"[link]({url})" if url.startswith(("https://", "http://")) else "thread"
+    if not url.startswith(("https://", "http://")):
+        return "thread"
+    safe = url.replace("(", "%28").replace(")", "%29").replace("|", "%7C")
+    return f"[link]({safe})"
 
 
 def _source_html(url: str) -> str:
@@ -68,21 +67,22 @@ def series(records: list[dict]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = defaultdict(list)
     for record in store.fold(records):
         out[record["metric"]].append(record)
-    return {metric: sorted(rows, key=_key) for metric, rows in sorted(out.items())}
+    return {metric: sorted(rows, key=store.series_key) for metric, rows in sorted(out.items())}
 
 
 def number(value: float) -> str:
-    if isinstance(value, int) or float(value).is_integer():
+    if isinstance(value, int) or (math.isfinite(value) and float(value).is_integer()):
         return f"{int(value):,}"
     return f"{value:.4g}"
 
 
 def sparkline(values: list[float]) -> str:
-    if not values:
+    finite = [v for v in values if math.isfinite(v)]
+    if not finite:
         return ""
-    low, high = min(values), max(values)
+    low, high = min(finite), max(finite)
     span = high - low
-    return "".join(SPARK[0 if span == 0 else round((v - low) / span * (len(SPARK) - 1))] for v in values[-40:])
+    return "".join(SPARK[0 if span == 0 else round((v - low) / span * (len(SPARK) - 1))] for v in finite[-40:])
 
 
 def family(metric: str) -> str:
@@ -144,13 +144,14 @@ def markdown(records: list[dict], groups: dict[str, list[dict]] | None = None) -
 
 
 def _svg(values: list[float], width: int = 160, height: int = 32) -> str:
-    if len(values) < 2:
+    finite = [v for v in values if math.isfinite(v)]
+    if len(finite) < 2:
         return ""
-    low, high = min(values), max(values)
+    low, high = min(finite), max(finite)
     span = (high - low) or 1
-    step = width / (len(values) - 1)
+    step = width / (len(finite) - 1)
     points = " ".join(f"{i * step:.1f},{height - 2 - (v - low) / span * (height - 4):.1f}"
-                      for i, v in enumerate(values))
+                      for i, v in enumerate(finite))
     return (f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" '
             f'aria-label="trend"><polyline points="{points}" fill="none" stroke="var(--line)" '
             f'stroke-width="1.5"/></svg>')
