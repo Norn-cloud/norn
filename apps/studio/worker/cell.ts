@@ -1,6 +1,7 @@
 import { hostToken, type NornActor, type ValidatedWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { cellScope, scopeQuery } from "./scope.ts"
+import type { Cell, CellAnswer } from "./cell-call.ts"
 
 /**
  * The Worker's own calls to the cell, made as the signed-in actor in that
@@ -9,15 +10,7 @@ import { cellScope, scopeQuery } from "./scope.ts"
  * the Worker gains no right of its own. Used by server-side routes (the
  * question catalog and check, the dashboard agent).
  */
-export type CellAnswer =
-  | { readonly kind: "answer"; readonly status: number; readonly body: unknown }
-  /** The workspace has no data environment: nothing was asked. */
-  | { readonly kind: "no-cell" }
-
-export interface Cell {
-  get(path: string): Promise<CellAnswer>
-  post(path: string, body: unknown): Promise<CellAnswer>
-}
+export type { Cell, CellAnswer } from "./cell-call.ts"
 
 export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedScope?: ValidatedWriteScope): Cell {
   const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<CellAnswer> => {

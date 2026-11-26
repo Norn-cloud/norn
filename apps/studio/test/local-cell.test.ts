@@ -80,6 +80,14 @@ test("/api/host/* reaches the dev host as the session, with the path, query, met
   expect(seen).toEqual([{ url: "http://127.0.0.1:4174/v1/actions/shop.product.add?orgId=local&environmentId=dev", method: "POST", authorization: "Bearer secret-dev-token", body: '{"input":{"price":19.990}}' }])
 })
 
+test("/api/questions/* is the Worker's own handler, reading the cell as the session", async () => {
+  const { seen, call } = studio()
+  const response = await call("/api/questions/catalog")
+  expect(response.status).toBeGreaterThanOrEqual(400)
+  expect(seen).toEqual([{ url: "http://127.0.0.1:4174/v1/questions:catalog?orgId=local&environmentId=dev", method: "GET", authorization: "Bearer secret-dev-token", body: "" }])
+  expect((await call("/api/questions/nothing")).status).toBe(404)
+})
+
 test("another site's request, or one for another host name, is refused before anything is forwarded", async () => {
   const { seen, call } = studio()
   expect((await call("/api/host/v1/definitions", { method: "POST", headers: { origin: "https://evil.example" } })).status).toBe(403)
@@ -93,6 +101,7 @@ test("another site's request, or one for another host name, is refused before an
 test("other /api routes are not served; the app's files are, and every other path is the app's page", async () => {
   const { seen, call } = studio()
   expect((await call("/api/agent")).status).toBe(404)
+  expect((await call("/api/questions")).status).toBe(404)
   expect(await (await call("/assets/app.js")).text()).toBe("console.log(1)")
   expect(await (await call("/sources/canon.Item/demo/item/gold")).text()).toContain("<div id=root>")
   // A path out of the app's directory is not a file of it.

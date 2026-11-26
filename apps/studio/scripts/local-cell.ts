@@ -1,7 +1,9 @@
 /**
  * Studio over a local `norn dev` cell: one loopback-only server that serves the
- * built app and stands in for the two Studio Worker routes the pages read
- * through, `/api/me` and `/api/host/*`, for the developer `norn dev` serves.
+ * built app and stands in for the Studio Worker routes the pages read through,
+ * `/api/me`, `/api/host/*` and the question builders' `/api/questions/*` (the
+ * Worker's own handler, over the cell as the session), for the developer
+ * `norn dev` serves.
  *
  *   bun run build && bun run local --project ../my-project [--port 5180] [--as reviewer]
  *
@@ -35,6 +37,8 @@
  */
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { isAbsolute, join, relative, resolve } from "node:path"
+import type { Cell } from "../worker/cell-call.ts"
+import { questions } from "../worker/questions.ts"
 
 export interface DevSession {
   readonly url: string
@@ -132,6 +136,27 @@ export async function localStudio(request: Request, studio: LocalStudio): Promis
         organization: { id: session.orgId, name: session.project, role: session.as === "reviewer" ? "local reviewer" : session.as === "principal" ? (session.roles ?? []).join(", ") : "local developer" },
         environmentId: session.environmentId,
       }, { headers: { "cache-control": "no-store" } })
+    }
+    // The question builders' catalog, checker and recommendations: the hosted Worker's own handler,
+    // reading the cell as this session, so the local Studio answers them exactly as the deployed one.
+    if (path.startsWith("/api/questions/")) {
+      const fetcher = studio.fetcher ?? fetch
+      const query = new URLSearchParams({ orgId: session.orgId, environmentId: session.environmentId }).toString()
+      const call = async (method: "GET" | "POST", cellPath: string, body?: unknown) => {
+        const headers: Record<string, string> = { authorization: `Bearer ${session.token}`, accept: "application/json" }
+        if (body !== undefined) headers["content-type"] = "application/json"
+        try {
+          const answer = await fetcher(`${session.url}${cellPath}?${query}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+          const text = await answer.text()
+          let parsed: unknown = null
+          try { parsed = JSON.parse(text) } catch { parsed = null }
+          return { kind: "answer" as const, status: answer.status, body: parsed }
+        } catch {
+          return { kind: "answer" as const, status: 503, body: { error: `norn dev at ${session.url} did not answer; is it still running?` } }
+        }
+      }
+      const cell: Cell = { get: (cellPath) => call("GET", cellPath), post: (cellPath, body) => call("POST", cellPath, body) }
+      return questions(request, cell, path.slice("/api/questions".length))
     }
     if (path.startsWith("/api/host/")) {
       const headers = new Headers({ authorization: `Bearer ${session.token}` })

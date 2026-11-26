@@ -53,8 +53,6 @@ export interface Workspace {
   readonly ready: Record<string, any>
   /** The local Studio serving `actor` (the developer when omitted). */
   readonly studio: (actor?: string) => string
-  /** The registry's own files: the definitions the rows build their assertions from. */
-  readonly registry: (path: string) => any
   /** The pack artifacts the project carries, by artifact id. */
   readonly artifacts: ReadonlyMap<string, any>
   readonly stop: () => Promise<void>
@@ -128,7 +126,6 @@ export async function packWorkspace(template: string, as: readonly string[]): Pr
         if (url === undefined) throw new Error(`no local Studio as ${actor}`)
         return url
       },
-      registry: (path: string) => JSON.parse(readFileSync(join(REPO, "registry", path), "utf8")),
     }
   } catch (error) {
     await stop()
