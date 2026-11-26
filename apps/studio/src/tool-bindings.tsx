@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link2, Play, Wrench } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -93,7 +93,7 @@ function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; 
         <Button size="sm" type="submit" disabled={save.isPending}>{binding === undefined ? "Add binding" : "Save binding"}</Button>
         <Button size="sm" variant="ghost" type="button" onClick={onDone}>Cancel</Button>
       </div>
-      {problem && <p role="alert" className="text-body text-destructive">{problem}</p>}
+      {problem && <p role="alert" className="text-body text-destructive-text">{problem}</p>}
       {save.isError && <ConnectorProblem error={save.error} scope={effectiveScope} />}
     </form>
   )
@@ -117,13 +117,13 @@ function TestRun({ binding, tool, scope }: { readonly binding: Binding; readonly
     <form aria-label={`Test run ${binding.label}`} className="space-y-3 border-t px-4 py-3" onSubmit={(e) => { e.preventDefault(); submit() }}>
       {fields.map((field) => (
         <label key={field.name} className="grid gap-1 text-body">
-          <span>{field.label}{field.required && <span className="text-destructive"> *</span>} <span className="text-meta text-muted-foreground">{field.kind}</span></span>
+          <span>{field.label}{field.required && <span className="text-destructive-text"> *</span>} <span className="text-meta text-muted-foreground">{field.kind}</span></span>
           <FieldInput field={field} value={texts[field.name] ?? ""} onChange={(next) => setTexts({ ...texts, [field.name]: next })} />
           {field.description && <span className="text-meta text-muted-foreground">{field.description}</span>}
         </label>
       ))}
       <Button size="sm" type="submit" disabled={run.isPending}><Play />Run</Button>
-      {problem && <p role="alert" className="text-body text-destructive">{problem}</p>}
+      {problem && <p role="alert" className="text-body text-destructive-text">{problem}</p>}
       {run.isError && <ConnectorProblem error={run.error} scope={effectiveScope} />}
       {run.isSuccess && <pre aria-label="Result" className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-meta">{JSON.stringify(run.data.result, null, 2)}</pre>}
     </form>
@@ -147,7 +147,7 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div>{binding.label}</div>
-          <div className="font-mono text-meta text-muted-foreground">{binding.app}.{binding.tool}</div>
+          <div className="font-mono text-meta text-muted-foreground"><bdi dir="ltr">{binding.app}.{binding.tool}</bdi></div>
         </div>
         <Badge variant="outline">{binding.runRole === "admin" ? "Admins only" : "Members"}</Badge>
         <Button size="sm" variant="ghost" aria-expanded={mode === "view"} onClick={() => toggle("view")}>View</Button>
@@ -159,10 +159,10 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
         <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 px-4 pb-3 text-meta">
           <dt className="text-muted-foreground">Fixed inputs</dt>
           <dd>{Object.keys(binding.inputMapping).length === 0 ? "none" : Object.entries(binding.inputMapping).map(([name, { fixed }]) => `${name} = ${show(fixed)}`).join(", ")}</dd>
-          <dt className="text-muted-foreground">Connector</dt><dd className="font-mono">{binding.connectorRef}</dd>
+          <dt className="text-muted-foreground">Connector</dt><dd className="font-mono"><bdi dir="ltr">{binding.connectorRef}</bdi></dd>
           <dt className="text-muted-foreground">In the cell</dt>
-          <dd>{binding.definition === null ? "Kept by Studio until this deployment's cell stores bindings" : <span className="font-mono">{binding.definition.id} · v{binding.definition.version}</span>}</dd>
-          <dt className="text-muted-foreground">Manifest</dt><dd className="truncate font-mono" title={binding.manifestDigest}>{binding.manifestDigest}</dd>
+          <dd>{binding.definition === null ? "Kept by Studio until this deployment's cell stores bindings" : <span className="font-mono"><bdi dir="ltr">{binding.definition.id} · v{binding.definition.version}</bdi></span>}</dd>
+          <dt className="text-muted-foreground">Manifest</dt><dd className="truncate font-mono" title={binding.manifestDigest}><bdi dir="ltr">{binding.manifestDigest}</bdi></dd>
           <dt className="text-muted-foreground">Last changed</dt><dd>{new Date(binding.updatedAt).toLocaleString()}</dd>
           <dt className="text-muted-foreground">Input schema</dt>
           <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-meta">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
@@ -171,7 +171,7 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
       {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-body text-muted-foreground">Loading the tool…</p>}
       {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} scope={scope} />}
       {mode !== null && mode !== "view" && tools.isSuccess && tool === undefined && (
-        <p role="alert" className="border-t px-4 py-3 text-body text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
+        <p role="alert" className="border-t px-4 py-3 text-body text-destructive-text">The gateway no longer lists <bdi dir="ltr">{binding.app}.{binding.tool}</bdi>. Remove this binding, or bind the tool again once the app serves it.</p>
       )}
       {mode === "edit" && tool && <BindingEditor tool={tool} binding={binding} onDone={() => setMode(null)} scope={scope} />}
       {mode === "run" && tool && <TestRun binding={binding} tool={tool} scope={scope} />}
@@ -198,16 +198,20 @@ function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
         </select>
       </label>
       {tools.isError && <ConnectorProblem error={tools.error} scope={scope} />}
-      {tools.data?.tools.map((tool) => (
-        <div key={tool.name} className="rounded-md border">
-          <div className="flex items-center gap-2 px-3 py-2">
-            <div className="min-w-0 flex-1"><span className="font-mono text-body">{tool.name}</span>{tool.description && <p className="line-clamp-1 text-meta text-muted-foreground">{tool.description}</p>}</div>
-            {tool.bindings.length > 0 && <Badge variant="secondary">Bound</Badge>}
-            <Button size="sm" variant="outline" aria-label={`Bind ${tool.name}`} onClick={() => setBinding(binding === tool.name ? null : tool.name)}>Bind</Button>
-          </div>
-          {binding === tool.name && <BindingEditor tool={tool} onDone={() => setBinding(null)} scope={scope} />}
+      {tools.data && tools.data.tools.length > 0 && (
+        <div className="divide-y divide-border">
+          {tools.data.tools.map((tool) => (
+            <div key={tool.name}>
+              <div className="flex items-center gap-2 py-2">
+                <div className="min-w-0 flex-1"><span className="font-mono text-body"><bdi dir="ltr">{tool.name}</bdi></span>{tool.description && <p className="line-clamp-1 text-meta text-muted-foreground">{tool.description}</p>}</div>
+                {tool.bindings.length > 0 && <Badge variant="secondary">Bound</Badge>}
+                <Button size="sm" variant="outline" aria-label={`Bind ${tool.name}`} onClick={() => setBinding(binding === tool.name ? null : tool.name)}>Bind</Button>
+              </div>
+              {binding === tool.name && <BindingEditor tool={tool} onDone={() => setBinding(null)} scope={scope} />}
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   )
 }
@@ -220,15 +224,45 @@ export function ToolBindings() {
   const bindings = useQuery({ queryKey: ["connectors", "bindings", scopeKey], queryFn: () => api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings", { scope: activeScope }) })
   const fallbackPinnedScope = usePinnedWorkspaceScope(bindings.data !== undefined)
   const pinnedScope = activeScope !== undefined ? activeScope : fallbackPinnedScope
-  const hasPending = bindings.data?.bindings.some((binding) => binding.state === "pending") === true
+  const pinnedScopeKey = pinnedScope ? `${pinnedScope.orgId}:${pinnedScope.environmentId ?? ""}` : ""
+  const pinnedScopeRef = useRef(pinnedScope)
+  pinnedScopeRef.current = pinnedScope
+  const pendingKey = (bindings.data?.bindings ?? [])
+    .filter((binding) => binding.state === "pending")
+    .map((binding) => binding.id)
+    .sort()
+    .join(",")
   const canManage = bindings.data?.manage === true
+  const lastReconcileKey = useRef<string | null>(null)
   useEffect(() => {
-    if (!hasPending || !canManage || pinnedScope === undefined || pinnedScope === null) return
-    const targetScope = pinnedScope
+    if (pendingKey === "" || !canManage || pinnedScopeKey === "") {
+      lastReconcileKey.current = null
+      return
+    }
+    const targetScope = pinnedScopeRef.current
+    if (targetScope === undefined || targetScope === null) return
+    const reconcileKey = `${pinnedScopeKey}|${pendingKey}`
+    if (lastReconcileKey.current === reconcileKey) return
+    lastReconcileKey.current = reconcileKey
+    let cancelled = false
+    let settled = false
     const targetKey = `${targetScope.orgId}:${targetScope.environmentId ?? ""}`
     void api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings:reconcile", { method: "POST", scope: targetScope })
-      .then((reconciled) => client.setQueryData(["connectors", "bindings", targetKey], reconciled), () => undefined)
-  }, [hasPending, canManage, pinnedScope, client])
+      .then(
+        (reconciled) => {
+          settled = true
+          if (!cancelled) client.setQueryData(["connectors", "bindings", targetKey], reconciled)
+        },
+        () => {
+          settled = true
+          if (!cancelled && lastReconcileKey.current === reconcileKey) lastReconcileKey.current = null
+        },
+      )
+    return () => {
+      cancelled = true
+      if (!settled && lastReconcileKey.current === reconcileKey) lastReconcileKey.current = null
+    }
+  }, [pendingKey, canManage, pinnedScopeKey, client])
   return (
     <Panel icon={Link2} label="Tool bindings">
       <Well>

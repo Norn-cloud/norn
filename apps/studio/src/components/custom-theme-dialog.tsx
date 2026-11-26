@@ -1,6 +1,6 @@
 import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
 import { Check, Copy, Palette, RotateCcw, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppearance } from "@/lib/appearance"
 import {
@@ -26,12 +26,21 @@ export function CustomThemeDialog({
   const [draft, setDraft] = useState("")
   const [issues, setIssues] = useState<readonly StudioThemeValidationIssue[]>([])
   const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (copyTimer.current !== null) clearTimeout(copyTimer.current)
+  }, [])
 
   useEffect(() => {
     if (!open) return
     setDraft(exportStudioThemeJson(skin, customTheme))
     setIssues([])
     setCopied(false)
+    if (copyTimer.current !== null) {
+      clearTimeout(copyTimer.current)
+      copyTimer.current = null
+    }
   }, [open, skin, customTheme])
 
   const applyDraft = () => {
@@ -49,7 +58,11 @@ export function CustomThemeDialog({
     try {
       await navigator.clipboard?.writeText(draft)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
+      if (copyTimer.current !== null) clearTimeout(copyTimer.current)
+      copyTimer.current = setTimeout(() => {
+        copyTimer.current = null
+        setCopied(false)
+      }, 1800)
     } catch {
       /* clipboard blocked */
     }
@@ -57,9 +70,9 @@ export function CustomThemeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogBackdrop className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
+      <DialogBackdrop className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] transition-opacity duration-150 motion-reduce:transition-none data-starting-style:opacity-0 data-ending-style:opacity-0" />
       <DialogContent
-        className="fixed top-[8vh] left-1/2 z-50 m-0 flex max-h-[84vh] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 flex-col overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
+        className="fixed top-[8vh] start-1/2 z-50 m-0 flex max-h-[84vh] w-[min(40rem,calc(100vw-2rem))] ltr:-translate-x-1/2 rtl:translate-x-1/2 flex-col overflow-hidden rounded-2xl bg-popover text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 motion-reduce:transition-none data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
@@ -70,7 +83,7 @@ export function CustomThemeDialog({
           </div>
           <DialogClose
             aria-label="Close"
-            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:size-[44px]"
           >
             <X aria-hidden className="size-4" />
           </DialogClose>
@@ -102,6 +115,7 @@ export function CustomThemeDialog({
 
           <textarea
             aria-label="Theme JSON definition"
+            dir="ltr"
             spellCheck={false}
             value={draft}
             onChange={(event) => {

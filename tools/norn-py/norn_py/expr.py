@@ -21,7 +21,9 @@ from __future__ import annotations
 import ast
 import inspect
 import linecache
+import os
 import re
+import stat
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -31,7 +33,11 @@ from typing import Any, Literal, NoReturn, final, overload
 from .canonical import OMIT, NornFloatRefusalError, SourceSpan
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_CONTROL_OR_ESCAPE_RE = re.compile(r"[\\\n\r\x00-\x1f]")
+_CONTROL_OR_ESCAPE_RE = re.compile(r"[\\\n\r\x00-\x1f\x7f]")
+
+MAX_DECIMAL_EXPONENT: int = 1000
+MAX_DECIMAL_DIGITS: int = 1000
+MAX_CALLBACK_SOURCE_BYTES: int = 1_048_576
 
 _EXPR_TOKEN = object()
 
@@ -150,6 +156,11 @@ class _NotNode:
 
 
 @dataclass(frozen=True, slots=True)
+class _UnaryNegNode:
+    operand: _ExprNode
+
+
+@dataclass(frozen=True, slots=True)
 class _ConditionalNode:
     condition: _ExprNode
     yes: _ExprNode
@@ -169,12 +180,31 @@ type _ExprNode = (
     | _BinaryNode
     | _LogicalNode
     | _NotNode
+    | _UnaryNegNode
     | _ConditionalNode
     | _CallNode
 )
 
 
 # ------------------------------------------------------------------ ZEN rendering (exact TS parity)
+
+
+def format_exact_decimal(value: Decimal, span: SourceSpan | None = None) -> str:
+    """Format a finite, exponent-bounded `Decimal` as fixed-point text without OOM."""
+    if not value.is_finite():
+        raise NornTracingError("NORN-PY-EXPRESSION", f"non-finite Decimal {value!r}", span)
+    tup = value.as_tuple()
+    if (
+        abs(value.adjusted()) > MAX_DECIMAL_EXPONENT
+        or (isinstance(tup.exponent, int) and abs(tup.exponent) > MAX_DECIMAL_EXPONENT)
+        or len(tup.digits) > MAX_DECIMAL_DIGITS
+    ):
+        raise NornTracingError(
+            "NORN-PY-EXPRESSION",
+            f"Decimal {value!r} exceeds admitted precision/exponent bounds (±{MAX_DECIMAL_EXPONENT})",
+            span,
+        )
+    return format(value, "f")
 
 
 def render_zen_string(value: str, span: SourceSpan | None = None) -> str:
@@ -204,9 +234,7 @@ def _literal_zen(value: str | int | bool | Decimal | None, span: SourceSpan | No
     if isinstance(value, int):
         return str(value)
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise NornTracingError("NORN-PY-EXPRESSION", f"non-finite Decimal {value!r}", span)
-        return format(value, "f")
+        return format_exact_decimal(value, span)
     if isinstance(value, str):
         return render_zen_string(value, span)
     raise NornTracingError(
@@ -258,15 +286,17 @@ def _render_node(node: _ExprNode, span: SourceSpan | None = None) -> str:
         return f"{_operand(node.left, span)} {node.op} {_operand(node.right, span)}"
     if isinstance(node, _NotNode):
         return f"not {_operand(node.operand, span)}"
+    if isinstance(node, _UnaryNegNode):
+        return f"-{_operand(node.operand, span)}"
     if isinstance(node, _ConditionalNode):
         return f"{_operand(node.condition, span)} ? {_operand(node.yes, span)} : {_operand(node.no, span)}"
     if isinstance(node, _CallNode):
         if node.fn == "dateBefore":
             return f"date({_render_node(node.args[0], span)}) < date({_render_node(node.args[1], span)})"
         if node.fn == "timestampBefore":
-            return f"{_render_node(node.args[0], span)} < {_render_node(node.args[1], span)}"
+            return f"{_operand(node.args[0], span)} < {_operand(node.args[1], span)}"
         if node.fn == "timestampAtOrBefore":
-            return f"{_render_node(node.args[0], span)} <= {_render_node(node.args[1], span)}"
+            return f"{_operand(node.args[0], span)} <= {_operand(node.args[1], span)}"
         rendered_args = ", ".join(_render_node(arg, span) for arg in node.args)
         return f"{node.fn}({rendered_args})"
     raise NornTracingError("NORN-PY-EXPRESSION", f"unexpected AST node {type(node).__name__}", span)
@@ -475,6 +505,68 @@ class Expr[T]:
     def __truediv__(self, other: Any) -> Expr[Any]:
         return _arith("/", self, other)
 
+    @overload
+    def __radd__(self: Expr[int], other: int) -> Expr[int]: ...
+    @overload
+    def __radd__(self: Expr[Decimal], other: Decimal) -> Expr[Decimal]: ...
+    @overload
+    def __radd__[U](self: Expr[Quantity[U]], other: Decimal) -> Expr[Quantity[U]]: ...
+    @overload
+    def __radd__[C](self: Expr[Money[C]], other: Decimal) -> Expr[Money[C]]: ...
+    def __radd__(self, other: Any) -> Expr[Any]:
+        return _rarith("+", other, self)
+
+    @overload
+    def __rsub__(self: Expr[int], other: int) -> Expr[int]: ...
+    @overload
+    def __rsub__(self: Expr[Decimal], other: Decimal) -> Expr[Decimal]: ...
+    @overload
+    def __rsub__[U](self: Expr[Quantity[U]], other: Decimal) -> Expr[Quantity[U]]: ...
+    @overload
+    def __rsub__[C](self: Expr[Money[C]], other: Decimal) -> Expr[Money[C]]: ...
+    def __rsub__(self, other: Any) -> Expr[Any]:
+        return _rarith("-", other, self)
+
+    @overload
+    def __rmul__(self: Expr[int], other: int) -> Expr[int]: ...
+    @overload
+    def __rmul__(self: Expr[Decimal], other: Decimal) -> Expr[Decimal]: ...
+    @overload
+    def __rmul__[U](self: Expr[Quantity[U]], other: Decimal | int) -> Expr[Quantity[U]]: ...
+    @overload
+    def __rmul__[C](self: Expr[Money[C]], other: Decimal | int) -> Expr[Money[C]]: ...
+    def __rmul__(self, other: Any) -> Expr[Any]:
+        return _rarith("*", other, self)
+
+    @overload
+    def __rtruediv__(self: Expr[int], other: int) -> Expr[int]: ...
+    @overload
+    def __rtruediv__(self: Expr[Decimal], other: Decimal) -> Expr[Decimal]: ...
+    def __rtruediv__(self, other: Any) -> Expr[Any]:
+        return _rarith("/", other, self)
+
+    @overload
+    def __neg__(self: Expr[int]) -> Expr[int]: ...
+    @overload
+    def __neg__(self: Expr[Decimal]) -> Expr[Decimal]: ...
+    @overload
+    def __neg__[U](self: Expr[Quantity[U]]) -> Expr[Quantity[U]]: ...
+    @overload
+    def __neg__[C](self: Expr[Money[C]]) -> Expr[Money[C]]: ...
+    def __neg__(self) -> Expr[Any]:
+        return _make_expr(_UnaryNegNode(self._node), capture_caller_span())
+
+    @overload
+    def __pos__(self: Expr[int]) -> Expr[int]: ...
+    @overload
+    def __pos__(self: Expr[Decimal]) -> Expr[Decimal]: ...
+    @overload
+    def __pos__[U](self: Expr[Quantity[U]]) -> Expr[Quantity[U]]: ...
+    @overload
+    def __pos__[C](self: Expr[Money[C]]) -> Expr[Money[C]]: ...
+    def __pos__(self) -> Expr[Any]:
+        return self
+
     def __and__(self: Expr[bool], other: Expr[bool]) -> Expr[bool]:
         return all_of(self, other)
 
@@ -533,6 +625,13 @@ def _arith[T](op: _BinaryOp, left: Expr[T], right: object) -> Expr[T]:
     left_expr = _require_expr(left, "arithmetic operand", span)
     right_node = _coerce_operand(right, span)
     return _make_expr(_BinaryNode(op, left_expr._node, right_node), span)
+
+
+def _rarith[T](op: _BinaryOp, left: object, right: Expr[T]) -> Expr[T]:
+    span = capture_caller_span(skip=3)
+    right_expr = _require_expr(right, "arithmetic operand", span)
+    left_node = _coerce_operand(left, span)
+    return _make_expr(_BinaryNode(op, left_node, right_expr._node), span)
 
 
 # ------------------------------------------------------------------ Typed Field Descriptor
@@ -881,6 +980,76 @@ _FORBIDDEN_INTERNAL_ATTRS: frozenset[str] = frozenset(
 
 _SOURCE_REGISTRY: dict[str, tuple[str, ast.Module]] = {}
 
+_ALLOWED_CALLBACK_BINDINGS: dict[str, object] = {
+    "Decimal": Decimal,
+    "add_days": add_days,
+    "add_seconds": add_seconds,
+    "all_of": all_of,
+    "any_of": any_of,
+    "between": between,
+    "contains": contains,
+    "date_before": date_before,
+    "days_between": days_between,
+    "if_else": if_else,
+    "interval_gap_seconds": interval_gap_seconds,
+    "interval_intersection_seconds": interval_intersection_seconds,
+    "intervals_overlap": intervals_overlap,
+    "lit": lit,
+    "norn_len": norn_len,
+    "not_": not_,
+    "parse_date": parse_date,
+    "parse_timestamp": parse_timestamp,
+    "seconds_between": seconds_between,
+    "timestamp_at_or_before": timestamp_at_or_before,
+    "timestamp_before": timestamp_before,
+    "when": when,
+}
+
+
+def read_regular_file_bounded(
+    file_path: Path,
+    rel_source_path: str,
+    *,
+    max_bytes: int = MAX_CALLBACK_SOURCE_BYTES,
+) -> str:
+    """Open a regular file without following final symlinks or blocking on FIFOs, reading at most `max_bytes`."""
+    span = SourceSpan(rel_source_path, 1, 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(file_path, flags)
+    except OSError as exc:
+        raise NornTracingError("NORN-PY-IO", f"cannot open source {rel_source_path!r}: {exc}", span) from exc
+
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise NornTracingError(
+                "NORN-PY-IO",
+                f"source path {rel_source_path!r} must be a regular file",
+                span,
+            )
+    except BaseException:
+        os.close(fd)
+        raise
+
+    with os.fdopen(fd, "rb") as fh:
+        raw = fh.read(max_bytes + 1)
+
+    if len(raw) > max_bytes:
+        raise NornTracingError(
+            "NORN-PY-UNBOUNDED",
+            f"source exceeds {max_bytes} byte limit",
+            span,
+        )
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise NornTracingError(
+            "NORN-PY-SYNTAX",
+            f"source is not valid UTF-8: {exc}",
+            span,
+        ) from exc
+
 
 def register_source(filename: str, source: str, tree: ast.Module | None = None) -> None:
     """Register authored source in-memory so callback AST inspection needs no disk `open()`."""
@@ -888,6 +1057,27 @@ def register_source(filename: str, source: str, tree: ast.Module | None = None) 
     _SOURCE_REGISTRY[filename] = (source, parsed)
     lines = source.splitlines(keepends=True)
     linecache.cache[filename] = (len(source), None, lines, filename)
+
+
+type _SourceSnapshot = tuple[tuple[str, ast.Module] | None, Any]
+
+
+def snapshot_source_entry(filename: str) -> _SourceSnapshot:
+    """Capture prior `_SOURCE_REGISTRY` and `linecache` entries for `filename` so callers can restore them."""
+    return _SOURCE_REGISTRY.get(filename), linecache.cache.get(filename)
+
+
+def restore_source_entry(filename: str, snapshot: _SourceSnapshot) -> None:
+    """Restore or remove `_SOURCE_REGISTRY` and `linecache` entries for `filename`."""
+    prior_reg, prior_lc = snapshot
+    if prior_reg is None:
+        _SOURCE_REGISTRY.pop(filename, None)
+    else:
+        _SOURCE_REGISTRY[filename] = prior_reg
+    if prior_lc is None:
+        linecache.cache.pop(filename, None)
+    else:
+        linecache.cache[filename] = prior_lc
 
 
 def _load_module_ast_for_callable(fn: Callable[..., object], span: SourceSpan | None) -> tuple[str, ast.Module]:
@@ -907,6 +1097,12 @@ def _load_module_ast_for_callable(fn: Callable[..., object], span: SourceSpan | 
     lines = linecache.getlines(filename)
     if lines:
         source = "".join(lines)
+        if len(source.encode("utf-8")) > MAX_CALLBACK_SOURCE_BYTES:
+            raise NornTracingError(
+                "NORN-PY-UNBOUNDED",
+                f"callback source exceeds {MAX_CALLBACK_SOURCE_BYTES} byte limit",
+                span,
+            )
         tree = ast.parse(source, filename=filename)
         _SOURCE_REGISTRY[filename] = (source, tree)
         return filename, tree
@@ -914,8 +1110,8 @@ def _load_module_ast_for_callable(fn: Callable[..., object], span: SourceSpan | 
     src_file = inspect.getsourcefile(fn)
     if src_file is not None:
         p = Path(src_file)
-        if p.is_file():
-            source = p.read_text(encoding="utf-8")
+        if p.exists():
+            source = read_regular_file_bounded(p, filename, max_bytes=MAX_CALLBACK_SOURCE_BYTES)
             tree = ast.parse(source, filename=filename)
             _SOURCE_REGISTRY[filename] = (source, tree)
             return filename, tree
@@ -1186,6 +1382,12 @@ def validate_callback_node(node: ast.FunctionDef | ast.Lambda, filename: str) ->
             f"authoring callbacks must take exactly 1 parameter, got {len(args.args)}",
             span,
         )
+    if args.args[0].arg.startswith("__"):
+        raise NornTracingError(
+            "NORN-PY-FORBIDDEN-NAME",
+            f"dunder parameter name {args.args[0].arg!r} is forbidden in Norn callbacks",
+            span,
+        )
 
     if isinstance(node, ast.Lambda):
         _validate_callback_expr_ast(node.body, filename)
@@ -1237,6 +1439,64 @@ def validate_callback_node(node: ast.FunctionDef | ast.Lambda, filename: str) ->
     _validate_callback_expr_ast(body[0].value, filename)
 
 
+def _verify_callback_call_bindings(
+    fn: Callable[..., object],
+    node: ast.FunctionDef | ast.Lambda,
+    filename: str,
+) -> None:
+    """Verify every allowlisted call name in `node` resolves to the exact Norn operator object."""
+    code = getattr(fn, "__code__", None)
+    fn_globals = getattr(fn, "__globals__", None)
+    closure = getattr(fn, "__closure__", None)
+    freevars: tuple[str, ...] = getattr(code, "co_freevars", ()) if code is not None else ()
+    closure_map: dict[str, object] = {}
+    if closure is not None:
+        for var_name, cell in zip(freevars, closure, strict=False):
+            try:
+                closure_map[var_name] = cell.cell_contents
+            except ValueError:
+                continue
+
+    param_name = node.args.args[0].arg
+    if isinstance(node, ast.Lambda):
+        expr_root: ast.AST = node.body
+    else:
+        body = list(node.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]
+        assert len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None
+        expr_root = body[0].value
+
+    for sub in ast.walk(expr_root):
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
+            callee_name = sub.func.id
+            expected = _ALLOWED_CALLBACK_BINDINGS.get(callee_name)
+            call_span = SourceSpan(filename, getattr(sub, "lineno", node.lineno), getattr(sub, "col_offset", 0))
+            if callee_name == param_name:
+                raise NornTracingError(
+                    "NORN-PY-FORBIDDEN-CALL",
+                    f"callback parameter {param_name!r} cannot shadow allowlisted operator {callee_name}()",
+                    call_span,
+                )
+            if callee_name in closure_map:
+                actual = closure_map[callee_name]
+            elif isinstance(fn_globals, dict) and callee_name in fn_globals:
+                actual = fn_globals[callee_name]
+            else:
+                actual = None
+            if actual is not expected:
+                raise NornTracingError(
+                    "NORN-PY-FORBIDDEN-CALL",
+                    f"call target {callee_name}() does not resolve to the canonical norn_py operator",
+                    call_span,
+                )
+
+
 def validate_callback_ast(fn: Callable[..., object], span: SourceSpan | None = None) -> None:
     """Inspect a Python authoring callback with `ast.parse` BEFORE tracing it."""
     if not callable(fn):
@@ -1247,6 +1507,7 @@ def validate_callback_ast(fn: Callable[..., object], span: SourceSpan | None = N
         )
     filename, node = _find_callback_node(fn, span)
     validate_callback_node(node, filename)
+    _verify_callback_call_bindings(fn, node, filename)
 
 
 def trace_bool_callback(

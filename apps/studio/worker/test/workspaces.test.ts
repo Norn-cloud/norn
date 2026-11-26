@@ -735,4 +735,46 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
   expect(racedReject.status).toBe(403)
   expect(await racedReject.json()).toMatchObject({ code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION" })
   expect(db.query(`select "status" from "invitation" where "id" = ?`).get(invForUnverified.id)).toEqual({ status: "pending" })
+
+  // 8. Unused Better Auth /api-key/* management endpoints are disabled (404 NOT_FOUND),
+  //    /api-key/create enforces x-norn-expected-org, and /organization/cancel-invitation honors x-norn-expected-org.
+  for (const path of ["/api-key/get", "/api-key/list", "/api-key/update", "/api-key/delete", "/api-key/delete-all-expired-api-keys"]) {
+    for (const variant of [path, `${path}/`, path.toUpperCase()]) {
+      const getRes = await call(env, `/api/auth${variant}?id=key_1&organizationId=${alice.organizationId}`, { headers: { cookie: alice.cookie } })
+      expect({ method: "GET", variant, status: getRes.status }).toEqual({ method: "GET", variant, status: 404 })
+      const postRes = await mutate(env, "POST", `/api/auth${variant}`, { keyId: "key_1" }, { cookie: alice.cookie })
+      expect({ method: "POST", variant, status: postRes.status }).toEqual({ method: "POST", variant, status: 404 })
+    }
+  }
+  const wrongScopeKey = await mutate(
+    env,
+    "POST",
+    "/api/auth/api-key/create",
+    { name: "mismatched-scope", organizationId: alice.organizationId },
+    { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: bob.organizationId },
+  )
+  expect(wrongScopeKey.status).toBe(409)
+  expect(await wrongScopeKey.json()).toMatchObject({ code: "WORKSPACE_CHANGED" })
+
+  // Multi-org admin: x-norn-expected-org pins cancel-invitation to that single workspace.
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_alice_in_bob', ?, ?, 'admin', ?)`, [bob.organizationId, alice.userId, new Date().toISOString()])
+  const crossOrgCancel = await mutate(
+    env,
+    "POST",
+    "/api/auth/organization/cancel-invitation",
+    { invitationId: bobInv.id },
+    { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  )
+  expect(crossOrgCancel.status).toBe(400)
+  expect(await crossOrgCancel.json()).toMatchObject({ code: "INVITATION_NOT_FOUND" })
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(bobInv.id)).toEqual({ status: "pending" })
+  // Naming a workspace where the caller is NOT an admin refuses 403 FORBIDDEN even if they administer another workspace.
+  const unprivScopedCancel = await mutate(
+    env,
+    "POST",
+    "/api/auth/organization/cancel-invitation",
+    { invitationId: aliceInv.id },
+    { cookie: bob.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  )
+  expect(unprivScopedCancel.status).toBe(403)
 })

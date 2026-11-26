@@ -23,6 +23,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,9 +41,17 @@ def run(emit_dir: Path, scale_set: str) -> dict:
     else:
         command, marker = SCALE, "NORN_OWL_SCALE "
         env["NORN_OWL_SCALE_SET"] = scale_set
-    out = subprocess.run(command, cwd=ROOT, env=env, check=True, capture_output=True, text=True).stdout
+    try:
+        completed = subprocess.run(command, cwd=ROOT, env=env, check=True, capture_output=True, text=True, timeout=1800)
+    except subprocess.CalledProcessError as error:
+        if error.stderr:
+            sys.stderr.write(error.stderr[-4000:])
+        raise
+    out = completed.stdout
     # libtest prints `test <name> ... ` on the same line before the record.
-    line = next(line for line in out.splitlines() if marker in line)
+    line = next((line for line in out.splitlines() if marker in line), None)
+    if line is None:
+        raise RuntimeError(f"{scale_set}: output missing marker {marker!r}")
     record = json.loads(line.split(marker, 1)[1])
     record.setdefault("set", scale_set)
     return record
@@ -66,6 +75,8 @@ def main() -> None:
     parser.add_argument("--permille", default="125,250,500,1000")
     parser.add_argument("--repeat", type=int, default=3)
     args = parser.parse_args()
+    if args.repeat < 1:
+        parser.error("--repeat must be >= 1")
     emit_dir = args.emit_dir.resolve()
     if ROOT in emit_dir.parents or emit_dir == ROOT:
         raise SystemExit("the import is upstream-derived: keep --emit-dir outside the repository")
@@ -76,10 +87,13 @@ def main() -> None:
     runs = []
     for scale_set in sets:
         records = [run(emit_dir, scale_set) for _ in range(args.repeat)]
-        best = min(records, key=lambda record: record.get("admitMillis", 0))
+        if scale_set.startswith("lending:"):
+            best = min(records, key=lambda record: record.get("commit", {}).get("p50_us", float("inf")))
+        else:
+            best = min(records, key=lambda record: record.get("admitMillis", 0))
         best["admitMillisRuns"] = [record.get("admitMillis") for record in records]
         if "commit" in best:
-            best["commitP50UsRuns"] = [record["commit"]["p50_us"] for record in records]
+            best["commitP50UsRuns"] = [record.get("commit", {}).get("p50_us") for record in records]
         runs.append(best)
     owl = [(r["artifacts"], r["admitMillis"]) for r in runs if r["set"].startswith("owl:")]
     print(json.dumps({"runs": runs, "owlTimeExponent": exponent(owl), "cpus": os.cpu_count()}, indent=2))

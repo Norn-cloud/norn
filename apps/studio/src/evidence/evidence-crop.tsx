@@ -7,7 +7,7 @@ import { useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { cn } from "@/lib/utils"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
-import { useStudioScope } from "../lib/definitions.ts"
+import { studioScopeKey, useStudioScope } from "../lib/definitions.ts"
 import { atScale } from "../lib/objects.ts"
 import { transport, type Artifact } from "@/lib/transport"
 import { historyQueryKey, readEvidence, readHistory, readScan, type Evidence, type EvidenceRef } from "./review.ts"
@@ -62,6 +62,41 @@ function Correction({ evidence, subject }: { readonly evidence: Evidence; readon
   )
 }
 
+const SAFE_DATA_IMAGE = /^data:image\/(svg\+xml|png|webp|jpeg)(;charset=[^;,]+)?(;base64)?,/i
+
+/** Allow direct image URIs only when same-origin, loopback http(s), or an inline safe image data URI. */
+export function safeDirectEvidenceUri(uri: string, origin = typeof window !== "undefined" ? window.location.origin : "https://studio.invalid"): string | null {
+  const trimmed = uri.trim()
+  if (SAFE_DATA_IMAGE.test(trimmed)) return trimmed
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.origin === origin) return parsed.href
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]")) {
+      return parsed.href
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** Allow cell-returned signed scan URLs only for https:, loopback/same-origin http:, blob:, or safe data:image/. */
+export function safeScanImageUrl(url: string, origin = typeof window !== "undefined" ? window.location.origin : "https://studio.invalid"): string | null {
+  const trimmed = url.trim()
+  if (SAFE_DATA_IMAGE.test(trimmed)) return trimmed
+  try {
+    const parsed = new URL(trimmed, origin)
+    if (parsed.protocol === "https:" || parsed.protocol === "blob:") return parsed.href
+    if (parsed.protocol === "http:" && (parsed.origin === origin || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]")) {
+      return parsed.href
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /**
  * The region of the scanned page an extracted value was read from, beside the
  * text the extractor read there. The page comes from a short-lived read the
@@ -70,43 +105,62 @@ function Correction({ evidence, subject }: { readonly evidence: Evidence; readon
  */
 export function EvidenceCrop({ evidence, record, className, actionFor }: { readonly evidence: Evidence; readonly record?: EvidenceRef; readonly className?: string; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
   const subject = evidence.subject ?? record
+  const scope = useStudioScope()
+  const scopeKey = studioScopeKey(scope.data ?? null)
   // An object-store URI is read only through the cell's short-lived, policy-checked read; a plain
-  // web URI the evidence names (a local `norn dev` serving synthetic scans) is shown as it is.
-  const direct = /^https?:\/\//.test(evidence.documentUri)
+  // local/same-origin web URI (local `norn dev` synthetic scans) is allowed directly, never arbitrary external origins.
+  const directUrl = safeDirectEvidenceUri(evidence.documentUri)
+  const blockedExternal = directUrl === null && /^https?:\/\//i.test(evidence.documentUri.trim())
   const scan = useQuery({
-    queryKey: ["scan", evidence.documentUri],
-    queryFn: () => direct
-      ? Promise.resolve({ document: { getUrl: evidence.documentUri, expiresAt: "" }, numbers: new Map<string, string>(), origin: "live" as const })
-      : readScan(evidence.documentUri),
+    queryKey: ["scan", scopeKey, evidence.documentUri],
+    queryFn: () => {
+      if (directUrl !== null) {
+        return Promise.resolve({ document: { getUrl: directUrl, expiresAt: "" }, numbers: new Map<string, string>(), origin: "live" as const })
+      }
+      if (blockedExternal) {
+        return Promise.reject(new Error("External scan URLs are blocked."))
+      }
+      return readScan(evidence.documentUri)
+    },
     retry: false,
     staleTime: 4 * 60_000,
   })
+  const imageUrl = scan.data ? safeScanImageUrl(scan.data.document.getUrl) : null
   const { view } = useView()
   const [aspect, setAspect] = useState<number | null>(null)
   const [whole, setWhole] = useState(false)
   const { x, y, w, h } = evidence.box
+  const numX = Number(x)
+  const numY = Number(y)
+  const numW = Number(w)
+  const numH = Number(h)
+  const validBox = Number.isFinite(numX) && Number.isFinite(numY) && Number.isFinite(numW) && Number.isFinite(numH) && numW > 0 && numH > 0
   const confidence = evidence.confidenceBp === null ? "no confidence reported" : `confidence ${(evidence.confidenceBp / 100).toFixed(1)}%`
   // The crop window keeps the box's own proportions on the page.
-  const cropAspect = aspect === null ? 4 : (Number(w) * aspect) / Number(h)
+  const cropAspect = !validBox || aspect === null ? 4 : (numW * aspect) / numH
   return (
     <figure className={cn("space-y-2 rounded-lg border border-border bg-card p-3", className)}>
       {/* The scanned page shows only when the cell serves it; otherwise the read value stands alone. */}
-      {(scan.data || scan.isPending) && <div className="overflow-hidden rounded-md border bg-white">
-        {scan.data && !whole && (
+      {(imageUrl !== null || scan.isPending) && <div className="overflow-hidden rounded-md border bg-white">
+        {imageUrl !== null && !whole && validBox && (
           <div className="relative w-full" style={{ aspectRatio: String(cropAspect) }}>
             <img
-              src={scan.data.document.getUrl}
+              src={imageUrl}
+              referrerPolicy="no-referrer"
               alt={`Page ${evidence.page} of the scanned document, at the region read as “${evidence.text}”`}
-              onLoad={(event) => setAspect(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight)}
+              onLoad={(event) => {
+                const { naturalWidth, naturalHeight } = event.currentTarget
+                if (naturalWidth > 0 && naturalHeight > 0) setAspect(naturalWidth / naturalHeight)
+              }}
               className="absolute max-w-none"
-              style={{ width: `${100 / Number(w)}%`, left: `-${Number(x) / Number(w) * 100}%`, top: `-${Number(y) / Number(h) * 100}%` }}
+              style={{ width: `${100 / numW}%`, left: `-${(numX / numW) * 100}%`, top: `-${(numY / numH) * 100}%` }}
             />
           </div>
         )}
-        {scan.data && whole && (
+        {imageUrl !== null && (whole || !validBox) && (
           <div className="relative">
-            <img src={scan.data.document.getUrl} alt={`Page ${evidence.page} of the scanned document`} className="w-full" />
-            <div aria-hidden className="absolute rounded-sm ring-2 ring-warning" style={{ left: percent(x), top: percent(y), width: percent(w), height: percent(h) }} />
+            <img src={imageUrl} referrerPolicy="no-referrer" alt={`Page ${evidence.page} of the scanned document`} className="w-full" />
+            {validBox && <div aria-hidden className="absolute rounded-sm ring-2 ring-warning" style={{ left: percent(x), top: percent(y), width: percent(w), height: percent(h) }} />}
           </div>
         )}
         {scan.isPending && <div className="flex h-16 items-center justify-center text-meta text-muted-foreground">Reading the scanned page…</div>}
@@ -116,7 +170,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
           <span className="sr-only">Read as</span>
           <span className="font-mono text-heading font-medium text-foreground tabular-nums">{evidence.text}</span>
           <Chip tone="blue" icon={ScanText}>{evidence.subjectProperty.replaceAll("_", " ")}</Chip>
-          {scan.data && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
+          {imageUrl !== null && validBox && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip tone={evidence.confidenceBp === null ? "gray" : evidence.confidenceBp >= 9000 ? "green" : "amber"} dot title="The extractor's own confidence in this read">{confidence}</Chip>
@@ -162,10 +216,12 @@ function EvidenceRow({ evidence, record, actionFor }: { readonly evidence: Evide
  * them, the reads are dense rows under one quiet note (never a placeholder per value).
  */
 export function EvidenceList({ refs, record, filter, actionFor }: { readonly refs: readonly EvidenceRef[]; readonly record?: EvidenceRef; readonly filter?: (evidence: Evidence) => boolean; readonly actionFor?: (evidence: Evidence) => ReactNode }) {
-  const evidence = useQuery({ queryKey: ["evidence", refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
+  const scope = useStudioScope()
+  const scopeKey = studioScopeKey(scope.data ?? null)
+  const evidence = useQuery({ queryKey: ["evidence", scopeKey, refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
   // The first page decides: a cell that serves scanned pages serves them all.
-  const first = evidence.data?.find((item) => !/^https?:\/\//.test(item.documentUri))
-  const page = useQuery({ queryKey: ["scan", first?.documentUri], queryFn: () => readScan(first!.documentUri), retry: false, staleTime: 4 * 60_000, enabled: first !== undefined })
+  const first = evidence.data?.find((item) => safeDirectEvidenceUri(item.documentUri) === null && !/^https?:\/\//i.test(item.documentUri.trim()))
+  const page = useQuery({ queryKey: ["scan", scopeKey, first?.documentUri], queryFn: () => readScan(first!.documentUri), retry: false, staleTime: 4 * 60_000, enabled: first !== undefined })
   if (refs.length === 0) return null
   if (evidence.isPending) return <p className="text-meta text-muted-foreground">Reading the evidence…</p>
   if (evidence.isError) return <p className="text-meta text-muted-foreground">The evidence could not be read.</p>

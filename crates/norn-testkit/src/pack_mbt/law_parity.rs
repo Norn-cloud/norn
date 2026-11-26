@@ -328,7 +328,7 @@ fn check_law_runtime_outcome<H: PackHost>(
         coverage,
     } = ctx;
     match (checker_verdict, runtime_result) {
-        (verdict @ (Verdict::Holds | Verdict::NotApplicable), Ok(_)) => {
+        (verdict @ (Verdict::Holds | Verdict::NotApplicable | Verdict::Excepted { .. }), Ok(_)) => {
             let host_pin = host.governing_law_pin(law.subject.as_str(), expected_artifact_id);
             if host_pin.as_deref() != Some(expected_pin) {
                 return Err(format!(
@@ -339,8 +339,10 @@ fn check_law_runtime_outcome<H: PackHost>(
             if host.ledger_len() != ledger_before.saturating_add(1) {
                 let label = if *verdict == Verdict::Holds {
                     "accepted"
-                } else {
+                } else if *verdict == Verdict::NotApplicable {
                     "NotApplicable"
+                } else {
+                    "Excepted"
                 };
                 return Err(format!(
                     "LAW-EXAMPLE-1 '{}': {label} commit did not advance ledger",
@@ -382,10 +384,6 @@ fn check_law_runtime_outcome<H: PackHost>(
             with_cov(coverage, |cov| cov.hit_law_violation(law.id.clone()));
             host.verify_ledger()
         }
-        (Verdict::Excepted { .. }, _) => Err(format!(
-            "LAW-EXAMPLE-1 '{}': law '{}' uses exception trees, which are unsupported on the commit path",
-            example.name, law.id
-        )),
         (verdict, outcome) => Err(format!(
             "LAW-EXAMPLE-1 '{}' parity mismatch: checker={verdict:?}, runtime={outcome:?}",
             example.name

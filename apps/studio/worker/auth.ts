@@ -162,9 +162,14 @@ export function parseGrantRef(referenceId: unknown): { readonly organizationId: 
   return { organizationId, memberId }
 }
 
-/** Unused public Better Auth routes disabled to eliminate unguarded side effects on GET (S2). */
+/** Unused public Better Auth routes disabled to eliminate unguarded GET side effects (S2) and cross-tenant key oracles (S5). */
 export const DISABLED_AUTH_PATHS: ReadonlySet<string> = new Set([
   "/account-info",
+  "/api-key/get",
+  "/api-key/list",
+  "/api-key/update",
+  "/api-key/delete",
+  "/api-key/delete-all-expired-api-keys",
 ])
 
 /**
@@ -1384,25 +1389,31 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           if (invitationId === null) {
             throw apiError(400, { code: "VALIDATION_ERROR", message: "invitationId is required." }, responseHeaders)
           }
+          const headerOrg = nonEmptyString((ctx.headers ?? ctx.request?.headers)?.get("x-norn-expected-org"))
           const db = config.database as unknown as ProvisionDb
           // Authorize caller permission BEFORE touching target invitation rows: callers without
-          // admin/owner rights anywhere get uniform 403; admins atomically cancel only a pending
-          // invitation in a workspace they administer while their session is live (S5).
+          // admin/owner rights in the target workspace (or anywhere, when unscoped) get uniform 403;
+          // admins atomically cancel only a pending invitation in a workspace they administer while
+          // their session is live (S5).
           const adminMemberships = await dbAll<{ organizationId: string; role: string }>(
             db,
             `select "organizationId", "role" from "member" where "userId" = ?`,
             session.user.id,
           )
           const adminOrgIds = new Set(adminMemberships.filter((m) => hasOrgRole(m.role, ["owner", "admin"])).map((m) => m.organizationId))
-          if (adminOrgIds.size === 0) {
+          if (adminOrgIds.size === 0 || (headerOrg !== null && !adminOrgIds.has(headerOrg))) {
             throw apiError(403, { code: "FORBIDDEN", message: "You do not have permission to cancel invitations." }, responseHeaders)
           }
           type CancelledInvitation = { id: string; organizationId: string; email: string; role: string; status: string; expiresAt: string | number; createdAt: string | number; inviterId: string }
+          const orgScopeClause = headerOrg === null ? "" : ` and "organizationId" = ?`
+          const cancelParams: SqlParam[] = headerOrg === null
+            ? [invitationId, session.user.id, session.session.token, session.user.id]
+            : [invitationId, headerOrg, session.user.id, session.session.token, session.user.id]
           const cancelled = await dbFirst<CancelledInvitation>(
             db,
             `update "invitation"
              set "status" = 'canceled'
-             where "id" = ?
+             where "id" = ?${orgScopeClause}
                and "status" = 'pending'
                and exists (
                  select 1 from "member" m
@@ -1415,10 +1426,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
                  where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL}
                )
              returning "id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId"`,
-            invitationId,
-            session.user.id,
-            session.session.token,
-            session.user.id,
+            ...cancelParams,
           )
           if (cancelled === null) {
             if (!(await isSessionLive(db, session.session.token, session.user.id))) {
@@ -1655,6 +1663,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           }
           if (orgId === null) {
             throw apiError(400, { code: "ORGANIZATION_ID_REQUIRED", message: "A workspace id is required to create an API key." }, responseHeaders)
+          }
+          const headerOrg = nonEmptyString((ctx.headers ?? ctx.request?.headers)?.get("x-norn-expected-org"))
+          if (headerOrg !== null && headerOrg !== orgId) {
+            throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload the page before submitting." }, responseHeaders)
           }
           if ((body.refillAmount !== undefined && body.refillInterval === undefined) || (body.refillInterval !== undefined && body.refillAmount === undefined)) {
             throw apiError(400, { code: "REFILL_AMOUNT_AND_INTERVAL_REQUIRED", message: "refillAmount and refillInterval must be provided together." }, responseHeaders)

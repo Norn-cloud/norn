@@ -85,8 +85,11 @@ export interface Profile {
 
 export class ProfileError extends Error {}
 
+let cachedDefaultProfile: Profile | undefined
+
 /** Load and structurally validate the profile: every referenced code and row must exist. */
 export function loadProfile(path: string = PROFILE_PATH): Profile {
+  if (path === PROFILE_PATH && cachedDefaultProfile !== undefined) return cachedDefaultProfile
   const profile = JSON.parse(readFileSync(path, "utf8")) as Profile
   const codes = new Set(Object.keys(profile.diagnostics))
   const requireCode = (code: string, where: string) => {
@@ -106,5 +109,6 @@ export function loadProfile(path: string = PROFILE_PATH): Profile {
   for (const m of profile.rejectedModules) requireCode(m.code, `rejectedModules ${m.module}`)
   for (const c of profile.rejectedConstructs) requireCode(c.code, `rejectedConstructs ${c.construct}`)
   requireCode(profile.defaultCode, "defaultCode")
+  if (path === PROFILE_PATH) cachedDefaultProfile = profile
   return profile
 }

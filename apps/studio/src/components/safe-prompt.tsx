@@ -1,5 +1,5 @@
 import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, Phone, ShieldCheck, UserRound, type LucideIcon } from "lucide-react"
-import { Fragment, useState, type CSSProperties } from "react"
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 import { cellCall } from "@/lib/cell-read"
 import { usePinnedScope } from "@/lib/session"
@@ -94,18 +94,42 @@ function Flow({ model }: { readonly model: string }) {
 export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
   const pinnedScope = usePinnedScope(guard.guardId)
   const [original, setOriginal] = useState<{ readonly kind: "idle" } | { readonly kind: "busy" } | { readonly kind: "shown"; readonly segments: readonly RestoredSegment[] } | { readonly kind: "error"; readonly message: string }>({ kind: "idle" })
+  const restoreAbort = useRef<AbortController | null>(null)
+  const activeGuardId = useRef(guard.guardId)
+  useEffect(() => {
+    activeGuardId.current = guard.guardId
+    restoreAbort.current?.abort()
+    restoreAbort.current = null
+    setOriginal({ kind: "idle" })
+    return () => {
+      restoreAbort.current?.abort()
+      restoreAbort.current = null
+    }
+  }, [guard.guardId])
   const revealable = guard.tokens.some((token) => token.revealable)
   const legend = guard.tokens.filter((token, index, all) => all.findIndex((other) => other.kind === token.kind) === index || all.length <= 6)
   const restored = guard.reply.some((segment) => segment.state === "restored" || segment.state === "projected")
   const toggle = async (on: boolean) => {
+    restoreAbort.current?.abort()
+    restoreAbort.current = null
     if (!on) { setOriginal({ kind: "idle" }); return }
+    const controller = new AbortController()
+    restoreAbort.current = controller
+    const targetGuardId = guard.guardId
     setOriginal({ kind: "busy" })
     // Showing the original is itself a reveal: the cell logs one receipt per field it restores.
-    const result = await cellCall<{ segments: RestoredSegment[] }>(`/v1/guard/${guard.guardId}:restore`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: guard.safePrompt, idempotencyKey: `original-${guard.guardId}-${globalThis.crypto.randomUUID()}` }),
-    }, undefined, pinnedScope)
-    setOriginal(result.kind === "ok" ? { kind: "shown", segments: result.value.segments } : { kind: "error", message: result.kind === "refused" ? result.refusal.message : "The cell could not restore the prompt." })
+    try {
+      const result = await cellCall<{ segments: RestoredSegment[] }>(`/v1/guard/${encodeURIComponent(String(targetGuardId))}:restore`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: guard.safePrompt, idempotencyKey: `original-${targetGuardId}-${globalThis.crypto.randomUUID()}` }),
+        signal: controller.signal,
+      }, undefined, pinnedScope)
+      if (controller.signal.aborted || activeGuardId.current !== targetGuardId) return
+      setOriginal(result.kind === "ok" ? { kind: "shown", segments: result.value.segments } : { kind: "error", message: result.kind === "refused" ? result.refusal.message : "The cell could not restore the prompt." })
+    } catch {
+      if (controller.signal.aborted || activeGuardId.current !== targetGuardId) return
+      setOriginal({ kind: "error", message: "The cell could not restore the prompt." })
+    }
   }
   const shown = original.kind === "shown" ? original.segments : splitTokens(guard.safePrompt, guard.tokens)
   return (
@@ -114,12 +138,14 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
         <h3 className="text-body text-muted-foreground">{original.kind === "shown" ? "Original prompt" : "Safe prompt"}</h3>
         {revealable && (
           <div className="flex items-center gap-2 text-body text-muted-foreground">
-            {original.kind === "busy" && <LoaderCircle className="size-3.5 animate-spin" aria-hidden />}
+            {original.kind === "busy" && <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
             Show original
             <button type="button" role="switch" aria-checked={original.kind === "shown"} aria-label="Show original" data-show-original="" disabled={original.kind === "busy"}
               onClick={() => void toggle(original.kind !== "shown")}
-              className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted transition-colors aria-checked:bg-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
-              <span aria-hidden className={cn("absolute top-0.5 size-3.5 rounded-full bg-background shadow transition-[left]", original.kind === "shown" ? "start-[1.1rem]" : "start-0.5")} />
+              className="relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full focus-visible:outline-none sm:min-h-0 sm:min-w-0 group">
+              <span className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted transition-colors group-aria-checked:bg-foreground group-focus-visible:ring-2 group-focus-visible:ring-ring motion-reduce:transition-none">
+                <span aria-hidden className={cn("absolute top-0.5 size-3.5 rounded-full bg-background shadow transition-all motion-reduce:transition-none", original.kind === "shown" ? "start-[1.1rem]" : "start-0.5")} />
+              </span>
             </button>
           </div>
         )}
@@ -127,7 +153,7 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
       <p className="rounded-xl bg-muted/60 px-3.5 py-3 text-body leading-7 whitespace-pre-wrap" data-prompt>
         <Segments segments={shown} />
       </p>
-      {original.kind === "error" && <p role="alert" className="text-meta text-destructive">{original.message}</p>}
+      {original.kind === "error" && <p role="alert" className="text-meta text-destructive-text">{original.message}</p>}
       {guard.tokens.length > 0 && (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-x-4 gap-y-2" aria-label="Withheld from the model">
           {legend.map((token) => {
