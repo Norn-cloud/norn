@@ -157,12 +157,13 @@ impl OfflineDecision {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    reason = "fixed fixtures"
-)]
 mod tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::indexing_slicing,
+        reason = "fixed fixtures"
+    )]
+
     use super::*;
 
     const DECIDE: &str =

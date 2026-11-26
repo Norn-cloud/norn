@@ -221,18 +221,18 @@ const MAX_TREE_DEPTH: usize = 128;
 
 #[cfg(unix)]
 fn open_tree_entry(
-    dir: impl std::os::fd::AsFd,
+    dir: &std::fs::File,
     name: &std::ffi::CStr,
     shown: &std::path::Path,
 ) -> Result<std::fs::File, String> {
     use rustix::fs::{AtFlags, Mode, OFlags};
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    match rustix::fs::openat(&dir, name, flags, Mode::empty()) {
+    match rustix::fs::openat(dir, name, flags, Mode::empty()) {
         Ok(fd) => Ok(std::fs::File::from(fd)),
         Err(rustix::io::Errno::LOOP) => Err(format!("{}: symlinks are refused", shown.display())),
         Err(rustix::io::Errno::NXIO | rustix::io::Errno::OPNOTSUPP) => {
             // On Unix, opening a domain socket with O_RDONLY fails with ENXIO/EOPNOTSUPP.
-            if let Ok(stat) = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+            if let Ok(stat) = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
                 let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
                 if kind == rustix::fs::FileType::Symlink {
                     return Err(format!("{}: symlinks are refused", shown.display()));
