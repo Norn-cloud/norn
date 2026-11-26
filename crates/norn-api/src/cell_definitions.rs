@@ -436,7 +436,9 @@ fn candidate<E: SqlEngine>(
 }
 
 /// The action ids of a canonical artifact set.
-fn set_actions(canonical_set: &str) -> Result<std::collections::BTreeSet<String>, Refusal> {
+pub(crate) fn set_actions(
+    canonical_set: &str,
+) -> Result<std::collections::BTreeSet<String>, Refusal> {
     let artifacts: Vec<serde_json::Value> =
         serde_json::from_str(canonical_set).map_err(Refusal::host)?;
     Ok(artifacts

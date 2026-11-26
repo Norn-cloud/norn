@@ -1,0 +1,57 @@
+{
+  "artifactId": "supply.OrderLine.receipts_consistent.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.ShipmentReceipt.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Total linked receipt quantities on a line never exceed ordered_qty, and recorded received_qty never exceeds its linked receipts.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "len(self.receipts) > 0",
+    "id": "supply.OrderLine.receipts_consistent",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "Total linked receipt quantities on a line never exceed ordered_qty, and recorded received_qty never exceeds its linked receipts.",
+    "response": {
+      "expression": "(sum(map(self.receipts as b0, b0.received_qty)) <= self.ordered_qty) and (self.received_qty <= sum(map(self.receipts as b0, b0.received_qty)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.OrderLine"
+      ],
+      "root": {
+        "id": "supply.OrderLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.OrderLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.OrderLine.receipts_consistent.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

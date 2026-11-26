@@ -50,31 +50,22 @@ pub fn validate_flow_source_map(
     let all_artifacts = base
         .iter()
         .chain(candidates)
-        .map(|artifact| {
-            (
-                artifact.artifact_id.as_str(),
-                (
-                    artifact,
-                    crate::receipt::ArtifactRef::of(artifact).map_err(|error| error.to_string()),
-                ),
-            )
-        })
+        .map(|artifact| (artifact.artifact_id.as_str(), artifact))
         .collect::<BTreeMap<_, _>>();
-    let artifact_values = base.iter().chain(candidates).cloned().collect::<Vec<_>>();
+    let mut artifact_hashes = BTreeMap::<&str, Result<crate::receipt::ArtifactRef, String>>::new();
     let mut views = crate::entity_scopes::ScopedViews::new(candidates, base, &BTreeSet::new());
 
     let mut artifacts_by_state = BTreeMap::<String, BTreeSet<String>>::new();
     let mut artifacts_by_row = BTreeMap::<String, BTreeSet<String>>::new();
-    for artifact in &artifact_values {
+    for artifact in base.iter().chain(candidates) {
         if matches!(artifact.payload, ArtifactPayload::Entity(_)) {
             let catalog = views.of(artifact).catalog();
             if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {
-                let states = object_type
+                for state in object_type
                     .lifecycles
                     .iter()
-                    .flat_map(|lifecycle| lifecycle.states.iter().cloned())
-                    .collect::<BTreeSet<_>>();
-                for state in &states {
+                    .flat_map(|lifecycle| lifecycle.states.iter())
+                {
                     artifacts_by_state
                         .entry(state.clone())
                         .or_default()
@@ -94,7 +85,7 @@ pub fn validate_flow_source_map(
         else {
             continue;
         };
-        let rows = graph
+        for row in graph
             .nodes
             .iter()
             .filter_map(|node| match node {
@@ -108,11 +99,9 @@ pub fn validate_flow_source_map(
                 | JdmNode::CustomNode { .. } => None,
             })
             .flatten()
-            .map(|row| row.id.clone())
-            .collect::<BTreeSet<_>>();
-        for row in &rows {
+        {
             artifacts_by_row
-                .entry(row.clone())
+                .entry(row.id.clone())
                 .or_default()
                 .insert(artifact.artifact_id.clone());
         }
@@ -175,8 +164,7 @@ pub fn validate_flow_source_map(
                 ));
                 continue;
             }
-            let Some((artifact, hash)) = all_artifacts.get(artifact_ref.artifact_id.as_str())
-            else {
+            let Some(&artifact) = all_artifacts.get(artifact_ref.artifact_id.as_str()) else {
                 diagnostics.push(finding(
                     codes::MISSING_ARTIFACT,
                     format!(
@@ -200,6 +188,11 @@ pub fn validate_flow_source_map(
                 ));
                 continue;
             }
+            let hash = artifact_hashes
+                .entry(artifact.artifact_id.as_str())
+                .or_insert_with(|| {
+                    crate::receipt::ArtifactRef::of(artifact).map_err(|error| error.to_string())
+                });
             match hash {
                 Ok(actual) if actual.sha256 == artifact_ref.sha256 => {}
                 Ok(_) => diagnostics.push(finding(

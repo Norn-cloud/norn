@@ -124,6 +124,37 @@ export interface RetainedDefinitionDoc {
 }
 
 /**
+ * Narrow top-level `self.<prop> != null` conjuncts from a law's `when`
+ * condition so the response lambda sees non-null optional links (matching
+ * `guarded_predicate` in `norn-checker`).
+ */
+function narrowSubjectByCondition(condition: X.Expr, self: SubjectSchema): SubjectSchema {
+  const narrowed = new Set<string>()
+  const collect = (expr: X.Expr): void => {
+    if (expr._tag === "Logical" && expr.op === "and") {
+      collect(expr.left)
+      collect(expr.right)
+      return
+    }
+    if (expr._tag !== "Compare" || expr.op !== "!=") return
+    const check = (candidate: X.Expr, other: X.Expr): void => {
+      if (other._tag === "Literal" && other.value === null && candidate._tag === "Input" && candidate.name === "input" && candidate.path.length === 1) {
+        narrowed.add(candidate.path[0]!)
+      }
+    }
+    check(expr.left, expr.right)
+    check(expr.right, expr.left)
+  }
+  collect(condition)
+  if (narrowed.size === 0 || self.schema.type !== "object") return self
+  const properties: Record<string, S.ValueSchema> = { ...self.schema.properties }
+  for (const field of narrowed) {
+    if (Object.hasOwn(properties, field)) properties[field] = S.nonNull(properties[field]!)
+  }
+  return { schema: S.record(properties), temporal: self.temporal }
+}
+
+/**
  * MAPPING-SOURCE-REF-1: the `sha256` a mapping bound to a source schema of
  * the same project carries until the Rust checker's hash replaces it. It is
  * never a hash, so a set that was not bound refuses with the checker's
@@ -1315,7 +1346,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", "independentOf", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "quantityEffect", "compensation", "dependencies", "access", "fromCaller", "independentOf", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string, temporalWire = false): S.ObjectSchema => {
       const node = need(key)
@@ -1437,11 +1468,58 @@ class DefinitionCompiler {
         : [],
       ...(members.has("synchronousRule") ? { synchronousRule: this.synchronousRule(need("synchronousRule")) } : {}),
       ...(compiledEffect ? { effect: compiledEffect } : {}),
+      ...(members.has("quantityEffect") ? { quantityEffect: this.quantityEffect(need("quantityEffect")) } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
       ...(members.has("independentOf") ? { independentOf: this.strings(need("independentOf")) } : {}),
       at: this.at(call),
     })
+  }
+
+  /** ActionIR `quantityEffect`: atomic cell-local quantity-ledger reservation or posting. */
+  private quantityEffect(input: ts.Expression): A.ActionQuantityEffect {
+    const m = this.closedRecord(input, ["ledgerId", "balanceVersionsField", "operation"], ["ledgerId", "balanceVersionsField", "operation"])
+    const opNode = m.get("operation")!
+    const op = this.record(opNode)
+    const kind = this.string(this.member(op, "kind", opNode))
+    let operation: A.ActionQuantityOperation
+    if (kind === "reserve") {
+      const rm = this.closedRecord(opNode, ["kind", "reservationIdField", "templateId", "parameters", "ttlMs"], ["kind", "reservationIdField", "templateId", "parameters", "ttlMs"])
+      const parameters: Record<string, A.ActionQuantityParameter> = {}
+      for (const [paramName, paramNode] of this.record(rm.get("parameters")!)) {
+        const pm = this.closedRecord(paramNode, ["field", "scale"], ["field", "scale"])
+        const scale = this.json(pm.get("scale")!)
+        if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 28) {
+          throw new CompileError("NORN-FLOW-LITERAL", "quantityEffect parameter scale must be an integer from 0 to 28", pm.get("scale")!)
+        }
+        parameters[paramName] = { field: this.string(pm.get("field")!), scale }
+      }
+      const ttlMs = this.json(rm.get("ttlMs")!)
+      if (typeof ttlMs !== "number" || !Number.isInteger(ttlMs) || ttlMs <= 0) {
+        throw new CompileError("NORN-FLOW-LITERAL", "quantityEffect reserve ttlMs must be a positive integer", rm.get("ttlMs")!)
+      }
+      operation = {
+        kind: "reserve",
+        reservationIdField: this.string(rm.get("reservationIdField")!),
+        templateId: this.string(rm.get("templateId")!),
+        parameters,
+        ttlMs,
+      }
+    } else if (kind === "post_reservation") {
+      const pm = this.closedRecord(opNode, ["kind", "reservationIdField", "postingIdField"], ["kind", "reservationIdField", "postingIdField"])
+      operation = {
+        kind: "post_reservation",
+        reservationIdField: this.string(pm.get("reservationIdField")!),
+        postingIdField: this.string(pm.get("postingIdField")!),
+      }
+    } else {
+      throw new CompileError("NORN-FLOW-LITERAL", "quantityEffect operation kind must be reserve or post_reservation", opNode)
+    }
+    return {
+      ledgerId: this.string(m.get("ledgerId")!),
+      balanceVersionsField: this.string(m.get("balanceVersionsField")!),
+      operation,
+    }
   }
 
   /** ActionIR `access`: a Norn.access reference, or `{ artifactId, version? }`. */
@@ -2183,13 +2261,42 @@ class DefinitionCompiler {
     if (call.arguments.length !== 2) throw new CompileError("NORN-FLOW-LITERAL", "a law takes its name and one spec object", call)
     const name = this.string(call.arguments[0]!)
     if (!/^[a-z][a-z0-9_]*$/.test(name)) throw new CompileError("NORN-FLOW-LITERAL", `law name ${JSON.stringify(name)} must be snake_case`, call.arguments[0]!)
-    const spec = this.closedRecord(call.arguments[1]!, ["on", "when", "must", "never", "eventually", "within", "severity", "because", "id", "unless"], ["on", "because"])
+    const spec = this.closedRecord(call.arguments[1]!, ["on", "inverses", "when", "must", "never", "eventually", "within", "severity", "because", "id", "unless"], ["on", "because"])
     const on = spec.get("on")!
     const { call: subjectCall, members: subjectMembers } = this.referenced(on, ANY_TYPE, "a Norn.type or Norn.interfaceType definition")
     const subject = this.string(this.member(subjectMembers, "name", subjectCall))
     if (subject.lastIndexOf(".") <= 0) throw new CompileError("NORN-FLOW-LITERAL", `law subject ${JSON.stringify(subject)} is not a qualified type name (namespace.Type), so the law has no owner`, on)
     const version = this.string(this.member(subjectMembers, "version", subjectCall))
-    const self = this.subjectSchema(subjectCall, subjectMembers, true, new Set())
+    const selfBase = this.subjectSchema(subjectCall, subjectMembers, true, new Set())
+    const dependencies: Array<L.LawDef["dependencies"][number]> = [
+      { artifactId: `${subject}.${this.id(subjectCall) === INTERFACE ? "interface" : "entity"}`, kind: "entity", version, required: true },
+    ]
+    const selfProperties: Record<string, S.ValueSchema> = { ...(selfBase.schema as S.ObjectSchema).properties }
+    const selfTemporal = new Map(selfBase.temporal)
+    if (spec.has("inverses")) {
+      for (const [role, sourceNode] of this.record(spec.get("inverses")!)) {
+        const ref = this.referenced(sourceNode, OBJECT_TYPES, "a Norn.type definition")
+        const sourceName = this.string(this.member(ref.members, "name", ref.call))
+        const sourceVersion = this.string(this.member(ref.members, "version", ref.call))
+        const linksNode = ref.members.get("links")
+        const declared = linksNode
+          ? this.list(linksNode).map((n) => this.link(n)).find((l) => l.inverse === role && l.cardinality.from === "many" && l.target === subject)
+          : undefined
+        if (!declared) {
+          throw new CompileError("NORN-FLOW-SLICE", `${sourceName} declares no from: "many" link targeting ${subject} with inverse ${JSON.stringify(role)}`, sourceNode)
+        }
+        if (Object.hasOwn(selfProperties, role)) {
+          throw new CompileError("NORN-FLOW-SLICE", `inverse role ${JSON.stringify(role)} collides with an existing member of ${subject}`, sourceNode)
+        }
+        const sourceSchema = this.subjectSchema(ref.call, ref.members, false, new Set())
+        selfProperties[role] = S.array(sourceSchema.schema)
+        const depId = `${sourceName}.entity`
+        if (!dependencies.some((d) => d.artifactId === depId)) {
+          dependencies.push({ artifactId: depId, kind: "entity", version: sourceVersion, required: true })
+        }
+      }
+    }
+    const self: SubjectSchema = { schema: S.record(selfProperties), temporal: selfTemporal }
     const id = spec.has("id") ? this.string(spec.get("id")!) : `${subject}.${name}`
     const artifactId = `${id}.law`
     const modalities = (["must", "never", "eventually"] as const).filter((k) => spec.has(k))
@@ -2198,15 +2305,23 @@ class DefinitionCompiler {
     const severityNode = spec.get("severity")
     const severity = severityNode ? this.string(severityNode) : "error"
     if (severity !== "error" && severity !== "warning") throw new CompileError("NORN-FLOW-LITERAL", "severity is \"error\" or \"warning\"; override severity is engine gap §8.2", severityNode!)
-    const predicate = (node: ts.Expression, pointer: string): string => {
+    const predicateWith = (schema: SubjectSchema) => (node: ts.Expression, pointer: string): string => {
       this.sourceMap.push({ artifactId, pointer, at: this.at(node) })
-      return this.lambda(node, self)
+      return this.lambda(node, schema)
     }
     const within = spec.get("within")
     const timing = within ? this.lawTiming(within, self) : undefined
     const when = spec.get("when")
+    let condition: string | undefined
+    let responseSelf = self
+    if (when) {
+      this.sourceMap.push({ artifactId, pointer: "/payload/condition", at: this.at(when) })
+      const parsed = this.lambdaExpr(when, self)
+      condition = parsed.zen
+      responseSelf = narrowSubjectByCondition(parsed.expr, self)
+    }
     const unless = spec.get("unless")
-    const exceptions = unless ? this.exceptions(unless, id, artifactId, predicate) : []
+    const exceptions = unless ? this.exceptions(unless, id, artifactId, predicateWith(responseSelf)) : []
     return L.law({
       id: artifactId,
       title: this.string(spec.get("because")!),
@@ -2221,13 +2336,13 @@ class DefinitionCompiler {
         provenance: { source: "authoring_sdk" },
         scope: { root: { kind: "entity", id: subject }, objectTypes: [subject] },
         subject,
-        ...(when ? { condition: predicate(when, "/payload/condition") } : {}),
+        ...(condition !== undefined ? { condition } : {}),
         modality: { kind: modality === "must" ? "always" : modality },
         ...(timing ? { timing } : {}),
-        response: { kind: "predicate", expression: predicate(spec.get(modality)!, "/payload/response/expression") },
+        response: { kind: "predicate", expression: predicateWith(responseSelf)(spec.get(modality)!, "/payload/response/expression") },
         ...(exceptions.length ? { exceptions } : {}),
       },
-      dependencies: [{ artifactId: `${subject}.${this.id(subjectCall) === INTERFACE ? "interface" : "entity"}`, kind: "entity", version, required: true }],
+      dependencies,
     })
   }
 
@@ -2291,6 +2406,10 @@ class DefinitionCompiler {
 
   /** Lower a law lambda `self => ...` over the subject to ZEN text. */
   private lambda(input: ts.Expression, self: SubjectSchema): string {
+    return this.lambdaExpr(input, self).zen
+  }
+
+  private lambdaExpr(input: ts.Expression, self: SubjectSchema): { readonly expr: X.Expr; readonly zen: string } {
     const fn = this.deref(input)
     if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) throw new CompileError("NORN-FLOW-CAPTURE", "a law predicate is an inline lambda (self => ...)", input)
     if (fn.parameters.length !== 1) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", "a law predicate takes one parameter, the subject", fn)
@@ -2302,7 +2421,7 @@ class DefinitionCompiler {
     try {
       const value = parsedTemporal(rows[0]!.value, self.temporal)
       if (X.typeOf(value, scope).type !== "boolean") throw new X.ExprError("NORN-FLOW-EXPRESSION", "a law predicate must be Boolean")
-      return X.render(value, scope)
+      return { expr: value, zen: X.render(value, scope) }
     } catch (error) {
       if (error instanceof X.ExprError) throw new CompileError(error.code, error.message, syntax.expressionSources.get(rows[0]!.value) ?? fn)
       throw error

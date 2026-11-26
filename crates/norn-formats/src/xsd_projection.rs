@@ -61,8 +61,9 @@ pub(crate) fn resolve_fields(
         .map(|n| (n.id.as_str(), n))
         .collect::<BTreeMap<_, _>>();
     let mut globals = BTreeMap::new();
+    let mut types: BTreeMap<String, &XsdNode> = BTreeMap::new();
     for node in crate::xsd::semantic_nodes(nodes) {
-        if !node.is("element") || node.attr("name").is_empty() {
+        if node.attr("name").is_empty() {
             continue;
         }
         let Some(root) = node.parent.as_deref().and_then(|id| by_id.get(id)) else {
@@ -71,21 +72,12 @@ pub(crate) fn resolve_fields(
         if !root.is("schema") {
             continue;
         }
-        let key = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
-        if globals.insert(key, node).is_some() {
-            return Err("duplicate global element".into());
-        }
-    }
-    // Global simple and complex types, for simple-content resolution.
-    let mut types: BTreeMap<String, &XsdNode> = BTreeMap::new();
-    for node in crate::xsd::semantic_nodes(nodes) {
-        if !(node.is("simpleType") || node.is("complexType")) || node.attr("name").is_empty() {
-            continue;
-        }
-        let Some(root) = node.parent.as_deref().and_then(|id| by_id.get(id)) else {
-            continue;
-        };
-        if root.is("schema") {
+        if node.is("element") {
+            let key = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
+            if globals.insert(key, node).is_some() {
+                return Err("duplicate global element".into());
+            }
+        } else if node.is("simpleType") || node.is("complexType") {
             let name = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
             if types.insert(name.clone(), node).is_some() {
                 return Err(format!("duplicate global type {name}"));
@@ -143,14 +135,12 @@ struct TypeIndex<'a> {
     children: BTreeMap<&'a str, Vec<&'a XsdNode>>,
 }
 
-const XSD_NS: &str = "{http://www.w3.org/2001/XMLSchema}";
-
 /// The XML Schema built-in a value of `qname` ultimately has: through simple
 /// type restrictions and a complex type's simple content (extension or
 /// restriction). `None` for element-only content, lists, unions and unknown
 /// types. Bounded, so a cyclic definition cannot loop.
 fn builtin(qname: &str, index: &TypeIndex<'_>, depth: u8) -> Result<Option<String>, String> {
-    if let Some(local) = qname.strip_prefix(XSD_NS) {
+    if let Some(local) = qname.strip_prefix(crate::xsd::XS_PREFIX) {
         return Ok(Some(local.to_owned()));
     }
     if depth > 32 {

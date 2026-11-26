@@ -17,6 +17,26 @@
           ]
         }
       ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "warehouse",
+          "target": "supply.Warehouse"
+        }
+      ],
       "name": "supply.DemandObservation",
       "properties": [
         {

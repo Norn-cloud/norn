@@ -1,0 +1,57 @@
+{
+  "artifactId": "supply.ShipmentReceipt.inspections_within_received.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.ShipmentReceipt.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.Inspection.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "The sum of inspected quantities across all inspections of a shipment receipt cannot exceed the quantity received.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "len(self.inspections) > 0",
+    "id": "supply.ShipmentReceipt.inspections_within_received",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "The sum of inspected quantities across all inspections of a shipment receipt cannot exceed the quantity received.",
+    "response": {
+      "expression": "sum(map(self.inspections as b0, b0.inspected_qty)) <= self.received_qty",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.ShipmentReceipt"
+      ],
+      "root": {
+        "id": "supply.ShipmentReceipt",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.ShipmentReceipt"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ShipmentReceipt.inspections_within_received.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

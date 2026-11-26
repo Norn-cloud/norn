@@ -36,6 +36,18 @@ export const CloseWarehouse = Norn.action({
   label: { en: "Close warehouse", ar: "إغلاق مستودع" },
   input: WarehouseRef, output: WarehouseRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  aggregates: [{
+    name: "live_stock",
+    type: InventorySnapshot,
+    filter: { warehouse_id: "warehouse_id" },
+    aggregate: { kind: "sum", property: "on_hand_qty" },
+    maxItems: 500,
+  }],
+  preconditions: [Norn.expression(
+    Schema.Struct({ aggregates: Schema.Struct({ live_stock: Norn.decimal(6) }) }),
+    (ctx) => ctx.aggregates.live_stock === 0,
+    { root: "context" },
+  )],
   writes: [{ type: Warehouse, change: "modified" }],
   effect: { kind: "fire_transition", type: Warehouse, objectIdField: "warehouse_id", lifecycle: "status", transition: "close" },
 })
@@ -290,7 +302,7 @@ const BlindReceiptInput = Schema.Struct({
 })
 const ReceiptRef = Schema.Struct({ receipt_id: Schema.String })
 
-/** An inspected delivery against a line, in the line's unit. */
+/** An inspected delivery against a line of an active order, in the line's unit, at an active warehouse. */
 export const RecordReceipt = Norn.action({
   id: "supply.receipt.record", title: "Record a shipment receipt", version: "0.1.0",
   label: { en: "Record receipt", ar: "تسجيل استلام" },
@@ -298,11 +310,21 @@ export const RecordReceipt = Norn.action({
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
   slice: [
     { name: "line", type: OrderLine, key: { property: { from: "input", property: "line_id" } } },
+    { name: "order", type: PurchaseOrder, key: { property: { from: "line", property: "po_id" } } },
     { name: "warehouse", type: Warehouse, key: { property: { from: "input", property: "warehouse_id" } } },
   ],
   preconditions: [Norn.expression(
-    Schema.Struct({ input: ReceiptInput, slice: Schema.Struct({ line: Schema.Struct({ unit: Schema.String }) }) }),
-    (ctx) => ctx.input.unit === ctx.slice.line.unit,
+    Schema.Struct({
+      input: ReceiptInput,
+      slice: Schema.Struct({
+        line: Schema.Struct({ unit: Schema.String }),
+        order: Schema.Struct({ status: Schema.String }),
+        warehouse: Schema.Struct({ status: Schema.String }),
+      }),
+    }),
+    (ctx) => (ctx.slice.order.status === "submitted" || ctx.slice.order.status === "partially_received")
+      && ctx.slice.warehouse.status === "active"
+      && ctx.input.unit === ctx.slice.line.unit,
     { root: "context" },
   )],
   createLinks: [
@@ -393,6 +415,19 @@ export const RecordObservation = Norn.action({
   label: { en: "Record weekly demand", ar: "تسجيل الطلب الأسبوعي" },
   input: ObservationInput, output: Schema.Struct({ observation_id: Schema.String }),
   scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+    { name: "warehouse", type: Warehouse, key: { property: { from: "input", property: "warehouse_id" } } },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({ input: ObservationInput, slice: Schema.Struct({ sku: Schema.Struct({ unit_of_measure: Schema.String }) }) }),
+    (ctx) => ctx.input.unit === ctx.slice.sku.unit_of_measure,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "sku", targetType: Sku, targetIdField: "sku_id" },
+    { link: "warehouse", targetType: Warehouse, targetIdField: "warehouse_id" },
+  ],
   writes: [{ type: DemandObservation, change: "created" }],
   effect: { kind: "upsert_input_object", type: DemandObservation, objectIdField: "observation_id", writeMode: { kind: "create_only" } },
 })

@@ -17,8 +17,8 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_navigation_items(&mut self) {
-        let navigation_items = self.ux.navigation_items.clone();
-        for (index, item) in navigation_items.iter().enumerate() {
+        let ux = self.ux;
+        for (index, item) in ux.navigation_items.iter().enumerate() {
             let path = format!("/payload/ux/navigationItems/{index}");
             if item.required_capability.trim().is_empty() {
                 self.error(
@@ -42,8 +42,7 @@ impl UxChecker<'_, '_, '_> {
                     page_id,
                     parameters,
                 } => {
-                    let Some(page) = self.pages.get(page_id.as_str()).map(|page| (*page).clone())
-                    else {
+                    let Some(page) = self.pages.get(page_id.as_str()).copied() else {
                         self.error(
                             &format!("{path}/destination/pageId"),
                             "navigation destination page does not exist",
@@ -53,7 +52,7 @@ impl UxChecker<'_, '_, '_> {
                     let record_contexts =
                         self.navigation_record_contexts(item.item_id.as_str(), &path);
                     self.check_context_parameters(
-                        &page,
+                        page,
                         parameters,
                         &record_contexts,
                         &format!("{path}/destination/parameters"),
@@ -69,12 +68,7 @@ impl UxChecker<'_, '_, '_> {
                         &ArtifactKind::Entity,
                         &format!("{path}/destination/object"),
                     );
-                    let Some(binding) = self
-                        .bindings
-                        .get(data_binding_id.as_str())
-                        .copied()
-                        .cloned()
-                    else {
+                    let Some(binding) = self.bindings.get(data_binding_id.as_str()).copied() else {
                         self.error(
                             &format!("{path}/destination/dataBindingId"),
                             "object destination binding does not exist",
@@ -119,8 +113,8 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    fn check_app_shell(&mut self) {
-        let Some(app) = self.ux.app.clone() else {
+    fn check_app_shell(&self) {
+        let Some(app) = self.ux.app.as_ref() else {
             return;
         };
         let app_path = "/payload/ux/app";
@@ -187,11 +181,7 @@ impl UxChecker<'_, '_, '_> {
         app_pages: &BTreeSet<&str>,
         route_path: &str,
     ) {
-        let Some(page) = self
-            .pages
-            .get(route.page_id.as_str())
-            .map(|page| (*page).clone())
-        else {
+        let Some(page) = self.pages.get(route.page_id.as_str()).copied() else {
             self.error(
                 &format!("{route_path}/pageId"),
                 "route destination page does not exist",

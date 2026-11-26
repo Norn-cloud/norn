@@ -435,16 +435,13 @@ fn validate_contract_value(
     schema: &JsonValue,
     path: &str,
 ) -> Result<(), String> {
-    match schema {
+    let keywords = match schema {
         JsonValue::Bool(true) => return Ok(()),
         JsonValue::Bool(false) => return Err(format!("{path} is denied by the contract")),
-        JsonValue::Object(_) => {}
+        JsonValue::Object(keywords) => keywords,
         JsonValue::Null | JsonValue::Number(_) | JsonValue::String(_) | JsonValue::Array(_) => {
             return Err(format!("{path} has an invalid contract schema"));
         }
-    }
-    let JsonValue::Object(keywords) = schema else {
-        return Err(format!("{path} has an invalid contract schema"));
     };
 
     if let Some(expected) = keywords.get("type")

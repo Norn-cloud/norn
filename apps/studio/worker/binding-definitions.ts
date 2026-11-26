@@ -80,7 +80,8 @@ export class BindingDefinitions {
 
   /** DEFS's scope query: the actor's server-resolved organization and its environment. */
   private scoped(path: string): string {
-    return `${path}?${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
+    const sep = path.includes("?") ? "&" : "?"
+    return `${path}${sep}${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
   private async call(method: "GET" | "POST", path: string, body?: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {

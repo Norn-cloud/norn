@@ -91,8 +91,6 @@ impl Reply {
 pub struct Due {
     /// It committed something: live subscriptions are answered again.
     pub committed: bool,
-    /// When the next alarm should fire (Unix milliseconds).
-    pub next: Option<u64>,
     /// What stayed due, and why, for the operator's log.
     pub failed: Option<String>,
 }
@@ -400,7 +398,6 @@ impl CellCore {
             .map_err(|refusal| refusal.code)?;
         Ok(Due {
             committed: work.committed(),
-            next: earliest(work.next, self.sync_next(now_ms)?),
             failed: (!work.failed.is_empty()).then(|| work.failed.join("; ")),
         })
     }

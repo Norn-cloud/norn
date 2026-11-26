@@ -1581,6 +1581,10 @@ impl VMInner<'_, '_> {
             Opcode::Join => self.peek(1).map(deep).unwrap_or(0),
             Opcode::Flatten => self.peek(0).map(nested).unwrap_or(0),
             Opcode::Slice => size_of(2),
+            Opcode::Fetch => match (self.peek(1), self.peek(0)) {
+                (Some(Object(_)), Some(String(_))) => size_of(0),
+                _ => 0,
+            },
             Opcode::In | Opcode::Equal => size_of(0).saturating_add(size_of(1)),
             Opcode::Add => match (self.peek(1), self.peek(0)) {
                 (Some(String(_)), _) | (_, Some(String(_))) => {

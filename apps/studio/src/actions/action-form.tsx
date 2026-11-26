@@ -219,7 +219,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         <span className="flex-1" />
         {phase.kind === "confirming"
           ? <Button type="button" variant="ghost" onClick={() => dispatch({ kind: "back" })}>Back</Button>
-          : wizard && step > 0 && <Button type="button" variant="ghost" onClick={() => go(step - 1)}><ChevronLeft /> Back</Button>}
+          : wizard && step > 0 && <Button type="button" variant="ghost" onClick={() => go(step - 1)}><ChevronLeft aria-hidden className="rtl:rotate-180" /> Back</Button>}
         <Button type="submit" variant={phase.kind === "confirming" ? "destructive" : "default"} disabled={blocked !== null || phase.kind === "sending"}>
           {phase.kind === "sending" ? "Sending…" : phase.kind === "confirming" ? `Yes, ${action.title.toLowerCase()}`
             : wizard && step < review - 1 ? "Next" : wizard && step === review - 1 ? "Review" : action.title}

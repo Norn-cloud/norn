@@ -260,27 +260,17 @@ pub(crate) fn gate<E: SqlEngine>(
     action_id: &str,
 ) -> Result<Option<Gate>, Refusal> {
     let reader = cell.store().read();
-    let mut after: Option<String> = None;
-    loop {
-        let page = reader
-            .retained_definitions("approval", false, after.as_deref(), 200)
-            .map_err(Refusal::host)?;
-        for record in &page {
-            let payload: Value =
-                serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
-            if payload.get("action").and_then(Value::as_str) == Some(action_id) {
-                return Ok(Some(Gate {
-                    definition: record.definition.id.clone(),
-                    revision: record.definition.revision,
-                    payload,
-                }));
-            }
+    for definition in crate::approval_definitions::active_approvals_in(&reader)? {
+        let payload: Value = serde_json::from_str(&definition.payload).map_err(Refusal::host)?;
+        if payload.get("action").and_then(Value::as_str) == Some(action_id) {
+            return Ok(Some(Gate {
+                definition: definition.id,
+                revision: definition.revision,
+                payload,
+            }));
         }
-        if page.len() < 200 {
-            return Ok(None);
-        }
-        after = page.last().map(|record| record.definition.id.clone());
     }
+    Ok(None)
 }
 
 /// The decision request a parked call carries (`norn.decision@1` input).

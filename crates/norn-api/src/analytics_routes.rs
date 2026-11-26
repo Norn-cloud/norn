@@ -2136,12 +2136,12 @@ fn decided_source<E: SqlEngine, T>(
 ) -> Result<(T, norn_cell::analytics::Source, String, CellVersion), Refusal> {
     for _attempt in 0..3 {
         let reader = store.read();
-        let start = crate::object_routes::cell_version(&reader)?;
+        let start = crate::object_routes::version_of(&reader)?;
         let decision = decide(&reader)?;
         let (source, snapshot) = store
             .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
             .map_err(engine_failure)?;
-        if crate::object_routes::cell_version(&reader)? == start {
+        if crate::object_routes::version_of(&reader)? == start {
             return Ok((decision, source, snapshot, start));
         }
     }
@@ -2246,7 +2246,7 @@ pub fn profile_objects<E: SqlEngine>(
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
-    use crate::object_routes::{cell_version, not_found, snapshot_moved};
+    use crate::object_routes::{not_found, snapshot_moved, version_of};
     use norn_cell::analytics::ProfileRequest;
     let resumed = transport.resumed();
     let resumed_profile = resumed.as_ref().is_some_and(|a| a.op == "profile");
@@ -2303,7 +2303,7 @@ pub fn profile_objects<E: SqlEngine>(
     let profile = profile_exchange(store, transport, &tenant, &source, &call, resumed)?;
     let schema_pin = matches!(source, Source::Mirror { .. }).then_some(table.pin.as_str());
     if store.model().model_hash() != model_pin
-        || cell_version(&store.read())? != start_version
+        || version_of(&store.read())? != start_version
         || profile
             .provenance
             .verify(
