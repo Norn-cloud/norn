@@ -38,6 +38,9 @@ pub struct Snapshot {
     /// Effective integrity invariants (owned by the subject's lineage or implemented
     /// interfaces); quality invariants do not refuse native transitions.
     pub invariants: Vec<(String, Invariant)>,
+    /// Subject-bound `ZenTypeEnv` for preparing and evaluating integrity
+    /// invariants under the native exact profile (`evaluate_prepared`).
+    pub invariant_env: Option<norn_expr::ZenTypeEnv>,
 }
 /// Fresh source identity and exact finite inputs, never checked evidence.
 #[derive(Debug)]
@@ -57,6 +60,7 @@ fn freeze(
     bounds: &Bounds,
     laws: Vec<(String, LawIR)>,
     invariants: Vec<(String, Invariant)>,
+    invariant_env: Option<norn_expr::ZenTypeEnv>,
 ) -> Result<Snapshot, String> {
     require(
         object.lifecycles.len() == 1,
@@ -149,7 +153,53 @@ fn freeze(
         nodes,
         laws,
         invariants,
+        invariant_env,
     })
+}
+
+/// Build the subject-bound `ZenTypeEnv` matching native `TypeCatalog` so
+/// integrity invariants run through `evaluate_prepared` (exact Decimal profile).
+fn build_invariant_env(
+    pool: &[ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
+    object: &EffectiveObjectType,
+) -> Result<norn_expr::ZenTypeEnv, String> {
+    let mut property_types = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut object_types = Vec::new();
+    let mut extensions = Vec::new();
+    for artifact in pool.iter().filter(|a| a.kind() == ArtifactKind::Entity) {
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            continue;
+        };
+        match *root {
+            EntityRoot::V2(root) => object_types.push(root.object_type),
+            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+            EntityRoot::V2Extension(root) => extensions.push(root.object_type_extension),
+            EntityRoot::V2PropertyTypes(root) => property_types.extend(root.property_types),
+            EntityRoot::V1(_) | EntityRoot::V2Markings(_) => {}
+        }
+    }
+    let definitions = norn_expr::EntityDefinitions {
+        property_types: &property_types,
+        object_types: &object_types,
+        interfaces: &interfaces,
+        extensions: &extensions,
+    };
+    norn_expr::ZenTypeEnv::from_artifact_set_for_checking(
+        &definitions,
+        registry,
+        norn_expr::EnvOptions::default(),
+    )
+    .map_err(|errors| {
+        errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?
+    .bind_self(&object.name)
+    .map_err(|error| error.to_string())
 }
 
 /// Collect every integrity invariant declared by `object`'s lineage or
@@ -360,7 +410,12 @@ impl ApprovedContract {
                     .map(|(artifact, law)| (artifact.artifact_id.clone(), law.clone()))
                     .collect();
                 let invariants = integrity_invariants(&pool, object)?;
-                freeze(object, bounds, applicable, invariants)
+                let invariant_env = if invariants.is_empty() {
+                    None
+                } else {
+                    Some(build_invariant_env(&pool, registry, object)?)
+                };
+                freeze(object, bounds, applicable, invariants, invariant_env)
             });
         let document = serde_json::json!({"profile":"norn.lifecycle.frozen/2","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxSelectorBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
         let bytes = norn_canonical::canonical_json_exact_of(&document)
