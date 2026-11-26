@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { CellResult, Refusal as CellReadRefusal } from "../lib/cell-read.ts"
-import { CellUnavailable, NO_DATA_CELL } from "../lib/definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, parseUnavailableDetail } from "../lib/definitions.ts"
 import { CellRefusal } from "../lib/live-transport.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
 import { badgeText, cellNow, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, listRequested, parkedFrom, remaining, requestedAction, requestedPath, requestedWords, stepTitle, type Decision, type DecisionsPage, type RequestedDecision, type RequestedPage } from "../lib/decisions.ts"
@@ -37,16 +37,11 @@ function useCellClock(serverNowMs: number | undefined, receivedAt: number | unde
 export { useDecisionBadge } from "../lib/nav-menus.ts"
 
 function inboxRefusalError(refusal: CellReadRefusal): Error {
-  const body = refusal.body
-  const explanation = typeof body["explanation"] === "string" ? body["explanation"] : undefined
-  const incidentId = typeof body["incidentId"] === "string" ? body["incidentId"] : undefined
-  const retryable = typeof body["retryable"] === "boolean" ? body["retryable"] : undefined
-  const category = typeof body["category"] === "string" ? body["category"] : undefined
-  const decidedAt = typeof body["decidedAt"] === "string" ? body["decidedAt"] : undefined
-  if (refusal.status >= 500 || retryable === false) {
-    return new CellUnavailable(refusal.status, refusal.message, { code: refusal.code, explanation, incidentId, retryable, category, decidedAt })
+  const detail = parseUnavailableDetail(refusal.body)
+  if (refusal.status >= 500 || detail.retryable === false) {
+    return new CellUnavailable(refusal.status, refusal.message, { ...detail, code: refusal.code })
   }
-  return new CellRefusal(refusal.status, refusal.code, refusal.message, { explanation, incidentId, retryable, category, decidedAt })
+  return new CellRefusal(refusal.status, refusal.code, refusal.message, detail)
 }
 
 /**

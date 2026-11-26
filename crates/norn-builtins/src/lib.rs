@@ -21,6 +21,8 @@ pub mod action;
 pub mod decision;
 pub mod geo;
 
+use std::sync::OnceLock;
+
 use norn_ir::function::{
     Capability, DependencyClosure, DeterminismProfile, Digest, EffectfulPolicy, FUNCTION_ABI_V1,
     FunctionManifest, Implementation, ImplementationFormat, Platform, ResourceBounds,
@@ -130,16 +132,21 @@ impl Registered {
 /// # Errors
 /// A [`RegistryError`].
 pub fn registered_decision() -> Result<Registered, RegistryError> {
-    Registered::new(host_manifest(&HostFunction {
-        id: decision::FUNCTION_ID,
-        version: decision::VERSION,
-        schemas: [
-            ("norn.decision.input", decision::INPUT_SCHEMA),
-            ("norn.decision.output", decision::OUTPUT_SCHEMA),
-            ("norn.decision.error", decision::ERROR_SCHEMA),
-        ],
-        max_input_bytes: decision::MAX_REQUEST_BYTES,
-    })?)
+    static CACHED: OnceLock<Result<Registered, RegistryError>> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            Registered::new(host_manifest(&HostFunction {
+                id: decision::FUNCTION_ID,
+                version: decision::VERSION,
+                schemas: [
+                    ("norn.decision.input", decision::INPUT_SCHEMA),
+                    ("norn.decision.output", decision::OUTPUT_SCHEMA),
+                    ("norn.decision.error", decision::ERROR_SCHEMA),
+                ],
+                max_input_bytes: decision::MAX_REQUEST_BYTES,
+            })?)
+        })
+        .clone()
 }
 
 /// The registered `norn.action@1`.
@@ -147,16 +154,21 @@ pub fn registered_decision() -> Result<Registered, RegistryError> {
 /// # Errors
 /// A [`RegistryError`].
 pub fn registered_action() -> Result<Registered, RegistryError> {
-    Registered::new(host_manifest(&HostFunction {
-        id: action::FUNCTION_ID,
-        version: action::VERSION,
-        schemas: [
-            ("norn.action.input", action::INPUT_SCHEMA),
-            ("norn.action.output", action::OUTPUT_SCHEMA),
-            ("norn.action.error", action::ERROR_SCHEMA),
-        ],
-        max_input_bytes: action::MAX_INPUT_BYTES,
-    })?)
+    static CACHED: OnceLock<Result<Registered, RegistryError>> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            Registered::new(host_manifest(&HostFunction {
+                id: action::FUNCTION_ID,
+                version: action::VERSION,
+                schemas: [
+                    ("norn.action.input", action::INPUT_SCHEMA),
+                    ("norn.action.output", action::OUTPUT_SCHEMA),
+                    ("norn.action.error", action::ERROR_SCHEMA),
+                ],
+                max_input_bytes: action::MAX_INPUT_BYTES,
+            })?)
+        })
+        .clone()
 }
 
 /// A compiled-in host Function: its identity, its input, output and error

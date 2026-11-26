@@ -82,9 +82,24 @@ test("payload types follow the declaration exactly", () => {
 })
 
 test("the frame allows no network and no same-origin access; the module cannot close its script early", () => {
-  const html = frameDocument('import x from "y"; document.body.textContent = "</script></SCRIPT><img src=x>"')
+  const html = frameDocument('import x from "y"; document.body.textContent = "</script></SCRIPT><!--<img src=x>"')
   expect(html).toContain("default-src 'none'")
   expect(html).not.toContain("connect-src")
   expect(html.match(/<\/script>/gi)?.length).toBe(2)
+  expect(html).not.toContain("<!--")
   expect(html).not.toContain("{ once: true }")
+})
+
+test("checkPayload ignores prototype properties and createHost catches guard evaluation errors", () => {
+  expect(checkPayload([{ fieldId: "toString", type: "json", required: true }], {})).toContain("toString")
+  const brokenTile: CatalogEntry = {
+    ...tile,
+    machine: {
+      ...tile.machine!,
+      transitions: tile.machine!.transitions.map((t) => (t.transitionId === "expand" ? { ...t, guard: "broken_expr" } : t)),
+    },
+  }
+  const { host, refused } = harness(brokenTile)
+  expect(() => host.receive({ type: "emit", eventId: "expand" })).not.toThrow()
+  expect(refused).toEqual([{ kind: "malformed_message", detail: "no expression in this machine" }])
 })

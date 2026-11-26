@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -8,6 +8,7 @@ import type { Cell, CellAnswer } from "../cell.ts"
 import { claudeCost, configuredModel, neuronCost, withFallback, workersAi, worstCallMicroUsd, type Answer, type Ask, type Model } from "../model.ts"
 import { reserve, settle } from "../proposals.ts"
 import type { CellCatalog } from "../questions.ts"
+import { createMigratedDb } from "./harness.ts"
 
 const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../../fixtures/demo/answers", name), "utf8"))
 const cellCatalog: CellCatalog = { objectTypes: [fixture("scrap-yield.object-type.json")], metrics: fixture("scrap-yield.metrics.json"), grains: ["week"], operators: ["eq", "ne"], maxGroupBy: 1, maxBuckets: 104 }
@@ -111,12 +112,7 @@ function d1(db: Database): D1Database {
   })
   return { prepare: (sql: string) => statement(sql), batch: async (list: { run(): Promise<unknown> }[]) => { for (const s of list) await s.run(); return [] } } as unknown as D1Database
 }
-function stage() {
-  const db = new Database(":memory:")
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0008_dashboard_proposal.sql"), "utf8"))
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0016_agent_reservation.sql"), "utf8"))
-  return d1(db)
-}
+const stage = () => d1(createMigratedDb(["0008_dashboard_proposal.sql", "0016_agent_reservation.sql"]))
 const post = (route: string, body: unknown = {}) => new Request(`https://studio.test/api/agent/dashboards${route}`, { method: "POST", body: JSON.stringify(body) })
 const get = (route = "") => new Request(`https://studio.test/api/agent/dashboards${route}`)
 

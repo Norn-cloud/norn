@@ -3,18 +3,18 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { getMigrations } from "better-auth/db/migration"
-import worker, { type Env } from "../index.ts"
+import type { Env } from "../index.ts"
 import { authOptions, createAuth } from "../auth.ts"
 import { forgetPolarCustomer, grantOf, payerOf, reconcile, snapshotOf, statusOf, type PolarBilling, type PolarSubscription } from "../polar.ts"
 import { billingModeOn, billingModeStatement, entitlementOf, FREE_LIMITS, limitRaised, ownedWorkspaces, UNLIMITED, workspaceMembers, writeLimits, type BillingDb } from "../billing.ts"
 import { BILLING_ENV, parsePlans, PLACEHOLDER_PLANS, polarConfig, POLAR_SCOPES, settingsOf, type PlanTable, type PolarConfig } from "../polar-config.ts"
 import { celldConfig, celldStudio } from "../../celld-config.ts"
 import { README, withBillingSection } from "../../scripts/billing-readme.ts"
+import { DEFAULT_ORIGIN as ORIGIN, cookieOf, createMigratedDb, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 // Polar is mocked throughout: no request leaves the test. The Worker runs against bun:sqlite with
 // Studio's committed migrations, so the entitlement record is the one D1 holds.
 
-const ORIGIN = "https://studio-preview.norn.cloud"
 const MIGRATIONS = join(import.meta.dir, "../migrations")
 const PLANS: PlanTable = {
   plans: [
@@ -38,17 +38,12 @@ const CONFIG = polarConfig(POLAR_ENV) as PolarConfig
 /** What entitlement and admission take: provider-neutral, no Polar settings. */
 const SETTINGS = settingsOf(CONFIG)
 
-function database(): Database {
-  const db = new Database(":memory:")
-  for (const file of readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).sort()) db.exec(readFileSync(join(MIGRATIONS, file), "utf8"))
-  return db
-}
+const database = (): Database => createMigratedDb("all")
 /** A deployed stage: migrated, its billing mode written by the deploy step (alchemy.run.ts, celld-migrate.ts). */
 function stage(billing: boolean): Env {
-  const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
   const db = database()
   db.run(billingModeStatement(billing))
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? POLAR_ENV : {} }
+  return createWorkerEnv({ db, origin: ORIGIN, overrides: billing ? POLAR_ENV : {} }).env
 }
 const sql = (env: Env) => env.AUTH_DB as unknown as Database
 
@@ -94,18 +89,9 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = realFetch })
 
 // --- Worker calls ------------------------------------------------------------------------------
-let address = 0
-const call = (env: Env, path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers)
-  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", `198.51.100.${++address % 250}`)
-  return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
-}
-const post = (env: Env, path: string, body: unknown, headers: HeadersInit = {}) =>
-  call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, ...headers } })
-const cookieOf = (response: Response) => response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
+const { call, post, enroll: enrollResponse } = createWorkerClient(ORIGIN)
 async function enroll(env: Env, email: string): Promise<{ cookie: string; userId: string }> {
-  expect((await post(env, "/api/auth/sign-up/email", { email, password: "correct horse battery", name: email.split("@")[0] })).status).toBe(200)
-  const signIn = await post(env, "/api/auth/sign-in/email", { email, password: "correct horse battery" })
+  const signIn = await enrollResponse(env, email)
   expect(signIn.status).toBe(200)
   const { id } = sql(env).query("select id from user where email = ?").get(email) as { id: string }
   return { cookie: cookieOf(signIn), userId: id }

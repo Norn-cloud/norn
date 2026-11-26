@@ -10,6 +10,9 @@ import { syncStudioScopeChange } from "../lib/live-transport.ts"
 
 const LearningScopeContext = createContext<StudioScope | null>(null)
 
+/** Shared native `<select>` classes for Learning filter bars (44px mobile touch target, DESIGN.md §16.2). */
+export const LEARNING_SELECT_CLASS = "h-8 max-sm:min-h-[44px] rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+
 /**
  * The verified server-reported scope whose `/v1/definitions` catalog opened the enclosing
  * `<LearningGate>`, or null outside a gate.

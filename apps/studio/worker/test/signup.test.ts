@@ -1,45 +1,37 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
 import { INVITE_ONLY_MESSAGE, issueSignupInvite, SIGNUP_CLAIM_STALE_MS, SIGNUP_INVITE_HEADER, verifySignupInvite } from "../auth.ts"
 import worker, { magicLinkEnabled, signUpEmails, type Env } from "../index.ts"
+import { BASE_MIGRATIONS, DEFAULT_PASSWORD, DEFAULT_SECRET as SECRET, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 const ORIGIN = "https://studio-alpha.norn.cloud"
-const migration = (name: string) => readFileSync(join(import.meta.dir, "../migrations", name), "utf8")
 
 function stage(options: { invited?: string; magicLink?: boolean; emailFrom?: string } = {}) {
-  const db = new Database(":memory:")
-  db.exec(migration("0001_better_auth.sql"))
-  db.exec(migration("0002_workspace_provisioning.sql"))
-  db.exec(migration("0015_signup_invite.sql"))
-  const env: Env = {
-    ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
-    AUTH_DB: db as unknown as D1Database,
-    BETTER_AUTH_SECRET: "t".repeat(40),
-    BETTER_AUTH_URL: ORIGIN,
-    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
-    ...options.invited === undefined ? {} : { STUDIO_SIGNUP_EMAILS: options.invited },
-    ...options.magicLink ? { EMAIL: { send: async () => undefined }, EMAIL_FROM: options.emailFrom ?? "studio@norn.cloud" } : {},
-    ...!options.magicLink && options.emailFrom !== undefined ? { EMAIL_FROM: options.emailFrom } : {},
-  }
-  return { db, env }
+  return createWorkerEnv({
+    migrations: [...BASE_MIGRATIONS, "0015_signup_invite.sql"],
+    origin: ORIGIN,
+    assetsHtml: "studio",
+    overrides: {
+      ...options.invited === undefined ? {} : { STUDIO_SIGNUP_EMAILS: options.invited },
+      ...options.magicLink ? { EMAIL: { send: async () => undefined }, EMAIL_FROM: options.emailFrom ?? "studio@norn.cloud" } : {},
+      ...!options.magicLink && options.emailFrom !== undefined ? { EMAIL_FROM: options.emailFrom } : {},
+    },
+  })
 }
 
-let address = 0
-const SECRET = "t".repeat(40)
+const { post } = createWorkerClient(ORIGIN)
 const invite = async (email: string, options: { now?: number; ttlMs?: number } = {}) => (await issueSignupInvite(SECRET, email, options)).token
 const signUp = (env: Env, email: string, options: { path?: string; ip?: string; origin?: string; invite?: string; password?: string } = {}) =>
-  worker.fetch(new Request(`${ORIGIN}${options.path ?? "/api/auth/sign-up/email"}`, {
-    method: "POST",
-    body: JSON.stringify({ email, password: options.password ?? "correct horse battery", name: "someone" }),
-    headers: {
-      "content-type": "application/json",
-      origin: options.origin ?? ORIGIN,
-      "cf-connecting-ip": options.ip ?? `198.51.100.${++address % 250}`,
+  post(
+    env,
+    options.path ?? "/api/auth/sign-up/email",
+    { email, password: options.password ?? DEFAULT_PASSWORD, name: "someone" },
+    {
+      ...options.origin === undefined ? {} : { origin: options.origin },
+      ...options.ip === undefined ? {} : { "cf-connecting-ip": options.ip },
       ...options.invite === undefined ? {} : { [SIGNUP_INVITE_HEADER]: options.invite },
     },
-  }) as Parameters<typeof worker.fetch>[0], env)
+  )
 
 const users = (db: Database) => db.query(`select "email" from "user" order by "email"`).all()
 const count = (db: Database, table: string) => (db.query(`select count(*) as n from "${table}"`).get() as { n: number }).n

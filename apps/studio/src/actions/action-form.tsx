@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { formatRelativeOrTimestamp as when } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { ACTIONS_UNAVAILABLE, CALL_OUTCOME_UNKNOWN, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft, type FormField, type Section, type Spec } from "../lib/actions.ts"
 import { createIntentKey, type ActionReceipt, type ActionSummary, type Diagnostic } from "../../../../packages/norn-sdk/src/index.ts"
@@ -528,14 +529,6 @@ function Review({ sections, fields, draft, counts, prefill, onEdit }: {
       ))}
     </section>
   )
-}
-
-/** "just now", "4 min ago", or the local date and time. */
-function when(ms: number, now = Date.now()): string {
-  const seconds = Math.round((now - ms) / 1000)
-  if (seconds >= 0 && seconds < 60) return "just now"
-  if (seconds >= 0 && seconds < 3600) return `${Math.round(seconds / 60)} min ago`
-  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 }
 
 /** A refusal as the form shows it: a broken law (named, or redacted for this role), or the cell's refusal in words. */
