@@ -111,7 +111,99 @@ export function requiredCapabilities(ux: WidgetUx): string[] {
   return [...out].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
 }
 
-const REFERENCES_RECORD_VERSION = /\binput\s*(?:\.\s*recordVersion\b|\[\s*["']recordVersion["']\s*\])/
+type ZenToken =
+  | { readonly kind: "ident"; readonly value: string }
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "punct"; readonly value: string }
+
+function tokenizeZen(expression: string): ZenToken[] {
+  const tokens: ZenToken[] = []
+  let i = 0
+  while (i < expression.length) {
+    const ch = expression[i]!
+    if (/\s/.test(ch)) {
+      i += 1
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const quote = ch
+      let value = ""
+      i += 1
+      while (i < expression.length && expression[i] !== quote) {
+        if (expression[i] === "\\" && i + 1 < expression.length) {
+          value += expression[i + 1]!
+          i += 2
+        } else {
+          value += expression[i]!
+          i += 1
+        }
+      }
+      if (i < expression.length) i += 1
+      tokens.push({ kind: "string", value })
+      continue
+    }
+    if (/[A-Za-z_$]/.test(ch)) {
+      let end = i + 1
+      while (end < expression.length && /[A-Za-z0-9_$]/.test(expression[end]!)) end += 1
+      tokens.push({ kind: "ident", value: expression.slice(i, end) })
+      i = end
+      continue
+    }
+    if (ch === "?" && expression[i + 1] === ".") {
+      tokens.push({ kind: "punct", value: "?." })
+      i += 2
+      continue
+    }
+    tokens.push({ kind: "punct", value: ch })
+    i += 1
+  }
+  return tokens
+}
+
+/**
+ * Whether a Zen expression accesses the unsupported `input.recordVersion` slot, including
+ * parenthesized forms (`(input).recordVersion`, `((input))["recordVersion"]`, `input?.recordVersion`)
+ * while ignoring string literals like `"input.recordVersion"`.
+ */
+export function referencesRecordVersion(expression: string): boolean {
+  const tokens = tokenizeZen(expression)
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]!
+    if (token.kind !== "ident" || token.value !== "input") continue
+    const prev = i > 0 ? tokens[i - 1] : undefined
+    if (prev !== undefined && prev.kind === "punct" && (prev.value === "." || prev.value === "?.")) continue
+    // Allow balanced grouping parentheses wrapping `input`: `(input).recordVersion`, `((input))["recordVersion"]`.
+    let left = i - 1
+    let right = i + 1
+    while (
+      left >= 0 &&
+      right < tokens.length &&
+      tokens[left]!.kind === "punct" &&
+      tokens[left]!.value === "(" &&
+      tokens[right]!.kind === "punct" &&
+      tokens[right]!.value === ")"
+    ) {
+      const beforeParen = left > 0 ? tokens[left - 1] : undefined
+      if (beforeParen !== undefined && beforeParen.kind === "ident") break
+      left -= 1
+      right += 1
+    }
+    const next = tokens[right]
+    if (next === undefined || next.kind !== "punct") continue
+    if (next.value === "." || next.value === "?.") {
+      const member = tokens[right + 1]
+      if (member?.kind === "ident" && member.value === "recordVersion") return true
+    } else if (next.value === "[") {
+      const key = tokens[right + 1]
+      const close = tokens[right + 2]
+      if (key?.kind === "string" && key.value === "recordVersion" && close?.kind === "punct" && close.value === "]") {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 const NUMBER_FORMATS = new Set(["integer", "decimal", "currency", "percent"])
 
 /**
@@ -130,7 +222,7 @@ export function unsupported(ux: WidgetUx): string[] {
   }
   for (const binding of ux.actionBindings) {
     for (const [member, expression] of Object.entries(binding.inputMapping)) {
-      if (REFERENCES_RECORD_VERSION.test(expression)) {
+      if (referencesRecordVersion(expression)) {
         out.push(`expr:recordVersion (action:${binding.bindingId}.${member})`)
       }
     }
@@ -140,7 +232,7 @@ export function unsupported(ux: WidgetUx): string[] {
       out.push(`field:number:unformatted (${field.fieldId})`)
     }
     for (const condition of [field.visibleWhen, field.requiredWhen, field.readOnlyWhen]) {
-      if (condition !== undefined && REFERENCES_RECORD_VERSION.test(condition.expression)) {
+      if (condition !== undefined && referencesRecordVersion(condition.expression)) {
         out.push(`expr:recordVersion (field:${field.fieldId})`)
       }
     }
@@ -150,18 +242,18 @@ export function unsupported(ux: WidgetUx): string[] {
       readonly enabledWhen?: { readonly expression?: string }
       readonly selectionInputMapping?: Readonly<Record<string, string>>
     }
-    if (typeof extra.enabledWhen?.expression === "string" && REFERENCES_RECORD_VERSION.test(extra.enabledWhen.expression)) {
+    if (typeof extra.enabledWhen?.expression === "string" && referencesRecordVersion(extra.enabledWhen.expression)) {
       out.push(`expr:recordVersion (placement:${placement.placementId})`)
     }
     for (const [member, expression] of Object.entries(extra.selectionInputMapping ?? {})) {
-      if (REFERENCES_RECORD_VERSION.test(expression)) {
+      if (referencesRecordVersion(expression)) {
         out.push(`expr:recordVersion (placement:${placement.placementId}.${member})`)
       }
     }
   }
   for (const item of ux.navigationItems) {
     const extra = item as unknown as { readonly visibleWhen?: { readonly expression?: string } }
-    if (typeof extra.visibleWhen?.expression === "string" && REFERENCES_RECORD_VERSION.test(extra.visibleWhen.expression)) {
+    if (typeof extra.visibleWhen?.expression === "string" && referencesRecordVersion(extra.visibleWhen.expression)) {
       out.push(`expr:recordVersion (navigation:${item.itemId})`)
     }
   }

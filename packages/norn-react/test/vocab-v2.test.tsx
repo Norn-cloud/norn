@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import { formConfirmReason, type ActionEffects } from "../src/agent.ts"
-import { missingCapabilities, RENDERED_COMPONENTS, RENDERER_CAPABILITIES, requiredCapabilities } from "../src/capabilities.ts"
+import { missingCapabilities, referencesRecordVersion, RENDERED_COMPONENTS, RENDERER_CAPABILITIES, requiredCapabilities } from "../src/capabilities.ts"
 import { lazyEngine, type CheckerEvaluator } from "../src/machine/evaluate.ts"
 import type { Classified, Clock } from "../src/machine/index.ts"
 import type { Fields, Machine, MachineEvent } from "../src/machine/machine.ts"
@@ -31,6 +31,7 @@ import {
   partitionTabRuns,
   readPrefill,
   reconcileSelection,
+  resolveFieldPrefillSecurity,
   selectionEventPayload,
   validateExactNumber,
   type PageScope,
@@ -1511,6 +1512,118 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     )
     expect(numRefusedMarkup).toContain('data-norn-refused=""')
     expect(numRefusedMarkup).toContain("field:number:unformatted (f-qty)")
+  })
+
+  test("referencesRecordVersion detects parenthesized/optional accesses and ignores string literals", () => {
+    expect(referencesRecordVersion("input.recordVersion")).toBe(true)
+    expect(referencesRecordVersion("(input).recordVersion")).toBe(true)
+    expect(referencesRecordVersion("((input))['recordVersion']")).toBe(true)
+    expect(referencesRecordVersion('((input))["recordVersion"]')).toBe(true)
+    expect(referencesRecordVersion("input?.recordVersion")).toBe(true)
+    expect(referencesRecordVersion('"input.recordVersion"')).toBe(false)
+    expect(referencesRecordVersion("'input.recordVersion'")).toBe(false)
+    expect(referencesRecordVersion("input.record.version")).toBe(false)
+    expect(referencesRecordVersion("foo(input).recordVersion")).toBe(false)
+  })
+
+  test("resolveFieldPrefillSecurity ratchets stricter masking while dirty and restores withheld fields on clean ok refresh", () => {
+    const masked = { mode: "redacted" as const, markings: ["pii"], revealable: false }
+    const visible = { value: "raw", masked: undefined, withheld: false }
+    const maskedLive = { value: "***", masked, withheld: false }
+    const withheldLive = { value: undefined, masked: undefined, withheld: true }
+    const pendingEmpty = { value: undefined, masked: undefined, withheld: false }
+
+    // Dirty form: live ok refresh upgrades masking -> saved into pinned -> subsequent pending/refused keeps mask.
+    const ratcheted = resolveFieldPrefillSecurity(maskedLive, visible, true, true)
+    expect(ratcheted.masked).toEqual(masked)
+    const afterPending = resolveFieldPrefillSecurity(pendingEmpty, ratcheted, true, false)
+    expect(afterPending.masked).toEqual(masked)
+
+    // Clean form: previously withheld field restored on ok refresh clears withholding immediately.
+    const restored = resolveFieldPrefillSecurity(visible, withheldLive, false, true)
+    expect(restored.withheld).toBe(false)
+    expect(restored.value).toBe("raw")
+
+    // Clean form: non-ok refresh preserves pinned withholding/masking.
+    const stillWithheld = resolveFieldPrefillSecurity(pendingEmpty, withheldLive, false, false)
+    expect(stillWithheld.withheld).toBe(true)
+  })
+
+  test("synchronous selection reconciliation keys by envelope row.id so colliding values.id never substitutes another row", async () => {
+    const rowA = { id: "env-A", values: { id: "env-B", name: "Alpha" } }
+    const rowB = { id: "env-B", values: { id: "env-B", name: "Beta" } }
+    const sent: Array<{ actionId: string; input: Fields }> = []
+    let pushSnapshot: ((doc: unknown) => void) | undefined
+
+    const subMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "opening",
+      fields: [],
+      events: [
+        { eventId: "opened", source: { kind: "page_opened" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+        { eventId: "list-changed", source: { kind: "subscription", bindingId: "orders" } },
+      ],
+      states: [
+        { stateId: "opening", role: "idle" },
+        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "orders" }, deadlineMs: 5000 },
+        { stateId: "ready", role: "idle" },
+        { stateId: "acting", role: "pending", awaits: { kind: "action", bindingId: "act-selected" }, deadlineMs: 5000 },
+      ],
+      transitions: [
+        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "orders" } }] },
+        { transitionId: "t-loaded", from: "loading", on: "accepted", target: "ready" },
+        { transitionId: "t-ref", from: "loading", on: "refused", target: "ready" },
+        { transitionId: "t-sub", from: "ready", on: "list-changed", target: "acting", effects: [{ kind: "start", call: { kind: "action", bindingId: "act-selected" } }] },
+        { transitionId: "t-act-ok", from: "acting", on: "accepted", target: "ready" },
+      ],
+    }
+
+    const listNode: WidgetNode = {
+      nodeId: "orders-list",
+      component: { kind: "list", dataBindingId: "orders", fields: [{ bindingId: "orders", propertyId: "name" }], selection: "single" },
+      children: [],
+    }
+    const subUx = makeUx(
+      listNode,
+      {
+        dataBindings: [{ bindingId: "orders", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_list", filters: [], sort: [], page: { size: 10, maxSize: 20 } } }],
+        actionBindings: [{
+          bindingId: "act-selected",
+          action: { id: "canon.order.act.action", version: "0.1.0" },
+          inputMapping: { selected: "input.selection" },
+          inputs: { selectionBindingId: "orders" },
+          requiredCapability: "canon.order.act",
+        }],
+      },
+      subMachine,
+    )
+
+    const runtime = createPageRuntime(
+      {
+        ux: subUx,
+        machine: subMachine,
+        reader: { kind: "live", widget: () => ({ queryKey: ["orders"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: { records: [rowA, rowB] } }) }) },
+        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({
+          context: {},
+          objectTypeOf: () => "canon.Order",
+          actionIdOf: (id) => (id === "canon.order.act.action" ? "canon.order.act" : undefined),
+          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
+        }),
+      },
+      () => {},
+    )
+    await flush()
+    // Select row A using its canonical envelope id "env-A" even though values.id === "env-B".
+    runtime.setSelection("orders", [flattenSelectionRecord(rowA)], ["env-A"])
+    // Live snapshot removes row A while keeping row B ("env-B"): reconciliation must NOT substitute row B!
+    pushSnapshot?.({ records: [rowB] })
+    await flush()
+    expect(sent).toEqual([{ actionId: "canon.order.act", input: { selected: [] } }])
+    runtime.dispose()
   })
 
   test("packages/norn-react/src never imports Radix", () => {

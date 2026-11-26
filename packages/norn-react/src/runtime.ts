@@ -57,8 +57,8 @@ export interface MachineRuntime extends RuntimeView {
   readonly retryEngine: () => void
   /** Record a form's current local draft (and optional pinned baseline record) so `ActionBinding` maps from it. */
   readonly setDraft?: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
-  /** Record a selectable list's selected records so `ActionBinding` (`input.selection`) maps from it. */
-  readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => void
+  /** Record a selectable list's selected records (and canonical envelope row ids) so `ActionBinding` (`input.selection`) maps from it. */
+  readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids?: readonly string[]) => void
   /** Submit a form's declared action binding directly when no machine event owns the form node. */
   readonly submitForm?: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
 }
@@ -93,7 +93,7 @@ export interface PageRuntime {
   readonly send: (msg: Msg) => void
   readonly retryEngine: () => void
   readonly setDraft: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
-  readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => void
+  readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids?: readonly string[]) => void
   readonly submitForm: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
   /** Start the engine loading, as the page does after its first paint. */
   readonly preload: () => void
@@ -137,7 +137,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   const feeds = new Map<string, { readonly key: string; readonly stop: () => void }>()
   const drafts = new Map<string, Readonly<Record<string, unknown>>>()
   const draftRecords = new Map<string, PinnedRecord>()
-  const selections = new Map<string, readonly Readonly<Record<string, unknown>>[]>()
+  const selections = new Map<string, readonly { readonly id: string; readonly record: Readonly<Record<string, unknown>> }[]>()
   const formKeys = new Map<string, string>()
   const formInflight = new Set<{ readonly controller: AbortController; readonly deadline: unknown }>()
   let wait: unknown = null
@@ -162,7 +162,8 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     const hasRecord = typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues)
     const recordKey = hasRecord && typeof recordDoc?.id === "string" && recordDoc.id !== "" ? recordDoc.id : undefined
     const draft = binding.inputs.draftFormId === undefined ? undefined : drafts.get(binding.inputs.draftFormId)
-    const selection = binding.inputs.selectionBindingId === undefined ? undefined : selections.get(binding.inputs.selectionBindingId)
+    const selectionEntries = binding.inputs.selectionBindingId === undefined ? undefined : selections.get(binding.inputs.selectionBindingId)
+    const selection = selectionEntries === undefined ? undefined : selectionEntries.map((entry) => entry.record)
     return {
       context,
       ...(hasRecord ? { record: recordValues } : {}),
@@ -224,17 +225,10 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (typeof row.id === "string" && row.id !== "" && !Object.hasOwn(flattened, "id")) flattened.id = row.id
       available.set(rowId, flattened)
     }
-    const pruned: Record<string, unknown>[] = []
-    for (let index = 0; index < current.length; index += 1) {
-      const selected = current[index]!
-      const selectedId =
-        typeof selected.id === "string" && selected.id !== ""
-          ? selected.id
-          : typeof selected.key === "string" && selected.key !== ""
-            ? selected.key
-            : String(index)
-      const fresh = available.get(selectedId)
-      if (fresh !== undefined) pruned.push(fresh)
+    const pruned: { readonly id: string; readonly record: Readonly<Record<string, unknown>> }[] = []
+    for (const entry of current) {
+      const fresh = available.get(entry.id)
+      if (fresh !== undefined) pruned.push({ id: entry.id, record: fresh })
     }
     selections.set(bindingId, pruned)
   }
@@ -503,8 +497,22 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     },
     retryEngine: () => loadEngine(true),
     setDraft,
-    setSelection: (bindingId, records) => {
-      selections.set(bindingId, records)
+    setSelection: (bindingId, records, ids) => {
+      selections.set(
+        bindingId,
+        records.map((record, index) => {
+          const explicit = ids?.[index]
+          const id =
+            explicit !== undefined && explicit !== ""
+              ? explicit
+              : typeof record.id === "string" && record.id !== ""
+                ? record.id
+                : typeof record.key === "string" && record.key !== ""
+                  ? record.key
+                  : String(index)
+          return { id, record }
+        }),
+      )
     },
     submitForm,
     preload: () => {
@@ -602,7 +610,7 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
   const send = useCallback((msg: Msg) => runtimeRef.current?.send(msg), [])
   const retryEngine = useCallback(() => runtimeRef.current?.retryEngine(), [])
   const setDraft = useCallback((formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.setDraft(formId, draft, pinnedRecord), [])
-  const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => runtimeRef.current?.setSelection(bindingId, records), [])
+  const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids?: readonly string[]) => runtimeRef.current?.setSelection(bindingId, records, ids), [])
   const submitForm = useCallback((formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.submitForm(formId, bindingId, draft, pinnedRecord), [])
 
   return {

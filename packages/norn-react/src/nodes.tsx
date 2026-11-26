@@ -532,7 +532,7 @@ function ListRows({
   useEffect(() => {
     if (selection === "none") return
     if (reconciled.changed) setSelectedIds(reconciled.ids)
-    scope.runtime.setSelection?.(dataBindingId, reconciled.records)
+    scope.runtime.setSelection?.(dataBindingId, reconciled.records, reconciled.ids)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection, dataBindingId, reconciledKey, reconciled.changed])
 
@@ -568,7 +568,7 @@ function ListRows({
     setSelectedIds(next)
     setFocusIndex(index)
     const nextReconciled = reconcileSelection(next, rows)
-    scope.runtime.setSelection?.(dataBindingId, nextReconciled.records)
+    scope.runtime.setSelection?.(dataBindingId, nextReconciled.records, nextReconciled.ids)
     const event = eventFor(scope, node)
     if (event !== undefined) {
       const payload = selectionEventPayload(event, selection, rowId, nextReconciled.ids, nextReconciled.records)
@@ -1332,6 +1332,29 @@ function FormFieldControlView({
   )
 }
 
+function fieldReadSettledOk(scope: PageScope, form: WidgetForm, field: FieldPresentation): boolean {
+  const ref = prefillRefOf(form, field)
+  if (ref === undefined) return true
+  return scope.runtime.reads.get(ref.bindingId)?.kind === "ok"
+}
+
+/**
+ * Resolve one field's effective L6 security metadata across refreshes:
+ * - On a clean form whose backing read just settled `ok`, trust the fresh read (so a field restored
+ *   by the server un-hides immediately without remounting).
+ * - While dirty or while a backing read is non-`ok` (pending/refused/unavailable), never drop
+ *   stricter `masked` or `withheld` metadata from either the pinned baseline or the live read.
+ */
+export function resolveFieldPrefillSecurity(
+  live: PrefillInfo,
+  pinned: PrefillInfo | undefined,
+  dirty: boolean,
+  readSettledOk: boolean,
+): PrefillInfo {
+  if (!dirty && readSettledOk) return live
+  return mergePrefillSecurity(live, pinned)
+}
+
 function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly node: WidgetNode; readonly formId: string }) {
   const form = scope.ux.forms.find((candidate) => candidate.formId === formId)
   if (form === undefined) {
@@ -1359,6 +1382,12 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
   const livePrefills = buildPrefillMap(scope, form, formFields)
   const prefillSnapshot = buildInitialDraft(formFields, livePrefills)
   const prefillKey = JSON.stringify(prefillSnapshot)
+  const liveSecurityKey = formFields
+    .map((field) => {
+      const info = livePrefills[field.fieldId]!
+      return `${field.fieldId}:${fieldReadSettledOk(scope, form, field) ? "1" : "0"}:${info.withheld ? "1" : "0"}:${info.masked?.mode ?? ""}`
+    })
+    .join("|")
   const [initialDraft, setInitialDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [draft, setDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [pinnedRecord, setPinnedRecord] = useState<PinnedRecord | undefined>(() => liveBaselineRecord)
@@ -1369,36 +1398,70 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const dirty = computeFormDirty(initialDraft, draft)
 
-  // Hydrate from server prefill and advance pinned baseline + masking metadata ONLY while clean.
-  // While dirty (or while a baseline refresh is in flight/failed), keep the edited baseline revision
-  // and its L6 security metadata pinned so version checks never submit a newer revision and
-  // pending/refused refreshes never drop redaction marks.
+  // Hydrate from server prefill and advance pinned baseline ONLY while clean.
+  // - While dirty, keep the edited draft and baseline revision pinned, but STILL ratchet
+  //   `pinnedPrefills` monotonically stricter whenever a refresh delivers new `masked`/`withheld`
+  //   metadata so a subsequent pending/refused refresh can never drop L6 redaction marks.
+  // - While clean, take fresh security metadata from any field whose backing read settled `ok`
+  //   (allowing restored fields to un-hide without remount) while preserving pinned marks across
+  //   non-`ok` refreshes.
   useEffect(() => {
-    if (dirty) return
+    if (dirty) {
+      setPinnedPrefills((previous) => {
+        let changed = false
+        const next: Record<string, PrefillInfo> = { ...previous }
+        for (const field of formFields) {
+          const prev = previous[field.fieldId]
+          const merged = mergePrefillSecurity(livePrefills[field.fieldId]!, prev)
+          if (prev === undefined || merged.withheld !== prev.withheld || merged.masked?.mode !== prev.masked?.mode) {
+            next[field.fieldId] = merged
+            changed = true
+          }
+        }
+        return changed ? next : previous
+      })
+      return
+    }
     if (requiresBaseline) {
       if (liveBaselineRecord === undefined) return
       setInitialDraft(prefillSnapshot)
       setDraft(prefillSnapshot)
       setPinnedRecord(liveBaselineRecord)
-      setPinnedPrefills(livePrefills)
+      setPinnedPrefills((previous) => {
+        const next: Record<string, PrefillInfo> = {}
+        for (const field of formFields) {
+          next[field.fieldId] = resolveFieldPrefillSecurity(
+            livePrefills[field.fieldId]!,
+            previous[field.fieldId],
+            false,
+            fieldReadSettledOk(scope, form, field),
+          )
+        }
+        return next
+      })
       scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, prefillSnapshot), liveBaselineRecord)
       return
     }
     setInitialDraft(prefillSnapshot)
     setDraft(prefillSnapshot)
     setPinnedPrefills((previous) => {
-      const merged: Record<string, PrefillInfo> = {}
+      const next: Record<string, PrefillInfo> = {}
       for (const field of formFields) {
-        merged[field.fieldId] = mergePrefillSecurity(livePrefills[field.fieldId]!, previous[field.fieldId])
+        next[field.fieldId] = resolveFieldPrefillSecurity(
+          livePrefills[field.fieldId]!,
+          previous[field.fieldId],
+          false,
+          fieldReadSettledOk(scope, form, field),
+        )
       }
-      return merged
+      return next
     })
     if (liveBaselineRecord !== undefined) {
       setPinnedRecord(liveBaselineRecord)
       scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, prefillSnapshot), liveBaselineRecord)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillKey, liveBaselineKey])
+  }, [prefillKey, liveBaselineKey, liveSecurityKey, dirty])
 
   // Do not mount interactive edit inputs or allow submission before the initial baseline record loads.
   if (requiresBaseline && pinnedRecord === undefined) {
@@ -1434,7 +1497,12 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
 
   const fieldStates = formFields.map((field) => {
     const key = extractFieldKey(field)
-    const prefill = mergePrefillSecurity(livePrefills[field.fieldId]!, pinnedPrefills[field.fieldId])
+    const prefill = resolveFieldPrefillSecurity(
+      livePrefills[field.fieldId]!,
+      pinnedPrefills[field.fieldId],
+      dirty,
+      fieldReadSettledOk(scope, form, field),
+    )
     const agentMark = valueMark(prefill.masked, prefill.withheld)
     const value = prefill.withheld ? "" : (Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined))
     const visible = evaluateFieldCondition(scope, field.visibleWhen, draftPayload, true, pinnedRecord)
