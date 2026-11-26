@@ -371,7 +371,7 @@ pub fn render_review_module(projection: &Value) -> Result<String, String> {
 
 fn by_key<'v, K: Ord>(
     list: Option<&'v Value>,
-    key: &dyn Fn(&'v Value) -> Option<K>,
+    key: impl Fn(&'v Value) -> Option<K>,
 ) -> BTreeMap<K, &'v Value> {
     list.and_then(Value::as_array)
         .into_iter()
@@ -417,6 +417,32 @@ impl std::fmt::Display for ConstraintKey<'_> {
     }
 }
 
+fn rows<'v>(value: &'v Value, key: &str) -> &'v [Value] {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+fn dataset_key(d: &Value) -> Option<&str> {
+    text(d, "/id")
+}
+
+fn field_key(f: &Value) -> Option<(&str, &str)> {
+    Some((text(f, "/dataset")?, text(f, "/name")?))
+}
+
+fn constraint_key(c: &Value) -> Option<ConstraintKey<'_>> {
+    Some(ConstraintKey {
+        kind: text(c, "/kind")?,
+        dataset: text(c, "/dataset")?,
+        fields: string_list(c, "/fields")?,
+        target_dataset: text(c, "/target/dataset").unwrap_or_default(),
+        target_fields: string_list(c, "/target/fields")?,
+        collection: text(c, "/collection").unwrap_or_default(),
+    })
+}
+
 /// Every way the contract `payload` (a compiled `source_schema` payload)
 /// claims more than the `projection` of the pinned originals. Empty when the
 /// contract is a faithful subset. A contract row missing its identifying keys
@@ -434,28 +460,6 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
         if contract.get(key).is_some_and(|section| !section.is_array()) {
             problems.push(format!("contract {key} is not an array"));
         }
-    }
-    fn rows<'v>(value: &'v Value, key: &str) -> &'v [Value] {
-        value
-            .get(key)
-            .and_then(Value::as_array)
-            .map_or(&[], Vec::as_slice)
-    }
-    fn dataset_key(d: &Value) -> Option<&str> {
-        text(d, "/id")
-    }
-    fn field_key(f: &Value) -> Option<(&str, &str)> {
-        Some((text(f, "/dataset")?, text(f, "/name")?))
-    }
-    fn constraint_key(c: &Value) -> Option<ConstraintKey<'_>> {
-        Some(ConstraintKey {
-            kind: text(c, "/kind")?,
-            dataset: text(c, "/dataset")?,
-            fields: string_list(c, "/fields")?,
-            target_dataset: text(c, "/target/dataset").unwrap_or_default(),
-            target_fields: string_list(c, "/target/fields")?,
-            collection: text(c, "/collection").unwrap_or_default(),
-        })
     }
     let upstream_datasets = by_key(projection.get("datasets"), dataset_key);
     for dataset in rows(contract, "datasets") {
