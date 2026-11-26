@@ -1,0 +1,173 @@
+{
+  "artifactId": "analytics.Study.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Preregistered analytical study",
+  "namespace": "analytics",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Preregistered analytical, experimentation, or ML study pinning temporal split boundaries (ANALYTICS-SPLIT-1) and diagnostics-gated publication lifecycle (DATA-PUBLISH-GUARD, LIFE-SOUND-1..8).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "published"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "withheld"
+            }
+          ],
+          "immutable": [
+            "published",
+            "withheld"
+          ],
+          "initial": [
+            "preregistered"
+          ],
+          "property": "publication_status",
+          "terminal": [
+            "published",
+            "withheld"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "preregistered"
+              ],
+              "id": "evaluate",
+              "to": "evaluated"
+            },
+            {
+              "from": [
+                "evaluated"
+              ],
+              "id": "publish",
+              "to": "published"
+            },
+            {
+              "from": [
+                "preregistered",
+                "evaluated"
+              ],
+              "id": "withhold",
+              "to": "withheld"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Accountable analyst or investigator owning this preregistered study.",
+          "id": "owner",
+          "target": "core.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional certified metric evaluated by this study.",
+          "id": "target_metric",
+          "target": "bi.CertifiedMetric"
+        }
+      ],
+      "name": "analytics.Study",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "study_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "population_digest",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "method_digest",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "train_cutoff_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "holdout_start_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "default": false,
+          "id": "diagnostics_passed",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "default": "preregistered",
+          "id": "publication_status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "preregistered"
+              },
+              {
+                "value": "evaluated"
+              },
+              {
+                "value": "published"
+              },
+              {
+                "value": "withheld"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.Study.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

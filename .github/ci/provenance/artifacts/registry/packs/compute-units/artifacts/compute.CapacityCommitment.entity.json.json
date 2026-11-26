@@ -1,0 +1,9 @@
+{
+  "category": "generated",
+  "license": "Proprietary",
+  "origin": "derived",
+  "parents": [
+    "registry/packs/compute-units/units.ts"
+  ],
+  "sha256": "373c6befa02b5d255839ab6c9177ec5c982b22afee00005d98f483927a115497"
+}

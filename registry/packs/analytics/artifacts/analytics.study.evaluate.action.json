@@ -1,0 +1,64 @@
+{
+  "artifactId": "analytics.study.evaluate.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Evaluate a preregistered study",
+  "namespace": "analytics",
+  "payload": {
+    "actionId": "analytics.study.evaluate",
+    "effectProgram": {
+      "entityArtifactId": "analytics.Study.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "publication_status",
+      "objectIdField": "id",
+      "objectKind": "analytics.Study",
+      "transition": "evaluate"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Evaluate a preregistered study",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "analytics.Study"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.study.evaluate.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

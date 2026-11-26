@@ -1,0 +1,165 @@
+{
+  "artifactId": "compute.usage.price.action",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Price a compute token usage event",
+  "namespace": "compute",
+  "payload": {
+    "actionId": "compute.usage.price",
+    "derive": [
+      {
+        "expression": "input.rate_per_token * input.token_quantity",
+        "field": "billed_amount",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "compute.UsageEvent.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "compute.UsageEvent",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "consume"
+          ],
+          "type": "string"
+        },
+        "billed_amount": {
+          "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "currencySource": {
+              "links": [],
+              "property": "billing_currency"
+            },
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "billing_currency": {
+          "enum": [
+            "USD"
+          ],
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "rate_per_token": {
+          "nornType": {
+            "currencySource": {
+              "links": [],
+              "property": "billing_currency"
+            },
+            "kind": "decimal",
+            "perUnit": {
+              "code": "{token}",
+              "system": "ucum"
+            },
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "token_quantity": {
+          "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 0,
+            "unit": {
+              "code": "{token}",
+              "system": "ucum"
+            }
+          },
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "occurred_at",
+        "quantity",
+        "unit",
+        "currency",
+        "billing_currency",
+        "token_quantity",
+        "rate_per_token",
+        "billed_amount"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "token_quantity > 0"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Price a compute token usage event",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "compute.UsageEvent"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.usage.price.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

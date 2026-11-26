@@ -1,0 +1,9 @@
+{
+  "category": "generated",
+  "license": "Proprietary",
+  "origin": "derived",
+  "parents": [
+    "registry/packs/analytics/analytics.ts"
+  ],
+  "sha256": "246b8f28b4a1d6b05d05935d76ac46dad5585088e0b75bfed61139f30ada635c"
+}

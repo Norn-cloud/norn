@@ -1,0 +1,50 @@
+{
+  "artifactId": "analytics.Study.temporal_split_ordered.law",
+  "dependencies": [
+    {
+      "artifactId": "analytics.Study.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "ANALYTICS-SPLIT-1: train_cutoff_at must be at or before holdout_start_at so training features never overlap holdout outcomes.",
+  "namespace": "analytics",
+  "payload": {
+    "id": "analytics.Study.temporal_split_ordered",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "analytics",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/analytics/analytics.ts"
+    },
+    "rationale": "ANALYTICS-SPLIT-1: train_cutoff_at must be at or before holdout_start_at so training features never overlap holdout outcomes.",
+    "response": {
+      "expression": "timestamp(self.train_cutoff_at) <= timestamp(self.holdout_start_at)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "analytics.Study"
+      ],
+      "root": {
+        "id": "analytics.Study",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "analytics.Study"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.Study.temporal_split_ordered.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

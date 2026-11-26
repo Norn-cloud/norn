@@ -1,0 +1,50 @@
+{
+  "artifactId": "bi.CertifiedMetric.freshness_sla_positive.law",
+  "dependencies": [
+    {
+      "artifactId": "bi.CertifiedMetric.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "DATA-FRESH: every certified metric must declare a strictly positive freshness SLA bound in milliseconds.",
+  "namespace": "bi",
+  "payload": {
+    "id": "bi.CertifiedMetric.freshness_sla_positive",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "bi",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/analytics/analytics.ts"
+    },
+    "rationale": "DATA-FRESH: every certified metric must declare a strictly positive freshness SLA bound in milliseconds.",
+    "response": {
+      "expression": "self.freshness_sla_ms > 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "bi.CertifiedMetric"
+      ],
+      "root": {
+        "id": "bi.CertifiedMetric",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "bi.CertifiedMetric"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.CertifiedMetric.freshness_sla_positive.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
