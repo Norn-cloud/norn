@@ -128,7 +128,16 @@ pub fn action_tool(action: &ActionRoot) -> Result<McpTool, McpProjectionError> {
     })
 }
 
+const MAX_SCHEMA_DEPTH: usize = 64;
+
 fn decimal_wire_schema(schema: &mut JsonObject) {
+    decimal_wire_object(schema, 0);
+}
+
+fn decimal_wire_object(schema: &mut JsonObject, depth: usize) {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return;
+    }
     if schema.get("type").and_then(JsonValue::as_string) == Some("number")
         && schema
             .get("nornType")
@@ -143,11 +152,59 @@ fn decimal_wire_schema(schema: &mut JsonObject) {
         });
     } else {
         for value in schema.values_mut() {
-            if let JsonValue::Object(child) = value {
-                decimal_wire_schema(child);
-            }
+            decimal_wire_value(value, depth.saturating_add(1));
         }
     }
+}
+
+fn decimal_wire_value(value: &mut JsonValue, depth: usize) {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return;
+    }
+    match value {
+        JsonValue::Object(child) => decimal_wire_object(child, depth),
+        JsonValue::Array(items) => {
+            for item in items {
+                decimal_wire_value(item, depth.saturating_add(1));
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_) => {}
+    }
+}
+
+fn schema_allows_null(schema: &JsonValue) -> bool {
+    let Some(object) = schema.as_object() else {
+        return false;
+    };
+    if let Some(kind) = object.get("type") {
+        if kind.as_string() == Some("null") {
+            return true;
+        }
+        if kind
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item.as_string() == Some("null")))
+        {
+            return true;
+        }
+    }
+    for combiner in ["anyOf", "oneOf"] {
+        if object
+            .get(combiner)
+            .and_then(JsonValue::as_array)
+            .is_some_and(|branches| {
+                branches.iter().any(|branch| {
+                    branch
+                        .as_object()
+                        .and_then(|b| b.get("type"))
+                        .and_then(JsonValue::as_string)
+                        == Some("null")
+                })
+            })
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Project caller requirements without evaluating or parsing ZEN.
@@ -175,7 +232,7 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
     let filled = server_filled(action);
     if let Some(JsonValue::Array(required)) = input_schema.get_mut("required") {
         required.retain(|field| {
-            field.as_string().is_none_or(|field| {
+            field.as_string().is_some_and(|field| {
                 !filled.contains(field)
                     && !action
                         .derive
@@ -192,6 +249,7 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
             // A null source has the same meaning as an omitted source.
             if let Some(schema) = properties.get_mut(&derivation.field)
                 && projected.insert(&derivation.field)
+                && !schema_allows_null(schema)
             {
                 *schema = JsonValue::Object(JsonObject::from([(
                     "anyOf".to_owned(),
@@ -209,16 +267,51 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
     input_schema
 }
 
+/// Whether a ZEN expression references the root identifier `input` outside
+/// string literals and not as a member after `.`.
+fn expression_reads_input(expression: &str) -> bool {
+    let mut chars = expression.chars().peekable();
+    let mut prev_dot = false;
+    while let Some(ch) = chars.next() {
+        if ch == '\'' || ch == '"' {
+            let quote = ch;
+            while let Some(inner) = chars.next() {
+                if inner == '\\' {
+                    let _escaped = chars.next();
+                } else if inner == quote {
+                    break;
+                }
+            }
+            prev_dot = false;
+        } else if ch.is_ascii_alphabetic() || ch == '_' {
+            let mut ident = String::new();
+            ident.push(ch);
+            while let Some(&next) = chars.peek() {
+                if next.is_ascii_alphanumeric() || next == '_' {
+                    ident.push(next);
+                    let _consumed = chars.next();
+                } else {
+                    break;
+                }
+            }
+            if !prev_dot && ident == "input" {
+                return true;
+            }
+            prev_dot = false;
+        } else if ch == '.' {
+            prev_dot = true;
+        } else if !ch.is_whitespace() {
+            prev_dot = false;
+        }
+    }
+    false
+}
+
 /// Fields every derivation of which is optional for the caller and reads no
 /// caller input (`actor.subjectId`, `now`): the server's to fill, never the
 /// caller's. A derivation that reads `input` (a default, a normalization)
 /// keeps its field in the schema.
 fn server_filled(action: &ActionRoot) -> std::collections::BTreeSet<&str> {
-    let reads_input = |expression: &str| {
-        expression
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .any(|word| word == "input")
-    };
     let mut filled = std::collections::BTreeSet::new();
     for derivation in &action.derive {
         filled.insert(derivation.field.as_str());
@@ -228,7 +321,9 @@ fn server_filled(action: &ActionRoot) -> std::collections::BTreeSet<&str> {
             .derive
             .iter()
             .filter(|derivation| derivation.field == *field)
-            .all(|derivation| !derivation.input_required && !reads_input(&derivation.expression.0))
+            .all(|derivation| {
+                !derivation.input_required && !expression_reads_input(&derivation.expression.0)
+            })
     });
     filled
 }

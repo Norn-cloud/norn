@@ -127,3 +127,27 @@ fn a_lifecycle_over_an_inherited_property_has_no_declared_diagram() {
     rush.properties.clear();
     assert_eq!(declared_lifecycle_diagrams(&rush), Vec::new());
 }
+
+#[test]
+fn duplicate_states_are_deduplicated_and_front_matter_strips_newlines() {
+    let lifecycle = serde_json::from_value(serde_json::json!({
+        "property": "status",
+        "initial": ["open"],
+        "terminal": ["closed"],
+        "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
+    }))
+    .expect("decodes");
+    let diagram = norn_projections::lifecycle_diagram(
+        "acme.Order\n---\nmalicious: true",
+        &["open", "open", "closed"],
+        &lifecycle,
+    );
+    assert_eq!(
+        diagram.mermaid.matches("state \"open\"").count(),
+        1,
+        "{}",
+        diagram.mermaid
+    );
+    let front_matter = diagram.mermaid.split("---").nth(1).expect("front matter");
+    assert!(!front_matter.trim().contains('\n'), "{front_matter}");
+}
