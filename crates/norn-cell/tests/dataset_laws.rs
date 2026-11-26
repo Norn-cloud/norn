@@ -1500,7 +1500,7 @@ fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
     ]);
     *never_law = serde_json::from_value(never_json).expect("updated never law");
 
-    let (_dir, mut cell) = support::cell_from_artifacts(artifacts, base);
+    let (_dir, mut cell) = support::cell_from_artifacts(&artifacts, &base);
 
     let table = cell.store().analytics_table(TYPE).expect("table");
     let checks = cell

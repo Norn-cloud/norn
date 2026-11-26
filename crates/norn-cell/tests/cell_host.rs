@@ -5900,7 +5900,7 @@ fn create_ifc_fixture(
     norn_cell::Model,
     SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
 ) {
-    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+    let mut defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "hr.Employee",
             "identity": [{"name": "primary", "properties": ["id"]}],
@@ -5927,6 +5927,7 @@ fn create_ifc_fixture(
         }
     ]))
     .expect("hr defs");
+    defs.push(r2_action_call_type());
     let model = common::model_of(&defs)
         .with_governing_laws(laws)
         .expect("governing laws");
@@ -6227,11 +6228,11 @@ fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_clo
         ("L-WHOLE", json!(["slice.emp != null"])),
     ] {
         let action = create_ifc_action(&format!("hr.{id}"), &precond, true);
-        let call = create_ifc_call(&action, id, id);
+        let request = create_ifc_call(&action, id, id);
         assert_marking_refusal(norn_kernel::commit_action(
             &mut cell,
             &catalog,
-            &call,
+            &request,
             &ReferenceLineageAllowAll,
         ));
     }
