@@ -110,7 +110,11 @@ impl<A: AnalyticalEngine> InProcess<A> {
                         code: "analytics.engine".to_owned(),
                         detail: error.to_string(),
                     })
-                    .unwrap_or_else(|_e| String::from("{\"code\":\"analytics.engine\"}")),
+                    .unwrap_or_else(|_e| {
+                        String::from(
+                            "{\"code\":\"analytics.engine\",\"detail\":\"serialization failed\"}",
+                        )
+                    }),
                 ),
             },
             Err(refused) => (

@@ -219,11 +219,10 @@ pub fn new_key(kid: &str) -> Result<(String, String), String> {
     use base64::Engine as _;
     let mut seed = [0_u8; 32];
     getrandom::fill(&mut seed).map_err(|e| format!("no randomness: {e}"))?;
-    let mut secret = format!(
-        "{kid}:{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(seed)
-    );
+    let mut encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(seed);
     zeroize::Zeroize::zeroize(&mut seed);
+    let mut secret = format!("{kid}:{encoded}");
+    zeroize::Zeroize::zeroize(&mut encoded);
     let issuer = match norn_api::olap_credential::Issuer::parse(&secret) {
         Ok(issuer) => issuer,
         Err(error) => {
@@ -262,11 +261,11 @@ pub fn healthy() -> bool {
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "0.0.0.0:8790".to_owned());
-    let Ok(addrs) = raw.to_socket_addrs() else {
+    let Ok(mut addrs) = raw.to_socket_addrs() else {
         return false;
     };
     let timeout = Duration::from_secs(2);
-    let Some(mut stream) = addrs.into_iter().find_map(|mut target| {
+    let Some(mut stream) = addrs.find_map(|mut target| {
         if target.ip().is_unspecified() {
             target.set_ip(match target.ip() {
                 std::net::IpAddr::V4(_) => std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
@@ -686,16 +685,26 @@ fn preadmit(
         }
         (request, tenant, room)
     };
-    drop(pending);
     match jobs.try_send(Job {
         stream,
         request,
         tenant,
         _held: room,
     }) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            drop(pending);
+            Ok(())
+        }
         Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
-            let _sent = respond(&job.stream, 503, "application/json", BUSY_BODY);
+            let Job {
+                stream,
+                request,
+                tenant,
+                _held,
+            } = job;
+            drop((request, tenant, _held));
+            let _sent = respond(&stream, 503, "application/json", BUSY_BODY);
+            drop(pending);
             Ok(())
         }
     }

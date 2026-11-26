@@ -64,6 +64,14 @@ fn is_header_name(name: &str) -> bool {
         })
 }
 
+/// RFC 9110 §5.5 / RFC 9112 §2.2 field value check: reject control bytes
+/// (including bare CR and NUL) other than HTAB.
+fn is_header_value(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte == b'\t' || (byte >= 0x20 && byte != 0x7f))
+}
+
 fn strip_eol(line: &str) -> &str {
     line.strip_suffix("\r\n")
         .or_else(|| line.strip_suffix('\n'))
@@ -118,6 +126,9 @@ pub(crate) fn read_head<R: BufRead, E>(
         };
         if !is_header_name(name) {
             return Err(map_invalid("malformed header name".to_owned()));
+        }
+        if !is_header_value(value) {
+            return Err(map_invalid("malformed header value".to_owned()));
         }
         let value = value.trim();
         if name.eq_ignore_ascii_case("content-length") {
@@ -226,6 +237,14 @@ mod tests {
             (
                 b" POST /v1/sync HTTP/1.1\r\n\r\n".as_slice(),
                 "the request line is malformed",
+            ),
+            (
+                b"POST /v1/sync HTTP/1.1\r\nX-Bad: a\rb\r\n\r\n".as_slice(),
+                "malformed header value",
+            ),
+            (
+                b"POST /v1/sync HTTP/1.1\r\nX-Bad: a\x00b\r\n\r\n".as_slice(),
+                "malformed header value",
             ),
             (
                 b"POST /v1/sync HTTP/2.0\r\n\r\n".as_slice(),
