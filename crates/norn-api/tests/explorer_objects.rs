@@ -8,9 +8,9 @@
     reason = "retained engine explorer documents"
 )]
 use norn_api::objects::{NornLinkPage, NornObjectPage, NornObjectRecord};
+use norn_cell::catalog::CatalogSnapshot;
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::read::LinkDirection;
-use norn_cell::catalog::CatalogSnapshot;
 use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model};
 // Both rings, as a cell admits the set: it carries a widget (#1762 C2).
 use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};

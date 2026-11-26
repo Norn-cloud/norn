@@ -1062,7 +1062,6 @@ fn active(serving: &http::Serving) -> Result<Option<InstalledDefinitionSet>, Str
     })
 }
 
-
 #[cfg(all(test, unix))]
 #[allow(
     clippy::unwrap_used,
