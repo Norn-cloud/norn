@@ -60,7 +60,7 @@ fn reference_action(
                 || action.quantity_effect.is_some()
                 || !catalog.lifecycles(&target.object_type).is_empty()
                 || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
-                || patch_read_properties(catalog, action, target, &target_attributes).is_none()))
+                || patch_read_properties(catalog, action, target, target_attributes).is_none()))
         || (!patch
             && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
         || action.slice.iter().any(|entry| {
