@@ -55,6 +55,7 @@ fn admission_findings(schema: &JsonValue) -> Vec<norn_ir::Diagnostic> {
             code: "rule.validation.invalid_schema",
             subject: "RuleIR",
             string_enums: true,
+            allow_fixed_currency: false,
             unions: ClosedSchemaUnions::Nullable,
         },
     );
