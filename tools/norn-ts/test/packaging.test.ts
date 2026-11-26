@@ -289,8 +289,8 @@ test("dev host: the download is bounded by the recorded size and by time", async
   try {
     const base = `http://127.0.0.1:${server.port}`
     expect(await download(`${base}/exact`, body.length)).toEqual(body)
-    await expect(download(`${base}/declared-too-big`, body.length - 1)).rejects.toThrow("the server offers 1024 bytes")
-    await expect(download(`${base}/streamed-too-big`, 4096)).rejects.toThrow("more than the 4096 bytes")
+    await expect(download(`${base}/declared-too-big`, body.length - 1)).rejects.toThrow("exceeds size limit")
+    await expect(download(`${base}/streamed-too-big`, 4096)).rejects.toThrow("exceeded size limit")
     await expect(download(`${base}/stalled`, body.length, 300)).rejects.toThrow()
     await expect(download(`${base}/absent`, 10)).rejects.toThrow("HTTP 404")
   } finally { server.stop(true) }

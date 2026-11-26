@@ -87,7 +87,6 @@ export function flowSourceMapGraph(steps: ReadonlyArray<Step>): FlowSourceMapGra
   const nodes = new Map<string, FlowSourceMapStep>()
   const edges: FlowSourceMapEdge[] = []
   const edgeKeys = new Set<string>()
-  const tails = (shape: Shape): ReadonlyArray<string> => shape.tails
 
   interface Shape {
     readonly first: string | undefined
@@ -145,7 +144,7 @@ export function flowSourceMapGraph(steps: ReadonlyArray<Step>): FlowSourceMapGra
           const values = step._tag === "All" ? step.steps : step.body
           const shape = visitSequence(values)
           contain(values, step._tag === "All" ? "steps" : "body")
-          stepTails = shape.first ? tails(shape) : id ? [id] : []
+          stepTails = shape.first ? shape.tails : id ? [id] : []
           break
         }
         case "Retry": {

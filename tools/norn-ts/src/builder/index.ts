@@ -3,7 +3,7 @@
  * of hand-written definitions and of the syntax compiler (ruling 2026-09-27
  * authoring-effect-profile §2).
  */
-export { assignable, assignable as conforms } from "./assignable.ts"
+export { assignable } from "./assignable.ts"
 export * as S from "./schema.ts"
 export * as X from "./expr.ts"
 export * from "./flow.ts"

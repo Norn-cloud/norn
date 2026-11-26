@@ -209,7 +209,6 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     } else if (result.definitions.length === 0 && result.retained.length === 0) {
       failures.push({ file, diagnostics: [{ code: "NORN-FLOW-RESULT", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: file, message: "a pack module declares no definition and no Norn.flow; move shared code under a subdirectory" }] })
     }
-    return
   })
   for (const path of options.imports ?? []) {
     for (const { file, artifact } of readArtifacts(path)) add(artifact, posix(relative(root, file)))
