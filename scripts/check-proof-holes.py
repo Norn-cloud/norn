@@ -49,6 +49,50 @@ def relative(path: Path) -> str:
     return path.resolve().relative_to(ROOT).as_posix()
 
 
+CHAR_ESCAPE_LITERAL = re.compile(
+    r"'\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\{[0-9A-Fa-f]+\}|[0-9]{1,3}|[^\n])'"
+)
+RAW_STRING_OPEN = re.compile(r'r(#*)"')
+
+
+def _is_lean_letter_like(ch: str) -> bool:
+    """Exact mirror of Lean v4.34.1 `Init.Meta.Defs.isLetterLike`."""
+    code = ord(ch)
+    return (
+        (0x03B1 <= code <= 0x03C9 and code != 0x03BB)
+        or (0x0391 <= code <= 0x03A9 and code not in (0x03A0, 0x03A3))
+        or (0x03CA <= code <= 0x03FB)
+        or (0x1F00 <= code <= 0x1FFE)
+        or (0x2100 <= code <= 0x214F)
+        or (0x1D49C <= code <= 0x1D59F)
+        or (0x00C0 <= code <= 0x00FF and code not in (0x00D7, 0x00F7))
+        or (0x0100 <= code <= 0x017F)
+    )
+
+
+def _is_lean_subscript_alnum(ch: str) -> bool:
+    """Exact mirror of Lean v4.34.1 `Init.Meta.Defs.isSubScriptAlnum`."""
+    code = ord(ch)
+    return (
+        (0x2080 <= code <= 0x2089)
+        or (0x2090 <= code <= 0x209C)
+        or (0x1D62 <= code <= 0x1D6A)
+        or code == 0x2C7C
+    )
+
+
+def _is_ident_start(ch: str, *, is_lean: bool) -> bool:
+    if "a" <= ch <= "z" or "A" <= ch <= "Z" or ch == "_":
+        return True
+    return is_lean and _is_lean_letter_like(ch)
+
+
+def _is_ident_rest(ch: str, *, is_lean: bool) -> bool:
+    if _is_ident_start(ch, is_lean=is_lean) or "0" <= ch <= "9" or ch == "'":
+        return True
+    return is_lean and (ch in ("!", "?") or _is_lean_subscript_alnum(ch))
+
+
 def strip_comments_and_strings(
     source: str,
     *,
@@ -56,25 +100,30 @@ def strip_comments_and_strings(
     block: tuple[str, str],
     preserve_strings: bool = False,
 ) -> str:
-    """Remove nested block comments, line comments, and quoted strings."""
+    """Remove nested block comments, line comments, char literals, and quoted strings."""
 
     output: list[str] = []
     index = 0
     depth = 0
-    in_string = False
+    in_string: str | None = None
+    interp_braces: list[int] = []
+    after_dot = False
+    is_lean = line_marker == "--"
     while index < len(source):
         if depth:
             if source.startswith(block[0], index):
                 depth += 1
+                output.extend(" " * len(block[0]))
                 index += len(block[0])
             elif source.startswith(block[1], index):
                 depth -= 1
+                output.extend(" " * len(block[1]))
                 index += len(block[1])
             else:
                 output.append("\n" if source[index] == "\n" else " ")
                 index += 1
             continue
-        if in_string:
+        if in_string is not None:
             if source[index] == "\\":
                 width = min(2, len(source) - index)
                 output.extend(source[index : index + width] if preserve_strings else " " * width)
@@ -82,7 +131,14 @@ def strip_comments_and_strings(
             elif source[index] == '"':
                 output.append('"' if preserve_strings else " ")
                 index += 1
-                in_string = False
+                in_string = None
+            elif in_string == "interp" and source[index] == "{":
+                output.append("{")
+                index += 1
+                interp_braces.append(1)
+                in_string = None
+            elif is_lean and in_string == "plain" and source[index] == "{":
+                fail("unescaped '{' inside Lean string literal is forbidden in trusted proof sources")
             else:
                 output.append(
                     source[index]
@@ -98,20 +154,109 @@ def strip_comments_and_strings(
                 break
             output.extend(" " * (newline - index))
             index = newline
+            after_dot = False
         elif source.startswith(block[0], index):
             output.extend(" " * len(block[0]))
             index += len(block[0])
             depth = 1
+            after_dot = False
+        elif is_lean and source[index] == "«":
+            close = source.find("»", index + 1)
+            if close < 0:
+                fail("unterminated French-quoted identifier in trusted Lean source")
+            span = source[index : close + 1]
+            # Keep identifier text visible to hole patterns so `«ofReduceBool»`
+            # or `«implemented_by»` cannot hide behind French quotes, while
+            # neutralizing quote/brace characters so `«"»` or `«}»` cannot
+            # desynchronize string or interpolation lexing.
+            output.extend(
+                span
+                if preserve_strings
+                else "".join(" " if ch in ('«', '»', '"', "'", "{", "}") else ch for ch in span)
+            )
+            index = close + 1
+            after_dot = False
+        elif _is_ident_start(source[index], is_lean=is_lean):
+            if (
+                is_lean
+                and not after_dot
+                and source[index] == "r"
+                and RAW_STRING_OPEN.match(source, index) is not None
+            ):
+                fail("raw string literal is forbidden in trusted Lean proof sources")
+            if (
+                is_lean
+                and not after_dot
+                and source[index] in ("s", "m", "f")
+                and source.startswith('!"', index + 1)
+            ):
+                output.extend(source[index : index + 3] if preserve_strings else "   ")
+                index += 3
+                in_string = "interp"
+                after_dot = False
+                continue
+            end = index + 1
+            while end < len(source) and _is_ident_rest(source[end], is_lean=is_lean):
+                end += 1
+            output.append(source[index:end])
+            index = end
+            after_dot = False
+        elif source[index] == "'":
+            char_width = 0
+            if (
+                index + 2 < len(source)
+                and source[index + 1] not in ("\\", "'")
+                and source[index + 2] == "'"
+            ):
+                char_width = 3
+            elif index + 3 < len(source) and source[index + 1] == "\\":
+                matched = CHAR_ESCAPE_LITERAL.match(source, index)
+                if matched is not None:
+                    char_width = matched.end() - index
+            if char_width:
+                span = source[index : index + char_width]
+                output.extend(
+                    span
+                    if preserve_strings
+                    else "".join("\n" if ch == "\n" else " " for ch in span)
+                )
+                index += char_width
+            else:
+                output.append(source[index])
+                index += 1
+            after_dot = False
         elif source[index] == '"':
             output.append('"' if preserve_strings else " ")
             index += 1
-            in_string = True
+            in_string = "plain"
+            after_dot = False
+        elif interp_braces and source[index] == "{":
+            interp_braces[-1] += 1
+            output.append("{")
+            index += 1
+            after_dot = False
+        elif interp_braces and source[index] == "}":
+            interp_braces[-1] -= 1
+            output.append("}")
+            index += 1
+            after_dot = False
+            if interp_braces[-1] == 0:
+                interp_braces.pop()
+                in_string = "interp"
+        elif source[index] == ".":
+            is_single_dot = (index == 0 or source[index - 1] != ".") and (
+                index + 1 == len(source) or source[index + 1] != "."
+            )
+            output.append(".")
+            index += 1
+            after_dot = is_single_dot
         else:
             output.append(source[index])
             index += 1
+            after_dot = False
     if depth:
         fail("unterminated block comment in trusted proof source")
-    if in_string:
+    if in_string is not None or interp_braces:
         fail("unterminated string in trusted proof source")
     return "".join(output)
 
@@ -137,16 +282,27 @@ FSTAR_ADMISSION_OPTION = re.compile(
     re.IGNORECASE,
 )
 
-# `constant` is Lean's general constant-declaration command. `native_decide`
-# and `implemented_by` move trust to native compilation or an alternate
-# implementation; `unsafe` declarations are outside Lean's trusted logical
-# fragment. `opaque` definitions can be kernel-sound when they include a body,
-# but rejecting them in promoted proof sources keeps selector and extraction
-# correspondence transparent and avoids a declaration-shaped escape hatch.
-# The scanner always runs after comments and strings have been removed by the
-# nested-comment-aware lexer.
+FSTAR_PROOF_HOLE = re.compile(
+    r"\b(?:admit|_assume|assume|admitted|admit_termination|axiom|val|"
+    r"admit_smt_query|admit_smt_queries|expect_failure|expect_lax_failure|"
+    r"magic|tadmit|tadmit_t|admitP|unsafe_coerce)\b"
+)
+
+# `constant` is Lean's general constant-declaration command. `native_decide`,
+# `+native`, `ofReduceBool`, `ofReduceNat`, `bv_decide`, `implemented_by`,
+# `extern`, `skipKernelTC`, `addDecl*`, `addAndCompile`, `axiomDecl`,
+# `modifyEnv`, `setEnv`, `#eval`, `initialize`, `run_cmd`, `elab`,
+# `elab_rules`, `sorryAx`, and `unsafe` move trust outside Lean's kernel or
+# inject arbitrary declarations. `opaque` definitions can be kernel-sound when
+# they include a body, but rejecting them in promoted proof sources keeps
+# selector and extraction correspondence transparent and avoids a
+# declaration-shaped escape hatch. The scanner always runs after comments and
+# strings have been removed by the nested-comment-aware lexer.
 LEAN_PROOF_HOLE = re.compile(
-    r"\b(?:sorry|admit|axiom|constant|native_decide|implemented_by|unsafe|opaque)\b|"
+    r"\b(?:sorry|sorryAx|admit|axiom|constant|native_decide|implemented_by|unsafe|opaque|"
+    r"ofReduceBool|ofReduceNat|bv_decide|skipKernelTC|addDecl\w*|addAndCompile|"
+    r"axiomDecl|modifyEnv|setEnv|initialize|extern|run_cmd|elab|elab_rules)\b|"
+    r"(?<!\w)(?:\+native|#eval)\b|"
     r"\bset_option\s+warningAsError\s+false\b"
 )
 
@@ -184,16 +340,55 @@ def run_lexer_canaries() -> None:
     lean_clean = (
         '-- sorry native_decide unsafe\n'
         '/- axiom /- constant hidden : False -/ implemented_by opaque -/\n'
-        'def quoted := "constant native_decide implemented_by unsafe opaque"\n'
+        'def quoted := "constant native_decide implemented_by unsafe opaque \\{ok}"\n'
+        'def interpClean (n : Nat) := s!"count={n} sorry"\n'
+        "def quoteChar := '\"'\n"
+        "def x' := \"still clean\"\n"
+        'def «"» := true\n'
         'def theorem_ok : True := by exact True.intro\n'
     )
     if lean_proof_hole_locations(lean_clean):
         fail("Lean proof-hole scanner canary failed")
     for lean_bad in (
         "def theorem_bad : True := by sorry\n",
+        "def quote_blind := '\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
+        "def esc_blind := '\\\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
+        'def «"» := 1\ndef theorem_bad : True := by sorry\ndef close := ""\n',
+        'def Foo.r (s : String) : String := s\ndef a := Foo.r"\\""\naxiom bad : False\n-- "\n',
+        "def x : Bool := !'\"' == 'a'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def x' (s : String) : Bool := true\ndef b : Bool := !x'\"'\"\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def z : Char := 'a'x'\"'\" x'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def c : Char := д'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def é' : Char := 'a'\ndef b : Prop := é'<'\x22'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def ā' : Char := 'a'\ndef b : Prop := ā'<'\x22'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def xⱼ' : Char := 'a'\ndef b : Prop := xⱼ'<'\x22'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def b : Nat := x₊'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def b : Nat := x²'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def l : List Char := ['\n','\"']\naxiom bad : False\ndef y : Char := '\"'\n",
+        'def x : Bool := !s!"{(Lean.ofReduceBool : Nat)}" == ""\n',
+        'def interp_hide := s!"{(Lean.ofReduceBool : Nat)}"\n',
+        "def guillemet_hide := Lean.«ofReduceBool»\n",
+        "set_option debug.«skipKernelTC» true\n",
+        "set_option «warningAsError» false\n",
+        "@[«implemented_by» alt] def forged : True := True.intro\n",
+        "def forged := «sorryAx» _ false\n",
         "axiom impossible : False\n",
         "constant impossible : False\n",
         "example : True := by native_decide\n",
+        "example : True := by decide +native\n",
+        "def forged := Lean.ofReduceBool\n",
+        "def forged := Lean.ofReduceNat\n",
+        "example : True := by bv_decide\n",
+        "set_option debug.skipKernelTC true\n",
+        "def forged := Lean.addDecl\n",
+        "def forged := Lean.Kernel.Environment.addDeclWithoutChecking\n",
+        "#eval Lean.addAndCompile (.axiomDecl default)\n",
+        "initialize pure ()\n",
+        "def forged := Lean.modifyEnv\n",
+        "def forged := Lean.setEnv\n",
+        '@[extern "c_forged"] def forged : True := True.intro\n',
+        "run_cmd pure ()\n",
+        "elab \"x\" : term => pure ()\n",
         "@[implemented_by alternate] def forged : True := True.intro\n",
         "unsafe def forged : True := True.intro\n",
         "opaque forged : True := True.intro\n",
@@ -202,21 +397,49 @@ def run_lexer_canaries() -> None:
         if not lean_proof_hole_locations(lean_bad):
             fail(f"Lean proof-hole scanner canary failed for {lean_bad.strip()!r}")
 
-    fstar_pattern = re.compile(
-        r"\b(?:admit|assume|axiom|val|admit_smt_query|admit_smt_queries)\b"
-    )
+    for lean_rejected in (
+        'def raw_blind := r"\\"\naxiom impossible : False\ndef close := \'"\'\n',
+        'def x : Bool := !r"\\" == ""\naxiom bad : False\ndef y : Char := \'"\'\n',
+        'def c := дr"\\"\naxiom bad : False\ndef y : Char := \'"\'\n',
+        'def xs! (s : String) : Bool := true\ndef b : Bool := !xs!"{"\naxiom bad : False\ndef q := "}"\n',
+        'def raw_hashed := r#"sorry"#\n',
+        'def a : Nat := panic!"{"\naxiom bad : False\ndef b := "}"\n',
+        'def a := throwError "{(Lean.ofReduceBool : Nat)}"\n',
+        'def a := dbg_trace "{(by run_tac Lean.addDecl d; exact 0 : Nat)}"; 0\n',
+        'def a := s! "{Lean.ofReduceBool}"\n',
+        'def a := m! "{Lean.modifyEnv}"\n',
+    ):
+        try:
+            lean_proof_hole_locations(lean_rejected)
+        except ValueError:
+            continue
+        fail(f"Lean proof-hole scanner canary did not reject {lean_rejected.strip()!r}")
+
     fstar_clean = strip_comments_and_strings(
-        "// admit\n(* assume *)\nlet theorem_ok = ()\n",
+        "// admit\n(* assume *)\nlet id (x' : 'a) : 'a = x'\nlet q = '\"'\nlet theorem_ok = ()\n",
         line_marker="//",
         block=("(*", "*)"),
     )
-    fstar_bad = strip_comments_and_strings(
+    if FSTAR_PROOF_HOLE.search(fstar_clean):
+        fail("F* clean proof-hole scanner canary failed")
+    for fstar_bad_src in (
         "let theorem_bad = admit ()\n",
-        line_marker="//",
-        block=("(*", "*)"),
-    )
-    if fstar_pattern.search(fstar_clean) or not fstar_pattern.search(fstar_bad):
-        fail("F* proof-hole scanner canary failed")
+        "let q = '\"'\nlet theorem_bad = admit ()\nlet s = \"\"\n",
+        "let theorem_bad = _assume ()\n",
+        "let theorem_bad = admitted ()\n",
+        "let theorem_bad = magic ()\n",
+        "let theorem_bad = tadmit ()\n",
+        "let theorem_bad = tadmit_t ()\n",
+        "let theorem_bad = admitP True\n",
+        "let theorem_bad = unsafe_coerce ()\n",
+    ):
+        fstar_bad = strip_comments_and_strings(
+            fstar_bad_src,
+            line_marker="//",
+            block=("(*", "*)"),
+        )
+        if not FSTAR_PROOF_HOLE.search(fstar_bad):
+            fail(f"F* proof-hole scanner canary failed for {fstar_bad_src.strip()!r}")
 
     fstar_option_clean = '// #push-options "--lax"\nlet theorem_ok = ()\n'
     if fstar_admission_option_present(fstar_option_clean):
@@ -322,11 +545,8 @@ def main() -> int:
             f"undeclared={sorted(discovered_fstar - declared_fstar)}, "
             f"missing={sorted(declared_fstar - discovered_fstar)}"
         )
-    forbidden_fstar = re.compile(
-        r"\b(?:admit|assume|axiom|val|admit_smt_query|admit_smt_queries)\b"
-    )
     for path_string in sorted(discovered_fstar):
-        check_fstar_source(ROOT / path_string, forbidden_fstar)
+        check_fstar_source(ROOT / path_string, FSTAR_PROOF_HOLE)
     generated_paths = [
         path.resolve() if path.is_absolute() else (ROOT / path).resolve()
         for path in args.fstar_generated
@@ -334,7 +554,7 @@ def main() -> int:
     for path in generated_paths:
         if not path.is_file() or ROOT not in path.parents:
             fail(f"generated F* source must be an existing workspace file: {path}")
-        check_fstar_source(path, forbidden_fstar)
+        check_fstar_source(path, FSTAR_PROOF_HOLE)
 
     proof_scripts = tuple(
         sorted(
