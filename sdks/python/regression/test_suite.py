@@ -108,23 +108,41 @@ class Suite(unittest.TestCase):
 
     def test_text_columns_from_an_uploaded_csv_are_read_as_numbers(self):
         frame = dataset(n=1500)
-        text = frame.astype({column: str for column in ("x1", "x2", "x3", "y", "t")})
+        text = frame.astype(dict.fromkeys(("x1", "x2", "x3", "y", "t"), str))
         first, _ = assumption_suite(frame, "y", ["x1", "x2"], order="t")
         again, _ = assumption_suite(text, "y", ["x1", "x2"], order="t")
         self.assertEqual([c.as_dict() for c in first], [c.as_dict() for c in again])
 
     def test_a_p_value_is_recorded_as_exact_decimal_text(self):
         from norn_regression.cell import p_decimal
+        from norn_regression.suite import by_p
         self.assertEqual(p_decimal("2.96446e-14"), "0.000000000000029645")
         self.assertEqual(p_decimal("0.5"), "0.5")
         self.assertEqual(p_decimal("1"), "1.0")
         self.assertIsNone(p_decimal(None))
+        self.assertIsNone(p_decimal("n/a"))
+        self.assertIsNone(p_decimal("nan"))
+        self.assertIsNone(p_decimal("inf"))
+        self.assertEqual(by_p(float("nan"), 0.01, 0.05), "not_applicable")
+        self.assertEqual(by_p(float("inf"), 0.01, 0.05), "not_applicable")
 
     def test_bad_requests_are_refused(self):
         with self.assertRaisesRegex(ValueError, "both the target and a feature"):
             assumption_suite(clean(), "y", ["y", "x1"])
         with self.assertRaisesRegex(ValueError, "at least one feature"):
             assumption_suite(clean(), "y", [])
+        with self.assertRaisesRegex(ValueError, "duplicates"):
+            assumption_suite(clean(), "y", ["x1", "x1"])
+        constant = clean(50)
+        constant["c"] = 1.0
+        with self.assertRaisesRegex(ValueError, "all features are constant"):
+            assumption_suite(constant, "y", ["c"])
+
+    def test_missing_order_values_mark_durbin_watson_not_applicable(self):
+        frame = clean(100)
+        frame["t"] = [None if i == 0 else i for i in range(100)]
+        checks, _ = assumption_suite(frame, "y", ["x1", "x2"], order="t")
+        self.assertEqual(by_test(checks, "Durbin-Watson").status, "not_applicable")
 
 
 if __name__ == "__main__":

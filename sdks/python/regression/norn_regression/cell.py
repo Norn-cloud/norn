@@ -17,9 +17,13 @@ changes the revision and records a new spec.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import math
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -45,14 +49,35 @@ def _unknown_route(answer) -> bool:
     return refusal.get("code") == "request.invalid" and str(refusal.get("explanation") or "").startswith("unknown query parameter")
 
 
+def _safe_object_type(object_type: str) -> str:
+    if (
+        not object_type
+        or not object_type.strip()
+        or ".." in object_type
+        or any(ch in object_type for ch in ("/", "\\", "?", "#", "%"))
+        or any(ord(ch) < 32 for ch in object_type)
+    ):
+        raise ValueError(f"invalid object_type: {object_type!r}")
+    return quote(object_type, safe="")
+
+
 @dataclass(frozen=True)
 class Cell:
     client: AuthenticatedClient
     org_id: str
     environment_id: str
 
+    def close(self) -> None:
+        self.client.get_httpx_client().close()
+
+    def __enter__(self) -> Cell:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
     @classmethod
-    def from_project(cls, project: str | Path = ".") -> "Cell":
+    def from_project(cls, project: str | Path = ".") -> Cell:
         """The local development host `norn dev` serves for a project, with its session token."""
         project = Path(project)
         session = json.loads((project / ".norn/dev.json").read_text())
@@ -61,10 +86,9 @@ class Cell:
                    session["scope"]["orgId"], session["scope"]["environmentId"])
 
     @classmethod
-    def from_env(cls) -> "Cell":
+    def from_env(cls) -> Cell:
         """A hosted cell through Studio's proxy: NORN_URL (https://<studio>/api/host), ORG, ENV,
         and NORN_TOKEN_FILE holding a Studio API key, sent as `x-api-key`."""
-        import os
         key = Path(os.environ["NORN_TOKEN_FILE"]).read_text().strip()
         client = AuthenticatedClient(base_url=os.environ["NORN_URL"].rstrip("/"), token=key, prefix="", auth_header_name="x-api-key")
         return cls(client, os.environ["ORG"], os.environ["ENV"])
@@ -81,10 +105,9 @@ class Cell:
         one 400 a host without the engine gives when it reads `{type}:export` as an object
         route (code `request.invalid`, explanation "unknown query parameter …"). Any other
         refusal, another 400 or a 403 included, raises with the cell's explanation."""
-        import io
-
+        encoded_type = _safe_object_type(object_type)
         answer = self.client.get_httpx_client().get(
-            f"/v1/objects/{object_type}:export",
+            f"/v1/objects/{encoded_type}:export",
             params={"columns": ",".join(columns), "format": "parquet", "orgId": self.org_id, "environmentId": self.environment_id},
         )
         if answer.status_code in (404, 405, 501) or (answer.status_code == 400 and _unknown_route(answer)):
@@ -100,6 +123,7 @@ class Cell:
     def rows(self, object_type: str, columns: list[str] | None = None) -> pd.DataFrame:
         """Every object of the type the caller may read, as a dataframe with `id` and `version`.
         With `columns`, read through the analytical engine when the host has one."""
+        _safe_object_type(object_type)
         if columns:
             exported = self.export(object_type, columns)
             if exported is not None:
@@ -143,15 +167,18 @@ class RegressionChecks:
 
 def p_decimal(text: str | None) -> str | None:
     """A p-value as the exact decimal text the cell stores (18 places, no exponent), or None."""
-    if text is None:
+    if text is None or text == "n/a":
         return None
-    fixed = f"{float(text):.18f}".rstrip("0")
+    value = float(text)
+    if not math.isfinite(value):
+        return None
+    fixed = f"{value:.18f}".rstrip("0")
     return fixed + "0" if fixed.endswith(".") else fixed
 
 
 def revision(rows: pd.DataFrame) -> str:
     """The dataset revision the checks ran on: a hash of every row's id and version."""
-    pairs = sorted(zip(rows["id"].astype(str), rows["version"].astype(int))) if len(rows) else []
+    pairs = sorted(zip(rows["id"].astype(str), rows["version"].astype(int), strict=True)) if len(rows) else []
     return hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -167,7 +194,6 @@ def check_regression(object_type: str, target: str, features: list[str], *, cell
     # The engine's snapshot when it answered (the same snapshot re-exports the same rows),
     # else a hash of every row's id and version.
     dataset = rows.attrs.get("snapshot") or revision(rows)
-    # Which read the checks ran on: the analytical engine's export, or the paged object route.
     read_path = rows.attrs.get("read_path", "paged")
     identity = json.dumps([object_type, target, sorted(features), order, SUITE_VERSION, dataset, *([request] if request else [])], separators=(",", ":"))
     spec_id = "ms-" + hashlib.sha256(identity.encode()).hexdigest()[:24]
