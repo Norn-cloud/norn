@@ -29,11 +29,10 @@ pub(crate) fn apply_property_origin_flags<'a, F, I>(
             }
             protected |= candidate.protected;
             immutable_after_create |= candidate.immutable_after_create;
-            if let Some(origin) = candidate.origin {
-                match effective_origin {
-                    Some(existing) if existing != PropertyOrigin::Caller => {}
-                    Some(PropertyOrigin::Caller) | None => effective_origin = Some(origin),
-                }
+            if let Some(origin) = candidate.origin
+                && matches!(effective_origin, None | Some(PropertyOrigin::Caller))
+            {
+                effective_origin = Some(origin);
             }
         }
     }

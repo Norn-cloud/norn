@@ -1567,7 +1567,7 @@ impl Defined<'_> {
             .and_then(|view| view.as_ref().ok());
         let mut enums = Vec::new();
         collect_input_enums(properties, "/payload/inputSchema", true, &mut enums);
-        set_fields::check_input_enums(action, program, view, enums)
+        set_fields::check_input_enums(action, program, view, &enums)
     }
 
     #[allow(

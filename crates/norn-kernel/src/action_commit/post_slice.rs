@@ -8,10 +8,18 @@ use crate::cell_host::JsonObject;
 use crate::decision_commit::TypeCatalog;
 
 use super::input::{
-    check_canonical_object_bound, prepare_action_derivation, validate_action_input,
+    DerivationEvalEnv, canonical_object_bytes, check_canonical_object_bound,
+    prepare_action_derivation, validate_action_input,
 };
 use super::slice::LoadedActionSlice;
 use super::types::{ActionCall, ActionDerivedValue, ActionInputPreparation, ActionRefusal};
+
+fn expr_reads_clock_fail_closed(expression: &str) -> bool {
+    match norn_expr::expression_reads(expression, norn_expr::CLOCK_VARIABLE) {
+        Ok(reads) => reads.whole_root || !reads.fields.is_empty(),
+        Err(_) => true,
+    }
+}
 
 /// ACTION-CLOCK-1: the input fields an action derives from the server commit
 /// clock without the caller: a derivation with `inputRequired: false` that
@@ -24,10 +32,7 @@ pub fn clock_derived_fields(action: &ActionRoot) -> BTreeSet<String> {
         .derive
         .iter()
         .filter(|step| !step.input_required)
-        .filter(|step| {
-            norn_expr::expression_reads(step.expression.as_str(), norn_expr::CLOCK_VARIABLE)
-                .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty())
-        })
+        .filter(|step| expr_reads_clock_fail_closed(step.expression.as_str()))
         .map(|step| step.field.clone())
         .collect()
 }
@@ -35,10 +40,47 @@ pub fn clock_derived_fields(action: &ActionRoot) -> BTreeSet<String> {
 /// ACTION-CLOCK-1: returns `true` when ANY derivation step on `action` (including
 /// `inputRequired: true` or unparseable expressions, failing closed) reads `clock`.
 pub(super) fn action_reads_clock(action: &ActionRoot) -> bool {
-    action.derive.iter().any(|step| {
-        norn_expr::expression_reads(step.expression.as_str(), norn_expr::CLOCK_VARIABLE)
-            .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty())
-    })
+    action
+        .derive
+        .iter()
+        .any(|step| expr_reads_clock_fail_closed(step.expression.as_str()))
+}
+
+pub(super) fn seed_derived_slots_and_receipt_bytes<X>(
+    action: &ActionRoot,
+    raw_input: &JsonObject,
+    effective_input: &mut JsonObject,
+    raw_bytes: usize,
+    max_input_bytes: usize,
+    max_receipt_bytes: usize,
+) -> Result<usize, ActionRefusal<X>> {
+    for derivation in &action.derive {
+        if derivation.input_required && !raw_input.contains_key(&derivation.field) {
+            return Err(ActionRefusal::InvalidInput {
+                field: derivation.field.clone(),
+            });
+        }
+        if !derivation.input_required && !effective_input.contains_key(&derivation.field) {
+            effective_input.insert(derivation.field.clone(), RuntimeValue::Null);
+        }
+    }
+    check_canonical_object_bound::<X>("effective input", effective_input, max_input_bytes)?;
+    let effective_bytes = if action.derive.is_empty() && *effective_input == *raw_input {
+        0 // Raw input already describes the exact execution value.
+    } else {
+        canonical_object_bytes::<X>(effective_input)?
+    };
+    let receipt_evidence_bytes = raw_bytes
+        .saturating_add(effective_bytes)
+        .saturating_add(128);
+    if receipt_evidence_bytes > max_receipt_bytes {
+        return Err(ActionRefusal::InputBoundExceeded {
+            subject: "action call receipt evidence".to_owned(),
+            actual_bytes: receipt_evidence_bytes,
+            max_bytes: max_receipt_bytes,
+        });
+    }
+    Ok(receipt_evidence_bytes)
 }
 
 pub(super) fn validate_action_input_excluding<X>(
@@ -169,14 +211,16 @@ pub(super) fn apply_post_slice_derivations<X>(
     {
         let index = split.saturating_add(offset);
         let (value, next_receipt_bytes) = prepare_action_derivation(
-            action,
+            &DerivationEvalEnv {
+                action,
+                effective_input: &preparation.effective_input,
+                actor: Some(call.actor.as_str()),
+                now: Some(call.turn.now),
+                slice: Some(slice),
+                catalog_env: catalog_env.as_ref(),
+            },
             index,
             derivation,
-            &preparation.effective_input,
-            Some(call.actor.as_str()),
-            Some(call.turn.now),
-            Some(slice),
-            catalog_env.as_ref(),
             &mut preparation.remaining_fuel,
             preparation.receipt_evidence_bytes,
         )?;

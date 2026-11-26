@@ -433,32 +433,14 @@ fn prepare_action_input_inner<'a, X>(
     }
     let raw_bytes = check_receipt_input_bound::<X>(raw_input)?;
     let mut effective_input = normalized;
-    for derivation in &action.derive {
-        if derivation.input_required && !raw_input.contains_key(&derivation.field) {
-            return Err(ActionRefusal::InvalidInput {
-                field: derivation.field.clone(),
-            });
-        }
-        if !derivation.input_required && !effective_input.contains_key(&derivation.field) {
-            effective_input.insert(derivation.field.clone(), RuntimeValue::Null);
-        }
-    }
-    check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
-    let effective_bytes = if action.derive.is_empty() && effective_input == *raw_input {
-        0 // Raw input already describes the exact execution value.
-    } else {
-        canonical_object_bytes::<X>(&effective_input)?
-    };
-    let mut receipt_evidence_bytes = raw_bytes
-        .saturating_add(effective_bytes)
-        .saturating_add(128);
-    if receipt_evidence_bytes > max_receipt_bytes {
-        return Err(ActionRefusal::InputBoundExceeded {
-            subject: "action call receipt evidence".to_owned(),
-            actual_bytes: receipt_evidence_bytes,
-            max_bytes: max_receipt_bytes,
-        });
-    }
+    let mut receipt_evidence_bytes = super::post_slice::seed_derived_slots_and_receipt_bytes::<X>(
+        action,
+        raw_input,
+        &mut effective_input,
+        raw_bytes,
+        max_input_bytes,
+        max_receipt_bytes,
+    )?;
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = TurnFuel::turn(&profile);
     let pre_slice_limit =
@@ -466,14 +448,16 @@ fn prepare_action_input_inner<'a, X>(
 
     for (index, derivation) in action.derive.iter().take(pre_slice_limit).enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
-            action,
+            &DerivationEvalEnv {
+                action,
+                effective_input: &effective_input,
+                actor,
+                now,
+                slice: None,
+                catalog_env: None,
+            },
             index,
             derivation,
-            &effective_input,
-            actor,
-            now,
-            None,
-            None,
             &mut remaining_fuel,
             receipt_evidence_bytes,
         )?;
@@ -685,81 +669,63 @@ fn action_derivation_context<X>(
     Ok(context)
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "pre-slice and post-slice derivations share one metered evaluator"
-)]
+pub(super) struct DerivationEvalEnv<'a> {
+    pub(super) action: &'a ActionRoot,
+    pub(super) effective_input: &'a JsonObject,
+    pub(super) actor: Option<&'a str>,
+    pub(super) now: Option<LogicalTime>,
+    pub(super) slice: Option<&'a LoadedActionSlice>,
+    pub(super) catalog_env: Option<&'a norn_expr::ZenTypeEnv>,
+}
+
 pub(super) fn prepare_action_derivation<X>(
-    action: &ActionRoot,
+    eval_env: &DerivationEvalEnv<'_>,
     completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
-    effective_input: &JsonObject,
-    actor: Option<&str>,
-    now: Option<LogicalTime>,
-    slice: Option<&LoadedActionSlice>,
-    catalog_env: Option<&norn_expr::ZenTypeEnv>,
     remaining_fuel: &mut TurnFuel,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
-    let context =
-        action_derivation_context(action, effective_input, actor, now, slice, derivation)?;
-    let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason: error.to_string(),
-        }
-    })?;
-    let env = if slice.is_some() {
-        norn_expr::schema::action_slice_derivation_environment(action, catalog_env, completed)
-    } else {
-        norn_expr::schema::action_derivation_environment(action, completed)
-    }
-    .map_err(|reason| ActionRefusal::DerivationFailed {
+    let fail = |reason: String| ActionRefusal::DerivationFailed {
         field: derivation.field.clone(),
         expression: derivation.expression.as_str().to_owned(),
         reason,
-    })?;
-    let expected = action_derivation_destination(action, derivation, &env);
+    };
+    let context = action_derivation_context(
+        eval_env.action,
+        eval_env.effective_input,
+        eval_env.actor,
+        eval_env.now,
+        eval_env.slice,
+        derivation,
+    )?;
+    let expression =
+        Expression::compile(derivation.expression.as_str()).map_err(|e| fail(e.to_string()))?;
+    let env = if eval_env.slice.is_some() {
+        norn_expr::schema::action_slice_derivation_environment(
+            eval_env.action,
+            eval_env.catalog_env,
+            completed,
+        )
+    } else {
+        norn_expr::schema::action_derivation_environment(eval_env.action, completed)
+    }
+    .map_err(&fail)?;
+    let expected = action_derivation_destination(eval_env.action, derivation, &env);
     let attempt = remaining_fuel
         .spend(|budget| expression.evaluate_admitted_metered(&context, budget, &env, &expected));
-    let evaluated = attempt
-        .result
-        .map_err(|error| ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason: error.to_string(),
-        })?;
-    let value = expression_value_to_runtime(evaluated.value()).map_err(|reason| {
-        ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason,
-        }
-    })?;
+    let evaluated = attempt.result.map_err(|e| fail(e.to_string()))?;
+    let value = expression_value_to_runtime(evaluated.value()).map_err(&fail)?;
     let encoded = norn_ir::canonical::canonical_json_of(&ActionDerivedValueRef {
         field: &derivation.field,
         value: &value,
     })
-    .map_err(|error| ActionRefusal::DerivationFailed {
-        field: derivation.field.clone(),
-        expression: derivation.expression.as_str().to_owned(),
-        reason: error.to_string(),
-    })?;
+    .map_err(|e| fail(e.to_string()))?;
     let value_bytes = norn_ir::canonical::canonical_json_of(&value)
-        .map_err(|error| ActionRefusal::DerivationFailed {
-            field: derivation.field.clone(),
-            expression: derivation.expression.as_str().to_owned(),
-            reason: error.to_string(),
-        })?
+        .map_err(|e| fail(e.to_string()))?
         .len();
-    let effective_growth = if let Some(previous) = effective_input.get(&derivation.field) {
+    let effective_growth = if let Some(previous) = eval_env.effective_input.get(&derivation.field) {
         let previous_bytes = norn_ir::canonical::canonical_json_of(previous)
-            .map_err(|error| ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason: error.to_string(),
-            })?
+            .map_err(|e| fail(e.to_string()))?
             .len();
         (
             value_bytes >= previous_bytes,
@@ -767,18 +733,14 @@ pub(super) fn prepare_action_derivation<X>(
         )
     } else {
         let field_bytes = norn_ir::canonical::canonical_json_of(&derivation.field)
-            .map_err(|error| ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason: error.to_string(),
-            })?
+            .map_err(|e| fail(e.to_string()))?
             .len();
         (
             true,
             field_bytes
                 .saturating_add(1)
                 .saturating_add(value_bytes)
-                .saturating_add(usize::from(!effective_input.is_empty())),
+                .saturating_add(usize::from(!eval_env.effective_input.is_empty())),
         )
     };
     let receipt_evidence_bytes = if effective_growth.0 {
@@ -791,7 +753,7 @@ pub(super) fn prepare_action_derivation<X>(
     Ok((value, receipt_evidence_bytes))
 }
 
-fn canonical_object_bytes<X>(object: &JsonObject) -> Result<usize, ActionRefusal<X>> {
+pub(super) fn canonical_object_bytes<X>(object: &JsonObject) -> Result<usize, ActionRefusal<X>> {
     norn_ir::canonical::canonical_json_of(object)
         .map(|bytes| bytes.len())
         .map_err(|error| ActionRefusal::DerivationFailed {

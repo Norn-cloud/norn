@@ -40,8 +40,6 @@ fn input_property_finding(
     diagnostic
 }
 
-/// The per-action findings: caller-writable protected properties, a writer
-/// on a generated-key create, and each `independentOf` property.
 fn descendant_views<'a>(
     model: &'a Model<'_>,
     kind: &str,
@@ -58,6 +56,8 @@ fn descendant_views<'a>(
         .collect()
 }
 
+/// The per-action findings: caller-writable protected properties, a writer
+/// on a generated-key create, and each `independentOf` property.
 pub(super) fn actor_binding_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
@@ -88,11 +88,13 @@ pub(super) fn actor_binding_findings(
     }
     if let (
         Some(ActionEffectProgram::FireTransition {
+            lifecycle,
+            transition,
             accept_receipt,
             set_fields,
             ..
         }),
-        Some(_),
+        Some(base_kind),
     ) = (program, kind)
     {
         transition_origin_findings(
@@ -103,6 +105,21 @@ pub(super) fn actor_binding_findings(
             &target_views,
             &mut findings,
         );
+        let subtype_views: Vec<_> = target_views
+            .iter()
+            .copied()
+            .filter(|v| v.name.as_str() != base_kind)
+            .collect();
+        if !subtype_views.is_empty() {
+            findings.extend(super::set_fields::subtype_transition_guard_findings(
+                artifact,
+                root,
+                &subtype_views,
+                lifecycle,
+                transition,
+                set_fields,
+            ));
+        }
     }
     if let (
         Some(ActionEffectProgram::MutateParentWithRows {
@@ -163,7 +180,8 @@ fn parent_rows_origin_findings(
                 if prop.computed {
                     continue;
                 }
-                if prop.immutable_after_create()
+                if prop.protected()
+                    || prop.immutable_after_create()
                     || prop
                         .origin()
                         .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
@@ -188,6 +206,16 @@ fn parent_rows_origin_findings(
             let Some(prop) = view.property(field.as_str()) else {
                 continue;
             };
+            if prop.protected() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} is protected and cannot be written by mutate_parent_with_rows"
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
+                ));
+            }
             if prop.immutable_after_create() {
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,
@@ -341,6 +369,17 @@ fn transition_origin_findings(
             let Some(prop) = view.property(target_prop.as_str()) else {
                 continue;
             };
+            if prop.protected() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "fire_transition setFields cannot write protected property {:?} of {kind:?}",
+                        target_prop.as_str()
+                    ),
+                    artifact,
+                    "/payload/effectProgram/setFields",
+                ));
+            }
             if prop.immutable_after_create() {
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,
@@ -371,40 +410,61 @@ fn transition_origin_findings(
             }
         }
         if let Some(binding) = accept_receipt {
-            for target_prop in
-                std::iter::once(&binding.digest_property).chain(binding.result_bindings.keys())
-            {
-                let Some(prop) = view.property(target_prop.as_str()) else {
-                    continue;
-                };
-                if prop.immutable_after_create() {
-                    findings.push(finding(
-                        codes::TARGET_NOT_WRITABLE,
-                        format!(
-                            "acceptReceipt cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
-                            target_prop.as_str()
-                        ),
-                        artifact,
-                        "/payload/effectProgram/acceptReceipt",
-                    ));
-                }
-                if let Some(origin) = prop.origin()
-                    && !matches!(
-                        origin,
-                        norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Receipt
-                    )
-                {
-                    findings.push(finding(
-                        codes::TARGET_NOT_WRITABLE,
-                        format!(
-                            "acceptReceipt cannot write property {:?} of {kind:?} whose declared origin is not `receipt`",
-                            target_prop.as_str()
-                        ),
-                        artifact,
-                        "/payload/effectProgram/acceptReceipt",
-                    ));
-                }
-            }
+            accept_receipt_origin_findings(artifact, view, binding, findings);
+        }
+    }
+}
+
+fn accept_receipt_origin_findings(
+    artifact: &ArtifactEnvelope,
+    view: &crate::entity_instance::EffectiveObjectType,
+    binding: &norn_ir::ReceiptAcceptance,
+    findings: &mut Vec<Diagnostic>,
+) {
+    let kind = view.name.as_str();
+    for target_prop in
+        std::iter::once(&binding.digest_property).chain(binding.result_bindings.keys())
+    {
+        let Some(prop) = view.property(target_prop.as_str()) else {
+            continue;
+        };
+        if prop.protected() {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                format!(
+                    "acceptReceipt cannot write protected property {:?} of {kind:?}",
+                    target_prop.as_str()
+                ),
+                artifact,
+                "/payload/effectProgram/acceptReceipt",
+            ));
+        }
+        if prop.immutable_after_create() {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                format!(
+                    "acceptReceipt cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
+                    target_prop.as_str()
+                ),
+                artifact,
+                "/payload/effectProgram/acceptReceipt",
+            ));
+        }
+        if let Some(origin) = prop.origin()
+            && !matches!(
+                origin,
+                norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Receipt
+            )
+        {
+            findings.push(finding(
+                codes::TARGET_NOT_WRITABLE,
+                format!(
+                    "acceptReceipt cannot write property {:?} of {kind:?} whose declared origin is not `receipt`",
+                    target_prop.as_str()
+                ),
+                artifact,
+                "/payload/effectProgram/acceptReceipt",
+            ));
         }
     }
 }

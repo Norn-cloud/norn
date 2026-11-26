@@ -662,7 +662,7 @@ fn lifecycle_property_names<'a>(
 
 pub(super) struct EffectiveProp<'a> {
     id: &'a PropertyId,
-    property_type: &'a PropertyType,
+    pub(super) property_type: &'a PropertyType,
     read_only: bool,
     protected: bool,
     default: Option<&'a IrJsonValue>,

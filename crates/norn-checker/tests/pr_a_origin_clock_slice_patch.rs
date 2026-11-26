@@ -545,3 +545,79 @@ fn refuses_base_action_writing_subtype_tightened_origin() {
         "base action writing subtype-tightened clock property must fail closed: {errs:?}"
     );
 }
+
+#[test]
+fn refuses_base_action_writing_subtype_protected_property() {
+    let base = envelope(
+        "entity",
+        "test.BaseNote.entity",
+        "BaseNote",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.BaseNote",
+                "properties": [
+                    { "id": "id", "type": { "kind": "text" } },
+                    { "id": "memo", "type": { "kind": "text" } },
+                    { "id": "state", "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "closed" }] }, "default": "open" }
+                ],
+                "identity": [{ "name": "primary", "properties": ["id"] }],
+                "lifecycles": [{
+                    "property": "state",
+                    "initial": ["open"],
+                    "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
+                }]
+            }
+        }),
+    );
+    let sub = envelope(
+        "entity",
+        "test.SealedNote.entity",
+        "SealedNote",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.SealedNote",
+                "extends": "test.BaseNote",
+                "properties": [
+                    { "id": "memo", "type": { "kind": "text" }, "protected": true }
+                ]
+            }
+        }),
+    );
+    let base_close = envelope(
+        "action",
+        "test.base_note.close.action",
+        "Close base note",
+        &json!({
+            "actionId": "test.base_note.close",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "id": { "type": "string" }, "memo_in": { "type": "string" } },
+                "required": ["id", "memo_in"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "test.BaseNote", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectKind": "test.BaseNote",
+                "objectIdField": "id",
+                "entityArtifactId": "test.BaseNote.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "state",
+                "transition": "close",
+                "setFields": { "memo": "memo_in" }
+            }
+        }),
+    );
+    let errs = check(&[base, sub, base_close]);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("protected property") && e.contains("test.SealedNote")),
+        "base action writing subtype-tightened protected property must fail closed: {errs:?}"
+    );
+}

@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{EnvOptions, Expression, Type, ZenTypeEnv, check_expression_with_root_bounds};
 use norn_ir::{
-    ActionInputDerivation, ActionRoot, Diagnostic, JsonValue, ResourceLimitProfile, SliceKey,
+    ActionEffectProgram, ActionInputDerivation, ActionRoot, Diagnostic, JsonObject, JsonValue,
+    ResourceLimitProfile, SliceKey,
 };
 
 use crate::envelope::invalid_diagnostic;
@@ -20,7 +21,11 @@ fn post_slice_key_cycle_findings(
     artifact_id: Option<&str>,
 ) -> Vec<Diagnostic> {
     let mut pre_slice_inputs = BTreeSet::new();
-    if let Some(target) = root.effect_program.as_ref().map(|p| p.target()) {
+    if let Some(target) = root
+        .effect_program
+        .as_ref()
+        .map(ActionEffectProgram::target)
+    {
         pre_slice_inputs.insert(target.object_id_field.to_owned());
     }
     for entry in &root.slice {

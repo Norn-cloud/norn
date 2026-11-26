@@ -52,6 +52,49 @@ pub(super) fn post_slice_effect_findings(
         .collect()
 }
 
+pub(super) fn subtype_transition_guard_findings(
+    action: &ArtifactEnvelope,
+    root: &ActionRoot,
+    views: &[&EffectiveObjectType],
+    lifecycle: &PropertyId,
+    transition: &TransitionId,
+    set_fields: &BTreeMap<PropertyId, String>,
+) -> Vec<Diagnostic> {
+    if set_fields.is_empty() || views.is_empty() {
+        return Vec::new();
+    }
+    let trusted_sources: BTreeSet<String> = root
+        .actor_stamped_fields()
+        .into_iter()
+        .chain(root.clock_stamped_fields())
+        .chain(norn_expr::schema::trusted_server_derived_fields(root))
+        .collect();
+    let mut findings = Vec::new();
+    for view in views {
+        let (guarded_fields, guard_reads_all) =
+            transition_guarded_fields(Some(view), lifecycle, transition);
+        for (target_prop, source_field) in set_fields {
+            if (guard_reads_all || guarded_fields.contains(target_prop.as_str()))
+                && !trusted_sources.contains(source_field)
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "fire_transition setFields {:?} -> {:?} cannot feed a caller-controlled input into a property read by subtype {:?} transition {:?}'s guard",
+                        target_prop.as_str(),
+                        source_field,
+                        view.name.as_str(),
+                        transition.as_str()
+                    ),
+                    action,
+                    "/payload/effectProgram/setFields",
+                ));
+            }
+        }
+    }
+    findings
+}
+
 fn transition_guarded_fields(
     view: Option<&EffectiveObjectType>,
     lifecycle: &PropertyId,
@@ -115,7 +158,7 @@ pub(super) fn fire_transition_set_fields_findings(
             })
     };
     for (target_prop, source_field) in set_fields {
-        let receipt_overlap = accept_receipt.as_ref().is_some_and(|receipt| {
+        let receipt_overlap = accept_receipt.is_some_and(|receipt| {
             &receipt.digest_property == target_prop
                 || receipt.result_bindings.contains_key(target_prop)
         });
@@ -189,17 +232,17 @@ pub(super) fn check_input_enums(
     action: &ArtifactEnvelope,
     program: &ActionEffectProgram,
     view: Option<&EffectiveObjectType>,
-    enums: Vec<(String, bool, Vec<String>, String)>,
+    enums: &[(String, bool, Vec<String>, String)],
 ) -> Vec<Diagnostic> {
     let mut findings = Vec::new();
     for (field, top_level, values, at) in enums {
-        let target_props = enum_target_properties(program, &field, top_level);
+        let target_props = enum_target_properties(program, field, *top_level);
         if target_props.is_empty() {
             findings.push(finding(
                 codes::INPUT_ENUM_UNBOUND,
                 format!("input {field:?} declares an enum but writes no enum property"),
                 action,
-                &at,
+                at,
             ));
             continue;
         }
@@ -220,7 +263,7 @@ pub(super) fn check_input_enums(
                     codes::INPUT_ENUM_UNBOUND,
                     format!("input {field:?} declares an enum but writes no enum property"),
                     action,
-                    &at,
+                    at,
                 ));
                 continue;
             };
@@ -235,7 +278,7 @@ pub(super) fn check_input_enums(
                         "input {field:?} admits {missing:?}, which property {target_prop:?} does not declare"
                     ),
                     action,
-                    &at,
+                    at,
                 ));
             }
         }
