@@ -597,11 +597,18 @@ pub(super) fn schema_accepts_empty_array(schema: &Schema) -> bool {
     }
 }
 
-fn json_value_type(value: &JsonValue) -> Type {
+pub(super) fn json_value_type(value: &JsonValue) -> Type {
     match value {
         JsonValue::Null | JsonValue::Array(_) | JsonValue::Object(_) => Type::Json,
         JsonValue::Bool(_) => Type::Bool,
-        JsonValue::Number(number) if number.fract() == 0.0 => Type::Integer,
+        JsonValue::Number(_)
+            if matches!(
+                norn_ir::RuntimeValue::from_ir(value),
+                Ok(norn_ir::RuntimeValue::Number(number)) if number.to_i64().is_some()
+            ) =>
+        {
+            Type::Integer
+        }
         JsonValue::Number(_) => Type::Number,
         JsonValue::String(_) => Type::text(),
     }

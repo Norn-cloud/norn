@@ -41,4 +41,19 @@ mod decimal_wire_tests {
             proptest::prop_assert!(accepts(&InferredType::Const(invalid)).is_err());
         }
     }
+
+    #[test]
+    fn json_value_type_rejects_out_of_range_whole_floats_as_integer() {
+        use norn_expr::Type;
+        use norn_ir::JsonValue;
+
+        assert_eq!(
+            super::super::types::json_value_type(&JsonValue::Number(42.0)),
+            Type::Integer
+        );
+        assert_eq!(
+            super::super::types::json_value_type(&JsonValue::Number(1e100)),
+            Type::Number
+        );
+    }
 }
