@@ -455,9 +455,7 @@ pub(crate) fn set_action_specs(
         let reads_clock = artifact
             .get("payload")
             .and_then(|payload| serde_json::from_value::<norn_ir::ActionRoot>(payload.clone()).ok())
-            .is_some_and(|action| {
-                norn_kernel::clock_derived_fields(&action).is_err_or(|fields| !fields.is_empty())
-            });
+            .is_some_and(|action| norn_kernel::action_reads_clock(&action));
         specs.insert(action_id.to_owned(), reads_clock);
     }
     Ok(specs)

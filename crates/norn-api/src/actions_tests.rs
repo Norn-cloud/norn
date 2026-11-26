@@ -2612,3 +2612,49 @@ fn conditional_when_gate_allows_excluded_clock_action_and_refuses_matching() {
     .expect_err("matching call under conditional `when` gate on clock action must refuse");
     assert_eq!(large_err.status, http::StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// ACTION-CLOCK-1 / APPROVAL-1: a caller-required (`inputRequired: true`)
+/// derivation reading `clock` still invalidates a bound approval digest when
+/// the clock advances, so live approval admission refuses it via the same
+/// `action_reads_clock` predicate used at release.
+#[test]
+fn approval_admission_refuses_caller_required_clock_derivation() {
+    let mut docs = clock_order_documents(false);
+    docs[1]["payload"]["derive"] = json!([
+        {
+            "field": "stamped_at",
+            "expression": "clock.nowIso",
+            "inputRequired": true
+        }
+    ]);
+    let host = write_call_host(&docs);
+    let scope_query = crate::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let kinds = crate::definition_routes::DefinitionKinds::default().with_roles(["admin"]);
+    let standalone = crate::definition_routes::admit_definition(
+        &host,
+        &scope_query,
+        Some(OPERATOR),
+        &kinds,
+        None,
+        &crate::definition_routes::AdmitDefinitionRequest {
+            kind: "approval".to_owned(),
+            id: "gate.caller_clock_order".to_owned(),
+            payload: serde_json::value::RawValue::from_string(
+                clock_order_approval_payload().to_string(),
+            )
+            .unwrap(),
+        },
+    )
+    .unwrap();
+    assert!(!standalone.admitted, "{standalone:?}");
+    assert!(
+        standalone
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("clock")),
+        "{standalone:?}"
+    );
+}

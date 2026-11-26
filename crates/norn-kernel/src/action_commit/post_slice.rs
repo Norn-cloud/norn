@@ -39,7 +39,8 @@ pub fn clock_derived_fields(action: &ActionRoot) -> BTreeSet<String> {
 
 /// ACTION-CLOCK-1: returns `true` when ANY derivation step on `action` (including
 /// `inputRequired: true` or unparseable expressions, failing closed) reads `clock`.
-pub(super) fn action_reads_clock(action: &ActionRoot) -> bool {
+#[must_use]
+pub fn action_reads_clock(action: &ActionRoot) -> bool {
     action
         .derive
         .iter()

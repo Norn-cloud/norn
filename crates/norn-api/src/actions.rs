@@ -817,8 +817,7 @@ fn refuse_clock_approval<E: SqlEngine>(
     action_id: &str,
     approval: Option<&str>,
 ) -> Result<(), Refusal> {
-    if !norn_kernel::clock_derived_fields(kernel_call.action).is_err_or(|fields| !fields.is_empty())
-    {
+    if !norn_kernel::action_reads_clock(kernel_call.action) {
         return Ok(());
     }
     let error = norn_kernel::ActionRefusal::<norn_cell::CellError>::UnsupportedEffect {
