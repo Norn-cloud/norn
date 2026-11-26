@@ -255,7 +255,7 @@ fn multi_lifecycle_order_entity() -> ArtifactEnvelope {
                             { "id": "submit", "from": ["draft"], "to": "submitted" },
                             { "id": "auto_close", "from": ["submitted"], "to": "approved", "trigger": { "kind": "event", "event": "auto_approved" } }
                         ],
-                        "events": [{ "id": "auto_approved", "payload": [] }]
+                        "events": [{ "id": "auto_approved" }]
                     },
                     {
                         "property": "fulfillment_state",
