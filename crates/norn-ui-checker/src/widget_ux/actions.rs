@@ -582,7 +582,7 @@ impl UxChecker<'_, '_, '_> {
                     Some("selection action input.record must name its selected list binding")
                 }
                 WidgetActionLocation::Toolbar
-                | WidgetActionLocation::DetailHeader
+                | WidgetActionLocation::Detail
                 | WidgetActionLocation::FormFooter => None,
             };
             if let Some(message) = message {

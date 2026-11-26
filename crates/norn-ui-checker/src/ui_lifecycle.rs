@@ -570,7 +570,7 @@ impl Page<'_> {
         product: &'a Product,
         run: &'a [usize],
     ) -> impl Iterator<Item = (usize, Option<&'a str>, Option<&'a str>)> + 'a {
-        run.iter().filter_map(|edge| {
+        run.iter().filter_map(move |edge| {
             let origin = product
                 .net()
                 .edges
