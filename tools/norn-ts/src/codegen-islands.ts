@@ -27,19 +27,22 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 const key = (name: string): string => JSON.stringify(name)
 
 /** The TypeScript type of one machine value type (`WidgetValueType`), as the page's engine yields it. */
-const VALUE_TYPES: Readonly<Record<string, string>> = {
-  text: "string",
-  integer: "number",
+const VALUE_TYPES: ReadonlyMap<string, string> = new Map([
+  ["text", "string"],
+  ["integer", "number"],
   // The engine's JSON value; an exact decimal reads as a JS number here, as the page's fields do.
-  number: "number",
-  boolean: "boolean",
-  date: "string",
-  timestamp: "string",
-  duration: "string",
-  json: "NornJson",
-}
+  ["number", "number"],
+  ["boolean", "boolean"],
+  ["date", "string"],
+  ["timestamp", "string"],
+  ["duration", "string"],
+  ["json", "NornJson"],
+])
 
-const TIERS: Readonly<Record<string, string>> = { opaque_island: "presentational", contract_checked: "stateful" }
+const TIERS: ReadonlyMap<string, string> = new Map([
+  ["opaque_island", "presentational"],
+  ["contract_checked", "stateful"],
+])
 
 function members(fields: unknown, at: string): string {
   if (fields === undefined) return "Readonly<Record<string, never>>"
@@ -47,7 +50,7 @@ function members(fields: unknown, at: string): string {
   if (fields.length === 0) return "Readonly<Record<string, never>>"
   const lines = (fields as unknown[]).map((field) => {
     if (!record(field) || typeof field.fieldId !== "string" || typeof field.type !== "string") throw new CodegenError(at, "a member has no fieldId or type")
-    const type = VALUE_TYPES[field.type]
+    const type = VALUE_TYPES.get(field.type)
     if (type === undefined) throw new CodegenError(`${at}/${field.fieldId}`, `value type \`${field.type}\` is outside the closed set`)
     return { id: field.fieldId, text: `readonly ${key(field.fieldId)}: ${field.required === true ? type : `${type} | null`}` }
   }).sort((a, b) => compare(a.id, b.id))
@@ -64,7 +67,7 @@ function widgetIslands(artifact: Node): { readonly id: string; readonly text: st
   if (!Array.isArray(catalog)) throw new CodegenError(at, "the widget's catalog is not a list")
   const entries = (catalog as unknown[]).flatMap((entry) => {
     if (!record(entry) || typeof entry.entryId !== "string" || typeof entry.trust !== "string") throw new CodegenError(at, "a catalog entry has no entryId or trust")
-    const tier = TIERS[entry.trust]
+    const tier = TIERS.get(entry.trust)
     if (tier === undefined) return []
     const where = `${at}#/ux/catalog/${entry.entryId}`
     const events = entry.events === undefined ? [] : entry.events
@@ -80,34 +83,41 @@ function widgetIslands(artifact: Node): { readonly id: string; readonly text: st
   return { id: at, text: `  readonly ${key(at)}: {\n${entries.map((entry) => entry.text).join("\n")}\n  }` }
 }
 
-/** The widget artifacts of `set` that declare islands; codegen's digest covers them. */
-export function islandWidgets(set: readonly unknown[]): Node[] {
-  return set.filter((value): value is Node => record(value) && value.kind === "widget" && widgetIslands(value) !== null)
-}
-
-/** The islands block of the `.d.ts`, or no lines when the set declares no islands. */
-export function islandsBlock(set: readonly unknown[]): string[] {
-  const widgets = islandWidgets(set).map((artifact) => widgetIslands(artifact)!).sort((a, b) => compare(a.id, b.id))
-  if (widgets.length === 0) return []
-  return [
-    "/** Each widget id → each catalog island it declares: its tier, its typed props and its typed events. */",
-    `export type WidgetIslands = {\n${widgets.map((widget) => widget.text).join("\n")}\n}`,
-    "",
-    "/** An island's `emit`: one of its declared events, with that event's typed payload. */",
-    "export type IslandEmit<Events> = <K extends keyof Events & string>(event: K, payload: Events[K]) => void",
-    "",
-    "/**",
-    " * The islands a renderer must be given to draw widget `W` (`@norn/react`'s `NornAppRenderer` `islands`):",
-    " * every entry, none extra, each typed by its entry. A presentational island takes `{ props, emit }`; a",
-    " * stateful one also `states`, the page's server states as `States` (`@norn/react`'s `IslandStates`).",
-    " */",
-    "export type RequiredCatalogRegistry<W extends keyof WidgetIslands, States> = {",
-    "  readonly [E in keyof WidgetIslands[W]]: WidgetIslands[W][E] extends { readonly tier: \"stateful\"; readonly props: infer P; readonly events: infer V }",
-    "    ? (island: { readonly props: P; readonly emit: IslandEmit<V>; readonly states: States }) => unknown",
-    "    : WidgetIslands[W][E] extends { readonly props: infer P; readonly events: infer V }",
-    "      ? (island: { readonly props: P; readonly emit: IslandEmit<V> }) => unknown",
-    "      : never",
-    "}",
-    "",
-  ]
+/** Collect every widget artifact declaring catalog islands and its generated `.d.ts` lines in one pass. */
+export function collectIslands(set: readonly unknown[]): { readonly artifacts: readonly Node[]; readonly lines: readonly string[] } {
+  const artifacts: Node[] = []
+  const rendered: Array<{ readonly id: string; readonly text: string }> = []
+  for (const value of set) {
+    if (!record(value) || value.kind !== "widget") continue
+    const islands = widgetIslands(value)
+    if (islands === null) continue
+    artifacts.push(value)
+    rendered.push(islands)
+  }
+  if (rendered.length === 0) return { artifacts, lines: [] }
+  rendered.sort((a, b) => compare(a.id, b.id))
+  return {
+    artifacts,
+    lines: [
+      "/** Each widget id → each catalog island it declares: its tier, its typed props and its typed events. */",
+      `export type WidgetIslands = {\n${rendered.map((widget) => widget.text).join("\n")}\n}`,
+      "",
+      "/** An island's `emit`: one of its declared events, with that event's typed payload. */",
+      "export type IslandEmit<Events> = <K extends keyof Events & string>(event: K, payload: Events[K]) => void",
+      "",
+      "/**",
+      " * The islands a renderer must be given to draw widget `W` (`@norn/react`'s `NornAppRenderer` `islands`):",
+      " * every entry, none extra, each typed by its entry. A presentational island takes `{ props, emit }`; a",
+      " * stateful one also `states`, the page's server states as `States` (`@norn/react`'s `IslandStates`).",
+      " */",
+      "export type RequiredCatalogRegistry<W extends keyof WidgetIslands, States> = {",
+      "  readonly [E in keyof WidgetIslands[W]]: WidgetIslands[W][E] extends { readonly tier: \"stateful\"; readonly props: infer P; readonly events: infer V }",
+      "    ? (island: { readonly props: P; readonly emit: IslandEmit<V>; readonly states: States }) => unknown",
+      "    : WidgetIslands[W][E] extends { readonly props: infer P; readonly events: infer V }",
+      "      ? (island: { readonly props: P; readonly emit: IslandEmit<V> }) => unknown",
+      "      : never",
+      "}",
+      "",
+    ],
+  }
 }
