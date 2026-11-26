@@ -98,6 +98,9 @@ impl JsonNumber {
                 });
             }
             if let Ok(integer) = literal.parse::<i64>() {
+                if integer == 0 {
+                    return Ok(Self::from_non_negative(0));
+                }
                 return Ok(Self {
                     kind: JsonNumberKind::NegativeInteger(integer),
                     value,

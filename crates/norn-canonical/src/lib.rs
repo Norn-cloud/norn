@@ -186,8 +186,9 @@ pub const NORN1_DOMAIN_TAG: &[u8] = b"norn.canonical.json/norn1\0";
 /// Norn1 ingress profile; callers may impose a smaller document limit.
 pub const MAX_CANONICAL_NUMBER_BYTES: usize = 1_048_576;
 
-/// Maximum cumulative UTF-8 bytes of expanded Norn1 numbers in a single
-/// document, preventing many small exponential tokens from amplifying memory.
+/// Maximum cumulative UTF-8 bytes of decimal expansion (`output_len - raw_len`)
+/// across Norn1 numbers in a single document, preventing many small exponential
+/// tokens from amplifying memory while allowing large documents of plain numbers.
 pub const MAX_DOCUMENT_NUMBER_BYTES: usize = 4 * MAX_CANONICAL_NUMBER_BYTES;
 
 /// Maximum nesting depth for Norn1 JSON values.
@@ -1405,8 +1406,9 @@ fn charge_number_bytes(
     output_len: usize,
     budget: &mut usize,
 ) -> Result<(), CanonicalJsonError> {
+    let expansion = output_len.saturating_sub(raw.len());
     let next = budget
-        .checked_add(output_len)
+        .checked_add(expansion)
         .ok_or_else(|| number_too_large(raw, offset))?;
     if output_len > MAX_CANONICAL_NUMBER_BYTES || next > MAX_DOCUMENT_NUMBER_BYTES {
         return Err(number_too_large(raw, offset));
@@ -2563,7 +2565,9 @@ mod tests {
     #[test]
     fn norn1_rejects_cumulative_decimal_expansion_amplification() {
         let item = format!("1e{}", MAX_CANONICAL_NUMBER_BYTES.saturating_sub(1));
-        let count = (MAX_DOCUMENT_NUMBER_BYTES / MAX_CANONICAL_NUMBER_BYTES).saturating_add(1);
+        let count = MAX_DOCUMENT_NUMBER_BYTES
+            .div_euclid(MAX_CANONICAL_NUMBER_BYTES)
+            .saturating_add(1);
         let mut input = String::from("[");
         for index in 0..count {
             if index > 0 {
@@ -2599,18 +2603,22 @@ mod tests {
 
     #[test]
     fn canonical_json_exact_of_handles_depth_above_128_up_to_limit() {
-        let mut json = String::new();
-        for _ in 0..160 {
-            json.push_str(r#"{"b":1,"a":"#);
+        #[derive(Serialize)]
+        struct Nested {
+            b: u8,
+            a: Option<Box<Nested>>,
         }
-        json.push('0');
-        for _ in 0..160 {
-            json.push('}');
+        let mut value = Nested { b: 1, a: None };
+        for _ in 1..160 {
+            value = Nested {
+                b: 1,
+                a: Some(Box::new(value)),
+            };
         }
-        let raw = serde_json::value::RawValue::from_string(json).expect("raw");
-        let sorted = canonical_json_exact_of(&raw).expect("depth 160 exact json");
+        let sorted = canonical_json_exact_of(&value).expect("depth 160 exact json");
         let text = String::from_utf8(sorted).expect("utf8");
         assert!(text.starts_with(r#"{"a":{"a":"#));
+        assert!(text.ends_with(r#","b":1},"b":1}"#));
     }
 
     #[test]
