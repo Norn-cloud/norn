@@ -25,6 +25,7 @@ use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::{MetricDefinition, QuestionIR};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::sync::RwLockReadGuard;
 use utoipa::IntoParams;
 
 /// S2 (#1547): a question that reads history (a knowledge cutoff, a
@@ -191,21 +192,15 @@ fn answered_at(
     }
 }
 
+type AdmittedQuestion<'h, 'a, 'r> = (RwLockReadGuard<'h, ()>, &'a str, &'r [u8], QuestionPlan);
+
 fn admit_named_question<'h, 'a, 'r, E: SqlEngine>(
     host: &'h DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&'a str>,
     question: &str,
     runtime: &'r dyn QuestionRuntime<E>,
-) -> Result<
-    (
-        std::sync::RwLockReadGuard<'h, ()>,
-        &'a str,
-        &'r [u8],
-        QuestionPlan,
-    ),
-    Refusal,
-> {
+) -> Result<AdmittedQuestion<'h, 'a, 'r>, Refusal> {
     let actor = actor.ok_or_else(read_denied)?;
     let access = mapped(host, runtime, actor, question, Population, None)?;
     let key = handle_key(runtime)?;

@@ -821,7 +821,7 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
             .ingest(&chunk)
             .map_err(|refusal| fail("source.ingest", refusal.message))?;
         for ingested in outcomes {
-            crate::uploads::tally_outcome(
+            crate::pull::tally_outcome(
                 &ingested.outcome,
                 &mut run.landed,
                 &mut run.quarantined,

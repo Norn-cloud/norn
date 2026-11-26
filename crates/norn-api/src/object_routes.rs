@@ -106,12 +106,15 @@ pub(crate) fn row_readable<E: SqlEngine>(
         .all(|capability| permitted(host, access, actor, row, capability))
 }
 
+/// Declared property names and resolved base types of an object type.
+pub(crate) type EffectiveProperties = Vec<(String, Option<norn_ir::PropertyType>)>;
+
 /// The effective property types of `object_type`, or `None` when the model
 /// does not declare `object_type`.
 pub(crate) fn effective_properties<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
-) -> Result<Option<Vec<(String, Option<norn_ir::PropertyType>)>>, Refusal> {
+) -> Result<Option<EffectiveProperties>, Refusal> {
     let cell = host.cell()?;
     let reader = cell.store().read();
     if !reader.model().has_type(object_type) {

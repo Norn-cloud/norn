@@ -808,6 +808,27 @@ fn form_urlencoded_pairs(query: &BTreeMap<String, String>, tokens: &Tokens<'_>) 
     out
 }
 
+/// Accumulate one mapping outcome into landed / quarantined / reason counts.
+pub(crate) fn tally_outcome(
+    outcome: &norn_cell::MappingOutcome,
+    landed: &mut u64,
+    quarantined: &mut u64,
+    reasons: &mut BTreeMap<String, u64>,
+) {
+    match outcome {
+        norn_cell::MappingOutcome::Landed | norn_cell::MappingOutcome::AlreadyLanded => {
+            *landed = landed.saturating_add(1);
+        }
+        held @ norn_cell::MappingOutcome::Quarantined(_) => {
+            *quarantined = quarantined.saturating_add(1);
+            for code in held.codes() {
+                let count = reasons.entry(code).or_insert(0);
+                *count = count.saturating_add(1);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,

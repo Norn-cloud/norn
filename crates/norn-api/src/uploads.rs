@@ -18,7 +18,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
@@ -899,27 +898,6 @@ pub struct Loaded {
     pub quarantine_reasons: BTreeMap<String, u64>,
 }
 
-/// Accumulate one mapping outcome into landed / quarantined / reason counts.
-pub(crate) fn tally_outcome(
-    outcome: &MappingOutcome,
-    landed: &mut u64,
-    quarantined: &mut u64,
-    reasons: &mut BTreeMap<String, u64>,
-) {
-    match outcome {
-        MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
-            *landed = landed.saturating_add(1);
-        }
-        held @ MappingOutcome::Quarantined(_) => {
-            *quarantined = quarantined.saturating_add(1);
-            for code in held.codes() {
-                let count = reasons.entry(code).or_insert(0);
-                *count = count.saturating_add(1);
-            }
-        }
-    }
-}
-
 /// Load every row of `table` through `generated`'s mapping, each row's
 /// lineage `<uri>#row=N` (N counts data rows from 1).
 ///
@@ -984,7 +962,7 @@ pub fn load_rows<E: SqlEngine>(
             .rows_read
             .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
-            tally_outcome(
+            crate::pull::tally_outcome(
                 &ingested.outcome,
                 &mut loaded.rows_landed,
                 &mut loaded.rows_quarantined,
