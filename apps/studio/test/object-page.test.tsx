@@ -303,7 +303,7 @@ test("a refusal with no detail reads nothing but the refusal: a warm cache's fin
     versions: [{ version: 1, commit: 2975, logicalTime: 0, values: { total: 720 }, writer: { kind: "other" } }] }), "live"))
   // Handed the record it refused (as the form once did), the panel still reads none of it.
   const Panel = RedactedLawRefusal as unknown as (props: Readonly<Record<string, unknown>>) => ReactNode
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><Panel objectType="docs.ScannedDocument" id={id} code="core.laws.violated" message="a declared precondition does not hold" technical={false} /></ViewProvider></QueryClientProvider>)
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><Panel objectType="docs.ScannedDocument" id={id} code="core.laws.violated" message="a declared precondition does not hold" technical={false} at={new Date("2026-01-01T00:00:00.000Z")} /></ViewProvider></QueryClientProvider>)
   expect(html).toContain("Refused by a law. Nothing was written.")
   expect(html).toContain("It does not say which law, or which values, to your role.")
   for (const disclosed of ["Open findings", "sum of its lines", "total 720", "720", "72.00", "30.00", "sum of lines"]) expect(html).not.toContain(disclosed)

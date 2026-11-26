@@ -90,6 +90,12 @@ impl fmt::Display for VaultError {
 
 impl std::error::Error for VaultError {}
 
+impl From<norn_cell::error::CellError> for VaultError {
+    fn from(error: norn_cell::error::CellError) -> Self {
+        storage(error)
+    }
+}
+
 fn storage(error: impl fmt::Display) -> VaultError {
     VaultError::Storage(error.to_string())
 }
@@ -238,7 +244,7 @@ pub trait KeyWrap: Send + Sync {
 /// manager's environment). One environment and region per keyring.
 pub struct LocalKeyring {
     current: String,
-    keys: BTreeMap<String, [u8; KEY_BYTES]>,
+    keys: BTreeMap<String, Box<Zeroizing<[u8; KEY_BYTES]>>>,
 }
 
 impl fmt::Debug for LocalKeyring {
@@ -251,18 +257,11 @@ impl fmt::Debug for LocalKeyring {
     }
 }
 
-impl Drop for LocalKeyring {
-    fn drop(&mut self) {
-        for key in self.keys.values_mut() {
-            key.zeroize();
-        }
-    }
-}
-
-/// Decoded straight into a wiped buffer, so no key byte is ever held in an
-/// unprotected allocation, whether decoding succeeds or fails. The buffer
-/// holds a little more than a key, so a longer value is refused as one.
-fn decode_key(variable: &str, value: &str) -> Result<Zeroizing<[u8; KEY_BYTES]>, VaultError> {
+/// Decoded straight into a wiped heap buffer, so no key byte is ever held in
+/// an unprotected allocation or copied on `BTree` rebalances, whether decoding
+/// succeeds or fails. The buffer holds a little more than a key, so a longer
+/// value is refused as one.
+fn decode_key(variable: &str, value: &str) -> Result<Box<Zeroizing<[u8; KEY_BYTES]>>, VaultError> {
     let mut buffer = Zeroizing::new([0_u8; KEY_BYTES * 2]);
     let written = match base64::engine::general_purpose::STANDARD
         .decode_slice(value.trim(), buffer.as_mut_slice())
@@ -275,7 +274,7 @@ fn decode_key(variable: &str, value: &str) -> Result<Zeroizing<[u8; KEY_BYTES]>,
             )));
         }
     };
-    let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
+    let mut key = Box::new(Zeroizing::new([0_u8; KEY_BYTES]));
     match buffer.get(..written) {
         Some(decoded) if decoded.len() == KEY_BYTES => {
             key.copy_from_slice(decoded);
@@ -296,9 +295,14 @@ impl LocalKeyring {
     /// key's bytes under any id (VAULT-DEV-KEY-1).
     pub fn new(current: &str, keys: BTreeMap<String, [u8; KEY_BYTES]>) -> Result<Self, VaultError> {
         // Built first, so every key is wiped however this returns.
+        let mut boxed = BTreeMap::new();
+        for (id, mut key) in keys {
+            boxed.insert(id, Box::new(Zeroizing::new(key)));
+            key.zeroize();
+        }
         Self {
             current: current.to_owned(),
-            keys,
+            keys: boxed,
         }
         .checked()
     }
@@ -308,7 +312,11 @@ impl LocalKeyring {
     fn checked(self) -> Result<Self, VaultError> {
         let ring = self;
         let current = ring.current.as_str();
-        if let Some((id, _)) = ring.keys.iter().find(|(_, key)| *key == DEV_KEY) {
+        if let Some((id, _)) = ring
+            .keys
+            .iter()
+            .find(|(_, key)| key.as_slice() == DEV_KEY.as_slice())
+        {
             return Err(VaultError::Config(format!(
                 "key id {id} holds the public development key"
             )));
@@ -337,7 +345,7 @@ impl LocalKeyring {
     fn dev() -> Self {
         Self {
             current: DEV_KEK_ID.to_owned(),
-            keys: BTreeMap::from([(DEV_KEK_ID.to_owned(), *DEV_KEY)]),
+            keys: BTreeMap::from([(DEV_KEK_ID.to_owned(), Box::new(Zeroizing::new(*DEV_KEY)))]),
         }
     }
 
@@ -354,7 +362,7 @@ impl LocalKeyring {
         let Some(value) = vars.get(KEK_VAR).filter(|value| !value.trim().is_empty()) else {
             return Ok(None);
         };
-        if value == DEV_KEK_VALUE {
+        if value.trim() == DEV_KEK_VALUE {
             return if allow_dev {
                 Ok(Some(Self::dev()))
             } else {
@@ -373,7 +381,7 @@ impl LocalKeyring {
             current: current.clone(),
             keys: BTreeMap::new(),
         };
-        ring.keys.insert(current, *decode_key(KEK_VAR, value)?);
+        ring.keys.insert(current, decode_key(KEK_VAR, value)?);
         for entry in vars
             .get(KEKS_PREVIOUS_VAR)
             .map_or_default(String::as_str)
@@ -384,11 +392,11 @@ impl LocalKeyring {
             let (id, key) = entry.split_once('=').ok_or_else(|| {
                 VaultError::Config(format!("{KEKS_PREVIOUS_VAR} entries are id=base64"))
             })?;
-            if let Some(mut repeated) = ring
+            if ring
                 .keys
-                .insert(id.trim().to_owned(), *decode_key(KEKS_PREVIOUS_VAR, key)?)
+                .insert(id.trim().to_owned(), decode_key(KEKS_PREVIOUS_VAR, key)?)
+                .is_some()
             {
-                repeated.zeroize();
                 return Err(VaultError::Config(format!(
                     "{KEKS_PREVIOUS_VAR} repeats key id {id}"
                 )));
@@ -454,7 +462,7 @@ impl KeyWrap for LocalKeyring {
             .get(&self.current)
             .ok_or_else(|| VaultError::UnknownKey(self.current.clone()))?;
         let aad = [aad, b"|", self.current.as_bytes()].concat();
-        let (nonce, ciphertext) = seal_with(key, &aad, dek.expose())?;
+        let (nonce, ciphertext) = seal_with(key.as_slice(), &aad, dek.expose())?;
         Ok(Wrapped {
             key_id: self.current.clone(),
             nonce,
@@ -468,7 +476,7 @@ impl KeyWrap for LocalKeyring {
             .get(&wrapped.key_id)
             .ok_or_else(|| VaultError::UnknownKey(wrapped.key_id.clone()))?;
         let aad = [aad, b"|", wrapped.key_id.as_bytes()].concat();
-        open_with(key, &aad, &wrapped.nonce, &wrapped.ciphertext)
+        open_with(key.as_slice(), &aad, &wrapped.nonce, &wrapped.ciphertext)
     }
 }
 
@@ -591,7 +599,8 @@ impl<E: SqlEngine> Vault<E> {
         if let Some((version, wrapped)) = self.wrapped_dek(None)? {
             return Ok((version, self.keys.unwrap(&wrapped, &self.dek_aad(version))?));
         }
-        let dek = Secret::new(random_bytes::<KEY_BYTES>()?.to_vec());
+        let mut raw = random_bytes::<KEY_BYTES>()?;
+        let dek = Secret::new(std::mem::take(&mut *raw));
         let version = 1;
         let wrapped = self.keys.wrap(&dek, &self.dek_aad(version))?;
         self.engine
@@ -734,36 +743,40 @@ impl<E: SqlEngine> Vault<E> {
     /// # Errors
     /// A DEK under an id the keyring no longer lists, or storage failures.
     pub fn rewrap(&self) -> Result<usize, VaultError> {
-        let rows = self
-            .engine
-            .query(
-                r#"SELECT "version" FROM "_norn_vault_dek" WHERE "key_id" <> ?1 ORDER BY "version""#,
-                &[SqlValue::Text(self.keys.current().to_owned())],
-            )
-            .map_err(storage)?;
-        let mut rewrapped: usize = 0;
-        for row in rows {
-            let version = int(row.first().ok_or_else(|| storage("dek row"))?)?;
-            let (_, wrapped) = self
-                .wrapped_dek(Some(version))?
-                .ok_or_else(|| storage("dek row vanished"))?;
-            let aad = self.dek_aad(version);
-            let dek = self.keys.unwrap(&wrapped, &aad)?;
-            let next = self.keys.wrap(&dek, &aad)?;
-            self.engine
-                .execute(
-                    r#"UPDATE "_norn_vault_dek" SET "key_id" = ?1, "nonce" = ?2, "wrapped" = ?3 WHERE "version" = ?4"#,
-                    &[
-                        SqlValue::Text(next.key_id),
-                        SqlValue::Blob(next.nonce),
-                        SqlValue::Blob(next.ciphertext),
-                        SqlValue::Integer(version),
-                    ],
+        self.engine.transaction(|| {
+            let rows = self
+                .engine
+                .query(
+                    r#"SELECT "version", "key_id", "nonce", "wrapped" FROM "_norn_vault_dek" WHERE "key_id" <> ?1 ORDER BY "version""#,
+                    &[SqlValue::Text(self.keys.current().to_owned())],
                 )
                 .map_err(storage)?;
-            rewrapped = rewrapped.saturating_add(1);
-        }
-        Ok(rewrapped)
+            let mut rewrapped: usize = 0;
+            for row in rows {
+                let version = int(row.first().ok_or_else(|| storage("dek row"))?)?;
+                let wrapped = Wrapped {
+                    key_id: text(row.get(1).ok_or_else(|| storage("dek row"))?)?,
+                    nonce: blob(row.get(2).ok_or_else(|| storage("dek row"))?)?,
+                    ciphertext: blob(row.get(3).ok_or_else(|| storage("dek row"))?)?,
+                };
+                let aad = self.dek_aad(version);
+                let dek = self.keys.unwrap(&wrapped, &aad)?;
+                let next = self.keys.wrap(&dek, &aad)?;
+                self.engine
+                    .execute(
+                        r#"UPDATE "_norn_vault_dek" SET "key_id" = ?1, "nonce" = ?2, "wrapped" = ?3 WHERE "version" = ?4"#,
+                        &[
+                            SqlValue::Text(next.key_id),
+                            SqlValue::Blob(next.nonce),
+                            SqlValue::Blob(next.ciphertext),
+                            SqlValue::Integer(version),
+                        ],
+                    )
+                    .map_err(storage)?;
+                rewrapped = rewrapped.saturating_add(1);
+            }
+            Ok(rewrapped)
+        })
     }
 
     /// The KEK id each DEK version is wrapped under.

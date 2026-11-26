@@ -35,6 +35,10 @@ const DEMO: (&str, &str) = ("org_demo", "dev");
 pub const HEALTH_PATH: &str = "/healthz";
 /// The parameter a conformance request names its own cell object with.
 const OBJECT_PARAM: &str = "conformanceObject";
+/// Edge bound on client WebSocket frames (above `norn_api::live::MAX_MESSAGE` so
+/// moderately oversize frames still receive the cell's protocol close 1009, while
+/// multi-megabyte frames are rejected before buffering at the router).
+const MAX_CLIENT_WS_FRAME: usize = 64 * 1024;
 
 fn scope_part(part: &str, max_len: usize) -> bool {
     let bytes = part.as_bytes();
@@ -332,7 +336,7 @@ impl Router {
             let name_text = name.as_str();
             if name_text == "authorization"
                 || name_text == "content-type"
-                || name_text.starts_with("x-norn-conformance-")
+                || (self.config.conformance && name_text.starts_with("x-norn-conformance-"))
             {
                 headers.insert(name.clone(), value.clone());
             }
@@ -445,6 +449,8 @@ impl Router {
         let router = Arc::clone(self);
         upgrade
             .protocols([crate::live::PROTOCOL])
+            .max_message_size(MAX_CLIENT_WS_FRAME)
+            .max_frame_size(MAX_CLIENT_WS_FRAME)
             .on_upgrade(move |socket| async move {
                 if let Err(error) = router
                     .join(socket, target.actor, target.key, &scope, authorization)

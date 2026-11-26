@@ -297,6 +297,52 @@ class Ratchet(unittest.TestCase):
             self.assertGreater(rule["noise_pct"], 0)
             self.assertTrue(rule["why"])
 
+    def test_main_fails_closed_when_all_metrics_lack_data_or_config_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote = root / "remote.git"
+            repo = root / "repo"
+            subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+            subprocess.run(["git", "clone", "--quiet", str(remote), str(repo)], check=True, capture_output=True)
+            env_backup = {k: os.environ.get(k) for k in GIT_ENV}
+            os.environ.update(GIT_ENV)
+            try:
+                record.append(repo, [sample(metric="sim.cell.serial_s", env={"runner": "boat", "vm_type": "default", "vcpu": 4})])
+                empty_cfg = root / "empty.json"
+                empty_cfg.write_text(json.dumps({"runner": "boat", "metrics": {}}), encoding="utf-8")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(empty_cfg)]), 1)
+                self.assertIn("tracks no metrics", out.getvalue())
+
+                missing_cfg = root / "missing.json"
+                missing_cfg.write_text(json.dumps({"runner": "boat", "metrics": {"other.metric.s": {"better": "lower", "noise_pct": 10}}}), encoding="utf-8")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(missing_cfg)]), 1)
+                self.assertIn("none of the 1 tracked metrics have any boat points", out.getvalue())
+
+                partial_cfg = root / "partial.json"
+                partial_cfg.write_text(json.dumps({"runner": "boat", "metrics": {
+                    "sim.cell.serial_s": {"better": "lower", "noise_pct": 10},
+                    "other.metric.s": {"better": "lower", "noise_pct": 10},
+                }}), encoding="utf-8")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(partial_cfg)]), 0)
+                self.assertIn("::warning title=metric has no data::other.metric.s", out.getvalue())
+
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(partial_cfg), "--require-data"]), 1)
+                self.assertIn("::error title=metric has no data::", out.getvalue())
+            finally:
+                for key, value in env_backup.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
 
 class Views(unittest.TestCase):
     def test_render(self):
