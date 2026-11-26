@@ -231,6 +231,7 @@ where
         object_type: object_type.clone(),
         key: object_id.clone(),
     };
+    let pre_auth_footprint = authorizer.action_policy_read_footprint(action);
     let state = authorize_upsert_target(
         host,
         call,
@@ -301,6 +302,9 @@ where
         &state,
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
+    if slice.reference_only && slice.policy_footprint != pre_auth_footprint {
+        return Err(ActionRefusal::TargetNotFound);
+    }
     preparation.precondition_outcomes = check_action_preconditions(
         catalog,
         action,
@@ -433,6 +437,7 @@ where
             target,
             slice: slice.facts,
             reference_only: slice.reference_only,
+            policy_footprint: slice.policy_footprint,
             link_reads: slice.link_reads,
             predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,

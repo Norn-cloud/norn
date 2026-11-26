@@ -171,6 +171,7 @@ where
             target,
             slice: slice.facts,
             reference_only: slice.reference_only,
+            policy_footprint: slice.policy_footprint,
             link_reads: slice.link_reads,
             predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,

@@ -25,7 +25,7 @@ use super::types::{
 fn reference_action(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
-    authorizer: &dyn ActionAuthorizer,
+    policy_footprint: &ActionPolicyReadFootprint,
     target: &FactKey,
 ) -> bool {
     // Closed creates use reference lineage plus exact proved property reads for
@@ -42,9 +42,7 @@ fn reference_action(
     else {
         return false;
     };
-    let ActionPolicyReadFootprint::Exact { target_attributes } =
-        authorizer.action_policy_read_footprint(action)
-    else {
+    let ActionPolicyReadFootprint::Exact { target_attributes } = policy_footprint else {
         return false;
     };
     let patch = matches!(write_mode, UpsertWriteMode::Upsert);
@@ -161,12 +159,12 @@ fn patch_read_properties(
 pub(super) fn reference_read_proof<E, C, I>(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
-    authorizer: &dyn ActionAuthorizer,
+    policy_footprint: &ActionPolicyReadFootprint,
     commit: &CellCommit<E, C, I>,
     target: &FactKey,
     effective_input: &JsonObject,
 ) -> Option<ActionReferenceReads> {
-    if !reference_action(catalog, action, authorizer, target)
+    if !reference_action(catalog, action, policy_footprint, target)
         || !commit.effects.is_empty()
         || commit.consumes.is_some()
         || !commit.link_reads.is_empty()
@@ -202,13 +200,10 @@ pub(super) fn reference_read_proof<E, C, I>(
         })
     ) {
         let reference = references.iter().find(|read| read.key == *target)?.clone();
-        let policy_attrs = authorizer
-            .action_policy_read_footprint(action)
-            .target_attributes()
-            .cloned()?;
+        let policy_attrs = policy_footprint.target_attributes()?;
         vec![(
             reference,
-            patch_read_properties(catalog, action, target, &policy_attrs)?,
+            patch_read_properties(catalog, action, target, policy_attrs)?,
         )]
     } else {
         super::receipt::create_reference_property_reads(
@@ -237,6 +232,7 @@ pub(super) fn reference_read_proof<E, C, I>(
 pub(super) struct LoadedActionSlice {
     pub(super) facts: FactSlice,
     pub(super) reference_only: bool,
+    pub(super) policy_footprint: ActionPolicyReadFootprint,
     pub(super) values: JsonObject,
     pub(super) link_reads: Vec<LinkReadExpectation>,
     pub(super) precondition_keys: BTreeSet<FactKey>,
@@ -692,8 +688,9 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let call = context.call;
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let reserved_bytes = meter.bytes();
+    let policy_footprint = context.authorizer.action_policy_read_footprint(call.action);
     let mut reference_only = context.host.supports_reference_reads()
-        && reference_action(catalog, call.action, context.authorizer, action_target);
+        && reference_action(catalog, call.action, &policy_footprint, action_target);
     let read_plan = super::receipt::prepare_create_slice_plan(
         context.host,
         catalog,
@@ -777,6 +774,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     Ok(LoadedActionSlice {
         facts,
         reference_only,
+        policy_footprint,
         values,
         link_reads,
         precondition_keys,

@@ -458,6 +458,7 @@ where
         target,
         slice,
         reference_only,
+        policy_footprint,
         link_reads,
         predicate_reads,
         precondition_reads,
@@ -581,9 +582,8 @@ where
     // value-dependent admission. Revocation refuses before any write rather
     // than using empty values under newly dependent authorization.
     if reference_only
-        && !authorizer
-            .action_policy_read_footprint(call.action)
-            .is_exact()
+        && (!policy_footprint.is_exact()
+            || authorizer.action_policy_read_footprint(call.action) != policy_footprint)
     {
         return Err(ActionRefusal::TargetNotFound);
     }
@@ -620,7 +620,7 @@ where
             reference_read_proof(
                 catalog,
                 call.action,
-                authorizer,
+                &policy_footprint,
                 &commit,
                 &target,
                 &effective_input,

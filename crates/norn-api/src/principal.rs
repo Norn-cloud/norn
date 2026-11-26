@@ -128,15 +128,26 @@ fn valid_attribute_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-struct ScalarAttr(AttrValue);
+enum ScalarAttr {
+    Bool(bool),
+    Long(i64),
+    String(String),
+}
 
 impl ScalarAttr {
     const fn kind(&self) -> u8 {
-        match self.0 {
-            AttrValue::Bool(_) => 0,
-            AttrValue::Long(_) => 1,
-            AttrValue::String(_) => 2,
-            AttrValue::Set(_) => 3,
+        match self {
+            Self::Bool(_) => 0,
+            Self::Long(_) => 1,
+            Self::String(_) => 2,
+        }
+    }
+
+    fn into_attr(self) -> AttrValue {
+        match self {
+            Self::Bool(value) => AttrValue::Bool(value),
+            Self::Long(value) => AttrValue::Long(value),
+            Self::String(value) => AttrValue::String(value),
         }
     }
 }
@@ -153,25 +164,25 @@ impl<'de> Deserialize<'de> for ScalarAttr {
             }
 
             fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
-                Ok(ScalarAttr(AttrValue::Bool(value)))
+                Ok(ScalarAttr::Bool(value))
             }
 
             fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
-                Ok(ScalarAttr(AttrValue::Long(value)))
+                Ok(ScalarAttr::Long(value))
             }
 
             fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
                 let signed = i64::try_from(value)
                     .map_err(|_| E::custom("principal attribute integer out of range"))?;
-                Ok(ScalarAttr(AttrValue::Long(signed)))
+                Ok(ScalarAttr::Long(signed))
             }
 
             fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
-                Ok(ScalarAttr(AttrValue::String(value.to_owned())))
+                Ok(ScalarAttr::String(value.to_owned()))
             }
 
             fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
-                Ok(ScalarAttr(AttrValue::String(value)))
+                Ok(ScalarAttr::String(value))
             }
         }
 
@@ -236,7 +247,7 @@ impl<'de> Deserialize<'de> for PrincipalAttr {
                     } else {
                         expected_kind = Some(kind);
                     }
-                    items.push(elem.0);
+                    items.push(elem.into_attr());
                 }
                 Ok(PrincipalAttr(AttrValue::Set(items)))
             }

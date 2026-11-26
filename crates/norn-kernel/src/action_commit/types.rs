@@ -971,6 +971,7 @@ pub(super) struct Pending<'fuel> {
     pub(super) target: FactKey,
     pub(super) slice: FactSlice,
     pub(super) reference_only: bool,
+    pub(super) policy_footprint: ActionPolicyReadFootprint,
     pub(super) link_reads: Vec<LinkReadExpectation>,
     pub(super) predicate_reads: Vec<PredicateReadExpectation>,
     pub(super) precondition_reads: BTreeSet<FactKey>,
