@@ -234,7 +234,7 @@ def _literal_zen(value: str | int | bool | Decimal | None, span: SourceSpan | No
     if isinstance(value, float):
         raise NornFloatRefusalError(value, context="expression literal")
     if isinstance(value, int):
-        return int.__str__(value)
+        return int.__repr__(value)
     if isinstance(value, Decimal):
         return format_exact_decimal(value, span)
     if isinstance(value, str):

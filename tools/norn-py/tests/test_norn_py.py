@@ -1975,6 +1975,37 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
         for cb in good_callbacks:
             validate_callback_ast(cb)
 
+        # Clean IntEnum and int/str subclasses with overridden __str__/__repr__/__format__ render plain ZEN literals.
+        class _CleanPrio(IntEnum):
+            HIGH = 3
+
+        class _EvilInt(int):
+            def __str__(self) -> str:
+                trap.called = True
+                return "1 || true"
+
+            def __repr__(self) -> str:
+                trap.called = True
+                return "1 || true"
+
+        class _EvilStr(str):
+            def __str__(self) -> str:
+                trap.called = True
+                return "x' || true || '"
+
+            def __format__(self, _spec: str) -> str:
+                trap.called = True
+                return "x' || true || '"
+
+        sym = DynamicSym("self", ("hours", "status"), "test.Shift")
+        traced_int_enum = trace_bool_callback(lambda s: s.hours == _CleanPrio.HIGH, sym, context="test")  # noqa: E731
+        self.assertEqual(traced_int_enum.zen, "self.hours == 3")
+        traced_str_enum = trace_bool_callback(lambda s: s.status == _CleanStatus.DRAFT, sym, context="test")  # noqa: E731
+        self.assertEqual(traced_str_enum.zen, "self.status == 'draft'")
+        self.assertEqual(lit(_EvilInt(7)).zen, "7")
+        self.assertEqual(lit(_EvilStr("ok")).zen, "'ok'")
+        self.assertFalse(trap.called)
+
 
 if __name__ == "__main__":
     unittest.main()
