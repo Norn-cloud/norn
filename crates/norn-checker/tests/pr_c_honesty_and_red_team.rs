@@ -12,9 +12,7 @@
 //! - RED-TEAM-1 (`norn-datalog` Scope Confinement, Unauthenticated External Settlement,
 //!   Self-Ratifiable Transitions, and Unconstrained Caller Writes)
 
-use norn_checker::law_honesty::{
-    LawEnforcementStatus, LawProofStatus, classify_law_honesty,
-};
+use norn_checker::law_honesty::{LawEnforcementStatus, LawProofStatus, classify_law_honesty};
 use norn_checker::red_team::analyze_red_team;
 use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
@@ -119,18 +117,48 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
     assert_eq!(statuses.len(), 4);
 
     let by_id = |id: &str| statuses.iter().find(|s| s.law_id == id).expect("status");
-    assert_eq!(by_id("hr.Payslip.exact_net").enforcement, LawEnforcementStatus::Enforced);
+    assert_eq!(
+        by_id("hr.Payslip.exact_net").enforcement,
+        LawEnforcementStatus::Enforced
+    );
     assert_eq!(by_id("hr.Payslip.exact_net").proof, LawProofStatus::Unknown);
     assert_eq!(by_id("hr.Payslip.exact_net").reason, None);
 
-    assert_eq!(by_id("hr.Payout.eventually_settled").enforcement, LawEnforcementStatus::DeclaredOnly);
-    assert!(by_id("hr.Payout.eventually_settled").reason.as_deref().unwrap().contains("temporal"));
+    assert_eq!(
+        by_id("hr.Payout.eventually_settled").enforcement,
+        LawEnforcementStatus::DeclaredOnly
+    );
+    assert!(
+        by_id("hr.Payout.eventually_settled")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("temporal")
+    );
 
-    assert_eq!(by_id("hr.Shift.max_span").enforcement, LawEnforcementStatus::DeclaredOnly);
-    assert!(by_id("hr.Shift.max_span").reason.as_deref().unwrap().contains("exception"));
+    assert_eq!(
+        by_id("hr.Shift.max_span").enforcement,
+        LawEnforcementStatus::DeclaredOnly
+    );
+    assert!(
+        by_id("hr.Shift.max_span")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("exception")
+    );
 
-    assert_eq!(by_id("hr.App.cross_entity").enforcement, LawEnforcementStatus::DeclaredOnly);
-    assert!(by_id("hr.App.cross_entity").reason.as_deref().unwrap().contains("single-entity"));
+    assert_eq!(
+        by_id("hr.App.cross_entity").enforcement,
+        LawEnforcementStatus::DeclaredOnly
+    );
+    assert!(
+        by_id("hr.App.cross_entity")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("single-entity")
+    );
 }
 
 #[test]
@@ -302,24 +330,72 @@ fn datalog_red_team_catches_branch_hop_unauth_settlement_self_ratify_and_unconst
         }),
     );
 
-    let report = analyze_red_team(&[payout, create_payout, dispatch_payout, confirm_payout, policy]);
-    assert!(report.is_complete(), "{:?} {:?}", report.evaluation_errors, report.decode_errors);
+    let report = analyze_red_team(&[
+        payout,
+        create_payout,
+        dispatch_payout,
+        confirm_payout,
+        policy,
+    ]);
+    assert!(
+        report.is_complete(),
+        "{:?} {:?}",
+        report.evaluation_errors,
+        report.decode_errors
+    );
 
     // 1. Scope confinement catches BOTH branch hopping AND an unscoped duplicate rule (no masking by rule A)!
-    assert_eq!(report.scope_confinement.len(), 2, "{:?}", report.scope_confinement);
-    assert!(report.scope_confinement.iter().any(|f| f.rule_id == "bm_roster_unscoped_duplicate" && f.resource_type == "hr.Roster"));
-    assert!(report.scope_confinement.iter().any(|f| f.rule_id == "bm_safe_departure_unscoped" && f.resource_type == "hr.SafeDepartureRule"));
+    assert_eq!(
+        report.scope_confinement.len(),
+        2,
+        "{:?}",
+        report.scope_confinement
+    );
+    assert!(
+        report
+            .scope_confinement
+            .iter()
+            .any(|f| f.rule_id == "bm_roster_unscoped_duplicate" && f.resource_type == "hr.Roster")
+    );
+    assert!(
+        report
+            .scope_confinement
+            .iter()
+            .any(|f| f.rule_id == "bm_safe_departure_unscoped"
+                && f.resource_type == "hr.SafeDepartureRule")
+    );
 
     // 2. Unauthenticated external settlement catches B2!
-    assert_eq!(report.unauthenticated_settlements.len(), 1, "{:?}", report.unauthenticated_settlements);
-    assert_eq!(report.unauthenticated_settlements[0].action_id, "hr.payout.confirm_succeeded");
+    assert_eq!(
+        report.unauthenticated_settlements.len(),
+        1,
+        "{:?}",
+        report.unauthenticated_settlements
+    );
+    assert_eq!(
+        report.unauthenticated_settlements[0].action_id,
+        "hr.payout.confirm_succeeded"
+    );
 
     // 3. Recursive lifecycle SoD catches self-ratifiable dispatch!
-    assert_eq!(report.self_ratifiable_transitions.len(), 1, "{:?}", report.self_ratifiable_transitions);
-    assert_eq!(report.self_ratifiable_transitions[0].action_id, "hr.payout.dispatch");
+    assert_eq!(
+        report.self_ratifiable_transitions.len(),
+        1,
+        "{:?}",
+        report.self_ratifiable_transitions
+    );
+    assert_eq!(
+        report.self_ratifiable_transitions[0].action_id,
+        "hr.payout.dispatch"
+    );
     assert_eq!(report.self_ratifiable_transitions[0].role, "owner");
 
     // 4. Unconstrained-write report flags `late_minutes` (while `amount` is in preconditions & `created_by` is protected)!
-    assert_eq!(report.unconstrained_writes.len(), 1, "{:?}", report.unconstrained_writes);
+    assert_eq!(
+        report.unconstrained_writes.len(),
+        1,
+        "{:?}",
+        report.unconstrained_writes
+    );
     assert_eq!(report.unconstrained_writes[0].property, "late_minutes");
 }

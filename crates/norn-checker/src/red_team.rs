@@ -187,21 +187,26 @@ fn extract_set(artifacts: &[ArtifactEnvelope]) -> ExtractedSet {
                         object_types.insert(ty.name.as_str().to_owned(), ty);
                     }
                     Ok(EntityRoot::V2Interface(iface)) => {
-                        interfaces.insert(iface.interface.name.as_str().to_owned(), iface.interface);
+                        interfaces
+                            .insert(iface.interface.name.as_str().to_owned(), iface.interface);
                     }
                     Ok(_) => {}
                     Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
                 }
             }
-            (ArtifactPayload::Action(action), _) => match action.to_json_value().decode::<ActionRoot>() {
-                Ok(root) => actions.push(root),
-                Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
-            },
-            (ArtifactPayload::Policy(policy), _) => match policy.to_json_value().decode::<PolicyRoot>() {
-                Ok(PolicyRoot::Access(access)) => policies.push(access),
-                Ok(_) => {}
-                Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
-            },
+            (ArtifactPayload::Action(action), _) => {
+                match action.to_json_value().decode::<ActionRoot>() {
+                    Ok(root) => actions.push(root),
+                    Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
+                }
+            }
+            (ArtifactPayload::Policy(policy), _) => {
+                match policy.to_json_value().decode::<PolicyRoot>() {
+                    Ok(PolicyRoot::Access(access)) => policies.push(access),
+                    Ok(_) => {}
+                    Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
+                }
+            }
             (_, ArtifactKind::Law) => {
                 match serde_json::to_value(artifact.payload.to_json_value())
                     .and_then(serde_json::from_value::<LawIR>)
@@ -390,13 +395,23 @@ fn collect_scope_facts(set: &ExtractedSet) -> Facts {
                     push_fact(
                         &mut facts,
                         "role_grants",
-                        vec![s(&rule_key), s(&rule.rule_id), s(role), s(action_id), s(rule.resource_type.as_str())],
+                        vec![
+                            s(&rule_key),
+                            s(&rule.rule_id),
+                            s(role),
+                            s(action_id),
+                            s(rule.resource_type.as_str()),
+                        ],
                     );
                     if self_scoped {
                         push_fact(&mut facts, "self_scoped_grant", vec![s(&rule_key)]);
                     }
                     for (attr, prop) in &scope_pairs {
-                        push_fact(&mut facts, "grant_checks_attr", vec![s(&rule_key), s(attr), s(prop)]);
+                        push_fact(
+                            &mut facts,
+                            "grant_checks_attr",
+                            vec![s(&rule_key), s(attr), s(prop)],
+                        );
                     }
                 }
             }
@@ -415,13 +430,21 @@ fn collect_scope_facts(set: &ExtractedSet) -> Facts {
                     .collect();
                 for prop in &scoped_props {
                     if props.contains(prop.as_str()) {
-                        push_fact(&mut facts, "type_applicable_prop", vec![s(ty_name), s(prop)]);
+                        push_fact(
+                            &mut facts,
+                            "type_applicable_prop",
+                            vec![s(ty_name), s(prop)],
+                        );
                     }
                 }
             } else {
                 // Unknown resource type in partial artifact set: fail closed for all scoped props.
                 for prop in &scoped_props {
-                    push_fact(&mut facts, "type_applicable_prop", vec![s(ty_name), s(prop)]);
+                    push_fact(
+                        &mut facts,
+                        "type_applicable_prop",
+                        vec![s(ty_name), s(prop)],
+                    );
                 }
             }
         }
@@ -449,7 +472,10 @@ fn run_scope_confinement(
             head: atom("unscoped_grant", &["RuleLabel", "R", "A", "T", "Attr"]),
             body: vec![
                 Literal::Positive(atom("role_scoped", &["R", "Attr", "Prop"])),
-                Literal::Positive(atom("role_grants", &["RuleKey", "RuleLabel", "R", "A", "T"])),
+                Literal::Positive(atom(
+                    "role_grants",
+                    &["RuleKey", "RuleLabel", "R", "A", "T"],
+                )),
                 Literal::Positive(atom("type_applicable_prop", &["T", "Prop"])),
                 Literal::Negative(atom("grant_checks_attr", &["RuleKey", "Attr", "Prop"])),
                 Literal::Negative(atom("self_scoped_grant", &["RuleKey"])),
@@ -581,7 +607,10 @@ fn run_external_settlement_check(
 fn collect_sod_facts(set: &ExtractedSet) -> Facts {
     let mut facts = Facts::new();
     for (type_name, ty) in &set.object_types {
-        if effective_object_properties(set, ty).iter().any(|p| p.protected) {
+        if effective_object_properties(set, ty)
+            .iter()
+            .any(|p| p.protected)
+        {
             push_fact(&mut facts, "protected_creator", vec![s(type_name)]);
         }
         for lc in effective_object_lifecycles(set, ty) {
@@ -590,13 +619,25 @@ fn collect_sod_facts(set: &ExtractedSet) -> Facts {
             }
             for ending in &lc.endings {
                 if matches!(ending.outcome, LifecycleOutcome::Completed) {
-                    push_fact(&mut facts, "sensitive_state", vec![s(type_name), s(&ending.state)]);
+                    push_fact(
+                        &mut facts,
+                        "sensitive_state",
+                        vec![s(type_name), s(&ending.state)],
+                    );
                 }
             }
             for tr in &lc.transitions {
-                push_fact(&mut facts, "transition_target", vec![s(type_name), s(tr.id.as_str()), s(&tr.to)]);
+                push_fact(
+                    &mut facts,
+                    "transition_target",
+                    vec![s(type_name), s(tr.id.as_str()), s(&tr.to)],
+                );
                 for from in &tr.from {
-                    push_fact(&mut facts, "transition_edge", vec![s(type_name), s(tr.id.as_str()), s(from), s(&tr.to)]);
+                    push_fact(
+                        &mut facts,
+                        "transition_edge",
+                        vec![s(type_name), s(tr.id.as_str()), s(from), s(&tr.to)],
+                    );
                 }
             }
         }
@@ -629,7 +670,10 @@ fn collect_sod_facts(set: &ExtractedSet) -> Facts {
                     "transition_action",
                     vec![s(&action.action_id), s(object_kind), s(transition.as_str())],
                 );
-                transition_actions.insert(action.action_id.clone(), (object_kind.clone(), transition.as_str().to_owned()));
+                transition_actions.insert(
+                    action.action_id.clone(),
+                    (object_kind.clone(), transition.as_str().to_owned()),
+                );
             }
             _ => {}
         }
@@ -650,7 +694,11 @@ fn collect_sod_facts(set: &ExtractedSet) -> Facts {
                 }
                 if let Some((ty, tr)) = transition_actions.get(action_id) {
                     for role in &roles {
-                        push_fact(&mut facts, "transition_grant", vec![s(&rule_key), s(role), s(action_id), s(ty), s(tr)]);
+                        push_fact(
+                            &mut facts,
+                            "transition_grant",
+                            vec![s(&rule_key), s(role), s(action_id), s(ty), s(tr)],
+                        );
                     }
                 }
             }
@@ -683,7 +731,10 @@ fn sod_reachability_program() -> Program {
                 id: "transition_has_action_rule".to_owned(),
                 mode: Mode::Entailment,
                 head: atom("transition_has_action", &["T", "Tr"]),
-                body: vec![Literal::Positive(atom("transition_action", &["A", "T", "Tr"]))],
+                body: vec![Literal::Positive(atom(
+                    "transition_action",
+                    &["A", "T", "Tr"],
+                ))],
             },
             // An edge is open if ANY action firing that transition lacks `independentOf`,
             // or if it is a timer/automatic transition with no action at all.
