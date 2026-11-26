@@ -28,7 +28,18 @@ pub(crate) struct Jwks {
     seq: u64,
 }
 
+/// Outcome of the most recent completed fetch attempt, shared with concurrent
+/// waiters whose ticket predates `seq` so an issuer outage does not serialize
+/// N redundant timeouts behind `JWKS_FETCH_LOCK`.
+#[derive(Clone)]
+struct LastAttempt {
+    url: String,
+    seq: u64,
+    outcome: std::result::Result<Jwks, String>,
+}
+
 static LAST_JWKS: std::sync::Mutex<Option<Jwks>> = std::sync::Mutex::new(None);
+static LAST_ATTEMPT: std::sync::Mutex<Option<LastAttempt>> = std::sync::Mutex::new(None);
 /// Monotonic fetch generation incremented under `JWKS_FETCH_LOCK` before each
 /// outbound HTTP request so coalescing never depends on wall-clock time.
 static JWKS_FETCH_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -42,6 +53,13 @@ fn last_jwks() -> Result<Option<Jwks>> {
         .clone())
 }
 
+fn last_attempt() -> Result<Option<LastAttempt>> {
+    Ok(LAST_ATTEMPT
+        .lock()
+        .map_err(|_poisoned| anyhow!("the JWKS attempt cache is poisoned"))?
+        .clone())
+}
+
 fn cached_jwks(url: &str) -> Result<Option<Jwks>> {
     Ok(last_jwks()?.filter(|entry| {
         entry.url == url
@@ -51,33 +69,15 @@ fn cached_jwks(url: &str) -> Result<Option<Jwks>> {
     }))
 }
 
-fn cached_jwks_after(url: &str, ticket: u64) -> Result<Option<Jwks>> {
-    Ok(last_jwks()?.filter(|entry| entry.url == url && entry.seq > ticket))
+fn cached_attempt_after(url: &str, ticket: u64) -> Result<Option<Result<Jwks>>> {
+    Ok(last_attempt()?
+        .filter(|entry| entry.url == url && entry.seq > ticket)
+        .map(|entry| entry.outcome.map_err(anyhow::Error::msg)))
 }
 
-/// The pinned JWKS document at `url` and when it was fetched; `reuse` accepts
-/// this process's last one while it is younger than `OPEN_RETRY_MS`. The
-/// actors and the router's gate share it, so a runner fetches the issuer's
-/// keys at most once a minute for both. Concurrent `reuse = false` refreshes
-/// coalesce only onto a fetch that started after the caller began waiting
-/// (tracked by a monotonic generation counter, never wall-clock time).
-pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool) -> Result<Jwks> {
-    if reuse && let Some(last) = cached_jwks(&url)? {
-        return Ok(last);
-    }
-    let ticket = JWKS_FETCH_SEQ.load(Ordering::Acquire);
-    let _singleflight = JWKS_FETCH_LOCK.lock().await;
-    if reuse && let Some(last) = cached_jwks(&url)? {
-        return Ok(last);
-    }
-    if let Some(fresh) = cached_jwks_after(&url, ticket)? {
-        return Ok(fresh);
-    }
-    let seq = JWKS_FETCH_SEQ
-        .fetch_add(1, Ordering::AcqRel)
-        .saturating_add(1);
+async fn fetch_jwks_once(http: &reqwest::Client, url: &str, seq: u64) -> Result<Jwks> {
     let response = http
-        .get(&url)
+        .get(url)
         .timeout(JWKS_TIMEOUT)
         .send()
         .await
@@ -89,22 +89,63 @@ pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool)
         .await
         .ok_or_else(|| anyhow!("JWKS read failed or exceeded {MAX_JWKS_BYTES} bytes"))?;
     let text = String::from_utf8(bytes).context("JWKS is not UTF-8")?;
-    let fetched = Jwks {
-        url,
+    Ok(Jwks {
+        url: url.to_owned(),
         text,
         at: now_ms(),
         seq,
+    })
+}
+
+/// The pinned JWKS document at `url` and when it was fetched; `reuse` accepts
+/// this process's last one while it is younger than `OPEN_RETRY_MS`. The
+/// actors and the router's gate share it, so a runner fetches the issuer's
+/// keys at most once a minute for both. Concurrent `reuse = false` refreshes
+/// coalesce onto the outcome (success or error) of a fetch that started after
+/// the caller began waiting (tracked by a monotonic generation counter, never
+/// wall-clock time).
+pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool) -> Result<Jwks> {
+    if reuse && let Some(last) = cached_jwks(&url)? {
+        return Ok(last);
+    }
+    let ticket = JWKS_FETCH_SEQ.load(Ordering::Acquire);
+    let _singleflight = JWKS_FETCH_LOCK.lock().await;
+    if reuse && let Some(last) = cached_jwks(&url)? {
+        return Ok(last);
+    }
+    if let Some(outcome) = cached_attempt_after(&url, ticket)? {
+        return outcome;
+    }
+    let seq = JWKS_FETCH_SEQ
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1);
+    let outcome = fetch_jwks_once(http, &url, seq).await;
+    let recorded = match &outcome {
+        Ok(fetched) => {
+            *LAST_JWKS
+                .lock()
+                .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? =
+                Some(fetched.clone());
+            Ok(fetched.clone())
+        }
+        Err(error) => Err(format!("{error:#}")),
     };
-    *LAST_JWKS
+    *LAST_ATTEMPT
         .lock()
-        .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(fetched.clone());
-    Ok(fetched)
+        .map_err(|_poisoned| anyhow!("the JWKS attempt cache is poisoned"))? = Some(LastAttempt {
+        url,
+        seq,
+        outcome: recorded,
+    });
+    outcome
 }
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future as _;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+    use std::task::{Context, Poll, Waker};
 
     use axum::response::IntoResponse as _;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -182,17 +223,29 @@ mod tests {
 
         let url = format!("http://{addr}/jwks");
         let future_ms = now_ms().saturating_add(600_000);
-        let future_seq = JWKS_FETCH_SEQ
-            .fetch_add(1, Ordering::AcqRel)
-            .saturating_add(1);
-        *LAST_JWKS
-            .lock()
-            .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(Jwks {
-            url: url.clone(),
-            text: document.clone(),
-            at: future_ms,
-            seq: future_seq,
-        });
+        {
+            let _seed_lock = JWKS_FETCH_LOCK.lock().await;
+            let future_seq = JWKS_FETCH_SEQ
+                .fetch_add(1, Ordering::AcqRel)
+                .saturating_add(1);
+            let seeded = Jwks {
+                url: url.clone(),
+                text: document.clone(),
+                at: future_ms,
+                seq: future_seq,
+            };
+            *LAST_JWKS
+                .lock()
+                .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(seeded.clone());
+            *LAST_ATTEMPT
+                .lock()
+                .map_err(|_poisoned| anyhow!("the JWKS attempt cache is poisoned"))? =
+                Some(LastAttempt {
+                    url: url.clone(),
+                    seq: future_seq,
+                    outcome: Ok(seeded),
+                });
+        }
 
         let keys = IssuerKeys::new(ISSUER, &document, future_ms / 1000)
             .map_err(|refused| anyhow!(refused.message))?;
@@ -263,13 +316,60 @@ mod tests {
         let first = tokio::spawn(async move { fetch_jwks(&first_http, first_url, false).await });
         first_started.notified().await;
 
-        let second = tokio::spawn(async move { fetch_jwks(&http, url, false).await });
+        let mut second = std::pin::pin!(fetch_jwks(&http, url, false));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(matches!(second.as_mut().poll(&mut cx), Poll::Pending));
         release_first.notify_one();
 
-        let first_res = first.await??;
-        let second_res = second.await??;
+        let (first_joined, second_res) = tokio::join!(first, second);
+        let first_res = first_joined??;
+        let second_res = second_res?;
         assert_eq!(first_res.text, old_doc);
         assert_eq!(second_res.text, new_doc);
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+
+        server.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_jwks_coalesces_concurrent_failed_refreshes() -> Result<()> {
+        let _serial = TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&fetches);
+        let app = axum::Router::new().fallback(move || {
+            let counted = Arc::clone(&counted);
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::INTERNAL_SERVER_ERROR, String::new()).into_response()
+            }
+        });
+        let server = tokio::spawn(async move {
+            let _result = axum::serve(listener, app).await;
+        });
+
+        let url = format!("http://{addr}/jwks");
+        let http = outbound_client()?;
+        let hold = JWKS_FETCH_LOCK.lock().await;
+        let mut f1 = std::pin::pin!(fetch_jwks(&http, url.clone(), false));
+        let mut f2 = std::pin::pin!(fetch_jwks(&http, url.clone(), false));
+        let mut f3 = std::pin::pin!(fetch_jwks(&http, url.clone(), false));
+        let mut f4 = std::pin::pin!(fetch_jwks(&http, url.clone(), false));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(matches!(f1.as_mut().poll(&mut cx), Poll::Pending));
+        assert!(matches!(f2.as_mut().poll(&mut cx), Poll::Pending));
+        assert!(matches!(f3.as_mut().poll(&mut cx), Poll::Pending));
+        assert!(matches!(f4.as_mut().poll(&mut cx), Poll::Pending));
+        drop(hold);
+
+        let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
+        assert!(r1.is_err() && r2.is_err() && r3.is_err() && r4.is_err());
+        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+
+        // A later sequential arrival still retries the issuer.
+        assert!(fetch_jwks(&http, url, false).await.is_err());
         assert_eq!(fetches.load(Ordering::SeqCst), 2);
 
         server.abort();
