@@ -2078,7 +2078,8 @@ mod direct {
                 // Serde JSON's raw emitter takes only `serialize_str`; any
                 // other shape is its refusal, so the text path decides it.
                 let text = value.serialize(KeySerializer { raw: true })?;
-                let parsed = super::parse(text.as_bytes()).map_err(|_error| Declined)?;
+                let parsed =
+                    super::parse_json_tokens(text.as_bytes()).map_err(|_error| Declined)?;
                 if matches!(parsed, JsonValue::Array(_) | JsonValue::Object(_)) {
                     return Err(Declined);
                 }
@@ -2578,6 +2579,21 @@ mod tests {
         input.push(']');
         assert!(matches!(
             parse(input),
+            Err(CanonicalJsonError::NumberTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn canonical_json_of_rejects_raw_value_cumulative_decimal_amplification() {
+        let item = format!("1e{}", MAX_CANONICAL_NUMBER_BYTES.saturating_sub(1));
+        let count = MAX_DOCUMENT_NUMBER_BYTES
+            .div_euclid(MAX_CANONICAL_NUMBER_BYTES)
+            .saturating_add(1);
+        let values: Vec<Box<serde_json::value::RawValue>> = (0..count)
+            .map(|_| serde_json::value::RawValue::from_string(item.clone()).expect("raw"))
+            .collect();
+        assert!(matches!(
+            canonical_json_of(&values),
             Err(CanonicalJsonError::NumberTooLarge { .. })
         ));
     }
