@@ -258,7 +258,7 @@ impl fmt::Debug for LocalKeyring {
 }
 
 /// Decoded straight into a wiped heap buffer, so no key byte is ever held in
-/// an unprotected allocation or copied on BTree rebalances, whether decoding
+/// an unprotected allocation or copied on `BTree` rebalances, whether decoding
 /// succeeds or fails. The buffer holds a little more than a key, so a longer
 /// value is refused as one.
 fn decode_key(variable: &str, value: &str) -> Result<Box<Zeroizing<[u8; KEY_BYTES]>>, VaultError> {
