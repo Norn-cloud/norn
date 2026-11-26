@@ -8,8 +8,9 @@ test("tla_ts_apalache_parity", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
   const tools = process.env.NORN_VERIFICATION_TOOL_ROOT
   if (!tools) throw new Error("NORN_VERIFICATION_TOOL_ROOT is required for real backend parity")
+  const targetDir = process.env.CARGO_TARGET_DIR || join(root, "target")
   const build = Bun.spawn(["cargo", "build", "--locked", "-p", "norn-checker",
-    "--features", "native-proof-driver", "--bin", "norn-proof-quint", "--target-dir", join(root, "target")],
+    "--features", "native-proof-driver", "--bin", "norn-proof-quint", "--target-dir", targetDir],
     { cwd: root, stdout: "inherit", stderr: "inherit" })
   expect(await build.exited).toBe(0)
   const work = await mkdtemp(join(tmpdir(), "norn-proof-parity-"))
@@ -25,7 +26,7 @@ test("tla_ts_apalache_parity", async () => {
       base.push(await Bun.file(join(root, `registry/core/artifacts/${name}.json`)).json())
     }
     await Bun.write(join(work, "base.json"), JSON.stringify(base))
-    const child = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/norn-proof-quint",
+    const child = Bun.spawn(["python3", "scripts/run-generated-proofs.py", join(targetDir, "debug", "norn-proof-quint"),
       join(work, "original.json"), join(work, "mutant.json"), join(work, "base.json"),
       "verification/profiles/constitution-one-create.json", join(work, "jobs"), tools],
       {cwd: root, stdout: "pipe", stderr: "inherit"})
@@ -57,4 +58,23 @@ test("generated_solver_timeout_and_exit_status", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
   const child = Bun.spawn(["python3", "scripts/test_generated_proofs.py"], {cwd: root, stdout: "inherit", stderr: "inherit"})
   expect(await child.exited).toBe(0)
+})
+
+test("check_ts_rejects_extra_args_and_records_missing_library_as_unknown", async () => {
+  const runnerDir = fileURLToPath(new URL(".", import.meta.url))
+  const work = await mkdtemp(join(tmpdir(), "norn-proof-check-"))
+  try {
+    const out = join(work, "result.json")
+    const extra = Bun.spawn(["bun", "run", "check.ts", join(work, "spec.tla"), out, work, "0", "extra"],
+      {cwd: runnerDir, stdout: "ignore", stderr: "ignore"})
+    expect(await extra.exited).not.toBe(0)
+
+    const missingLib = Bun.spawn(["bun", "run", "check.ts", join(work, "spec.tla"), out, work, "0"],
+      {cwd: runnerDir, stdout: "ignore", stderr: "ignore"})
+    expect(await missingLib.exited).toBe(0)
+    const report: unknown = await Bun.file(out).json()
+    expect(report).toMatchObject({status: "unknown", reason: expect.any(String)})
+  } finally {
+    await rm(work, {recursive: true, force: true})
+  }
 })
