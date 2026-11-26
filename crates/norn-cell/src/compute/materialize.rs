@@ -167,10 +167,12 @@ impl<E: SqlEngine> CellStore<E> {
                 };
                 let digest = input_digest(&snapshot)?;
                 let (plan_pin, _) = self.transform_pins(plan)?;
+                let cache_pin =
+                    crate::codec::hash_json(&("norn.transform-cache/1", &plan_pin, world, scope))?;
                 if snapshot.whole
                     && let Some(stored) = self
                         .stored_materialization(&plan.artifact_id)?
-                        .filter(|stored| stored.plan_pin == plan_pin)
+                        .filter(|stored| stored.plan_pin == cache_pin)
                 {
                     let exact = stored.input_digest == digest;
                     let within_age = match policy {
@@ -210,7 +212,7 @@ impl<E: SqlEngine> CellStore<E> {
                 let whole = snapshot.whole;
                 let result = self.evaluate_snapshot(plan, snapshot)?;
                 if whole && matches!(policy, Materialization::OnRead { .. }) {
-                    self.store_materialization(plan, &plan_pin, &digest, now_ms, &result)?;
+                    self.store_materialization(plan, &cache_pin, &digest, now_ms, &result)?;
                     return Ok((
                         Served {
                             materialization: Some(MaterializationState {
@@ -289,8 +291,10 @@ impl<E: SqlEngine> CellStore<E> {
                 guard(&self.read()).map_err(crate::GuardedError::Guard)?;
                 let digest = input_digest(&snapshot)?;
                 let (plan_pin, _) = self.transform_pins(plan)?;
+                let cache_pin =
+                    crate::codec::hash_json(&("norn.transform-cache/1", &plan_pin, world, scope))?;
                 let result = self.evaluate_snapshot(plan, snapshot)?;
-                self.store_materialization(plan, &plan_pin, &digest, now_ms, &result)?;
+                self.store_materialization(plan, &cache_pin, &digest, now_ms, &result)?;
                 Ok(Some(MaterializationState {
                     frontier: result.revision,
                     refreshed_at_ms: now_ms,

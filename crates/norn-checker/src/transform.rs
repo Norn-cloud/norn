@@ -1115,19 +1115,15 @@ impl Builder<'_, '_> {
     }
 
     fn read_columns(&mut self, schema: &NodeSchema, source: &str, at: &str) -> Vec<Column> {
-        match norn_expr::expression_read_paths(source, ROW_ROOT) {
-            Ok(paths) => paths
-                .iter()
-                .filter_map(|path| path.first())
-                .filter_map(|name| schema.column(name).cloned())
-                .collect(),
+        match crate::model_privacy::expression_columns(schema, source) {
+            Ok(columns) => columns.into_iter().cloned().collect(),
             Err(error) => {
                 self.fail(
                     codes::TYPE_MISMATCH,
                     format!("expression reads are unbounded: {error}"),
                     at,
                 );
-                Vec::new()
+                schema.columns.clone()
             }
         }
     }
@@ -1846,6 +1842,11 @@ impl Builder<'_, '_> {
         let schema = self.schema(&window.input)?.clone();
         for (index, column) in window.partition_by.iter().enumerate() {
             match schema.column(column) {
+                Some(found) if !found.markings.is_empty() => self.fail(
+                    metric_codes::MARKED_FIELD,
+                    format!("cannot partition by marked column {column:?}"),
+                    format!("{at}/partitionBy/{index}"),
+                ),
                 Some(found) if scalar(&found.ty) => {}
                 Some(_) => self.fail(
                     codes::TYPE_MISMATCH,
@@ -2099,6 +2100,11 @@ impl Builder<'_, '_> {
         }
         for (index, key) in dedupe.key.iter().enumerate() {
             match schema.column(key) {
+                Some(found) if !found.markings.is_empty() => self.fail(
+                    metric_codes::MARKED_FIELD,
+                    format!("cannot dedupe by marked column {key:?}"),
+                    format!("{at}/key/{index}"),
+                ),
                 Some(found) if scalar(&found.ty) => {}
                 Some(_) => self.fail(
                     codes::TYPE_MISMATCH,

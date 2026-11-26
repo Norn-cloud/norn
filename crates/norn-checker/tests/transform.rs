@@ -1294,8 +1294,7 @@ fn evaluate_shares_one_fuel_budget_across_rows_and_columns() {
     );
 }
 
-#[test]
-fn a_transform_cannot_filter_or_order_by_a_marked_column() {
+fn marked_customer_pool() -> Vec<Value> {
     let mut pool = ontology();
     for item in &mut pool {
         if item["artifactId"] == "shop.Customer" {
@@ -1321,50 +1320,80 @@ fn a_transform_cannot_filter_or_order_by_a_marked_column() {
             }]
         }),
     ));
+    pool
+}
+
+#[test]
+fn a_transform_cannot_filter_or_order_by_a_marked_column() {
+    let pool = marked_customer_pool();
     let check_view = |nodes: Value, output: &str| {
         let mut set = pool.clone();
         set.push(view(nodes, output));
         let set = envelopes(set);
         admit(set.last().expect("view"), &set, &BTreeSet::new())
     };
+    let assert_marked = |err: Vec<norn_checker::Diagnostic>| {
+        assert!(
+            err.iter()
+                .any(|d| d.code.as_str() == "question.validation.marked_field"),
+            "{err:?}"
+        );
+    };
 
-    let filter_err = check_view(
-        json!({
-            "s": {"op": "scan", "input": "customer"},
-            "f": {"op": "filter", "input": "s", "predicate": "input.email == 'a@b.c'"}
-        }),
-        "f",
-    )
-    .expect_err("filter on marked column must refuse");
-    assert_eq!(
-        filter_err
-            .iter()
-            .map(|d| d.code.as_str())
-            .collect::<Vec<_>>(),
-        vec!["question.validation.marked_field"]
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "f": {"op": "filter", "input": "s", "predicate": "input.email == 'a@b.c'"}
+            }),
+            "f",
+        )
+        .expect_err("filter on marked column must refuse"),
     );
-
-    let order_err = check_view(
-        json!({
-            "s": {"op": "scan", "input": "customer"},
-            "w": {
-                "op": "window", "input": "s", "partitionBy": ["region"],
-                "orderBy": [
-                    {"column": "email", "direction": "asc"},
-                    {"column": "id", "direction": "asc"}
-                ],
-                "columns": [{"name": "rn", "fn": "row_number"}]
-            }
-        }),
-        "w",
-    )
-    .expect_err("order by marked column must refuse");
-    assert_eq!(
-        order_err
-            .iter()
-            .map(|d| d.code.as_str())
-            .collect::<Vec<_>>(),
-        vec!["question.validation.marked_field"]
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "w": {
+                    "op": "window", "input": "s", "partitionBy": ["region"],
+                    "orderBy": [
+                        {"column": "email", "direction": "asc"},
+                        {"column": "id", "direction": "asc"}
+                    ],
+                    "columns": [{"name": "rn", "fn": "row_number"}]
+                }
+            }),
+            "w",
+        )
+        .expect_err("order by marked column must refuse"),
+    );
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "w": {
+                    "op": "window", "input": "s", "partitionBy": ["email"],
+                    "orderBy": [{"column": "id", "direction": "asc"}],
+                    "columns": [{"name": "rn", "fn": "row_number"}]
+                }
+            }),
+            "w",
+        )
+        .expect_err("partition by marked column must refuse"),
+    );
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "d": {
+                    "op": "dedupe", "input": "s", "key": ["email"],
+                    "orderBy": [{"column": "id", "direction": "asc"}],
+                    "keep": "first"
+                }
+            }),
+            "d",
+        )
+        .expect_err("dedupe by marked key must refuse"),
     );
 
     let projected = check_view(
