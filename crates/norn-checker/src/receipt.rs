@@ -507,46 +507,8 @@ struct ReceiptCheckRequest<'a> {
     retained: bool,
 }
 
-/// Finalize a [`CheckReceipt`] from already-computed diagnostics under the
-/// current admission profile (used by Ring-1 checkers composing above Ring-0).
-/// Callers must pass the complete Ring-0 diagnostic output (plus any Ring-1
-/// diagnostics composed above it).
-///
-/// # Errors
-///
-/// As [`check_artifact_set_with_receipt`].
-pub fn check_artifact_set_with_diagnostics(
-    artifacts: &ReceiptSources,
-    context: &EntityArtifactSetContext<'_>,
-    limits: &ResourceLimitProfile,
-    flow_source_map: Option<&FlowSourceMap>,
-    diagnostics: Vec<Diagnostic>,
-) -> Result<CheckedArtifactSet, ReceiptError> {
-    let context = artifacts.validated_context(context)?;
-    finalize_receipt_with_profile(
-        ReceiptCheckRequest {
-            artifacts: &artifacts.artifacts,
-            context: &context,
-            limits,
-            artifact_set: artifacts.identity.clone(),
-            identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
-            flow_source_map,
-            retained: false,
-        },
-        diagnostics,
-    )
-}
-
 fn check_artifact_set_with_profile(
     request: ReceiptCheckRequest<'_>,
-) -> Result<CheckedArtifactSet, ReceiptError> {
-    let diagnostics = crate::check_artifact_set(request.artifacts, request.context);
-    finalize_receipt_with_profile(request, diagnostics)
-}
-
-fn finalize_receipt_with_profile(
-    request: ReceiptCheckRequest<'_>,
-    mut diagnostics: Vec<Diagnostic>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
     let ReceiptCheckRequest {
         artifacts,
@@ -558,6 +520,7 @@ fn finalize_receipt_with_profile(
         retained,
     } = request;
     let limit_profile = limits.reference()?;
+    let mut diagnostics = crate::check_artifact_set(artifacts, context);
     if !retained {
         for artifact in artifacts {
             if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
