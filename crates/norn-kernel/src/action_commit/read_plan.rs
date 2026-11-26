@@ -14,15 +14,99 @@ use norn_ir::{
     SliceKey, TransitionId, UpsertWriteMode,
 };
 
-use crate::cell_host::{CellCommit, CellHost, FactExpectation, FactKey, JsonObject};
-use crate::decision_commit::TypeCatalog;
+use crate::cell_host::{CellCommit, CellHost, FactExpectation, FactKey, FactState, JsonObject};
+use crate::decision_commit::{DecisionRefusal, TypeCatalog};
 use crate::naming_series::NAMING_SERIES_COUNTER_TYPE;
 
 use super::receipt::{
     ActionReferenceReads, SliceReadMode, collect_patch_law_property_reads,
     create_precondition_alias_reads, create_slice_property_reads, non_computed_property,
 };
-use super::types::ActionPolicyReadFootprint;
+use super::types::{ActionPolicyReadFootprint, ActionRefusal};
+use super::{check_kind, host_failure};
+
+/// Loads a target fact and resolves its stored concrete subtype when present,
+/// failing closed on an incompatible or unproven subtype so polymorphic actions
+/// always run against the concrete subtype's invariants, lifecycles, and laws.
+pub(super) fn load_target_with_concrete<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    object_kind: &str,
+    target: &FactKey,
+) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
+    crate::check_fact_key_identity(target)
+        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
+    match host.load_bounded(target, u64::MAX).map_err(host_failure)? {
+        Some(bounded) => {
+            if let Some(concrete) = bounded.concrete_type {
+                if !catalog.lineage(&concrete).contains(&target.object_type) {
+                    return Err(ActionRefusal::TargetNotFound);
+                }
+                check_kind(catalog, &concrete, object_kind)?;
+                return Ok((
+                    FactKey::new(concrete.as_str(), target.key.clone()),
+                    bounded.state,
+                ));
+            }
+            // SQLite reports missing values with the hierarchy's nonzero version when
+            // a live sibling subtype occupies this key; refuse opaquely rather than
+            // letting a create path surface a downstream TypeMismatch.
+            if bounded.state.version != crate::cell_host::FactVersion::ABSENT {
+                let canonical = crate::CommitModel::new(catalog).canonical(target);
+                if canonical != *target
+                    && host
+                        .load_bounded(&canonical, u64::MAX)
+                        .map_err(host_failure)?
+                        .is_some_and(|root| root.concrete_type.is_some())
+                {
+                    return Err(ActionRefusal::TargetNotFound);
+                }
+            }
+            Ok((target.clone(), bounded.state))
+        }
+        None => {
+            let state = host.load(target).map_err(host_failure)?;
+            let has_proper_subtypes = catalog.object_type_names().iter().any(|ty| {
+                ty != &target.object_type && catalog.lineage(ty).contains(&target.object_type)
+            });
+            if state.exists() && has_proper_subtypes {
+                return Err(ActionRefusal::TargetNotFound);
+            }
+            Ok((target.clone(), state))
+        }
+    }
+}
+
+/// Reconcile naming-series collision probes with already-captured slice reads
+/// by canonical key so an `allow_gaps` create that slice-reads a skipped key
+/// never emits duplicate read expectations or hides a version disagreement.
+pub(super) fn reconcile_skipped_reads<X>(
+    catalog: &TypeCatalog<'_>,
+    reads: &mut Vec<FactExpectation>,
+    probes: Vec<FactExpectation>,
+) -> Result<Vec<FactExpectation>, ActionRefusal<X>> {
+    let model = crate::CommitModel::new(catalog);
+    let mut skipped_reads = Vec::new();
+    for skipped in probes {
+        let canonical = model.canonical(&skipped.key);
+        if let Some(existing) = reads
+            .iter()
+            .find(|read| model.canonical(&read.key) == canonical)
+        {
+            if existing.expected != skipped.expected {
+                return Err(ActionRefusal::Decision(DecisionRefusal::Stale {
+                    key: existing.key.clone(),
+                    expected: skipped.expected,
+                    actual: existing.expected,
+                }));
+            }
+            continue;
+        }
+        skipped_reads.push(skipped.clone());
+        reads.push(skipped);
+    }
+    Ok(skipped_reads)
+}
 
 /// Whether the action mutates an existing target or creates a new one.
 #[derive(Clone)]
@@ -558,19 +642,20 @@ pub(super) fn bind_create_property_reads(
     // Naming-series collision probes check existence (`version == ABSENT`) only
     // and carry occurrence-only reference lineage (no property reads).
     for (index, reference) in references.iter().enumerate() {
-        if !matched[index] && reference.expected.0 != 0 && skipped_reads.contains(reference) {
-            matched[index] = true;
+        let covered = matched.get_mut(index)?;
+        if !*covered && reference.expected.0 != 0 && skipped_reads.contains(reference) {
+            *covered = true;
         }
     }
     if matched.iter().any(|covered| !covered) {
         return None;
     }
-    Some(
-        merged
-            .into_iter()
-            .map(|(index, props)| (references[index].clone(), props.into_iter().collect()))
-            .collect(),
-    )
+    let mut property_reads = Vec::with_capacity(merged.len());
+    for (index, props) in merged {
+        let reference = references.get(index)?.clone();
+        property_reads.push((reference, props.into_iter().collect()));
+    }
+    Some(property_reads)
 }
 
 fn bind_existing_property_reads(
@@ -594,7 +679,7 @@ fn bind_existing_property_reads(
     if target_candidates.next().is_some() || target_ref.expected.0 == 0 {
         return None;
     }
-    matched[target_index] = true;
+    *matched.get_mut(target_index)? = true;
     merged
         .entry(target_index)
         .or_default()
@@ -626,10 +711,10 @@ fn bind_existing_property_reads(
     }
     // Retain the target entry even when `target_properties` is empty so the
     // host keeps exact target-preservation lineage instead of whole-row reads.
-    Some(
-        merged
-            .into_iter()
-            .map(|(index, props)| (references[index].clone(), props.into_iter().collect()))
-            .collect(),
-    )
+    let mut property_reads = Vec::with_capacity(merged.len());
+    for (index, props) in merged {
+        let reference = references.get(index)?.clone();
+        property_reads.push((reference, props.into_iter().collect()));
+    }
+    Some(property_reads)
 }

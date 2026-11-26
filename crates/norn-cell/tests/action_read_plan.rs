@@ -1,9 +1,17 @@
 #![cfg(feature = "native")]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 //! Lane A3 end-to-end cell tests on production `SqliteCell`:
 //! - Naming-series `CreateOnly` field-level IFC and replay after slice mutations.
 //! - `FireTransition` (`independentOf`, guards, external slice) and lifecycle-bearing
 //!   `UpdateOnly` exact field-level IFC.
-//! - Polymorphic subtype dispatch across `FireTransition`, `UpdateOnly`, and `createLinks`.
+//! - Polymorphic subtype dispatch across `FireTransition`, `UpdateOnly`, sibling
+//!   subtype refusal, and `createLinks`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,9 +20,9 @@ use norn_ir::{ActionRoot, ObjectTypeDef};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
-    ActionPolicyReadFootprint, ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit,
-    CellHost, Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite,
-    LinkKey, LogicalTime, TypeCatalog, World, commit_action, transition_guards,
+    ActionPolicyReadFootprint, ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal,
+    CellCommit, CellHost, Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion,
+    FactWrite, LinkKey, LogicalTime, TypeCatalog, World, commit_action, transition_guards,
 };
 use serde_json::{Value, json};
 
@@ -108,23 +116,18 @@ fn leave_request_type() -> ObjectTypeDef {
             {
                 "id": "status",
                 "type": {"kind": "enum", "values": [{"value": "submitted"}, {"value": "approved"}, {"value": "escalated"}]},
-                "default": "submitted",
-                "lifecycle": {
-                    "property": "status",
-                    "initial": ["submitted"],
-                    "terminal": ["approved", "escalated"],
-                    "states": [
-                        {"id": "submitted", "label": "Submitted"},
-                        {"id": "approved", "label": "Approved"},
-                        {"id": "escalated", "label": "Escalated"}
-                    ],
-                    "transitions": [
-                        {"id": "approve", "from": ["submitted"], "to": "approved", "guards": ["self.days <= 10"]},
-                        {"id": "escalate", "from": ["submitted"], "to": "escalated", "guards": ["self.private_notes != ''"]}
-                    ]
-                }
+                "default": "submitted"
             }
         ],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["submitted"],
+            "terminal": ["approved", "escalated"],
+            "transitions": [
+                {"id": "approve", "from": ["submitted"], "to": "approved", "guards": ["self.days <= 10"]},
+                {"id": "escalate", "from": ["submitted"], "to": "escalated", "guards": ["self.private_notes != ''"]}
+            ]
+        }],
         "links": [{
             "id": "employee",
             "target": "hr.Person",
@@ -138,25 +141,22 @@ fn hr_a3_types() -> Vec<ObjectTypeDef> {
     let mut defs: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "hr.Person",
+            "identity": [{"name": "primary", "properties": ["id"]}],
             "properties": [
                 {"id": "id", "type": {"kind": "text"}},
                 {"id": "name", "type": {"kind": "text"}},
                 {
                     "id": "status",
                     "type": {"kind": "enum", "values": [{"value": "active"}, {"value": "inactive"}]},
-                    "default": "active",
-                    "lifecycle": {
-                        "property": "status",
-                        "initial": ["active"],
-                        "terminal": ["inactive"],
-                        "states": [
-                            {"id": "active", "label": "Active"},
-                            {"id": "inactive", "label": "Inactive"}
-                        ],
-                        "transitions": [{"id": "deactivate", "from": ["active"], "to": "inactive"}]
-                    }
+                    "default": "active"
                 }
-            ]
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["active"],
+                "terminal": ["inactive"],
+                "transitions": [{"id": "deactivate", "from": ["active"], "to": "inactive"}]
+            }]
         },
         {
             "name": "hr.Employee",
@@ -165,7 +165,18 @@ fn hr_a3_types() -> Vec<ObjectTypeDef> {
                 {"id": "badge_no", "type": {"kind": "text"}},
                 {"id": "national_id", "type": {"kind": "text"}, "markings": [PII]}
             ],
-            "invariants": [{"id": "badge_non_empty", "expression": "self.badge_no != ''"}]
+            "invariants": [{
+                "id": "badge_non_empty",
+                "expression": "self.badge_no != ''",
+                "message": "badge_no must be non-empty"
+            }]
+        },
+        {
+            "name": "hr.Contractor",
+            "extends": "hr.Person",
+            "properties": [
+                {"id": "vendor", "type": {"kind": "text"}}
+            ]
         }
     ]))
     .unwrap();
@@ -268,12 +279,16 @@ fn submit_leave_action() -> ActionRoot {
     .unwrap()
 }
 
-fn markings(cell: &Cell, ty: &str, id: &str) -> BTreeMap<String, BTreeSet<String>> {
+fn markings(cell: &Cell, ty: &str, id: &str) -> BTreeMap<String, Vec<String>> {
     cell.store()
         .read()
         .effective_markings(MAIN_WORLD, ty, id, None)
         .unwrap()
         .unwrap()
+}
+
+fn has_pii(marks: &BTreeMap<String, Vec<String>>, property: &str) -> bool {
+    marks[property].iter().any(|label| label == PII)
 }
 
 /// Naming-series `CreateOnly` commits with exact field-level IFC (unread PII
@@ -310,10 +325,7 @@ fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes()
     let leave_marks = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001");
     assert!(leave_marks["reason"].is_empty(), "{leave_marks:?}");
     assert!(leave_marks["status"].is_empty(), "{leave_marks:?}");
-    assert!(
-        leave_marks["private_notes"].contains(PII),
-        "{leave_marks:?}"
-    );
+    assert!(has_pii(&leave_marks, "private_notes"), "{leave_marks:?}");
     // Polymorphic `createLinks` resolved supertype `hr.Person` to concrete `hr.Employee`.
     assert!(
         cell.load_link(&LinkKey::new(
@@ -337,7 +349,8 @@ fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes()
         "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
         "effectProgram": {
             "kind": "fire_transition", "objectIdField": "id",
-            "objectKind": "hr.Person", "lifecycle": "status", "transition": "deactivate"
+            "objectKind": "hr.Person", "entityArtifactId": "hr.Person.entity",
+            "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "deactivate"
         }
     }))
     .unwrap();
@@ -380,7 +393,8 @@ fn hr_transition_and_update_actions() -> (ActionRoot, ActionRoot, ActionRoot) {
         "preconditions": ["slice.emp.status == 'active'"],
         "effectProgram": {
             "kind": "fire_transition", "objectIdField": "id",
-            "objectKind": "hr.LeaveRequest", "lifecycle": "status", "transition": "approve"
+            "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "approve"
         }
     }))
     .unwrap();
@@ -395,7 +409,8 @@ fn hr_transition_and_update_actions() -> (ActionRoot, ActionRoot, ActionRoot) {
         "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
         "effectProgram": {
             "kind": "fire_transition", "objectIdField": "id",
-            "objectKind": "hr.LeaveRequest", "lifecycle": "status", "transition": "escalate"
+            "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "escalate"
         }
     }))
     .unwrap();
@@ -462,7 +477,7 @@ fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_r
     commit_action(&mut cell, &catalog, &upd, &authz).unwrap();
     let after_upd = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001");
     assert!(after_upd["reason"].is_empty(), "{after_upd:?}");
-    assert!(after_upd["private_notes"].contains(PII), "{after_upd:?}");
+    assert!(has_pii(&after_upd, "private_notes"), "{after_upd:?}");
 
     // Approve transition reads `days`, `created_by`, `branch_id`, `status`, and `emp.status` — none PII.
     let app = make_call(
@@ -485,13 +500,14 @@ fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_r
     commit_action(&mut cell, &catalog, &esc, &authz).unwrap();
     let after_esc = markings(&cell, "hr.LeaveRequest", "LR-cairo-0002");
     assert!(
-        after_esc["status"].contains(PII),
+        has_pii(&after_esc, "status"),
         "guard reading PII must propagate onto status: {after_esc:?}"
     );
 }
 
 /// Polymorphic `UpdateOnly` targeting supertype `hr.Person` resolves concrete
-/// `hr.Employee`, enforces subtype invariants, and records concrete `hr.Employee`.
+/// `hr.Employee`, enforces subtype invariants, records concrete `hr.Employee`,
+/// and refuses a sibling subtype (`hr.Contractor`) opaquely with `TargetNotFound`.
 #[test]
 fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
     let defs = hr_a3_types();
@@ -517,8 +533,37 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
         }
     }))
     .unwrap();
+    let upsert_contractor: ActionRoot = serde_json::from_value(json!({
+        "actionId": "hr.upsert_contractor",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true, "ledgered": true,
+        "inputSchema": {
+            "type": "object", "additionalProperties": false,
+            "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "vendor": {"type": "string"}},
+            "required": ["id", "name", "vendor"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "effectProgram": {
+            "kind": "upsert_input_object", "objectIdField": "id",
+            "objectKind": "hr.Contractor", "entityArtifactId": "hr.Contractor.entity",
+            "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "upsert"}
+        }
+    }))
+    .unwrap();
 
-    // Violating `hr.Employee`'s `badge_non_empty` invariant must refuse even when calling `hr.Person`.
+    // Sibling subtype occupying `E1` in `hr.Person`'s hierarchy refuses opaquely.
+    let sibling = make_call(
+        &upsert_contractor,
+        "user:admin",
+        json!({"id": "E1", "name": "Other", "vendor": "Acme"}),
+        "sib-1",
+    );
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &sibling, &authz),
+        Err(ActionRefusal::TargetNotFound)
+    ));
+
+    // Violating `hr.Employee`'s `badge_non_empty` invariant refuses even when calling `hr.Person`.
     let bad = make_call(
         &update_person,
         "user:admin",
@@ -541,5 +586,5 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
     assert_eq!(record.object, FactKey::new("hr.Employee", "E1"));
     let emp_marks = markings(&cell, "hr.Employee", "E1");
     assert!(emp_marks["name"].is_empty(), "{emp_marks:?}");
-    assert!(emp_marks["national_id"].contains(PII), "{emp_marks:?}");
+    assert!(has_pii(&emp_marks, "national_id"), "{emp_marks:?}");
 }

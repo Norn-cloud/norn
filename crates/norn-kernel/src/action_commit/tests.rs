@@ -635,7 +635,7 @@ fn create_slice_property_reads_fails_closed_on_whole_object_computed_and_inverse
 struct ReferenceCapableHost;
 
 impl crate::cell_host::CellHost for ReferenceCapableHost {
-    type Error = &'static str;
+    type Error = std::convert::Infallible;
     type Event = crate::decision_commit::FactEvent;
     type Command = JsonObject;
     type Input = JsonObject;
@@ -644,11 +644,29 @@ impl crate::cell_host::CellHost for ReferenceCapableHost {
         Ok(crate::cell_host::FactState::default())
     }
 
+    fn load_link(&self, _: &LinkKey) -> Result<crate::cell_host::LinkState, Self::Error> {
+        Ok(crate::cell_host::LinkState::default())
+    }
+
     fn commit(
         &mut self,
         _: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<crate::cell_host::CommitReceipt, crate::cell_host::CommitError<Self::Error>> {
-        Err(crate::cell_host::CommitError::Host("unused"))
+        Err(crate::cell_host::CommitError::Invalid(
+            "unused test host".to_owned(),
+        ))
+    }
+
+    fn perform(&mut self) -> Result<Option<crate::cell_host::Performed<Self::Input>>, Self::Error> {
+        Ok(None)
+    }
+
+    fn observe(&mut self) -> Result<Option<crate::cell_host::Observed<Self::Input>>, Self::Error> {
+        Ok(None)
+    }
+
+    fn clock(&mut self) -> Result<Option<crate::cell_host::DueTimer<Self::Input>>, Self::Error> {
+        Ok(None)
     }
 
     fn supports_reference_reads(&self) -> bool {
@@ -664,6 +682,7 @@ fn a3_lifecycle_types() -> Vec<norn_ir::ObjectTypeDef> {
     serde_json::from_value(serde_json::json!([
         {
             "name": "hr.Employee",
+            "identity": [{"name": "primary", "properties": ["id"]}],
             "properties": [
                 {"id": "id", "type": {"kind": "text"}},
                 {"id": "status", "type": {"kind": "text"}},
@@ -672,6 +691,7 @@ fn a3_lifecycle_types() -> Vec<norn_ir::ObjectTypeDef> {
         },
         {
             "name": "hr.LeaveRequest",
+            "identity": [{"name": "primary", "properties": ["id"]}],
             "properties": [
                 {"id": "id", "type": {"kind": "text"}},
                 {"id": "employee_id", "type": {"kind": "text"}},
@@ -683,24 +703,20 @@ fn a3_lifecycle_types() -> Vec<norn_ir::ObjectTypeDef> {
                 {
                     "id": "status",
                     "type": {"kind": "enum", "values": [{"value": "submitted"}, {"value": "approved"}]},
-                    "default": "submitted",
-                    "lifecycle": {
-                        "property": "status",
-                        "initial": ["submitted"],
-                        "terminal": ["approved"],
-                        "states": [
-                            {"id": "submitted", "label": "Submitted"},
-                            {"id": "approved", "label": "Approved"}
-                        ],
-                        "transitions": [{
-                            "id": "approve",
-                            "from": ["submitted"],
-                            "to": "approved",
-                            "guards": ["self.days <= 10"]
-                        }]
-                    }
+                    "default": "submitted"
                 }
-            ]
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["submitted"],
+                "terminal": ["approved"],
+                "transitions": [{
+                    "id": "approve",
+                    "from": ["submitted"],
+                    "to": "approved",
+                    "guards": ["self.days <= 10"]
+                }]
+            }]
         }
     ]))
     .expect("a3 types")
@@ -729,7 +745,8 @@ fn tracked_read_set_covers_fire_transition_with_guards_and_external_slice() {
         "preconditions": ["slice.emp.status == 'active'"],
         "effectProgram": {
             "kind": "fire_transition", "objectIdField": "id",
-            "objectKind": "hr.LeaveRequest", "lifecycle": "status", "transition": "approve"
+            "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "approve"
         }
     }))
     .expect("approve action");

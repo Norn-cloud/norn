@@ -197,9 +197,14 @@ where
         );
         match outcome {
             Err(ActionRefusal::Decision(DecisionRefusal::Stale { .. })) => {}
-            Err(refusal @ ActionRefusal::Decision(DecisionRefusal::NotPending { .. })) => {
-                // A consumed delivery is not retried, but an exact concurrent
-                // winner may have committed this call under the same key.
+            Err(
+                refusal @ (ActionRefusal::Decision(DecisionRefusal::NotPending { .. })
+                | ActionRefusal::StalePreconditionRead { .. }
+                | ActionRefusal::StaleAggregateRead { .. }),
+            ) => {
+                // A consumed delivery or stale slice read is not retried as a new
+                // allocation, but an exact concurrent winner may have committed
+                // this call under the same idempotency key.
                 let raced = host.load(&record_key).map_err(host_failure)?;
                 if let Some(record) = recorded_generated_call(
                     &raced,

@@ -362,31 +362,6 @@ fn host_failure<X>(error: X) -> ActionRefusal<X> {
     ActionRefusal::Decision(DecisionRefusal::Host(error))
 }
 
-/// Loads a target fact and resolves its stored concrete subtype when present,
-/// failing closed on an incompatible subtype so polymorphic actions run against
-/// the concrete subtype's invariants, lifecycles, and governing laws.
-fn load_target_with_concrete<H: CellHost + ?Sized>(
-    host: &H,
-    catalog: &TypeCatalog<'_>,
-    object_kind: &str,
-    target: &FactKey,
-) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
-    crate::check_fact_key_identity(target)
-        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
-    let (concrete_type, state) = match host.load_bounded(target, u64::MAX).map_err(host_failure)? {
-        Some(bounded) => (bounded.concrete_type, bounded.state),
-        None => (None, host.load(target).map_err(host_failure)?),
-    };
-    let Some(concrete) = concrete_type else {
-        return Ok((target.clone(), state));
-    };
-    if !catalog.lineage(&concrete).contains(&target.object_type) {
-        return Err(ActionRefusal::TargetNotFound);
-    }
-    check_kind(catalog, &concrete, object_kind)?;
-    Ok((FactKey::new(concrete.as_str(), target.key.clone()), state))
-}
-
 /// Loads the target, resolves its concrete subtype, and authorizes the call;
 /// existence never leaks.
 fn authorize_target<H: CellHost + ?Sized>(
@@ -398,7 +373,8 @@ fn authorize_target<H: CellHost + ?Sized>(
     object_kind: &str,
     target: &FactKey,
 ) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
-    let (resolved, state) = load_target_with_concrete(host, catalog, object_kind, target)?;
+    let (resolved, state) =
+        read_plan::load_target_with_concrete(host, catalog, object_kind, target)?;
     authorize_current_target(call, effective_input, authorizer, &resolved, &state)?;
     Ok((resolved, state))
 }
@@ -444,7 +420,8 @@ fn authorize_upsert_target<H: CellHost + ?Sized>(
     object_kind: &str,
     target: &FactKey,
 ) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
-    let (resolved, state) = load_target_with_concrete(host, catalog, object_kind, target)?;
+    let (resolved, state) =
+        read_plan::load_target_with_concrete(host, catalog, object_kind, target)?;
     // A create has no resource state to inspect yet. Its identity/scope and
     // proposed-resource authorization is checked after the prepared write is
     // available, without sending an empty resource to the policy engine.
@@ -575,12 +552,12 @@ where
     })?;
     let mut writes = prepared.writes;
     let mut reads = prepared.reads;
-    let mut skipped_reads = Vec::new();
-    if let Some(candidate) = series_candidate {
+    let skipped_reads = if let Some(candidate) = series_candidate {
         writes.push(candidate.counter_write);
-        skipped_reads.clone_from(&candidate.skipped_reads);
-        reads.extend(candidate.skipped_reads);
-    }
+        read_plan::reconcile_skipped_reads(catalog, &mut reads, candidate.skipped_reads)?
+    } else {
+        Vec::new()
+    };
     let quantity = crate::action_quantity::prepare_quantity_action(call, &effective_input)?;
     let target_before = receipt::target_before_version(catalog, &slice, &target);
     receipt::ensure_target_read(catalog, &target, target_before, &writes, &mut reads);
