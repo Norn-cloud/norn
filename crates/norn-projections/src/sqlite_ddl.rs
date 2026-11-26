@@ -421,7 +421,7 @@ pub fn quote_identifier(name: &str) -> String {
 ///
 /// Returns the first [`SqliteDdlError`] in object-table order.
 pub fn project_sqlite_ddl(input: &SqliteDdlInput<'_>) -> Result<SqliteSchema, SqliteDdlError> {
-    project(input, property_column_name)
+    project(input, ColumnNaming::Physical)
 }
 
 /// The identity rendering of [`project_sqlite_ddl`]: the same tables and
@@ -434,11 +434,24 @@ pub fn project_sqlite_ddl(input: &SqliteDdlInput<'_>) -> Result<SqliteSchema, Sq
 pub fn project_logical_sqlite_ddl(
     input: &SqliteDdlInput<'_>,
 ) -> Result<SqliteSchema, SqliteDdlError> {
-    project(input, str::to_owned)
+    project(input, ColumnNaming::Logical)
 }
 
-/// The column name of a property id: physical or logical.
-type ColumnNaming = fn(&str) -> String;
+/// How property columns are named: physical (`p:<id>`) or logical (`<id>`).
+#[derive(Clone, Copy)]
+enum ColumnNaming {
+    Physical,
+    Logical,
+}
+
+impl ColumnNaming {
+    fn column_name(self, property_id: &str) -> String {
+        match self {
+            Self::Physical => property_column_name(property_id),
+            Self::Logical => property_id.to_owned(),
+        }
+    }
+}
 
 fn project(
     input: &SqliteDdlInput<'_>,
@@ -610,7 +623,7 @@ fn property_columns(
             .ok_or_else(|| SqliteDdlError::PropertyTypeChain(property.id.as_str().to_owned()))?;
         columns.push(PropertyColumn {
             property: property.id.clone(),
-            column: (index < fits).then(|| naming(property.id.as_str())),
+            column: (index < fits).then(|| naming.column_name(property.id.as_str())),
             kind,
             encoding,
             nullable,
@@ -623,18 +636,33 @@ fn check_table_columns(
     system: &[&str],
     columns: &[PropertyColumn],
     has_overflow: bool,
+    naming: ColumnNaming,
 ) -> Result<(), SqliteDdlError> {
     let mut seen = PhysicalNames::default();
-    for column in system {
-        seen.claim(column)?;
-    }
-    for column in columns {
-        if let Some(name) = &column.column {
-            seen.claim(name)?;
+    match naming {
+        ColumnNaming::Physical => {
+            for column in system {
+                seen.claim(column)?;
+            }
+            for column in columns {
+                if let Some(name) = &column.column {
+                    seen.claim(name)?;
+                }
+            }
+            if has_overflow {
+                seen.claim(OVERFLOW_COLUMN)?;
+            }
         }
-    }
-    if has_overflow {
-        seen.claim(OVERFLOW_COLUMN)?;
+        ColumnNaming::Logical => {
+            // Logical rendering names property columns by raw property id (never
+            // executed), so reserved ids like `_world` are valid because physical
+            // columns are `p:`-prefixed. Still catch property-vs-property collisions.
+            for column in columns {
+                if let Some(name) = &column.column {
+                    seen.claim(name)?;
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -766,7 +794,7 @@ fn object_table(
         property_types,
         naming,
     )?;
-    check_table_columns(system, &columns, has_overflow)?;
+    check_table_columns(system, &columns, has_overflow, naming)?;
 
     let mut definitions = Vec::new();
     for column in system {
@@ -848,7 +876,7 @@ fn link_table(
         property_types,
         naming,
     )?;
-    check_table_columns(&system, &columns, has_overflow)?;
+    check_table_columns(&system, &columns, has_overflow, naming)?;
 
     let mut definitions: Vec<String> = system
         .iter()

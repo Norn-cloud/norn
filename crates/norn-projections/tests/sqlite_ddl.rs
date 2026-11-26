@@ -512,7 +512,7 @@ fn duplicate_property_types_and_case_colliding_columns_fail_closed() {
     }));
     assert_eq!(
         project_sqlite_ddl(&SqliteDdlInput {
-            object_types: &[colliding_cols],
+            object_types: &[colliding_cols.clone()],
             property_types: &[],
         }),
         Err(SqliteDdlError::NameCollision {
@@ -520,4 +520,31 @@ fn duplicate_property_types_and_case_colliding_columns_fail_closed() {
             second: "p:Code".to_owned(),
         })
     );
+    assert_eq!(
+        project_logical_sqlite_ddl(&SqliteDdlInput {
+            object_types: &[colliding_cols],
+            property_types: &[],
+        }),
+        Err(SqliteDdlError::NameCollision {
+            first: "code".to_owned(),
+            second: "Code".to_owned(),
+        })
+    );
+
+    // Reserved system-column property ids (`_world`, `_id`, `_overflow`) are valid:
+    // physical columns are `p:`-prefixed and logical rendering must not reject them.
+    let reserved = decode_object_type(serde_json::json!({
+        "name": "acme.Reserved",
+        "properties": [
+            { "id": "_world", "type": { "kind": "text" } },
+            { "id": "_id", "type": { "kind": "text" } },
+            { "id": "_overflow", "type": { "kind": "text" } }
+        ]
+    }));
+    let input = SqliteDdlInput {
+        object_types: &[reserved],
+        property_types: &[],
+    };
+    assert!(project_sqlite_ddl(&input).is_ok());
+    assert!(project_logical_sqlite_ddl(&input).is_ok());
 }
