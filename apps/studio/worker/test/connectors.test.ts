@@ -930,3 +930,33 @@ test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped 
     globalThis.fetch = realFetch
   }
 })
+
+test("DELETE /bindings/:id unwedges already-retired definitions and refuses concurrent edits without orphaning", async () => {
+  const { db, send, signUp, cell } = stage()
+  const owner = await signUp("del-race@example.com")
+
+  // 1. If the cell definition was already retired (422 definition.already_retired), DELETE still removes the row.
+  const created = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Already retired", runRole: "member" }), cookie: owner }, { host: cell.host })).body.binding as { id: string; definition: { id: string; version: number } }
+  const held = cell.held.get(created.definition.id)!
+  cell.held.set(created.definition.id, { ...held, lifecycle: "retired" })
+  const unwedged = await send(`/bindings/${created.id}`, { method: "DELETE", cookie: owner }, { host: cell.host })
+  expect(unwedged.status).toBe(200)
+  expect(unwedged.body).toEqual({ removed: created.id, retired: created.definition.id })
+  expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(created.id)).toBeNull()
+
+  // 2. If a concurrent edit advances the binding's version while DELETE is retiring v1, removeBinding
+  //    refuses with 409 and preserves the updated row instead of deleting it and orphaning v2.
+  const second = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Raced delete", runRole: "member" }), cookie: owner }, { host: cell.host })).body.binding as { id: string; definition: { id: string; version: number } }
+  const racedDeleteHost = {
+    fetch: async (request: Request) => {
+      const response = await cell.host.fetch(request)
+      if (new URL(request.url).pathname.endsWith(":retire")) {
+        db.query("UPDATE connector_binding SET definition_version = 2, label = 'Edited concurrently' WHERE id = ?").run(second.id)
+      }
+      return response
+    },
+  } as unknown as Fetcher
+  const conflicted = await send(`/bindings/${second.id}`, { method: "DELETE", cookie: owner }, { host: racedDeleteHost })
+  expect(conflicted).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  expect(db.query("SELECT label, definition_version FROM connector_binding WHERE id = ?").get(second.id)).toEqual({ label: "Edited concurrently", definition_version: 2 })
+})

@@ -4,11 +4,13 @@ import { CheckCircle2, Circle, Hourglass, Loader2, MinusCircle, Play, Radio, Wor
 import { useRef } from "react"
 import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/system/panel"
+import { StatusDot, type DotTone } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
 import { cn } from "@/lib/utils"
-import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { NO_DATA_CELL, studioScopeKey, useStudioScope } from "../lib/definitions.ts"
 import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, RUNS_UNAVAILABLE, startRun, stepTitle, type Phase, type Run, type RunStep, type StepStatus } from "../lib/runs.ts"
@@ -19,13 +21,14 @@ const STATUS: Readonly<Record<StepStatus, { readonly icon: LucideIcon; readonly 
   running: { icon: Loader2, label: "Running", tone: "text-[var(--tint-tool)]" },
   waiting: { icon: Hourglass, label: "Waiting", tone: "text-[var(--tint-ask)]" },
   done: { icon: CheckCircle2, label: "Done", tone: "text-[var(--tint-outcome)]" },
-  failed: { icon: XCircle, label: "Failed", tone: "text-destructive" },
+  failed: { icon: XCircle, label: "Failed", tone: "text-destructive-text" },
   skipped: { icon: MinusCircle, label: "Skipped", tone: "text-muted-foreground" },
 }
 
 const WAITING_ON = { decision: "Waiting on a person", executor: "Waiting on an executor", timer: "Waiting for a timer" } as const
 
 const PHASE: Readonly<Record<Phase, string>> = { running: "Running", waiting: "Waiting on a decision", succeeded: "Succeeded", failed: "Failed", ended: "Ended", active: "In progress" }
+const PHASE_TONE: Readonly<Record<Phase, DotTone>> = { running: "live", waiting: "held", succeeded: "live", failed: "bad", ended: "quiet", active: "live" }
 
 const KIND: Readonly<Record<RunStep["kind"], string>> = { perform: "Step", decide: "Ask a person", route: "Route", wait: "Wait", succeed: "Outcome", fail: "Outcome" }
 
@@ -46,9 +49,9 @@ export function RunButton({ flow, label = "Run", variant = "default" }: { readon
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <Button size="sm" variant={variant} className={cn(variant === "outline" && "border-node-border")} disabled={start.isPending} onClick={() => start.mutate()}>
-        {start.isPending ? <Loader2 className="animate-spin" /> : <Play />} {label}
+        {start.isPending ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Play />} {label}
       </Button>
-      {problem !== undefined && <span role="alert" className="text-meta text-destructive">{problem}</span>}
+      {problem !== undefined && <span role="alert" className="text-meta text-destructive-text">{problem}</span>}
     </span>
   )
 }
@@ -59,29 +62,47 @@ const took = (step: RunStep) => step.startedAtMs !== null && step.endedAtMs !== 
 /** `/runs/$id`: a run's steps as they happen, read again while it works or waits; receipts under Details. */
 export function RunPage() {
   const { id = "" } = useParams({ strict: false })
+  const { locale } = useLocale()
+  const dateLocale = locale === "ar" ? "ar-EG-u-nu-latn" : locale
   const { view } = useView()
   const technical = view === "technical"
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const scopeKey = studioScopeKey(boundScope)
+  const runKey = `${scopeKey}:${id}`
   const learning = useLearningCapabilities()
-  const etag = useRef<string | null>(null)
-  const last = useRef<Run | null>(null)
+  const cached = useRef<{ key: string; etag: string | null; run: Run | null }>({ key: "", etag: null, run: null })
+  const queryKey = ["run", scopeKey, id] as const
   const read = useQuery({
-    queryKey: ["run", id],
-    queryFn: async () => {
-      const result = await getRun(id, etag.current)
-      if (result.kind === "ok") { etag.current = result.etag; last.current = result.value }
+    queryKey,
+    enabled: scope.isSuccess,
+    queryFn: async ({ signal }) => {
+      const currentEtag = cached.current.key === runKey ? cached.current.etag : null
+      const result = await getRun(id, currentEtag, undefined, boundScope, signal)
+      if (result.kind === "ok" && !signal.aborted) cached.current = { key: runKey, etag: result.etag, run: result.value }
       return { result, at: Date.now() }
     },
     retry: false,
   })
   const result = read.data?.result
-  // A 304 keeps the run already read.
-  const run = result?.kind === "ok" ? result.value : result?.kind === "not-modified" ? last.current : null
+  // A 304 keeps the run already read, strictly for the same (scope, id).
+  const run = result?.kind === "ok"
+    ? result.value
+    : result?.kind === "not-modified" && cached.current.key === runKey
+      ? cached.current.run
+      : null
   // While the run works or waits, each commit that changes it is read once (UI-LIVE-1); an ended run is not watched.
-  useLiveRefresh(run !== null && refreshEvery(phaseOf(run)) !== false ? `/v1/runs/${encodeURIComponent(id)}` : null, ["run", id])
+  useLiveRefresh(run !== null && refreshEvery(phaseOf(run)) !== false ? `/v1/runs/${encodeURIComponent(id)}` : null, queryKey)
 
-  if (read.isPending) return <div className="grid max-w-4xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
+  if (scope.isError) return (
+    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive-text">
+      <span>{scope.error instanceof Error ? scope.error.message : "The workspace scope could not be read."}</span><span className="flex-1" />
+      <Button variant="outline" size="sm" onClick={() => void scope.refetch()}>Retry</Button>
+    </div>
+  )
+  if (scope.isPending || read.isPending) return <div className="grid max-w-4xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
   if (read.isError) return (
-    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive">
+    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive-text">
       <span>{read.error instanceof Error ? read.error.message : "The run could not be read."}</span><span className="flex-1" />
       <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
     </div>
@@ -99,24 +120,24 @@ export function RunPage() {
       <header className="grid gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-title font-medium tracking-tight">{runTitle(run)}</h1>
-          <span className={cn("rounded-md px-2 py-0.5 text-meta", phase === "failed" ? "bg-destructive/10 text-destructive" : phase === "succeeded" ? "bg-[color-mix(in_oklab,var(--tint-outcome)_14%,transparent)] text-[color-mix(in_oklab,var(--tint-outcome)_80%,var(--foreground))]" : "bg-muted text-foreground")}>{PHASE[phase]}</span>
-          {live && <span className="inline-flex items-center gap-1 text-meta text-muted-foreground" aria-live="polite"><Radio className="size-3 animate-pulse" aria-hidden />Live</span>}
+          <StatusDot tone={PHASE_TONE[phase]} data-phase={phase}>{PHASE[phase]}</StatusDot>
+          {live && <span className="inline-flex items-center gap-1 text-meta text-muted-foreground" aria-live="polite"><Radio className="size-3 animate-pulse motion-reduce:animate-none" aria-hidden />Live</span>}
           <span className="flex-1" />
           <RunButton flow={flowId} label="Run again" variant="outline" />
         </div>
         <p className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
           <span>Run</span><CopyId value={run.id} />
-          <span>· started {new Date(run.createdAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</span>
-          {technical && <span>· {run.flow.ruleId} v{run.flow.version}{run.steps !== undefined && ` · generation ${run.generation}`} · version {run.version}</span>}
+          <span>· started {new Date(run.createdAtMs).toLocaleString(dateLocale, { dateStyle: "medium", timeStyle: "short" })}</span>
+          {technical && <span>· <bdi dir="ltr">{run.flow.ruleId}</bdi> v{run.flow.version}{run.steps !== undefined && ` · generation ${run.generation}`} · version {run.version}</span>}
         </p>
       </header>
       {run.steps === undefined && (
         <section aria-label="Run" className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
           <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-4 gap-y-2 text-body">
-            <dt className="text-muted-foreground">State</dt><dd>{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-meta">{run.state}</code>}</dd>
+            <dt className="text-muted-foreground">State</dt><dd>{run.state === null ? <span className="text-muted-foreground">Ended (the run object is gone)</span> : <code className="text-meta"><bdi dir="ltr">{run.state}</bdi></code>}</dd>
             <dt className="text-muted-foreground">Flow</dt><dd>{runTitle(run)} <span className="text-meta text-muted-foreground">v{run.flow.version}</span></dd>
             <dt className="text-muted-foreground">Generation</dt><dd className="tabular-nums">{run.generation}</dd>
-            <dt className="text-muted-foreground">Updated</dt><dd>{new Date(run.updatedAtMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</dd>
+            <dt className="text-muted-foreground">Updated</dt><dd>{new Date(run.updatedAtMs).toLocaleString(dateLocale, { dateStyle: "medium", timeStyle: "medium" })}</dd>
           </dl>
           <p className="rounded-lg border border-dashed border-node-border px-3 py-2 text-meta text-muted-foreground">Step details are coming soon: this cell doesn't send a run's steps yet.</p>
         </section>
@@ -139,7 +160,7 @@ export function RunPage() {
             <li key={step.id} aria-current={step.status === "running" || step.status === "waiting" ? "step" : undefined}
               className={cn("grid gap-2 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]", step.status === "pending" || step.status === "skipped" ? "opacity-70" : undefined)}>
               <div className="flex flex-wrap items-center gap-2">
-                <Icon className={cn("size-4 shrink-0", s.tone, step.status === "running" && "animate-spin")} aria-hidden />
+                <Icon className={cn("size-4 shrink-0", s.tone, step.status === "running" && "animate-spin motion-reduce:animate-none")} aria-hidden />
                 <span className="text-meta text-muted-foreground tabular-nums">{index + 1}</span>
                 <span>{stepTitle(step)}</span>
                 <span className="rounded-md bg-muted px-1.5 py-0.5 text-meta text-muted-foreground">{KIND[step.kind]}</span>
@@ -147,11 +168,11 @@ export function RunPage() {
                 <span className={cn("text-meta", s.tone)}>{statusLabel}</span>
                 {took(step) && <span className="text-meta text-muted-foreground tabular-nums">· {took(step)}</span>}
               </div>
-              {step.error && <p role="alert" className="text-body text-destructive">{step.error.message}{technical && <code className="ms-2 text-meta">{step.error.code}</code>}</p>}
+              {step.error && <p role="alert" className="text-body text-destructive-text">{step.error.message}{technical && <code className="ms-2 text-meta"><bdi dir="ltr">{step.error.code}</bdi></code>}</p>}
               {step.receipts.length > 0 && (
                 <details open={technical} className="text-body">
                   <summary className="cursor-pointer text-meta text-muted-foreground select-none hover:text-foreground">
-                    {step.receipts.some((r) => r.executor) ? `Done by ${step.receipts.find((r) => r.executor)?.executor}` : "Details"}{started ? ` · ${started.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : ""}
+                    {step.receipts.some((r) => r.executor) ? `Done by ${step.receipts.find((r) => r.executor)?.executor}` : "Details"}{started ? ` · ${started.toLocaleTimeString(dateLocale, { hour: "2-digit", minute: "2-digit" })}` : ""}
                   </summary>
                   <ul className="mt-2 grid gap-2">
                     {step.receipts.map((r) => {
@@ -162,7 +183,7 @@ export function RunPage() {
                           <span className="text-muted-foreground">Kind</span><span>{r.kind === "decision" ? "A person's decision" : r.kind === "function" ? "A function's result" : "A commit"}</span>
                           {r.executor && <><span className="text-muted-foreground">By</span><span>{r.executor}</span></>}
                           <span className="text-muted-foreground">Commit</span><span className="tabular-nums">{r.commitSeq}</span>
-                          <span className="text-muted-foreground">Recorded</span><time dateTime={at.toISOString()} className="whitespace-nowrap">{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</time>
+                          <span className="text-muted-foreground">Recorded</span><time dateTime={at.toISOString()} className="whitespace-nowrap">{at.toLocaleString(dateLocale, { dateStyle: "medium", timeStyle: "medium" })}</time>
                           {/* PROVISIONAL CONTRACT (#1208, PR #1631 S1/S2): link only when the cell advertises learning.Episode and supplies episodeId. */}
                           {learning.episodes && typeof r.episodeId === "string" && r.episodeId !== "" && (
                             <><span className="text-muted-foreground">Episode</span><Link to="/episodes/$id" params={{ id: r.episodeId }} className="underline-offset-4 hover:underline">See episode</Link></>

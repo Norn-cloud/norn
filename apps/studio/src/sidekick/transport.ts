@@ -66,21 +66,22 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     const open: Open = this.options.open ?? (async (events, options) => (await import("./client.ts")).SidekickSession.open(events, options))
     // This session's own link: its events count only while it is the current session.
     const link = { live: true }
-    this.opening = open({
+    const current = open({
       update: (notification) => { if (link.live) this.turn?.update(notification) },
       view: (delivery) => { if (link.live) this.turn?.view(delivery) },
       tools: (labels) => { if (link.live) this.labels = labels },
       permission: (request) => link.live ? this.ask(request) : Promise.resolve(CANCELLED),
       closed: () => { if (!link.live) return; this.retire(); this.session = null; this.cancelApprovals(null) },
     }, this.options.scope === undefined ? {} : { scope: this.options.scope })
+    this.opening = current
     try {
-      const session = await this.opening
+      const session = await current
       if (generation !== this.generation || !link.live) { link.live = false; session.close(); throw new Error("Chat closed.") }
       this.link = link
       this.session = session
       return session
     } finally {
-      this.opening = null
+      if (this.opening === current) this.opening = null
     }
   }
 
@@ -214,6 +215,7 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
   /** End the chat's session: it closes and nothing it sends later is drawn; a later send opens a new one. */
   close() {
     this.generation += 1
+    this.opening = null
     this.retire()
     this.cancelApprovals(null)
     this.turn = null

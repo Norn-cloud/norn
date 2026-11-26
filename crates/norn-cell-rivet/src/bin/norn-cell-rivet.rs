@@ -14,6 +14,31 @@ use norn_cell_rivet::router::{Router, app, listener as nodelay};
 use rivetkit::client::{Client, ClientConfig};
 use tokio_util::sync::CancellationToken;
 
+/// Maximum time to wait for actors to drain after a shutdown signal.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        tokio::select! {
+            _ctrl_c = tokio::signal::ctrl_c() => {}
+            () = async {
+                if let Some(signal) = terminate.as_mut() {
+                    signal.recv().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ctrl_c = tokio::signal::ctrl_c().await;
+    }
+}
+
 /// `RivetKit` logs every `SQLite` statement's profile at `info`; the host keeps
 /// its own `info` and `RivetKit`'s warnings unless `RUST_LOG` says otherwise.
 const DEFAULT_LOG: &str =
@@ -46,7 +71,7 @@ async fn main() -> Result<()> {
     runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
     runner_config.engine_auto_download = false;
     let shutdown = CancellationToken::new();
-    let runner = tokio::spawn(serve_actors(runner_config, shutdown.clone()));
+    let mut runner = tokio::spawn(serve_actors(runner_config, shutdown.clone()));
     let client = Client::new(ClientConfig::new(endpoint));
     let router = Arc::new(Router::new(client, Arc::clone(&config))?);
     let listener = tokio::net::TcpListener::bind(&listen)
@@ -57,12 +82,30 @@ async fn main() -> Result<()> {
         let shutdown = shutdown.clone();
         async move { shutdown.cancelled().await }
     });
+    let mut runner_done = false;
     tokio::select! {
         served = routing => served.context("the router stopped")?,
-        ran = runner => ran.context("the runner panicked")?.context("the runner stopped")?,
-        _signal = tokio::signal::ctrl_c() => {}
+        ran = &mut runner => {
+            runner_done = true;
+            ran.context("the runner panicked")?.context("the runner stopped")?;
+        }
+        () = shutdown_signal() => {}
     }
     shutdown.cancel();
+    if !runner_done {
+        match tokio::time::timeout(DRAIN_TIMEOUT, runner).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(error))) => {
+                tracing::warn!(error = %format!("{error:#}"), "runner exited with error during drain");
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(error = %error, "runner panicked during drain");
+            }
+            Err(_elapsed) => {
+                tracing::warn!(timeout = ?DRAIN_TIMEOUT, "runner drain timed out");
+            }
+        }
+    }
     Ok(())
 }
 

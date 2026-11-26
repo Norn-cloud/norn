@@ -12,6 +12,7 @@
 //! by the egress client before any call.
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use norn_ir::ConnectorAuth;
 use serde::Deserialize;
@@ -100,6 +101,11 @@ fn texts(extra: &serde_json::Map<String, serde_json::Value>, key: &str) -> Vec<S
 /// # Errors
 /// The generated file does not parse as connector auth.
 pub fn load() -> Result<BTreeMap<String, Provider>, String> {
+    static PROVIDERS: OnceLock<Result<BTreeMap<String, Provider>, String>> = OnceLock::new();
+    PROVIDERS.get_or_init(parse_providers).clone()
+}
+
+fn parse_providers() -> Result<BTreeMap<String, Provider>, String> {
     let file: File =
         serde_json::from_str(PROVIDERS_JSON).map_err(|e| format!("providers.json: {e}"))?;
     file.providers
@@ -172,6 +178,11 @@ impl Provider {
         template: &str,
         params: &BTreeMap<String, String>,
     ) -> Result<String, String> {
+        for key in params.keys() {
+            if !self.url_parameters.iter().any(|name| name == key) {
+                return Err(format!("parameter {key} is not declared for this provider"));
+            }
+        }
         let mut url = template.to_owned();
         for name in &self.url_parameters {
             let value = params
@@ -182,7 +193,7 @@ impl Provider {
             }
             url = url.replace(&format!("{{{name}}}"), value);
         }
-        if url.contains('{') {
+        if url.contains(['{', '}']) {
             return Err("the provider URL has an unfilled parameter".to_owned());
         }
         Ok(url)

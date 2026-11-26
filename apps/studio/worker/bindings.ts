@@ -287,11 +287,20 @@ export async function adoptReadyCell(
   return results.length > 0
 }
 
-export async function removeBinding(db: D1Database, orgId: string, id: string): Promise<boolean> {
-  const before = await getBinding(db, orgId, id)
-  if (before === null) return false
-  await db.prepare("DELETE FROM connector_binding WHERE org_id = ? AND id = ?").bind(orgId, id).run()
-  return true
+export async function removeBinding(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  expected?: { readonly definitionId: string | null; readonly definitionVersion: number | null },
+): Promise<boolean> {
+  if (expected !== undefined) {
+    const { results } = await db.prepare(
+      "DELETE FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_id IS ? AND definition_version IS ? RETURNING id",
+    ).bind(orgId, id, expected.definitionId, expected.definitionVersion).all<{ id: string }>()
+    return results.length > 0
+  }
+  const { results } = await db.prepare("DELETE FROM connector_binding WHERE org_id = ? AND id = ? RETURNING id").bind(orgId, id).all<{ id: string }>()
+  return results.length > 0
 }
 
 /** Durable tombstone for an abandoned create whose cell install outcome was unknown. */
