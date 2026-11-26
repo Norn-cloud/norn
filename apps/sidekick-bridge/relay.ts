@@ -54,7 +54,18 @@ export const BUILT_IN_TOOLS = [
   "Monitor", "CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "RemoteTrigger", "ScheduleWakeup",
 ]
 
-export const SYSTEM_PROMPT = [
+const MCP_PROTOCOL_VERSION = "2025-06-18"
+const MAX_ADAPTER_LINE_BYTES = 4 * 1024 * 1024
+const MAX_MCP_BODY_BYTES = 262_144
+const MAX_MCP_RESPONSE_BYTES = 4 * 1024 * 1024
+const MAX_INBOX_QUEUE = 128
+const MAX_INFLIGHT_TOOL_CALLS = 8
+const MAX_PENDING_BROWSER = 128
+const MAX_CANONICAL_DEPTH = 64
+const KILL_ESCALATION_MS = 5_000
+const UTF8 = new TextDecoder()
+
+const SYSTEM_PROMPT = [
   "You are Sidekick, the assistant inside Norn Studio. You act for the signed-in person through the Norn tools only;",
   "Norn's policy decides what they may see and do, so never claim more than a tool returned.",
   "Answer from tool results. Prefer norn_answer for numbers, norn_trace_answer for where a number comes from,",
@@ -103,7 +114,11 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
     }
     return value
   }
-  const studioOrigin = new URL(need("SIDEKICK_STUDIO_ORIGIN")).origin
+  const studioUrl = new URL(need("SIDEKICK_STUDIO_ORIGIN"))
+  if (studioUrl.protocol !== "https:" && studioUrl.protocol !== "http:") {
+    throw new Error("SIDEKICK_STUDIO_ORIGIN must use http:// or https://")
+  }
+  const studioOrigin = studioUrl.origin
   return {
     studioOrigin,
     allowedOrigins: list("SIDEKICK_ALLOWED_ORIGINS"),
@@ -162,17 +177,17 @@ export async function verifyGrant(token: unknown, keys: JWTVerifyGetKey, studioO
 /** Replace every occurrence of a secret in a serialized message; the relay never forwards a grant. */
 export function scrub(text: string, secrets: readonly string[]): string {
   let out = text
-  for (const secret of secrets) if (secret.length >= 16) out = out.split(secret).join("[redacted]")
+  for (const secret of secrets) if (secret.length >= 16 && out.includes(secret)) out = out.replaceAll(secret, "[redacted]")
   return out
 }
 
 // ---------------------------------------------------------------- ACP rewrites
 
 type Json = Record<string, unknown>
-export type Message = { jsonrpc: "2.0"; id?: number | string | null; method?: string; params?: Json; result?: unknown; error?: unknown }
+type Message = { jsonrpc: "2.0"; id?: number | string | null; method?: string; params?: Json; result?: unknown; error?: unknown }
 
 /** Methods the browser may send the agent. Everything else is refused at the relay. */
-export const BROWSER_METHODS = new Set(["initialize", "session/new", "session/prompt", "session/cancel", "_norn/grant", "_norn/call_tool"])
+const BROWSER_METHODS = new Set(["initialize", "session/new", "session/prompt", "session/cancel", "_norn/grant", "_norn/call_tool"])
 
 /** The `initialize` the adapter sees: the browser's protocol version, and no client file system or terminal. */
 export function rewriteInitialize(params: Json | undefined): Json {
@@ -184,7 +199,7 @@ export function rewriteInitialize(params: Json | undefined): Json {
 }
 
 /** The only permission mode a Sidekick session runs in: every non-pre-allowed tool asks (ACP mode id). */
-export const MANUAL_MODE = "default"
+const MANUAL_MODE = "default"
 
 /** The `session/new` the adapter sees: whatever the browser asked, only the Norn server, locked options, the scratch cwd. */
 export function rewriteNewSession(cwd: string, mcpUrl: string, model?: string, readOnly: Iterable<string> = []): Json {
@@ -240,17 +255,17 @@ export function nornToolName(params: Json | undefined): string | null {
   return typeof name === "string" && name.startsWith(prefix) && name.length > prefix.length ? name.slice(prefix.length) : null
 }
 
-/** Whether a permission request is for one of the Norn server's tools. */
-export const isNornTool = (params: Json | undefined): boolean => nornToolName(params) !== null
-
 /** A JSON value with object keys sorted, so the same arguments always read the same. */
 export function canonicalJson(value: unknown): string {
-  const sort = (item: unknown): unknown => Array.isArray(item)
-    ? item.map(sort)
-    : item !== null && typeof item === "object"
-      ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, sort((item as Json)[key])]))
-      : item
-  return JSON.stringify(sort(value ?? {}))
+  const sort = (item: unknown, depth: number): unknown => {
+    if (depth > MAX_CANONICAL_DEPTH) throw new RangeError("canonicalJson depth limit exceeded")
+    if (Array.isArray(item)) return item.map((child) => sort(child, depth + 1))
+    if (item !== null && typeof item === "object") {
+      return Object.fromEntries(Object.keys(item).sort().map((key) => [key, sort((item as Json)[key], depth + 1)]))
+    }
+    return item
+  }
+  return JSON.stringify(sort(value === undefined ? {} : value, 0))
 }
 
 /** One call the person allowed once: the Norn tool and its exact arguments. */
@@ -276,7 +291,8 @@ export function proxyAdmits(body: unknown, readOnly: ReadonlySet<string>, approv
   const name = call.params.name
   if (typeof name !== "string") return false
   if (readOnly.has(name)) return true
-  const input = canonicalJson(call.params?.arguments)
+  let input: string
+  try { input = canonicalJson(call.params.arguments) } catch { return false }
   const at = approvals.findIndex((approval) => approval.tool === name && approval.input === input)
   if (at < 0) return false
   approvals.splice(at, 1)
@@ -307,7 +323,7 @@ export function exactNumbers(text: string): boolean {
   for (let at = 0; at < text.length; at += 1) {
     const char = text[at] as string
     if (char === '"') {
-      for (at += 1; at < text.length && text[at] !== '"'; at += text[at] === "\\" ? 2 : 1) { /* inside a string */ }
+      for (at += 1; at < text.length && text[at] !== '"'; at += text[at] === "\\" ? 2 : 1) {}
       continue
     }
     if (char !== "-" && (char < "0" || char > "9")) continue
@@ -342,8 +358,9 @@ export interface Question { readonly options: readonly Option[]; readonly reject
  * missing), or ask the person, offering only "allow once" and "reject".
  */
 export function permissionDecision(params: Json | undefined, readOnly: ReadonlySet<string>): { readonly answer: Json } | { readonly ask: Question } {
-  const options = Array.isArray(params?.options) ? params.options as Option[] : []
-  const find = (kind: string) => options.find((option) => option.kind === kind)
+  const options = Array.isArray(params?.options) ? params.options : []
+  const find = (kind: string): Option | undefined => options.find((option): option is Option =>
+    option !== null && typeof option === "object" && typeof (option as Option).optionId === "string" && (option as Option).optionId !== "" && (option as Option).kind === kind)
   const name = nornToolName(params)
   if (name === null) {
     const reject = find("reject_once") ?? find("reject_always")
@@ -471,9 +488,12 @@ interface Connection {
   readonly approvals: Approval[]
   /** Messages from the browser, handled one at a time in the order they came. */
   inbox: Promise<void>
+  queuedMessages: number
+  inFlightToolCalls: number
   /** Ids the relay used for its own requests to the adapter, mapped back to the browser's id. */
   readonly pendingFromBrowser: Map<string, { id: Message["id"]; method: string }>
   initTimer: ReturnType<typeof setTimeout> | null
+  killTimer: ReturnType<typeof setTimeout> | null
   scratchDir: string | null
   nextId: number
   closed: boolean
@@ -487,6 +507,39 @@ const send = (ws: ServerWebSocket<Data>, message: Message, secrets: readonly str
 
 const rpcError = (id: Message["id"], code: number, message: string): Message => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } })
 
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const lengthHeader = response.headers.get("content-length")
+  if (lengthHeader !== null && /^\d+$/.test(lengthHeader) && Number(lengthHeader) > maxBytes) {
+    await response.body?.cancel()
+    throw new Error("upstream response exceeds size budget")
+  }
+  if (response.body === null) return ""
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new Error("upstream response exceeds size budget")
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return UTF8.decode(merged)
+}
+
 export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetcher?: typeof fetch; log?: (line: string) => void } = {}) {
   const keys = deps.keys ?? createRemoteJWKSet(new URL("/api/auth/jwks", config.studioOrigin), { cooldownDuration: 30_000 })
   const fetcher = deps.fetcher ?? fetch
@@ -494,7 +547,12 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   const connections = new Map<string, Connection>()
   const byCapability = new Map<string, Connection>()
   const mcpUrl = `${config.studioOrigin}/mcp`
-  const secrets = (connection: Connection) => connection.grant === null ? [] : [connection.grant.token]
+  const secrets = (connection: Connection, extra?: string) => {
+    const tokens: string[] = []
+    if (connection.grant !== null) tokens.push(connection.grant.token)
+    if (extra !== undefined && extra !== "" && !tokens.includes(extra)) tokens.push(extra)
+    return tokens
+  }
 
   /** One JSON-RPC message to Studio's /mcp as the connection's person. */
   async function studioMcp(connection: Connection, body: string, headers: Record<string, string> = {}): Promise<Response> {
@@ -505,6 +563,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers, authorization: `Bearer ${connection.grant.token}` },
       body,
+      redirect: "error",
       signal: AbortSignal.timeout(120_000),
     })
   }
@@ -513,9 +572,12 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   async function listTools(connection: Connection) {
     // A refused or malformed page throws, so a listing that did not arrive whole changes nothing.
     const tools = await listAllTools(async (params) => {
-      const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params }), { "mcp-protocol-version": "2025-06-18" })
-      if (!response.ok) throw new Error(`tools/list answered ${response.status}`)
-      const body = await response.json() as { result?: { tools?: ListedTool[]; nextCursor?: unknown } }
+      const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params }), { "mcp-protocol-version": MCP_PROTOCOL_VERSION })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`tools/list answered ${response.status}`)
+      }
+      const body = JSON.parse(await readBoundedText(response, MAX_MCP_RESPONSE_BYTES)) as { result?: { tools?: ListedTool[]; nextCursor?: unknown } }
       const result = body.result
       if (result === undefined || !Array.isArray(result.tools)) throw new Error("tools/list answered no tools")
       return result
@@ -528,13 +590,23 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
 
   /** Whether Studio's /mcp accepts this grant right now: the Worker's own answer, not just the signature. */
   async function workerAccepts(connection: Connection): Promise<boolean> {
-    const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-init", method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "norn-sidekick-relay", version: "1" } } }), { "mcp-protocol-version": "2025-06-18" })
-    await response.body?.cancel()
-    return response.ok
+    try {
+      const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-init", method: "initialize", params: { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "norn-sidekick-relay", version: "1" } } }), { "mcp-protocol-version": MCP_PROTOCOL_VERSION })
+      await response.body?.cancel()
+      return response.ok
+    } catch (error) {
+      log(`conn ${connection.id} worker check failed: ${error instanceof Error ? error.message : "unknown"}`)
+      return false
+    }
   }
 
   function toAdapter(connection: Connection, message: Message) {
-    connection.adapter?.stdin.write(`${JSON.stringify(message)}\n`)
+    if (connection.closed || connection.adapter === null) return
+    try {
+      connection.adapter.stdin.write(`${JSON.stringify(message)}\n`)
+    } catch (error) {
+      log(`conn ${connection.id} adapter stdin write failed: ${error instanceof Error ? error.message : "unknown"}`)
+    }
   }
 
   function removeScratch(connection: Connection) {
@@ -544,15 +616,50 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
   }
 
+  function clearKillTimer(connection: Connection) {
+    if (connection.killTimer !== null) {
+      clearTimeout(connection.killTimer)
+      connection.killTimer = null
+    }
+  }
+
   function cleanupConnection(connection: Connection) {
     if (connection.initTimer !== null) {
       clearTimeout(connection.initTimer)
       connection.initTimer = null
     }
-    if (connection.adapter !== null) {
-      connection.adapter.kill()
+    const adapter = connection.adapter
+    if (adapter !== null) {
+      try { adapter.stdin.end() } catch { /* best effort */ }
+      try { adapter.kill() } catch { /* best effort */ }
+      if (connection.killTimer === null) {
+        const timer = setTimeout(() => {
+          connection.killTimer = null
+          try { adapter.kill(9) } catch { /* already exited */ }
+          removeScratch(connection)
+        }, KILL_ESCALATION_MS)
+        timer.unref?.()
+        connection.killTimer = timer
+      }
     } else {
+      clearKillTimer(connection)
       removeScratch(connection)
+    }
+  }
+
+  /** Fail closed immediately: revoke capability & grant, drop approvals, stop adapter, and close socket. */
+  function terminate(connection: Connection, code?: number, reason?: string) {
+    if (connection.closed) return
+    connection.closed = true
+    connection.grant = null
+    connection.questions.clear()
+    connection.approvals.length = 0
+    connection.pendingFromBrowser.clear()
+    connections.delete(connection.id)
+    byCapability.delete(connection.capability)
+    cleanupConnection(connection)
+    if (code !== undefined) {
+      try { connection.ws.close(code, reason) } catch { /* already closing */ }
     }
   }
 
@@ -568,24 +675,66 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     })
     connection.adapter = child
     void (async () => {
-      const decoder = new TextDecoder()
-      let buffer = ""
-      for await (const chunk of child.stdout) {
-        buffer += decoder.decode(chunk, { stream: true })
-        let newline: number
-        while ((newline = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, newline).trim()
-          buffer = buffer.slice(newline + 1)
-          if (line !== "") fromAdapter(connection, line)
+      const parts: Uint8Array[] = []
+      let buffered = 0
+      try {
+        for await (const chunk of child.stdout) {
+          if (connection.closed) break
+          let start = 0
+          for (;;) {
+            const newline = chunk.indexOf(0x0a, start)
+            if (newline < 0) {
+              const tail = start === 0 ? chunk : chunk.subarray(start)
+              buffered += tail.byteLength
+              if (buffered > MAX_ADAPTER_LINE_BYTES) {
+                log(`conn ${connection.id} adapter stdout buffer exceeded ${MAX_ADAPTER_LINE_BYTES} bytes`)
+                terminate(connection, 1011, "agent output limit")
+                return
+              }
+              if (tail.byteLength > 0) parts.push(tail)
+              break
+            }
+            const segment = chunk.subarray(start, newline)
+            const lineBytes = buffered + segment.byteLength
+            if (lineBytes > MAX_ADAPTER_LINE_BYTES) {
+              log(`conn ${connection.id} adapter stdout line exceeded ${MAX_ADAPTER_LINE_BYTES} bytes`)
+              terminate(connection, 1011, "agent output limit")
+              return
+            }
+            let rawLine: Uint8Array
+            if (parts.length === 0) {
+              rawLine = segment
+            } else {
+              rawLine = new Uint8Array(lineBytes)
+              let offset = 0
+              for (const part of parts) { rawLine.set(part, offset); offset += part.byteLength }
+              rawLine.set(segment, offset)
+              parts.length = 0
+              buffered = 0
+            }
+            start = newline + 1
+            const line = UTF8.decode(rawLine).trim()
+            if (line !== "") fromAdapter(connection, line)
+            if (connection.closed) return
+          }
         }
+      } catch (error) {
+        log(`conn ${connection.id} adapter stdout failed: ${error instanceof Error ? error.message : "unknown"}`)
+        terminate(connection, 1011, "agent error")
       }
     })()
-    // The adapter's stderr is drained and counted, never echoed: it can hold prompt text.
-    void (async () => { for await (const _ of child.stderr) { /* drained */ } })()
+    // The adapter's stderr is drained and discarded, never echoed: it can hold prompt text.
+    void (async () => {
+      try {
+        for await (const _ of child.stderr) { /* drained */ }
+      } catch { /* stream closed */ }
+    })()
     void child.exited.then((code) => {
+      clearKillTimer(connection)
+      connection.adapter = null
       removeScratch(connection)
       log(`conn ${connection.id} adapter exited ${code}`)
-      if (!connection.closed) connection.ws.close(1011, "agent stopped")
+      if (!connection.closed) terminate(connection, 1011, "agent stopped")
     })
   }
 
@@ -597,8 +746,11 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   }
 
   function fromAdapter(connection: Connection, line: string) {
-    let message: Message
-    try { message = JSON.parse(line) as Message } catch { return }
+    if (connection.closed) return
+    let parsed: unknown
+    try { parsed = JSON.parse(line) } catch { return }
+    if (!plainObject(parsed)) return
+    const message = parsed as Message
     // A response to a request the browser sent: restore the browser's id.
     if (message.method === undefined && message.id !== undefined && message.id !== null) {
       const key = String(message.id)
@@ -609,27 +761,38 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         // Fail closed: a session in any mode but manual could run a tool without asking.
         log(`conn ${connection.id} session refused: not in the manual permission mode`)
         send(connection.ws, rpcError(pending.id, -32003, "Sidekick could not start a session that asks before every change."), secrets(connection))
-        connection.ws.close(1011, "permission mode")
+        terminate(connection, 1011, "permission mode")
         return
       }
       if (pending.method === "session/prompt") endTurn(connection)
       send(connection.ws, { ...message, id: pending.id }, secrets(connection))
       return
     }
-    if (message.method === undefined) return
+    if (typeof message.method !== "string") return
     // A request from the agent to the client.
     if (message.id !== undefined) {
       if (message.method === "session/request_permission") {
         const decision = permissionDecision(message.params, connection.readOnly)
+        const tool = nornToolName(message.params)
         if ("answer" in decision) {
-          log(`conn ${connection.id} permission ${(decision.answer.outcome as Json).outcome === "selected" && isNornTool(message.params) ? "allowed (read-only)" : "refused"}`)
+          log(`conn ${connection.id} permission ${(decision.answer.outcome as Json).outcome === "selected" && tool !== null ? "allowed (read-only)" : "refused"}`)
           toAdapter(connection, { jsonrpc: "2.0", id: message.id, result: decision.answer })
           return
         }
+        let input: string
+        try {
+          input = canonicalJson((message.params?.toolCall as Json | undefined)?.rawInput)
+        } catch {
+          toAdapter(connection, { jsonrpc: "2.0", id: message.id, result: CANCELLED })
+          return
+        }
         // Ask the person: the browser answers with one of the two options, or the reject stands.
+        if (connection.questions.size >= MAX_PENDING_BROWSER) {
+          toAdapter(connection, { jsonrpc: "2.0", id: message.id, result: CANCELLED })
+          return
+        }
         const id = `p${connection.nextId++}`
-        const tool = nornToolName(message.params) as string
-        connection.questions.set(id, { adapterId: message.id, question: decision.ask, approval: { tool, input: canonicalJson((message.params?.toolCall as Json | undefined)?.rawInput) } })
+        connection.questions.set(id, { adapterId: message.id, question: decision.ask, approval: { tool: tool as string, input } })
         log(`conn ${connection.id} permission asked ${tool}`)
         send(connection.ws, { jsonrpc: "2.0", id, method: "session/request_permission", params: questionFor(message.params, decision.ask) }, secrets(connection))
         return
@@ -644,7 +807,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     const update = message.params?.update as { sessionUpdate?: unknown; currentModeId?: unknown; configOptions?: unknown } | undefined
     if ((update?.sessionUpdate === "current_mode_update" && update.currentModeId !== MANUAL_MODE) || (update?.sessionUpdate === "config_option_update" && !manualConfigOptions(update.configOptions))) {
       log(`conn ${connection.id} closed: the session left the manual permission mode`)
-      connection.ws.close(1011, "permission mode")
+      terminate(connection, 1011, "permission mode")
       return
     }
     send(connection.ws, message, secrets(connection))
@@ -652,8 +815,10 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
 
   async function fromBrowser(connection: Connection, raw: string) {
     if (connection.closed) return
-    let message: Message
-    try { message = JSON.parse(raw) as Message } catch { return send(connection.ws, rpcError(null, -32700, "Parse error"), []) }
+    let parsed: unknown
+    try { parsed = JSON.parse(raw) } catch { return send(connection.ws, rpcError(null, -32700, "Parse error"), []) }
+    if (!plainObject(parsed)) return send(connection.ws, rpcError(null, -32600, "Invalid Request"), [])
+    const message = parsed as Message
     // Responses from the browser: only the person's answers to the questions the relay forwarded.
     if (message.method === undefined) {
       const asked = typeof message.id === "string" ? connection.questions.get(message.id) : undefined
@@ -668,22 +833,21 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       toAdapter(connection, { jsonrpc: "2.0", id: asked.adapterId, result: answer })
       return
     }
+    if (typeof message.method !== "string") return send(connection.ws, rpcError(message.id, -32600, "Invalid Request"), [])
     const method = message.method
     if (!BROWSER_METHODS.has(method)) return message.id === undefined ? undefined : send(connection.ws, rpcError(message.id, -32601, `Sidekick does not offer ${method}.`), secrets(connection))
     if (method === "_norn/grant" && connection.grant === null) {
-      connection.closed = true
       send(connection.ws, rpcError(message.id, -32001, "Initialize with a Sidekick grant first."), [])
-      connection.ws.close(4401, "no grant")
+      terminate(connection, 4401, "no grant")
       return
     }
     if (method === "initialize" || method === "_norn/grant") {
       const grant = await verifyGrant((message.params?._meta as Json | undefined)?.["norn.cloud/grant"] ?? message.params?.grant, keys, config.studioOrigin)
       if (connection.closed) return
       if (grant === null || (connection.grant !== null && !sameGrantIdentity(connection.grant, grant))) {
-        connection.closed = true
         send(connection.ws, rpcError(message.id, -32001, "Sign in to Studio again: the Sidekick grant was not accepted."), [])
         log(`conn ${connection.id} grant refused`)
-        connection.ws.close(4401, "grant refused")
+        terminate(connection, 4401, "grant refused")
         return
       }
       connection.grant = grant
@@ -692,12 +856,20 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         connection.initTimer = null
       }
       if (method === "_norn/grant") return send(connection.ws, { jsonrpc: "2.0", id: message.id ?? null, result: { expiresAt: grant.expiresAt } }, secrets(connection))
-      if (connection.adapter === null) spawnAdapter(connection)
+      if (connection.adapter === null) {
+        try {
+          spawnAdapter(connection)
+        } catch (error) {
+          log(`conn ${connection.id} adapter spawn failed: ${error instanceof Error ? error.message : "unknown"}`)
+          send(connection.ws, rpcError(message.id, -32000, "Sidekick could not start the agent."), secrets(connection))
+          terminate(connection, 1011, "agent error")
+          return
+        }
+      }
     }
     if (connection.grant === null || connection.adapter === null) {
-      connection.closed = true
       send(connection.ws, rpcError(message.id, -32001, "Initialize with a Sidekick grant first."), [])
-      connection.ws.close(4401, "no grant")
+      terminate(connection, 4401, "no grant")
       return
     }
     let params: Json | null | undefined = message.params
@@ -709,9 +881,8 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       endTurn(connection)
       if (!(await workerAccepts(connection))) {
         if (connection.closed) return
-        connection.closed = true
         send(connection.ws, rpcError(message.id, -32001, "Studio did not accept the Sidekick grant."), secrets(connection))
-        connection.ws.close(4403, "worker refused grant")
+        terminate(connection, 4403, "worker refused grant")
         return
       }
       if (connection.closed) return
@@ -719,34 +890,57 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       connection.readOnly = new Set()
       connection.views = new Map()
       connection.labels = []
-      await listTools(connection).catch(() => { /* leave empty pre-allow set */ })
+      await listTools(connection).catch((error: unknown) => {
+        log(`conn ${connection.id} tools/list failed: ${error instanceof Error ? error.message : "unknown"}`)
+      })
       if (connection.closed) return
       send(connection.ws, { jsonrpc: "2.0", method: "_norn/tools", params: { tools: connection.labels } }, secrets(connection))
       params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${mcp.port}/mcp/${connection.capability}`, config.model, connection.readOnly)
     }
-    if (method === "session/prompt") params = rewritePrompt(message.params)
+    if (method === "session/prompt") {
+      if (message.id === undefined || message.id === null) { log(`conn ${connection.id} session/prompt without an id refused`); return }
+      params = rewritePrompt(message.params)
+    }
     if (method === "session/cancel") {
       // Stopping the turn cancels every question still open (ACP: pending permissions answer `cancelled`)
       // and every approval the agent has not spent.
       endTurn(connection)
+      params = typeof message.params?.sessionId === "string" ? { sessionId: message.params.sessionId } : null
     }
-    if (params === null) return send(connection.ws, rpcError(message.id, -32602, "Send text only."), secrets(connection))
+    if (params === null) return send(connection.ws, rpcError(message.id, -32602, method === "session/cancel" ? "Missing sessionId." : "Send text only."), secrets(connection))
     if (method === "_norn/call_tool") {
       // A view's follow-up read: one tool the cell marks read-only, as the person. Anything else
       // would run without the person's answer, so it goes through the agent and its question.
       const name = message.params?.name
       if (typeof name !== "string" || !name.startsWith("norn_")) return send(connection.ws, rpcError(message.id, -32602, "Only Norn tools."), secrets(connection))
       if (!connection.readOnly.has(name)) return send(connection.ws, rpcError(message.id, -32602, "Only read-only Norn tools."), secrets(connection))
+      if (connection.inFlightToolCalls >= MAX_INFLIGHT_TOOL_CALLS) return send(connection.ws, rpcError(message.id, -32000, "Too many concurrent tool calls."), secrets(connection))
+      connection.inFlightToolCalls += 1
       // Runs beside the inbox: a slow read never holds up the person's answers or Stop.
       void (async () => {
-        const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: message.params?.arguments ?? {} } }), { "mcp-protocol-version": "2025-06-18" })
-        const body = await response.json().catch(() => null) as { result?: unknown; error?: { message?: string } } | null
-        send(connection.ws, body?.result !== undefined ? { jsonrpc: "2.0", id: message.id ?? null, result: body.result } : rpcError(message.id, -32000, body?.error?.message ?? `Norn answered ${response.status}.`), secrets(connection))
-      })().catch(() => send(connection.ws, rpcError(message.id, -32000, "Norn did not answer."), secrets(connection)))
+        const sentToken = connection.grant?.token
+        try {
+          const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: message.params?.arguments ?? {} } }), { "mcp-protocol-version": MCP_PROTOCOL_VERSION })
+          if (connection.closed) { await response.body?.cancel(); return }
+          const text = await readBoundedText(response, MAX_MCP_RESPONSE_BYTES)
+          if (connection.closed) return
+          let body: { result?: unknown; error?: { message?: string } } | null = null
+          try { body = JSON.parse(text) as { result?: unknown; error?: { message?: string } } } catch { body = null }
+          send(connection.ws, body?.result !== undefined ? { jsonrpc: "2.0", id: message.id ?? null, result: body.result } : rpcError(message.id, -32000, body?.error?.message ?? `Norn answered ${response.status}.`), secrets(connection, sentToken))
+        } catch {
+          if (!connection.closed) send(connection.ws, rpcError(message.id, -32000, "Norn did not answer."), secrets(connection, sentToken))
+        } finally {
+          connection.inFlightToolCalls = Math.max(0, connection.inFlightToolCalls - 1)
+        }
+      })()
       return
     }
     const outgoing: Message = { jsonrpc: "2.0", method, ...params === undefined ? {} : { params } }
     if (message.id !== undefined && message.id !== null) {
+      if (connection.pendingFromBrowser.size >= MAX_PENDING_BROWSER) {
+        send(connection.ws, rpcError(message.id, -32000, "Too many pending requests."), secrets(connection))
+        return
+      }
       const id = `b${connection.nextId++}`
       connection.pendingFromBrowser.set(id, { id: message.id, method })
       outgoing.id = id
@@ -758,13 +952,24 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   const mcp = Bun.serve({
     hostname: "127.0.0.1",
     port: config.mcpPort,
+    idleTimeout: 120,
+    maxRequestBodySize: MAX_MCP_BODY_BYTES,
     async fetch(request) {
       const match = /^\/mcp\/([A-Za-z0-9_-]{32,})$/.exec(new URL(request.url).pathname)
       const connection = match === null ? undefined : byCapability.get(match[1] as string)
       if (connection === undefined || connection.closed) return new Response("Not found", { status: 404 })
       if (request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } })
-      const raw = await request.text()
-      if (raw.length > 262_144) return new Response("Too large", { status: 413 })
+      const contentLength = request.headers.get("content-length")
+      if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > MAX_MCP_BODY_BYTES) {
+        return new Response("Too large", { status: 413 })
+      }
+      let raw: string
+      try {
+        raw = await request.text()
+      } catch {
+        return new Response("Invalid body", { status: 400 })
+      }
+      if (Buffer.byteLength(raw) > MAX_MCP_BODY_BYTES) return new Response("Too large", { status: 413 })
       let call: { id?: Message["id"]; method?: string; params?: { name?: unknown; arguments?: unknown } } | null = null
       try { call = JSON.parse(raw) } catch { return Response.json(rpcError(null, -32700, "Parse error"), { status: 400 }) }
       const id = plainObject(call) ? call.id : null
@@ -783,19 +988,34 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       for (const name of ["mcp-protocol-version", "mcp-session-id"]) { const value = request.headers.get(name); if (value !== null) forward[name] = value }
       // Studio gets the object that was checked, re-serialised, never the agent's own bytes: a duplicate
       // key or a number spelled differently cannot reach Studio as anything but what was approved.
-      const response = await studioMcp(connection, JSON.stringify(call), forward)
-      const text = await response.text()
+      let response: Response
+      let text: string
+      const sentToken = connection.grant?.token
+      try {
+        response = await studioMcp(connection, JSON.stringify(call), forward)
+        if (connection.closed) {
+          await response.body?.cancel()
+          return new Response("Not found", { status: 404 })
+        }
+        text = await readBoundedText(response, MAX_MCP_RESPONSE_BYTES)
+      } catch (error) {
+        log(`conn ${connection.id} studio MCP failed: ${error instanceof Error ? error.message : "unknown"}`)
+        return Response.json(rpcError(id, -32000, "Studio MCP request failed."), { status: 502, headers: { "cache-control": "no-store" } })
+      }
+      if (connection.closed) return new Response("Not found", { status: 404 })
+      const activeSecrets = secrets(connection, sentToken)
+      const safeText = scrub(text, activeSecrets)
       if (call?.method === "tools/call" && typeof call.params?.name === "string") {
         const view = connection.views.get(call.params.name)
         let result: unknown
-        try { result = (JSON.parse(text) as { result?: unknown }).result } catch { /* streamed or not JSON */ }
-        if (view !== undefined && result !== undefined) send(connection.ws, { jsonrpc: "2.0", method: "_norn/tool_result", params: { tool: call.params.name, view, input: call.params.arguments ?? {}, result } }, secrets(connection))
+        try { result = (JSON.parse(safeText) as { result?: unknown }).result } catch { /* streamed or not JSON */ }
+        if (view !== undefined && result !== undefined) send(connection.ws, { jsonrpc: "2.0", method: "_norn/tool_result", params: { tool: call.params.name, view, input: call.params.arguments ?? {}, result } }, activeSecrets)
         log(`conn ${connection.id} tool ${call.params.name} ${response.status}`)
       }
       const headers = new Headers({ "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store" })
       const session = response.headers.get("mcp-session-id")
       if (session !== null) headers.set("mcp-session-id", session)
-      return new Response(text, { status: response.status, headers })
+      return new Response(safeText, { status: response.status, headers })
     },
   })
 
@@ -818,37 +1038,62 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     websocket: {
       maxPayloadLength: 65_536,
       open(ws) {
+        if (connections.size >= config.maxConnections) {
+          ws.close(1013, "busy")
+          return
+        }
         const id = crypto.randomUUID()
         const capability = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
-        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), labels: [], readOnly: new Set(), questions: new Map(), approvals: [], inbox: Promise.resolve(), pendingFromBrowser: new Map(), initTimer: null, scratchDir: null, nextId: 1, closed: false }
+        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), labels: [], readOnly: new Set(), questions: new Map(), approvals: [], inbox: Promise.resolve(), queuedMessages: 0, inFlightToolCalls: 0, pendingFromBrowser: new Map(), initTimer: null, killTimer: null, scratchDir: null, nextId: 1, closed: false }
         ws.data.connection = connection
         connections.set(id, connection)
         byCapability.set(capability, connection)
         log(`conn ${id} open (${connections.size})`)
         // A socket that never initializes is closed.
-        connection.initTimer = setTimeout(() => { if (connection.grant === null && !connection.closed) ws.close(4401, "no grant") }, 15_000)
+        connection.initTimer = setTimeout(() => { if (connection.grant === null && !connection.closed) terminate(connection, 4401, "no grant") }, 15_000)
       },
       message(ws, data) {
         const connection = ws.data.connection
-        if (connection === undefined) return
+        if (connection === undefined || connection.closed) return
+        if (connection.queuedMessages >= MAX_INBOX_QUEUE) {
+          log(`conn ${connection.id} message queue limit exceeded`)
+          terminate(connection, 1008, "message queue full")
+          return
+        }
+        connection.queuedMessages += 1
         // One at a time, in order: a prompt never overtakes the session/new or grant check before it.
-        const raw = typeof data === "string" ? data : new TextDecoder().decode(data)
-        connection.inbox = connection.inbox.then(() => fromBrowser(connection, raw)).catch((error: unknown) => log(`conn ${connection.id} message failed: ${error instanceof Error ? error.message : "unknown"}`))
+        const raw = typeof data === "string" ? data : UTF8.decode(data)
+        connection.inbox = connection.inbox
+          .then(() => fromBrowser(connection, raw))
+          .catch((error: unknown) => log(`conn ${connection.id} message failed: ${error instanceof Error ? error.message : "unknown"}`))
+          .finally(() => { connection.queuedMessages = Math.max(0, connection.queuedMessages - 1) })
       },
       close(ws) {
         const connection = ws.data.connection
         if (connection === undefined) return
-        connection.closed = true
-        connection.grant = null
-        cleanupConnection(connection)
-        connections.delete(connection.id)
-        byCapability.delete(connection.capability)
+        terminate(connection)
         log(`conn ${connection.id} closed (${connections.size})`)
       },
     },
   })
   log(`sidekick relay on ${config.listenHost}:${server.port}, agent MCP on 127.0.0.1:${mcp.port}, studio ${config.studioOrigin}`)
-  return { server, mcp, connections, stop: () => { server.stop(true); mcp.stop(true); for (const connection of connections.values()) { connection.closed = true; cleanupConnection(connection) } } }
+  return {
+    server,
+    mcp,
+    connections,
+    stop: () => {
+      server.stop(true)
+      mcp.stop(true)
+      for (const connection of [...connections.values()]) terminate(connection)
+      connections.clear()
+      byCapability.clear()
+    },
+  }
 }
 
-if (import.meta.main) startRelay(configFromEnv(process.env))
+if (import.meta.main) {
+  const relay = startRelay(configFromEnv(process.env))
+  const shutdown = () => { relay.stop(); process.exit(0) }
+  process.once("SIGINT", shutdown)
+  process.once("SIGTERM", shutdown)
+}
