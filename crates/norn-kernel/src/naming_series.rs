@@ -318,10 +318,22 @@ where
         let target_key = FactKey::new(object_type.as_str(), rendered);
         crate::check_fact_key_identity(&target_key).map_err(DecisionRefusal::from_commit)?;
         // Probe through the hierarchy root so a same-key object in any branch
-        // is visible, while the committed target retains its concrete type.
+        // is visible, while retaining the live concrete type on skipped probes
+        // so reference-lineage lookup hits its concrete marking snapshot.
         let probe_key = commit_model.canonical(&target_key);
         crate::check_fact_key_identity(&probe_key).map_err(DecisionRefusal::from_commit)?;
-        let state = host.load(&probe_key).map_err(DecisionRefusal::Host)?;
+        let (concrete_probe, state) = match host
+            .load_bounded(&probe_key, u64::MAX)
+            .map_err(DecisionRefusal::Host)?
+        {
+            Some(bounded) => (
+                bounded
+                    .concrete_type
+                    .map(|kind| FactKey::new(kind.as_str(), probe_key.key.clone())),
+                bounded.state,
+            ),
+            None => (None, host.load(&probe_key).map_err(DecisionRefusal::Host)?),
+        };
         if state.version == FactVersion::ABSENT {
             break (candidate, target_key, state);
         }
@@ -333,7 +345,7 @@ where
             }
             norn_ir::NamingGapPolicy::AllowGaps => {
                 skipped_reads.push(FactExpectation {
-                    key: probe_key,
+                    key: concrete_probe.unwrap_or(probe_key),
                     expected: state.version,
                 });
                 current = candidate;

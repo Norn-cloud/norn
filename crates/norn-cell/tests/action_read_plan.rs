@@ -1,11 +1,4 @@
 #![cfg(feature = "native")]
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    reason = "integration-test fixtures and assertions"
-)]
 //! Lane A3 end-to-end cell tests on production `SqliteCell`:
 //! - Naming-series `CreateOnly` field-level IFC and replay after slice mutations.
 //! - `FireTransition` (`independentOf`, guards, external slice) and lifecycle-bearing
@@ -27,6 +20,7 @@ use norn_kernel::{
 use serde_json::{Value, json};
 
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const PII: &str = "pii.contact";
 
@@ -59,7 +53,7 @@ impl ActionAuthorizer for ExactPolicyAuthz {
     }
 }
 
-fn action_call_type() -> ObjectTypeDef {
+fn action_call_type() -> TestResult<ObjectTypeDef> {
     let mut fields: Vec<Value> = ["actionId", "actor", "turn", "transition", "from", "to"]
         .iter()
         .map(|id| json!({"id": id, "type": {"kind": "text"}}))
@@ -88,11 +82,13 @@ fn action_call_type() -> ObjectTypeDef {
             |id| json!({"id": id, "type": {"kind": "json-ext"}, "constraints": {"nullable": true}}),
         ),
     );
-    serde_json::from_value(json!({"name": "norn.ActionCall", "properties": fields})).unwrap()
+    Ok(serde_json::from_value(
+        json!({"name": "norn.ActionCall", "properties": fields}),
+    )?)
 }
 
-fn leave_request_type() -> ObjectTypeDef {
-    serde_json::from_value(json!({
+fn leave_request_type() -> TestResult<ObjectTypeDef> {
+    Ok(serde_json::from_value(json!({
         "name": "hr.LeaveRequest",
         "identity": [{
             "name": "primary",
@@ -133,11 +129,10 @@ fn leave_request_type() -> ObjectTypeDef {
             "target": "hr.Person",
             "cardinality": {"to": "one", "from": "many"}
         }]
-    }))
-    .unwrap()
+    }))?)
 }
 
-fn hr_a3_types() -> Vec<ObjectTypeDef> {
+fn hr_a3_types() -> TestResult<Vec<ObjectTypeDef>> {
     let mut defs: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "hr.Person",
@@ -178,27 +173,25 @@ fn hr_a3_types() -> Vec<ObjectTypeDef> {
                 {"id": "vendor", "type": {"kind": "text"}}
             ]
         }
-    ]))
-    .unwrap();
-    defs.push(leave_request_type());
-    defs.push(action_call_type());
-    defs
+    ]))?;
+    defs.push(leave_request_type()?);
+    defs.push(action_call_type()?);
+    Ok(defs)
 }
 
-fn open_cell(defs: &[ObjectTypeDef], name: &str) -> (tempfile::TempDir, Cell) {
-    let dir = tempfile::tempdir().unwrap();
+fn open_cell(defs: &[ObjectTypeDef], name: &str) -> TestResult<(tempfile::TempDir, Cell)> {
+    let dir = tempfile::tempdir()?;
     let cell = Cell::open(
         dir.path().join(format!("{name}.sqlite")),
-        Model::from_definitions(defs, &[]).unwrap(),
+        Model::from_definitions(defs, &[])?,
         StoreOptions::default(),
         "org_demo/dev",
-        |_: &Command<JsonObject>| panic!("no command expected"),
-    )
-    .unwrap();
-    (dir, cell)
+        |_: &Command<JsonObject>| JsonObject::new(),
+    )?;
+    Ok((dir, cell))
 }
 
-fn seed_employee(cell: &mut Cell, id: &str, status: &str) {
+fn seed_employee(cell: &mut Cell, id: &str, status: &str) -> TestResult {
     let mut commit = CellCommit::empty();
     commit.writes.push(FactWrite {
         key: FactKey::new("hr.Employee", id),
@@ -210,15 +203,20 @@ fn seed_employee(cell: &mut Cell, id: &str, status: &str) {
                 "status": status,
                 "badge_no": "B-101",
                 "national_id": "123-45-6789"
-            }))
-            .unwrap(),
+            }))?,
         },
     });
-    cell.commit(commit).unwrap();
+    cell.commit(commit)?;
+    Ok(())
 }
 
-fn make_call<'a>(action: &'a ActionRoot, actor: &str, input: Value, key: &str) -> ActionCall<'a> {
-    ActionCall {
+fn make_call<'a>(
+    action: &'a ActionRoot,
+    actor: &str,
+    input: Value,
+    key: &str,
+) -> TestResult<ActionCall<'a>> {
+    Ok(ActionCall {
         action,
         action_artifact_id: "a3.test",
         action_version: "1.0.0",
@@ -228,7 +226,7 @@ fn make_call<'a>(action: &'a ActionRoot, actor: &str, input: Value, key: &str) -
         ]),
         actor: actor.into(),
         approved_intent: None,
-        input: serde_json::from_value(input).unwrap(),
+        input: serde_json::from_value(input)?,
         idempotency_key: key.into(),
         object_type: None,
         turn: DecisionTurn {
@@ -238,11 +236,11 @@ fn make_call<'a>(action: &'a ActionRoot, actor: &str, input: Value, key: &str) -
             consumes: None,
         },
         trace: None,
-    }
+    })
 }
 
-fn submit_leave_action() -> ActionRoot {
-    serde_json::from_value(json!({
+fn submit_leave_action() -> TestResult<ActionRoot> {
+    Ok(serde_json::from_value(json!({
         "actionId": "hr.submit_leave",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": true,
@@ -275,20 +273,22 @@ fn submit_leave_action() -> ActionRoot {
             "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
             "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "create_only"}
         }
-    }))
-    .unwrap()
+    }))?)
 }
 
-fn markings(cell: &Cell, ty: &str, id: &str) -> BTreeMap<String, Vec<String>> {
+fn markings(cell: &Cell, ty: &str, id: &str) -> TestResult<BTreeMap<String, Vec<String>>> {
     cell.store()
         .read()
-        .effective_markings(MAIN_WORLD, ty, id, None)
-        .unwrap()
-        .unwrap()
+        .effective_markings(MAIN_WORLD, ty, id, None)?
+        .ok_or_else(|| format!("missing markings for {ty}/{id}").into())
+}
+
+fn prop_marks<'a>(marks: &'a BTreeMap<String, Vec<String>>, property: &str) -> &'a [String] {
+    marks.get(property).map_or(&[], Vec::as_slice)
 }
 
 fn has_pii(marks: &BTreeMap<String, Vec<String>>, property: &str) -> bool {
-    marks[property].iter().any(|label| label == PII)
+    prop_marks(marks, property).iter().any(|label| label == PII)
 }
 
 /// Naming-series `CreateOnly` commits with exact field-level IFC (unread PII
@@ -296,13 +296,13 @@ fn has_pii(marks: &BTreeMap<String, Vec<String>>, property: &str) -> bool {
 /// links polymorphically via `createLinks` (`hr.Person` -> concrete `hr.Employee`),
 /// and replays cleanly even after the referenced employee becomes inactive.
 #[test]
-fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes() {
-    let defs = hr_a3_types();
+fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes() -> TestResult {
+    let defs = hr_a3_types()?;
     let catalog = TypeCatalog::new(&defs);
-    let (_dir, mut cell) = open_cell(&defs, "series-ifc");
-    seed_employee(&mut cell, "E1", "active");
+    let (_dir, mut cell) = open_cell(&defs, "series-ifc")?;
+    seed_employee(&mut cell, "E1", "active")?;
 
-    let submit = submit_leave_action();
+    let submit = submit_leave_action()?;
     let authz = ExactPolicyAuthz::of(&["branch_id"]);
     let payload = json!({
         "employee_id": "E1",
@@ -311,20 +311,25 @@ fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes()
         "reason": "annual",
         "private_notes": "clinic visit"
     });
-    let first_call = make_call(&submit, "user:alice", payload.clone(), "leave-1");
-    let ActionOutcome::Committed { record, .. } =
-        commit_action(&mut cell, &catalog, &first_call, &authz).unwrap()
-    else {
-        panic!("expected committed");
+    let first_call = make_call(&submit, "user:alice", payload.clone(), "leave-1")?;
+    let outcome = commit_action(&mut cell, &catalog, &first_call, &authz)?;
+    let ActionOutcome::Committed { record, .. } = outcome else {
+        return Err("expected committed leave create".into());
     };
     assert_eq!(
         record.object,
         FactKey::new("hr.LeaveRequest", "LR-cairo-0001")
     );
     // Unread PII on `hr.Employee.national_id` must NOT taint `reason` or `status`.
-    let leave_marks = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001");
-    assert!(leave_marks["reason"].is_empty(), "{leave_marks:?}");
-    assert!(leave_marks["status"].is_empty(), "{leave_marks:?}");
+    let leave_marks = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001")?;
+    assert!(
+        prop_marks(&leave_marks, "reason").is_empty(),
+        "{leave_marks:?}"
+    );
+    assert!(
+        prop_marks(&leave_marks, "status").is_empty(),
+        "{leave_marks:?}"
+    );
     assert!(has_pii(&leave_marks, "private_notes"), "{leave_marks:?}");
     // Polymorphic `createLinks` resolved supertype `hr.Person` to concrete `hr.Employee`.
     assert!(
@@ -332,8 +337,7 @@ fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes()
             FactKey::new("hr.LeaveRequest", "LR-cairo-0001"),
             "employee",
             FactKey::new("hr.Employee", "E1"),
-        ))
-        .unwrap()
+        ))?
         .exists()
     );
 
@@ -352,29 +356,29 @@ fn naming_series_create_only_enables_field_ifc_and_replays_after_slice_changes()
             "objectKind": "hr.Person", "entityArtifactId": "hr.Person.entity",
             "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "deactivate"
         }
-    }))
-    .unwrap();
-    let deactivate_call = make_call(&deactivate, "user:admin", json!({"id": "E1"}), "deact-1");
+    }))?;
+    let deactivate_call = make_call(&deactivate, "user:admin", json!({"id": "E1"}), "deact-1")?;
     let ActionOutcome::Committed {
         record: deact_record,
         ..
-    } = commit_action(&mut cell, &catalog, &deactivate_call, &authz).unwrap()
+    } = commit_action(&mut cell, &catalog, &deactivate_call, &authz)?
     else {
-        panic!("expected deactivate commit");
+        return Err("expected deactivate commit".into());
     };
     assert_eq!(deact_record.object, FactKey::new("hr.Employee", "E1"));
 
     // Idempotent replay of the naming-series create succeeds even though `emp.status` is now `inactive`.
-    let retry_call = make_call(&submit, "user:alice", payload, "leave-1");
+    let retry_call = make_call(&submit, "user:alice", payload, "leave-1")?;
     let ActionOutcome::Replayed { record: replayed } =
-        commit_action(&mut cell, &catalog, &retry_call, &authz).unwrap()
+        commit_action(&mut cell, &catalog, &retry_call, &authz)?
     else {
-        panic!("expected replay without re-running slice preconditions");
+        return Err("expected replay without re-running slice preconditions".into());
     };
     assert_eq!(replayed, record);
+    Ok(())
 }
 
-fn hr_transition_and_update_actions() -> (ActionRoot, ActionRoot, ActionRoot) {
+fn hr_transition_and_update_actions() -> TestResult<(ActionRoot, ActionRoot, ActionRoot)> {
     let approve: ActionRoot = serde_json::from_value(json!({
         "actionId": "hr.approve_leave",
         "scopeRequired": ["orgId", "environmentId"],
@@ -396,8 +400,7 @@ fn hr_transition_and_update_actions() -> (ActionRoot, ActionRoot, ActionRoot) {
             "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
             "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "approve"
         }
-    }))
-    .unwrap();
+    }))?;
     let escalate: ActionRoot = serde_json::from_value(json!({
         "actionId": "hr.escalate_leave",
         "scopeRequired": ["orgId", "environmentId"],
@@ -412,8 +415,7 @@ fn hr_transition_and_update_actions() -> (ActionRoot, ActionRoot, ActionRoot) {
             "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
             "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "escalate"
         }
-    }))
-    .unwrap();
+    }))?;
     let update_reason: ActionRoot = serde_json::from_value(json!({
         "actionId": "hr.update_leave_reason",
         "scopeRequired": ["orgId", "environmentId"],
@@ -429,23 +431,23 @@ fn hr_transition_and_update_actions() -> (ActionRoot, ActionRoot, ActionRoot) {
             "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
             "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "update_only"}
         }
-    }))
-    .unwrap();
-    (approve, escalate, update_reason)
+    }))?;
+    Ok((approve, escalate, update_reason))
 }
 
 /// `FireTransition` (`independentOf`, guards, external slice) and lifecycle-bearing
 /// `UpdateOnly` preserve exact field-level IFC, while transition guards reading
 /// PII propagate that marking onto the transitioned lifecycle property.
 #[test]
-fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_reads() {
-    let defs = hr_a3_types();
-    let submit = submit_leave_action();
-    let (approve, escalate, update_reason) = hr_transition_and_update_actions();
+fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_reads() -> TestResult
+{
+    let defs = hr_a3_types()?;
+    let submit = submit_leave_action()?;
+    let (approve, escalate, update_reason) = hr_transition_and_update_actions()?;
     let guards = transition_guards([&approve, &escalate]);
     let catalog = TypeCatalog::new(&defs).with_transition_guards(&guards);
-    let (_dir, mut cell) = open_cell(&defs, "transition-ifc");
-    seed_employee(&mut cell, "E1", "active");
+    let (_dir, mut cell) = open_cell(&defs, "transition-ifc")?;
+    seed_employee(&mut cell, "E1", "active")?;
     let authz = ExactPolicyAuthz::of(&["branch_id"]);
 
     let payload = json!({
@@ -455,17 +457,15 @@ fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_r
     commit_action(
         &mut cell,
         &catalog,
-        &make_call(&submit, "user:alice", payload.clone(), "sub-1"),
+        &make_call(&submit, "user:alice", payload.clone(), "sub-1")?,
         &authz,
-    )
-    .unwrap();
+    )?;
     commit_action(
         &mut cell,
         &catalog,
-        &make_call(&submit, "user:alice", payload, "sub-2"),
+        &make_call(&submit, "user:alice", payload, "sub-2")?,
         &authz,
-    )
-    .unwrap();
+    )?;
 
     // Lifecycle-bearing UpdateOnly keeps `reason` unmarked despite PII in `private_notes`.
     let upd = make_call(
@@ -473,10 +473,10 @@ fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_r
         "user:alice",
         json!({"id": "LR-cairo-0001", "reason": "updated"}),
         "upd-1",
-    );
-    commit_action(&mut cell, &catalog, &upd, &authz).unwrap();
-    let after_upd = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001");
-    assert!(after_upd["reason"].is_empty(), "{after_upd:?}");
+    )?;
+    commit_action(&mut cell, &catalog, &upd, &authz)?;
+    let after_upd = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001")?;
+    assert!(prop_marks(&after_upd, "reason").is_empty(), "{after_upd:?}");
     assert!(has_pii(&after_upd, "private_notes"), "{after_upd:?}");
 
     // Approve transition reads `days`, `created_by`, `branch_id`, `status`, and `emp.status` — none PII.
@@ -485,10 +485,10 @@ fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_r
         "user:bob",
         json!({"id": "LR-cairo-0001", "employee_id": "E1"}),
         "app-1",
-    );
-    commit_action(&mut cell, &catalog, &app, &authz).unwrap();
-    let after_app = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001");
-    assert!(after_app["status"].is_empty(), "{after_app:?}");
+    )?;
+    commit_action(&mut cell, &catalog, &app, &authz)?;
+    let after_app = markings(&cell, "hr.LeaveRequest", "LR-cairo-0001")?;
+    assert!(prop_marks(&after_app, "status").is_empty(), "{after_app:?}");
 
     // Escalate transition guard reads `self.private_notes` (PII) -> propagates `pii.contact` to `status`.
     let esc = make_call(
@@ -496,24 +496,25 @@ fn fire_transition_and_lifecycle_update_preserve_field_ifc_and_propagate_guard_r
         "user:bob",
         json!({"id": "LR-cairo-0002"}),
         "esc-1",
-    );
-    commit_action(&mut cell, &catalog, &esc, &authz).unwrap();
-    let after_esc = markings(&cell, "hr.LeaveRequest", "LR-cairo-0002");
+    )?;
+    commit_action(&mut cell, &catalog, &esc, &authz)?;
+    let after_esc = markings(&cell, "hr.LeaveRequest", "LR-cairo-0002")?;
     assert!(
         has_pii(&after_esc, "status"),
         "guard reading PII must propagate onto status: {after_esc:?}"
     );
+    Ok(())
 }
 
 /// Polymorphic `UpdateOnly` targeting supertype `hr.Person` resolves concrete
 /// `hr.Employee`, enforces subtype invariants, records concrete `hr.Employee`,
 /// and refuses a sibling subtype (`hr.Contractor`) opaquely with `TargetNotFound`.
 #[test]
-fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
-    let defs = hr_a3_types();
+fn polymorphic_update_only_enforces_concrete_subtype_invariants() -> TestResult {
+    let defs = hr_a3_types()?;
     let catalog = TypeCatalog::new(&defs);
-    let (_dir, mut cell) = open_cell(&defs, "poly-update");
-    seed_employee(&mut cell, "E1", "active");
+    let (_dir, mut cell) = open_cell(&defs, "poly-update")?;
+    seed_employee(&mut cell, "E1", "active")?;
     let authz = ExactPolicyAuthz::of(&[]);
 
     let update_person: ActionRoot = serde_json::from_value(json!({
@@ -531,8 +532,7 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
             "objectKind": "hr.Person", "entityArtifactId": "hr.Person.entity",
             "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "update_only"}
         }
-    }))
-    .unwrap();
+    }))?;
     let upsert_contractor: ActionRoot = serde_json::from_value(json!({
         "actionId": "hr.upsert_contractor",
         "scopeRequired": ["orgId", "environmentId"],
@@ -548,8 +548,7 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
             "objectKind": "hr.Contractor", "entityArtifactId": "hr.Contractor.entity",
             "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "upsert"}
         }
-    }))
-    .unwrap();
+    }))?;
 
     // Sibling subtype occupying `E1` in `hr.Person`'s hierarchy refuses opaquely.
     let sibling = make_call(
@@ -557,7 +556,7 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
         "user:admin",
         json!({"id": "E1", "name": "Other", "vendor": "Acme"}),
         "sib-1",
-    );
+    )?;
     assert!(matches!(
         commit_action(&mut cell, &catalog, &sibling, &authz),
         Err(ActionRefusal::TargetNotFound)
@@ -569,7 +568,7 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
         "user:admin",
         json!({"id": "E1", "name": "Nadia", "badge_no": ""}),
         "upd-bad",
-    );
+    )?;
     assert!(commit_action(&mut cell, &catalog, &bad, &authz).is_err());
 
     let ok = make_call(
@@ -577,14 +576,14 @@ fn polymorphic_update_only_enforces_concrete_subtype_invariants() {
         "user:admin",
         json!({"id": "E1", "name": "Nadia K.", "badge_no": "B-202"}),
         "upd-ok",
-    );
-    let ActionOutcome::Committed { record, .. } =
-        commit_action(&mut cell, &catalog, &ok, &authz).unwrap()
+    )?;
+    let ActionOutcome::Committed { record, .. } = commit_action(&mut cell, &catalog, &ok, &authz)?
     else {
-        panic!("expected committed");
+        return Err("expected committed subtype update".into());
     };
     assert_eq!(record.object, FactKey::new("hr.Employee", "E1"));
-    let emp_marks = markings(&cell, "hr.Employee", "E1");
-    assert!(emp_marks["name"].is_empty(), "{emp_marks:?}");
+    let emp_marks = markings(&cell, "hr.Employee", "E1")?;
+    assert!(prop_marks(&emp_marks, "name").is_empty(), "{emp_marks:?}");
     assert!(has_pii(&emp_marks, "national_id"), "{emp_marks:?}");
+    Ok(())
 }

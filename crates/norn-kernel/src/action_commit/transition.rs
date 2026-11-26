@@ -95,7 +95,13 @@ where
     let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
     record.rule_binding = rule.map(|rule| rule.binding(call)).transpose()?;
     let recorded = host.load(&record_key).map_err(host_failure)?;
-    if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
+    if let Some(outcome) = replay(
+        catalog,
+        &recorded,
+        &record,
+        &requested_target,
+        &call.idempotency_key,
+    )? {
         return Ok(outcome);
     }
     let mut slice = load_action_slice(

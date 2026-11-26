@@ -794,7 +794,13 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         // or consumed the same delivery): replay it if it was this
         // same call, else report the original refusal.
         let raced = host.load(record_key).map_err(host_failure)?;
-        if let Some(outcome) = replay(&raced, record, &call.idempotency_key)? {
+        if let Some(outcome) = replay(
+            catalog,
+            &raced,
+            record,
+            &record.object,
+            &call.idempotency_key,
+        )? {
             // The winner may have changed authorization-relevant
             // values. A replay must use current authorization too.
             authorize_target(
@@ -1013,10 +1019,14 @@ fn check_scope<X>(call: &ActionCall<'_>) -> Result<(), ActionRefusal<X>> {
 
 /// The replay of an already committed call under the same key, or `None`
 /// when no call was committed under it. The decision is
-/// [`crate::replay_decision::decide_replay`]; this only decodes the record.
+/// [`crate::replay_decision::decide_replay`]; this decodes the record and
+/// accepts a pre-upgrade ancestor-addressed receipt when `call` resolved
+/// `requested` to its concrete subtype.
 fn replay<X>(
+    catalog: &TypeCatalog<'_>,
     recorded: &FactState,
     call: &ActionCallRecord,
+    requested: &FactKey,
     key: &str,
 ) -> Result<Option<ActionOutcome>, ActionRefusal<X>> {
     use crate::replay_decision::{Recorded, ReplayDecision, decide_replay};
@@ -1026,7 +1036,24 @@ fn replay<X>(
             ActionCallRecord::from_values(values).map_or(Recorded::Unreadable, Recorded::Record)
         }
     };
-    match decide_replay(stored, call) {
+    let candidate = match &stored {
+        Recorded::Record(prior)
+            if prior.object == *requested
+                && prior.object.key == call.object.key
+                && catalog
+                    .lineage(&call.object.object_type)
+                    .contains(&prior.object.object_type) =>
+        {
+            std::borrow::Cow::Owned(ActionCallRecord {
+                object: prior.object.clone(),
+                ..call.clone()
+            })
+        }
+        Recorded::Empty | Recorded::Unreadable | Recorded::Record(_) => {
+            std::borrow::Cow::Borrowed(call)
+        }
+    };
+    match decide_replay(stored, candidate.as_ref()) {
         ReplayDecision::Fresh => Ok(None),
         ReplayDecision::Replay(record) => Ok(Some(ActionOutcome::Replayed { record })),
         ReplayDecision::Conflict => Err(ActionRefusal::IdempotencyConflict {

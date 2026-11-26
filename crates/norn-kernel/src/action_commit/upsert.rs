@@ -289,7 +289,13 @@ where
             &state,
         )?;
     }
-    if let Some(outcome) = replay(&recorded, &record, &call.idempotency_key)? {
+    if let Some(outcome) = replay(
+        catalog,
+        &recorded,
+        &record,
+        &requested_target,
+        &call.idempotency_key,
+    )? {
         return Ok(outcome);
     }
 
