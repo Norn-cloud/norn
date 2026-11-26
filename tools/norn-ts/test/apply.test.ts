@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-import { APPLY_PATH, PLAN_PATH, change, credentialsAllowed } from "../src/apply.ts"
+import {
+  APPLY_PATH,
+  PLAN_PATH,
+  change,
+  credentialsAllowed,
+  extractCookieHeader,
+  normalizeTargetUrl,
+  post,
+} from "../src/apply.ts"
 
 // HOST-INSTALL-1 client: `norn apply` plans first, applies against the planned
 // revision, and stops at the cell's refusal. The cell itself is pinned by
@@ -125,6 +133,165 @@ test("credentials go only over HTTPS or to loopback", () => {
   expect(credentialsAllowed("http://127.0.0.1:8787")).toBe(true)
   expect(credentialsAllowed("http://studio.example/api/host")).toBe(false)
   expect(credentialsAllowed("http://localhost.example")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host?extra=1")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host#frag")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host?")).toBe(false)
+  expect(credentialsAllowed("https://studio.example/api/host#")).toBe(false)
+  expect(credentialsAllowed("https://user:pass@studio.example/api/host")).toBe(false)
+})
+
+test("normalizeTargetUrl rejects query strings, fragments, userinfo, and non-HTTP schemes", () => {
+  expect(normalizeTargetUrl("https://studio.example/api/host///")).toBe("https://studio.example/api/host")
+  expect(normalizeTargetUrl("http://127.0.0.1:8787/")).toBe("http://127.0.0.1:8787")
+  for (const bad of [
+    "https://studio.example/api/host?foo=bar",
+    "https://studio.example/api/host?",
+    "https://studio.example/api/host#section",
+    "https://studio.example/api/host#",
+    "https://alice:secret@studio.example/api/host",
+    "ftp://studio.example/api/host",
+    "not-a-url",
+  ]) {
+    expect(() => normalizeTargetUrl(bad)).toThrow()
+  }
+})
+
+test("extractCookieHeader deduplicates cookies last-write-wins and honors Max-Age/Expires deletions", () => {
+  const now = Date.parse("2026-11-26T21:00:00Z")
+  expect(
+    extractCookieHeader(
+      [
+        "session=old; Path=/; HttpOnly",
+        "csrf=tok1; Path=/",
+        "session=new; Path=/; Secure",
+      ],
+      now,
+    ),
+  ).toBe("session=new; csrf=tok1")
+
+  // Max-Age=0 deletes an earlier cookie.
+  expect(
+    extractCookieHeader(
+      [
+        "session=old; Path=/",
+        "session=; Max-Age=0; Path=/",
+        "theme=dark; Path=/",
+      ],
+      now,
+    ),
+  ).toBe("theme=dark")
+
+  // Max-Age takes precedence over Expires per RFC 6265 §5.3.
+  expect(
+    extractCookieHeader(
+      [
+        "session=alive; Max-Age=3600; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+        "gone=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+      ],
+      now,
+    ),
+  ).toBe("session=alive")
+
+  // Malformed or CRLF-containing cookies are skipped.
+  expect(
+    extractCookieHeader(["noequals", "=noname", "bad=a\r\nb", "ok=1=2; Path=/"], now),
+  ).toBe("ok=1=2")
+})
+
+test("post enforces response byte bounds, HTTP timeouts, redirects, and target URL validation", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url)
+      if (url.pathname === "/redirect/v1/cell/definitions:plan") {
+        return new Response(null, { status: 302, headers: { location: "https://evil.example/" } })
+      }
+      if (url.pathname === "/large/v1/cell/definitions:plan") {
+        return new Response(JSON.stringify({ pad: "x".repeat(4096) }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (url.pathname === "/stream-large/v1/cell/definitions:plan") {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("{\"a\":\""))
+              controller.enqueue(new TextEncoder().encode("y".repeat(2048)))
+              controller.enqueue(new TextEncoder().encode("\"}"))
+              controller.close()
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      if (url.pathname === "/slow/v1/cell/definitions:plan") {
+        await Bun.sleep(500)
+        return Response.json({ ok: true })
+      }
+      if (url.pathname === "/stream-slow/v1/cell/definitions:plan") {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new TextEncoder().encode("{\"ok\":"))
+              await Bun.sleep(500)
+              try {
+                controller.enqueue(new TextEncoder().encode("true}"))
+                controller.close()
+              } catch {
+                // Stream already cancelled on timeout.
+              }
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }
+      return Response.json({ ok: true })
+    },
+  })
+  try {
+    await expect(
+      post({ url: `http://127.0.0.1:${server.port}/api?inject=1`, org: "o", env: "e", headers: {} }, PLAN_PATH, {}),
+    ).rejects.toThrow("query or fragment")
+
+    await expect(
+      post({ url: `http://127.0.0.1:${server.port}/redirect`, org: "o", env: "e", headers: {} }, PLAN_PATH, {}),
+    ).rejects.toThrow("unexpected redirect (302)")
+
+    await expect(
+      post(
+        { url: `http://127.0.0.1:${server.port}/large`, org: "o", env: "e", headers: {}, maxResponseBytes: 256 },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow("exceeds size limit")
+
+    await expect(
+      post(
+        { url: `http://127.0.0.1:${server.port}/stream-large`, org: "o", env: "e", headers: {}, maxResponseBytes: 256 },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow("exceeds size limit")
+
+    await expect(
+      post(
+        { url: `http://127.0.0.1:${server.port}/slow`, org: "o", env: "e", headers: {}, timeoutMs: 50 },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow()
+
+    await expect(
+      post(
+        { url: `http://127.0.0.1:${server.port}/stream-slow`, org: "o", env: "e", headers: {}, timeoutMs: 50 },
+        PLAN_PATH,
+        {},
+      ),
+    ).rejects.toThrow()
+  } finally {
+    server.stop(true)
+  }
 })
 
 // #1469 S8: `norn apply <project-root>` reads the project through the shared
@@ -161,6 +328,15 @@ test("apply CLI rejects non-integer --expected-version and worker rejects escapi
 
     for (const bad of [["--expected-version", "abc"], ["--expected-version", "--json"], ["--expected-version", "-1"]]) {
       const code = await main("apply", [projectDir, "--url", "http://127.0.0.1:1", "--org", "o1", "--env", "e1", ...bad])
+      expect(code).toBe(2)
+    }
+
+    for (const badUrl of [
+      "https://studio.example/api/host?extra=1",
+      "https://studio.example/api/host#frag",
+      "https://user:secret@studio.example/api/host",
+    ]) {
+      const code = await main("plan", [projectDir, "--url", badUrl, "--org", "o1", "--env", "e1"])
       expect(code).toBe(2)
     }
 
