@@ -42,8 +42,6 @@ mod dataset_laws;
 mod dataset_laws_datafusion;
 #[path = "definition_scope.rs"]
 mod definition_scope;
-#[path = "explorer_documents.rs"]
-mod explorer_documents;
 #[path = "governed_create.rs"]
 mod governed_create;
 #[path = "jewelry_pricing.rs"]
