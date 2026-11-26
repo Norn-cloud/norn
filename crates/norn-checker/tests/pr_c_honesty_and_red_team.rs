@@ -406,3 +406,45 @@ fn red_team_rejects_unprotected_field_as_sod() {
         report.self_ratifiable_transitions
     );
 }
+
+#[test]
+fn red_team_accepts_protected_creator_sod_predicate() {
+    let order = multi_lifecycle_order_entity();
+    let create = order_create_action();
+    let submit = transition_action("hr.order.submit", "hr.Order", "approval_state", "submit", &[]);
+    let policy = envelope(
+        "policy",
+        "hr.order.protected_sod.policy",
+        "Protected SoD policy",
+        &json!({
+            "policyId": "hr.order.protected_sod",
+            "rules": [
+                {
+                    "ruleId": "clerk_create",
+                    "actions": ["hr.order.create"],
+                    "resourceType": "hr.Order",
+                    "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [{ "role": { "anyOf": ["clerk"] } }]
+                },
+                {
+                    "ruleId": "clerk_submit_with_protected_sod",
+                    "actions": ["hr.order.submit"],
+                    "resourceType": "hr.Order",
+                    "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["clerk"] } },
+                        { "resource": { "name": "created_by", "op": "ne", "value": { "principalAttribute": "id" } } }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let report = analyze_red_team(&[order, create, submit, policy]);
+    assert!(report.is_complete(), "{:?} {:?}", report.evaluation_errors, report.decode_errors);
+    assert!(
+        report.self_ratifiable_transitions.is_empty(),
+        "protected `created_by` ne principal.id should satisfy SoD: {:?}",
+        report.self_ratifiable_transitions
+    );
+}
