@@ -108,7 +108,7 @@ function frame(root: string, finding: Finding): string {
   const text = file ? readFileSync(file, "utf8").split("\n")[at.line - 1] : undefined
   if (at && text !== undefined) {
     lines.push(`  ${at.line} | ${text}`)
-    if (at.column) lines.push(`  ${" ".repeat(String(at.line).length)} | ${" ".repeat(at.column - 1)}^`)
+    if (at.column) lines.push(`  ${" ".repeat(String(at.line).length)} | ${" ".repeat(Math.max(0, at.column - 1))}^`)
   }
   if (finding.fix) lines.push(`  fix: ${finding.fix}`)
   else if (finding.no_fix) lines.push(`  no automatic fix: ${finding.no_fix}`)

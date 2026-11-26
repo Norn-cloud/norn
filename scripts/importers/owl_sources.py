@@ -32,11 +32,15 @@ Run with the ontology tools interpreter (`scripts/bootstrap-ontology-tools.sh`):
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import hashlib
 import http.client
 import json
+import os
 import re
+import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -115,6 +119,12 @@ def fetch_url(url: str, attempts: int = 5, *, follow: bool = False) -> tuple[byt
             if not follow and served != url:
                 raise RedirectRefused(f"{url}: served from {served}; a pinned fetch follows no redirect")
             return raw, served
+        except urllib.error.HTTPError as error:
+            if 400 <= error.code < 500 and error.code != 429:
+                raise
+            if attempt == attempts - 1:
+                raise
+            time.sleep(2 ** (attempt + 1))
         except (OSError, http.client.HTTPException):
             if attempt == attempts - 1:
                 raise
@@ -133,6 +143,8 @@ def sha256(raw: bytes) -> str:
 
 def declares_licence(raw: bytes, licence: str) -> bool:
     """Whether an ontology header's `dct:license` names `licence`."""
+    if b"</owl:Ontology>" not in raw:
+        return False
     header = raw.split(b"</owl:Ontology>", 1)[0]
     match = re.search(rb"<dct:license[^>]*>(.*?)</dct:license>", header, re.S)
     if match is None:
@@ -142,10 +154,22 @@ def declares_licence(raw: bytes, licence: str) -> bool:
 
 
 def local_path(raw_dir: Path, url: str) -> Path:
-    relative = url.removeprefix("https://")
-    if not relative or any(part in ("", "..") for part in relative.split("/")):
+    if not url.startswith("https://"):
         raise SystemExit(f"{url}: not a plain HTTPS file URL")
-    return raw_dir / relative
+    relative = url.removeprefix("https://")
+    parts = relative.split("/")
+    if not relative or any(part in ("", ".", "..") or "\\" in part for part in parts):
+        raise SystemExit(f"{url}: not a plain HTTPS file URL")
+    resolved_raw = raw_dir.resolve()
+    cur = raw_dir
+    for part in parts:
+        cur = cur / part
+        if cur.is_symlink():
+            raise SystemExit(f"{url}: refuses symlink path under {raw_dir}")
+    target = raw_dir.joinpath(*parts)
+    if not target.resolve().is_relative_to(resolved_raw):
+        raise SystemExit(f"{url}: local path escapes {raw_dir}")
+    return target
 
 
 def is_ontology(url: str) -> bool:
@@ -161,7 +185,20 @@ def acquire(url: str, digest: str, raw_dir: Path) -> bytes:
         if sha256(raw) != digest:
             raise SystemExit(f"{url}: digest mismatch (pinned {digest})")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(raw)
+        local_path(raw_dir, url)
+        with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            try:
+                tmp.write(raw)
+                tmp.flush()
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)
+                raise
+        try:
+            os.replace(tmp_path, target)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
     return raw
 
 
@@ -181,6 +218,8 @@ def normalise(originals: list[tuple[str, bytes]]) -> tuple[bytes, list[dict]]:
         prefix = next((str(p) for p, ns in part.namespaces() if str(ns) == iri), None)
         if prefix is None:
             raise SystemExit(f"{url}: no xmlns prefix names the ontology namespace {iri}")
+        if iri in namespaces and namespaces[iri] != prefix:
+            raise SystemExit(f"{url}: conflicting xmlns prefix {prefix!r} vs {namespaces[iri]!r} for {iri}")
         namespaces[iri] = prefix
         graph += part
     lines = sorted(line for line in to_canonical_graph(graph).serialize(format="nt").splitlines() if line.strip())
@@ -214,19 +253,23 @@ def pin(args: argparse.Namespace) -> None:
     manifest = json.loads(args.manifest.read_text())
     selection = manifest["selection"]
     licence = manifest["admission"]["license"]
-    files, originals, seen, queue = [], [], set(), list(selection["roots"])
+    files_by_path: dict[str, str] = {}
+    originals, seen, queue = [], set(), deque(selection["roots"])
     for url in selection.get("evidence", []):
         raw, served = fetch_url(url, follow=True)
-        files.append({"path": served, "sha256": sha256(raw)})
+        files_by_path[served] = sha256(raw)
     while queue:
-        iri = queue.pop(0)
+        iri = queue.popleft()
         if iri in seen:
             continue
         seen.add(iri)
         rule = next((r for r in selection["resolve"] if iri.startswith(r["namespace"])), None)
         if rule is None:
             raise SystemExit(f"{iri}: imported, but no resolve rule covers it; the closure is refused")
-        url = rule["url"].replace("{path}", iri[len(rule["namespace"]):].rstrip("/"))
+        subpath = iri[len(rule["namespace"]):].rstrip("/")
+        if any(part in ("", ".", "..") or any(c in part for c in "?#\\") for part in subpath.split("/")):
+            raise SystemExit(f"{iri}: invalid import path segment {subpath!r}")
+        url = rule["url"].replace("{path}", subpath)
         raw, url = fetch_url(url, follow=True)
         declared = header(raw)
         if declared["iri"] != iri:
@@ -242,11 +285,12 @@ def pin(args: argparse.Namespace) -> None:
                     url = dated
             except (OSError, http.client.HTTPException):
                 pass
-        files.append({"path": url, "sha256": sha256(raw)})
+        files_by_path[url] = sha256(raw)
         originals.append((url, raw))
         queue.extend(declared["imports"])
     graph, namespaces = normalise(sorted(originals))
-    manifest["admission"]["files"] = sorted(files, key=lambda item: item["path"])
+    files = [{"path": path, "sha256": digest} for path, digest in sorted(files_by_path.items())]
+    manifest["admission"]["files"] = files
     manifest["namespaces"] = namespaces
     manifest["graph"] = {"sha256": sha256(graph), "triples": graph.count(b"\n")}
     args.manifest.write_text(json.dumps(manifest, indent=2) + "\n")

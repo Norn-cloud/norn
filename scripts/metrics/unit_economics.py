@@ -706,7 +706,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
 
 
 def format_json(report: dict) -> str:
-    return json.dumps(report, indent=2, sort_keys=False) + "\n"
+    return json.dumps(report, indent=2, sort_keys=False, allow_nan=False) + "\n"
 
 
 def format_csv(report: dict) -> str:
@@ -759,6 +759,10 @@ def _fmt_value(value, unit: str, *, has_missing: bool = True) -> str:
     return f"{value:,.4g}"
 
 
+def _md_cell(text: object) -> str:
+    return str(text).replace("|", "\\|").replace("\r\n", " ").replace("\n", " ")
+
+
 def _md_table_rows(rows: list[dict]) -> list[str]:
     out = []
     for row in rows:
@@ -772,9 +776,9 @@ def _md_table_rows(rows: list[dict]) -> list[str]:
             if row["value"] is None and row["notes"]:
                 detail = f"{detail} ({row['notes']})" if detail else row["notes"]
         out.append(
-            f"| {row['category']} | `{row['id']}` | "
-            f"{_fmt_value(row['value'], row['unit'], has_missing=bool(row['missing_inputs']))} "
-            f"| {row['unit']} | {row['pricing_as_of']} | {detail} |"
+            f"| {_md_cell(row['category'])} | `{_md_cell(row['id'])}` | "
+            f"{_md_cell(_fmt_value(row['value'], row['unit'], has_missing=bool(row['missing_inputs'])))} "
+            f"| {_md_cell(row['unit'])} | {_md_cell(row['pricing_as_of'])} | {_md_cell(detail)} |"
         )
     return out
 
@@ -825,12 +829,12 @@ def format_markdown(report: dict) -> str:
         "",
         "| Parameter | Value | As of | Source |",
         "|---|---:|---|---|",
-        f"| Hetzner `cpx62`{region} | ${cpx['monthly_usd']}/mo ({cpx['vcpu']} vCPU, {cpx['ram_gib']} GiB RAM, {cpx['nvme_gb']} GB NVMe) | {cpx['as_of']} | {cpx['source']} |",
+        f"| Hetzner `cpx62`{_md_cell(region)} | ${_md_cell(cpx['monthly_usd'])}/mo ({cpx['vcpu']} vCPU, {cpx['ram_gib']} GiB RAM, {cpx['nvme_gb']} GB NVMe) | {_md_cell(cpx['as_of'])} | {_md_cell(cpx['source'])} |",
     ]
     for section in ("storage", "bandwidth", "ci", "utilization", "workload_assumptions"):
         for key, spec in report["pricing"].get(section, {}).items():
             lines.append(
-                f"| `{section}.{key}` | {spec['value']} {spec['unit']} | {spec['as_of']} | {spec['source']} |"
+                f"| `{_md_cell(section)}.{_md_cell(key)}` | {_md_cell(spec['value'])} {_md_cell(spec['unit'])} | {_md_cell(spec['as_of'])} | {_md_cell(spec['source'])} |"
             )
     lines.append("")
     return "\n".join(lines)

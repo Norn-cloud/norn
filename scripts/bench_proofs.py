@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate one guarded/unguarded create writer per benchmark law and run the real proof driver."""
+import argparse
 import ast
 from decimal import Decimal
 import itertools
@@ -10,10 +11,12 @@ import re
 import subprocess
 import sys
 
+ROOT = Path(__file__).resolve().parents[1]
 UNIT = {"system": "ucum", "code": "1"}
 TYPES = {"text": {"kind": "text"}, "qty": {"kind": "decimal", "scale": 0, "unit": UNIT},
          "money": {"kind": "decimal", "scale": 2, "currencySource": {"links": [], "property": "currency"}}}
 BOUND = (-3, 4)
+MAX_PRODUCT_STATES = 100_000
 _UNARY_OPS = {ast.UAdd: operator.pos, ast.USub: operator.neg, ast.Not: operator.not_}
 _BIN_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul}
 _CMP_OPS = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt,
@@ -60,13 +63,13 @@ def declarations(law, props, guarded):
 
 
 def _eval_node(node, env):
+    if isinstance(node, ast.Expression):
+        return _eval_node(node.body, env)
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool):
+        if isinstance(node.value, (bool, str)):
             return node.value
         if isinstance(node.value, (int, float)):
             return Decimal(str(node.value))
-        if isinstance(node.value, str):
-            return node.value
         raise TypeError(f"unsupported constant: {node.value!r}")
     if isinstance(node, ast.Name):
         if node.id not in env:
@@ -78,9 +81,20 @@ def _eval_node(node, env):
         return _BIN_OPS[type(node.op)](_eval_node(node.left, env), _eval_node(node.right, env))
     if isinstance(node, ast.BoolOp):
         if isinstance(node.op, ast.And):
-            return all(bool(_eval_node(value, env)) for value in node.values)
+            result = True
+            for value in node.values:
+                result = _eval_node(value, env)
+                if not result:
+                    return result
+            return result
         if isinstance(node.op, ast.Or):
-            return any(bool(_eval_node(value, env)) for value in node.values)
+            result = False
+            for value in node.values:
+                result = _eval_node(value, env)
+                if result:
+                    return result
+            return result
+        raise TypeError(f"unsupported bool op: {type(node.op).__name__}")
     if isinstance(node, ast.Compare):
         left = _eval_node(node.left, env)
         for op, comparator in zip(node.ops, node.comparators, strict=True):
@@ -100,6 +114,8 @@ def states(expression, fields, step):
     lower, upper = BOUND
     divisor = Decimal(step)
     domain = [Decimal(value) / divisor for value in range(lower * step, upper * step + 1)]
+    if len(domain) ** len(fields) > MAX_PRODUCT_STATES:
+        raise ValueError(f"state space {len(domain) ** len(fields)} exceeds {MAX_PRODUCT_STATES}")
     enabled = sum(bool(_eval_node(tree, dict(zip(fields, values, strict=True))))
                   for values in itertools.product(domain, repeat=len(fields)))
     return enabled + 1
@@ -123,21 +139,30 @@ def laws(root):
             yield ({"id": law["id"], "expression": law["expression"], "requirement": law["text"]}, props, fields, step)
 
 
-def main():
-    if len(sys.argv) < 4:
-        sys.exit("usage: bench_proofs.py BINARY TOOLS WORK [LAW_ID ...]")
-    root = Path(__file__).resolve().parent.parent
-    binary = str(Path(sys.argv[1]).resolve())
-    tools = str(Path(sys.argv[2]).resolve())
-    work = Path(sys.argv[3]).resolve()
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary")
+    parser.add_argument("tools")
+    parser.add_argument("work", type=Path)
+    parser.add_argument("only", nargs="*")
+    args = parser.parse_args(argv)
+    binary = str(Path(args.binary).resolve())
+    tools = str(Path(args.tools).resolve())
+    work = args.work.resolve()
+    if work == ROOT or ROOT in work.parents:
+        parser.error("work directory must remain outside the source checkout")
     work.mkdir(parents=True, exist_ok=True)
-    base = [json.loads((root / f"registry/core/artifacts/{n}.json").read_text(encoding="utf-8"))
+    base = [json.loads((ROOT / f"registry/core/artifacts/{n}.json").read_text(encoding="utf-8"))
             for n in ("core.Process.interface", "core.units")]
     (work / "base.json").write_text(json.dumps(base), encoding="utf-8")
-    only = set(sys.argv[4:])
-    for law, props, fields, step in laws(root):
+    only = set(args.only)
+    runner = ROOT / "scripts/run-generated-proofs.py"
+    failed = False
+    for law, props, fields, step in laws(ROOT):
         if only and law["id"] not in only:
             continue
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", law["id"]) or law["id"] in (".", ".."):
+            raise ValueError(f"unsafe law id: {law['id']!r}")
         directory = work / law["id"]
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "original.json").write_text(json.dumps(declarations(law, props, True)), encoding="utf-8")
@@ -145,7 +170,7 @@ def main():
         numeric = [f for f in fields if props.get(f) != "text"]
         try:
             expected, computed = states(law["expression"], numeric, step), True
-        except (NameError, TypeError, SyntaxError):
+        except (NameError, TypeError, SyntaxError, ValueError):
             # The driver needs an integer; 0 is a placeholder, reported as "not computed".
             expected, computed = 0, False
         profile = {"profile": "norn.bench.one-create/1", "action": "bench.create.action", "identity": "sample",
@@ -154,15 +179,18 @@ def main():
         reported = expected if computed else "not computed"
         (directory / "bounds.json").write_text(json.dumps(profile), encoding="utf-8")
         try:
-            run = subprocess.run([sys.executable, str(root / "scripts/run-generated-proofs.py"), binary,
+            run = subprocess.run([sys.executable, "-I", "-B", str(runner), binary,
                                   str(directory / "original.json"), str(directory / "mutant.json"),
                                   str(work / "base.json"), str(directory / "bounds.json"),
                                   str(directory / "jobs"), tools],
-                                 cwd=root, capture_output=True, text=True, timeout=500, check=False)
+                                 cwd=ROOT, capture_output=True, text=True, timeout=500, check=False)
         except subprocess.TimeoutExpired:
+            failed = True
             print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": None, "expectedStates": reported,
                                                 "report": None, "stderr": "proof driver timed out"}), flush=True)
             continue
+        if run.returncode != 0:
+            failed = True
         report = None
         for line in reversed(run.stdout.splitlines()):
             try:
@@ -172,7 +200,8 @@ def main():
                 continue
         print("BENCH-PROOF " + json.dumps({"id": law["id"], "returncode": run.returncode, "expectedStates": reported,
                                             "report": report, "stderr": run.stderr[-400:] if report is None else ""}), flush=True)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

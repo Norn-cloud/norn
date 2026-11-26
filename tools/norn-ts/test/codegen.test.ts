@@ -341,4 +341,26 @@ test("CODEGEN-TS-ISLANDS: a widget's islands are typed, tiered and digested; a s
   const odd = matrixArtifact() as unknown as { payload: { ux: { catalog: { props?: { type: string }[] }[] } } }
   odd.payload.ux.catalog[0]!.props![0]!.type = "money"
   expect(() => generateTypes([odd])).toThrow(CodegenError)
+  // Prototype-chain keys must fail closed with CodegenError, never emit native code or bypass checks.
+  const protoIsland = matrixArtifact() as unknown as { payload: { ux: { catalog: { props?: { type: string }[] }[] } } }
+  protoIsland.payload.ux.catalog[0]!.props![0]!.type = "toString"
+  expect(() => generateTypes([protoIsland])).toThrow(CodegenError)
+  const protoAction = {
+    format: "norn/artifact@1", artifactId: "a.proto", kind: "action", version: "1.0.0",
+    payload: {
+      actionId: "a.proto",
+      inputSchema: { type: "constructor", properties: {}, additionalProperties: false },
+      outputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+  }
+  expect(() => generateTypes([protoAction])).toThrow(CodegenError)
+  const protoRequired = {
+    format: "norn/artifact@1", artifactId: "a.req", kind: "action", version: "1.0.0",
+    payload: {
+      actionId: "a.req",
+      inputSchema: { type: "object", properties: {}, required: ["toString"], additionalProperties: false },
+      outputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+  }
+  expect(() => generateTypes([protoRequired])).toThrow(CodegenError)
 })

@@ -32,7 +32,7 @@ def main():
     quint = tools / "bin/quint"
     located_bun = shutil.which("bun")
     bun = str(Path(located_bun).resolve()) if located_bun else None
-    if not bun or subprocess.check_output([quint, "--version"]).strip() != b"0.32.0" or subprocess.check_output([bun, "--version"]).strip() != b"1.3.14":
+    if not bun or subprocess.check_output([quint, "--version"], timeout=60).strip() != b"0.32.0" or subprocess.check_output([bun, "--version"], timeout=60).strip() != b"1.3.14":
         raise ValueError("backend version mismatch")
     package = ROOT / "tools/norn-proofs"
     check_script = ROOT / "scripts/check-generated-quint.py"
@@ -50,19 +50,21 @@ def main():
         root = package / "node_modules" / name
         if json.loads((root / "package.json").read_text())["version"] != version:
             raise ValueError(f"{name} version mismatch")
-        assets += [(f"{name}/{version}/{path.relative_to(root).as_posix()}", path)
-                   for path in sorted(root.rglob("*")) if path.is_file() and
-                   (path.name == "package.json" or path.suffix in {".js", ".mjs", ".cjs"})]
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                raise ValueError(f"symlink inside {name} package: {path}")
+            if path.is_file() and (path.name == "package.json" or path.suffix in {".js", ".mjs", ".cjs"}):
+                assets.append((f"{name}/{version}/{path.relative_to(root).as_posix()}", path))
     control = {"toolchain": asset_pins(assets), "results": {}}
-    plan = json.loads(subprocess.check_output([binary, "prepare", *arguments], input=json.dumps(control).encode()))
+    plan = json.loads(subprocess.check_output([binary, "prepare", *arguments], input=json.dumps(control).encode(), timeout=600))
     for job in plan["jobs"]:
         if sha(job["model"]) != job["modelSha"]:
             raise ValueError("generated model changed")
-        subprocess.run([sys.executable, str(check_script), "--model", job["model"], "--out", job["result"],
+        subprocess.run([sys.executable, "-I", "-B", str(check_script), "--model", job["model"], "--out", job["result"],
                         "--tools", str(tools), "--bun", bun, "--step", job["step"], "--invariant", job["invariant"], "--seed", str(job["seed"]),
-                        "--expected-states", str(job["expectedStates"])], check=True)
+                        "--expected-states", str(job["expectedStates"])], check=True, timeout=600)
         control["results"][job["key"]] = {"resultSha": sha(job["result"]), "modelSha": job["modelSha"], "challenge": job["challenge"]}
-    bound = subprocess.run([binary, "bind", *arguments], input=json.dumps(control).encode())
+    bound = subprocess.run([binary, "bind", *arguments], input=json.dumps(control).encode(), timeout=600)
     return bound.returncode
 
 

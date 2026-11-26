@@ -14,6 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { formatTimestamp as when } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
@@ -35,8 +36,6 @@ const AGREEMENT_TONE: Readonly<Record<Agreement, Tone>> = {
   overridden: "amber",
   none: "gray",
 }
-
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 /**
  * `/learning/cases`: curated cases and eval sets (#1220 L-3).
