@@ -113,7 +113,7 @@ export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: 
     }
   }, [catalogRead.data, open, locale])
   // Kept drafts belong to the session that wrote them (#1469 S6).
-  const session = sessionKey(useAccount().data)
+  const session = sessionKey(account)
   const kept = { get: (k: string) => keptDrafts.get(session, k), set: (k: string, d: Draft) => keptDrafts.set(session, k, d), delete: (k: string) => keptDrafts.delete(session, k) }
   const technical = view === "technical"
   const [dirty, setDirty] = useState(false)

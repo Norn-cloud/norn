@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { hashPassword as nativeHash, verifyPassword as nativeVerify } from "@better-auth/utils/password"
-import { mkdtempSync, readFileSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { authOptions } from "../auth.ts"
-import worker, { type Env } from "../index.ts"
 import { hashPassword, passwordScrypt, verifyPassword } from "../password.ts"
+import { BASE_MIGRATIONS, DEFAULT_ORIGIN, createMigratedDb, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 // A fixed vector (Python hashlib.scrypt, same parameters); the password is NFKC-normalized first.
 const VECTOR = {
@@ -50,17 +50,15 @@ test("AUTH_SCRYPT selects the implementation; Cloudflare's default stays native"
 })
 
 test("an account stored on Cloudflare signs in on a pure-JS deployment", async () => {
-  const ORIGIN = "https://studio-preview.norn.cloud"
   // One database file, opened twice: Workers cache one Better Auth instance per database binding.
   const file = join(mkdtempSync(join(tmpdir(), "studio-scrypt-")), "auth.sqlite")
-  const db = new Database(file)
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8"))
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
-  const assets = { fetch: async () => new Response("studio") } as unknown as Fetcher
-  const env = (database: Database, scrypt?: string): Env => ({ ASSETS: assets, AUTH_DB: database as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...scrypt === undefined ? {} : { AUTH_SCRYPT: scrypt } })
-  const post = (target: Env, path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, {
-    method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": "198.51.100.7" },
-  }) as Parameters<typeof worker.fetch>[0], target)
+  const db = createMigratedDb(BASE_MIGRATIONS, file)
+  const { post } = createWorkerClient(DEFAULT_ORIGIN)
+  const env = (database: Database, scrypt?: string) => createWorkerEnv({
+    db: database,
+    assetsHtml: "studio",
+    overrides: scrypt === undefined ? {} : { AUTH_SCRYPT: scrypt },
+  }).env
   const email = "moved@example.com"
   expect((await post(env(db), "/api/auth/sign-up/email", { email, password: "a native password", name: "Moved" })).status).toBe(200)
   // The row as Cloudflare stored it, read by a pure-JS deployment of the same database.
