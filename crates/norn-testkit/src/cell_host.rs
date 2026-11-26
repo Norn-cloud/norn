@@ -1428,7 +1428,7 @@ impl CellModel {
             .map_or(FactVersion::ABSENT, |state| state.version)
     }
 
-    fn load_with(&self, model: &CommitModel<'_, '_>, key: &FactKey) -> FactState {
+    fn load_with(&self, model: CommitModel<'_, '_>, key: &FactKey) -> FactState {
         let canonical = model.canonical(key);
         let mut state = self.facts.get(&canonical).cloned().unwrap_or_default();
         if !self
@@ -1442,7 +1442,7 @@ impl CellModel {
     }
 
     fn load(&self, key: &FactKey) -> FactState {
-        self.with_model(|model| self.load_with(model, key))
+        self.with_model(|model| self.load_with(*model, key))
     }
 
     fn pending(&self, consumed: &Consumed) -> bool {
@@ -2354,7 +2354,7 @@ impl CellModel {
         let (facts, links) = self.with_model(|model| {
             let facts = law_fact_keys()
                 .iter()
-                .map(|key| Ok(self.load_with(model, key)))
+                .map(|key| Ok(self.load_with(*model, key)))
                 .collect();
             let links = (0..LAW_DECLARED_LINKS)
                 .map(|n| {
