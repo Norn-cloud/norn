@@ -55,8 +55,22 @@ CHAR_ESCAPE_LITERAL = re.compile(
 RAW_STRING_OPEN = re.compile(r'r(#*)"')
 
 
+def _is_ident_start(ch: str) -> bool:
+    return ch.isalpha() or ch == "_" or 0x2100 <= ord(ch) <= 0x214F
+
+
 def _is_ident_tail(ch: str) -> bool:
-    return ch.isalnum() or ch in ("_", "'", "!", "?")
+    return _is_ident_start(ch) or ch.isdigit() or ch in ("'", "!", "?")
+
+
+def _preceded_by_ident(source: str, index: int) -> bool:
+    """Return True when the character immediately before `index` ends an identifier."""
+    pos = index - 1
+    if pos < 0 or not _is_ident_tail(source[pos]):
+        return False
+    while pos > 0 and _is_ident_tail(source[pos - 1]):
+        pos -= 1
+    return _is_ident_start(source[pos])
 
 
 def strip_comments_and_strings(
@@ -141,7 +155,8 @@ def strip_comments_and_strings(
         elif (
             is_lean
             and source[index] == "r"
-            and (index == 0 or (not _is_ident_tail(source[index - 1]) and source[index - 1] != "."))
+            and not _preceded_by_ident(source, index)
+            and (index == 0 or source[index - 1] != ".")
             and RAW_STRING_OPEN.match(source, index) is not None
         ):
             fail("raw string literal is forbidden in trusted Lean proof sources")
@@ -150,12 +165,13 @@ def strip_comments_and_strings(
             and source.startswith('!"', index)
             and index >= 1
             and source[index - 1] in ("s", "m", "f")
-            and (index == 1 or (not _is_ident_tail(source[index - 2]) and source[index - 2] != "."))
+            and not _preceded_by_ident(source, index - 1)
+            and (index == 1 or source[index - 2] != ".")
         ):
             output.extend('!"' if preserve_strings else "  ")
             index += 2
             in_string = "interp"
-        elif source[index] == "'" and (index == 0 or not _is_ident_tail(source[index - 1])):
+        elif source[index] == "'" and not _preceded_by_ident(source, index):
             char_width = 0
             if (
                 index + 2 < len(source)
@@ -294,6 +310,8 @@ def run_lexer_canaries() -> None:
         "def esc_blind := '\\\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
         'def «"» := 1\ndef theorem_bad : True := by sorry\ndef close := ""\n',
         'def Foo.r (s : String) : String := s\ndef a := Foo.r"\\""\naxiom bad : False\n-- "\n',
+        "def x : Bool := !'\"' == 'a'\naxiom bad : False\ndef y : Char := '\"'\n",
+        'def x : Bool := !s!"{(Lean.ofReduceBool : Nat)}" == ""\n',
         'def interp_hide := s!"{(Lean.ofReduceBool : Nat)}"\n',
         "def guillemet_hide := Lean.«ofReduceBool»\n",
         "set_option debug.«skipKernelTC» true\n",
@@ -327,6 +345,7 @@ def run_lexer_canaries() -> None:
 
     for lean_rejected in (
         'def raw_blind := r"\\"\naxiom impossible : False\ndef close := \'"\'\n',
+        'def x : Bool := !r"\\" == ""\naxiom bad : False\ndef y : Char := \'"\'\n',
         'def raw_hashed := r#"sorry"#\n',
         'def a : Nat := panic!"{"\naxiom bad : False\ndef b := "}"\n',
         'def a := throwError "{(Lean.ofReduceBool : Nat)}"\n',
