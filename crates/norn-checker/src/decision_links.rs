@@ -18,7 +18,7 @@
 //!   must be written or captured in the slice, and links may not target
 //!   `norn.*` system types, owned-child types, or owned-collection links.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use norn_ir::{
     ActionRoot, ArtifactEnvelope, ArtifactKind, DiagnosticRemediation, DiagnosticSeverity,

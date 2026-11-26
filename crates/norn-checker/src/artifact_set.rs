@@ -712,14 +712,11 @@ pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
     }
 }
 
-/// PACK-PIN-1: unique scoped IDs, exact endpoints and an acyclic instance graph.
-fn check_pack_instances(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-) -> Vec<Diagnostic> {
-    let pool: Vec<_> = base.iter().chain(artifacts).collect();
+fn collect_pack_instance_declarations<'a>(
+    pool: &[&'a ArtifactEnvelope],
+) -> Vec<(&'a ArtifactEnvelope, String, PackInstance)> {
     let mut declarations = Vec::new();
-    for owner in &pool {
+    for owner in pool {
         if let ArtifactPayload::BusinessPack(payload) = &owner.payload {
             let instances: Vec<PackInstance> = payload
                 .instances
@@ -732,6 +729,41 @@ fn check_pack_instances(
             }
         }
     }
+    declarations
+}
+
+fn count_pack_pin_matches(
+    pool: &[&ArtifactEnvelope],
+    instance: &PackInstance,
+    pack_hashes: &mut BTreeMap<usize, Option<String>>,
+) -> usize {
+    pool.iter()
+        .enumerate()
+        .filter(|(pack_index, pack)| {
+            pack.kind() == ArtifactKind::BusinessPack
+                && pack.artifact_id == instance.pack.artifact_id
+                && pack.version == instance.pack.version
+                && scope_conflict(&instance.scope, &pack.scope).is_none()
+                && pack_hashes
+                    .entry(*pack_index)
+                    .or_insert_with(|| {
+                        crate::receipt::ArtifactRef::of(pack)
+                            .ok()
+                            .map(|pin| pin.sha256)
+                    })
+                    .as_deref()
+                    == Some(instance.pack.sha256.as_str())
+        })
+        .count()
+}
+
+/// PACK-PIN-1: unique scoped IDs, exact endpoints and an acyclic instance graph.
+fn check_pack_instances(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let pool: Vec<_> = base.iter().chain(artifacts).collect();
+    let declarations = collect_pack_instance_declarations(&pool);
     let mut findings = Vec::new();
     let mut edges = BTreeMap::new();
     let mut by_identity = BTreeMap::<(crate::entity_scopes::ScopeKey, &str), Vec<usize>>::new();
@@ -758,25 +790,7 @@ fn check_pack_instances(
                 "instance ID must be non-empty and unique in its scoped graph",
             );
         }
-        let matches = pool
-            .iter()
-            .enumerate()
-            .filter(|(pack_index, pack)| {
-                pack.kind() == ArtifactKind::BusinessPack
-                    && pack.artifact_id == instance.pack.artifact_id
-                    && pack.version == instance.pack.version
-                    && scope_conflict(&instance.scope, &pack.scope).is_none()
-                    && pack_hashes
-                        .entry(*pack_index)
-                        .or_insert_with(|| {
-                            crate::receipt::ArtifactRef::of(pack)
-                                .ok()
-                                .map(|pin| pin.sha256)
-                        })
-                        .as_deref()
-                        == Some(instance.pack.sha256.as_str())
-            })
-            .count();
+        let matches = count_pack_pin_matches(&pool, instance, &mut pack_hashes);
         if matches != 1 || scope_conflict(&instance.scope, &owner.scope).is_some() {
             reject(
                 "core.composition.unresolved_pin",

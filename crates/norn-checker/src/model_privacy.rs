@@ -342,7 +342,7 @@ pub(crate) fn check(
     let mut findings = Vec::new();
     for (artifact, root) in models {
         let key = crate::entity_scopes::scope_key(&artifact.scope);
-        let (lineage, catalog) = scope_cache.entry(key).or_insert_with(|| {
+        let (lineage, catalog) = &*scope_cache.entry(key).or_insert_with(|| {
             let pool = views.of(artifact).pool();
             let lineage = Lineage::of(&pool.iter().collect::<Vec<_>>());
             let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(pool)
@@ -366,7 +366,7 @@ pub(crate) fn check(
             let carried: Vec<Carried> = lineage
                 .carried(input, property)
                 .into_iter()
-                .filter(|carried| trains_personal_data(&catalog, &carried.marking))
+                .filter(|carried| trains_personal_data(catalog, &carried.marking))
                 .collect();
             if carried.is_empty() {
                 continue;
