@@ -153,17 +153,14 @@ fn infer_principal_attributes_with_projection(
     let mut inferred: BTreeMap<String, CedarPrincipalAttribute> = BTreeMap::new();
     let mut diagnostics = Vec::new();
     for document in documents {
-        if !document.generic_rules.is_empty() {
-            {
-                let name = "entitlement_kinds";
-                if let Some(diagnostic) = register_principal_attribute(
-                    &mut inferred,
-                    name,
-                    CedarPrincipalAttribute::StringSet,
-                ) {
-                    diagnostics.push(diagnostic.for_policy(&document.policy_id));
-                }
-            }
+        if !document.generic_rules.is_empty()
+            && let Some(diagnostic) = register_principal_attribute(
+                &mut inferred,
+                "entitlement_kinds",
+                CedarPrincipalAttribute::StringSet,
+            )
+        {
+            diagnostics.push(diagnostic.for_policy(&document.policy_id));
         }
         for rule in &document.rules {
             for condition in &rule.all_of {
@@ -199,6 +196,34 @@ fn infer_principal_attributes_with_projection(
     }
 }
 
+pub(crate) fn is_reserved_principal_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        SCOPE_ATTRIBUTE
+            | "represents"
+            | "acted_by"
+            | "entitlement_kinds"
+            | "entitlement_roles"
+            | "entitlement_groups"
+    )
+}
+
+fn validate_principal_attribute_name(name: &str) -> Result<(), AuthzDiagnostic> {
+    if !is_context_name(name) {
+        return Err(AuthzDiagnostic::new(
+            AuthzCode::AccessNameInvalid,
+            format!("principal attribute '{name}' is not an identifier ([A-Za-z_][A-Za-z0-9_]*)"),
+        ));
+    }
+    if is_reserved_principal_attribute(name) {
+        return Err(AuthzDiagnostic::new(
+            AuthzCode::AccessPrincipalReserved,
+            format!("principal attribute '{name}' is reserved"),
+        ));
+    }
+    Ok(())
+}
+
 fn inferred_principal_attribute(
     resource_type: &str,
     resource: &ResourceCondition,
@@ -207,26 +232,7 @@ fn inferred_principal_attribute(
 ) -> Result<(String, CedarPrincipalAttribute), AuthzDiagnostic> {
     let expected = infer_principal_attribute_type(resource_type, resource, projection)?;
     let name = principal.principal_attribute.as_str();
-    if !is_context_name(name) {
-        return Err(AuthzDiagnostic::new(
-            AuthzCode::AccessNameInvalid,
-            format!("principal attribute '{name}' is not an identifier ([A-Za-z_][A-Za-z0-9_]*)"),
-        ));
-    }
-    if matches!(
-        name,
-        SCOPE_ATTRIBUTE
-            | "represents"
-            | "acted_by"
-            | "entitlement_kinds"
-            | "entitlement_roles"
-            | "entitlement_groups"
-    ) {
-        return Err(AuthzDiagnostic::new(
-            AuthzCode::AccessPrincipalReserved,
-            format!("principal attribute '{name}' is reserved"),
-        ));
-    }
+    validate_principal_attribute_name(name)?;
     Ok((name.to_owned(), expected))
 }
 
@@ -430,6 +436,64 @@ fn lower_document(
     );
 }
 
+fn validate_generic_rule<'a>(
+    rule: &'a norn_ir::access::GenericAccessRule,
+    projection: Option<&CedarSchemaProjection>,
+    catalog: Option<&'a EntitlementCatalog>,
+    seen: &mut BTreeSet<&'a str>,
+) -> Result<&'a EntitlementCatalog, (AuthzCode, String)> {
+    if !seen.insert(rule.rule_id.as_str()) {
+        return Err((
+            AuthzCode::AccessRuleDuplicate,
+            format!("rule id '{}' is declared twice", rule.rule_id),
+        ));
+    }
+    let Some(catalog) = catalog else {
+        return Err((
+            AuthzCode::AccessProjectionRequired,
+            "generic entitlement rules require an admitted type/action catalog".to_owned(),
+        ));
+    };
+    let Some((condition_kind, expected_id)) = (match rule.all_of.as_slice() {
+        [AccessCondition::Entitlement(EntitlementMatchKind::None)] => {
+            Some(("none", "entitlement.none"))
+        }
+        [AccessCondition::Entitlement(EntitlementMatchKind::OwnerOnly)] => {
+            Some(("ownerOnly", "entitlement.owner_only"))
+        }
+        [AccessCondition::Entitlement(EntitlementMatchKind::LinkedRecord)] => {
+            Some(("linkedRecord", "entitlement.linked_record"))
+        }
+        _ => None,
+    }) else {
+        return Err((
+            AuthzCode::AccessGenericRuleInvalid,
+            "generic entitlement rules require exactly one closed entitlement condition".to_owned(),
+        ));
+    };
+    if rule.rule_id != expected_id {
+        return Err((
+            AuthzCode::AccessGenericRuleInvalid,
+            format!(
+                "generic entitlement rule id must be '{expected_id}' for kind '{condition_kind}'"
+            ),
+        ));
+    }
+    if projection.is_none() {
+        return Err((
+            AuthzCode::AccessProjectionRequired,
+            "generic entitlement rules require Cedar projection metadata".to_owned(),
+        ));
+    }
+    if !rule.scope.dimensions.contains(&ScopeDimension::Org) {
+        return Err((
+            AuthzCode::AccessScopeOrgRequired,
+            "the scope conjunct must list `org`".to_owned(),
+        ));
+    }
+    Ok(catalog)
+}
+
 fn lower_generic_rules<'a>(
     access: &'a AccessIr,
     projection: Option<&CedarSchemaProjection>,
@@ -440,67 +504,13 @@ fn lower_generic_rules<'a>(
 ) {
     for rule in &access.generic_rules {
         let id = format!("{}/{}", access.policy_id, rule.rule_id);
-        if !seen.insert(rule.rule_id.as_str()) {
-            diagnostics.push(
-                AuthzDiagnostic::new(
-                    AuthzCode::AccessRuleDuplicate,
-                    format!("rule id '{}' is declared twice", rule.rule_id),
-                )
-                .for_policy(id.as_str()),
-            );
-            continue;
-        }
-        let Some(catalog) = catalog else {
-            diagnostics.push(
-                AuthzDiagnostic::new(
-                    AuthzCode::AccessProjectionRequired,
-                    "generic entitlement rules require an admitted type/action catalog",
-                )
-                .for_policy(id.as_str()),
-            );
-            continue;
+        let catalog = match validate_generic_rule(rule, projection, catalog, seen) {
+            Ok(catalog) => catalog,
+            Err((code, message)) => {
+                diagnostics.push(AuthzDiagnostic::new(code, message).for_policy(id.as_str()));
+                continue;
+            }
         };
-        let Some((condition_kind, expected_id)) = (match rule.all_of.as_slice() {
-            [AccessCondition::Entitlement(EntitlementMatchKind::None)] => {
-                Some(("none", "entitlement.none"))
-            }
-            [AccessCondition::Entitlement(EntitlementMatchKind::OwnerOnly)] => {
-                Some(("ownerOnly", "entitlement.owner_only"))
-            }
-            [AccessCondition::Entitlement(EntitlementMatchKind::LinkedRecord)] => {
-                Some(("linkedRecord", "entitlement.linked_record"))
-            }
-            _ => None,
-        }) else {
-            diagnostics.push(
-                AuthzDiagnostic::new(
-                    AuthzCode::AccessGenericRuleInvalid,
-                    "generic entitlement rules require exactly one closed entitlement condition",
-                )
-                .for_policy(id.as_str()),
-            );
-            continue;
-        };
-        if rule.rule_id != expected_id {
-            diagnostics.push(
-                AuthzDiagnostic::new(
-                    AuthzCode::AccessGenericRuleInvalid,
-                    format!("generic entitlement rule id must be '{expected_id}' for kind '{condition_kind}'"),
-                )
-                .for_policy(id.as_str()),
-            );
-            continue;
-        }
-        if projection.is_none() {
-            diagnostics.push(
-                AuthzDiagnostic::new(
-                    AuthzCode::AccessProjectionRequired,
-                    "generic entitlement rules require Cedar projection metadata",
-                )
-                .for_policy(id.as_str()),
-            );
-            continue;
-        }
         for (resource_type, action_ids) in &catalog.resource_actions {
             if action_ids.is_empty() {
                 continue;
@@ -762,7 +772,7 @@ fn lower_role(role: &RoleCondition, diagnostics: &mut Vec<AuthzDiagnostic>) -> O
     }
     let mut roles = Vec::with_capacity(role.any_of.len());
     for name in &role.any_of {
-        if name.is_empty() {
+        if name.trim().is_empty() {
             diagnostics.push(AuthzDiagnostic::new(
                 AuthzCode::AccessIdEmpty,
                 "a role id is empty",
@@ -973,26 +983,8 @@ fn lower_principal_comparison(
     diagnostics: &mut Vec<AuthzDiagnostic>,
 ) -> Option<String> {
     let name = principal.principal_attribute.as_str();
-    if !is_context_name(name) {
-        diagnostics.push(AuthzDiagnostic::new(
-            AuthzCode::AccessNameInvalid,
-            format!("principal attribute '{name}' is not an identifier ([A-Za-z_][A-Za-z0-9_]*)"),
-        ));
-        return None;
-    }
-    if matches!(
-        name,
-        SCOPE_ATTRIBUTE
-            | "represents"
-            | "acted_by"
-            | "entitlement_kinds"
-            | "entitlement_roles"
-            | "entitlement_groups"
-    ) {
-        diagnostics.push(AuthzDiagnostic::new(
-            AuthzCode::AccessPrincipalReserved,
-            format!("principal attribute '{name}' is reserved"),
-        ));
+    if let Err(diagnostic) = validate_principal_attribute_name(name) {
+        diagnostics.push(diagnostic);
         return None;
     }
     let resource_name = string_literal(&resource.name);
