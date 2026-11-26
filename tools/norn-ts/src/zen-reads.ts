@@ -14,7 +14,7 @@
 export type ZenTokenKind = "identifier" | "literal" | "number" | "string" | "boolean" | "operator" | "bracket" | "template" | "text"
 export interface ZenToken { readonly kind: ZenTokenKind; readonly value: string }
 
-export class ZenLexError extends Error {
+class ZenLexError extends Error {
   constructor(message: string) {
     super(message)
     this.name = "ZenLexError"
@@ -31,7 +31,7 @@ const isAlphanumeric = (c: string | undefined): boolean => isAlpha(c) || isDigit
 /** `Identifier` in the lexer's token set: the context and root references, the callback pointer, null. */
 const IDENTIFIERS = new Set(["$", "$root", "#", "null"])
 
-export function zenTokens(source: string): ZenToken[] {
+function zenTokens(source: string): ZenToken[] {
   const chars = [...source]
   const tokens: ZenToken[] = []
   let at = 0

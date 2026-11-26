@@ -631,9 +631,6 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             let Some(law) = decode_law_artifact(artifact) else {
                 continue;
             };
-            if !law.exceptions.is_empty() {
-                continue;
-            }
             if let Some(triggers) = touched_link_triggers {
                 let single = [artifact.clone()];
                 let single_catalog = ctx.model.type_catalog().with_governing_laws(&single);
@@ -776,7 +773,7 @@ fn linked_law_condition_active<S: SqlEngine>(
     key: &FactKey,
     effective_values: &norn_kernel::cell_host::JsonObject,
 ) -> bool {
-    if law.condition.is_none() {
+    if law.condition.is_none() && law.exceptions.is_empty() {
         return true;
     }
     let mut probe_law = law.clone();
@@ -803,7 +800,8 @@ fn linked_law_condition_active<S: SqlEngine>(
         subject: key.clone(),
     };
     let mut remaining = norn_kernel::TurnFuel::new(1_000_000);
-    // The probe law emits `NotSatisfied` on its `false` predicate iff its activation condition is true.
+    // The probe law emits `NotSatisfied` on its `false` predicate iff its
+    // activation condition holds and no exception lifts the law.
     norn_kernel::governing_laws::evaluate_linked(
         &catalog,
         key,

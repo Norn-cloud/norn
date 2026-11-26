@@ -416,3 +416,96 @@ fn recorded_commit_sequence_replays_identical_receipts() {
         path.display()
     );
 }
+
+#[test]
+fn observed_sqlite_cell_folds_law_exceptions_and_records_holds_honestly() {
+    let mut law = serde_json::to_value(&laws(1)[0]).expect("law json");
+    law["payload"]["modality"] = json!({"kind": "always"});
+    law["payload"]["response"]["expression"] = json!("self.qty <= 100");
+    law["payload"]["exceptions"] = json!([
+        {
+            "id": "vip",
+            "overrides": "bench.ceiling_0000",
+            "condition": "self.label == 'vip'",
+            "rationale": "VIP items may exceed 100.",
+            "source": {"artifactId": "bench.ceiling_0000.law", "pointer": "/payload"}
+        },
+        {
+            "id": "hard_cap",
+            "overrides": "vip",
+            "condition": "self.qty > 1000",
+            "rationale": "Hard cap still applies above 1000.",
+            "source": {"artifactId": "bench.ceiling_0000.law", "pointer": "/payload"}
+        }
+    ]);
+    let artifact: ArtifactEnvelope = serde_json::from_value(law).expect("excepted law");
+    let model = Model::from_definitions(&[object_type(0)], &[])
+        .expect("model")
+        .with_governing_laws(&[artifact])
+        .expect("laws");
+    let recorder = std::sync::Arc::new(norn_cell::DomainCoverageRecorder::new());
+    let mut observed = Cell::new(
+        CellStore::open_in_memory(model).expect("SQLite"),
+        "org_demo/dev",
+        |command| command.payload.clone(),
+    )
+    .expect("cell")
+    .into_observed(std::sync::Arc::clone(&recorder));
+
+    let write_row = |key: &str, qty: i64, label: &str| CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(OBJECT_TYPE, key),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({"qty": qty, "label": label}))
+                    .expect("values"),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+
+    // 1. Lifted by `vip` exception: commits, and MUST NOT be counted as a law hold.
+    observed
+        .commit(write_row("lifted", 500, "vip"))
+        .expect("vip exception lifts law");
+    let after_lifted = recorder.snapshot();
+    assert_eq!(
+        after_lifted
+            .law_holds
+            .get("bench.ceiling_0000")
+            .copied()
+            .unwrap_or(0),
+        0,
+        "an excepted write must not be tallied as a law hold"
+    );
+
+    // 2. Active non-excepted write satisfying the law: commits and increments law_holds to 1.
+    observed
+        .commit(write_row("held", 50, "regular"))
+        .expect("regular row satisfies law");
+    let after_held = recorder.snapshot();
+    assert_eq!(
+        after_held
+            .law_holds
+            .get("bench.ceiling_0000")
+            .copied()
+            .unwrap_or(0),
+        1,
+        "an active unexcepted passing write must tally one law hold"
+    );
+
+    // 3. Nested `hard_cap` overrides `vip`: refuses and tallies a law violation.
+    let err = observed
+        .commit(write_row("overridden", 1500, "vip"))
+        .expect_err("hard_cap must override vip and refuse");
+    assert_eq!(err.code(), "core.laws.violated");
+    let after_refused = recorder.snapshot();
+    assert_eq!(
+        after_refused
+            .law_violations
+            .get("bench.ceiling_0000")
+            .copied()
+            .unwrap_or(0),
+        1
+    );
+}

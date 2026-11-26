@@ -922,6 +922,54 @@ fn law_link_reads_admit_one_to_one_hop_only() {
         says(&second, &["`self.order.ticket` is a second hop"]),
         "{second:?}"
     );
+    // Exception conditions enforce the same guarded non-null narrowing and 1-hop link bound.
+    let check_exception = |condition: Option<&str>, ex_condition: &str| {
+        let mut law = laws()[1].clone();
+        let id = law["payload"]["id"].as_str().expect("id").to_owned();
+        let payload = law["payload"].as_object_mut().expect("payload");
+        match condition {
+            Some(condition) => payload.insert("condition".into(), json!(condition)),
+            None => payload.remove("condition"),
+        };
+        law["payload"]["response"]["expression"] = json!("self.amount <= 100");
+        law["payload"]["exceptions"] = json!([{
+            "id": "ex",
+            "overrides": id,
+            "condition": ex_condition,
+            "rationale": "linked exception",
+            "source": {"artifactId": "erpnext.approved_amount.law", "pointer": "/payload"}
+        }]);
+        diagnostics(vec![law], &base)
+    };
+    let ex_admitted = check_exception(Some("self.order != null"), "self.order.paid == true");
+    assert!(
+        !refused(&ex_admitted, codes::UNKNOWN_BINDING)
+            && !refused(&ex_admitted, codes::PREDICATE_TYPE),
+        "{ex_admitted:?}"
+    );
+    let ex_unguarded =
+        check_exception(Some("self.status == 'approved'"), "self.order.paid == true");
+    assert!(
+        refused(&ex_unguarded, codes::PREDICATE_TYPE),
+        "{ex_unguarded:?}"
+    );
+    let ex_second = check_exception(
+        Some("self.order != null"),
+        "self.order.ticket.status == 'accepted'",
+    );
+    assert!(
+        ex_second.iter().any(|found| {
+            found.code.as_str() == codes::UNKNOWN_BINDING
+                && found
+                    .message
+                    .contains("`self.order.ticket` is a second hop")
+                && found
+                    .span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/exceptions/0/condition")
+        }),
+        "{ex_second:?}"
+    );
 }
 
 /// The artifacts of the canon itemized-document concept and of the documents
@@ -1622,5 +1670,60 @@ fn installed_law_is_closed_to_exceptions_from_another_artifact() {
             .any(|d| d.code.as_str() == codes::WEAKENS_INHERITED
                 && d.message.contains("cannot add or change its exceptions")),
         "{findings:?}"
+    );
+}
+
+#[test]
+fn zero_implementor_interface_law_enforces_one_hop_link_bound_in_exceptions() {
+    let (law_artifact, mut base) = interface_case(false, "self.total_amount >= 0");
+    // Give `core.Party` a to-one link so `self.counterparty.parent` is a second hop.
+    let party = base
+        .iter_mut()
+        .find(|a| a.artifact_id == "core.Party.interface")
+        .expect("core.Party");
+    let mut party_json = serde_json::to_value(party.payload.to_json_value()).expect("party json");
+    party_json["interface"]["links"] = json!([{
+        "id": "parent",
+        "target": "core.Party",
+        "cardinality": {"to": "one", "from": "many", "required": true}
+    }]);
+    party.payload = ArtifactPayload::from_kind_json(
+        &norn_ir::ArtifactKind::Entity,
+        serde_json::from_value(party_json).expect("party tree"),
+    )
+    .expect("party payload");
+
+    let check_iface_exception = |ex_condition: &str| {
+        let mut law_json = serde_json::to_value(&law_artifact).expect("law json");
+        let id = law_json["payload"]["id"].as_str().expect("id").to_owned();
+        law_json["payload"]["exceptions"] = json!([{
+            "id": "ex",
+            "overrides": id,
+            "condition": ex_condition,
+            "rationale": "interface linked exception",
+            "source": {"artifactId": law_artifact.artifact_id, "pointer": "/payload"}
+        }]);
+        diagnostics(vec![law_json], &base)
+    };
+
+    let one_hop = check_iface_exception("self.counterparty.display_name == 'VIP'");
+    assert!(
+        !one_hop
+            .iter()
+            .any(|d| d.code.as_str() == codes::UNKNOWN_BINDING
+                || d.code.as_str() == codes::PREDICATE_TYPE),
+        "{one_hop:?}"
+    );
+    let two_hop = check_iface_exception("self.counterparty.parent.display_name == 'VIP'");
+    assert!(
+        two_hop.iter().any(|d| {
+            d.code.as_str() == codes::UNKNOWN_BINDING
+                && d.message
+                    .contains("`self.counterparty.parent` is a second hop")
+                && d.span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/exceptions/0/condition")
+        }),
+        "{two_hop:?}"
     );
 }
