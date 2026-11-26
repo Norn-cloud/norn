@@ -1345,13 +1345,10 @@ fn words(
 
 /// The input field a slice keys by, when it is `{"property": {"from": "input", "property": F}}`.
 fn slice_input(key: &norn_ir::SliceKey) -> Option<String> {
-    if let norn_ir::SliceKey::Property { from, property } = key
-        && from == "input"
-    {
-        Some(property.as_str().to_owned())
-    } else {
-        None
-    }
+    let norn_ir::SliceKey::Property { from, property } = key else {
+        return None;
+    };
+    (from == "input").then(|| property.as_str().to_owned())
 }
 
 /// The fix: an action the caller may call that upserts this record and takes
