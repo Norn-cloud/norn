@@ -84,9 +84,14 @@ export function fetchTransport(
   }
 }
 
+export const DEFAULT_CLOCK: Clock = {
+  setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+}
+
 export function createDriver(options: DriverOptions): Driver {
   const { machine, evaluate, transport } = options
-  const clock: Clock = options.clock ?? { setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms), clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>) }
+  const clock: Clock = options.clock ?? DEFAULT_CLOCK
   const newKey = options.newKey ?? (() => crypto.randomUUID())
   const keys = new Map<string, string>()
   const inflight = new Map<number, InFlight>()

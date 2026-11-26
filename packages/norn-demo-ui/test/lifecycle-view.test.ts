@@ -429,6 +429,9 @@ test("no arrow crosses a card, for any lifecycle the layout can produce", () => 
 // The view's load states are a declared machine, admitted by the checker like any page's: every
 // state can exit (no endless "Counting…"), every outcome of the read is handled.
 const pkg = process.env.NORN_CHECKER_WASM_PKG
+if (!pkg && process.env.NORN_CHECKER_WASM_REQUIRED === "1") {
+  throw new Error("NORN_CHECKER_WASM_PKG is required when NORN_CHECKER_WASM_REQUIRED=1")
+}
 const withChecker = pkg ? describe : describe.skip
 withChecker("the checker", () => {
   test("admits the view's machine: no widget.machine.* finding", async () => {

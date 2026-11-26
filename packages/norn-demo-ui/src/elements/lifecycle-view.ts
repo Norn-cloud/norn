@@ -366,11 +366,8 @@ export function stepState(lifecycle: LifecycleDoc, finding: LifecycleFinding, ta
 
 const SVG_NS = "http://www.w3.org/2000/svg"
 
-const isRouteNotServed = (answer: LiveAnswer | null): boolean => {
-  if (answer === null) return false
-  const code = (answer.body as { code?: unknown } | undefined)?.code
-  return (answer.status === 404 || answer.status === 503) && (typeof code !== "string" || code === "route.not_found")
-}
+const isRouteNotServed = (answer: LiveAnswer | null): boolean =>
+  answer !== null && classifyResponse(answer.status, answer.body).outcome === "not_served"
 
 function sameJson(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true

@@ -82,20 +82,16 @@ export interface LazyEngine {
 
 export function lazyEngine(loader: EngineLoader): LazyEngine {
   let ready: Evaluate | null = null
-  let engine: CheckerEvaluator | null = null
   let loading: Promise<void> | null = null
   let failed = false
   let attempts = 0
-  // A load after a failure asks the loader again: it reports `loading` until that attempt settles.
   const start = (fresh: boolean): Promise<void> => {
     const attempt = ++attempts
     failed = false
-    // A superseded attempt's waiters follow the current one: ready, still loading, or failed.
     const current = (error: unknown): Promise<void> => (ready !== null ? Promise.resolve() : loading ?? Promise.reject(error))
     loading = loader({ fresh }).then(
       (checker) => {
         if (attempt !== attempts || ready !== null) return current(undefined)
-        engine = checker
         ready = wasmEvaluate(checker)
         return undefined
       },
@@ -117,10 +113,10 @@ export function lazyEngine(loader: EngineLoader): LazyEngine {
       throw new EngineNotReady(expression)
     },
     evaluateWith: async (expression, input) => {
-      const constant = engine === null ? literal(expression) : null
+      const constant = ready === null ? literal(expression) : null
       if (constant !== null) return constant.value
       await load()
-      return wasmEvaluate(engine!)(expression, input as Parameters<Evaluate>[1])
+      return ready!(expression, input as Parameters<Evaluate>[1])
     },
     load,
     reload: () => (ready !== null ? Promise.resolve() : start(true)),
