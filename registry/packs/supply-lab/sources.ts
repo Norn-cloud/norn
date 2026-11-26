@@ -38,14 +38,14 @@ export const ErpSupplierMapping = Norn.mapping({
     properties: [
       { property: "receipt_line_id", value: "input.name" },
       // ERP vendor codes onto canonical supplier codes; an unknown vendor keeps its own code.
-      { property: "supplier_id", value: "({'NILE-001': 'SUP-NILE', 'DELTA-07': 'SUP-DELTA'}[input.supplier]) ?? input.supplier" },
+      { property: "supplier_id", value: "({'NILE-001': 'SUP-NILE', 'DELTA-07': 'SUP-DELTA'})[input.supplier] ?? input.supplier" },
       { property: "po_item_ref", value: "input.purchase_order_item" },
       { property: "received_qty", value: "input.received_qty" },
       { property: "damaged_qty", value: "input.rejected_qty" },
       // ERP units onto canonical units via a bounded literal lookup table (O(1) key-length
       // cost regardless of table size); any other unit passes through and the `unit` enum
       // quarantines it (MAP-ENUM-TEXT-1).
-      { property: "unit", value: "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l'}[input.uom]) ?? input.uom" },
+      { property: "unit", value: "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l'})[input.uom] ?? input.uom" },
       { property: "received_at", value: "timestamp(input.posting_datetime)" },
     ],
   }],
@@ -95,7 +95,7 @@ export const WmsScanMapping = Norn.mapping({
       { property: "warehouse_code", value: "input.site" },
       { property: "sku_code", value: "input.item" },
       { property: "on_hand_qty", value: "input.qty" },
-      { property: "unit", value: "({'EA': 'each', 'KG': 'kg', 'L': 'l'}[input.uom]) ?? input.uom" },
+      { property: "unit", value: "({'EA': 'each', 'KG': 'kg', 'L': 'l'})[input.uom] ?? input.uom" },
       { property: "quantity_basis", value: "input.basis" },
       { property: "as_of", value: "timestamp(input.counted_at)" },
     ],

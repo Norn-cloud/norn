@@ -1091,7 +1091,7 @@ fn literal_table_lookup_stays_within_decide_fuel_and_bounds_runtime() {
         EnvOptions::default(),
     )
     .expect("input env");
-    let source = "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l', 'Box': 'each', 'Gram': 'kg', 'Ml': 'l'}[input.uom]) ?? input.uom";
+    let source = "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l', 'Box': 'each', 'Gram': 'kg', 'Ml': 'l'})[input.uom] ?? input.uom";
     let expr = Expression::compile(source).expect("compile");
     let checked = check_expression_with(&expr, &env, &Type::text(), &limits())
         .expect("bounded literal-table lookup stays within norn.limits/1 decide fuel");
@@ -1124,7 +1124,7 @@ fn literal_table_lookup_stays_within_decide_fuel_and_bounds_runtime() {
     )
     .expect("record lookup env");
     let rec_expr =
-        Expression::compile("({'a': {'x': input.s}}[input.k]) ?? {'x': ''}").expect("compile");
+        Expression::compile("({'a': {'x': input.s}})[input.k] ?? {'x': ''}").expect("compile");
     let rec_checked = check_expression_with(&rec_expr, &rec_env, &Type::Json, &limits())
         .expect("record-valued literal-table lookup checks");
     let rec_bound = rec_checked.cost().units();

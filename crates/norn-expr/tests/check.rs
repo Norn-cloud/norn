@@ -2813,7 +2813,7 @@ fn literal_table_lookup_admits_non_null_string_key_and_refuses_invalid_shapes()
 
     // Valid literal-table lookup with fallback yields string and evaluates hit + miss cleanly.
     let lookup =
-        Expression::compile("({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l'}[input.uom]) ?? input.uom")?;
+        Expression::compile("({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l'})[input.uom] ?? input.uom")?;
     check_expression(&lookup, &env, &Type::text())
         .map_err(|errors| format!("lookup failed: {errors:?}"))?;
     for (uom, expected) in [
@@ -2848,20 +2848,40 @@ fn literal_table_lookup_admits_non_null_string_key_and_refuses_invalid_shapes()
     assert_eq!(
         check(
             &env,
-            "({'Nos': 'each'}[input.maybe_uom]) ?? 'each'",
+            "({'Nos': 'each'})[input.maybe_uom] ?? 'each'",
             &Type::text()
         ),
         Err(vec![codes::NULLABLE])
     );
     // Non-string key refuses with TYPE_ERROR.
     assert_eq!(
-        check(&env, "({'1': 'each'}[input.qty]) ?? 'each'", &Type::text()),
+        check(&env, "({'1': 'each'})[input.qty] ?? 'each'", &Type::text()),
         Err(vec![codes::TYPE_ERROR])
     );
     // Mixed-type table refuses with TYPE_ERROR.
     assert_eq!(
-        check(&env, "({'a': 'each', 'b': 1}[input.uom])", &Type::Json),
+        check(&env, "({'a': 'each', 'b': 1})[input.uom]", &Type::Json),
         Err(vec![codes::TYPE_ERROR])
     );
+
+    // Condition null-guard narrows optional record links for both Norn and zen's strict cross-check.
+    let guarded_env = ZenTypeEnv::input_only_with_records(
+        std::collections::BTreeMap::from([(
+            "test.Receipt".to_owned(),
+            std::collections::BTreeMap::from([("received_qty".to_owned(), decimal(6))]),
+        )]),
+        std::collections::BTreeMap::from([
+            ("inspected_qty".to_owned(), decimal(6)),
+            (
+                "receipt".to_owned(),
+                Type::Record("test.Receipt".to_owned()).optional(),
+            ),
+        ]),
+        EnvOptions::default(),
+    )?;
+    let cond = Expression::compile("input.receipt != null")?;
+    let body = Expression::compile("input.inspected_qty <= input.receipt.received_qty")?;
+    norn_expr::check_expression_under(&body, &cond, &guarded_env, &Type::Bool)
+        .map_err(|errors| format!("guarded optional-link comparison failed: {errors:?}"))?;
     Ok(())
 }

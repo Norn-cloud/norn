@@ -57,7 +57,7 @@
           },
           {
             "property": "unit",
-            "value": "({'EA': 'each', 'KG': 'kg', 'L': 'l'}[input.uom]) ?? input.uom"
+            "value": "({'EA': 'each', 'KG': 'kg', 'L': 'l'})[input.uom] ?? input.uom"
           },
           {
             "property": "quantity_basis",

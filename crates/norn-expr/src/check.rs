@@ -1125,7 +1125,7 @@ pub(super) fn check_guarded(
         diagnostics.extend(validate_lowered_source(&runtime_source, span));
     }
     // Cross-check: zen's strict analysis must not report an error either.
-    let root = ZenEnv::new(env).root(None);
+    let root = narrow_zen_assumed(&ZenEnv::new(env).root(None), options.assumed);
     let analysis = intellisense.analyze(source, &root);
     diagnostics.extend(upstream_errors(&analysis.diagnostics));
     if !diagnostics.is_empty() {
@@ -1486,6 +1486,47 @@ impl<'a> ZenEnv<'a> {
         self.memo.insert(key, object.clone());
         object
     }
+}
+
+/// Apply `condition_null_guards` assumed non-null paths to the zen upstream
+/// root type so `check_expression_under` narrows both Norn's checker and zen's
+/// strict cross-check consistently.
+fn narrow_zen_assumed(root: &VariableType, assumed: &[Vec<String>]) -> VariableType {
+    if assumed.is_empty() {
+        return root.clone();
+    }
+    let mut paths: Vec<&[String]> = assumed.iter().map(Vec::as_slice).collect();
+    paths.sort_by_key(|path| path.len());
+    let mut current = root.clone();
+    for path in paths {
+        current = narrow_zen_path(&current, path);
+    }
+    current
+}
+
+fn narrow_zen_path(ty: &VariableType, path: &[String]) -> VariableType {
+    let Some((head, tail)) = path.split_first() else {
+        return match ty {
+            VariableType::Nullable(inner) => inner.as_ref().clone(),
+            other => other.clone(),
+        };
+    };
+    let VariableType::Object(members) = ty else {
+        return ty.clone();
+    };
+    let cloned = VariableType::empty_object();
+    if let VariableType::Object(target) = &cloned {
+        let mut out = target.borrow_mut();
+        for (name, field) in members.borrow().iter() {
+            let next = if name.as_ref() == head.as_str() {
+                narrow_zen_path(field, tail)
+            } else {
+                field.clone()
+            };
+            out.insert(Rc::clone(name), next);
+        }
+    }
+    cloned
 }
 
 // ---------------------------------------------------------------------------
@@ -2550,63 +2591,7 @@ impl<'a> Checker<'a> {
                     format!("`{key}` is not a member of the record"),
                 ),
             },
-            T::Record(Rec::Env { name, depth }) => {
-                let Some(field) = self.env.record(&name).and_then(|r| r.fields.get(*key)) else {
-                    return self.report(
-                        node,
-                        codes::UNKNOWN_MEMBER,
-                        format!("`{key}` is not a member of `{name}`"),
-                    );
-                };
-                let depth = match field.source {
-                    FieldSource::Link { .. } | FieldSource::Inverse { .. } => {
-                        let Some(next) = depth.checked_sub(1) else {
-                            return self.report(
-                                node,
-                                codes::UNKNOWN_MEMBER,
-                                format!("`{key}` is a link beyond the link depth"),
-                            );
-                        };
-                        next
-                    }
-                    FieldSource::Property { .. } | FieldSource::Builtin => depth,
-                };
-                self.exact |= exact_type(&field.ty);
-                match lower(&field.ty, depth, self.env, Some(&name), self.exact_math) {
-                    Some(mut ty) => {
-                        if self.exact_math
-                            && let Some(group) = units::decimal_binding_group(&field.ty)
-                        {
-                            let owner = self.env.decimal_binding_owner(&name, key);
-                            let instance = units::instance_path(
-                                target,
-                                &|alias| {
-                                    self.scopes
-                                        .iter()
-                                        .rev()
-                                        .find(|scope| scope.alias.as_deref() == Some(alias))
-                                        .map(|scope| scope.id)
-                                },
-                                self.scopes.last().map(|scope| scope.id),
-                            );
-                            let op = units::bound_operand(owner, instance, group);
-                            if let T::Number(slot) = &mut ty {
-                                *slot = op;
-                            } else if let T::Optional(inner) = &mut ty
-                                && let T::Number(slot) = inner.as_mut()
-                            {
-                                *slot = op;
-                            }
-                        }
-                        Some(ty)
-                    }
-                    None => self.report(
-                        node,
-                        codes::OPAQUE_READ,
-                        format!("`{key}` is an opaque json-ext property and cannot be read"),
-                    ),
-                }
-            }
+            T::Record(Rec::Env { name, depth }) => self.env_member(node, target, &name, depth, key),
             other @ (T::Null
             | T::Bool
             | T::Number(_)
@@ -2617,6 +2602,71 @@ impl<'a> Checker<'a> {
             | T::ParsedTimestamp
             | T::List(_)
             | T::Optional(_)) => self.unsupported(node, &format!("a member read on `{other}`")),
+        }
+    }
+
+    fn env_member(
+        &mut self,
+        node: &Node<'_>,
+        target: &Node<'_>,
+        name: &str,
+        depth: u32,
+        key: &str,
+    ) -> Option<T> {
+        let Some(field) = self.env.record(name).and_then(|r| r.fields.get(key)) else {
+            return self.report(
+                node,
+                codes::UNKNOWN_MEMBER,
+                format!("`{key}` is not a member of `{name}`"),
+            );
+        };
+        let depth = match field.source {
+            FieldSource::Link { .. } | FieldSource::Inverse { .. } => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return self.report(
+                        node,
+                        codes::UNKNOWN_MEMBER,
+                        format!("`{key}` is a link beyond the link depth"),
+                    );
+                };
+                next
+            }
+            FieldSource::Property { .. } | FieldSource::Builtin => depth,
+        };
+        self.exact |= exact_type(&field.ty);
+        match lower(&field.ty, depth, self.env, Some(name), self.exact_math) {
+            Some(mut ty) => {
+                if self.exact_math
+                    && let Some(group) = units::decimal_binding_group(&field.ty)
+                {
+                    let owner = self.env.decimal_binding_owner(name, key);
+                    let instance = units::instance_path(
+                        target,
+                        &|alias| {
+                            self.scopes
+                                .iter()
+                                .rev()
+                                .find(|scope| scope.alias.as_deref() == Some(alias))
+                                .map(|scope| scope.id)
+                        },
+                        self.scopes.last().map(|scope| scope.id),
+                    );
+                    let op = units::bound_operand(owner, instance, group);
+                    if let T::Number(slot) = &mut ty {
+                        *slot = op;
+                    } else if let T::Optional(inner) = &mut ty
+                        && let T::Number(slot) = inner.as_mut()
+                    {
+                        *slot = op;
+                    }
+                }
+                Some(ty)
+            }
+            None => self.report(
+                node,
+                codes::OPAQUE_READ,
+                format!("`{key}` is an opaque json-ext property and cannot be read"),
+            ),
         }
     }
 

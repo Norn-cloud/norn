@@ -249,23 +249,55 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
     seq: u64,
 ) -> Result<(), String> {
     let mut seeded_keys: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut seeded_slices: BTreeMap<String, FactKey> = BTreeMap::new();
     let desired_states = parse_slice_precondition_states(&admitted.root.preconditions);
 
     for slice_spec in &admitted.root.slice {
-        if let Some(prop_name) = slice_input_key_field(&slice_spec.key)
-            && let Some(JsonValue::String(target_id)) = input.get(prop_name)
-        {
+        let resolved_id = match &slice_spec.key {
+            SliceKey::Property { from, property } if from == "input" => {
+                match input.get(property.as_str()) {
+                    Some(JsonValue::String(id)) => Some(id.clone()),
+                    _ => None,
+                }
+            }
+            SliceKey::Property { from, property } => seeded_slices
+                .get(from.as_str())
+                .map(|parent| {
+                    host.load(parent)
+                        .map_err(|err| format!("load {parent}: {err}"))
+                        .map(
+                            |loaded| match loaded.values.and_then(|v| v.get(property.as_str())) {
+                                Some(JsonValue::String(id)) => Some(id.clone()),
+                                _ => None,
+                            },
+                        )
+                })
+                .transpose()?
+                .flatten(),
+            SliceKey::Parameter { .. }
+            | SliceKey::TriggerObject
+            | SliceKey::TriggerBefore
+            | SliceKey::TriggerAfter
+            | SliceKey::TriggerChanges
+            | SliceKey::Link { .. }
+            | SliceKey::Predicate { .. } => None,
+        };
+        if let Some(target_id) = resolved_id {
             let target_ty_name = slice_spec.object_type.as_str();
             if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
                 seed_related_target(
                     (pack, catalog),
                     host,
                     target_ty_name,
-                    target_id,
+                    &target_id,
                     desired_states.get(&slice_spec.name),
                     seq,
                 )?;
             }
+            seeded_slices.insert(
+                slice_spec.name.clone(),
+                FactKey::new(target_ty_name, &target_id),
+            );
         }
     }
     for link in &admitted.root.create_links {
