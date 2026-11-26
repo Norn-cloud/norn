@@ -296,6 +296,42 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
     assert_eq!(body["error"]["code"], -32602);
 }
 
+/// The route serves Studio's built-in pages beside its definitions; `detail: full` returns only
+/// the named workspace artifacts, so never a built-in page, even when one is named.
+#[test]
+fn the_full_catalog_carries_no_builtin_pages() {
+    let cell = cell();
+    let (_, catalog) = direct(&cell, "/v1/definitions", SCOPE, VIEWER);
+    assert!(
+        catalog["builtins"]
+            .as_array()
+            .is_some_and(|pages| !pages.is_empty()),
+        "{catalog}"
+    );
+    for names in [
+        json!([analytics::TYPE]),
+        json!([norn_api::builtin_pages::RECORD_PAGE_ID]),
+    ] {
+        let full = call_tool(
+            &cell,
+            VIEWER,
+            "norn_catalog",
+            &json!({"detail": "full", "names": names}),
+        )["structuredContent"]
+            .clone();
+        assert_eq!(full.get("builtins"), None, "{names}: {full}");
+        assert_eq!(full.get("receipt"), None, "{names}: {full}");
+    }
+    let named = call_tool(
+        &cell,
+        VIEWER,
+        "norn_catalog",
+        &json!({"detail": "full", "names": [norn_api::builtin_pages::RECORD_PAGE_ID]}),
+    )["structuredContent"]
+        .clone();
+    assert_eq!(named["artifacts"], json!([]), "{named}");
+}
+
 #[test]
 fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
     let cell = cell();
@@ -385,25 +421,6 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
                 .collect::<Vec<_>>(),
             named
         );
-        // The route serves Studio's built-in pages; detail full returns only named
-        // workspace artifacts, so never those, even when one is named.
-        assert!(
-            catalog["builtins"]
-                .as_array()
-                .is_some_and(|pages| !pages.is_empty()),
-            "{catalog}"
-        );
-        assert_eq!(full.get("builtins"), None);
-        assert_eq!(full.get("receipt"), None);
-        let builtin = call_tool(
-            &cell,
-            auth,
-            "norn_catalog",
-            &json!({"detail": "full", "names": [norn_api::builtin_pages::RECORD_PAGE_ID]}),
-        )["structuredContent"]
-            .clone();
-        assert_eq!(builtin.get("builtins"), None);
-        assert_eq!(builtin["artifacts"], json!([]));
         assert_eq!(
             call_tool(&cell, auth, "norn_catalog", &json!({"detail": "full"}))["isError"],
             true
