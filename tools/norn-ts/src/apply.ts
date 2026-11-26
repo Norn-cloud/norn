@@ -41,6 +41,20 @@ export interface Target {
   readonly maxResponseBytes?: number
 }
 
+function sanitizeTargetUrlForDiagnostic(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    const hadQuery = rawUrl.includes("?") || parsed.search !== ""
+    const hadHash = rawUrl.includes("#") || parsed.hash !== ""
+    parsed.search = ""
+    parsed.hash = ""
+    const base = sanitizeUrlForDiagnostic(parsed.toString())
+    return `${base}${hadQuery ? "?<redacted>" : ""}${hadHash ? "#<redacted>" : ""}`
+  } catch {
+    return "[malformed URL redacted]"
+  }
+}
+
 /**
  * Validate and normalize a target base URL for `norn plan|apply`.
  *
@@ -50,22 +64,22 @@ export interface Target {
  */
 export function normalizeTargetUrl(rawUrl: string): string {
   if (rawUrl.includes("?") || rawUrl.includes("#")) {
-    throw new Error(`refusing target URL with query or fragment: ${sanitizeUrlForDiagnostic(rawUrl)}`)
+    throw new Error(`refusing target URL with query or fragment: ${sanitizeTargetUrlForDiagnostic(rawUrl)}`)
   }
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
   } catch {
-    throw new Error(`invalid target URL: ${sanitizeUrlForDiagnostic(rawUrl)}`)
+    throw new Error(`invalid target URL: ${sanitizeTargetUrlForDiagnostic(rawUrl)}`)
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`refusing target URL with unsupported protocol: ${sanitizeUrlForDiagnostic(rawUrl)}`)
+    throw new Error(`refusing target URL with unsupported protocol: ${sanitizeTargetUrlForDiagnostic(rawUrl)}`)
   }
   if (parsed.username !== "" || parsed.password !== "") {
-    throw new Error(`refusing target URL with embedded credentials: ${sanitizeUrlForDiagnostic(rawUrl)}`)
+    throw new Error(`refusing target URL with embedded credentials: ${sanitizeTargetUrlForDiagnostic(rawUrl)}`)
   }
   if (parsed.hostname.length === 0 || parsed.search !== "" || parsed.hash !== "") {
-    throw new Error(`invalid target URL: ${sanitizeUrlForDiagnostic(rawUrl)}`)
+    throw new Error(`invalid target URL: ${sanitizeTargetUrlForDiagnostic(rawUrl)}`)
   }
   const cleanPath = parsed.pathname.replace(/\/+$/, "")
   return `${parsed.origin}${cleanPath}`
@@ -110,8 +124,8 @@ export function extractCookieHeader(setCookies: ReadonlyArray<string>, nowMs = D
         maxAgeExpired = Number(attrValue) <= 0
       } else if (attrName === "expires") {
         const parsed = Date.parse(attrValue)
-        if (!Number.isNaN(parsed) && parsed <= nowMs) {
-          expiresExpired = true
+        if (!Number.isNaN(parsed)) {
+          expiresExpired = parsed <= nowMs
         }
       }
     }
@@ -125,7 +139,17 @@ export function extractCookieHeader(setCookies: ReadonlyArray<string>, nowMs = D
   return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join("; ")
 }
 
-async function readBoundedText(
+function cancelBodyWithoutWaiting(response: Response): void {
+  const body = response.body
+  if (!body) return
+  try {
+    void body.cancel().catch(() => undefined)
+  } catch {
+    // Already locked or disturbed.
+  }
+}
+
+export async function readBoundedText(
   response: Response,
   limit: number,
   label: string,
@@ -133,7 +157,7 @@ async function readBoundedText(
 ): Promise<string> {
   const declaredRaw = response.headers.get("content-length")?.trim()
   if (declaredRaw && /^\d+$/.test(declaredRaw) && Number(declaredRaw) > limit) {
-    await response.body?.cancel()
+    cancelBodyWithoutWaiting(response)
     throw new Error(`${label} response exceeds size limit (${limit} bytes)`)
   }
   if (!response.body) return ""
@@ -166,10 +190,18 @@ async function readBoundedText(
     text += decoder.decode()
     return text
   } catch (error) {
-    await reader.cancel().catch(() => undefined)
+    try {
+      void reader.cancel().catch(() => undefined)
+    } catch {
+      // Ignore cancellation errors while surfacing the original failure.
+    }
     throw error
   } finally {
-    reader.releaseLock()
+    try {
+      reader.releaseLock()
+    } catch {
+      // Reader already released or detached.
+    }
   }
 }
 
@@ -204,7 +236,7 @@ async function signIn(origin: string, email: string, password: string, timeoutMs
     if (cookieHeader.length === 0) throw new Error("Studio sign-in returned no session")
     return cookieHeader
   } finally {
-    await response.body?.cancel().catch(() => undefined)
+    cancelBodyWithoutWaiting(response)
   }
 }
 
@@ -222,7 +254,7 @@ export async function post(target: Target, path: string, body?: unknown): Promis
       : { method: "POST", headers: { "content-type": "application/json", accept: "application/json", ...target.headers }, body: JSON.stringify(body) }),
   })
   if (response.status >= 300 && response.status < 400) {
-    await response.body?.cancel().catch(() => undefined)
+    cancelBodyWithoutWaiting(response)
     throw new Error(`${path} answered with unexpected redirect (${response.status})`)
   }
   const text = await readBoundedText(response, maxBytes, path, deadline)

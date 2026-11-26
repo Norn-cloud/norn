@@ -8,6 +8,7 @@ import {
   extractCookieHeader,
   normalizeTargetUrl,
   post,
+  readBoundedText,
 } from "../src/apply.ts"
 
 // HOST-INSTALL-1 client: `norn apply` plans first, applies against the planned
@@ -154,6 +155,17 @@ test("normalizeTargetUrl rejects query strings, fragments, userinfo, and non-HTT
   ]) {
     expect(() => normalizeTargetUrl(bad)).toThrow()
   }
+
+  let redactedError = ""
+  try {
+    normalizeTargetUrl("https://alice:pwsecret@studio.example/api/host?token=querysecret#fragsecret")
+  } catch (error) {
+    redactedError = error instanceof Error ? error.message : String(error)
+  }
+  expect(redactedError).toContain("?<redacted>#<redacted>")
+  expect(redactedError).not.toContain("pwsecret")
+  expect(redactedError).not.toContain("querysecret")
+  expect(redactedError).not.toContain("fragsecret")
 })
 
 test("extractCookieHeader deduplicates cookies last-write-wins and honors Max-Age/Expires deletions", () => {
@@ -192,13 +204,86 @@ test("extractCookieHeader deduplicates cookies last-write-wins and honors Max-Ag
     ),
   ).toBe("session=alive")
 
+  // Duplicate Expires attributes: the last valid Expires attribute wins (RFC 6265).
+  expect(
+    extractCookieHeader(
+      [
+        "revived=ok; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Expires=Fri, 01 Jan 2027 00:00:00 GMT",
+        "expired=no; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        "kept=yes; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=not-a-date",
+      ],
+      now,
+    ),
+  ).toBe("revived=ok; kept=yes")
+
   // Malformed or CRLF-containing cookies are skipped.
   expect(
     extractCookieHeader(["noequals", "=noname", "bad=a\r\nb", "ok=1=2; Path=/"], now),
   ).toBe("ok=1=2")
 })
 
+test("readBoundedText decodes split multi-byte UTF-8 chunks and does not hang on stalled stream cancellation", async () => {
+  // Split 3-byte "€" (e2 82 ac) and 4-byte "🚀" (f0 9f 9a 80) across chunk boundaries.
+  const full = new TextEncoder().encode("{\"currency\":\"€\",\"rocket\":\"🚀\"}")
+  const splitA = full.indexOf(0x82)
+  const splitB = full.indexOf(0x9a)
+  const utf8Stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(full.subarray(0, splitA))
+      controller.enqueue(full.subarray(splitA, splitB))
+      controller.enqueue(full.subarray(splitB))
+      controller.close()
+    },
+  })
+  const decoded = await readBoundedText(new Response(utf8Stream), 1024, "utf8", Date.now() + 5_000)
+  expect(JSON.parse(decoded)).toEqual({ currency: "€", rocket: "🚀" })
+
+  // Stalled cancellation after chunk 1 was read must still reject promptly at deadline.
+  let pulledCount = 0
+  let cancelCalled = false
+  const stalledStream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulledCount++
+      if (pulledCount === 1) {
+        controller.enqueue(new TextEncoder().encode("{\"partial\":"))
+        return
+      }
+      return new Promise(() => {})
+    },
+    cancel() {
+      cancelCalled = true
+      return new Promise(() => {})
+    },
+  })
+  const startedAt = Date.now()
+  await expect(
+    readBoundedText(new Response(stalledStream), 1024, PLAN_PATH, startedAt + 50),
+  ).rejects.toThrow(`${PLAN_PATH} timed out reading response`)
+  expect(pulledCount).toBeGreaterThanOrEqual(2)
+  expect(cancelCalled).toBe(true)
+  expect(Date.now() - startedAt).toBeLessThan(1_000)
+
+  // Stalled cancellation on Content-Length limit refusal must also return promptly.
+  let clCancelCalled = false
+  const clStream = new ReadableStream<Uint8Array>({
+    cancel() {
+      clCancelCalled = true
+      return new Promise(() => {})
+    },
+  })
+  await expect(
+    readBoundedText(
+      new Response(clStream, { headers: { "content-length": "99999" } }),
+      256,
+      PLAN_PATH,
+      Date.now() + 5_000,
+    ),
+  ).rejects.toThrow(`${PLAN_PATH} response exceeds size limit (256 bytes)`)
+  expect(clCancelCalled).toBe(true)
+})
+
 test("post enforces response byte bounds, HTTP timeouts, redirects, and target URL validation", async () => {
+  let streamSlowChunkSent = false
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -234,6 +319,7 @@ test("post enforces response byte bounds, HTTP timeouts, redirects, and target U
           new ReadableStream({
             async start(controller) {
               controller.enqueue(new TextEncoder().encode("{\"ok\":"))
+              streamSlowChunkSent = true
               await Bun.sleep(500)
               try {
                 controller.enqueue(new TextEncoder().encode("true}"))
@@ -280,15 +366,16 @@ test("post enforces response byte bounds, HTTP timeouts, redirects, and target U
         PLAN_PATH,
         {},
       ),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/timed out|aborted/i)
 
     await expect(
       post(
-        { url: `http://127.0.0.1:${server.port}/stream-slow`, org: "o", env: "e", headers: {}, timeoutMs: 50 },
+        { url: `http://127.0.0.1:${server.port}/stream-slow`, org: "o", env: "e", headers: {}, timeoutMs: 80 },
         PLAN_PATH,
         {},
       ),
-    ).rejects.toThrow()
+    ).rejects.toThrow(/timed out|aborted/i)
+    expect(streamSlowChunkSent).toBe(true)
   } finally {
     server.stop(true)
   }
