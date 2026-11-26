@@ -327,6 +327,14 @@ fn arithmetic_never_silently_rounds_or_overflows() {
         Quantity::mul(&Decimal::new(5, 28), &Decimal::new(2, 1)),
         Ok(Decimal::new(1, 28))
     );
+    // Exact product 5^39 * 10^-28 * 2^39 * 10^-11 == 1 must not spuriously overflow i128.
+    let five_39 =
+        Decimal::try_from_i128_with_scale(1_818_989_403_545_856_475_830_078_125, 28).unwrap();
+    let neg_five_39 =
+        Decimal::try_from_i128_with_scale(-1_818_989_403_545_856_475_830_078_125, 28).unwrap();
+    let two_39 = Decimal::try_from_i128_with_scale(549_755_813_888, 11).unwrap();
+    assert_eq!(Quantity::mul(&five_39, &two_39), Ok(Decimal::ONE));
+    assert_eq!(Quantity::mul(&neg_five_39, &two_39), Ok(d(-1)));
     assert_eq!(Quantity::mul(&Decimal::MAX, &d(0)), Ok(d(0)));
     let graph = Graph {
         nodes: vec![0, 1],

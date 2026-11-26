@@ -59,7 +59,6 @@ fn decimal(mut mantissa: i128, mut scale: u32) -> Result<Decimal, ArithmeticErro
 }
 
 fn aligned(value: Decimal, scale: u32) -> Result<i128, ArithmeticError> {
-    let value = value.normalize();
     let shift = scale
         .checked_sub(value.scale())
         .ok_or(ArithmeticError::Overflow)?;
@@ -70,6 +69,41 @@ fn aligned(value: Decimal, scale: u32) -> Result<i128, ArithmeticError> {
         .mantissa()
         .checked_mul(factor)
         .ok_or(ArithmeticError::Overflow)
+}
+
+fn combine(
+    lhs: Decimal,
+    rhs: Decimal,
+    op: impl FnOnce(i128, i128) -> Option<i128>,
+) -> Result<Decimal, ArithmeticError> {
+    let left = lhs.normalize();
+    let right = rhs.normalize();
+    let scale = left.scale().max(right.scale());
+    let mantissa =
+        op(aligned(left, scale)?, aligned(right, scale)?).ok_or(ArithmeticError::Overflow)?;
+    decimal(mantissa, scale)
+}
+
+fn cancel_ten_pairs(a: &mut i128, b: &mut i128, scale: &mut u32) -> Result<(), ArithmeticError> {
+    while *scale > 0 && a.checked_rem(10) == Some(0) {
+        *a = a.checked_div(10).ok_or(ArithmeticError::Overflow)?;
+        *scale = scale.checked_sub(1).ok_or(ArithmeticError::Overflow)?;
+    }
+    while *scale > 0 && b.checked_rem(10) == Some(0) {
+        *b = b.checked_div(10).ok_or(ArithmeticError::Overflow)?;
+        *scale = scale.checked_sub(1).ok_or(ArithmeticError::Overflow)?;
+    }
+    while *scale > 0 && a.checked_rem(2) == Some(0) && b.checked_rem(5) == Some(0) {
+        *a = a.checked_div(2).ok_or(ArithmeticError::Overflow)?;
+        *b = b.checked_div(5).ok_or(ArithmeticError::Overflow)?;
+        *scale = scale.checked_sub(1).ok_or(ArithmeticError::Overflow)?;
+    }
+    while *scale > 0 && a.checked_rem(5) == Some(0) && b.checked_rem(2) == Some(0) {
+        *a = a.checked_div(5).ok_or(ArithmeticError::Overflow)?;
+        *b = b.checked_div(2).ok_or(ArithmeticError::Overflow)?;
+        *scale = scale.checked_sub(1).ok_or(ArithmeticError::Overflow)?;
+    }
+    Ok(())
 }
 
 /// Wide accumulator for decimal-valued subtree rollups.
@@ -92,39 +126,34 @@ impl Quantity for Decimal {
     }
 
     fn add(&self, rhs: &Self) -> Result<Self, ArithmeticError> {
-        let scale = self.normalize().scale().max(rhs.normalize().scale());
-        let mantissa = aligned(*self, scale)?
-            .checked_add(aligned(*rhs, scale)?)
-            .ok_or(ArithmeticError::Overflow)?;
-        decimal(mantissa, scale)
+        combine(*self, *rhs, i128::checked_add)
     }
 
     fn sub(&self, rhs: &Self) -> Result<Self, ArithmeticError> {
-        let scale = self.normalize().scale().max(rhs.normalize().scale());
-        let mantissa = aligned(*self, scale)?
-            .checked_sub(aligned(*rhs, scale)?)
-            .ok_or(ArithmeticError::Overflow)?;
-        decimal(mantissa, scale)
+        combine(*self, *rhs, i128::checked_sub)
     }
 
     fn mul(&self, rhs: &Self) -> Result<Self, ArithmeticError> {
         let left = self.normalize();
         let right = rhs.normalize();
-        let mantissa = left
-            .mantissa()
-            .checked_mul(right.mantissa())
-            .ok_or(ArithmeticError::Overflow)?;
-        let scale = left
+        let mut lm = left.mantissa();
+        let mut rm = right.mantissa();
+        if lm == 0 || rm == 0 {
+            return Ok(Self::ZERO);
+        }
+        let mut scale = left
             .scale()
             .checked_add(right.scale())
             .ok_or(ArithmeticError::Overflow)?;
+        cancel_ten_pairs(&mut lm, &mut rm, &mut scale)?;
+        let mantissa = lm.checked_mul(rm).ok_or(ArithmeticError::Overflow)?;
         decimal(mantissa, scale)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ArithmeticError, Quantity};
+    use super::Quantity;
     use rust_decimal::Decimal;
 
     #[test]
@@ -136,14 +165,6 @@ mod tests {
         assert_eq!(
             Quantity::sub(&Decimal::ONE, &Decimal::new(125, 2)),
             Ok(Decimal::new(-25, 2))
-        );
-        assert_eq!(
-            Quantity::mul(&Decimal::new(5, 28), &Decimal::new(2, 1)),
-            Ok(Decimal::new(1, 28))
-        );
-        assert_eq!(
-            Quantity::mul(&Decimal::new(1, 28), &Decimal::new(1, 1)),
-            Err(ArithmeticError::Precision)
         );
     }
 }

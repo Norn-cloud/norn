@@ -84,16 +84,15 @@ pub fn critical_path<N: Ord + Clone, Q: Quantity>(
         let mut start = Q::zero();
         for parent in &graph.links(node)?.incoming {
             meter.step()?;
-            start = start.max(
-                timings
-                    .get(parent)
-                    .ok_or(Error::Invariant)?
-                    .earliest_finish
-                    .clone(),
-            );
+            let candidate = &timings.get(parent).ok_or(Error::Invariant)?.earliest_finish;
+            if candidate > &start {
+                start = candidate.clone();
+            }
         }
         let finish = start.add(value(durations, node)?)?;
-        length = length.max(finish.clone());
+        if finish > length {
+            length = finish.clone();
+        }
         timings.insert(
             node.clone(),
             Timing {
@@ -110,13 +109,10 @@ pub fn critical_path<N: Ord + Clone, Q: Quantity>(
         let mut finish = length.clone();
         for child in &graph.links(node)?.out {
             meter.step()?;
-            finish = finish.min(
-                timings
-                    .get(child)
-                    .ok_or(Error::Invariant)?
-                    .latest_start
-                    .clone(),
-            );
+            let candidate = &timings.get(child).ok_or(Error::Invariant)?.latest_start;
+            if candidate < &finish {
+                finish = candidate.clone();
+            }
         }
         let start = finish.sub(value(durations, node)?)?;
         let timing = timings.get_mut(node).ok_or(Error::Invariant)?;
@@ -189,7 +185,7 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
         bom.lines.iter().map(|line| (&line.parent, &line.child)),
         &mut meter,
     )?;
-    let mut lines: BTreeMap<N, Vec<&Composition<N, Q>>> = BTreeMap::new();
+    let mut lines: BTreeMap<&N, Vec<&Composition<N, Q>>> = BTreeMap::new();
     for (node, part) in &bom.parts {
         meter.step()?;
         nonnegative(node, &part.cost)?;
@@ -198,14 +194,14 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
     for line in &bom.lines {
         meter.step()?;
         nonnegative(&line.parent, &line.quantity)?;
-        lines.entry(line.parent.clone()).or_default().push(line);
+        lines.entry(&line.parent).or_default().push(line);
     }
-    let mut amounts = BTreeMap::new();
+    let mut amounts: BTreeMap<&N, Q::Sum> = BTreeMap::new();
     for (node, quantity) in demand {
         meter.step()?;
         graph.links(node)?;
         nonnegative(node, quantity)?;
-        Q::accumulate(amounts.entry(node.clone()).or_default(), quantity)?;
+        Q::accumulate(amounts.entry(node).or_default(), quantity)?;
     }
     let order = graph.order(&mut meter)?;
     let mut unit_rollups: BTreeMap<N, Part<Q>> = BTreeMap::new();
@@ -223,7 +219,9 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
                 }
                 let child = unit_rollups.get(&line.child).ok_or(Error::Invariant)?;
                 Q::accumulate(&mut cost, &line.quantity.mul(&child.cost)?)?;
-                child_time = child_time.max(child.lead_time.clone());
+                if child.lead_time > child_time {
+                    child_time = child.lead_time.clone();
+                }
             }
         }
         rolled.cost = Q::finish(cost)?;
@@ -239,7 +237,9 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
         }
         let rolled = unit_rollups.get(node).ok_or(Error::Invariant)?;
         Q::accumulate(&mut total_cost, &quantity.mul(&rolled.cost)?)?;
-        lead_time = lead_time.max(rolled.lead_time.clone());
+        if rolled.lead_time > lead_time {
+            lead_time = rolled.lead_time.clone();
+        }
     }
     let mut requirements = BTreeMap::new();
     for node in &order {
@@ -258,7 +258,7 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
                     continue;
                 }
                 let increment = amount.mul(&line.quantity)?;
-                Q::accumulate(amounts.entry(line.child.clone()).or_default(), &increment)?;
+                Q::accumulate(amounts.entry(&line.child).or_default(), &increment)?;
             }
         } else {
             requirements.insert(node.clone(), amount);
