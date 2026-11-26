@@ -30,8 +30,9 @@ describe("workforce canon v0.2 + Frappe HRMS v16.60.0 map-only parity pack (#159
   }
 
   test.skipIf(!checker)("all three ontology artifacts pass norn-checker-wasm with zero diagnostics", () => {
-    const findings = checker!.checkArtifactSet(artifacts, { base: [], registry: [] })
-    expect(findings).toEqual([])
+    const result = checker!.checkArtifactSet(artifacts, { base: [], registry: [] })
+    expect(result.admitted).toBe(true)
+    expect(result.diagnostics.diagnostics).toEqual([])
   })
 
   test("workforce canon v0.2 pins W3C ORG, OWL-Time, W3C DPV 2.1, and HR Open 4.5R and maps all 6 HR PII markings", () => {
