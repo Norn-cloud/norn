@@ -189,23 +189,23 @@ impl<N: Ord + Clone> Prepared<N> {
         let mut ready = BTreeSet::new();
         for (node, links) in &self.nodes {
             meter.step()?;
-            degrees.insert(node.clone(), links.incoming.len());
+            degrees.insert(node, links.incoming.len());
             if links.incoming.is_empty() {
-                ready.insert(node.clone());
+                ready.insert(node);
             }
         }
-        let mut order = Vec::new();
+        let mut order = Vec::with_capacity(self.nodes.len());
         while let Some(node) = ready.pop_first() {
             meter.step()?;
-            for next in &self.links(&node)?.out {
+            for next in &self.links(node)?.out {
                 meter.step()?;
                 let degree = degrees.get_mut(next).ok_or(Error::Invariant)?;
                 *degree = degree.checked_sub(1).ok_or(Error::Invariant)?;
                 if *degree == 0 {
-                    ready.insert(next.clone());
+                    ready.insert(next);
                 }
             }
-            order.push(node);
+            order.push(node.clone());
         }
         if order.len() != self.nodes.len() {
             return Err(Error::Cycle(self.cycle(meter)?));
@@ -217,35 +217,37 @@ impl<N: Ord + Clone> Prepared<N> {
     fn cycle(&self, meter: &mut Meter) -> Result<Vec<N>, Error<N>> {
         let mut done = BTreeSet::new();
         let mut active = BTreeMap::new();
-        let mut stack: Vec<(N, usize)> = Vec::new();
-        for start in self.nodes.keys() {
+        let mut stack: Vec<(&N, &[N], usize)> = Vec::new();
+        for (start, links) in &self.nodes {
             meter.step()?;
             if done.contains(start) {
                 continue;
             }
-            active.insert(start.clone(), 0);
-            stack.push((start.clone(), 0));
-            while let Some((node, offset)) = stack.last_mut() {
+            active.insert(start, 0);
+            stack.push((start, links.out.as_slice(), 0));
+            while let Some((_, out, offset)) = stack.last_mut() {
                 meter.step()?;
-                if let Some(next) = self.links(node)?.out.get(*offset) {
+                let out = *out;
+                if let Some(next) = out.get(*offset) {
                     *offset = offset.checked_add(1).ok_or(Error::Invariant)?;
                     if let Some(first) = active.get(next) {
                         let mut cycle = Vec::new();
-                        for (item, _) in stack.iter().skip(*first) {
+                        for (item, _, _) in stack.iter().skip(*first) {
                             meter.step()?;
-                            cycle.push(item.clone());
+                            cycle.push((*item).clone());
                         }
                         meter.step()?;
                         cycle.push(next.clone());
                         return Ok(cycle);
                     }
                     if !done.contains(next) {
-                        active.insert(next.clone(), stack.len());
-                        stack.push((next.clone(), 0));
+                        let next_links = self.links(next)?;
+                        active.insert(next, stack.len());
+                        stack.push((next, next_links.out.as_slice(), 0));
                     }
                 } else {
-                    let (finished, _) = stack.pop().ok_or(Error::Invariant)?;
-                    active.remove(&finished);
+                    let (finished, _, _) = stack.pop().ok_or(Error::Invariant)?;
+                    active.remove(finished);
                     done.insert(finished);
                 }
             }
@@ -293,17 +295,17 @@ pub fn reachability<N: Ord + Clone>(
     let mut meter = Meter::new(budget, graph.nodes.len(), graph.edges.len())?;
     let graph = prepare(graph, &mut meter)?;
     let mut found = BTreeSet::new();
-    let mut pending = Vec::new();
+    let mut pending: Vec<&N> = Vec::new();
     for seed in seeds {
         meter.step()?;
         graph.links(seed)?;
         if found.insert(seed.clone()) {
-            pending.push(seed.clone());
+            pending.push(seed);
         }
     }
     while let Some(node) = pending.pop() {
         meter.step()?;
-        let links = graph.links(&node)?;
+        let links = graph.links(node)?;
         let neighbors = match direction {
             Direction::Downstream => &links.out,
             Direction::Upstream => &links.incoming,
@@ -311,7 +313,7 @@ pub fn reachability<N: Ord + Clone>(
         for next in neighbors {
             meter.step()?;
             if found.insert(next.clone()) {
-                pending.push(next.clone());
+                pending.push(next);
             }
         }
     }

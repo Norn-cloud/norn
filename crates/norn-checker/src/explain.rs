@@ -335,7 +335,9 @@ fn target(
             catalog
                 .types
                 .iter()
-                .filter(|row| row.at.member.id() == format!("type:{id}"))
+                .filter(
+                    |row| matches!(&row.at.member, Member::Type { type_name } if type_name == id),
+                )
                 .map(|row| row.at.clone()),
         ),
         ExplainKind::Law => matches.extend(

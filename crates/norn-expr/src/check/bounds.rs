@@ -205,14 +205,17 @@ pub(crate) fn lexical(source: &str, limits: &StructuralLimits, unary: bool) -> O
     };
     let mut brackets: u32 = 0;
     let mut levels: u32 = 0;
-    let mut word = String::new();
+    let mut word_start: Option<usize> = None;
     for (index, byte) in source.bytes().chain(std::iter::once(b' ')).enumerate() {
         if byte.is_ascii_alphanumeric() || byte == b'_' {
-            word.push(char::from(byte));
+            word_start.get_or_insert(index);
             continue;
         }
-        let keyword = matches!(word.as_str(), "and" | "or" | "not" | "in");
-        word.clear();
+        let word = word_start
+            .take()
+            .and_then(|start| source.get(start..index))
+            .unwrap_or("");
+        let keyword = matches!(word, "and" | "or" | "not" | "in");
         let opens = match byte {
             b'(' | b'[' | b'{' => {
                 brackets = brackets.saturating_add(1);

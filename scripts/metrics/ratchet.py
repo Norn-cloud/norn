@@ -64,7 +64,7 @@ def judge(values: list[float], better: str, noise_pct: float, window: int = 3, c
     baseline = min(medians) if better == "lower" else max(medians)
     current = statistics.median(recent)
     if baseline == 0:
-        change = 0.0 if current == 0 else float("inf")
+        change = 0.0 if current == 0 else (float("inf") if current > 0 else float("-inf"))
     else:
         change = (current - baseline) / abs(baseline) * 100
     worse = change if better == "lower" else -change

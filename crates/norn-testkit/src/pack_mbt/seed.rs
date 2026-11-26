@@ -249,23 +249,55 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
     seq: u64,
 ) -> Result<(), String> {
     let mut seeded_keys: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut seeded_slices: BTreeMap<String, FactKey> = BTreeMap::new();
     let desired_states = parse_slice_precondition_states(&admitted.root.preconditions);
 
     for slice_spec in &admitted.root.slice {
-        if let Some(prop_name) = slice_input_key_field(&slice_spec.key)
-            && let Some(JsonValue::String(target_id)) = input.get(prop_name)
-        {
+        let resolved_id = match &slice_spec.key {
+            SliceKey::Property { from, property } if from == "input" => input
+                .get(property.as_str())
+                .and_then(JsonValue::as_str)
+                .map(str::to_owned),
+            SliceKey::Property { from, property } => seeded_slices
+                .get(from.as_str())
+                .map(|parent| {
+                    host.load(parent)
+                        .map_err(|err| format!("load {parent}: {err}"))
+                        .map(|loaded| {
+                            loaded
+                                .values
+                                .as_ref()
+                                .and_then(|values| values.get(property.as_str()))
+                                .and_then(JsonValue::as_str)
+                                .map(str::to_owned)
+                        })
+                })
+                .transpose()?
+                .flatten(),
+            SliceKey::Parameter { .. }
+            | SliceKey::TriggerObject
+            | SliceKey::TriggerBefore
+            | SliceKey::TriggerAfter
+            | SliceKey::TriggerChanges
+            | SliceKey::Link { .. }
+            | SliceKey::Predicate { .. } => None,
+        };
+        if let Some(target_id) = resolved_id {
             let target_ty_name = slice_spec.object_type.as_str();
             if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
                 seed_related_target(
                     (pack, catalog),
                     host,
                     target_ty_name,
-                    target_id,
+                    &target_id,
                     desired_states.get(&slice_spec.name),
                     seq,
                 )?;
             }
+            seeded_slices.insert(
+                slice_spec.name.clone(),
+                FactKey::new(target_ty_name, &target_id),
+            );
         }
     }
     for link in &admitted.root.create_links {
@@ -276,21 +308,7 @@ pub(crate) fn seed_create_links_and_slice_targets<H: PackHost>(
             }
         }
     }
-    bind_input_to_preconditions(admitted, input, host)
-}
-
-fn slice_input_key_field(key_spec: &SliceKey) -> Option<&str> {
-    match key_spec {
-        SliceKey::Property { from, property } if from == "input" => Some(property.as_str()),
-        SliceKey::Property { .. }
-        | SliceKey::Parameter { .. }
-        | SliceKey::TriggerObject
-        | SliceKey::TriggerBefore
-        | SliceKey::TriggerAfter
-        | SliceKey::TriggerChanges
-        | SliceKey::Link { .. }
-        | SliceKey::Predicate { .. } => None,
-    }
+    bind_input_to_preconditions(admitted, input, &seeded_slices, host)
 }
 
 /// Each `==` conjunct of `preconditions` as its two sides, grouping trimmed;
@@ -360,6 +378,7 @@ fn parse_slice_precondition_states(
 fn bind_input_to_preconditions<H: PackHost>(
     admitted: &AdmittedAction,
     input: &mut JsonObject,
+    seeded_slices: &BTreeMap<String, FactKey>,
     host: &H,
 ) -> Result<(), String> {
     for (lhs, rhs) in precondition_equalities(&admitted.root.preconditions) {
@@ -382,21 +401,10 @@ fn bind_input_to_preconditions<H: PackHost>(
             let (Some(slice_name), Some(prop_name)) = (parts.next(), parts.next()) else {
                 continue;
             };
-            let Some(spec) = admitted
-                .root
-                .slice
-                .iter()
-                .find(|spec| spec.name == slice_name)
-            else {
+            let Some(target) = seeded_slices.get(slice_name) else {
                 continue;
             };
-            let Some(JsonValue::String(target_id)) =
-                slice_input_key_field(&spec.key).and_then(|key| input.get(key))
-            else {
-                continue;
-            };
-            let target = FactKey::new(spec.object_type.as_str(), target_id);
-            host.load(&target)
+            host.load(target)
                 .map_err(|err| format!("load {target}: {err}"))?
                 .values
                 .and_then(|values| values.get(prop_name).cloned())

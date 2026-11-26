@@ -91,8 +91,51 @@ pub fn now_ms() -> u64 {
         })
 }
 
-fn signed(ms: u64) -> i64 {
+pub(crate) fn signed(ms: u64) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
+}
+
+fn unavailable_body() -> String {
+    json!({
+        "format": "norn/refusal@2",
+        "retryable": true,
+        "reason": null,
+        "code": "host.unavailable",
+        "category": "host",
+        "message": "the cell is unavailable",
+        "explanation": "retry the request"
+    })
+    .to_string()
+}
+
+fn unavailable_response(code: &str) -> Response {
+    refusal(
+        503,
+        code,
+        "host",
+        "the cell is unavailable",
+        "retry the request",
+        true,
+    )
+}
+
+struct WriteGuard<'a> {
+    actor: &'a CellActor,
+    armed: bool,
+}
+
+impl WriteGuard<'_> {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WriteGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.actor.release_writer();
+        }
+    }
 }
 
 /// `CellScope::key`: `%` and `/` escaped in each part.
@@ -452,33 +495,22 @@ impl CellActor {
         }
         if let Err(error) = self.ready(ctx, &scope).await {
             tracing::error!(error = %error, "cell open refused");
-            return refusal(
-                503,
-                "host.unavailable",
-                "host",
-                "the cell is unavailable",
-                "retry the request",
-                true,
-            );
+            return unavailable_response("host.unavailable");
         }
         if call.method == "GET" {
             return self.respond(ctx, call).await;
         }
-        if let Err(error) = self.before_write(ctx, now_ms()).await {
-            tracing::error!(error = %format!("{error:#}"), "write guard failed");
-            return refusal(
-                503,
-                "host.unavailable",
-                "host",
-                "the cell is unavailable",
-                "retry the request",
-                true,
-            );
-        }
+        let guard = match self.before_write(ctx, now_ms()).await {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "write guard failed");
+                return unavailable_response("host.unavailable");
+            }
+        };
         let response = self.respond(ctx, call).await;
         #[cfg(feature = "conformance")]
         self.seam.after_respond().await;
-        if let Err(error) = self.after_write(ctx, now_ms()).await {
+        if let Err(error) = self.after_write(ctx, now_ms(), guard).await {
             tracing::error!(error = %format!("{error:#}"), "alarm rearm failed; the recovery wake stands");
         }
         if let Err(error) = self.keep_scope(ctx, &scope).await {
@@ -708,21 +740,18 @@ impl CellActor {
     }
 
     /// Before a request that may write: the guard wake is durable first.
-    async fn before_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<()> {
+    async fn before_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<WriteGuard<'_>> {
         let _admission = self.deadline_lock().await;
         self.writing.fetch_add(1, Ordering::AcqRel);
-        let guarded = async {
-            if !self.serving().await? {
-                return Ok(());
-            }
-            self.earliest(ctx, Some(now.saturating_add(RECOVERY_MS)), now)
-                .await
+        let guard = WriteGuard {
+            actor: self,
+            armed: true,
         };
-        let result = guarded.await;
-        if result.is_err() {
-            self.release_writer();
+        if self.serving().await? {
+            self.earliest(ctx, Some(now.saturating_add(RECOVERY_MS)), now)
+                .await?;
         }
-        result
+        Ok(guard)
     }
 
     fn release_writer(&self) {
@@ -735,8 +764,9 @@ impl CellActor {
 
     /// After that request, whatever its reply: the alarm follows the cell's
     /// next deadline.
-    async fn after_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<()> {
+    async fn after_write(&self, ctx: &Ctx<Self>, now: u64, guard: WriteGuard<'_>) -> Result<()> {
         let _decision = self.deadline_lock().await;
+        guard.disarm();
         self.release_writer();
         if !self.serving().await? {
             return Ok(());
@@ -820,7 +850,7 @@ impl CellActor {
                 Some(core) => core.fetch(&call),
                 None => Reply {
                     status: 503,
-                    body: json!({"format": "norn/refusal@2", "retryable": true, "reason": null, "code": "host.unavailable", "category": "host", "message": "the cell is unavailable", "explanation": "retry the request"}).to_string(),
+                    body: unavailable_body(),
                     ..Reply::default()
                 },
             })
@@ -833,14 +863,7 @@ impl CellActor {
             Ok(response) => response,
             Err(error) => {
                 tracing::error!(error = %format!("{error:#}"), "request failed");
-                refusal(
-                    503,
-                    "host.unavailable",
-                    "host",
-                    "the cell is unavailable",
-                    "retry the request",
-                    true,
-                )
+                unavailable_response("host.unavailable")
             }
         }
     }
@@ -1061,14 +1084,17 @@ impl CellActor {
 
     /// Run one claimed sync to its end (`Cell.runSync`).
     async fn run_sync(self: &Arc<Self>, ctx: &Ctx<Self>, id: String) {
-        if let Err(error) = self.before_write(ctx, now_ms()).await {
-            tracing::error!(error = %format!("{error:#}"), "source sync not started");
-            return;
-        }
+        let guard = match self.before_write(ctx, now_ms()).await {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "source sync not started");
+                return;
+            }
+        };
         if let Err(error) = self.sync_run(ctx, &id).await {
             tracing::error!(error = %format!("{error:#}"), "source sync failed");
         }
-        if let Err(error) = self.after_write(ctx, now_ms()).await {
+        if let Err(error) = self.after_write(ctx, now_ms(), guard).await {
             tracing::error!(error = %format!("{error:#}"), "alarm rearm after a sync failed");
         }
     }

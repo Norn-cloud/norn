@@ -26,7 +26,7 @@ pub fn validate_widget_extra(artifact: &ArtifactEnvelope, payload: &JsonValue) -
             &mut diagnostics,
             Some(artifact.artifact_id.as_str()),
         );
-        validate_widget_binding_dependencies(artifact, &mut diagnostics);
+        validate_widget_binding_dependencies_in(artifact, payload, &mut diagnostics);
     }
     diagnostics
 }
@@ -93,7 +93,15 @@ pub fn validate_widget_binding_dependencies(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     let payload_value = artifact.payload.to_json_value();
-    let JsonValue::Object(payload) = &payload_value else {
+    validate_widget_binding_dependencies_in(artifact, &payload_value, diagnostics);
+}
+
+fn validate_widget_binding_dependencies_in(
+    artifact: &ArtifactEnvelope,
+    payload_value: &JsonValue,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let JsonValue::Object(payload) = payload_value else {
         return;
     };
 

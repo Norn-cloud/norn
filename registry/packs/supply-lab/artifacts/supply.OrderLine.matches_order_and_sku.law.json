@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.OrderLine.matches_order_and_sku.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An order line must use its purchase order's currency and its SKU's unit of measure.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.OrderLine.matches_order_and_sku",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "An order line must use its purchase order's currency and its SKU's unit of measure.",
+    "response": {
+      "expression": "(self.currency == self.order.currency) and (self.unit == self.sku.unit_of_measure)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.OrderLine"
+      ],
+      "root": {
+        "id": "supply.OrderLine",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.OrderLine"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.OrderLine.matches_order_and_sku.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

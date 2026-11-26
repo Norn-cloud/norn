@@ -86,7 +86,8 @@ def summary(values):
     ordered = sorted(values)
     if not ordered:
         return {}
-    pick = lambda q: ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+    def pick(q):
+        return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
     return {"n": len(ordered), "p50": round(statistics.median(ordered), 2), "p90": round(pick(0.90), 2), "p95": round(pick(0.95), 2), "p99": round(pick(0.99), 2), "max": round(ordered[-1], 2)}
 
 
@@ -155,9 +156,29 @@ class Cluster:
     def wait_pool(self, seconds=300):
         stop = time.time() + seconds
         while time.time() < stop:
-            done = self.compose("ps", "-a", "--format", "json", "pool", check=False).stdout
-            if '"ExitCode":0' in done.replace(" ", "") and '"State":"exited"' in done.replace(" ", ""):
-                return
+            done = self.compose("ps", "-a", "--format", "json", "pool", check=False).stdout.strip()
+            entries = []
+            if done.startswith("["):
+                try:
+                    parsed = json.loads(done)
+                    if isinstance(parsed, list):
+                        entries = parsed
+                except ValueError:
+                    pass
+            else:
+                for line in done.splitlines():
+                    try:
+                        entries.append(json.loads(line))
+                    except ValueError:
+                        pass
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("State") == "exited":
+                    code = entry.get("ExitCode")
+                    if code == 0:
+                        return
+                    raise RuntimeError(f"the pool job exited with code {code}: " + self.compose("logs", "--tail", "40", "pool", check=False).stdout[-2000:])
             time.sleep(2)
         raise RuntimeError("the pool job never finished: " + self.compose("logs", "--tail", "40", check=False).stdout[-2000:])
 
@@ -167,8 +188,8 @@ class Cluster:
     def start_runner(self, index):
         env = {**os.environ, "RIVET_ENDPOINT": f"http://default:{self.token}@127.0.0.1:{self.lb_port}", "NORN_LISTEN": f"127.0.0.1:{self.ports[index]}",
                "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic", "NORN_LINEAGE_KEY": self.lineage_key}
-        out = open(self.state / f"runner-{index}.log", "ab")
-        self.children[index] = subprocess.Popen([self.binary], env=env, stdout=out, stderr=out, start_new_session=True)
+        with open(self.state / f"runner-{index}.log", "ab") as out:
+            self.children[index] = subprocess.Popen([self.binary], env=env, stdout=out, stderr=out, start_new_session=True)
 
     def supervise(self):
         """Restart a runner process that exited on its own (none should; counted)."""
@@ -181,12 +202,37 @@ class Cluster:
     def kill_runner(self, index, *, require_running=True):
         child = self.children[index]
         if child is not None and child.poll() is None:
-            child.kill()
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             if child.wait(timeout=30) != -signal.SIGKILL and require_running:
                 raise RuntimeError(f"runner {index} did not exit from SIGKILL")
         elif require_running:
             raise RuntimeError(f"runner {index} was already stopped")
         self.children[index] = None
+
+    def crash_and_restart(self, kind, engine=None):
+        """Inject one crash kind (`runner`, `engine`, `engine+runner`, `everything`), wait 1 s, and restart."""
+        if kind in ("runner", "engine+runner", "everything"):
+            for index in range(len(self.children)):
+                self.kill_runner(index)
+        if kind in ("engine", "engine+runner"):
+            self.kill_engine(engine)
+        if kind == "everything":
+            for service in ENGINES:
+                self.kill_engine(service)
+        killed_at = time.perf_counter()
+        time.sleep(1)
+        if kind in ("engine", "engine+runner"):
+            self.start_engine(engine)
+        if kind == "everything":
+            for service in ENGINES:
+                self.start_engine(service)
+        if kind != "engine":
+            for index in range(len(self.children)):
+                self.start_runner(index)
+        return killed_at
 
     def wait_ready(self, base, seconds=300):
         stop = time.time() + seconds
@@ -321,7 +367,7 @@ class Writers:
                 self.inflight[cell].add(ident)
             try:
                 status, _, ms = self.install(cell, ident, base)
-            except (OSError, http.client.IncompleteRead):
+            except (OSError, http.client.HTTPException):
                 status, ms = None, None
             with self.lock:
                 if status == 200:
@@ -401,19 +447,27 @@ def recovered(cluster, cells, seconds=600):
     return (time.perf_counter() - started) * 1000
 
 
-def installed(base, cell):
-    """Every dashboard id the cell lists, page by page."""
-    ids, cursor = set(), None
+def list_dashboard_pages(base, cell):
+    """Every page of dashboard definitions from `cell`, as raw bytes and decoded JSON."""
+    pages, cursor = [], None
     while True:
         query = f"{SCOPE}&conformanceObject={cell}&kind=dashboard&limit=100" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
         status, body, _ = request(base, "GET", "/v1/definitions:list", query, headers={"authorization": ADMIN}, timeout=120)
         if status != 200:
             raise RuntimeError(f"definitions {cell}: {status} {body[:200]!r}")
-        page = json.loads(body)
-        ids.update(item["id"] for item in page.get("items", []) if item.get("id", "").startswith("studio.dashboard.dura-"))
-        cursor = page.get("cursor")
+        parsed = json.loads(body)
+        pages.append((body, parsed))
+        cursor = parsed.get("cursor")
         if not cursor:
-            return ids
+            return pages
+
+
+def installed(base, cell):
+    """Every dashboard id the cell lists, page by page."""
+    ids = set()
+    for _, page in list_dashboard_pages(base, cell):
+        ids.update(item["id"] for item in page.get("items", []) if item.get("id", "").startswith("studio.dashboard.dura-"))
+    return ids
 
 
 def verify(cluster, writers):
@@ -448,24 +502,7 @@ def phase_kill(cluster, reference, state, rounds):
             kind = kinds[round_index % len(kinds)]
             engine = random.choice(ENGINES)
             before = writers.total()
-            if kind in ("runner", "engine+runner", "everything"):
-                for index in range(len(cluster.children)):
-                    cluster.kill_runner(index)
-            if kind in ("engine", "engine+runner"):
-                cluster.kill_engine(engine)
-            if kind == "everything":
-                for service in ENGINES:
-                    cluster.kill_engine(service)
-            killed_at = time.perf_counter()
-            time.sleep(1)
-            if kind in ("engine", "engine+runner"):
-                cluster.start_engine(engine)
-            if kind == "everything":
-                for service in ENGINES:
-                    cluster.start_engine(service)
-            if kind != "engine":
-                for index in range(len(cluster.children)):
-                    cluster.start_runner(index)
+            killed_at = cluster.crash_and_restart(kind, engine)
             waited = recovered(cluster, writers.cells)
             recoveries.append({"kind": kind, "ms": round((time.perf_counter() - killed_at) * 1000)})
             writers.wait_for_progress(writers.counts())
@@ -516,15 +553,7 @@ def phase_disk(cluster, reference, state, rebuild_wait):
         recovered(cluster, writers.cells)
         writers.wait_for_progress(writers.counts())
         check("then engine-3's disk lost and restarted empty, writes resumed")
-    for index in range(len(cluster.children)):
-        cluster.kill_runner(index)
-    for service in ENGINES:
-        cluster.kill_engine(service)
-    time.sleep(1)
-    for service in ENGINES:
-        cluster.start_engine(service)
-    for index in range(len(cluster.children)):
-        cluster.start_runner(index)
+    cluster.crash_and_restart("everything")
     recovered(cluster, writers.cells)
     check("after kill -9 of everything and a restart")
     failed = any(step["lost"] or step["phantom"] for step in steps)
@@ -553,6 +582,8 @@ def phase_load(cluster, reference, state, commits, settle):
 
 
 def phase_idle(cluster, reference, state, seconds, settle):
+    if seconds <= 0:
+        raise ValueError("the idle phase needs a positive duration")
     writers = Writers(cluster, reference, state, count=10, tag="i")
     writers.open_cells()
     writers.commit_batch(1)
@@ -569,20 +600,9 @@ def phase_idle(cluster, reference, state, seconds, settle):
 def evidence(base, cell):
     """What a cell answers, as bytes: its verified head (the hash chain over every commit and
     receipt, as the Rust cell serialized it) and its full definition listing."""
-    status, body, _ = request(base, "GET", "/__conformance/head", f"{SCOPE}&conformanceObject={cell}", timeout=300)
-    if status != 200:
-        raise RuntimeError(f"head {cell}: {status} {body[:200]!r}")
-    pages, cursor = [], None
-    while True:
-        query = f"{SCOPE}&conformanceObject={cell}&kind=dashboard&limit=100" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
-        listed, page, _ = request(base, "GET", "/v1/definitions:list", query, headers={"authorization": ADMIN}, timeout=120)
-        if listed != 200:
-            raise RuntimeError(f"definitions {cell}: {listed} {page[:200]!r}")
-        pages.append(page)
-        cursor = json.loads(page).get("cursor")
-        if not cursor:
-            break
-    return json.loads(body)["headJson"], b"\n".join(pages)
+    doc, _ = head(base, cell, timeout=300)
+    pages = [raw for raw, _ in list_dashboard_pages(base, cell)]
+    return doc["headJson"], b"\n".join(pages)
 
 
 def phase_rehearsal(cluster, reference, state, commits):
@@ -609,24 +629,7 @@ def phase_rehearsal(cluster, reference, state, commits):
     for kind in ("runner", "engine", "everything"):
         before = {cell: evidence(base, cell) for cell in writers.cells}
         engine = random.choice(ENGINES)
-        if kind in ("runner", "everything"):
-            for index in range(len(cluster.children)):
-                cluster.kill_runner(index)
-        if kind == "engine":
-            cluster.kill_engine(engine)
-        if kind == "everything":
-            for service in ENGINES:
-                cluster.kill_engine(service)
-        killed = time.perf_counter()
-        time.sleep(1)
-        if kind == "engine":
-            cluster.start_engine(engine)
-        if kind == "everything":
-            for service in ENGINES:
-                cluster.start_engine(service)
-        if kind in ("runner", "everything"):
-            for index in range(len(cluster.children)):
-                cluster.start_runner(index)
+        killed = cluster.crash_and_restart(kind, engine)
         recovered(cluster, writers.cells)
         recovery = (time.perf_counter() - killed) * 1000
         after = {cell: evidence(cluster.urls()[1], cell) for cell in writers.cells}
@@ -655,6 +658,8 @@ def volume_bytes(cluster, volume):
 def phase_storage(cluster, reference, state, cells, commits, settle):
     """Bytes per cell: each engine's log disk and the bucket, before and after `cells` cells with
     `commits` governed installs each, once offload has settled."""
+    if cells <= 0:
+        raise ValueError("the storage phase needs at least one cell")
     volumes = [f"{service}-log" for service in ENGINES] + ["s3-data"]
     time.sleep(settle)
     before = {volume: volume_bytes(cluster, volume) for volume in volumes}
@@ -688,7 +693,7 @@ def phase_latency(cluster, reference, state, samples):
         status, _, ms = request(base, "GET", "/v1/definitions/studio.dashboard.dura-warm-0", f"{SCOPE}&conformanceObject={cell}", headers={"authorization": ADMIN})
         if status == 200:
             reads.append(ms)
-        status, _, ms = request(base, "GET", "/__probe/turn", f"object=floor&n=1&ms=0&tag=floor")
+        status, _, ms = request(base, "GET", "/__probe/turn", "object=floor&n=1&ms=0&tag=floor")
         if status == 200:
             floor.append(ms)
         status, _, ms = request(base, "GET", "/__probe/count", "object=floor&tag=floor")
@@ -736,9 +741,17 @@ def main():
         "rehearsal": lambda: phase_rehearsal(cluster, reference, state, args.rehearsal_commits),
         "storage": lambda: phase_storage(cluster, reference, state, args.storage_cells, args.storage_commits, args.settle),
     }
+    selected = [name.strip() for name in args.phase.split(",") if name.strip()]
+    unknown = [name for name in selected if name not in phases]
+    if not selected or unknown:
+        parser.error(f"unknown phase(s): {', '.join(unknown) if unknown else '<empty>'}; valid: {', '.join(phases)}")
+    if "idle" in selected and args.idle_seconds <= 0:
+        parser.error("--idle-seconds must be positive")
+    if "storage" in selected and args.storage_cells <= 0:
+        parser.error("--storage-cells must be positive")
     try:
         cluster.up()
-        for name in args.phase.split(","):
+        for name in selected:
             log(f"phase {name}")
             try:
                 results["phases"][name] = phases[name]()

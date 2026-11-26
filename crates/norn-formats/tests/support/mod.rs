@@ -15,9 +15,55 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use norn_checker::{EntityArtifactSetContext, TenantLayer, check_artifact_set};
-use norn_formats::contract::{DropReason, LossReport, sorted_keys};
+use norn_formats::contract::{DropReason, LossReport, sha256_hex, sorted_keys};
+use norn_formats::owl::{OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, WitnessPolicy};
 use norn_formats::{Disposition, SchemaImport, SchemaImporter};
-use norn_ir::{ArtifactEnvelope, DiagnosticSeverity};
+use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, OntologySource, OntologySourceFile};
+
+pub(crate) const SYNTHETIC_LEDGER_GRAPH: &[u8] = include_bytes!("../fixtures/synthetic/ledger.nt");
+const SYNTHETIC_LEDGER_ORIGINAL: &[u8] = include_bytes!("../fixtures/synthetic/ledger.ttl");
+
+pub(crate) fn synthetic_ledger_graph() -> OwlGraph<'static> {
+    OwlGraph {
+        path: "ledger.nt",
+        bytes: SYNTHETIC_LEDGER_GRAPH,
+    }
+}
+
+pub(crate) fn synthetic_ledger_config() -> OwlConfig {
+    let mut admission =
+        serde_json::from_str::<OntologySource>(include_str!("../fixtures/synthetic/source.json"))
+            .expect("synthetic source decodes");
+    admission.source_id = "source.test.synthetic-ledger".into();
+    admission.license = "MIT".into();
+    admission.importer = Some(norn_ir::SourceImporter {
+        name: "norn.formats.owl".into(),
+        version: "0.1.0".into(),
+    });
+    admission.files = Some(vec![OntologySourceFile {
+        path: "https://example.test/synthetic-ledger/1.0/ledger.ttl".into(),
+        sha256: sha256_hex(SYNTHETIC_LEDGER_ORIGINAL),
+    }]);
+    let namespace = |iri: &str, prefix: &str| OwlNamespace {
+        iri: iri.into(),
+        prefix: prefix.into(),
+    };
+    OwlConfig {
+        admission,
+        observed_at: "2026-11-20T00:00:00Z".into(),
+        graph_sha256: sha256_hex(SYNTHETIC_LEDGER_GRAPH),
+        normaliser: OwlNormaliser {
+            name: "rdflib".into(),
+            version: "7.6.0".into(),
+        },
+        namespaces: vec![
+            namespace("https://example.org/onto/Parties/", "ex-pty"),
+            namespace("https://example.org/onto/Agreements/", "ex-agr"),
+            namespace("https://example.org/onto/Loans/", "ex-ln"),
+        ],
+        witnesses: WitnessPolicy::Open,
+    }
+}
 
 pub(crate) const UPDATE_ENV: &str = "NORN_FORMATS_UPDATE_GOLDENS";
 

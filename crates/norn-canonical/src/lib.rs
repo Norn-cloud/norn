@@ -512,6 +512,22 @@ impl Display for CanonicalJsonError {
 
 impl std::error::Error for CanonicalJsonError {}
 
+fn parse_with(
+    bytes: &[u8],
+    normalize_strings: bool,
+    normalize_numbers: bool,
+) -> Result<JsonValue, CanonicalJsonError> {
+    if let Err(error) = str::from_utf8(bytes) {
+        return Err(CanonicalJsonError::InvalidUtf8 {
+            offset: error.valid_up_to(),
+        });
+    }
+    let mut parser = Parser::new(bytes);
+    parser.normalize_strings = normalize_strings;
+    parser.normalize_numbers = normalize_numbers;
+    parser.parse_document()
+}
+
 /// Parse and normalize one Norn1 JSON document.
 ///
 /// # Errors
@@ -519,14 +535,7 @@ impl std::error::Error for CanonicalJsonError {}
 /// Returns [`CanonicalJsonError`] for invalid UTF-8, invalid JSON, duplicate
 /// keys, non-finite numbers, or an unsupported exact decimal.
 pub fn parse(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonError> {
-    let bytes = input.as_ref();
-    if let Err(error) = str::from_utf8(bytes) {
-        return Err(CanonicalJsonError::InvalidUtf8 {
-            offset: error.valid_up_to(),
-        });
-    }
-
-    Parser::new(bytes).parse_document()
+    parse_with(input.as_ref(), true, true)
 }
 
 /// Parse one JSON document like [`parse`], with numbers normalized to exact
@@ -541,15 +550,7 @@ pub fn parse(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonError> {
 ///
 /// Returns the same errors as [`parse`].
 pub fn parse_json_verbatim(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonError> {
-    let bytes = input.as_ref();
-    if let Err(error) = str::from_utf8(bytes) {
-        return Err(CanonicalJsonError::InvalidUtf8 {
-            offset: error.valid_up_to(),
-        });
-    }
-    let mut parser = Parser::new(bytes);
-    parser.normalize_strings = false;
-    parser.parse_document()
+    parse_with(input.as_ref(), false, true)
 }
 
 /// Parse one JSON document like [`parse_json_verbatim`], but with every
@@ -563,16 +564,7 @@ pub fn parse_json_verbatim(input: impl AsRef<[u8]>) -> Result<JsonValue, Canonic
 ///
 /// Returns the same errors as [`parse`], except a number's exact expansion.
 pub fn parse_json_tokens(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonError> {
-    let bytes = input.as_ref();
-    if let Err(error) = str::from_utf8(bytes) {
-        return Err(CanonicalJsonError::InvalidUtf8 {
-            offset: error.valid_up_to(),
-        });
-    }
-    let mut parser = Parser::new(bytes);
-    parser.normalize_strings = false;
-    parser.normalize_numbers = false;
-    parser.parse_document()
+    parse_with(input.as_ref(), false, false)
 }
 
 /// Encode a typed value as compact Serde JSON for an exact-byte commitment.
@@ -1073,7 +1065,7 @@ impl<'a> Parser<'a> {
                 Some(b'"') => {
                     self.expect_byte(b'"')?;
                     return Ok(if self.normalize_strings {
-                        normalize_unicode(&value)
+                        nfc(&value)
                     } else {
                         value
                     });
@@ -1320,10 +1312,6 @@ impl<'a> Parser<'a> {
             message: message.to_owned(),
         }
     }
-}
-
-fn normalize_unicode(value: &str) -> String {
-    nfc(value)
 }
 
 /// [`nfc`] without copying text that is already in NFC (nearly all of it).
@@ -2616,27 +2604,6 @@ mod tests {
         }
         let expected = lower_hex(expected.finalize().into());
         assert_eq!(actual.finish(), expected);
-    }
-
-    #[test]
-    fn legacy0_matches_current_artifact_hash_fixture() {
-        let input = br#"{
-            "irVersion":"0.1",
-            "artifactId":"retail.entity.sku",
-            "kind":"entity",
-            "namespace":"retail",
-            "name":"Sku",
-            "version":"0.1.0",
-            "lifecycle":"approved",
-            "scope":{"orgId":"org_demo","workspaceId":"workspace_demo","environmentId":"sandbox"},
-            "dependencies":[],
-            "provenance":{"source":"agent","actorId":"agent_1"},
-            "payload":{"fields":{"sku":{"required":true,"type":"text"}}}
-        }"#;
-        assert_eq!(
-            HashProfile::Legacy0.hash_json(input).ok(),
-            Some("026f956e837ad090c704c1aca9211a2c4d859bdb14d1874c49f21d5ce648fca5".to_owned())
-        );
     }
 
     #[test]

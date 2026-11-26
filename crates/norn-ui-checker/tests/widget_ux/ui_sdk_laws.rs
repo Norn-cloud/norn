@@ -96,7 +96,6 @@ fn layer_codes(widget: Value) -> Vec<(String, String, String)> {
 #[test]
 fn l1_total_non_dismissal_only_while_a_call_is_pending() {
     let refuse = json!({ "dismissible": "false" });
-    // Refused: in an idle state with no Cancel and no question, nothing lets a person out.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &refuse,
@@ -106,7 +105,6 @@ fn l1_total_non_dismissal_only_while_a_call_is_pending() {
         },
     ));
     assert_refuses(&found, LAYER, "cannot be dismissed at all");
-    // Admitted: held while the approve call is pending (it has a deadline and exits on every outcome).
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &refuse,
@@ -114,14 +112,12 @@ fn l1_total_non_dismissal_only_while_a_call_is_pending() {
         |_| {},
     ));
     assert_admits(&found, LAYER);
-    // Refused: dismissible:false with no heldIn refuses whenever a person opens it.
     let found = layer_codes(layered("ui-sdk:dialog", &refuse, &json!([]), |_| {}));
     assert_refuses(&found, LAYER, "whenever it is open");
 }
 
 #[test]
 fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
-    // Admitted: an alert dialog (no outside press, no swipe) in an idle confirmation with Cancel.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
         &json!({}),
@@ -129,7 +125,6 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         |_| {},
     ));
     assert_admits(&found, LAYER);
-    // Refused: the same confirmation without Cancel; Escape alone is not enough in idle.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
         &json!({}),
@@ -139,7 +134,6 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         },
     ));
     assert_refuses(&found, LAYER, "locks out an outside press or swipe");
-    // Admitted: a dirty form refuses dismissal and asks through onDismissAttempt.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "dismissible": "false" }),
@@ -152,7 +146,6 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         },
     ));
     assert_admits(&found, LAYER);
-    // Refused: a lock held in an error state.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
         &json!({}),
@@ -160,7 +153,6 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         |_| {},
     ));
     assert_refuses(&found, LAYER, "`failed`");
-    // Admitted: a plain dialog refuses nothing and needs no heldIn.
     let found = layer_codes(layered("ui-sdk:dialog", &json!({}), &json!([]), |_| {}));
     assert_admits(&found, LAYER);
 }
@@ -176,7 +168,6 @@ fn push_transition(machine: &mut Value, transition: Value) {
 #[test]
 fn l1_asking_is_a_way_out_only_when_it_leaves_the_held_states() {
     let refuse = json!({ "dismissible": "false" });
-    // Refused: `onDismissAttempt` back into the same state lets nobody out.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &refuse,
@@ -190,7 +181,6 @@ fn l1_asking_is_a_way_out_only_when_it_leaves_the_held_states() {
         },
     ));
     assert_refuses(&found, LAYER, "cannot be dismissed at all");
-    // Refused: asking loops between two states the layer is held in.
     let looping = |exit: Option<Value>| {
         layer_codes(layered(
             "ui-sdk:dialog",
@@ -219,7 +209,6 @@ fn l1_asking_is_a_way_out_only_when_it_leaves_the_held_states() {
     let found = looping(None);
     assert_refuses(&found, LAYER, "`confirming`");
     assert_refuses(&found, LAYER, "`discarding`");
-    // Admitted: "Discard changes?" leads on, through a held state, to Cancel inside the layer.
     assert_admits(
         &looping(Some(
             json!({ "transitionId": "discard", "from": "discarding", "on": "confirm-cancel", "target": "browsing" }),
@@ -230,7 +219,6 @@ fn l1_asking_is_a_way_out_only_when_it_leaves_the_held_states() {
 
 #[test]
 fn l1_a_control_that_starts_the_call_is_not_cancel() {
-    // The layer's only control is Confirm: it leaves the held state, but to send the command.
     let confirm_only = |transition: Value| {
         layer_codes(layered(
             "ui-sdk:alert-dialog",
@@ -243,7 +231,6 @@ fn l1_a_control_that_starts_the_call_is_not_cancel() {
         ))
     };
     let start = json!([{ "kind": "start", "call": { "kind": "action", "bindingId": "approve" } }]);
-    // Refused: Confirm starts the call and waits on it.
     assert_refuses(
         &confirm_only(
             json!({ "transitionId": "confirm", "from": "confirming", "on": "confirm-cancel", "target": "approving", "effects": start }),
@@ -251,7 +238,6 @@ fn l1_a_control_that_starts_the_call_is_not_cancel() {
         LAYER,
         "locks out an outside press or swipe",
     );
-    // Refused: a step that starts a call is no way out, wherever it goes.
     assert_refuses(
         &confirm_only(
             json!({ "transitionId": "confirm", "from": "confirming", "on": "confirm-cancel", "target": "browsing", "effects": start }),
@@ -259,7 +245,6 @@ fn l1_a_control_that_starts_the_call_is_not_cancel() {
         LAYER,
         "`confirming`",
     );
-    // Refused: nor is a step into a pending state.
     assert_refuses(
         &confirm_only(
             json!({ "transitionId": "confirm", "from": "confirming", "on": "confirm-cancel", "target": "approving" }),
@@ -288,8 +273,6 @@ fn closed_by_open_change(entry: &str) -> Vec<(String, String, String)> {
 
 #[test]
 fn l1_a_held_layer_that_refuses_nothing_still_needs_a_way_out() {
-    // Refused: a plain dialog held in an idle state with no Cancel. Held, it stays open whatever
-    // Escape asks, and no transition hears it.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({}),
@@ -297,12 +280,10 @@ fn l1_a_held_layer_that_refuses_nothing_still_needs_a_way_out() {
         |m| without(m, "confirm-cancel"),
     ));
     assert_refuses(&found, LAYER, "is held open in `confirming`");
-    // Admitted: the same dialog whose own `onOpenChange` (Escape, an outside press, Close) leaves.
     let found = closed_by_open_change("ui-sdk:dialog");
     assert_admits(&found, LAYER);
     assert_admits(&found, "widget.catalog.unknown_event");
     assert_admits(&found, "widget.catalog.event_payload_mismatch");
-    // Refused: a plain dialog held in an error state whose only exit is outside the layer.
     let failed = |exit: Option<Value>| {
         layer_codes(layered(
             "ui-sdk:dialog",
@@ -316,7 +297,6 @@ fn l1_a_held_layer_that_refuses_nothing_still_needs_a_way_out() {
         ))
     };
     assert_refuses(&failed(None), LAYER, "is held open in `failed`");
-    // Admitted: with Cancel inside it.
     assert_admits(
         &failed(Some(
             json!({ "transitionId": "failed-cancel", "from": "failed", "on": "confirm-cancel", "target": "browsing" }),
@@ -327,8 +307,6 @@ fn l1_a_held_layer_that_refuses_nothing_still_needs_a_way_out() {
 
 #[test]
 fn l1_a_way_out_is_the_event_escape_raises() {
-    // Refused: an alert dialog whose only exit is `onDismissAttempt`. It refuses only an outside
-    // press or a swipe, never Escape, so a keyboard user never raises it.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
         &json!({}),
@@ -346,7 +324,6 @@ fn l1_a_way_out_is_the_event_escape_raises() {
         LAYER,
         "locks out an outside press or swipe in `confirming`",
     );
-    // Admitted: Escape closes an alert dialog and raises `onOpenChange`, which leaves.
     assert_admits(&closed_by_open_change("ui-sdk:alert-dialog"), LAYER);
 }
 
@@ -385,21 +362,16 @@ fn dirty_form_dialog(cancel: bool, open_change: bool) -> Vec<(String, String, St
 
 #[test]
 fn l1_a_computed_dismissible_needs_a_way_out_on_both_callbacks() {
-    // Refused: with a clean form Escape closes the dialog and raises `onOpenChange`, which nothing
-    // hears, so `heldIn` keeps it open; only a dirty form's `onDismissAttempt` leaves.
     let found = dirty_form_dialog(false, false);
     assert_refuses(&found, LAYER, "may close on Escape or refuse it");
     assert_refuses(&found, LAYER, "`confirming`");
     assert_admits(&found, "widget.catalog.invalid_prop");
-    // Admitted: `onOpenChange` leaves too.
     assert_admits(&dirty_form_dialog(false, true), LAYER);
-    // Admitted: Cancel inside the dialog leaves whichever Escape raises.
     assert_admits(&dirty_form_dialog(true, false), LAYER);
 }
 
 #[test]
 fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
-    // Refused: a controlled `open` keeps a plain dialog open whatever Escape asks.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "open": "true" }),
@@ -407,7 +379,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_refuses(&found, LAYER, "sets `open`");
-    // Refused: a lock held only while the call is pending, but opened by `open` in every state.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "dismissible": "false", "open": "true" }),
@@ -415,7 +386,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_refuses(&found, LAYER, "sets `open`");
-    // Refused: an alert dialog with Cancel, whose `open` follows a field instead of its states.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
         &json!({ "open": "input.fields.lastCode == 'locked'" }),
@@ -423,7 +393,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_refuses(&found, LAYER, "sets `open`");
-    // Refused: on every primitive with dismissal attempts, not only dialogs.
     for entry in ["ui-sdk:select", "ui-sdk:popover"] {
         let found = layer_codes(layered(
             entry,
@@ -433,7 +402,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         ));
         assert_refuses(&found, LAYER, "sets `open`");
     }
-    // Admitted: a collapsible has no dismissal, so `open` is its own state to set.
     let found = layer_codes(layered(
         "ui-sdk:collapsible",
         &json!({ "open": "true" }),
@@ -441,7 +409,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_admits(&found, LAYER);
-    // Refused: `defaultOpen` opens a lock on load, before any state holds it.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "dismissible": "false", "defaultOpen": "true" }),
@@ -449,7 +416,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_refuses(&found, LAYER, "sets `defaultOpen`");
-    // Refused: and on a layer that names `heldIn`, whatever it refuses.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "defaultOpen": "true" }),
@@ -457,7 +423,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_refuses(&found, LAYER, "sets `defaultOpen`");
-    // Admitted: a literal `defaultOpen: false` never opens it on load.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "dismissible": "false", "defaultOpen": "false" }),
@@ -465,7 +430,6 @@ fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
         |_| {},
     ));
     assert_admits(&found, LAYER);
-    // Admitted: a plain dialog that starts open, which Escape closes.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "defaultOpen": "true" }),

@@ -688,50 +688,18 @@ impl EffectiveProperty {
                 self.check_record(&runtime)
             }
 
-            PropertyType::Text { format } => {
-                let Value::String(text) = value else {
-                    return Err(InstanceError::TypeMismatch("text"));
-                };
-                if *format == Some(TextFormat::Uuid) && !matches_grammar(&UUID_GRAMMAR, text) {
-                    return Err(InstanceError::TypeMismatch("uuid text"));
-                }
-                self.check_text(text)
-            }
-            PropertyType::Enum { values } => match value {
-                Value::String(text) if values.iter().any(|entry| &entry.value == text) => Ok(()),
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Array(_)
-                | Value::Object(_) => Err(InstanceError::TypeMismatch("enum")),
-            },
+            PropertyType::Text { format } => self.check_text_value(*format, value.as_str()),
+            PropertyType::Enum { values } => Self::check_enum_value(values, value.as_str()),
             PropertyType::Integer { .. } => {
                 let integer =
                     integer_literal(value).ok_or(InstanceError::TypeMismatch("integer"))?;
-                self.check_bounds(&integer.to_string())
+                self.check_runtime_bounds(&integer.to_string(), "integer")
             }
-            PropertyType::Boolean {} => {
-                if value.is_boolean() {
-                    Ok(())
-                } else {
-                    Err(InstanceError::TypeMismatch("boolean"))
-                }
+            PropertyType::Boolean {} => Self::check_boolean_value(value.is_boolean()),
+            PropertyType::Date {} => Self::check_date_value(value.as_str()),
+            PropertyType::Timestamp { timezone } => {
+                Self::check_timestamp_value(*timezone, value.as_str())
             }
-            PropertyType::Date {} => match value.as_str() {
-                Some(text) if crate::object_types::valid_date(text) => Ok(()),
-                Some(_) => Err(InstanceError::ConstraintViolation(
-                    "must be a valid calendar date in YYYY-MM-DD form".to_owned(),
-                )),
-                None => Err(InstanceError::TypeMismatch("date string")),
-            },
-            PropertyType::Timestamp { timezone } => match value.as_str() {
-                Some(text) if crate::object_types::valid_timestamp(text, *timezone) => Ok(()),
-                Some(_) => Err(InstanceError::ConstraintViolation(
-                    "must be an RFC 3339 date-time with an admitted explicit offset".to_owned(),
-                )),
-                None => Err(InstanceError::TypeMismatch("timestamp string")),
-            },
             PropertyType::JsonExt { .. } => {
                 let (matches, label) = match json_ext_type(base) {
                     Some("number") => (value.is_number(), "number"),
@@ -748,11 +716,7 @@ impl EffectiveProperty {
             other @ (PropertyType::Decimal { .. }
             | PropertyType::Duration { .. }
             | PropertyType::DecimalBinding { .. }
-            | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
-                "property kind '{}' on '{}'",
-                other.kind().as_str(),
-                self.id.as_str()
-            ))),
+            | PropertyType::Ref { .. }) => Err(self.unsupported_kind(other)),
         }
     }
 
@@ -800,19 +764,8 @@ impl EffectiveProperty {
         }
         match base {
             PropertyType::Record { .. } => self.check_record(value),
-            PropertyType::Text { format } => {
-                let Some(text) = value.as_str() else {
-                    return Err(InstanceError::TypeMismatch("text"));
-                };
-                if *format == Some(TextFormat::Uuid) && !matches_grammar(&UUID_GRAMMAR, text) {
-                    return Err(InstanceError::TypeMismatch("uuid text"));
-                }
-                self.check_text(text)
-            }
-            PropertyType::Enum { values } => match value.as_str() {
-                Some(text) if values.iter().any(|entry| entry.value == text) => Ok(()),
-                _ => Err(InstanceError::TypeMismatch("enum")),
-            },
+            PropertyType::Text { format } => self.check_text_value(*format, value.as_str()),
+            PropertyType::Enum { values } => Self::check_enum_value(values, value.as_str()),
             PropertyType::Integer { .. } => {
                 let Some(integer) = value.as_i64() else {
                     return Err(InstanceError::TypeMismatch("integer"));
@@ -832,38 +785,81 @@ impl EffectiveProperty {
                 }
                 self.check_runtime_bounds(&decimal.canonical(), "decimal")
             }
-            PropertyType::Boolean {} => {
-                if value.as_bool().is_some() {
-                    Ok(())
-                } else {
-                    Err(InstanceError::TypeMismatch("boolean"))
-                }
+            PropertyType::Boolean {} => Self::check_boolean_value(value.as_bool().is_some()),
+            PropertyType::Date {} => Self::check_date_value(value.as_str()),
+            PropertyType::Timestamp { timezone } => {
+                Self::check_timestamp_value(*timezone, value.as_str())
             }
-            PropertyType::Date {} => match value.as_str() {
-                Some(text) if crate::object_types::valid_date(text) => Ok(()),
-                Some(_) => Err(InstanceError::ConstraintViolation(
-                    "must be a valid calendar date in YYYY-MM-DD form".to_owned(),
-                )),
-                None => Err(InstanceError::TypeMismatch("date string")),
-            },
-            PropertyType::Timestamp { timezone } => match value.as_str() {
-                Some(text) if crate::object_types::valid_timestamp(text, *timezone) => Ok(()),
-                Some(_) => Err(InstanceError::ConstraintViolation(
-                    "must be an RFC 3339 date-time with an admitted explicit offset".to_owned(),
-                )),
-                None => Err(InstanceError::TypeMismatch("timestamp string")),
-            },
             PropertyType::JsonExt { .. } => {
                 self.check_runtime_json(value, closed_json_schema, base)
             }
             other @ (PropertyType::Duration { .. }
             | PropertyType::DecimalBinding { .. }
-            | PropertyType::Ref { .. }) => Err(InstanceError::Unsupported(format!(
-                "property kind '{}' on '{}'",
-                other.kind().as_str(),
-                self.id.as_str()
-            ))),
+            | PropertyType::Ref { .. }) => Err(self.unsupported_kind(other)),
         }
+    }
+
+    fn check_text_value(
+        &self,
+        format: Option<TextFormat>,
+        text: Option<&str>,
+    ) -> Result<(), InstanceError> {
+        let Some(text) = text else {
+            return Err(InstanceError::TypeMismatch("text"));
+        };
+        if format == Some(TextFormat::Uuid) && !matches_grammar(&UUID_GRAMMAR, text) {
+            return Err(InstanceError::TypeMismatch("uuid text"));
+        }
+        self.check_text(text)
+    }
+
+    fn check_enum_value(
+        values: &[norn_ir::EnumValue],
+        text: Option<&str>,
+    ) -> Result<(), InstanceError> {
+        match text {
+            Some(text) if values.iter().any(|entry| entry.value == text) => Ok(()),
+            Some(_) | None => Err(InstanceError::TypeMismatch("enum")),
+        }
+    }
+
+    fn check_boolean_value(is_bool: bool) -> Result<(), InstanceError> {
+        if is_bool {
+            Ok(())
+        } else {
+            Err(InstanceError::TypeMismatch("boolean"))
+        }
+    }
+
+    fn check_date_value(text: Option<&str>) -> Result<(), InstanceError> {
+        match text {
+            Some(text) if crate::object_types::valid_date(text) => Ok(()),
+            Some(_) => Err(InstanceError::ConstraintViolation(
+                "must be a valid calendar date in YYYY-MM-DD form".to_owned(),
+            )),
+            None => Err(InstanceError::TypeMismatch("date string")),
+        }
+    }
+
+    fn check_timestamp_value(
+        timezone: norn_ir::TimezonePolicy,
+        text: Option<&str>,
+    ) -> Result<(), InstanceError> {
+        match text {
+            Some(text) if crate::object_types::valid_timestamp(text, timezone) => Ok(()),
+            Some(_) => Err(InstanceError::ConstraintViolation(
+                "must be an RFC 3339 date-time with an admitted explicit offset".to_owned(),
+            )),
+            None => Err(InstanceError::TypeMismatch("timestamp string")),
+        }
+    }
+
+    fn unsupported_kind(&self, other: &PropertyType) -> InstanceError {
+        InstanceError::Unsupported(format!(
+            "property kind '{}' on '{}'",
+            other.kind().as_str(),
+            self.id.as_str()
+        ))
     }
 
     /// VAL-ROUND: materialize explicit Decimal rounding before checking stored bounds.
@@ -1217,32 +1213,6 @@ impl EffectiveProperty {
                 return Err(InstanceError::ConstraintViolation(format!(
                     "does not match pattern {pattern:?}"
                 )));
-            }
-        }
-        Ok(())
-    }
-
-    fn check_bounds(&self, literal: &str) -> Result<(), InstanceError> {
-        let value = Decimal::parse_str(literal).ok_or(InstanceError::TypeMismatch("integer"))?;
-        for constraints in &self.constraints {
-            for (member, bound, violated) in [
-                ("min", &constraints.min, std::cmp::Ordering::Less),
-                ("max", &constraints.max, std::cmp::Ordering::Greater),
-            ] {
-                let Some(bound) = bound else { continue };
-                let limit = Decimal::parse_str(bound.as_str()).ok_or_else(|| {
-                    InstanceError::Unsupported(format!(
-                        "malformed {member} bound {:?} on '{}'",
-                        bound.as_str(),
-                        self.id.as_str()
-                    ))
-                })?;
-                if value.cmp(&limit) == violated {
-                    return Err(InstanceError::ConstraintViolation(format!(
-                        "{literal} is outside {member} {:?}",
-                        bound.as_str()
-                    )));
-                }
             }
         }
         Ok(())

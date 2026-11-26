@@ -9,7 +9,7 @@ use norn_cell::engine::SqlEngine;
 use crate::authz::RefusalDetailRequest;
 use crate::decisions::{DecideRequest, MAX_IDEMPOTENCY_KEY_BYTES, OpenDecision, decision_codes};
 use crate::host::{ActionCell, DevHost};
-use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes};
+use crate::refusal::{Refusal, RefusalDiagnostic, codes};
 
 /// Governed action id passed to the refusal-detail PDP when a flow's
 /// `norn.decision@1` step refuses on a decider law.
@@ -103,15 +103,7 @@ fn at(code: &str, pointer: &str, message: &str) -> Refusal {
         message,
         "correct the field and decide again",
     );
-    refusal.diagnostics = vec![RefusalDiagnostic {
-        code: code.to_owned(),
-        severity: "error".to_owned(),
-        message: message.to_owned(),
-        span: Some(RefusalSpan {
-            pointer: pointer.to_owned(),
-        }),
-        law: None,
-    }];
+    refusal.diagnostics = vec![RefusalDiagnostic::error(code, message, pointer)];
     refusal
 }
 

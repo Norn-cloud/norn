@@ -338,6 +338,7 @@ pub(super) fn validate_closed_action_schema(
             code: "action.validation.invalid_schema",
             subject: "ActionIR",
             string_enums: false,
+            allow_fixed_currency: true,
             unions: if action_input {
                 ClosedSchemaUnions::ActionInput
             } else {

@@ -9,7 +9,6 @@ import io
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -271,6 +270,12 @@ class Ratchet(unittest.TestCase):
         self.assertEqual(ratchet.judge([10, 10, 10, 10.6, 11.2, 11.8], "lower", 10)["status"], "regressed")
         # One lucky outlier does not set the bar.
         self.assertEqual(ratchet.judge([10, 2, 10, 10, 10.5], "lower", 10)["status"], "within")
+        # Zero baseline preserves the sign of current so regressions/improvements are never inverted.
+        self.assertEqual(ratchet.judge([0, 0, 0, -1], "higher", 10)["status"], "regressed")
+        self.assertEqual(ratchet.judge([0, 0, 0, 1], "higher", 10)["status"], "improved")
+        self.assertEqual(ratchet.judge([0, 0, 0, -1], "lower", 10)["status"], "improved")
+        self.assertEqual(ratchet.judge([0, 0, 0, 1], "lower", 10)["status"], "regressed")
+        self.assertEqual(ratchet.judge([0, 0, 0, 0], "lower", 10)["status"], "within")
 
     def test_only_boat_non_estimates_count(self):
         rows = [sample(id=f"s/{i}", value=v, measured_at=f"2026-11-0{i}T00:00:00Z",

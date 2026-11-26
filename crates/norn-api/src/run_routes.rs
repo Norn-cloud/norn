@@ -338,14 +338,9 @@ pub(crate) fn installed_flow<E: SqlEngine>(
         .ok_or_else(flow_not_found)?;
     let artifacts: Vec<Value> =
         serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
-    let find = |id: &str, kind: &str| {
-        artifacts.iter().find(|artifact| {
-            text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
-        })
-    };
     let (entity_id, rule_id) = owned_ids(flow);
-    let rule = find(&rule_id, "rule").ok_or_else(flow_not_found)?;
-    let entity = find(&entity_id, "entity").ok_or_else(flow_not_found)?;
+    let rule = find_artifact(&artifacts, &rule_id, "rule").ok_or_else(flow_not_found)?;
+    let entity = find_artifact(&artifacts, &entity_id, "entity").ok_or_else(flow_not_found)?;
     let lifecycles = entity
         .pointer("/payload/objectType/lifecycles")
         .and_then(Value::as_array)
@@ -395,6 +390,12 @@ pub(crate) fn installed_flow<E: SqlEngine>(
     })
 }
 
+fn find_artifact<'a>(artifacts: &'a [Value], id: &str, kind: &str) -> Option<&'a Value> {
+    artifacts.iter().find(|artifact| {
+        text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
+    })
+}
+
 /// TIMER-PIN-1: the flow a started run executes as it was pinned when the
 /// run started: the rule at the run's pinned version, and the environment
 /// (the definitions receipt) the run started under, read from the
@@ -431,16 +432,11 @@ pub(crate) fn pinned_flow<E: SqlEngine>(
         .ok_or_else(|| unavailable("its starting definitions are not retained"))?;
     let artifacts: Vec<Value> = serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?;
     let (entity_id, rule_id) = owned_ids(&row.flow.id);
-    let find = |id: &str, kind: &str| {
-        artifacts.iter().find(|artifact| {
-            text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
-        })
-    };
-    let rule = find(&rule_id, "rule")
+    let rule = find_artifact(&artifacts, &rule_id, "rule")
         .filter(|rule| text(rule, "/version") == Some(row.flow.version.as_str()))
         .and_then(|rule| rule.pointer("/payload"))
         .ok_or_else(|| unavailable("its starting definitions hold no rule at that version"))?;
-    let object_type = find(&entity_id, "entity")
+    let object_type = find_artifact(&artifacts, &entity_id, "entity")
         .and_then(|entity| text(entity, "/payload/objectType/name"))
         .ok_or_else(|| unavailable("its starting definitions hold no run type"))?;
     if object_type != row.object_type {
@@ -677,12 +673,12 @@ fn document<E: SqlEngine>(
     flow: &FlowView,
     row: RunRow,
 ) -> Result<RunDocument, Refusal> {
-    let decision = if terminal_state_of(store, &row) {
+    let terminal = terminal_state_of(store, &row);
+    let decision = if terminal {
         None
     } else {
         crate::decisions::run_decision(host, store, actor, &row.run_id)?
     };
-    let terminal = terminal_state_of(store, &row);
     let steps = timeline(store, flow, &row, terminal)?;
     Ok(RunDocument {
         id: row.run_id,

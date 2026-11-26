@@ -27,6 +27,7 @@
             "to": "one"
           },
           "id": "order_line",
+          "inverse": "receipts",
           "target": "supply.OrderLine"
         },
         {

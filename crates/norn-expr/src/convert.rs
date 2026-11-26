@@ -89,7 +89,7 @@ pub(crate) fn to_variable(value: &Value) -> Result<Variable, ExprError> {
                 reason: format!("{err}"),
             })?)
         }
-        Value::String(s) => Variable::String(Variable::key(&nfc(s))),
+        Value::String(s) => Variable::String(Variable::key(&nfc_cow(s))),
         Value::Array(items) => Variable::from_array(
             items
                 .iter()
@@ -101,17 +101,27 @@ pub(crate) fn to_variable(value: &Value) -> Result<Variable, ExprError> {
             for (key, item) in entries {
                 // P6: two distinct keys that are one key after NFC are refused,
                 // never silently overwritten by whichever sorts last.
-                let key = nfc(key);
+                let key = nfc_cow(key);
                 if map
                     .insert(Variable::key(&key), to_variable(item)?)
                     .is_some()
                 {
-                    return Err(ExprError::KeyCollision { key });
+                    return Err(ExprError::KeyCollision {
+                        key: key.into_owned(),
+                    });
                 }
             }
             Variable::from_object(map)
         }
     })
+}
+
+fn nfc_cow(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.is_ascii() {
+        std::borrow::Cow::Borrowed(text)
+    } else {
+        std::borrow::Cow::Owned(nfc(text))
+    }
 }
 
 pub(crate) fn from_variable(variable: &Variable) -> Result<Value, ExprError> {

@@ -19,6 +19,16 @@
       ],
       "lifecycles": [
         {
+          "endings": [
+            {
+              "outcome": "completed",
+              "state": "fulfilled"
+            },
+            {
+              "outcome": "cancelled",
+              "state": "cancelled"
+            }
+          ],
           "immutable": [
             "fulfilled",
             "cancelled"

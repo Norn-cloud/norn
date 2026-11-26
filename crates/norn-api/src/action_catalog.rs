@@ -26,8 +26,7 @@ use crate::{
 use norn_cell::engine::SqlEngine;
 use norn_ir::{ActionEffectProgram, ActionRoot, ActionUiEffect, ArtifactEnvelope};
 use serde::{Deserialize, Serialize};
-use utoipa::openapi::Type;
-use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
+use utoipa::openapi::schema::Object;
 use utoipa::{IntoParams, ToSchema};
 
 /// The retained actions one actor may call in one definitions revision.
@@ -184,13 +183,10 @@ pub struct NornActionCatalog {
 // helper restates it. The input schema is a JSON Schema object whose members
 // this document does not enumerate, so it says so (`additionalProperties`).
 fn input_schema_schema() -> Object {
-    ObjectBuilder::new()
-        .schema_type(SchemaType::Type(Type::Object))
-        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(
-            "The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies.",
-        ))
-        .build()
+    crate::objects::free_form(
+        "The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies.",
+        false,
+    )
 }
 
 /// The admitted input schema without the fields derived from the verified
@@ -239,37 +235,16 @@ fn existing_targets(action: &ActionRoot) -> Vec<NornActionInputLink> {
 }
 
 fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
-    let (effect, object_kind, object_id_field) = match &action.effect_program {
-        Some(ActionEffectProgram::UpsertInputObject {
-            object_kind,
-            object_id_field,
-            ..
-        }) => (
-            NornActionEffect::UpsertInputObject,
-            object_kind,
-            object_id_field,
-        ),
-        Some(ActionEffectProgram::FireTransition {
-            object_kind,
-            object_id_field,
-            ..
-        }) => (
-            NornActionEffect::FireTransition,
-            object_kind,
-            object_id_field,
-        ),
-        Some(ActionEffectProgram::MutateParentWithRows {
-            object_kind,
-            object_id_field,
-            ..
-        }) => (
-            NornActionEffect::MutateParentWithRows,
-            object_kind,
-            object_id_field,
-        ),
+    let Some(program) = &action.effect_program else {
         // Without an effect program the kernel has nothing it can run for a form.
-        None => return Ok(None),
+        return Ok(None);
     };
+    let effect = match program {
+        ActionEffectProgram::UpsertInputObject { .. } => NornActionEffect::UpsertInputObject,
+        ActionEffectProgram::FireTransition { .. } => NornActionEffect::FireTransition,
+        ActionEffectProgram::MutateParentWithRows { .. } => NornActionEffect::MutateParentWithRows,
+    };
+    let target = program.target();
     let effects = action.effective_ui_effects();
     Ok(Some(NornActionSummary {
         action_id: action.action_id.clone(),
@@ -278,9 +253,9 @@ fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
             .clone()
             .unwrap_or_else(|| action.action_id.clone()),
         description: action.description.clone(),
-        object_kind: object_kind.clone(),
+        object_kind: target.object_kind.to_owned(),
         effect,
-        object_id_field: object_id_field.clone(),
+        object_id_field: target.object_id_field.to_owned(),
         input_schema: caller_input_schema(action)?,
         input_links: existing_targets(action),
         to_state: None,
@@ -347,37 +322,34 @@ pub fn list_actions_on<E: SqlEngine>(
         },
         actor,
     )?;
-    let mut items = callable
-        .actions
-        .iter()
-        .map(|(_, action)| summary(action))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .filter(|item| {
-            query
-                .object_kind
-                .as_deref()
-                .is_none_or(|kind| kind == item.object_kind)
-        })
-        .filter(|item| {
-            states.as_ref().is_none_or(|states| {
-                callable
-                    .actions
-                    .iter()
-                    .find(|(_, action)| action.action_id == item.action_id)
-                    .is_none_or(|(_, action)| fires_from(action, states))
-            })
-        })
-        .collect::<Vec<_>>();
-    items.sort_by(|a, b| a.action_id.cmp(&b.action_id));
+    let mut matched = Vec::new();
+    for (_, action) in &callable.actions {
+        let Some(program) = &action.effect_program else {
+            continue;
+        };
+        if query
+            .object_kind
+            .as_deref()
+            .is_some_and(|kind| kind != program.target().object_kind)
+        {
+            continue;
+        }
+        if states
+            .as_ref()
+            .is_some_and(|states| !fires_from(action, states))
+        {
+            continue;
+        }
+        if let Some(item) = summary(action)? {
+            matched.push((action, item));
+        }
+    }
+    matched.sort_by(|(_, a), (_, b)| a.action_id.cmp(&b.action_id));
     let targets = transition_targets(host)?;
-    for item in &mut items {
-        item.to_state = callable
-            .actions
-            .iter()
-            .find(|(_, action)| action.action_id == item.action_id)
-            .and_then(|(_, action)| match &action.effect_program {
+    let items = matched
+        .into_iter()
+        .map(|(action, mut item)| {
+            item.to_state = match &action.effect_program {
                 Some(ActionEffectProgram::FireTransition {
                     object_kind,
                     lifecycle,
@@ -391,8 +363,10 @@ pub fn list_actions_on<E: SqlEngine>(
                     ))
                     .cloned(),
                 _ => None,
-            });
-    }
+            };
+            item
+        })
+        .collect();
     Ok(NornActionCatalog {
         definitions_version: callable.version,
         items,

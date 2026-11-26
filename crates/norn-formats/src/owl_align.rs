@@ -477,7 +477,6 @@ pub fn align(
         }
     }
 
-    // Precedence, then one finding per class.
     let mut findings = Vec::new();
     let mut outcome: BTreeMap<&str, (Vec<&OwlAnchor>, Vec<String>)> = BTreeMap::new();
     let mut held_out: BTreeMap<&str, (&OwlHeld, Vec<String>)> = BTreeMap::new();
@@ -538,7 +537,6 @@ pub fn align(
     }
     findings.sort();
 
-    // The imported vocabulary's ontology pack.
     let source = admission.source_id.as_str();
     let mut terms = Vec::new();
     let mut mappings = Vec::new();
@@ -590,7 +588,6 @@ pub fn align(
         }),
     )?;
 
-    // The link: every term mapped or residual, with its reason.
     let mut correspondences = Vec::new();
     let mut residuals = Vec::new();
     for (name, (row, anchors)) in &held_out {

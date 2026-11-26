@@ -453,16 +453,24 @@ impl Client {
 }
 
 fn encode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-                char::from(byte).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
+    let hex = |nibble: u8| {
+        char::from(if nibble < 10 {
+            b'0'.saturating_add(nibble)
+        } else {
+            b'A'.saturating_add(nibble.saturating_sub(10))
         })
-        .collect()
+    };
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            out.push('%');
+            out.push(hex(byte >> 4));
+            out.push(hex(byte & 0x0F));
+        }
+    }
+    out
 }
 
 fn text(value: &Value, key: &str) -> String {

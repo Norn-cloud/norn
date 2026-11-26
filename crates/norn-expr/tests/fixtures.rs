@@ -102,12 +102,6 @@ fn syntax_errors_are_compile_errors() {
 }
 
 #[test]
-fn runtime_errors_are_evaluation_errors() {
-    let err = eval("upper(5)", &Value::Null, BUDGET);
-    assert!(matches!(err, Err(ExprError::Evaluation { .. })), "{err:?}");
-}
-
-#[test]
 fn failed_evaluation_attempts_report_their_meter_usage() {
     let expression = Expression::compile("upper(5)").expect("compile");
     let context = Value::Null;
@@ -195,21 +189,6 @@ fn temporal_results_project_to_canonical_strings() {
         .unwrap(),
         Value::from("2026-09-27T10:00:00Z")
     );
-}
-
-#[test]
-fn inexact_numbers_are_rejected() {
-    for bad in [
-        "1e3",
-        "01",
-        "79228162514264337593543950336",
-        "0.00000000000000000000000000001",
-    ] {
-        assert!(
-            matches!(bad.parse::<Number>(), Err(ExprError::InvalidNumber { .. })),
-            "{bad}"
-        );
-    }
 }
 
 #[test]

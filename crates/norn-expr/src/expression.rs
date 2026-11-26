@@ -49,6 +49,18 @@ impl TzdbLookup for ZenTzdbAdapter {
 }
 
 fn zen_tzdb(bundle: &TzdbBundle) -> Arc<dyn TzdbLookup> {
+    static V2025B: std::sync::OnceLock<Arc<dyn TzdbLookup>> = std::sync::OnceLock::new();
+    static V2026C: std::sync::OnceLock<Arc<dyn TzdbLookup>> = std::sync::OnceLock::new();
+    if bundle.ptr_eq(TzdbBundle::v2025b()) {
+        return Arc::clone(
+            V2025B.get_or_init(|| Arc::new(ZenTzdbAdapter(TzdbBundle::v2025b().clone()))),
+        );
+    }
+    if bundle.ptr_eq(TzdbBundle::v2026c()) {
+        return Arc::clone(
+            V2026C.get_or_init(|| Arc::new(ZenTzdbAdapter(TzdbBundle::v2026c().clone()))),
+        );
+    }
     Arc::new(ZenTzdbAdapter(bundle.clone()))
 }
 

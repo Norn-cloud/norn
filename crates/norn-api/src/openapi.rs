@@ -80,8 +80,7 @@ pub struct ApiDoc;
 /// # Errors
 /// Returns a serialization failure.
 pub fn openapi_json() -> Result<String, serde_json::Error> {
-    let mut doc = ApiDoc::openapi();
-    ContractSchemas.modify(&mut doc);
+    let doc = ApiDoc::openapi();
     serde_json::to_string_pretty(&doc)
 }
 

@@ -58,6 +58,8 @@ pub(crate) struct ClosedSchemaProfile {
     /// schema (T3-DEC-2). `ActionIR` inputs keep the enum-free subset the
     /// engine's input validation implements.
     pub(crate) string_enums: bool,
+    /// Whether fixed single-currency string enums are permitted on string leaves.
+    pub(crate) allow_fixed_currency: bool,
     /// Which precise type-array forms this profile admits.
     pub(crate) unions: ClosedSchemaUnions,
 }
@@ -249,7 +251,7 @@ fn validate_closed_schema_keywords(
         "string"
             if profile.string_enums
                 || action_input
-                || profile.subject == "ActionIR"
+                || profile.allow_fixed_currency
                     && norn_expr::schema::fixed_currency_schema(value) =>
         {
             vec!["type", "enum"]

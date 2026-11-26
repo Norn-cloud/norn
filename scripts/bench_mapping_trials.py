@@ -168,7 +168,8 @@ class Budget:
             self.spent += reservation
             self.calls += 1
             self.tokens["unknown_usage_calls"] += 1
-        return reservation
+            spent = self.spent
+        return reservation, spent
 
     def settle(self, reservation, model, prompt, completion):
         cin, cout = self.prices[model]
@@ -182,7 +183,8 @@ class Budget:
             if cost > reservation:
                 self.overshoots.append({"model": model, "cost": cost, "reservation": reservation,
                                         "prompt_tokens": prompt, "completion_tokens": completion})
-        return cost
+            spent = self.spent
+        return cost, spent
 
 
 def ask(url, token, model, messages, budget, log):
@@ -201,13 +203,18 @@ def ask(url, token, model, messages, budget, log):
             budget.release(reservation)
             detail = error.read()[:200].decode("utf-8", "replace")
             if error.code < 500 and error.code != 429 or attempt == 2:
-                return None, f"http {error.code}: {detail}".replace(token, "***").replace(url, "<gateway>")
+                message = f"http {error.code}: {detail}"
+                if token:
+                    message = message.replace(token, "***")
+                if url:
+                    message = message.replace(url, "<gateway>")
+                return None, message
             time.sleep(5 * (attempt + 1))
             continue
         except (OSError, ValueError, http.client.HTTPException) as error:
             # The gateway may have billed a call whose reply was lost, so the worst case stays charged.
-            cost = budget.forfeit(reservation)
-            log({"model": model, "failure": type(error).__name__, "cost": cost, "spent": budget.spent})
+            cost, spent = budget.forfeit(reservation)
+            log({"model": model, "failure": type(error).__name__, "cost": cost, "spent": spent})
             if attempt == 2:
                 return None, type(error).__name__
             time.sleep(5 * (attempt + 1))
@@ -216,11 +223,11 @@ def ask(url, token, model, messages, budget, log):
         usage = usage if isinstance(usage, dict) else {}
         prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
         if isinstance(prompt, int) and isinstance(completion, int):
-            cost = budget.settle(reservation, model, prompt, completion)
+            cost, spent = budget.settle(reservation, model, prompt, completion)
         else:
             prompt = completion = None
-            cost = budget.forfeit(reservation)
-        log({"model": model, "prompt_tokens": prompt, "completion_tokens": completion, "cost": cost, "spent": budget.spent})
+            cost, spent = budget.forfeit(reservation)
+        log({"model": model, "prompt_tokens": prompt, "completion_tokens": completion, "cost": cost, "spent": spent})
         try:
             return (data["choices"][0]["message"].get("content") or ""), None
         except (KeyError, IndexError, TypeError, AttributeError):
@@ -271,7 +278,7 @@ def reference(name, row):
 
 def score(name, rows, result):
     correct = 0
-    for source, outcome in zip(rows, result["rows"]):
+    for source, outcome in zip(rows, result["rows"], strict=False):
         expected = reference(name, source)
         records = outcome.get("records") or []
         if expected is None:
@@ -413,18 +420,21 @@ def main():
     parser.add_argument("--workers", type=int, default=5)
     parser.add_argument("--tasks", help="comma-separated task names; default all")
     args = parser.parse_args()
+    scratch = Path(args.scratch)
+    if scratch.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+        parser.error("scratch directory must remain outside the source checkout")
     url, token = os.environ["NORN_BENCH_GATEWAY_URL"].rstrip("/"), os.environ["NORN_BENCH_GATEWAY_TOKEN"]
     data = json.loads(Path(args.rows).read_text())
-    check = cargo_transport(args.binary, Path(args.scratch) / "candidates")
-    transcript, lock = (Path(args.scratch) / "calls.jsonl").open("a"), threading.Lock()
-
-    def log(entry):
-        with lock:
-            transcript.write(json.dumps(entry) + "\n")
-            transcript.flush()
-    print(json.dumps({"references": references(data, check), "traps": traps(data, check)}))
-    outcomes, budget = run(url, token, args.models.split(","), args.repeats, data, check, load_prices(args.prices),
-                           args.cap, log, workers=args.workers, tasks=args.tasks.split(",") if args.tasks else None)
+    check = cargo_transport(args.binary, scratch / "candidates")
+    lock = threading.Lock()
+    with (scratch / "calls.jsonl").open("a", encoding="utf-8") as transcript:
+        def log(entry):
+            with lock:
+                transcript.write(json.dumps(entry) + "\n")
+                transcript.flush()
+        print(json.dumps({"references": references(data, check), "traps": traps(data, check)}))
+        outcomes, budget = run(url, token, args.models.split(","), args.repeats, data, check, load_prices(args.prices),
+                               args.cap, log, workers=args.workers, tasks=args.tasks.split(",") if args.tasks else None)
     print(json.dumps({"outcomes": outcomes, "calls": budget.calls, "tokens": budget.tokens, "spent": budget.spent,
                       "overshoots": budget.overshoots}))
 

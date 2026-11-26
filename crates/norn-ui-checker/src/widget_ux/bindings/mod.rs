@@ -51,8 +51,8 @@ struct LinkTraversalSpec<'a> {
 
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_bindings(&mut self) {
-        let bindings = self.ux.data_bindings.clone();
-        for (index, binding) in bindings.iter().enumerate() {
+        let ux = self.ux;
+        for (index, binding) in ux.data_bindings.iter().enumerate() {
             let path = format!("/payload/ux/dataBindings/{index}");
             let Some(entity) = self.resolve_ref(
                 &binding.object.id,
@@ -90,7 +90,6 @@ impl UxChecker<'_, '_, '_> {
                 );
                 continue;
             };
-            let effective = effective.clone();
             if effective.name.as_str() != type_name {
                 self.error(
                     &format!("{path}/object"),
@@ -98,7 +97,7 @@ impl UxChecker<'_, '_, '_> {
                 );
                 continue;
             }
-            self.check_data_query(binding, &effective, index, &path);
+            self.check_data_query(binding, effective, index, &path);
         }
     }
 
@@ -333,12 +332,10 @@ impl UxChecker<'_, '_, '_> {
             );
             return;
         };
-        let source_object = source_object.clone();
         let link = self
             .catalog
             .links_for_object_type(source_object.name.as_str())
-            .and_then(|links| links.iter().find(|link| link.id.as_str() == link_id))
-            .cloned();
+            .and_then(|links| links.iter().find(|link| link.id.as_str() == link_id));
         let Some(link) = link else {
             self.error(
                 &format!("{path}/query/linkId"),
