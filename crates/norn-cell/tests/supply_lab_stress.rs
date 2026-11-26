@@ -1396,11 +1396,8 @@ fn axis4_incremental_equals_recompute_through_redelivery_and_restart() -> Result
         "120 + the late 30"
     );
     // A ratio over an updated line: IVM retracts and replaces it.
-    let fill = plan(&stress.lab, "supply.fill_rate_weekly")?;
-    let mut ratio =
-        IncrementalQuestion::rebuild(stress.cell.store(), &fill, ctx.clone(), |_| Ok(true))
-            .map_err(|e| format!("ratio rebuild: {e}"))?;
-    // Record the matching 50-unit physical receipt before reconciling cumulative received_qty to 950.
+    // Record the matching 50-unit physical receipt first so reconciling received_qty to 950
+    // satisfies OrderLine.receipts_consistent and advances `ratio` by a single commit.
     stress.ok(
         "supply.receipt.record",
         "clerk:hana",
@@ -1413,6 +1410,10 @@ fn axis4_incremental_equals_recompute_through_redelivery_and_restart() -> Result
             "2026-07-17T08:00:00Z",
         ),
     )?;
+    let fill = plan(&stress.lab, "supply.fill_rate_weekly")?;
+    let mut ratio =
+        IncrementalQuestion::rebuild(stress.cell.store(), &fill, ctx.clone(), |_| Ok(true))
+            .map_err(|e| format!("ratio rebuild: {e}"))?;
     stress.ok(
         "supply.line.record_received",
         "clerk:hana",

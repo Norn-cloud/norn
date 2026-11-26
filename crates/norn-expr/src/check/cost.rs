@@ -750,21 +750,13 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 operator,
             } => {
                 let inner = self.eval(operand);
-                match operator {
-                    Operator::Arithmetic(ArithmeticOperator::Add) => inner,
-                    Operator::Arithmetic(_)
-                    | Operator::Logical(_)
-                    | Operator::Comparison(_)
-                    | Operator::Range
-                    | Operator::Comma
-                    | Operator::Slice
-                    | Operator::Dot
-                    | Operator::QuestionMark
-                    | Operator::Assign
-                    | Operator::Semi => Out {
+                if matches!(operator, Operator::Arithmetic(ArithmeticOperator::Add)) {
+                    inner
+                } else {
+                    Out {
                         cost: inner.cost.plus(1),
                         val: Val::scalar(),
-                    },
+                    }
                 }
             }
             Node::Binary {
@@ -878,9 +870,7 @@ impl<'a, 'n> Estimator<'a, 'n> {
                     val,
                 };
             }
-            // Bounded literal-table lookup: build table, evaluate key, Fetch (opcode + key size).
-            // Reduce from the first entry so record values retain `fields` for deep copy-out
-            // metering, and clamp `size` to at least 1 so a `null` miss is always covered.
+            // Bounded literal-table lookup: build table, evaluate key, Fetch (1 + key size).
             let key = self.eval(property);
             let mut cost = base.cost.plus(1);
             cost.add(&key.cost);
@@ -893,62 +883,22 @@ impl<'a, 'n> Estimator<'a, 'n> {
             val.size = val.size.at_least_one();
             return Out { cost, val };
         }
-        let key_charge = match property {
-            Node::String(key) => len64(key.len()),
-            Node::Null
-            | Node::Bool(_)
-            | Node::Number(_)
-            | Node::TemplateString(_)
-            | Node::Pointer
-            | Node::Array(_)
-            | Node::Object(_)
-            | Node::Assignments { .. }
-            | Node::Identifier(_)
-            | Node::Closure { .. }
-            | Node::Parenthesized(_)
-            | Node::Root
-            | Node::Member { .. }
-            | Node::Slice { .. }
-            | Node::Interval { .. }
-            | Node::Conditional { .. }
-            | Node::Unary { .. }
-            | Node::Binary { .. }
-            | Node::FunctionCall { .. }
-            | Node::MethodCall { .. }
-            | Node::Error { .. } => 0,
+        let key_charge = if let Node::String(key) = property {
+            len64(key.len())
+        } else {
+            0
         };
         let cost = base.cost.plus(2_u64.saturating_add(key_charge));
         let val = if matches!(self.type_of(target), Some(T::List(_))) {
-            // An in-bounds literal index into a list literal.
             base.val.elem.map_or_else(|| self.top(), |elem| *elem)
         } else {
-            let origin = match property {
-                Node::String(key) => base
-                    .val
+            let origin = if let Node::String(key) = property {
+                base.val
                     .origin
                     .as_ref()
-                    .map(|path| child(path, Seg::Field(Rc::from(*key)))),
-                Node::Null
-                | Node::Bool(_)
-                | Node::Number(_)
-                | Node::TemplateString(_)
-                | Node::Pointer
-                | Node::Array(_)
-                | Node::Object(_)
-                | Node::Assignments { .. }
-                | Node::Identifier(_)
-                | Node::Closure { .. }
-                | Node::Parenthesized(_)
-                | Node::Root
-                | Node::Member { .. }
-                | Node::Slice { .. }
-                | Node::Interval { .. }
-                | Node::Conditional { .. }
-                | Node::Unary { .. }
-                | Node::Binary { .. }
-                | Node::FunctionCall { .. }
-                | Node::MethodCall { .. }
-                | Node::Error { .. } => None,
+                    .map(|path| child(path, Seg::Field(Rc::from(*key))))
+            } else {
+                None
             };
             let ty = self.type_of(node);
             self.env_val(ty, origin)

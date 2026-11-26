@@ -1506,9 +1506,10 @@ fn narrow_zen_assumed(root: &VariableType, assumed: &[Vec<String>]) -> VariableT
 
 fn narrow_zen_path(ty: &VariableType, path: &[String]) -> VariableType {
     let Some((head, tail)) = path.split_first() else {
-        return match ty {
-            VariableType::Nullable(inner) => inner.as_ref().clone(),
-            other => other.clone(),
+        return if let VariableType::Nullable(inner) = ty {
+            inner.as_ref().clone()
+        } else {
+            ty.clone()
         };
     };
     let VariableType::Object(members) = ty else {
