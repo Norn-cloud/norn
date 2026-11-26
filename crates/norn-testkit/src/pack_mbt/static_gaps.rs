@@ -811,13 +811,52 @@ fn high_impact_reason(action: &ActionRoot) -> Option<String> {
     {
         return Some("declared monetary effect".to_owned());
     }
-    let lower = action.action_id.to_ascii_lowercase();
-    for keyword in [
-        "approve", "promote", "retire", "post", "pay", "settle", "payout", "activate", "release",
-        "void", "reverse",
-    ] {
-        if lower.contains(keyword) {
-            return Some(format!("high-impact action verb '{keyword}'"));
+    // Draft creation and host-authenticated receipt confirmations are not human
+    // approval decisions, so skip the name-based heuristic for them while still
+    // honoring explicit irreversible/destructive/monetary declarations above (DX-9).
+    if matches!(
+        action.effect_program,
+        Some(ActionEffectProgram::UpsertInputObject {
+            write_mode: norn_kernel::pack_mbt_support::UpsertWriteMode::CreateOnly,
+            ..
+        })
+    ) {
+        return None;
+    }
+    if matches!(
+        action.effect_program,
+        Some(ActionEffectProgram::FireTransition {
+            accept_receipt: Some(_),
+            ..
+        })
+    ) {
+        return None;
+    }
+    // Match on tokens of the action verb segment (final `.` segment), never on
+    // entity nouns such as `payroll`, `payslip`, or `payout` in earlier segments (DX-9).
+    let verb = action
+        .action_id
+        .rsplit('.')
+        .next()
+        .unwrap_or(action.action_id.as_str())
+        .to_ascii_lowercase();
+    for token in verb.split(['_', '-']) {
+        if matches!(
+            token,
+            "approve"
+                | "promote"
+                | "retire"
+                | "post"
+                | "pay"
+                | "payout"
+                | "dispatch"
+                | "settle"
+                | "activate"
+                | "release"
+                | "void"
+                | "reverse"
+        ) {
+            return Some(format!("high-impact action verb '{token}'"));
         }
     }
     None
@@ -907,5 +946,70 @@ fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<Structura
                 ),
             });
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "unit test fixture decoding")]
+mod tests {
+    use norn_kernel::pack_mbt_support::{ActionEffectProgram, ActionRoot, UpsertWriteMode};
+
+    use super::high_impact_reason;
+
+    fn sample_action(action_id: &str, effect: Option<ActionEffectProgram>) -> ActionRoot {
+        let mut root: ActionRoot = serde_json::from_value(serde_json::json!({
+            "actionId": action_id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }))
+        .expect("minimal action root");
+        root.effect_program = effect;
+        root
+    }
+
+    #[test]
+    fn dx9_skips_create_only_and_noun_matches_and_receipt_confirmations() {
+        let create_payroll = sample_action(
+            "soliman.payroll.create",
+            Some(ActionEffectProgram::UpsertInputObject {
+                object_kind: "soliman.PayrollRun".to_owned(),
+                object_id_field: "id".to_owned(),
+                entity_artifact_id: "soliman.PayrollRun.entity".to_owned(),
+                entity_artifact_version: "0.2.0".to_owned(),
+                write_mode: UpsertWriteMode::CreateOnly,
+            }),
+        );
+        assert!(high_impact_reason(&create_payroll).is_none());
+
+        let noun_only = sample_action("soliman.payout.rename", None);
+        assert!(high_impact_reason(&noun_only).is_none());
+
+        let receipt_confirm: ActionEffectProgram = serde_json::from_value(serde_json::json!({
+            "kind": "fire_transition",
+            "objectKind": "soliman.PayoutInstruction",
+            "objectIdField": "id",
+            "entityArtifactId": "soliman.PayoutInstruction.entity",
+            "entityArtifactVersion": "0.2.0",
+            "lifecycle": "state",
+            "transition": "confirm_succeeded",
+            "acceptReceipt": {
+                "referenceField": "receipt",
+                "manifestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "digestProperty": "last_evidence_digest",
+                "resultBindings": {}
+            }
+        }))
+        .expect("receipt transition effect");
+        let confirm = sample_action("soliman.payout.confirm_succeeded", Some(receipt_confirm));
+        assert!(high_impact_reason(&confirm).is_none());
+
+        let approve = sample_action("soliman.payroll.approve", None);
+        assert!(high_impact_reason(&approve).is_some());
+
+        let dispatch = sample_action("soliman.payout.dispatch_now", None);
+        assert!(high_impact_reason(&dispatch).is_some());
     }
 }

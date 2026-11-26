@@ -122,6 +122,8 @@ mod owned_collections;
 mod path_mapping;
 #[path = "predicate_slice_and_links.rs"]
 mod predicate_slice_and_links;
+#[path = "pr_c_honesty_and_red_team.rs"]
+mod pr_c_honesty_and_red_team;
 #[path = "principal_inputs.rs"]
 mod principal_inputs;
 #[path = "property_types.rs"]

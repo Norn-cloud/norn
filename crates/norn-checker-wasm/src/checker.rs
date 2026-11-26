@@ -1081,3 +1081,30 @@ pub fn restate_dashboard_json(payload_json: &str, metrics_json: &str) -> Result<
         .map_err(|error| invalid("payload", error.to_string()))?;
     Ok(restatement_document(&text))
 }
+
+/// LAW-HONESTY-1: classify every law artifact in `artifacts_json` with honest
+/// runtime enforcement (`enforced` vs `declared-only`) and proof status.
+///
+/// # Errors
+///
+/// Invalid JSON or undecodable artifact envelopes.
+pub fn law_honesty_json(artifacts_json: &str) -> Result<String, AbiError> {
+    let artifacts = parse_array("artifacts", artifacts_json)?;
+    let envelopes = envelopes_or_invalid("artifacts", &artifacts)?;
+    let statuses = norn_checker::law_honesty::classify_law_honesty(&envelopes);
+    serde_json::to_string(&statuses).map_err(|error| AbiError::Receipt(error.to_string()))
+}
+
+/// RED-TEAM-1: execute terminating `norn-datalog` scope-confinement, external
+/// settlement receipt-binding, recursive lifecycle `SoD`, and unconstrained-write
+/// checks over `artifacts_json`.
+///
+/// # Errors
+///
+/// Invalid JSON or undecodable artifact envelopes.
+pub fn analyze_red_team_json(artifacts_json: &str) -> Result<String, AbiError> {
+    let artifacts = parse_array("artifacts", artifacts_json)?;
+    let envelopes = envelopes_or_invalid("artifacts", &artifacts)?;
+    let report = norn_checker::red_team::analyze_red_team(&envelopes);
+    serde_json::to_string(&report).map_err(|error| AbiError::Receipt(error.to_string()))
+}
