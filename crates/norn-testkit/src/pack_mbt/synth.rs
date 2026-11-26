@@ -312,10 +312,15 @@ pub fn synthesize_object(
                 .map(|state| (lc.property.as_str(), state.as_str()))
         })
         .collect();
-    let key_props: BTreeSet<&str> = object_type
+    let primary_key_props: BTreeSet<&str> = object_type
         .identity
         .first()
         .map_or_default(|spec| spec.properties.iter().map(PropertyId::as_str).collect());
+    let all_key_props: BTreeSet<&str> = object_type
+        .identity
+        .iter()
+        .flat_map(|spec| spec.properties.iter().map(PropertyId::as_str))
+        .collect();
 
     // DX-8: when the pack supplies positive `LAW-EXAMPLE-1` witnesses for any
     // law targeting this entity type, seed non-key, non-lifecycle properties
@@ -333,12 +338,14 @@ pub fn synthesize_object(
             values.insert(id.to_owned(), JsonValue::String((*init).to_owned()));
             continue;
         }
-        if key_props.contains(id) {
+        if primary_key_props.contains(id) {
             values.insert(id.to_owned(), JsonValue::String(key.to_owned()));
             continue;
         }
-        if let Some(witness) = witness_subject
+        if !all_key_props.contains(id)
+            && let Some(witness) = witness_subject
             && let Some(witness_val) = witness.get(id)
+            && witness_value_matches_property(witness_val, &prop, &shared)
         {
             values.insert(id.to_owned(), witness_val.clone());
             continue;
@@ -385,6 +392,34 @@ fn positive_law_witness_for<'a>(
         .checked_rem(positives.len())
         .unwrap_or(0);
     positives.get(idx).copied()
+}
+
+fn witness_value_matches_property(
+    value: &JsonValue,
+    prop: &EffectiveProp<'_>,
+    shared: &BTreeMap<&str, &PropertyTypeDef>,
+) -> bool {
+    if value.is_null() {
+        return false;
+    }
+    let resolved = resolve_property_type(prop.property_type, shared);
+    match resolved {
+        PropertyType::Boolean {} => matches!(value, JsonValue::Bool(_)),
+        PropertyType::Integer { .. } => {
+            matches!(value, JsonValue::Number(dec) if dec.to_string().parse::<i64>().is_ok())
+        }
+        PropertyType::Decimal { .. } => matches!(value, JsonValue::Number(_)),
+        PropertyType::Text { .. }
+        | PropertyType::Date {}
+        | PropertyType::Duration {}
+        | PropertyType::Timestamp { .. } => matches!(value, JsonValue::String(_)),
+        PropertyType::Enum { values } => {
+            matches!(value, JsonValue::String(s) if values.iter().any(|v| v.value == *s))
+        }
+        PropertyType::Record { .. } => matches!(value, JsonValue::Object(_)),
+        PropertyType::JsonExt { .. } => true,
+        PropertyType::DecimalBinding { .. } | PropertyType::Ref { .. } => false,
+    }
 }
 
 /// Synthesizes an object that satisfies all declared `guards` for `lifecycle`

@@ -585,6 +585,12 @@ impl<'a, 'r> Checker<'a, 'r> {
                     if self.protected(&def.name, &property.id) {
                         property.protect();
                     }
+                    if self.immutable_after_create(&def.name, &property.id) {
+                        property.set_immutable_after_create();
+                    }
+                    if let Some(origin) = self.effective_origin(&def.name, &property.id) {
+                        property.set_origin(origin);
+                    }
                     if let Some(reads) = computed_reads.get(resolved.property.id.as_str()) {
                         property.computed_inputs = reads.fields.iter().cloned().collect();
                         property.computed_reads_all = reads.whole_root;
@@ -1004,6 +1010,61 @@ impl<'a> Checker<'a, '_> {
                     )
             })
             .any(|candidate| candidate.id == *property && candidate.protected)
+    }
+
+    fn immutable_after_create(&self, name: &ObjectTypeName, property: &PropertyId) -> bool {
+        std::iter::once(name)
+            .chain(self.ancestors(name))
+            .flat_map(|name| {
+                self.types
+                    .get(name)
+                    .into_iter()
+                    .flat_map(|entry| &entry.def.properties)
+                    .chain(
+                        self.extensions
+                            .get(name)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|(_, _, extension)| &extension.properties),
+                    )
+            })
+            .any(|candidate| candidate.id == *property && candidate.immutable_after_create)
+    }
+
+    fn effective_origin(
+        &self,
+        name: &ObjectTypeName,
+        property: &PropertyId,
+    ) -> Option<norn_ir::PropertyOrigin> {
+        let mut chain = self.ancestors(name);
+        chain.reverse();
+        chain.push(name);
+        let mut effective = None;
+        for owner in chain {
+            let declarations = self
+                .types
+                .get(owner)
+                .into_iter()
+                .flat_map(|entry| &entry.def.properties)
+                .chain(
+                    self.extensions
+                        .get(owner)
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|(_, _, extension)| &extension.properties),
+                );
+            for candidate in declarations {
+                if candidate.id == *property
+                    && let Some(origin) = candidate.origin
+                {
+                    match effective {
+                        Some(existing) if existing != norn_ir::PropertyOrigin::Caller => {}
+                        _ => effective = Some(origin),
+                    }
+                }
+            }
+        }
+        effective
     }
 
     /// The registered supertypes of `name`, nearest first.

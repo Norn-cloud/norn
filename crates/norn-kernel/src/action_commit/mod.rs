@@ -66,7 +66,9 @@ pub use approval::{
     retained_person_matches, validate_accountable_person,
 };
 pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
-pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
+pub use input::{
+    actor_derived_fields, clock_derived_fields, prepare_action_input, prepare_action_input_for_call,
+};
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,

@@ -343,4 +343,49 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
         format!("{err:?}").contains("immutableAfterCreate"),
         "expected immutableAfterCreate refusal, got: {err:?}"
     );
+
+    // Pre-slice validation must refuse malformed caller payloads on post-slice actions
+    // immediately inside `prepare_action_input_for_call` before slice loading.
+    let malformed: JsonObject = serde_json::from_value(json!({
+        "id": "po_1",
+        "unexpected_extra": "boom"
+    }))
+    .unwrap();
+    let prep_err = norn_kernel::prepare_action_input_for_call::<std::convert::Infallible>(
+        &retry_action,
+        &malformed,
+        "test.payout.retry.action",
+        "1.0.0",
+        "usr:owner",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(prep_err, ActionRefusal::InvalidInput { .. }),
+        "expected pre-slice InvalidInput refusal, got: {prep_err:?}"
+    );
+
+    // Caller overriding a purely server-derived field (`next_generation`) with a non-null
+    // value must refuse fail-closed.
+    let spoof_derived: JsonObject = serde_json::from_value(json!({
+        "id": "po_1",
+        "next_generation": 999
+    }))
+    .unwrap();
+    let derived_err = commit_action(
+        &mut cell,
+        &catalog,
+        &call(
+            &retry_action,
+            "test.payout.retry.action",
+            spoof_derived,
+            "k-spoof-derived",
+            1_764_115_450_000,
+        ),
+        &Allow,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(derived_err, ActionRefusal::InvalidInput { ref field } if field == "next_generation"),
+        "expected InvalidInput on next_generation, got: {derived_err:?}"
+    );
 }

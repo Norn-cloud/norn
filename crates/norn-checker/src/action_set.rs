@@ -586,15 +586,8 @@ fn action_slice_findings(
         let aggregates = action_aggregate_types(artifact, root, model);
         findings.extend(aggregates.findings);
         if slice.typed_slice && aggregates.typed {
-            let has_post_slice_derive = (!root.slice.is_empty() || !root.aggregates.is_empty())
-                && root.derive.iter().any(|step| {
-                    (!root.slice.is_empty()
-                        && norn_expr::expression_reads(step.expression.as_str(), "slice")
-                            .is_ok_and(|r| r.whole_root || !r.fields.is_empty()))
-                        || (!root.aggregates.is_empty()
-                            && norn_expr::expression_reads(step.expression.as_str(), "aggregates")
-                                .is_ok_and(|r| r.whole_root || !r.fields.is_empty()))
-                });
+            let has_post_slice_derive =
+                norn_expr::schema::first_slice_derivation_index(root).is_some();
             if has_post_slice_derive {
                 let unsupported_post_slice =
                     match &root.effect_program {
@@ -1554,7 +1547,7 @@ impl Defined<'_> {
                 .actor_stamped_fields()
                 .into_iter()
                 .chain(root.clock_stamped_fields())
-                .chain(root.server_derived_fields())
+                .chain(norn_expr::schema::trusted_server_derived_fields(root))
                 .collect();
             let writable = |id: &norn_ir::PropertyId| {
                 !id.as_str().starts_with("_norn")
@@ -1570,13 +1563,38 @@ impl Defined<'_> {
                     &receipt.digest_property == target_prop
                         || receipt.result_bindings.contains_key(target_prop)
                 });
-                let has_input =
-                    input_properties.is_some_and(|props| props.contains_key(source_field));
-                if !writable(target_prop) || receipt_overlap || !has_input {
+                let source_schema =
+                    input_properties.and_then(|props| props.get(source_field.as_str()));
+                let target_effective = view.and_then(|view| view.property(target_prop.as_str()));
+                let type_compatible =
+                    source_schema
+                        .zip(target_effective)
+                        .is_some_and(|(schema, target)| {
+                            let source_required =
+                                input_schema_field_required(&root.input_schema, source_field)
+                                    || root.derive.iter().any(|step| step.field == *source_field);
+                            crate::typed_roots::action_schema_type(schema).is_some_and(
+                                |source_ty| {
+                                    set_field_type_compatible(&source_ty, source_required, target)
+                                },
+                            )
+                        });
+                if !writable(target_prop) || receipt_overlap || source_schema.is_none() {
                     findings.push(finding(
                         codes::TARGET_NOT_WRITABLE,
                         format!(
                             "fire_transition setFields {:?} -> {:?} requires a writable non-lifecycle, non-identity target property and a declared input field",
+                            target_prop.as_str(),
+                            source_field
+                        ),
+                        action,
+                        "/payload/effectProgram/setFields",
+                    ));
+                } else if !type_compatible {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "fire_transition setFields {:?} -> {:?} has an input schema type or optionality incompatible with the target property",
                             target_prop.as_str(),
                             source_field
                         ),
@@ -1652,24 +1670,21 @@ impl Defined<'_> {
             .effective_object_type
             .as_ref()
             .and_then(|view| view.as_ref().ok());
-        let upsert = matches!(program, ActionEffectProgram::UpsertInputObject { .. });
         let mut findings = Vec::new();
         let mut enums = Vec::new();
         collect_input_enums(properties, "/payload/inputSchema", true, &mut enums);
         for (field, top_level, values, at) in enums {
-            let target = view
-                .filter(|_| upsert && top_level)
-                .and_then(|view| view.property(&field))
-                .and_then(|property| {
-                    if let crate::EffectiveKind::Base(norn_ir::PropertyType::Enum { values }) =
-                        &property.kind
-                    {
-                        Some(values)
-                    } else {
-                        None
-                    }
-                });
-            let Some(declared) = target else {
+            let target_props: Vec<String> = match program {
+                ActionEffectProgram::UpsertInputObject { .. } if top_level => vec![field.clone()],
+                ActionEffectProgram::FireTransition { set_fields, .. } if top_level => set_fields
+                    .iter()
+                    .filter_map(|(target_prop, source_field)| {
+                        (source_field == &field).then(|| target_prop.as_str().to_owned())
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if target_props.is_empty() {
                 findings.push(finding(
                     codes::INPUT_ENUM_UNBOUND,
                     format!("input {field:?} declares an enum but writes no enum property"),
@@ -1677,18 +1692,43 @@ impl Defined<'_> {
                     &at,
                 ));
                 continue;
-            };
-            let missing: Vec<&String> = values
-                .iter()
-                .filter(|value| !declared.iter().any(|declared| &declared.value == *value))
-                .collect();
-            if !missing.is_empty() {
-                findings.push(finding(
-                    codes::INPUT_ENUM_NOT_SUBSET,
-                    format!("input {field:?} admits {missing:?}, which property {field:?} does not declare"),
-                    action,
-                    &at,
-                ));
+            }
+            for target_prop in target_props {
+                let target =
+                    view.and_then(|view| view.property(&target_prop))
+                        .and_then(|property| {
+                            if let crate::EffectiveKind::Base(norn_ir::PropertyType::Enum {
+                                values,
+                            }) = &property.kind
+                            {
+                                Some(values)
+                            } else {
+                                None
+                            }
+                        });
+                let Some(declared) = target else {
+                    findings.push(finding(
+                        codes::INPUT_ENUM_UNBOUND,
+                        format!("input {field:?} declares an enum but writes no enum property"),
+                        action,
+                        &at,
+                    ));
+                    continue;
+                };
+                let missing: Vec<&String> = values
+                    .iter()
+                    .filter(|value| !declared.iter().any(|declared| &declared.value == *value))
+                    .collect();
+                if !missing.is_empty() {
+                    findings.push(finding(
+                        codes::INPUT_ENUM_NOT_SUBSET,
+                        format!(
+                            "input {field:?} admits {missing:?}, which property {target_prop:?} does not declare"
+                        ),
+                        action,
+                        &at,
+                    ));
+                }
             }
         }
         findings
@@ -2036,10 +2076,21 @@ fn owned_rows_effect_findings(
             let child_effective = declared.get(id).and_then(|collection| {
                 model.effective_object_type_named(collection.child_type.as_str())
             });
-            // ACTOR-STAMP-1 parity with runtime owned rows: never a protected property.
+            // ACTOR-STAMP-1 & ORIGIN-DATAFLOW-1 parity with runtime owned rows:
+            // never a protected, immutableAfterCreate, or non-caller/non-derived origin property.
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| property.computed || property.protected());
+                .is_none_or(|property| {
+                    property.computed
+                        || property.protected()
+                        || property.immutable_after_create()
+                        || property.origin().is_some_and(|origin| {
+                            !matches!(
+                                origin,
+                                norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Derived
+                            )
+                        })
+                });
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
@@ -2315,6 +2366,54 @@ fn owned_row_derivation_findings(
         }
     }
     findings
+}
+
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "norn_expr::Type is non-exhaustive; unknown variants fail closed"
+)]
+fn set_field_type_compatible(
+    source_ty: &Type,
+    source_required: bool,
+    target: &crate::entity_instance::EffectiveProperty,
+) -> bool {
+    let source_nullable = matches!(source_ty, Type::Optional(_));
+    if (!source_required || source_nullable) && !target.nullable {
+        return false;
+    }
+    let unwrapped = match source_ty {
+        Type::Optional(inner) => inner.as_ref(),
+        other => other,
+    };
+    let crate::EffectiveKind::Base(property_type) = &target.kind else {
+        return false;
+    };
+    match property_type {
+        norn_ir::PropertyType::Text { .. } => {
+            matches!(unwrapped, Type::Text { .. } | Type::Enum { .. })
+        }
+        norn_ir::PropertyType::Timestamp { .. } => {
+            matches!(unwrapped, Type::Timestamp { .. } | Type::Text { .. })
+        }
+        norn_ir::PropertyType::Date {} => matches!(unwrapped, Type::Date | Type::Text { .. }),
+        norn_ir::PropertyType::Duration {} => {
+            matches!(unwrapped, Type::Duration | Type::Text { .. })
+        }
+        norn_ir::PropertyType::Enum { .. } => {
+            matches!(unwrapped, Type::Enum { .. } | Type::Text { .. })
+        }
+        norn_ir::PropertyType::Integer { .. } => matches!(unwrapped, Type::Integer),
+        norn_ir::PropertyType::Decimal { .. } => {
+            matches!(
+                unwrapped,
+                Type::Decimal { .. } | Type::Number | Type::Integer
+            )
+        }
+        norn_ir::PropertyType::Boolean {} => matches!(unwrapped, Type::Bool),
+        norn_ir::PropertyType::Record { .. } => matches!(unwrapped, Type::Record(_) | Type::Json),
+        norn_ir::PropertyType::JsonExt { .. } => true,
+        norn_ir::PropertyType::Ref { .. } | norn_ir::PropertyType::DecimalBinding { .. } => false,
+    }
 }
 
 fn action_expression_fields(root: &ActionRoot) -> Option<BTreeMap<String, Type>> {

@@ -386,6 +386,14 @@ impl EffectiveProperty {
         self.write_authority = WriteAuthority::RulesOnly;
     }
 
+    pub(crate) fn set_immutable_after_create(&mut self) {
+        self.post_create = PostCreateMutability::Immutable;
+    }
+
+    pub(crate) fn set_origin(&mut self, origin: norn_ir::PropertyOrigin) {
+        self.origin = Some(origin);
+    }
+
     /// FA-PROTECT-1: only rule outputs or the ACTOR-STAMP-1 create stamp write it.
     #[must_use]
     pub const fn protected(&self) -> bool {

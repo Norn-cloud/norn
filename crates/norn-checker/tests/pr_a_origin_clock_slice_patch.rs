@@ -310,3 +310,157 @@ fn refuses_origin_violations_immutable_updates_and_slice_key_cycles() {
         "{cycle_errs:?}"
     );
 }
+
+#[test]
+fn enforces_subtype_origin_inheritance_caller_taint_reserved_clock_and_set_fields_types() {
+    // 1. Subtype override without repeating `origin` or `immutableAfterCreate` must inherit both.
+    let wire_subtype = envelope(
+        "entity",
+        "test.WirePayout.entity",
+        "WirePayout",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.WirePayout",
+                "extends": "test.Payout",
+                "properties": [
+                    { "id": "payslip_id", "type": { "kind": "text" }, "constraints": { "minLength": 1 } },
+                    { "id": "stamped_at", "type": { "kind": "timestamp", "timezone": "utc" } }
+                ]
+            }
+        }),
+    );
+    let subtype_spoof = envelope(
+        "action",
+        "test.wire.spoof.action",
+        "Subtype spoof",
+        &json!({
+            "actionId": "test.wire.spoof",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "id": { "type": "string" },
+                    "payslip_id": { "type": "string" },
+                    "stamped_at": { "type": "string" }
+                },
+                "required": ["id", "payslip_id", "stamped_at"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "test.WirePayout", "change": "modified" }],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectKind": "test.WirePayout",
+                "objectIdField": "id",
+                "entityArtifactId": "test.WirePayout.entity",
+                "entityArtifactVersion": "1.0.0",
+                "writeMode": { "kind": "update_only" }
+            }
+        }),
+    );
+    let subtype_errs = check(&[payout_entity(), wire_subtype, subtype_spoof]);
+    assert!(
+        subtype_errs
+            .iter()
+            .any(|e| e.contains("immutableAfterCreate")),
+        "{subtype_errs:?}"
+    );
+    assert!(
+        subtype_errs.iter().any(|e| e.contains("origin `clock`")),
+        "{subtype_errs:?}"
+    );
+
+    // 2. Caller-reading derivation cannot satisfy `origin: derived`.
+    let passthrough_derived = envelope(
+        "action",
+        "test.payout.passthrough.action",
+        "Passthrough derived",
+        &json!({
+            "actionId": "test.payout.passthrough",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "id": { "type": "string" },
+                    "caller_gen": { "type": "integer" },
+                    "generation": { "type": "integer" }
+                },
+                "required": ["id", "caller_gen", "generation"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "derive": [
+                { "field": "generation", "expression": "input.caller_gen", "inputRequired": false }
+            ],
+            "writes": [{ "entityKind": "test.Payout", "change": "created" }],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectKind": "test.Payout",
+                "objectIdField": "id",
+                "entityArtifactId": "test.Payout.entity",
+                "entityArtifactVersion": "1.0.0",
+                "writeMode": { "kind": "create_only" }
+            }
+        }),
+    );
+    let passthrough_errs = check(&[payout_entity(), passthrough_derived]);
+    assert!(
+        passthrough_errs
+            .iter()
+            .any(|e| e.contains("origin `derived`")),
+        "{passthrough_errs:?}"
+    );
+
+    // 3. Reserved `clock` input field and mismatched `setFields` type are refused at admission.
+    let bad_clock_and_patch = envelope(
+        "action",
+        "test.payout.bad_patch.action",
+        "Bad clock and patch",
+        &json!({
+            "actionId": "test.payout.bad_patch",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "id": { "type": "string" },
+                    "clock": { "type": "string" },
+                    "wrong_type": { "type": "string" }
+                },
+                "required": ["id", "wrong_type"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "test.Payout", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectKind": "test.Payout",
+                "objectIdField": "id",
+                "entityArtifactId": "test.Payout.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "state",
+                "transition": "retry",
+                "setFields": { "generation": "wrong_type" }
+            }
+        }),
+    );
+    let patch_errs = check(&[payout_entity(), bad_clock_and_patch]);
+    assert!(
+        patch_errs
+            .iter()
+            .any(|e| e.contains("reserves actor, approved, and clock")),
+        "{patch_errs:?}"
+    );
+    assert!(
+        patch_errs
+            .iter()
+            .any(|e| e.contains("incompatible with the target property")),
+        "{patch_errs:?}"
+    );
+}

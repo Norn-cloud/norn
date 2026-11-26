@@ -45,7 +45,7 @@ where
     H::Input: From<JsonObject>,
 {
     let limits = envelope.limits;
-    if super::input::first_slice_derivation_index(call.action).is_some() {
+    if norn_expr::schema::first_slice_derivation_index(call.action).is_some() {
         return Err(ActionRefusal::UnsupportedEffect {
             action_id: call.action.action_id.clone(),
         });

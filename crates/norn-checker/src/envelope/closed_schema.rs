@@ -348,11 +348,11 @@ fn validate_closed_object_schema(
     }
     for (field, field_schema) in properties {
         if matches!(profile.unions, ClosedSchemaUnions::ActionInput)
-            && matches!(field.as_str(), "actor" | "approved")
+            && matches!(field.as_str(), "actor" | "approved" | "clock")
         {
             diagnostics.push(invalid_diagnostic(
                 code,
-                "ActionIR input reserves actor and approved for authenticated context",
+                "ActionIR input reserves actor, approved, and clock for authenticated context",
                 format!("{path}.properties.{field}"),
                 artifact_id,
             ));

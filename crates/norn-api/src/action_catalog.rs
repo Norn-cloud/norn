@@ -197,7 +197,8 @@ fn input_schema_schema() -> Object {
 /// actor: the kernel refuses a caller value for them, so a form never offers one.
 fn caller_input_schema(action: &ActionRoot) -> Result<serde_json::Value, Refusal> {
     let mut schema = serde_json::to_value(&action.input_schema).map_err(Refusal::host)?;
-    let derived = norn_kernel::actor_derived_fields(action);
+    let mut derived = norn_kernel::actor_derived_fields(action);
+    derived.extend(norn_kernel::clock_derived_fields(action));
     if let Some(properties) = schema
         .get_mut("properties")
         .and_then(serde_json::Value::as_object_mut)

@@ -169,6 +169,14 @@ where
     // TRANSITION-PATCH-1: atomically apply declared companion property patches
     // from derived/validated action input alongside the lifecycle transition.
     for (property, source_field) in set_fields {
+        if accept_receipt.as_ref().is_some_and(|declaration| {
+            property == &declaration.digest_property
+                || declaration.result_bindings.contains_key(property)
+        }) {
+            return Err(ActionRefusal::UnsupportedEffect {
+                action_id: action.action_id.clone(),
+            });
+        }
         let Some(value) = preparation.effective_input.get(source_field).cloned() else {
             return Err(ActionRefusal::InvalidInput {
                 field: source_field.clone(),

@@ -372,6 +372,9 @@ fn validate_stored_patch<X>(
         };
         if declared.computed
             || declared.protected()
+            || declared
+                .origin()
+                .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -737,6 +740,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    if norn_expr::schema::first_slice_derivation_index(call.action).is_some() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: call.action.action_id.clone(),
+        });
+    }
     let EnvelopePolicy {
         limits,
         meter,
@@ -880,7 +888,18 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| candidate.computed || candidate.protected())
+                            .is_none_or(|candidate| {
+                                candidate.computed
+                                    || candidate.protected()
+                                    || candidate.immutable_after_create()
+                                    || candidate.origin().is_some_and(|origin| {
+                                        !matches!(
+                                            origin,
+                                            norn_ir::PropertyOrigin::Caller
+                                                | norn_ir::PropertyOrigin::Derived
+                                        )
+                                    })
+                            })
                 })
             })
         })
@@ -1125,11 +1144,6 @@ where
                 entry: "$owned_rows".to_owned(),
                 reason: error.to_string(),
             })?;
-    }
-    if super::input::first_slice_derivation_index(call.action).is_some() {
-        return Err(ActionRefusal::UnsupportedEffect {
-            action_id: call.action.action_id.clone(),
-        });
     }
     let action_slice = load_action_slice(
         &ActionSliceContext {

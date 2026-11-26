@@ -240,25 +240,6 @@ impl ActionRoot {
             .collect()
     }
 
-    /// ORIGIN-DATAFLOW-1: input fields derived exclusively server-side
-    /// (`inputRequired: false` on every derivation targeting that field).
-    #[must_use]
-    pub fn server_derived_fields(&self) -> BTreeSet<String> {
-        let mut fields = BTreeSet::new();
-        for step in &self.derive {
-            if !step.input_required
-                && self
-                    .derive
-                    .iter()
-                    .filter(|other| other.field == step.field)
-                    .all(|other| !other.input_required)
-            {
-                fields.insert(step.field.clone());
-            }
-        }
-        fields
-    }
-
     /// The closed effects a UI must handle for this action.
     ///
     /// Effects with trustworthy sources in the action definition are derived:

@@ -141,6 +141,28 @@ fn parent_rows_origin_findings(
         .and_then(|schema| schema.get("properties"))
         .and_then(JsonValue::as_object)
     else {
+        // Fail closed when parentValuesField uses an open JSON object union
+        // on a parent entity declaring origin-restricted or immutableAfterCreate properties.
+        for prop in &view.properties {
+            if prop.computed {
+                continue;
+            }
+            if prop.immutable_after_create()
+                || prop
+                    .origin()
+                    .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "mutate_parent_with_rows with open {parent_values_field:?} schema cannot target {kind:?}, which declares restricted property {:?}",
+                        prop.id.as_str()
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}"),
+                ));
+            }
+        }
         return;
     };
     for field in parent_fields.keys() {
@@ -185,7 +207,7 @@ fn upsert_origin_findings(
     };
     let stamped = root.actor_stamped_fields();
     let clock_stamped = root.clock_stamped_fields();
-    let server_derived = root.server_derived_fields();
+    let server_derived = norn_expr::schema::trusted_server_derived_fields(root);
     for field in properties.keys() {
         let Some(prop) = view.and_then(|view| view.property(field.as_str())) else {
             continue;
@@ -291,7 +313,7 @@ fn transition_origin_findings(
 ) {
     let stamped = root.actor_stamped_fields();
     let clock_stamped = root.clock_stamped_fields();
-    let server_derived = root.server_derived_fields();
+    let server_derived = norn_expr::schema::trusted_server_derived_fields(root);
     for (target_prop, source_field) in set_fields {
         let Some(prop) = view.and_then(|view| view.property(target_prop.as_str())) else {
             continue;
@@ -443,31 +465,58 @@ pub(super) fn writer_protected_findings(
         let Some(view) = model.effective_object_type_named(kind) else {
             continue;
         };
-        let protected = |name: &str| {
+        let restricted_always = |name: &str| {
+            view.property(name).is_some_and(|property| {
+                property.protected()
+                    || property
+                        .origin()
+                        .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+            })
+        };
+        let restricted_post_create = |name: &str| {
             view.property(name)
-                .is_some_and(EffectiveProperty::protected)
+                .is_some_and(EffectiveProperty::immutable_after_create)
         };
         let mut named: BTreeSet<String> = ["values", "patch"]
             .iter()
             .filter_map(|member| item.get(*member)?.get("properties")?.as_object())
             .flat_map(serde_json::Map::keys)
-            .filter(|name| protected(name.as_str()))
+            .filter(|name| restricted_always(name.as_str()))
             .cloned()
             .collect();
+        if operations.contains(&"patch")
+            && let Some(patch_props) = item
+                .get("patch")
+                .and_then(|member| member.get("properties"))
+                .and_then(serde_json::Value::as_object)
+        {
+            named.extend(
+                patch_props
+                    .keys()
+                    .filter(|name| restricted_post_create(name.as_str()))
+                    .cloned(),
+            );
+        }
         if operations.contains(&"set") {
             if let Some(names) = &set_properties {
                 named.extend(
                     names
                         .iter()
                         .copied()
-                        .filter(|name| protected(name))
+                        .filter(|name| restricted_always(name) || restricted_post_create(name))
                         .map(str::to_owned),
                 );
             } else {
                 named.extend(
                     view.properties
                         .iter()
-                        .filter(|property| property.protected())
+                        .filter(|property| {
+                            property.protected()
+                                || property
+                                    .origin()
+                                    .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+                                || property.immutable_after_create()
+                        })
                         .map(|property| property.id.as_str().to_owned()),
                 );
             }
@@ -476,7 +525,7 @@ pub(super) fn writer_protected_findings(
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(
-                    "synchronousRule may write {name:?}, a protected property of {kind:?}; only the kernel's create stamp of the verified principal writes it"
+                    "synchronousRule may write {name:?}, a protected, non-caller-origin, or post-create-immutable property of {kind:?}"
                 ),
                 artifact,
                 "/payload/synchronousRule",
