@@ -939,6 +939,7 @@ pub fn evaluate_linked(
     }
     Ok(failures)
 }
+
 /// Evaluate an admitted exception tree under `remaining` fuel and fold it with
 /// `norn_checker::law_exceptions::fold`; evaluation errors fail closed.
 fn exception_lifts(

@@ -4230,10 +4230,27 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
         norn_kernel::DataQualityRuleClassification::Unverified
     );
 
-    // Non-boolean and failing exception conditions fail closed (never lift or ignore).
-    for (expr, is_non_bool) in [("self.amount", true), ("upper(5) == '5'", false)] {
+    // Non-boolean and failing exception conditions fail closed (never lift or ignore),
+    // including a broken child exception under an unmatched parent.
+    for (exceptions, is_non_bool) in [
+        (
+            vec![law_exception("bad", "amount_bounded", "self.amount")],
+            true,
+        ),
+        (
+            vec![law_exception("bad", "amount_bounded", "upper(5) == '5'")],
+            false,
+        ),
+        (
+            vec![
+                law_exception("parent", "amount_bounded", "self.item_id == 'vip'"),
+                law_exception("broken_child", "parent", "upper(5) == '5'"),
+            ],
+            false,
+        ),
+    ] {
         let mut broken = serde_json::to_value(direct_amount_law()).unwrap();
-        broken["payload"]["exceptions"] = json!([law_exception("bad", "amount_bounded", expr)]);
+        broken["payload"]["exceptions"] = Value::Array(exceptions);
         let mut broken_cell = cell()
             .with_types(types.clone())
             .with_governing_laws(vec![serde_json::from_value(broken).unwrap()]);
