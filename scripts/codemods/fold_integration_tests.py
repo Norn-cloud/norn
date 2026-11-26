@@ -263,7 +263,7 @@ def edit_manifest(crate: Crate, folded: list[dict]) -> tuple[str, dict[str, list
         line = lines[index]
         if line.strip() == "[[test]]":
             end = index + 1
-            while end < len(lines) and not lines[end].startswith("[") and lines[end].strip():
+            while end < len(lines) and not lines[end].lstrip().startswith("["):
                 end += 1
             block = tomllib.loads("\n".join(lines[index + 1:end]))
             if block.get("name") in names or block.get("name") == SUITE:
@@ -281,12 +281,12 @@ def edit_manifest(crate: Crate, folded: list[dict]) -> tuple[str, dict[str, list
         index += 1
     if insert_at is None:
         headers = ("[dependencies]", "[dev-dependencies]", "[build-dependencies]", "[features]", "[lints]", "[target.")
-        insert_at = next(i for i, line in enumerate(out) if line.startswith(headers))
+        insert_at = next((i for i, line in enumerate(out) if line.startswith(headers)), len(out))
         while insert_at > 0 and out[insert_at - 1].startswith("#"):
             insert_at -= 1
     out[insert_at:insert_at] = ["[[test]]", f'name = "{SUITE}"', f'path = "tests/{SUITE}.rs"', ""]
     if "autotests" not in crate.manifest["package"]:
-        end = next(i for i, line in enumerate(out) if i > 0 and line.startswith("["))
+        end = next((i for i, line in enumerate(out) if i > 0 and line.startswith("[")), len(out))
         while end > 0 and not out[end - 1].strip():
             end -= 1
         out[end:end] = [
@@ -356,12 +356,12 @@ def rewrite_command(command: str, folded: dict[tuple[str, str], str], separator:
             continue
         positional = i
         break
-    after = keep if dashdash is None else [i for i in keep if i > dashdash]
+    after = [i for i in keep if i > dashdash] if dashdash is not None else []
     if dashdash is not None and (
         not after or any(tokens[i] not in {"--exact", "--ignored", "--include-ignored", "--nocapture", "--show-output"} for i in after)
     ):
         raise Refused(f"{command!r}: unsupported libtest arguments after --")
-    exact = any(tokens[i] == "--exact" for i in after) if dashdash is not None else False
+    exact = any(tokens[i] == "--exact" for i in after)
     new = {i: tokens[i] for i in keep}
     new[first] = SUITE
     appended: list[str] = []
@@ -456,13 +456,17 @@ def rewrite_filter(text: str, folded) -> str:
             cursor = match.end()
             continue
         start = match.end() + conjunction.end()
+        if start >= len(text):
+            raise Refused(f"truncated filter after {match[0]}")
         if text[start] == "(":
             depth, end = 0, start
-            while True:
+            while end < len(text):
                 depth += {"(": 1, ")": -1}.get(text[end], 0)
                 end += 1
                 if depth == 0:
                     break
+            else:
+                raise Refused(f"unclosed parenthesised filter after {match[0]}")
         else:
             test = re.match(r"test\([^()]*\)", text[start:])
             if not test:
@@ -521,6 +525,8 @@ def rewrite_manifest(folded, write: bool) -> list[str]:
         def walk(item):
             if isinstance(item, str):
                 return rewrite_commands(item, folded) if "--test" in item else item
+            if isinstance(item, list):
+                return [walk(inner) for inner in item]
             if isinstance(item, dict):
                 return {key: walk(inner) for key, inner in item.items()}
             return item
@@ -531,7 +537,7 @@ def rewrite_manifest(folded, write: bool) -> list[str]:
         target = path
         if not isinstance(value, dict) or "id" in value:
             identity = re.fullmatch(r"([0-9a-f]{64})((?:dup[1-9][0-9]*)?)\.json", path.name)
-            if identity[1] != coverage_manifest.entry_id(value) or identity[2]:
+            if identity is None or identity[1] != coverage_manifest.entry_id(value) or identity[2]:
                 raise Refused(f"{path.relative_to(ROOT)}: unexpected entry identity")
             target = path.with_name(coverage_manifest.entry_id(new) + ".json")
             if target.exists():

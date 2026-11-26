@@ -7,8 +7,10 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_EVEN
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
+import tempfile
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
@@ -21,23 +23,53 @@ SHEET_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 BUDGET = 200_000_000
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"{req.full_url}: refused non-HTTPS redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _sha256_file(path):
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def fetch(url, sha256, path):
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing non-HTTPS URL: {url}")
     if not path.exists():
-        partial = path.with_suffix(path.suffix + ".partial")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        opener = urllib.request.build_opener(_HttpsOnlyRedirects())
         request = urllib.request.Request(url, headers={"User-Agent": "norn-bench"})
+        with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".partial", delete=False) as out:
+            partial = Path(out.name)
+            try:
+                hasher = hashlib.sha256()
+                total = 0
+                with opener.open(request, timeout=120) as response:
+                    while chunk := response.read(1 << 20):
+                        total += len(chunk)
+                        if total > BUDGET:
+                            raise ValueError("download exceeds pinned size budget")
+                        hasher.update(chunk)
+                        out.write(chunk)
+                out.flush()
+            except BaseException:
+                partial.unlink(missing_ok=True)
+                raise
         try:
-            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
-                while chunk := response.read(1 << 20):
-                    if out.tell() + len(chunk) > BUDGET:
-                        raise ValueError("download exceeds pinned size budget")
-                    out.write(chunk)
-            if hashlib.sha256(partial.read_bytes()).hexdigest() != sha256:
+            if hasher.hexdigest() != sha256:
                 raise ValueError(f"checksum mismatch for {url}")
-            partial.replace(path)
-        finally:
+            os.replace(partial, path)
+        except BaseException:
             partial.unlink(missing_ok=True)
+            raise
         return
-    if hashlib.sha256(path.read_bytes()).hexdigest() != sha256:
+    if _sha256_file(path) != sha256:
         path.unlink()
         raise ValueError(f"checksum mismatch for {url}")
 
@@ -65,29 +97,37 @@ def sheet_rows(bundle, member, strings):
             row = dict.fromkeys(columns)
             for cell in element:
                 value = cell.find(SHEET_NS + "v")
-                if value is not None:
+                ref = cell.get("r")
+                if value is not None and value.text is not None and ref:
                     text = strings[int(value.text)] if cell.get("t") == "s" else value.text
-                    row[cell.get("r").rstrip("0123456789")] = text
+                    row[ref.rstrip("0123456789")] = text
             yield row
             element.clear()
 
 
 def uci_rows(archive):
-    with zipfile.ZipFile(archive) as outer:
-        workbook = next(n for n in outer.namelist() if n.endswith(".xlsx"))
-        extracted = archive.with_suffix(".xlsx")
-        extracted.write_bytes(outer.read(workbook))
-    with zipfile.ZipFile(extracted) as bundle:
-        strings = []
-        with bundle.open("xl/sharedStrings.xml") as stream:
-            for _, element in ET.iterparse(stream):
-                if element.tag == SHEET_NS + "si":
-                    strings.append("".join(t.text or "" for t in element.iter(SHEET_NS + "t")))
-                    element.clear()
-        for sheet, member in enumerate(sorted(n for n in bundle.namelist() if n.startswith("xl/worksheets/sheet"))):
-            for index, row in enumerate(sheet_rows(bundle, member, strings)):
-                if index:
-                    yield sheet, row
+    with tempfile.TemporaryDirectory(prefix="norn-uci-") as tmp_dir:
+        extracted = Path(tmp_dir) / "uci.xlsx"
+        with zipfile.ZipFile(archive) as outer:
+            workbook = next(n for n in outer.namelist() if n.endswith(".xlsx"))
+            with outer.open(workbook) as src, extracted.open("wb") as dst:
+                total = 0
+                while chunk := src.read(1 << 20):
+                    total += len(chunk)
+                    if total > BUDGET:
+                        raise ValueError("extracted workbook exceeds pinned size budget")
+                    dst.write(chunk)
+        with zipfile.ZipFile(extracted) as bundle:
+            strings = []
+            with bundle.open("xl/sharedStrings.xml") as stream:
+                for _, element in ET.iterparse(stream):
+                    if element.tag == SHEET_NS + "si":
+                        strings.append("".join(t.text or "" for t in element.iter(SHEET_NS + "t")))
+                        element.clear()
+            for sheet, member in enumerate(sorted(n for n in bundle.namelist() if n.startswith("xl/worksheets/sheet"))):
+                for index, row in enumerate(sheet_rows(bundle, member, strings)):
+                    if index:
+                        yield sheet, row
 
 
 def load_uci(database, archive):
@@ -111,6 +151,7 @@ def sample(database, work):
     database.execute("CREATE TABLE sampled(id INTEGER PRIMARY KEY)")
     for where in strata.values():
         database.execute(f"INSERT OR IGNORE INTO sampled SELECT rowid FROM uci WHERE {where} ORDER BY rowid LIMIT 300")
+    database.commit()
     rows = []
     for rowid, invoice, code, quantity, at, price, customer, country in database.execute("""
             SELECT u.rowid, invoice, code, quantity, at, price, customer, country FROM uci u

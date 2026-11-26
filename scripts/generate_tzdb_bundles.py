@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import struct
 import sys
@@ -76,6 +77,32 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+MAX_CRATE_BYTES = 32 * 1024 * 1024
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"{req.full_url}: refused non-HTTPS redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        try:
+            tmp.write(data)
+            tmp.flush()
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def load_verified_crate(spec: UpstreamRelease, crate_dir: Path, download: bool) -> Path:
     crate_path = crate_dir / f"jiff-tzdb-{spec.crate_version}.crate"
     if not crate_path.is_file():
@@ -86,19 +113,17 @@ def load_verified_crate(spec: UpstreamRelease, crate_dir: Path, download: bool) 
         if not spec.crate_url.startswith("https://"):
             raise ValueError(f"refusing non-HTTPS crate URL: {spec.crate_url!r}")
         crate_dir.mkdir(parents=True, exist_ok=True)
-        partial = crate_path.with_suffix(".crate.partial")
-        try:
-            with urllib.request.urlopen(spec.crate_url, timeout=60) as response:
-                data = response.read()
-            actual = sha256_hex(data)
-            if actual != spec.crate_sha256:
-                raise ValueError(
-                    f"{crate_path}: SHA-256 mismatch: expected {spec.crate_sha256}, got {actual}"
-                )
-            partial.write_bytes(data)
-            partial.replace(crate_path)
-        finally:
-            partial.unlink(missing_ok=True)
+        opener = urllib.request.build_opener(_HttpsOnlyRedirects())
+        with opener.open(spec.crate_url, timeout=60) as response:
+            data = response.read(MAX_CRATE_BYTES + 1)
+        if len(data) > MAX_CRATE_BYTES:
+            raise ValueError(f"{crate_path}: download exceeds {MAX_CRATE_BYTES}-byte budget")
+        actual = sha256_hex(data)
+        if actual != spec.crate_sha256:
+            raise ValueError(
+                f"{crate_path}: SHA-256 mismatch: expected {spec.crate_sha256}, got {actual}"
+            )
+        _write_atomic(crate_path, data)
         return crate_path
     actual = sha256_hex(crate_path.read_bytes())
     if actual != spec.crate_sha256:
@@ -256,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     expected_license: bytes | None = None
+    built: list[tuple[UpstreamRelease, bytes, str]] = []
     drift = False
 
     for spec in RELEASES:
@@ -265,7 +291,12 @@ def main(argv: list[str] | None = None) -> int:
             expected_license = license_mit
         elif license_mit != expected_license:
             raise ValueError(f"{spec.release}: LICENSE-MIT differs across pinned jiff-tzdb crates")
+        built.append((spec, bundle, vcs_commit))
 
+    if expected_license is None:
+        raise RuntimeError("no tzdb releases configured")
+
+    for spec, bundle, vcs_commit in built:
         bundle_path = OUTPUT_DIR / f"{spec.release}.tzdb"
         bundle_sha = sha256_hex(bundle)
         if args.check:
@@ -275,13 +306,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"OK {bundle_path.relative_to(ROOT)} sha256={bundle_sha} bytes={len(bundle)}")
         else:
-            bundle_path.write_bytes(bundle)
+            _write_atomic(bundle_path, bundle)
             print(
                 f"WROTE {bundle_path.relative_to(ROOT)} sha256={bundle_sha} bytes={len(bundle)} vcs={vcs_commit}"
             )
 
-    if expected_license is None:
-        raise RuntimeError("no tzdb releases configured")
     license_path = OUTPUT_DIR / "LICENSE-MIT"
     license_sha = sha256_hex(expected_license)
     if args.check:
@@ -291,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"OK {license_path.relative_to(ROOT)} sha256={license_sha}")
     else:
-        license_path.write_bytes(expected_license)
+        _write_atomic(license_path, expected_license)
         print(f"WROTE {license_path.relative_to(ROOT)} sha256={license_sha}")
 
     return 1 if drift else 0
