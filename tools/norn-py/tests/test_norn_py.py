@@ -1565,6 +1565,33 @@ class TestPackAndDeploymentPrototypes(unittest.TestCase):
                 initial_settings={"budget": 12.5},  # type: ignore[dict-item]
             )
 
+        for bad_url in (
+            "http://localhost.evil.example/solve",
+            "http://127.0.0.1.evil.example/solve",
+            "http://evil.example\\@localhost/solve",
+            "http://evil.example\\@127.0.0.1/solve",
+            "https://user:secret@example.com/solve",
+            "http://user:pass@localhost/solve",
+            "http://[::1/solve",
+            "https://example.com:notaport/solve",
+            "https://example.com:99999/solve",
+            "https://foo bar/solve",
+            "https:///no-host",
+            "http://example.com/solve",
+        ):
+            with self.assertRaises(NornTracingError) as url_ctx:
+                DeploymentSpec(
+                    id="dep_bad_url",
+                    org_id="org_demo",
+                    environment_id="dev",
+                    packs=(base,),
+                    worker_endpoints={"norn.solver.rostering@0.1.0": bad_url},
+                )
+            self.assertEqual(url_ctx.exception.code, "NORN-PY-DEPLOYMENT-ENDPOINT")
+
+        with self.assertRaises(NonJsonValueError):
+            canonical_json({1: "a"})
+
 
 if __name__ == "__main__":
     unittest.main()
