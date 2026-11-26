@@ -59,5 +59,36 @@ fn bounded_link_snapshot_restores_concrete_target_subtype() {
         .expect("bounded snapshot is supported");
     assert_eq!(snapshot.len(), 1);
     let target_snapshot = snapshot.first().expect("one target snapshot");
-    assert_eq!(target_snapshot.key, LinkKey::new(source, LAW_OWNER, target));
+    assert_eq!(
+        target_snapshot.key,
+        LinkKey::new(source.clone(), LAW_OWNER, target)
+    );
+
+    assert!(
+        cell.read_link_targets(&source, LAW_OWNER, 0, 1024)
+            .unwrap()
+            .is_none(),
+        "read_link_targets enforces max_targets"
+    );
+    assert!(
+        cell.read_link_targets(&source, LAW_OWNER, 10, 2)
+            .unwrap()
+            .is_none(),
+        "read_link_targets enforces max_key_bytes"
+    );
+
+    let predicate = norn_kernel::PredicateQuery {
+        object_type: norn_ir::ObjectTypeName(OVERRIDE_CHILD.to_owned()),
+        filter: std::collections::BTreeMap::new(),
+        window: None,
+    };
+    let all = cell
+        .read_predicate(&predicate, 16, u64::MAX)
+        .unwrap()
+        .expect("unbounded read_predicate succeeds");
+    assert_eq!(all.len(), 2);
+    assert!(
+        cell.read_predicate(&predicate, 16, 1).unwrap().is_none(),
+        "read_predicate enforces max_bytes"
+    );
 }
