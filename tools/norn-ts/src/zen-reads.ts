@@ -471,17 +471,17 @@ function literalPath(node: ZenNode): string[] | null {
   }
 }
 
-/** `collect_paths(node, variable)` is non-empty. */
-function readsRoot(node: ZenNode, variable: string): boolean {
+/** `collect_paths(node, "actor")` is non-empty. */
+function readsActor(node: ZenNode): boolean {
   const path = literalPath(node)
-  if (path !== null) return path[0] === variable
+  if (path !== null) return path[0] === "actor"
   switch (node.k) {
     case "leaf": case "number": case "string": case "identifier": return false
     case "root": case "pointer": case "closure": case "assignments": return true
-    case "parenthesized": case "unary": return readsRoot(node.inner, variable)
-    case "member": return readsRoot(node.node, variable) || readsRoot(node.property, variable)
-    case "list": return node.parts.some((part) => readsRoot(part, variable))
-    case "call": return node.args.some((arg) => readsRoot(arg, variable))
+    case "parenthesized": case "unary": return readsActor(node.inner)
+    case "member": return readsActor(node.node) || readsActor(node.property)
+    case "list": return node.parts.some(readsActor)
+    case "call": return node.args.some(readsActor)
   }
 }
 
@@ -576,18 +576,6 @@ function structuralBounds(root: ZenNode): boolean {
   return true
 }
 
-function mayReadRoot(source: string, variable: string): boolean {
-  if (!lexicalBounds(source)) return true
-  let root: ZenNode
-  try {
-    root = new Parser(zenTokens(source)).parse()
-  } catch (error) {
-    if (error instanceof ZenLexError || error instanceof ZenParseError) return true
-    throw error
-  }
-  return !structuralBounds(root) || readsRoot(root, variable)
-}
-
 /**
  * Whether `norn_kernel::actor_derived_fields` counts the expression as reading the verified actor:
  * `norn_expr::expression_read_paths(source, "actor")` is non-empty, or the source fails the checks
@@ -597,14 +585,13 @@ function mayReadRoot(source: string, variable: string): boolean {
  * unquoted object key a string, and a name inside a string literal no name at all.
  */
 export function mayReadActor(source: string): boolean {
-  return mayReadRoot(source, "actor")
-}
-
-/**
- * Whether `norn_kernel::clock_derived_fields` (ACTION-CLOCK-1) counts the expression as reading
- * the server commit clock: `norn_expr::expression_reads(source, "clock")` is non-empty, or the
- * expression fails lexical/structural bounds or does not parse (fail closed).
- */
-export function mayReadClock(source: string): boolean {
-  return mayReadRoot(source, "clock")
+  if (!lexicalBounds(source)) return true
+  let root: ZenNode
+  try {
+    root = new Parser(zenTokens(source)).parse()
+  } catch (error) {
+    if (error instanceof ZenLexError || error instanceof ZenParseError) return true
+    throw error
+  }
+  return !structuralBounds(root) || readsActor(root)
 }

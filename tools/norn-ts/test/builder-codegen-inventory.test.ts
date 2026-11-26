@@ -61,6 +61,7 @@ export const Shipment = Norn.type({
     },
   ],
   identity: [{ name: "primary", properties: ["shipment_id"] }],
+  defaults: { status: "draft" },
   lifecycles: [
     {
       property: "status",
@@ -81,7 +82,6 @@ const CreateInput = Schema.Struct({
   note: Schema.NullOr(Schema.String),
   amount: Norn.decimal(2),
   created_by: Schema.String,
-  status: Schema.Literals(["draft"]),
 })
 
 const ShipmentRef = Schema.Struct({
@@ -107,9 +107,9 @@ export const CreateShipment = Norn.action({
   ],
   aggregates: [
     {
-      name: "draft_count",
+      name: "warehouse_count",
       type: Shipment,
-      filter: { status: "draft" },
+      filter: { warehouse_id: "warehouse_id" },
       aggregate: { kind: "count" },
       maxItems: 100,
     },
@@ -119,7 +119,7 @@ export const CreateShipment = Norn.action({
     { field: "code", expression: Norn.unsafeZen("upper(input.code)"), inputRequired: true },
     { field: "note", expression: Norn.unsafeZen('input.note ?? "standard"'), inputRequired: false },
   ],
-  preconditions: [Norn.unsafeZen("aggregates.draft_count < 100")],
+  preconditions: [Norn.unsafeZen("aggregates.warehouse_count < 100")],
   createLinks: [
     { link: "warehouse", targetType: Warehouse, targetIdField: "warehouse_id" },
   ],
@@ -140,7 +140,7 @@ const DispatchInput = Schema.Struct({
   source_name: Schema.String,
   source_modified: Schema.String,
   owner_tag: Schema.String,
-  rows: Schema.Array(Schema.String),
+  item_code: Schema.String,
 })
 
 export const DispatchShipment = Norn.action({
@@ -171,7 +171,7 @@ export const DispatchShipment = Norn.action({
           ownershipField: "norn_owner",
           ownershipValue: Norn.expression(DispatchInput, (x) => x.owner_tag),
           rowKeyField: "item_code",
-          rows: Norn.expression(DispatchInput, (x) => x.rows),
+          rows: Norn.expression(DispatchInput, (x) => [{ item_code: x.item_code }]),
         },
       ],
     },
@@ -204,6 +204,7 @@ export const CancelShipment = Norn.action({
       operation: "cancel",
       doctype: "Delivery Note",
       name: Norn.expression(CancelInput, (x) => x.source_name),
+      fields: {},
     },
   ],
   uiEffects: {
@@ -251,7 +252,7 @@ function buildEquivalentDataArtifacts(sourcePath: string): Json[] {
       E.property("note", E.text(), { nullable: true }),
       E.property("amount", E.decimal(2)),
       E.property("created_by", E.text(), { protected: true }),
-      E.property("status", E.enumeration("draft", "dispatched", "cancelled")),
+      E.property("status", E.enumeration("draft", "dispatched", "cancelled"), { default: "draft" }),
     ],
     links: [{ id: "warehouse", target: warehouse.name, cardinality: { to: "one", from: "many" } }],
     identity: [{ name: "primary", properties: ["shipment_id"] }],
@@ -282,18 +283,17 @@ function buildEquivalentDataArtifacts(sourcePath: string): Json[] {
       note: S.nullable(S.text()),
       amount: { type: "number", nornType: { kind: "decimal", scale: 2 } },
       created_by: S.text(),
-      status: S.text(["draft"]),
     }),
     output: shipmentRef,
     slice: [{ name: "warehouse", objectType: warehouse.name, key: { property: { from: "input", property: "warehouse_id" } } }],
-    aggregates: [{ name: "draft_count", objectType: shipment.name, filter: { status: "draft" }, aggregate: { kind: "count" }, maxItems: 100 }],
+    aggregates: [{ name: "warehouse_count", objectType: shipment.name, filter: { warehouse_id: "warehouse_id" }, aggregate: { kind: "count" }, maxItems: 100 }],
     derive: [
       { field: "created_by", expression: "actor.subjectId", inputRequired: false },
       { field: "code", expression: "trim(input.code)" },
       { field: "code", expression: "upper(input.code)", inputRequired: true },
       { field: "note", expression: 'input.note ?? "standard"', inputRequired: false },
     ],
-    preconditions: ["aggregates.draft_count < 100"],
+    preconditions: ["aggregates.warehouse_count < 100"],
     createLinks: [{ link: "warehouse", targetType: warehouse.name, targetIdField: "warehouse_id" }],
     writes: [{ entityKind: shipment.name, change: "created" }],
     effect: A.upsertInputObject(shipment, "shipment_id", { kind: "create_only" }),
@@ -318,7 +318,7 @@ function buildEquivalentDataArtifacts(sourcePath: string): Json[] {
       source_name: S.text(),
       source_modified: S.text(),
       owner_tag: S.text(),
-      rows: S.array(S.text()),
+      item_code: S.text(),
     }),
     output: shipmentRef,
     writes: [{ entityKind: shipment.name, change: "modified" }],
@@ -338,7 +338,7 @@ function buildEquivalentDataArtifacts(sourcePath: string): Json[] {
             ownershipField: "norn_owner",
             ownershipValue: "input.owner_tag",
             rowKeyField: "item_code",
-            rows: "input.rows",
+            rows: "[{item_code: input.item_code}]",
           },
         ],
       },
@@ -366,6 +366,7 @@ function buildEquivalentDataArtifacts(sourcePath: string): Json[] {
         operation: "cancel",
         doctype: "Delivery Note",
         name: "input.source_name",
+        fields: {},
         childMerges: [],
       },
     ],
@@ -435,6 +436,7 @@ test("A4 builder inventory: syntax compiler == data builder == checker admission
     const cancelPayload = (compiled.artifacts.find((a) => (a as { artifactId: string }).artifactId === "inv.shipment.cancel.action") as { payload: Record<string, unknown> }).payload
     const cancelCommand = (cancelPayload["commands"] as Array<Record<string, unknown>>)[0]!
     expect(cancelCommand["operation"]).toBe("cancel")
+    expect(Object.hasOwn(cancelCommand, "fields")).toBe(false)
     expect(Object.hasOwn(cancelCommand, "childMerges")).toBe(false)
 
     const dispatchPayload = (compiled.artifacts.find((a) => (a as { artifactId: string }).artifactId === "inv.shipment.dispatch.action") as { payload: Record<string, unknown> }).payload
@@ -446,7 +448,7 @@ test("A4 builder inventory: syntax compiler == data builder == checker admission
         ownershipField: "norn_owner",
         ownershipValue: "input.owner_tag",
         rowKeyField: "item_code",
-        rows: "input.rows",
+        rows: "[{item_code: input.item_code}]",
       },
     ])
 
@@ -472,7 +474,6 @@ const validCreate: ActionMap["inv.shipment.create"]["input"] = {
   warehouse_id: "wh_1",
   code: "ab-1",
   amount: "42.50",
-  status: "draft",
 }
 const validCreateWithNote: ActionMap["inv.shipment.create"]["input"] = {
   ...validCreate,
@@ -483,7 +484,6 @@ const missingCode: ActionMap["inv.shipment.create"]["input"] = {
   shipment_id: "ship_1",
   warehouse_id: "wh_1",
   amount: "42.50",
-  status: "draft",
 }
 const spoofedActor: ActionMap["inv.shipment.create"]["input"] = {
   ...validCreate,

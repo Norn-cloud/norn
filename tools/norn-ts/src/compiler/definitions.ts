@@ -1628,7 +1628,7 @@ class DefinitionCompiler {
       operation,
       doctype: this.string(m.get("doctype")!),
       ...(name ? { name: this.zen(name) } : {}),
-      ...(fields ? { fields: values } : {}),
+      ...(fields && Object.keys(values).length > 0 ? { fields: values } : {}),
       ...(expectedModified ? { expectedModified: this.zen(expectedModified) } : {}),
       ...(childMerges && childMerges.length > 0 ? { childMerges } : {}),
     }

@@ -310,8 +310,9 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     derive: omitEmpty(def.derive.map(({ inputRequired, ...entry }) => (inputRequired === false ? { ...entry, inputRequired } : entry))),
     preconditions: omitEmpty(def.preconditions),
     commands: omitEmpty(
-      def.commands.map(({ childMerges, ...command }) => ({
+      def.commands.map(({ fields, childMerges, ...command }) => ({
         ...command,
+        ...(fields && Object.keys(fields).length > 0 ? { fields } : {}),
         ...(childMerges && childMerges.length > 0 ? { childMerges } : {}),
       })),
     ),
