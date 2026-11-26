@@ -56,6 +56,7 @@ RAW_STRING_OPEN = re.compile(r'r(#*)"')
 
 
 def _is_lean_letter_like(ch: str) -> bool:
+    """Exact mirror of Lean v4.34.1 `Init.Meta.Defs.isLetterLike`."""
     code = ord(ch)
     return (
         (0x03B1 <= code <= 0x03C9 and code != 0x03BB)
@@ -64,17 +65,19 @@ def _is_lean_letter_like(ch: str) -> bool:
         or (0x1F00 <= code <= 0x1FFE)
         or (0x2100 <= code <= 0x214F)
         or (0x1D49C <= code <= 0x1D59F)
+        or (0x00C0 <= code <= 0x00FF and code not in (0x00D7, 0x00F7))
+        or (0x0100 <= code <= 0x017F)
     )
 
 
-def _is_lean_id_sub_or_super(ch: str) -> bool:
+def _is_lean_subscript_alnum(ch: str) -> bool:
+    """Exact mirror of Lean v4.34.1 `Init.Meta.Defs.isSubScriptAlnum`."""
     code = ord(ch)
     return (
-        code in (0x00B2, 0x00B3, 0x00B9, 0x207F)
-        or (0x1D62 <= code <= 0x1D6A)
-        or (0x2070 <= code <= 0x2079)
-        or (0x2080 <= code <= 0x208E)
+        (0x2080 <= code <= 0x2089)
         or (0x2090 <= code <= 0x209C)
+        or (0x1D62 <= code <= 0x1D6A)
+        or code == 0x2C7C
     )
 
 
@@ -87,7 +90,7 @@ def _is_ident_start(ch: str, *, is_lean: bool) -> bool:
 def _is_ident_rest(ch: str, *, is_lean: bool) -> bool:
     if _is_ident_start(ch, is_lean=is_lean) or "0" <= ch <= "9" or ch == "'":
         return True
-    return is_lean and (ch in ("!", "?") or _is_lean_id_sub_or_super(ch))
+    return is_lean and (ch in ("!", "?") or _is_lean_subscript_alnum(ch))
 
 
 def strip_comments_and_strings(
@@ -202,7 +205,7 @@ def strip_comments_and_strings(
             char_width = 0
             if (
                 index + 2 < len(source)
-                and source[index + 1] not in ("\\", "'", "\n")
+                and source[index + 1] not in ("\\", "'")
                 and source[index + 2] == "'"
             ):
                 char_width = 3
@@ -211,8 +214,11 @@ def strip_comments_and_strings(
                 if matched is not None:
                     char_width = matched.end() - index
             if char_width:
+                span = source[index : index + char_width]
                 output.extend(
-                    source[index : index + char_width] if preserve_strings else " " * char_width
+                    span
+                    if preserve_strings
+                    else "".join("\n" if ch == "\n" else " " for ch in span)
                 )
                 index += char_width
             else:
@@ -353,6 +359,12 @@ def run_lexer_canaries() -> None:
         "def x' (s : String) : Bool := true\ndef b : Bool := !x'\"'\"\naxiom bad : False\ndef y : Char := '\"'\n",
         "def z : Char := 'a'x'\"'\" x'\naxiom bad : False\ndef y : Char := '\"'\n",
         "def c : Char := д'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def é' : Char := 'a'\ndef b : Prop := é'<'\x22'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def ā' : Char := 'a'\ndef b : Prop := ā'<'\x22'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def xⱼ' : Char := 'a'\ndef b : Prop := xⱼ'<'\x22'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def b : Nat := x₊'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def b : Nat := x²'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def l : List Char := ['\n','\"']\naxiom bad : False\ndef y : Char := '\"'\n",
         'def x : Bool := !s!"{(Lean.ofReduceBool : Nat)}" == ""\n',
         'def interp_hide := s!"{(Lean.ofReduceBool : Nat)}"\n',
         "def guillemet_hide := Lean.«ofReduceBool»\n",
