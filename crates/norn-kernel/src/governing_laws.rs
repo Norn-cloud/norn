@@ -208,10 +208,12 @@ fn inverse_declarations(
 }
 
 fn law_expressions(law: &LawIR) -> impl Iterator<Item = &str> {
-    let response = if let LawResponse::Predicate { expression } = &law.response {
-        Some(expression.as_str())
-    } else {
-        None
+    let response = match &law.response {
+        LawResponse::Predicate { expression } => Some(expression.as_str()),
+        LawResponse::Invariant { .. }
+        | LawResponse::Action { .. }
+        | LawResponse::Transition { .. }
+        | LawResponse::TranslationPreserves { .. } => None,
     };
     law.condition
         .iter()

@@ -1038,6 +1038,7 @@ impl LawContext<'_> {
             );
         }
         self.check_interface_response(law, artifact, &owners, &env, out);
+        link_reads(law, artifact, interface.name.as_str(), &env, out);
     }
 
     fn check_interface_response(
@@ -1518,9 +1519,9 @@ fn element_read_refusal(
     })
 }
 
-/// A law's response is evaluated only when its condition holds, so it is
-/// checked with every read path the condition proves non-null as non-null
-/// (`when: self.link != null`, then `self.link.amount`).
+/// A law's exception conditions and response are evaluated only when its
+/// condition holds, so they are checked with every read path the condition
+/// proves non-null as non-null (`when: self.link != null`, then `self.link.amount`).
 fn guarded_predicate(
     source: &str,
     condition: Option<&str>,

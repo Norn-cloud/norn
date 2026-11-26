@@ -4082,7 +4082,9 @@ fn law_with_exceptions_folds_nested_overrides_and_is_order_independent() {
         let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(law).unwrap();
         let types = vec![quality_item_type()];
         let catalog = TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&artifact));
-        let mut native = cell().with_types(types).with_governing_laws(vec![artifact]);
+        let mut native = cell()
+            .with_types(types.clone())
+            .with_governing_laws(vec![artifact.clone()]);
         let commit_row = |cell: &mut CommandCell, key: &str, item_id: &str, amount: i64| {
             cell.commit(CellCommit {
                 writes: vec![FactWrite {
@@ -4229,7 +4231,7 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
     );
 
     // Non-boolean and failing exception conditions fail closed (never lift or ignore).
-    for (expr, is_non_bool) in [("self.amount", true), ("1 / 0 == 1", false)] {
+    for (expr, is_non_bool) in [("self.amount", true), ("upper(5) == '5'", false)] {
         let mut broken = serde_json::to_value(direct_amount_law()).unwrap();
         broken["payload"]["exceptions"] = json!([law_exception("bad", "amount_bounded", expr)]);
         let mut broken_cell = cell()
@@ -4255,10 +4257,19 @@ fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_
         else {
             panic!("expected Violated");
         };
-        assert_eq!(
-            matches!(failure.outcome, DataQualityOutcome::NonBoolean { .. }),
-            is_non_bool
-        );
+        if is_non_bool {
+            assert!(
+                matches!(failure.outcome, DataQualityOutcome::NonBoolean { .. }),
+                "{:?}",
+                failure.outcome
+            );
+        } else {
+            assert!(
+                matches!(failure.outcome, DataQualityOutcome::EvaluationFailed { .. }),
+                "{:?}",
+                failure.outcome
+            );
+        }
     }
 
     // Invariant response with exceptions still refuses as unsupported semantics.
@@ -4392,8 +4403,8 @@ fn law_exception_reading_links_rechecks_on_target_mutation_and_supports_observat
     let obs_catalog =
         TypeCatalog::new(&obs_types).with_governing_laws(std::slice::from_ref(&obs_artifact));
     let mut obs_cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
-        .with_types(obs_types)
-        .with_governing_laws(vec![obs_artifact]);
+        .with_types(obs_types.clone())
+        .with_governing_laws(vec![obs_artifact.clone()]);
     let provenance = source_provenance();
     for (id, item_id, expected_findings) in [("obs-vip", "vip", 0), ("obs-reg", "regular", 1)] {
         let key = FactKey::new(ITEM, id);
