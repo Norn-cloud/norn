@@ -170,10 +170,10 @@ fn outliers(
         .iter()
         .filter_map(|(row, cell)| match cell {
             Cell::Dec(value) if value.compare(low).is_lt() => {
-                Some((distance_at_scale(low, *value)?, *row, *value))
+                Some((distance_at_scale(low, *value, scale)?, *row, *value))
             }
             Cell::Dec(value) if value.compare(high).is_gt() => {
-                Some((distance_at_scale(*value, high)?, *row, *value))
+                Some((distance_at_scale(high, *value, scale)?, *row, *value))
             }
             Cell::Dec(_) | Cell::Null | Cell::Text(_) | Cell::Bool(_) | Cell::Instant { .. } => {
                 None
@@ -198,9 +198,10 @@ fn outliers(
     })
 }
 
-/// Exact unsigned distance `|a - b|` in mantissa units at `a.s` (never overflows
-/// even when `|a - b| >= 10^38`).
-fn distance_at_scale(a: Dec, b: Dec) -> Option<u128> {
-    let b = b.rescale(a.s)?;
-    Some(a.m.abs_diff(b.m))
+/// Exact unsigned distance `|fence - value|` in mantissa units at `scale`
+/// (never overflows even when `|fence - value| >= 10^38`).
+fn distance_at_scale(fence: Dec, value: Dec, scale: u32) -> Option<u128> {
+    let fence = fence.rescale(scale)?;
+    let value = value.rescale(scale)?;
+    Some(fence.m.abs_diff(value.m))
 }

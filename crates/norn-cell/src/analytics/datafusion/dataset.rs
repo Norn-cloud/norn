@@ -238,7 +238,7 @@ pub(super) fn lineage(
     let matched_rows: usize = engine
         .collect(tenant, data_plan)?
         .iter()
-        .map(datafusion::arrow::array::RecordBatch::num_rows)
+        .map(datafusion::arrow::record_batch::RecordBatch::num_rows)
         .fold(0_usize, usize::saturating_add);
     let admitted = matched_rows == 1;
     let held_plan = super::scan::Plan::Scan {
