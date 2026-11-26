@@ -4914,7 +4914,9 @@ fn an_event_whose_source_is_held_out_of_its_state_is_no_way_out() {
 fn a_retry_inside_a_layer_held_in_no_state_is_no_way_out() {
     let retry = record_transition("retry");
     let trapped = record_page_with(|ux| {
-        let children = ux["pages"][0]["root"]["children"].as_array_mut().req("children");
+        let children = ux["pages"][0]["root"]["children"]
+            .as_array_mut()
+            .req("children");
         let mut failed = children[1].take();
         failed["component"]
             .as_object_mut()
