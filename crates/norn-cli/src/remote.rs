@@ -111,6 +111,9 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     if args.token_env.is_some() && !endpoint.is_https() {
         return Err("bearer authentication requires an HTTPS endpoint".into());
     }
+    if args.dev_actor.is_some() && !endpoint.carries_credentials() {
+        return Err("dev-actor authentication requires HTTPS or loopback HTTP".into());
+    }
     let mut input = String::new();
     if matches!(args.command, RemoteCommand::Call { .. }) {
         std::io::stdin()
@@ -122,7 +125,8 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         }
     }
     let body = request(&args.command, &input)?;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let agent: ureq::Agent = endpoint
+        .configure(ureq::Agent::config_builder())
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(30)))
@@ -152,7 +156,12 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         .headers()
         .get("content-type")
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.split(';').next() == Some("text/event-stream"));
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|media| media.trim().eq_ignore_ascii_case("text/event-stream"))
+        });
     let text = response_text(response.body_mut().as_reader(), is_sse)?;
     let value: Value = serde_json::from_str(&text).map_err(|_e| {
         if http_failed {
@@ -173,20 +182,35 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     Ok((text, !failed))
 }
 
+const MAX_MCP_RESPONSE: usize = 8 * 1024 * 1024;
+const MAX_MCP_RESPONSE_READ: u64 = 8 * 1024 * 1024 + 1;
+
 fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, String> {
-    let mut reader = std::io::BufReader::new(reader.take(8 * 1024 * 1024));
     if !is_sse {
         let mut text = String::new();
         reader
+            .take(MAX_MCP_RESPONSE_READ)
             .read_to_string(&mut text)
             .map_err(|_e| "MCP response could not be read")?;
+        if text.len() > MAX_MCP_RESPONSE {
+            return Err("MCP response exceeds 8 MiB".into());
+        }
         return Ok(text);
     }
+    let mut reader = std::io::BufReader::new(reader.take(MAX_MCP_RESPONSE_READ));
+    let mut total = 0_usize;
     let chunks = std::iter::from_fn(move || {
         let mut buffer = vec![0; 8192];
         match reader.read(&mut buffer) {
             Ok(0) => None,
             Ok(size) => {
+                total = total.saturating_add(size);
+                if total > MAX_MCP_RESPONSE {
+                    return Some(Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "MCP response exceeds 8 MiB",
+                    )));
+                }
                 buffer.truncate(size);
                 Some(Ok(bytes::Bytes::from(buffer)))
             }
@@ -201,8 +225,11 @@ fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, Str
             futures_util::pin_mut!(events);
             while let Some(event) = events.next().await {
                 if let Some(data) = event.map_err(|e| e.to_string())?.data
-                    && serde_json::from_str::<Value>(&data)
-                        .is_ok_and(|value| value.get("id") == Some(&json!(1)))
+                    && serde_json::from_str::<Value>(&data).is_ok_and(|value| {
+                        value.get("id") == Some(&json!(1))
+                            && value.get("method").is_none()
+                            && (value.get("result").is_some() || value.get("error").is_some())
+                    })
                 {
                     return Ok(data);
                 }
@@ -296,23 +323,45 @@ mod tests {
 
     #[test]
     fn userinfo_is_refused_without_a_token() {
-        for (url, token_env) in [
-            ("http://user:pass@example.com/mcp", None),
-            ("https://user:pass@example.com/mcp", None),
+        for (url, token_env, dev_actor) in [
+            ("http://user:pass@example.com/mcp", None, None),
+            ("https://user:pass@example.com/mcp", None, None),
             (
                 "http://example.com/mcp",
                 Some("NORN_TEST_UNSET_TOKEN".to_owned()),
+                None,
             ),
+            ("http://example.com/mcp", None, Some("admin".to_owned())),
         ] {
             let args = RemoteArgs {
                 url: url.to_owned(),
                 org: "org".to_owned(),
                 env: "env".to_owned(),
                 token_env,
-                dev_actor: None,
+                dev_actor,
                 command: RemoteCommand::List,
             };
             assert!(execute(&args).is_err(), "{url} must be refused");
         }
+    }
+
+    #[test]
+    fn sse_ignores_server_request_with_matching_id_and_refuses_oversized_response()
+    -> Result<(), String> {
+        let server_req = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let response = r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#;
+        let stream = format!("data: {server_req}\r\n\r\ndata: {response}\r\n\r\n");
+        assert_eq!(response_text(stream.as_bytes(), true)?, response);
+
+        let oversized = vec![b'a'; MAX_MCP_RESPONSE.saturating_add(1)];
+        let json_err = response_text(oversized.as_slice(), false)
+            .err()
+            .ok_or("oversized JSON response was admitted")?;
+        assert!(json_err.contains("exceeds"), "{json_err}");
+        let sse_err = response_text(oversized.as_slice(), true)
+            .err()
+            .ok_or("oversized SSE response was admitted")?;
+        assert!(sse_err.contains("exceeds"), "{sse_err}");
+        Ok(())
     }
 }

@@ -7,12 +7,16 @@
 //! `SRC-LIVE-1`: a refused read fails the pull. There is no recorded fallback.
 use super::cell::Endpoint;
 use clap::{Args, Subcommand};
-const MAX_PAGES: usize = 1000;
 use norn_ir::connector::{ConnectorKeysetProfile, ConnectorResource, ConnectorRoot};
 use norn_ir::{RuntimeObject, RuntimeValue};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+const MAX_PAGES: usize = 1000;
+const MAX_SOURCE_RESPONSE: usize = 16 * 1024 * 1024;
+const MAX_SOURCE_RESPONSE_READ: u64 = 16 * 1024 * 1024 + 1;
 
 #[derive(Debug, Args)]
 pub(super) struct SourceArgs {
@@ -146,16 +150,33 @@ fn agent(base: &str) -> ureq::Agent {
 fn accepted(
     response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<RuntimeValue, String> {
-    let mut response = response.map_err(|e| format!("source request failed: {e}"))?;
+    let mut response = response.map_err(|_e| "source request failed".to_owned())?;
     let status = response.status();
     if status != 200 {
         return Err(format!("source refused the read: HTTP {status}"));
     }
-    let body = response
+    let mut body = String::new();
+    response
         .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("source response unreadable: {e}"))?;
+        .as_reader()
+        .take(MAX_SOURCE_RESPONSE_READ)
+        .read_to_string(&mut body)
+        .map_err(|_e| "source response unreadable".to_owned())?;
+    if body.len() > MAX_SOURCE_RESPONSE {
+        return Err("source response exceeds 16 MiB".into());
+    }
     RuntimeValue::from_json_text(&body).map_err(|e| e.to_string())
+}
+
+fn valid_doctype(doctype: &str) -> bool {
+    !doctype.is_empty()
+        && doctype != "."
+        && doctype != ".."
+        && !doctype.contains("..")
+        && !doctype.contains(['/', '\\', '?', '#', '@'])
+        && !doctype
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || (byte.is_ascii_whitespace() && byte != b' '))
 }
 
 fn keyset_read<'a>(
@@ -181,8 +202,11 @@ fn keyset_read<'a>(
                 return None;
             }
             let doctype = additional.get("doctype")?.as_string()?;
+            if !valid_doctype(doctype) {
+                return None;
+            }
             Some((
-                endpoint.replace("{doctype}", doctype),
+                endpoint.replace("{doctype}", &super::cell::encode(doctype)),
                 keyset.as_ref(),
                 items_path.clone(),
             ))
@@ -211,6 +235,7 @@ fn pull_frappe(
         return Err("source page size must be positive".into());
     }
     let mut cursor: Option<(String, String)> = None;
+    let mut seen_cursors = BTreeSet::new();
     for _ in 0..MAX_PAGES {
         let mut request = agent
             .get(&url)
@@ -237,7 +262,7 @@ fn pull_frappe(
             text(last, &format!("/{}", keyset.watermark_field))?.to_owned(),
             text(last, &format!("/{}", keyset.tie_breaker_field))?.to_owned(),
         );
-        if cursor.as_ref().is_some_and(|old| next == *old) {
+        if !seen_cursors.insert(next.clone()) {
             return Err("source keyset cursor did not advance".into());
         }
         cursor = Some(next);
@@ -257,22 +282,34 @@ fn env(name: &str) -> Result<String, String> {
 
 /// Credentials travel only over TLS, except to this machine.
 fn checked_url(base: &str, path: &str) -> Result<String, String> {
-    if !path.starts_with('/') {
+    let base_trimmed = base.trim_end_matches('/');
+    let base_endpoint = Endpoint::parse(base_trimmed).map_err(|e| format!("source {e}"))?;
+    if base_endpoint.has_query() {
+        return Err("source URL must not contain a query".into());
+    }
+    if !(base_endpoint.is_https()
+        || base_endpoint.is_http_to("127.0.0.1")
+        || base_endpoint.is_http_to("::1"))
+    {
+        return Err("source URL must be HTTPS or loopback".into());
+    }
+    if !path.starts_with('/') || path.starts_with("//") {
         return Err("connector endpoint must be a path beginning with '/'".into());
     }
-    let url = format!("{}{path}", base.trim_end_matches('/'));
+    let url = format!("{base_trimmed}{path}");
     let endpoint = Endpoint::parse(&url).map_err(|e| format!("source {e}"))?;
     if endpoint.has_query() {
         return Err("source URL must not contain a query".into());
     }
-    if endpoint.is_https() || endpoint.is_http_to("127.0.0.1") {
-        return Ok(url);
+    if endpoint.origin() != base_endpoint.origin() {
+        return Err("connector endpoint changed source origin".into());
     }
-    Err("source URL must be HTTPS or loopback".into())
+    Ok(url)
 }
 
 fn read_connector(path: &Path) -> Result<ConnectorRoot, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let text =
+        super::cell::read_regular_text(path, super::cell::MAX_INPUT_FILE, "8 MiB connector")?;
     let artifact: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let payload = artifact.get("payload").ok_or("connector has no payload")?;
     serde_json::from_value(payload.clone()).map_err(|e| e.to_string())
@@ -416,14 +453,37 @@ mod tests {
 
     #[test]
     fn src_read_1_credentials_require_tls_or_loopback() {
-        for path in ["@evil.example/x", "api/x", "https://evil.example/x"] {
+        for path in [
+            "@evil.example/x",
+            "api/x",
+            "https://evil.example/x",
+            "//attacker.example/x",
+        ] {
             assert!(checked_url("https://erp.example", path).is_err());
         }
+        assert!(checked_url("https://", "//attacker.example/x").is_err());
         assert!(checked_url("http://example.test", "/api/resource/Item").is_err());
         assert!(checked_url("http://127.0.0.1.example.test", "/api/resource/Item").is_err());
         assert!(checked_url("http://127.0.0.1:8000@example.test", "/api/resource/Item").is_err());
         assert!(checked_url("https://user:password@example.test", "/api/resource/Item").is_err());
         assert!(checked_url("http://127.0.0.1:8000", "/api/resource/Item").is_ok());
+        assert!(checked_url("http://[::1]:8000", "/api/resource/Item").is_ok());
         assert!(checked_url("https://example.test", "/api/resource/Item").is_ok());
+
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../Secret",
+            "Item/foo",
+            "Item?x=1",
+            "Item#frag",
+            "Item@evil",
+            "Item\n",
+        ] {
+            assert!(!valid_doctype(bad), "{bad:?} must be refused");
+        }
+        assert!(valid_doctype("Item"));
+        assert!(valid_doctype("Purchase Order Item"));
     }
 }

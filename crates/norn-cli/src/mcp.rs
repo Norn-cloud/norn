@@ -7,8 +7,11 @@ use norn_api::{
 };
 use norn_ir::{McpTool, McpToolAnnotations, RuntimeObject, RuntimeValue};
 use std::io::{BufRead as _, Read as _, Write as _};
+use std::sync::OnceLock;
 
-fn platform_tools() -> Result<Vec<McpTool>, String> {
+static PLATFORM_TOOLS: OnceLock<Result<Vec<McpTool>, String>> = OnceLock::new();
+
+fn build_platform_tools() -> Result<Vec<McpTool>, String> {
     let command = Cli::command();
     ["capabilities", "check"]
         .into_iter()
@@ -19,6 +22,10 @@ fn platform_tools() -> Result<Vec<McpTool>, String> {
             command_tool(operation)
         })
         .collect()
+}
+
+fn platform_tools() -> Result<Vec<McpTool>, String> {
+    PLATFORM_TOOLS.get_or_init(build_platform_tools).clone()
 }
 fn command_tool(operation: &clap::Command) -> Result<McpTool, String> {
     // The platform catalog is generated from the human command's argument IR.
@@ -53,6 +60,9 @@ impl Backend for Human {
         let operation = name
             .strip_prefix("norn.")
             .ok_or_else(|| Refusal::invalid("unknown command"))?;
+        if !matches!(operation, "capabilities" | "check") {
+            return Err(Refusal::invalid("backend unavailable"));
+        }
         let mut argv = vec!["norn".to_owned(), operation.to_owned()];
         for (key, value) in arguments {
             let RuntimeValue::String(value) = value else {
@@ -60,8 +70,13 @@ impl Backend for Human {
                     "command arguments must be strings; use the advertised input schema",
                 ));
             };
-            argv.push(format!("--{key}"));
-            argv.push(value);
+            if key.is_empty()
+                || key.contains('=')
+                || key.bytes().any(|byte| byte.is_ascii_control())
+            {
+                return Err(Refusal::invalid("invalid command argument name"));
+            }
+            argv.push(format!("--{key}={value}"));
         }
         let parsed =
             Cli::try_parse_from(argv).map_err(|error| Refusal::invalid(error.to_string()))?;
@@ -187,5 +202,27 @@ mod tests {
             refusal.explanation
         );
         assert!(refusal.explanation.contains("restart"));
+    }
+
+    #[test]
+    fn call_refuses_non_advertised_operations_and_flag_injection() {
+        assert!(
+            Human
+                .call("norn.eval", RuntimeObject::new(), RuntimeObject::new())
+                .is_err()
+        );
+        let injected_key =
+            RuntimeObject::from([("cursor=bad".into(), RuntimeValue::String("x".into()))]);
+        assert!(
+            Human
+                .call("norn.capabilities", injected_key, RuntimeObject::new())
+                .is_err()
+        );
+        let dash_value =
+            RuntimeObject::from([("cursor".into(), RuntimeValue::String("--help".into()))]);
+        let refused = Human
+            .call("norn.capabilities", dash_value, RuntimeObject::new())
+            .unwrap_err();
+        assert!(refused.explanation.contains("restart"), "{refused:?}");
     }
 }

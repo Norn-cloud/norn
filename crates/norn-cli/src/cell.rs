@@ -13,6 +13,11 @@ use std::time::Duration;
 const MAX_BODY: usize = 1 << 20;
 /// [`MAX_BODY`] as a read budget across every file of a pack.
 const MAX_FILE: u64 = 1 << 20;
+/// Shared read limit for local CLI JSON inputs (`check`, `eval`, `explain`, `source`).
+pub(super) const MAX_INPUT_FILE: u64 = 8 * 1024 * 1024;
+/// Maximum HTTP JSON response accepted from a cell route.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RESPONSE_READ: u64 = 16 * 1024 * 1024 + 1;
 
 #[derive(Debug, Args)]
 pub(super) struct CellArgs {
@@ -169,7 +174,7 @@ fn read_path(path: &Path, _budget: &mut u64, _read: &mut Vec<Artifact>) -> Resul
 /// Open `name` under `dir` read-only: never through a final link
 /// (`O_NOFOLLOW`), and never blocking on a FIFO (`O_NONBLOCK`).
 #[cfg(unix)]
-fn open_no_follow<P: rustix::path::Arg>(
+pub(super) fn open_no_follow<P: rustix::path::Arg>(
     dir: impl std::os::fd::AsFd,
     name: P,
 ) -> Result<std::fs::File, String> {
@@ -186,10 +191,14 @@ fn open_no_follow<P: rustix::path::Arg>(
         })
 }
 
-/// One artifact's exact text, charged against the pack's remaining budget
-/// while it is read: never more than the budget plus one byte.
-#[cfg(unix)]
-fn artifact(path: &Path, file: std::fs::File, budget: &mut u64) -> Result<Artifact, String> {
+/// Read UTF-8 text from an open regular file, charging its byte length against
+/// `budget` while reading at most `*budget + 1` bytes.
+fn read_bounded_text(
+    path: &Path,
+    file: std::fs::File,
+    budget: &mut u64,
+    label: &str,
+) -> Result<String, String> {
     let shown = path.display();
     let mut text = String::new();
     file.take(budget.saturating_add(1))
@@ -198,8 +207,151 @@ fn artifact(path: &Path, file: std::fs::File, budget: &mut u64) -> Result<Artifa
     let used = u64::try_from(text.len()).map_err(|e| format!("{shown}: {e}"))?;
     *budget = budget
         .checked_sub(used)
-        .ok_or_else(|| format!("{shown}: the pack exceeds the cell's 1 MiB bound"))?;
-    serde_json::value::RawValue::from_string(text).map_err(|e| format!("{shown}: not JSON: {e}"))
+        .ok_or_else(|| format!("{shown}: exceeds the {label} limit"))?;
+    Ok(text)
+}
+
+/// Local JSON input read from either a single file or a directory of `*.json`.
+pub(super) enum JsonInput {
+    File(String),
+    Dir(Vec<String>),
+}
+
+/// Read one local regular UTF-8 file safely without following symlinks or
+/// blocking on FIFOs, bounded to `limit` bytes.
+#[cfg(unix)]
+pub(super) fn read_regular_text(path: &Path, limit: u64, label: &str) -> Result<String, String> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let shown = path.display();
+    let raw = path.as_os_str().as_bytes();
+    if raw.ends_with(b"/") || raw.ends_with(b"/.") {
+        return Err(format!("{shown}: not a regular file"));
+    }
+    let target: PathBuf = path.components().collect();
+    let opened = open_no_follow(rustix::fs::CWD, &target).map_err(|e| format!("{shown}: {e}"))?;
+    let is_file = opened
+        .metadata()
+        .map_err(|e| format!("{shown}: {e}"))?
+        .is_file();
+    if !is_file {
+        return Err(format!("{shown}: not a regular file"));
+    }
+    let mut budget = limit;
+    read_bounded_text(path, opened, &mut budget, label)
+}
+
+#[cfg(not(unix))]
+pub(super) fn read_regular_text(path: &Path, limit: u64, label: &str) -> Result<String, String> {
+    let shown = path.display();
+    let opened = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    let is_file = opened
+        .metadata()
+        .map_err(|e| format!("{shown}: {e}"))?
+        .is_file();
+    if !is_file {
+        return Err(format!("{shown}: not a regular file"));
+    }
+    let mut budget = limit;
+    read_bounded_text(path, opened, &mut budget, label)
+}
+
+/// Read either a single JSON file or a directory of `*.json` files safely
+/// within one shared `limit` byte budget.
+#[cfg(unix)]
+pub(super) fn read_json_input(path: &Path, limit: u64, label: &str) -> Result<JsonInput, String> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let shown = path.display();
+    let raw = path.as_os_str().as_bytes();
+    let must_be_dir = raw.ends_with(b"/") || raw.ends_with(b"/.");
+    let target: PathBuf = path.components().collect();
+    let opened = open_no_follow(rustix::fs::CWD, &target).map_err(|e| format!("{shown}: {e}"))?;
+    let kind = opened
+        .metadata()
+        .map_err(|e| format!("{shown}: {e}"))?
+        .file_type();
+    let mut budget = limit;
+    if kind.is_file() {
+        if must_be_dir {
+            return Err(format!("{shown}: not a directory"));
+        }
+        return Ok(JsonInput::File(read_bounded_text(
+            path,
+            opened,
+            &mut budget,
+            label,
+        )?));
+    }
+    if !kind.is_dir() {
+        return Err(format!("{shown}: not a regular file or directory"));
+    }
+    let mut documents = Vec::new();
+    for name in collect_json_names(&opened, path, MAX_BODY)? {
+        let child = path.join(std::ffi::OsStr::from_bytes(name.to_bytes()));
+        let file = open_no_follow(&opened, name.as_c_str())
+            .map_err(|e| format!("{}: {e}", child.display()))?;
+        let regular = file
+            .metadata()
+            .map_err(|e| format!("{}: {e}", child.display()))?
+            .is_file();
+        if !regular {
+            return Err(format!("{}: not a regular file", child.display()));
+        }
+        documents.push(read_bounded_text(&child, file, &mut budget, label)?);
+    }
+    Ok(JsonInput::Dir(documents))
+}
+
+#[cfg(not(unix))]
+pub(super) fn read_json_input(path: &Path, limit: u64, label: &str) -> Result<JsonInput, String> {
+    let mut budget = limit;
+    let metadata = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if metadata.is_file() {
+        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        return Ok(JsonInput::File(read_bounded_text(
+            path,
+            file,
+            &mut budget,
+            label,
+        )?));
+    }
+    if !metadata.is_dir() {
+        return Err(format!(
+            "{}: not a regular file or directory",
+            path.display()
+        ));
+    }
+    let mut paths = std::fs::read_dir(path)
+        .map_err(|e| e.to_string())?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    paths.sort();
+    let mut documents = Vec::new();
+    for child in paths.into_iter().filter(|child| {
+        child
+            .extension()
+            .is_some_and(|extension| extension == "json")
+    }) {
+        let file = std::fs::File::open(&child).map_err(|e| format!("{}: {e}", child.display()))?;
+        let regular = file
+            .metadata()
+            .map_err(|e| format!("{}: {e}", child.display()))?
+            .is_file();
+        if !regular {
+            return Err(format!("{}: not a regular file", child.display()));
+        }
+        documents.push(read_bounded_text(&child, file, &mut budget, label)?);
+    }
+    Ok(JsonInput::Dir(documents))
+}
+
+/// One artifact's exact text, charged against the pack's remaining budget
+/// while it is read: never more than the budget plus one byte.
+#[cfg(unix)]
+fn artifact(path: &Path, file: std::fs::File, budget: &mut u64) -> Result<Artifact, String> {
+    let text = read_bounded_text(path, file, budget, "cell's 1 MiB")?;
+    serde_json::value::RawValue::from_string(text)
+        .map_err(|e| format!("{}: not JSON: {e}", path.display()))
 }
 
 /// A URL parsed once: scheme, host and origin all come from this one parse,
@@ -267,7 +419,7 @@ impl Endpoint {
 
     /// Whether this endpoint may carry credentials: HTTPS, or plain HTTP to
     /// a loopback address or `localhost`.
-    fn carries_credentials(&self) -> bool {
+    pub(super) fn carries_credentials(&self) -> bool {
         self.is_https() || self.is_loopback_http()
     }
 
@@ -286,7 +438,7 @@ impl Endpoint {
     }
 
     /// `scheme://host[:port]`, where Studio's sign-in lives.
-    fn origin(&self) -> String {
+    pub(super) fn origin(&self) -> String {
         format!(
             "{}://{}",
             self.uri.scheme_str().unwrap_or_default(),
@@ -401,18 +553,7 @@ impl Client {
         if !response.status().is_success() {
             return Err(format!("Studio sign-in refused ({})", response.status()));
         }
-        let cookies: Vec<String> = response
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .filter_map(|value| value.split(';').next())
-            .map(str::to_owned)
-            .collect();
-        if cookies.is_empty() {
-            return Err("Studio sign-in returned no session".into());
-        }
-        Ok(cookies.join("; "))
+        parse_cookies(response.headers().get_all("set-cookie"))
     }
 
     /// POST `body` to `path`; the status and the JSON document answered.
@@ -439,20 +580,46 @@ impl Client {
             .send(body.as_bytes())
             .map_err(|_e| format!("the request to {path} failed"))?;
         let status = response.status().as_u16();
-        let mut text = String::new();
-        response
-            .body_mut()
-            .as_reader()
-            .take(16 * 1024 * 1024)
-            .read_to_string(&mut text)
-            .map_err(|e| e.to_string())?;
+        let text = read_response_text(response.body_mut().as_reader(), path)?;
         let value = serde_json::from_str(&text)
             .map_err(|_e| format!("{path} answered {status} with a non-JSON body"))?;
         Ok((status, value))
     }
 }
 
-fn encode(value: &str) -> String {
+fn parse_cookies<'a>(
+    headers: impl IntoIterator<Item = &'a ureq::http::HeaderValue>,
+) -> Result<String, String> {
+    let cookies: Vec<String> = headers
+        .into_iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|pair| {
+            pair.split_once('=')
+                .is_some_and(|(name, _)| !name.trim().is_empty())
+        })
+        .map(str::to_owned)
+        .collect();
+    if cookies.is_empty() {
+        return Err("Studio sign-in returned no session".into());
+    }
+    Ok(cookies.join("; "))
+}
+
+fn read_response_text(reader: impl std::io::Read, path: &str) -> Result<String, String> {
+    let mut text = String::new();
+    reader
+        .take(MAX_RESPONSE_READ)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    if text.len() > MAX_RESPONSE_BYTES {
+        return Err(format!("{path} response exceeds 16 MiB"));
+    }
+    Ok(text)
+}
+
+pub(super) fn encode(value: &str) -> String {
     let hex = |nibble: u8| {
         char::from(if nibble < 10 {
             b'0'.saturating_add(nibble)
@@ -1002,6 +1169,42 @@ mod tests {
         assert_eq!(apply.pointer("/artifacts/0/v"), Some(&json!(1)));
         assert_eq!(apply.get("expectedVersion"), Some(&json!(7)));
         std::fs::remove_dir_all(&pack)?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_set_cookie_headers_are_ignored() -> TestResult {
+        let valid = ureq::http::HeaderValue::from_static("session=abc; Path=/; HttpOnly");
+        let missing_eq = ureq::http::HeaderValue::from_static("malformed; Path=/");
+        let empty_name = ureq::http::HeaderValue::from_static(" =bad; Path=/");
+        assert_eq!(
+            parse_cookies([&missing_eq, &empty_name, &valid])?,
+            "session=abc"
+        );
+        assert!(parse_cookies([&missing_eq, &empty_name]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_cell_response_is_refused_not_truncated() {
+        let oversized = vec![b'x'; MAX_RESPONSE_BYTES.saturating_add(1)];
+        let err = read_response_text(oversized.as_slice(), "/plan").unwrap_err();
+        assert!(err.contains("exceeds 16 MiB"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_regular_text_refuses_symlinks_and_oversized_files() -> TestResult {
+        let root = scratch("regular-text")?;
+        let real = root.join("real.json");
+        std::fs::write(&real, "0123456789")?;
+        let link = root.join("link.json");
+        std::os::unix::fs::symlink(&real, &link)?;
+        assert!(read_regular_text(&link, 64, "test").is_err());
+        let oversized = read_regular_text(&real, 4, "4 B").unwrap_err();
+        assert!(oversized.contains("exceeds"), "{oversized}");
+        assert_eq!(read_regular_text(&real, 10, "10 B")?, "0123456789");
+        std::fs::remove_dir_all(&root)?;
         Ok(())
     }
 }

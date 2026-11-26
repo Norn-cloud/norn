@@ -25,43 +25,14 @@ pub(crate) struct ExplainArgs {
 }
 
 fn read(path: &Path) -> Result<String, String> {
-    if std::fs::metadata(path)
-        .map_err(|error| error.to_string())?
-        .len()
-        > 8_388_608
-    {
-        return Err(format!(
-            "{} exceeds the 8 MiB explain input limit",
-            path.display()
-        ));
-    }
-    std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
+    crate::cell::read_regular_text(path, crate::cell::MAX_INPUT_FILE, "8 MiB explain input")
 }
 
 fn definitions(path: &Path) -> Result<String, String> {
-    if path.is_file() {
-        return read(path);
+    match crate::cell::read_json_input(path, crate::cell::MAX_INPUT_FILE, "8 MiB explain input")? {
+        crate::cell::JsonInput::File(text) => Ok(text),
+        crate::cell::JsonInput::Dir(documents) => Ok(format!("[{}]", documents.join(","))),
     }
-    let mut paths = std::fs::read_dir(path)
-        .map_err(|error| error.to_string())?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    paths.sort();
-    let mut documents = Vec::new();
-    let mut size = 0_usize;
-    for path in paths.iter().filter(|path| {
-        path.extension()
-            .is_some_and(|extension| extension == "json")
-    }) {
-        let text = read(path)?;
-        size = size.saturating_add(text.len());
-        if size > 8_388_608 {
-            return Err("definition set exceeds the 8 MiB explain input limit".into());
-        }
-        documents.push(text);
-    }
-    Ok(format!("[{}]", documents.join(",")))
 }
 
 /// The JSON and text forms share one report; unknown proof status is explicit.

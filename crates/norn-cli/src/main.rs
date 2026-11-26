@@ -1,5 +1,5 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
-use std::io::{BufRead as _, Write as _};
+use std::io::{BufRead as _, Read as _, Write as _};
 mod cell;
 #[cfg(test)]
 mod cli_contract;
@@ -105,20 +105,17 @@ fn run(command: Command) -> Result<(String, bool), String> {
             rule,
             units,
         } => {
-            let mut paths = std::fs::read_dir(defs)
-                .map_err(|error| error.to_string())?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| error.to_string())?;
-            paths.sort();
-            let mut artifacts = Vec::new();
-            let mut documents = Vec::new();
+            const MAX_EVAL_LINE: usize = 4 * 1024 * 1024;
+            const MAX_EVAL_LINE_READ: u64 = 4 * 1024 * 1024 + 1;
+            let cell::JsonInput::Dir(raw_docs) =
+                cell::read_json_input(&defs, cell::MAX_INPUT_FILE, "8 MiB eval input")?
+            else {
+                return Err(format!("{}: not a directory", defs.display()));
+            };
+            let mut artifacts = Vec::with_capacity(raw_docs.len());
+            let mut documents = Vec::with_capacity(raw_docs.len());
             let mut exact_payloads = std::collections::BTreeMap::new();
-            for path in paths.into_iter().filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "json")
-            }) {
-                let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+            for text in raw_docs {
                 let artifact: norn_ir::ArtifactEnvelope =
                     serde_json::from_str(&text).map_err(|error| error.to_string())?;
                 if artifact.scope.org_id.as_deref() != Some(org.as_str())
@@ -157,10 +154,27 @@ fn run(command: Command) -> Result<(String, bool), String> {
             )?;
             let mut accepted = 0_u64;
             let mut refused = 0_u64;
-            for line in std::io::stdin().lock().lines() {
-                let line = line.map_err(|error| error.to_string())?;
+            let mut stdin = std::io::stdin().lock();
+            let mut stdout = std::io::stdout().lock();
+            let mut raw_line = Vec::new();
+            loop {
+                raw_line.clear();
+                let bytes = stdin
+                    .by_ref()
+                    .take(MAX_EVAL_LINE_READ)
+                    .read_until(b'\n', &mut raw_line)
+                    .map_err(|error| error.to_string())?;
+                if bytes == 0 {
+                    break;
+                }
+                if bytes > MAX_EVAL_LINE {
+                    return Err("eval input line exceeds 4 MiB".to_owned());
+                }
+                let line = std::str::from_utf8(&raw_line)
+                    .map_err(|error| error.to_string())?
+                    .trim_end_matches(['\r', '\n']);
                 let digest = decision.closure_digest();
-                let response = match decision.run(&line, units) {
+                let response = match decision.run(line, units) {
                     Ok(output) => {
                         accepted = accepted.checked_add(1).ok_or("eval counter overflow")?;
                         format!(
@@ -173,8 +187,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
                             .to_string()
                     }
                 };
-                writeln!(std::io::stdout().lock(), "{response}")
-                    .map_err(|error| error.to_string())?;
+                writeln!(stdout, "{response}").map_err(|error| error.to_string())?;
             }
             writeln!(
                 std::io::stderr().lock(),
@@ -186,8 +199,9 @@ fn run(command: Command) -> Result<(String, bool), String> {
         Command::SourceDigest { dir } => source_digest(&dir).map(|document| (document, true)),
         Command::Check { artifacts, context } => {
             let artifacts =
-                std::fs::read_to_string(artifacts).map_err(|error| error.to_string())?;
-            let context = std::fs::read_to_string(context).map_err(|error| error.to_string())?;
+                cell::read_regular_text(&artifacts, cell::MAX_INPUT_FILE, "8 MiB check input")?;
+            let context =
+                cell::read_regular_text(&context, cell::MAX_INPUT_FILE, "8 MiB check input")?;
             let report = norn_checker_wasm::check_artifact_set_json(&artifacts, &context)
                 .map_err(|error| error.to_string())?;
             let value: serde_json::Value =
@@ -200,7 +214,152 @@ fn run(command: Command) -> Result<(String, bool), String> {
     }
 }
 
+#[cfg(unix)]
+const MAX_TREE_BYTES: u64 = 64 * 1024 * 1024;
+#[cfg(unix)]
+const MAX_TREE_DEPTH: usize = 128;
+
+#[cfg(unix)]
+fn open_tree_entry(
+    dir: impl std::os::fd::AsFd,
+    name: &std::ffi::CStr,
+    shown: &std::path::Path,
+) -> Result<std::fs::File, String> {
+    use rustix::fs::{AtFlags, Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    match rustix::fs::openat(&dir, name, flags, Mode::empty()) {
+        Ok(fd) => Ok(std::fs::File::from(fd)),
+        Err(rustix::io::Errno::LOOP) => Err(format!("{}: symlinks are refused", shown.display())),
+        Err(rustix::io::Errno::NXIO | rustix::io::Errno::OPNOTSUPP) => {
+            // On Unix, opening a domain socket with O_RDONLY fails with ENXIO/EOPNOTSUPP.
+            if let Ok(stat) = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+                let kind = rustix::fs::FileType::from_raw_mode(stat.st_mode);
+                if kind == rustix::fs::FileType::Symlink {
+                    return Err(format!("{}: symlinks are refused", shown.display()));
+                }
+            }
+            Err(format!("{}: not a regular file", shown.display()))
+        }
+        Err(error) => Err(format!("{}: {error}", shown.display())),
+    }
+}
+
+#[cfg(unix)]
+fn walk_source_tree(
+    dir_fd: &std::fs::File,
+    dir_path: &std::path::Path,
+    prefix: &str,
+    depth: usize,
+    budget: &mut u64,
+    files: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), String> {
+    if depth > MAX_TREE_DEPTH {
+        return Err(format!(
+            "{}: source tree exceeds maximum nesting depth",
+            dir_path.display()
+        ));
+    }
+    let mut names = Vec::new();
+    for entry in rustix::fs::Dir::read_from(dir_fd)
+        .map_err(|error| format!("{}: {error}", dir_path.display()))?
+    {
+        let name = entry
+            .map_err(|error| format!("{}: {error}", dir_path.display()))?
+            .file_name()
+            .to_owned();
+        let raw = name.as_bytes();
+        if raw == b"." || raw == b".." {
+            continue;
+        }
+        names.push(name);
+    }
+    names.sort();
+    for entry_name in names {
+        let name = entry_name
+            .to_str()
+            .map_err(|_e| format!("non-UTF-8 name under {}", dir_path.display()))?;
+        if name.starts_with('.') {
+            continue;
+        }
+        let child_path = dir_path.join(name);
+        let opened = open_tree_entry(dir_fd, entry_name.as_c_str(), &child_path)?;
+        let kind = opened
+            .metadata()
+            .map_err(|error| format!("{}: {error}", child_path.display()))?
+            .file_type();
+        let relative = if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if kind.is_dir() {
+            if name == "target" {
+                continue;
+            }
+            walk_source_tree(
+                &opened,
+                &child_path,
+                &relative,
+                depth.saturating_add(1),
+                budget,
+                files,
+            )?;
+        } else if kind.is_file() {
+            let mut bytes = Vec::new();
+            opened
+                .take(budget.saturating_add(1))
+                .read_to_end(&mut bytes)
+                .map_err(|error| format!("{}: {error}", child_path.display()))?;
+            let used = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
+            *budget = budget.checked_sub(used).ok_or_else(|| {
+                format!("{}: source tree exceeds 64 MiB limit", child_path.display())
+            })?;
+            files.push((relative, bytes));
+        } else {
+            return Err(format!("{}: not a regular file", child_path.display()));
+        }
+    }
+    Ok(())
+}
+
 /// HOST-TREE-1: read every counted file below `root` and digest the tree.
+#[cfg(unix)]
+fn source_digest(root: &std::path::Path) -> Result<String, String> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let raw = root.as_os_str().as_bytes();
+    let target: PathBuf = if raw == b"/" {
+        PathBuf::from("/")
+    } else {
+        root.components().collect()
+    };
+    let root_fd = cell::open_no_follow(rustix::fs::CWD, &target).map_err(|error| {
+        if error == "links are refused" {
+            format!("{}: symlinks are refused", root.display())
+        } else {
+            format!("{}: {error}", root.display())
+        }
+    })?;
+    let is_dir = root_fd
+        .metadata()
+        .map_err(|error| format!("{}: {error}", root.display()))?
+        .is_dir();
+    if !is_dir {
+        return Err(format!("{}: not a directory", root.display()));
+    }
+    let mut files = Vec::new();
+    let mut budget = MAX_TREE_BYTES;
+    walk_source_tree(&root_fd, root, "", 0, &mut budget, &mut files)?;
+    let digest = norn_ir::source_tree::source_tree_digest(
+        files
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(serde_json::json!({ "digest": digest.0, "files": files.len() }).to_string())
+}
+
+/// HOST-TREE-1: read every counted file below `root` and digest the tree.
+#[cfg(not(unix))]
 fn source_digest(root: &std::path::Path) -> Result<String, String> {
     fn walk(
         root: &std::path::Path,
@@ -247,6 +406,13 @@ fn source_digest(root: &std::path::Path) -> Result<String, String> {
             }
         }
         Ok(())
+    }
+    if std::fs::symlink_metadata(root)
+        .map_err(|error| format!("{}: {error}", root.display()))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(format!("{}: symlinks are refused", root.display()));
     }
     let mut files = Vec::new();
     walk(root, root, &mut files)?;
@@ -386,6 +552,17 @@ mod tests {
                 "{name}: {refused}"
             );
         }
+        let target = Tree::new("root-link-target");
+        let root_link =
+            std::env::temp_dir().join(format!("norn-host-tree-root-link-{}", std::process::id()));
+        let _stale = std::fs::remove_file(&root_link);
+        symlink(target.path(), &root_link).unwrap();
+        let refused = super::source_digest(&root_link).unwrap_err();
+        let _cleaned = std::fs::remove_file(&root_link);
+        assert!(
+            refused.contains("symlinks are refused"),
+            "root symlink: {refused}"
+        );
     }
 
     #[cfg(unix)]
