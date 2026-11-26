@@ -17,12 +17,16 @@ use tokio::sync::{mpsc, oneshot};
 use crate::core::CellCore;
 use crate::engine::RivetEngine;
 
+/// Maximum queued calls waiting for one actor's cell thread.
+const MAX_PENDING_JOBS: usize = 1024;
+
 /// What the cell thread holds between calls.
 pub struct Slot {
     /// The opened cell, once a call opened it.
     pub core: Option<CellCore>,
     db: SqliteDb,
     runtime: Handle,
+    checkpoint_key: Option<norn_cell::CheckpointKey>,
     /// The conformance seams' statement hook, when this host serves them.
     #[cfg(feature = "conformance")]
     pub seams: Option<std::rc::Rc<crate::conformance::Seams>>,
@@ -33,10 +37,12 @@ impl Slot {
     pub fn engine(&self) -> impl Fn() -> RivetEngine + 'static {
         let db = self.db.clone();
         let runtime = self.runtime.clone();
+        let checkpoint_key = self.checkpoint_key;
         #[cfg(feature = "conformance")]
         let seams = self.seams.clone();
         move || {
-            let engine = RivetEngine::new(db.clone(), runtime.clone());
+            let engine =
+                RivetEngine::new(db.clone(), runtime.clone()).with_checkpoint_key(checkpoint_key);
             #[cfg(feature = "conformance")]
             if let Some(seams) = &seams {
                 let seams: std::rc::Rc<crate::conformance::Seams> = std::rc::Rc::clone(seams);
@@ -73,7 +79,7 @@ impl std::error::Error for CellGone {}
 /// The handle the actor's tasks call the cell through.
 #[derive(Clone)]
 pub struct CellThread {
-    jobs: mpsc::UnboundedSender<Job>,
+    jobs: mpsc::Sender<Job>,
 }
 
 impl std::fmt::Debug for CellThread {
@@ -99,9 +105,10 @@ impl CellThread {
         name: &str,
         db: SqliteDb,
         runtime: Handle,
+        checkpoint_key: Option<norn_cell::CheckpointKey>,
         conformance: bool,
     ) -> std::io::Result<Self> {
-        let (jobs, mut queue) = mpsc::unbounded_channel::<Job>();
+        let (jobs, mut queue) = mpsc::channel::<Job>(MAX_PENDING_JOBS);
         std::thread::Builder::new()
             .name(format!("norn-cell {name}"))
             .spawn(move || {
@@ -109,6 +116,7 @@ impl CellThread {
                     core: None,
                     db,
                     runtime,
+                    checkpoint_key,
                     #[cfg(feature = "conformance")]
                     seams: conformance
                         .then(|| std::rc::Rc::new(crate::conformance::Seams::default())),
@@ -139,7 +147,10 @@ impl CellThread {
             // A caller that stopped waiting has nothing to receive.
             let _sent = reply.send(outcome);
         });
-        self.jobs.send(job).map_err(|_closed| CellGone::Stopped)?;
+        self.jobs
+            .send(job)
+            .await
+            .map_err(|_closed| CellGone::Stopped)?;
         answer.await.map_err(|_dropped| CellGone::Stopped)?
     }
 }

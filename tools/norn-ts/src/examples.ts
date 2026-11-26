@@ -27,7 +27,7 @@ export interface CompiledExample {
 function resolvePointer(document: unknown, pointer: string): unknown {
   if (pointer === "") return document
   return pointer.slice(1).split("/").map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~")).reduce<unknown>((node, key) => {
-    if (node === null || typeof node !== "object") return undefined
+    if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) return undefined
     return (node as Record<string, unknown>)[key]
   }, document)
 }
@@ -48,9 +48,14 @@ const agrees = (verdict: LawVerdict, expect: ExampleExpectation): boolean => {
  * before `evaluateLaw` existed fails every example as unsupported rather than skipping it.
  */
 export function runExamples(checker: CheckerAbi, artifacts: ReadonlyArray<Json>, examples: ReadonlyArray<CompiledExample>): CheckerDiagnostic[] {
+  const byId = new Map<string, Json>()
+  for (const artifact of artifacts) {
+    const id = (artifact as { readonly artifactId?: unknown }).artifactId
+    if (typeof id === "string" && !byId.has(id)) byId.set(id, artifact)
+  }
   const out: CheckerDiagnostic[] = []
   for (const example of examples) {
-    const artifact = artifacts.find((a) => (a as { artifactId?: string }).artifactId === example.artifactId)
+    const artifact = byId.get(example.artifactId)
     const law = artifact === undefined ? undefined : resolvePointer(artifact, example.pointer)
     const verdict: LawVerdict = law === undefined
       ? { ok: false, code: "law.example.unsupported", error: `no law at ${example.artifactId}${example.pointer}` }

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { transport, type Artifact } from "@/lib/transport"
+import { studioScopeKey, useStudioScope } from "./lib/definitions.ts"
 import { systemName } from "./lib/catalog.ts"
 import { connectionStatus, watermarkText } from "./lib/format.ts"
 import { usePinnedScope } from "./lib/session.ts"
@@ -49,8 +50,8 @@ function SyncNow({ id }: { readonly id: string }) {
   })
   return (
     <div className="space-y-1">
-      <Button type="button" size="sm" variant="outline" disabled={sync.isPending} onClick={() => sync.mutate()}><RefreshCw className={sync.isPending ? "animate-spin" : undefined} />Sync now</Button>
-      {sync.isError && <p role="alert" className="max-w-48 text-meta text-destructive">{sync.error.message}</p>}
+      <Button type="button" size="sm" variant="outline" disabled={sync.isPending} onClick={() => sync.mutate()}><RefreshCw className={sync.isPending ? "animate-spin motion-reduce:animate-none" : undefined} />Sync now</Button>
+      {sync.isError && <p role="alert" className="max-w-48 text-meta text-destructive-text">{sync.error.message}</p>}
     </div>
   )
 }
@@ -73,30 +74,52 @@ export const declaresConnections = (artifacts: readonly Artifact[]): boolean =>
   artifacts.some((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === CONNECTION_TYPE)
 
 export function SourceConnections() {
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const scopeKey = studioScopeKey(boundScope)
   // The cell installs its sources pack (and so this type) with the first connection or upload: until then
   // there is nothing to read, and the panel says so instead of asking for a type the cell does not have.
-  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const catalog = useQuery({ queryKey: ["catalog", scopeKey], queryFn: transport.catalog, enabled: scope.isSuccess })
   const installed = catalog.data === undefined ? undefined : declaresConnections(catalog.data.document)
   const connections = useQuery({
-    enabled: installed === true,
-    queryKey: ["source-connections"],
-    queryFn: () => cellRead<Page>(`/v1/objects/${CONNECTION_TYPE}?limit=200`, "Source connections are", { signal: AbortSignal.timeout(READ_DEADLINE_MS) }),
+    enabled: scope.isSuccess && installed === true,
+    queryKey: ["source-connections", scopeKey],
+    queryFn: ({ signal }) => cellRead<Page>(
+      `/v1/objects/${CONNECTION_TYPE}?limit=200`,
+      "Source connections are",
+      { signal: AbortSignal.any([signal, AbortSignal.timeout(READ_DEADLINE_MS)]) },
+      undefined,
+      boundScope,
+    ),
     retry: false,
     // While a sync runs, read again until it lands.
     refetchInterval: (query) => query.state.data?.document.records.some(({ values }) => values.status === "syncing") ? 3000 : false,
   })
   const notInstalled = connections.error instanceof CellRefusal && connections.error.status === 404
+  const nonRetryableRefusal = connections.error instanceof CellRefusal && connections.error.retryable !== true
   return (
     <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {installed === false && <Well><EmptyState icon={Cable} title="No connections yet" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>}
-      {(installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-body text-muted-foreground">Reading connections…</p>}
+      {scope.isError && (
+        <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 text-body"><span>Couldn't check the workspace scope.</span> <span className="text-muted-foreground">{failure(scope.error)}</span></p>
+          <Button type="button" size="sm" variant="outline" disabled={scope.isFetching} onClick={() => void scope.refetch()}><RefreshCw />Read again</Button>
+        </div>
+      )}
+      {!scope.isError && catalog.isError && (
+        <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 text-body"><span>Couldn't check the cell's catalog.</span> <span className="text-muted-foreground">{failure(catalog.error)}</span></p>
+          <Button type="button" size="sm" variant="outline" disabled={catalog.isFetching} onClick={() => void catalog.refetch()}><RefreshCw />Read again</Button>
+        </div>
+      )}
+      {!scope.isError && !catalog.isError && (scope.isPending || installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-body text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well className="flex items-center gap-3 px-4 py-3 text-body"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
         : (
-          // The type is installed and the read failed (a refusal included): said plainly, quietly, with a way to try again.
+          // Non-retryable refusals are never retried (DESIGN.md 12.3); transient failures offer Read again.
           <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p className="min-w-0 text-body"><span>Couldn't read the connections.</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
-            <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>
+            <p className="min-w-0 text-body"><span>{nonRetryableRefusal ? "The cell refused to read the connections." : "Couldn't read the connections."}</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
+            {!nonRetryableRefusal && <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>}
           </div>
         ))}
       {connections.data && (connections.data.document.records.length === 0
@@ -112,14 +135,14 @@ export function SourceConnections() {
               const read = connections.data
               return (
                 <TableRow key={id}>
-                  <TableCell><div>{values.label ?? id}</div><div className="text-meta text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
+                  <TableCell><div>{values.label ?? id}</div><div className="text-meta text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono"><bdi dir="ltr">{values.target}</bdi></span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
                     {status.note && <div className="max-w-64 pt-1 text-meta whitespace-normal text-muted-foreground">{status.note}</div>}
-                    {status.error && <div className="max-w-64 pt-1 text-meta whitespace-normal text-destructive" title={status.error.message ?? undefined}><span className="font-mono">{status.error.code}</span>{status.error.message ? `: ${status.error.message}` : ""}</div>}
+                    {status.error && <div className="max-w-64 pt-1 text-meta whitespace-normal text-destructive-text" title={status.error.message ?? undefined}><span className="font-mono"><bdi dir="ltr">{status.error.code}</bdi></span>{status.error.message ? `: ${status.error.message}` : ""}</div>}
                   </TableCell>
                   <TableCell className="text-body whitespace-nowrap">{values.status === "syncing" ? <>started <Instant iso={values.last_sync_started_at} /></> : <Instant iso={values.last_sync_ended_at} />}</TableCell>
-                  <TableCell className="max-w-48 truncate font-mono text-meta" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{watermarkText(values.watermark)}</TableCell>
+                  <TableCell className="max-w-48 truncate font-mono text-meta" title={values.watermark ?? "The source's own modified-since mark after the last sync"}><bdi dir="ltr">{watermarkText(values.watermark)}</bdi></TableCell>
                   <TableCell className="text-end tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
                   <TableCell className="text-end tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>
                   <TableCell className="text-end tabular-nums" title={values.quarantine_reasons ?? undefined}>{count(read, index, "rows_quarantined", values.rows_quarantined)}{values.quarantine_reasons ? <div className="font-mono text-meta text-muted-foreground">{values.quarantine_reasons}</div> : null}</TableCell>

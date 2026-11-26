@@ -194,8 +194,6 @@ export interface EpisodeFilters {
   readonly agreement?: Agreement
 }
 
-export const EMPTY_EPISODE_FILTERS: EpisodeFilters = {}
-
 /** Encode active episode filters as the generic object-query predicate accepted by the cell today. */
 export function episodeFilterPredicate(filters: EpisodeFilters): Predicate | null {
   const all: Clause[] = []

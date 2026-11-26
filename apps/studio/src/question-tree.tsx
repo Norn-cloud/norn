@@ -9,8 +9,8 @@ import { ListRow, RowList } from "@/components/system/list-row"
 import { Dot, type Word } from "@/components/system/status-dot"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
-import { OPERATOR_WORDS, buildQuestion, draftOf, issuesOf, readCatalog, type Condition, type Draft, type QuestionCatalog } from "./builder.tsx"
+import { type QuestionVerdict } from "./agent/question.tsx"
+import { OPERATOR_WORDS, buildQuestion, draftOf, issuesOf, postQuestionCheck, readCatalog, type Condition, type Draft, type QuestionCatalog } from "./builder.tsx"
 import { RunQuestion } from "./run.tsx"
 import { questionDefinitions, QuestionDefinitionError } from "./lib/question-definitions.ts"
 import { NO_DATA_CELL, defaultFetch, getDisplayedScope, scopeHeaders, useStudioScope, type StudioScope } from "./lib/definitions.ts"
@@ -45,16 +45,10 @@ async function readRecommendations(boundScope?: StudioScope | null): Promise<Rec
 }
 
 async function checkQuestion(question: unknown, boundScope?: StudioScope | null): Promise<CheckedQuestion> {
-  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
-  const response = await fetch("/api/questions/check", {
-    method: "POST",
-    headers: { "content-type": "application/json", ...scopeHeaders(scope) },
-    body: JSON.stringify({ question }),
-  })
-  const body = await response.json().catch(() => null) as { restatement?: CheckedQuestion["restatement"]; restatementError?: unknown } | null
-  const verdict = questionVerdictOf(body)
-  if (!response.ok || verdict === undefined || body?.restatement === undefined) throw new Error("The checker could not be reached.")
-  return { verdict, restatement: body.restatement, ...typeof body.restatementError === "string" ? { restatementError: body.restatementError } : {} }
+  const { verdict, body } = await postQuestionCheck(question, boundScope)
+  const record = body as { restatement?: CheckedQuestion["restatement"]; restatementError?: unknown } | null
+  if (record?.restatement === undefined) throw new Error("The checker could not be reached.")
+  return { verdict, restatement: record.restatement, ...typeof record.restatementError === "string" ? { restatementError: record.restatementError } : {} }
 }
 
 const words = (name: string) => name.replaceAll("_", " ")

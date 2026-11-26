@@ -2,6 +2,7 @@ import { useQueryClient, type QueryKey } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { LiveClient, type LiveRefusal } from "../../../../packages/norn-sdk/src/index.ts"
 import { type StudioScope, studioScopeKey, useStudioScope } from "./definitions.ts"
+import { useReaderKey } from "./session.ts"
 
 /**
  * Live reads (UI-LIVE-1): Studio holds one socket per scope to the cell through its Worker
@@ -10,16 +11,28 @@ import { type StudioScope, studioScopeKey, useStudioScope } from "./definitions.
  * typed read, once. The socket carries nothing the GET would not.
  */
 const clients = new Map<string, LiveClient>()
+let activeReader: string | undefined
+
+/** Close and drop every cached live WebSocket client (e.g. on sign-out or reader/role change). */
+export function closeLiveClients(): void {
+  for (const client of clients.values()) client.close()
+  clients.clear()
+  activeReader = undefined
+}
 
 /**
  * The page's live client for `scope`: one per scope, so a read of one scope never loses its socket
  * to a read of another. Each client opens its socket for its first subscription and closes it when
  * its last one leaves (`LiveClient`); a workspace switch unmounts the old scope's pages, so their
- * socket closes with them. The Worker decides every upgrade: a scope the session no longer has is
- * refused, and that client's readers are told `LIVE_UNAVAILABLE` once it stops reconnecting.
+ * socket closes with them. Passing `reader` isolates sockets across sign-out and role changes so
+ * a prior reader's authenticated socket never survives into a downgraded session.
  */
-export function live(scope: StudioScope): LiveClient {
-  const key = studioScopeKey(scope)
+export function live(scope: StudioScope, reader?: string): LiveClient {
+  if (reader !== undefined && activeReader !== undefined && reader !== activeReader) {
+    closeLiveClients()
+  }
+  if (reader !== undefined) activeReader = reader
+  const key = `${reader ?? ""}|${studioScopeKey(scope)}`
   let client = clients.get(key)
   if (client === undefined) {
     const query = new URLSearchParams({ orgId: scope.orgId, environmentId: scope.environmentId })
@@ -45,16 +58,17 @@ export function scopedPath(path: string, scope: StudioScope): string {
 export function useLiveRefresh(path: string | null, queryKey: QueryKey): void {
   const queries = useQueryClient()
   const scope = useStudioScope().data ?? null
+  const reader = useReaderKey()
   const key = JSON.stringify(queryKey)
   useEffect(() => {
     if (path === null || scope === null || typeof WebSocket === "undefined") return
     let seen: string | undefined
-    return live(scope).subscribe(scopedPath(path, scope), (snapshot) => {
+    return live(scope, reader).subscribe(scopedPath(path, scope), (snapshot) => {
       if (seen !== undefined && snapshot.digest !== seen) void queries.invalidateQueries({ queryKey })
       seen = snapshot.digest
     })
     // The key's value, not its identity, decides the subscription.
-  }, [path, scope?.orgId, scope?.environmentId, key])
+  }, [path, scope?.orgId, scope?.environmentId, reader, key])
 }
 
 /**
@@ -67,9 +81,10 @@ export function liveAnswer(
   scope: StudioScope,
   listener: (answer: { readonly status: number; readonly body: unknown; readonly digest?: string }) => void,
   onRefused?: (refusal: LiveRefusal) => void,
+  reader?: string,
 ): () => void {
   if (typeof WebSocket === "undefined") return () => {}
-  return live(scope).subscribe(
+  return live(scope, reader).subscribe(
     scopedPath(path, scope),
     (snapshot) => listener({ status: snapshot.status, body: snapshot.body, digest: snapshot.digest }),
     onRefused ? { onRefused } : undefined,

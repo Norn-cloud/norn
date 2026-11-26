@@ -18,14 +18,12 @@
  * installs the set and its approvals in one transaction. An approval the
  * cell refuses fails the command and applies nothing.
  */
-import { existsSync, statSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { existsSync } from "node:fs"
 import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
 import { loadChecker } from "./checker-abi.ts"
-import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas, type PackResult } from "./pack.ts"
-import { readProject } from "./project.ts"
+import { bindSourceSchemas, checkPack, pendingSourceSchemas, type PackResult } from "./pack.ts"
 import { isFetchableUrl } from "./setup.ts"
-import { compileProjectPack } from "./worker.ts"
+import { compileInputPack } from "./worker.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
@@ -73,7 +71,7 @@ function diagnostics(document: Doc): string[] {
   return (document.diagnostics ?? []).map((d: Doc) => `  ${d.severity} ${d.code}${d.span?.pointer ? ` at ${d.span.pointer}` : ""}: ${d.message}`)
 }
 
-export function planSummary(plan: Doc): string {
+function planSummary(plan: Doc): string {
   const lines = [`plan over revision ${plan.baseVersion} -> ${plan.nextVersion}${plan.unchanged ? " (unchanged: the pack is already installed)" : ""}`]
   for (const a of plan.added ?? []) lines.push(`  + ${a.artifactId} (${a.kind} ${a.toVersion})`)
   for (const a of plan.changed ?? []) lines.push(`  ~ ${a.artifactId} (${a.kind} ${a.fromVersion} -> ${a.toVersion})`)
@@ -83,11 +81,11 @@ export function planSummary(plan: Doc): string {
   return lines.join("\n")
 }
 
-export function refusalSummary(status: number, refusal: Doc): string {
+function refusalSummary(status: number, refusal: Doc): string {
   return [`refused (${status}) ${refusal.code}: ${refusal.message}`, `  ${refusal.explanation ?? ""}`, ...diagnostics(refusal)].join("\n")
 }
 
-export function appliedSummary(applied: Doc): string {
+function appliedSummary(applied: Doc): string {
   const verb = applied.outcome === "unchanged" ? "unchanged: already at" : "installed"
   return `${verb} revision ${applied.definitionsVersion} over ${applied.previousVersion} (receipt sha256 ${applied.receiptSha256}, commit ${applied.commitSeq})`
 }
@@ -119,11 +117,11 @@ export async function change(target: Target, command: "plan" | "apply", artifact
     return ok
   }
   const approvals = definitions.map((definition) => ({ kind: definition.kind, id: definition.id, payload: definition.payload }))
-  const body = (extra: Doc) => ({ artifacts, ...(approvals.length > 0 ? { approvals: approvals.map((approval) => ({ ...approval, ...extra[approval.id] })) } : {}) })
+  const body = (extra: ReadonlyMap<string, Doc>) => ({ artifacts, ...(approvals.length > 0 ? { approvals: approvals.map((approval) => ({ ...approval, ...extra.get(approval.id) })) } : {}) })
   let expected = expectedVersion
   let planned: Doc | undefined
   if (command === "plan" || expected === undefined || approvals.length > 0) {
-    const plan = await post(target, PLAN_PATH, body({}))
+    const plan = await post(target, PLAN_PATH, body(new Map()))
     if (!show(plan.status, plan.document, (d) => [planSummary(d), ...approvalLines(d, "signs")].join("\n"))) return { out, ok: false }
     if (command === "plan") return { out, ok: true }
     planned = plan.document
@@ -131,8 +129,8 @@ export async function change(target: Target, command: "plan" | "apply", artifact
     if (typeof expected !== "number") throw new Error("the plan names no base revision")
   }
   // Each approval is signed with the words the plan returned for it.
-  const signed: Doc = Object.fromEntries((planned?.approvals ?? []).map((a: Doc) =>
-    [a.id, { expectedVersion: a.fromRevision ?? null, signoff: { restatementSha256: a.restatementSha256 } }]))
+  const signed = new Map<string, Doc>((planned?.approvals ?? []).map((a: Doc) =>
+    [String(a.id), { expectedVersion: a.fromRevision ?? null, signoff: { restatementSha256: a.restatementSha256 } }]))
   const applied = await post(target, APPLY_PATH, { ...body(signed), expectedVersion: expected })
   return { out, ok: show(applied.status, applied.document, (d) => [appliedSummary(d), ...approvalLines(d.plan ?? {}, "signed")].join("\n")) }
 }
@@ -144,16 +142,13 @@ export async function change(target: Target, command: "plan" | "apply", artifact
  * definitions); any other directory or module compiles as a pack.
  */
 export function loadPack(input: string, scope: { readonly orgId: string; readonly environmentId: string }): PackResult {
-  if (statSync(input).isDirectory() && existsSync(join(input, "norn.json"))) {
-    const { root, manifest } = readProject(resolve(input))
-    return compileProjectPack(root, { ...manifest, scope })
-  }
-  return compilePack(resolve(input), { scope, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
+  return compileInputPack(input, { scope, overrideProjectScope: true })
 }
 
 function option(args: ReadonlyArray<string>, name: string): string | undefined {
   const index = args.indexOf(name)
-  return index < 0 ? undefined : args[index + 1]
+  const value = index < 0 ? undefined : args[index + 1]
+  return value === undefined || value.startsWith("--") ? undefined : value
 }
 
 const USAGE = "usage: norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR) [--expected-version N] [--json]\n"
@@ -164,6 +159,16 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
   const org = option(args, "--org")
   const env = option(args, "--env")
   if (!input || input.startsWith("--") || !url || !org || !env) { process.stderr.write(USAGE); return 2 }
+  if (!existsSync(input)) { process.stderr.write(`${command}: ${input} does not exist\n`); return 2 }
+  let expected: number | undefined
+  if (args.includes("--expected-version")) {
+    const raw = option(args, "--expected-version")
+    if (raw === undefined || !/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      process.stderr.write("--expected-version requires a non-negative integer\n")
+      return 2
+    }
+    expected = Number(raw)
+  }
   const email = option(args, "--email")
   const passwordEnv = option(args, "--password-env")
   const tokenEnv = option(args, "--token-env")
@@ -191,8 +196,7 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
     headers.cookie = await signIn(origin, email, password)
     headers.origin = origin
   }
-  const expected = option(args, "--expected-version")
-  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected), pack.retained)
+  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected, pack.retained)
   process.stdout.write(`${out.join("\n")}\n`)
   return ok ? 0 : 1
 }

@@ -1,5 +1,4 @@
 import { createContext, use, useState, type ReactNode } from "react"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 /**
  * Business shows what a card means in the reader's words. Technical shows
@@ -33,20 +32,3 @@ export function ViewProvider({ children }: { readonly children: ReactNode }) {
 }
 
 export const useView = () => use(ViewContext)
-
-/** One card's view: the global view, unless the reader switched this card. */
-export function useCardView() {
-  const global = use(ViewContext).view
-  const [override, setOverride] = useState<View>()
-  // An override equal to the global view is dropped, so the card follows the next global switch.
-  return { view: override ?? global, overridden: override !== undefined && override !== global, setView: (next: View) => setOverride(next === global ? undefined : next) }
-}
-
-export function ViewToggle({ view, onChange, label = "View" }: { readonly view: View; readonly onChange: (view: View) => void; readonly label?: string }) {
-  return (
-    <ToggleGroup type="single" variant="outline" size="sm" aria-label={label} value={view} onValueChange={(next) => { if (next === "business" || next === "technical") onChange(next) }}>
-      <ToggleGroupItem value="business" className="px-3">Business</ToggleGroupItem>
-      <ToggleGroupItem value="technical" className="px-3">Technical</ToggleGroupItem>
-    </ToggleGroup>
-  )
-}

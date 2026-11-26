@@ -154,7 +154,7 @@ fn gate(dev: &Dev) -> Checked {
             environment_id: Some("dev".into()),
         },
         Some(DEVELOPER),
-        &crate::dev::policy::dev_kinds(),
+        crate::dev::policy::dev_kinds(),
         None,
         &serde_json::from_value(signed)?,
         NOW_MS,

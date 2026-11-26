@@ -390,11 +390,8 @@ impl<E, C, I> MemoryCell<E, C, I> {
                     return None;
                 }
             }
-            candidates.push((
-                FactKey::new(concrete.as_str(), &key.key),
-                state.version,
-                values,
-            ));
+            let fk = FactKey::new(concrete.as_str(), &key.key);
+            candidates.push((fk, state.version, values));
         }
         let rows = candidates.iter().map(|(k, v, vals)| (k, *v, *vals));
         Some(norn_kernel::predicate_read::select_members(
@@ -3517,8 +3514,8 @@ pub fn check_link_override<H: CellHost>(cell: &mut H)
 where
     H::Error: std::fmt::Debug,
 {
-    let put = |object_type: &str, key: &str| FactWrite {
-        key: FactKey::new(object_type, key),
+    let put = |ty: &str, key: &str| FactWrite {
+        key: FactKey::new(ty, key),
         expected: FactVersion::ABSENT,
         mutation: FactMutation::Put {
             values: JsonObject::new(),
@@ -3535,41 +3532,41 @@ where
         ..CellCommit::empty()
     });
     assert!(created.is_ok(), "creates the objects: {created:?}");
-    let owner = |source: &str, target: &str| LinkWrite {
-        key: LinkKey::new(
-            FactKey::new(OVERRIDE_BASE, source),
-            LAW_OWNER,
-            FactKey::new(OVERRIDE_BASE, target),
-        ),
-        expected: FactVersion::ABSENT,
-        mutation: LinkMutation::Add {
-            values: JsonObject::new(),
-        },
-    };
-    let refused = |cell: &mut H, links: Vec<LinkWrite>| {
+    let base = |id: &str| FactKey::new(OVERRIDE_BASE, id);
+    let key = |src: &str, dst: &str| LinkKey::new(base(src), LAW_OWNER, base(dst));
+    let apply = |cell: &mut H, pairs: &[(&str, &str)]| {
+        let links = pairs
+            .iter()
+            .map(|&(src, dst)| LinkWrite {
+                key: key(src, dst),
+                expected: FactVersion::ABSENT,
+                mutation: LinkMutation::Add {
+                    values: JsonObject::new(),
+                },
+            })
+            .collect();
         cell.commit(CellCommit {
             links,
             ..CellCommit::empty()
         })
         .map(|_| ())
-        .map_err(|error| error.code())
+        .map_err(|e| e.code())
     };
-    assert_eq!(
-        refused(cell, vec![owner("s", "t")]),
-        Err("commit.link_target"),
-        "Child.owner targets override.Child, even through a Base name"
-    );
-    assert_eq!(
-        refused(cell, vec![owner("s", "u"), owner("s", "v")]),
-        Err("commit.link_cardinality"),
-        "Child.owner is to-one, even through a Base name"
-    );
-    assert_eq!(refused(cell, vec![owner("s", "u")]), Ok(()));
-    assert_eq!(
-        refused(cell, vec![owner("b", "t"), owner("b", "u")]),
-        Ok(()),
-        "Base.owner stays many, to override.Base"
-    );
+    assert_eq!(apply(cell, &[("s", "t")]), Err("commit.link_target"));
+    let card = apply(cell, &[("s", "u"), ("s", "v")]);
+    assert_eq!(card, Err("commit.link_cardinality"));
+    assert_eq!(apply(cell, &[("s", "u")]), Ok(()));
+    assert_eq!(apply(cell, &[("b", "t"), ("b", "u")]), Ok(()));
+    for (src, dst, present) in [
+        ("s", "t", false),
+        ("s", "v", false),
+        ("s", "u", true),
+        ("b", "t", true),
+        ("b", "u", true),
+    ] {
+        let loaded = cell.load_link(&key(src, dst)).map(|s| s.values.is_some());
+        assert_eq!(loaded.ok(), Some(present), "link {src}->{dst}");
+    }
 }
 
 /// Coverage labels a healthy run of the law machine hits.

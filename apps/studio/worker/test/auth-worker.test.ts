@@ -1,35 +1,10 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
 import worker, { acceptInvitation, type Env } from "../index.ts"
+import { DEFAULT_ORIGIN as ORIGIN, cookieOf, createWorkerClient, createWorkerEnv, readMigration } from "./harness.ts"
 
-const ORIGIN = "https://studio-preview.norn.cloud"
-const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8")
-
-function stage(): Env {
-  const db = new Database(":memory:")
-  db.exec(MIGRATION)
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
-  const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip" }
-}
-
-let address = 0
-const call = (env: Env, path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers)
-  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", `198.51.100.${++address % 250}`)
-  return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
-}
-const post = (env: Env, path: string, body: unknown, headers: HeadersInit = {}) =>
-  call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, ...headers } })
-/** Sign up (no session is issued), then sign in with the password; the sign-in response carries the cookie. */
-const enroll = async (env: Env, email: string, name: string, headers: HeadersInit = {}) => {
-  const signUp = await post(env, "/api/auth/sign-up/email", { email, password: "correct horse battery", name }, headers)
-  if (signUp.status !== 200) return signUp
-  return post(env, "/api/auth/sign-in/email", { email, password: "correct horse battery" }, headers)
-}
-const cookieOf = (response: Response) => response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
+const stage = (): Env => createWorkerEnv({ origin: ORIGIN }).env
+const { call, nextIp, post, enroll } = createWorkerClient(ORIGIN)
 
 test("signing in after sign-up sets an HTTP-only, secure, same-site session cookie and an owned organization", async () => {
   const env = stage()
@@ -93,7 +68,7 @@ test("magic links stay on the trusted origin that requested them", async () => {
   const sent: string[] = []
   const env = { ...stage(), BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify([ORIGIN, second]), EMAIL_FROM: "studio@norn.cloud", EMAIL: { send: async (message: { text: string }) => { sent.push(message.text) } } }
   await post(env, "/api/auth/sign-up/email", { email: "magic@example.com", password: "correct horse battery", name: "Magic" })
-  const magic = (origin: string, extra: Record<string, string> = {}, callbackURL = "/") => worker.fetch(new Request(`${origin}/api/auth/sign-in/magic-link`, { method: "POST", headers: { "content-type": "application/json", origin, "cf-connecting-ip": `198.51.100.${++address % 250}`, ...extra }, body: JSON.stringify({ email: "magic@example.com", callbackURL }) }) as Parameters<typeof worker.fetch>[0], env)
+  const magic = (origin: string, extra: Record<string, string> = {}, callbackURL = "/") => worker.fetch(new Request(`${origin}/api/auth/sign-in/magic-link`, { method: "POST", headers: { "content-type": "application/json", origin, "cf-connecting-ip": nextIp(), ...extra }, body: JSON.stringify({ email: "magic@example.com", callbackURL }) }) as Parameters<typeof worker.fetch>[0], env)
   expect((await magic("https://evil.example")).status).toBe(403)
   expect((await magic(second, {}, "https://evil.example/landing")).status).toBe(403)
   expect((await magic(second, { host: "evil.example" })).status).toBe(403)
@@ -358,13 +333,13 @@ test("concurrent recovery creates one owner membership", async () => {
 
 test("workspace migration deduplicates by role, creation time, then id", () => {
   const db = new Database(":memory:")
-  db.exec(MIGRATION)
+  db.exec(readMigration("0001_better_auth.sql"))
   db.exec(`insert into "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") values ('u', 'User', 'u@example.com', 1, '2020', '2020');
     insert into "organization" ("id", "name", "slug", "createdAt") values ('o', 'Org', 'org', '2020');
     insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values
       ('viewer', 'o', 'u', 'viewer', '2010'), ('new-owner', 'o', 'u', 'owner', '2022'),
       ('b-owner', 'o', 'u', 'owner', '2020'), ('a-owner', 'o', 'u', 'owner', '2020')`)
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
+  db.exec(readMigration("0002_workspace_provisioning.sql"))
   expect(db.query(`select "id", "role" from "member"`).all()).toEqual([{ id: "a-owner", role: "owner" }])
   expect(() => db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('duplicate', 'o', 'u', 'member', '2025')`)).toThrow()
 })

@@ -20,7 +20,7 @@
  * experimental: they carry `"stability": "experimental"` and are not a
  * frozen contract (D84) until they are enrolled in `scripts/ci/contract_diff.py`.
  */
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
@@ -54,7 +54,7 @@ function installedPackage(name: string): string | undefined {
   catch { return undefined }
 }
 
-export const DOWNLOAD_TIMEOUT_MS = 600_000
+const DOWNLOAD_TIMEOUT_MS = 600_000
 
 export function download(url: string, limit: number, timeoutMs: number = DOWNLOAD_TIMEOUT_MS): Promise<Uint8Array> {
   return fetchBounded(url, limit, timeoutMs)
@@ -233,7 +233,7 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, build)
   }
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")
-  if (existsSync(cached) && sha256(readFileSync(cached)) === asset.sha256) return cached
+  if (existsSync(cached) && statSync(cached).isFile() && sha256(readFileSync(cached)) === asset.sha256) return cached
   if (!asset.url) throw unavailable(`${packageName} is not installed; reinstall @norn/cli for this platform.`, build)
   if (!isFetchableUrl(asset.url)) throw unavailable(`the release records ${asset.url}, which is not an https address.`, build)
   let bytes: Uint8Array
@@ -246,7 +246,7 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     throw unavailable(`the file fetched from ${asset.url} has sha256 ${found}, not the ${asset.sha256} this release records; it was not kept.`, build)
   }
   mkdirSync(dirname(cached), { recursive: true })
-  const partial = `${cached}.${process.pid}.partial`
+  const partial = `${cached}.${process.pid}.${randomBytes(4).toString("hex")}.partial`
   try {
     writeFileSync(partial, bytes, { mode: 0o755 })
     chmodSync(partial, 0o755)
@@ -267,5 +267,10 @@ export async function dev(args: readonly string[]): Promise<number> {
   const stop = () => child.kill("SIGTERM")
   process.on("SIGINT", stop)
   process.on("SIGTERM", stop)
-  return await child.exited
+  try {
+    return await child.exited
+  } finally {
+    process.off("SIGINT", stop)
+    process.off("SIGTERM", stop)
+  }
 }

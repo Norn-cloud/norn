@@ -8,6 +8,7 @@ import {
 import { CellUnavailable, defaultFetch, getDisplayedScope, NO_DATA_CELL, parseUnavailableDetail, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "./definitions.ts"
 import { live } from "./live-reads.ts"
 import { CellRefusal, MODE_AUTO_RETRIES, NotServed } from "./live-transport.ts"
+import { useReaderKey } from "./session.ts"
 import type { ReadState } from "../../../../packages/norn-react/src/state.ts"
 
 /**
@@ -341,6 +342,7 @@ export interface CellQuery<T> {
 /** Read `route` with `params` in `scope`, kept current by the cell's pushes. */
 export function useCellQuery<P extends GetRoute>(route: P, params: CellParams<P>, config: CellQueryConfig): CellQuery<Success<Operation<P, "get">>> {
   const client = useQueryClient()
+  const reader = useReaderKey()
   const options = cellQueryOptions(client, route, params, config)
   const read = useQuery(options)
   const [liveRefusal, setLiveRefusal] = useState<LiveRefusal | null>(null)
@@ -351,12 +353,12 @@ export function useCellQuery<P extends GetRoute>(route: P, params: CellParams<P>
     setLiveRefusal(null)
     if (!enabled || scope === null || typeof WebSocket === "undefined") return
     return attachLive({
-      client, live: live(scope), route, queryKey: options.queryKey, path: cellPath(route, scope, params),
+      client, live: live(scope, reader), route, queryKey: options.queryKey, path: cellPath(route, scope, params),
       ...(config.what === undefined ? {} : { what: config.what }),
       onLiveRefusal: setLiveRefusal,
     })
     // The key's value, not its identity, decides the subscription.
-  }, [client, key, enabled])
+  }, [client, key, enabled, reader])
   return { read, state: cellReadState(read, liveRefusal), liveRefusal }
 }
 
