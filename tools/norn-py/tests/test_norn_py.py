@@ -1568,6 +1568,14 @@ class TestPackAndDeploymentPrototypes(unittest.TestCase):
         for bad_url in (
             "http://localhost.evil.example/solve",
             "http://127.0.0.1.evil.example/solve",
+            "http://evil.example\\@localhost/solve",
+            "http://evil.example\\@127.0.0.1/solve",
+            "https://user:secret@example.com/solve",
+            "http://user:pass@localhost/solve",
+            "http://[::1/solve",
+            "https://example.com:notaport/solve",
+            "https://example.com:99999/solve",
+            "https://foo bar/solve",
             "https:///no-host",
             "http://example.com/solve",
         ):
@@ -1582,7 +1590,7 @@ class TestPackAndDeploymentPrototypes(unittest.TestCase):
             self.assertEqual(url_ctx.exception.code, "NORN-PY-DEPLOYMENT-ENDPOINT")
 
         with self.assertRaises(NonJsonValueError):
-            canonical_json({1: "a"})  # type: ignore[dict-item]
+            canonical_json({1: "a"})
 
 
 if __name__ == "__main__":

@@ -20,7 +20,6 @@ from __future__ import annotations
 import ast
 import re
 import types
-from urllib.parse import urlsplit
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -39,6 +38,7 @@ from typing import (
     get_args,
     get_origin,
 )
+from urllib.parse import urlsplit
 
 from .canonical import (
     OMIT,
@@ -1805,6 +1805,21 @@ class SecretRef:
         }
 
 
+def _is_valid_worker_endpoint_url(url: str) -> bool:
+    if not url or any(ch <= " " or ch == "\x7f" or ch == "\\" for ch in url):
+        return False
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port
+    except ValueError:
+        return False
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        return False
+    return (parsed.scheme == "https" and bool(parsed.hostname)) or (
+        parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DeploymentSpec:
     """Spike prototype (outside `collect_artifacts`): live Norn Deployment binding packs to a cell host."""
@@ -1831,11 +1846,7 @@ class DeploymentSpec:
                     "NORN-PY-DEPLOYMENT-ENDPOINT",
                     f"worker endpoint key {endpoint_key!r} must have form '<fn_id>@<semver>'",
                 )
-            parsed = urlsplit(url)
-            valid_url = (parsed.scheme == "https" and bool(parsed.hostname)) or (
-                parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1")
-            )
-            if not valid_url:
+            if not _is_valid_worker_endpoint_url(url):
                 raise NornTracingError(
                     "NORN-PY-DEPLOYMENT-ENDPOINT",
                     f"worker endpoint {endpoint_key!r} must use https:// (or loopback http:// for local dev), got {url!r}",

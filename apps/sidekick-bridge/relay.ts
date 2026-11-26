@@ -92,12 +92,15 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
     return value
   }
   const list = (name: string) => new Set((env[name] ?? "").split(",").map((entry) => entry.trim()).filter(Boolean))
-  const intEnv = (name: string, fallback: number, min: number) => {
+  const intEnv = (name: string, fallback: number, min: number, max?: number) => {
     const raw = env[name]?.trim()
     if (raw === undefined || raw === "") return fallback
-    if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer >= ${min}`)
+    const range = max === undefined ? `>= ${min}` : `between ${min} and ${max}`
+    if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer ${range}`)
     const value = Number(raw)
-    if (!Number.isSafeInteger(value) || value < min) throw new Error(`${name} must be an integer >= ${min}`)
+    if (!Number.isSafeInteger(value) || value < min || (max !== undefined && value > max)) {
+      throw new Error(`${name} must be an integer ${range}`)
+    }
     return value
   }
   const studioOrigin = new URL(need("SIDEKICK_STUDIO_ORIGIN")).origin
@@ -109,8 +112,8 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
     loginHeader: need("SIDEKICK_LOGIN_HEADER").toLowerCase(),
     allowedLogins: new Set([...list("SIDEKICK_ALLOWED_LOGINS")].map((login) => login.toLowerCase())),
     listenHost: env.SIDEKICK_LISTEN_HOST ?? "127.0.0.1",
-    listenPort: intEnv("SIDEKICK_LISTEN_PORT", 17950, 0),
-    mcpPort: intEnv("SIDEKICK_MCP_PORT", 17951, 0),
+    listenPort: intEnv("SIDEKICK_LISTEN_PORT", 17950, 0, 65535),
+    mcpPort: intEnv("SIDEKICK_MCP_PORT", 17951, 0, 65535),
     adapter: need("SIDEKICK_ADAPTER").split(/\s+/),
     scratch: need("SIDEKICK_SCRATCH"),
     maxConnections: intEnv("SIDEKICK_MAX_CONNECTIONS", 3, 1),
@@ -648,6 +651,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   }
 
   async function fromBrowser(connection: Connection, raw: string) {
+    if (connection.closed) return
     let message: Message
     try { message = JSON.parse(raw) as Message } catch { return send(connection.ws, rpcError(null, -32700, "Parse error"), []) }
     // Responses from the browser: only the person's answers to the questions the relay forwarded.
@@ -667,6 +671,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     const method = message.method
     if (!BROWSER_METHODS.has(method)) return message.id === undefined ? undefined : send(connection.ws, rpcError(message.id, -32601, `Sidekick does not offer ${method}.`), secrets(connection))
     if (method === "_norn/grant" && connection.grant === null) {
+      connection.closed = true
       send(connection.ws, rpcError(message.id, -32001, "Initialize with a Sidekick grant first."), [])
       connection.ws.close(4401, "no grant")
       return
@@ -675,6 +680,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       const grant = await verifyGrant((message.params?._meta as Json | undefined)?.["norn.cloud/grant"] ?? message.params?.grant, keys, config.studioOrigin)
       if (connection.closed) return
       if (grant === null || (connection.grant !== null && !sameGrantIdentity(connection.grant, grant))) {
+        connection.closed = true
         send(connection.ws, rpcError(message.id, -32001, "Sign in to Studio again: the Sidekick grant was not accepted."), [])
         log(`conn ${connection.id} grant refused`)
         connection.ws.close(4401, "grant refused")
@@ -689,6 +695,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       if (connection.adapter === null) spawnAdapter(connection)
     }
     if (connection.grant === null || connection.adapter === null) {
+      connection.closed = true
       send(connection.ws, rpcError(message.id, -32001, "Initialize with a Sidekick grant first."), [])
       connection.ws.close(4401, "no grant")
       return
@@ -702,6 +709,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       endTurn(connection)
       if (!(await workerAccepts(connection))) {
         if (connection.closed) return
+        connection.closed = true
         send(connection.ws, rpcError(message.id, -32001, "Studio did not accept the Sidekick grant."), secrets(connection))
         connection.ws.close(4403, "worker refused grant")
         return
