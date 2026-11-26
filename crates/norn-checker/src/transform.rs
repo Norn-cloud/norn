@@ -361,7 +361,7 @@ pub struct TransformPlan {
     pub output: String,
     /// `(alias, link)` edges the engine must read for link joins.
     pub links: BTreeSet<(String, String)>,
-    /// Fuel for one expression evaluation (its static cost fits it).
+    /// Cumulative expression fuel across all evaluations of this plan.
     pub fuel_units: u64,
     /// VIEW-MAT-1: how a materialized transform is kept; `None` recomputes
     /// on every read.

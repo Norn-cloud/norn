@@ -33,7 +33,7 @@ import tempfile
 import types
 import unittest
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, IntEnum, StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from unittest import mock
@@ -1843,6 +1843,168 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
         self.assertNotIn("api_secret", dep.initial_settings)
         with self.assertRaises(TypeError):
             dep.worker_endpoints["x@1.0.0"] = "https://x.example"  # type: ignore[index]
+
+    def test_sandbox_rejects_dataclasses_and_callback_attribute_calls_on_non_symbolic_receivers(self) -> None:
+        # `dataclasses` is rejected at Layer 1 preflight instead of passing Layer 1 and failing inside Layer 2.
+        with self.assertRaises(NornTracingError) as c_dc:
+            preflight_source(
+                "from dataclasses import dataclass\n\n@dataclass\nclass Bad:\n    x: int\n",
+                "bad_dc.py",
+            )
+        self.assertEqual(c_dc.exception.code, "NORN-PY-FORBIDDEN-IMPORT")
+
+        # Attribute method calls (.eq/.ne/.is_null/.is_not_null) MUST only target symbolic expressions.
+        class _Trap:
+            called = False
+
+            def eq(self, _other: object) -> object:
+                self.called = True
+                return None
+
+            def is_null(self) -> object:
+                self.called = True
+                return None
+
+            def __add__(self, _other: object) -> str:
+                self.called = True
+                return "1"
+
+        trap = _Trap()
+        holder = types.SimpleNamespace(trap=trap)
+
+        class _EvilEnum(Enum):
+            A = 1
+
+            def __add__(self, _other: object) -> object:
+                trap.called = True
+                return lit(1)
+
+            def __eq__(self, _other: object) -> bool:
+                trap.called = True
+                return True
+
+        class _EvilMix:
+            def __sub__(self, _other: object) -> object:
+                trap.called = True
+                return lit(1)
+
+        class _MixedEnum(_EvilMix, Enum):
+            B = 2
+
+        class _EvilFmtStrEnum(StrEnum):
+            A = "a"
+
+            def __format__(self, _spec: str) -> str:
+                trap.called = True
+                return "a"
+
+        class _EvilStrStrEnum(StrEnum):
+            A = "a"
+
+            def __str__(self) -> str:
+                trap.called = True
+                return "a"
+
+        class _EvilStrIntEnum(IntEnum):
+            A = 1
+
+            def __str__(self) -> str:
+                trap.called = True
+                return "1"
+
+        class _PatchedStrEnum(StrEnum):
+            A = "a"
+
+        def _evil_patched_format(_self: object, _spec: str) -> str:
+            trap.called = True
+            return "a"
+
+        _PatchedStrEnum.__format__ = _evil_patched_format  # type: ignore[method-assign]
+
+        class _CleanStatus(StrEnum):
+            DRAFT = "draft"
+
+        class _TamperedEnum(StrEnum):
+            A = "a"
+
+        class _Desc:
+            def __get__(self, _inst: object, _owner: object = None) -> object:
+                trap.called = True
+                return _TamperedEnum.A
+
+        setattr(_TamperedEnum, "FAKE", trap)
+        _TamperedEnum._member_map_["FAKE"] = trap  # type: ignore[assignment]
+        setattr(_TamperedEnum, "DESC", _Desc())
+        _TamperedEnum._member_map_["DESC"] = _TamperedEnum.A
+
+        bad_callbacks = [
+            lambda s: trap.eq(s.hours),  # noqa: E731
+            lambda s: holder.trap.is_null(),  # noqa: E731
+            lambda s: (trap + s.hours).eq(Decimal("1")),  # noqa: E731
+            lambda s: (Decimal(trap + 1) + s.hours).eq(Decimal("1")),  # noqa: E731
+            lambda s: (trap == s.hours).eq(True),  # noqa: E731
+            lambda s: (_EvilEnum.A + s.hours).eq(1),  # noqa: E731
+            lambda s: (_EvilEnum.A == s.hours).eq(True),  # noqa: E731
+            lambda s: (_MixedEnum.B - s.hours).eq(1),  # noqa: E731
+            lambda s: (s.status == _EvilFmtStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (s.status == _EvilStrStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (_EvilStrIntEnum.A + s.hours).eq(2),  # noqa: E731
+            lambda s: (s.status == _PatchedStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (_TamperedEnum.FAKE + s.hours).eq("1"),  # type: ignore[attr-defined]  # noqa: E731
+            lambda s: (s.status == _TamperedEnum.DESC).eq(True),  # type: ignore[attr-defined]  # noqa: E731
+        ]
+        for cb in bad_callbacks:
+            with self.assertRaises(NornTracingError) as c_attr:
+                validate_callback_ast(cb)
+            self.assertEqual(c_attr.exception.code, "NORN-PY-FORBIDDEN-CALL")
+        self.assertFalse(trap.called)
+
+        # Symbolic receivers (parameter attributes, comparisons, arithmetic, lit(), module Expr, clean StrEnum) still pass.
+        thresh = lit(5)
+        good_callbacks = [
+            lambda s: s.hours.eq(Decimal("8")),  # noqa: E731
+            lambda s: (s.hours + Decimal("1")).eq(Decimal("9")),  # noqa: E731
+            lambda s: (1 + 2 + s.hours).eq(10),  # noqa: E731
+            lambda s: (s.hours > Decimal("0")).eq(True),  # noqa: E731
+            lambda s: (s.hours > 0).is_not_null(),  # noqa: E731
+            lambda s: (s.status == _CleanStatus.DRAFT).eq(True),  # noqa: E731
+            lambda s: (s.hours + thresh).eq(10),  # noqa: E731
+            lambda s: thresh.eq(s.hours),  # noqa: E731
+            lambda s: lit("ok").eq(s.status),  # noqa: E731
+        ]
+        for cb in good_callbacks:
+            validate_callback_ast(cb)
+
+        # Clean IntEnum and int/str subclasses with overridden __str__/__repr__/__format__ render plain ZEN literals.
+        class _CleanPrio(IntEnum):
+            HIGH = 3
+
+        class _EvilInt(int):
+            def __str__(self) -> str:
+                trap.called = True
+                return "1 || true"
+
+            def __repr__(self) -> str:
+                trap.called = True
+                return "1 || true"
+
+        class _EvilStr(str):
+            def __str__(self) -> str:
+                trap.called = True
+                return "x' || true || '"
+
+            def __format__(self, _spec: str) -> str:
+                trap.called = True
+                return "x' || true || '"
+
+        sym = DynamicSym("self", ("hours", "status"), "test.Shift")
+        traced_int_enum = trace_bool_callback(lambda s: s.hours == _CleanPrio.HIGH, sym, context="test")  # noqa: E731
+        self.assertEqual(traced_int_enum.zen, "self.hours == 3")
+        traced_str_enum = trace_bool_callback(lambda s: s.status == _CleanStatus.DRAFT, sym, context="test")  # noqa: E731
+        self.assertEqual(traced_str_enum.zen, "self.status == 'draft'")
+        self.assertEqual(lit(_EvilInt(7)).zen, "7")
+        self.assertEqual(lit(_EvilStr("ok")).zen, "'ok'")
+        self.assertFalse(trap.called)
 
 
 if __name__ == "__main__":

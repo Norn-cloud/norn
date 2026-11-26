@@ -46,6 +46,39 @@ pub struct BindingSortedPosition {
     pub identity: String,
 }
 
+/// Encode a sealed sort cursor value for SQLite, returning `true` when an
+/// integer outside `±MAX_SAFE_INTEGER` travels as decimal text and needs
+/// `CAST(? AS INTEGER)` for numeric index comparison.
+pub(crate) fn binding_sort_sql_value(value: &BindingSortValue) -> (SqlValue, bool) {
+    match value {
+        BindingSortValue::Integer(value)
+            if (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(value) =>
+        {
+            (SqlValue::Integer(*value), false)
+        }
+        BindingSortValue::Integer(value) => (SqlValue::Text(value.to_string()), true),
+        BindingSortValue::Text(value) => (SqlValue::from(value.clone()), false),
+        BindingSortValue::Null => (SqlValue::Null, false),
+    }
+}
+
+/// Decode a fetched sort column value (projected as text for `INTEGER` columns
+/// so full 64-bit signed integers cross the host seam without loss).
+pub(crate) fn decode_binding_sort_value(
+    value: &SqlValue,
+    is_integer: bool,
+) -> Option<BindingSortValue> {
+    match value {
+        SqlValue::Null => Some(BindingSortValue::Null),
+        SqlValue::Integer(value) => Some(BindingSortValue::Integer(*value)),
+        SqlValue::Text(value) if is_integer => {
+            value.parse::<i64>().ok().map(BindingSortValue::Integer)
+        }
+        SqlValue::Text(value) => Some(BindingSortValue::Text(value.clone())),
+        SqlValue::Real(_) | SqlValue::Blob(_) => None,
+    }
+}
+
 /// One bounded candidate from an indexed widget sort scan.
 #[derive(Debug)]
 pub struct BindingSortedCandidate {
@@ -206,5 +239,48 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             out.push((row.get(0)?, row.get(1)?));
         }
         Ok((out, exhausted))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BindingSortValue, MAX_SAFE_INTEGER, SqlValue, binding_sort_sql_value,
+        decode_binding_sort_value,
+    };
+
+    #[test]
+    fn binding_sort_integer_roundtrips_beyond_safe_integer_range() {
+        for safe in [-MAX_SAFE_INTEGER, 0, MAX_SAFE_INTEGER] {
+            let (sql, cast) = binding_sort_sql_value(&BindingSortValue::Integer(safe));
+            assert_eq!(sql, SqlValue::Integer(safe));
+            assert!(!cast);
+            assert_eq!(
+                decode_binding_sort_value(&SqlValue::Text(safe.to_string()), true),
+                Some(BindingSortValue::Integer(safe))
+            );
+        }
+        for wide in [
+            i64::MIN,
+            (-MAX_SAFE_INTEGER).saturating_sub(1),
+            MAX_SAFE_INTEGER.saturating_add(1),
+            i64::MAX,
+        ] {
+            let (sql, cast) = binding_sort_sql_value(&BindingSortValue::Integer(wide));
+            assert_eq!(sql, SqlValue::Text(wide.to_string()));
+            assert!(cast);
+            assert_eq!(
+                decode_binding_sort_value(&sql, true),
+                Some(BindingSortValue::Integer(wide))
+            );
+        }
+        assert_eq!(
+            decode_binding_sort_value(&SqlValue::Text("not-an-int".to_owned()), true),
+            None
+        );
+        assert_eq!(
+            decode_binding_sort_value(&SqlValue::Text("plain".to_owned()), false),
+            Some(BindingSortValue::Text("plain".to_owned()))
+        );
     }
 }

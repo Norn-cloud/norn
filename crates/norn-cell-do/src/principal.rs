@@ -211,12 +211,29 @@ impl IssuerKeys {
     /// The new document is unusable; the previous keys stay in force, and
     /// age on (or stay refused after a clock regression).
     pub fn replace_jwks(&self, jwks: &str, now: u64) -> Result<(), Refusal> {
+        self.replace_jwks_at(jwks, now, || now)
+    }
+
+    /// Replace the keys fetched at `fetched` (Unix seconds), sampling the
+    /// current clock under the keys lock so concurrent verifiers cannot race
+    /// ahead of the recorded high-water mark.
+    ///
+    /// # Errors
+    /// The new document is unusable; the previous keys stay in force, and
+    /// age on (or stay refused after a clock regression).
+    pub fn replace_jwks_at(
+        &self,
+        jwks: &str,
+        fetched: u64,
+        now: impl FnOnce() -> u64,
+    ) -> Result<(), Refusal> {
         let verifier = TokenVerifier::from_jwks(&self.issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
         let mut keys = self.keys.lock().map_err(Refusal::host)?;
+        let observed = now();
         keys.verifier = verifier;
         keys.kids = kids(jwks);
-        keys.fetched = now;
-        keys.high_water = now;
+        keys.fetched = fetched;
+        keys.high_water = observed.max(fetched);
         keys.regressed = false;
         Ok(())
     }
@@ -227,9 +244,16 @@ impl IssuerKeys {
     /// after [`JWKS_RETRY_SECS`], not on every request. After an observed
     /// clock regression a refetch is due regardless of age.
     pub fn refresh_due(&self, now: u64) -> bool {
+        self.refresh_due_with(|| now)
+    }
+
+    /// Like [`Self::refresh_due`], sampling `now` under the keys lock so
+    /// concurrent tasks cannot present an older timestamp after a newer one.
+    pub fn refresh_due_with(&self, now: impl FnOnce() -> u64) -> bool {
         let Ok(mut keys) = self.keys.lock() else {
             return false;
         };
+        let now = now();
         keys.observe(now);
         let aged = keys.regressed || now.saturating_sub(keys.fetched) >= JWKS_MAX_AGE_SECS;
         let due = aged && keys.may_retry(now);
@@ -243,9 +267,15 @@ impl IssuerKeys {
     /// refetch is allowed now (at most one per [`JWKS_RETRY_SECS`]): the host
     /// refetches the pinned JWKS, then retries the request once.
     pub fn take_unknown_kid(&self, now: u64) -> bool {
+        self.take_unknown_kid_with(|| now)
+    }
+
+    /// Like [`Self::take_unknown_kid`], sampling `now` under the keys lock.
+    pub fn take_unknown_kid_with(&self, now: impl FnOnce() -> u64) -> bool {
         let Ok(mut keys) = self.keys.lock() else {
             return false;
         };
+        let now = now();
         keys.observe(now);
         let seen = std::mem::take(&mut keys.unknown_kid);
         let allowed = seen && keys.may_retry(now);
@@ -261,7 +291,21 @@ impl IssuerKeys {
     /// [`Self::take_unknown_kid`].
     #[must_use]
     pub fn principal(&self, token: &str, cell: &CellScope, now: u64) -> Option<Principal> {
+        self.principal_with(token, cell, || now)
+    }
+
+    /// Like [`Self::principal`], sampling `now` under the keys lock so
+    /// concurrent tasks or awaited refreshes cannot trip the clock-regression
+    /// latch with a stale timestamp.
+    #[must_use]
+    pub fn principal_with(
+        &self,
+        token: &str,
+        cell: &CellScope,
+        now: impl FnOnce() -> u64,
+    ) -> Option<Principal> {
         let mut keys = self.keys.lock().ok()?;
+        let now = now();
         keys.observe(now);
         // Keys older than the stale bound are not honoured: a removed key
         // must not verify forever because the issuer cannot be reached. Nor
