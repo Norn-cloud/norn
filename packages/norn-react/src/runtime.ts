@@ -18,7 +18,7 @@
  * and replayed once a Retry loads it: nothing that needed the engine has run until then.
  */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { createDriver, type Clock, type Driver, type Transport } from "./machine/driver.ts"
+import { createDriver, DEFAULT_CLOCK, type Clock, type Driver, type Transport } from "./machine/driver.ts"
 import { type EngineLoader, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
 import { init, type Machine, type Msg, type Snapshot } from "./machine/machine.ts"
 import { bindingRead, callStateOf, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
@@ -88,7 +88,7 @@ function valuesOf(document: unknown): unknown {
   return values ?? document
 }
 
-const GLOBAL_CLOCK: Clock = { setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms), clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>) }
+const GLOBAL_CLOCK: Clock = DEFAULT_CLOCK
 
 /** `work`, unless `signal` aborts first: a pending state's deadline or Cancel never waits on the engine. */
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
