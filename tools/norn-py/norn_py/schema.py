@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import re
 import types
+from urllib.parse import urlsplit
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -263,6 +264,19 @@ def ref_type(name: str) -> PropertyTypeSpec:
     return _make_spec(_RefSpec(name))
 
 
+_VALID_ROUNDING: frozenset[str] = frozenset({"refuse", "toward_zero", "half_even", "half_away_from_zero"})
+
+
+def _require_non_negative_int(value: int, label: str) -> None:
+    if isinstance(value, bool) or isinstance(value, float) or not isinstance(value, int) or value < 0:
+        raise NornTracingError("NORN-PY-SCHEMA", f"{label} must be a non-negative int, got {value!r}")
+
+
+def _require_rounding(rounding: Rounding | None) -> None:
+    if rounding is not None and rounding not in _VALID_ROUNDING:
+        raise NornTracingError("NORN-PY-SCHEMA", f"unsupported rounding mode {rounding!r}")
+
+
 def decimal_type(
     scale: int,
     *,
@@ -270,14 +284,12 @@ def decimal_type(
     currency: str | None = None,
     rounding: Rounding | None = None,
 ) -> PropertyTypeSpec:
-    if isinstance(scale, bool) or isinstance(scale, float) or not isinstance(scale, int) or scale < 0:
-        raise NornTracingError("NORN-PY-SCHEMA", f"decimal scale must be a non-negative int, got {scale!r}")
+    _require_non_negative_int(scale, "decimal scale")
     if unit is not None and not isinstance(unit, UnitRef):
         raise NornTracingError("NORN-PY-SCHEMA", f"decimal unit must be a UnitRef, got {type(unit).__name__}")
     if unit is not None and currency is not None:
         raise NornTracingError("NORN-PY-SCHEMA", "decimal cannot specify both unit and currency")
-    if rounding is not None and rounding not in ("refuse", "toward_zero", "half_even", "half_away_from_zero"):
-        raise NornTracingError("NORN-PY-SCHEMA", f"unsupported rounding mode {rounding!r}")
+    _require_rounding(rounding)
     return _make_spec(_DecimalSpec(scale=scale, unit=unit, currency=currency, rounding=rounding))
 
 
@@ -288,12 +300,10 @@ def rate_type(
     per_unit: UnitRef,
     rounding: Rounding | None = None,
 ) -> PropertyTypeSpec:
-    if isinstance(scale, bool) or isinstance(scale, float) or not isinstance(scale, int) or scale < 0:
-        raise NornTracingError("NORN-PY-SCHEMA", f"rate scale must be a non-negative int, got {scale!r}")
+    _require_non_negative_int(scale, "rate scale")
     if not isinstance(per_unit, UnitRef):
         raise NornTracingError("NORN-PY-SCHEMA", f"rate per_unit must be a UnitRef, got {type(per_unit).__name__}")
-    if rounding is not None and rounding not in ("refuse", "toward_zero", "half_even", "half_away_from_zero"):
-        raise NornTracingError("NORN-PY-SCHEMA", f"unsupported rounding mode {rounding!r}")
+    _require_rounding(rounding)
     return _make_spec(_DecimalSpec(scale=scale, currency=currency, per_unit=per_unit, rounding=rounding))
 
 
@@ -595,8 +605,7 @@ def mask_refuse() -> MaskSpec:
 
 
 def mask_last_n(count: int) -> MaskSpec:
-    if isinstance(count, bool) or isinstance(count, float) or not isinstance(count, int) or count < 0:
-        raise NornTracingError("NORN-PY-SCHEMA", f"mask_last_n count must be a non-negative int, got {count!r}")
+    _require_non_negative_int(count, "mask_last_n count")
     return _make_mask(_LastNMask(count=count))
 
 
@@ -1052,6 +1061,16 @@ def _extract_literal_tag(
     )
 
 
+_SIMPLE_SPEC_BASE_TYPES: dict[type[object], tuple[tuple[type[object], ...], str, str]] = {
+    _TextSpec: ((str,), "text() metadata", "str"),
+    _IntegerSpec: ((int,), "integer() metadata", "int"),
+    _BooleanSpec: ((bool,), "boolean() metadata", "bool"),
+    _TimestampSpec: ((Timestamp, str), "timestamp_type()", "Timestamp or str"),
+    _DateSpec: ((Date, str), "date_type()", "Date or str"),
+    _DurationSpec: ((Duration, str), "duration_type()", "Duration or str"),
+}
+
+
 def _validate_base_matches_spec(
     field_name: str,
     base: Any,
@@ -1151,58 +1170,13 @@ def _validate_base_matches_spec(
             span,
         )
 
-    if isinstance(inner, _TextSpec):
-        if base is not str:
+    simple_spec = _SIMPLE_SPEC_BASE_TYPES.get(type(inner))
+    if simple_spec is not None:
+        allowed_bases, spec_label, expected_hint = simple_spec
+        if base not in allowed_bases:
             raise NornTracingError(
                 "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with text() metadata; use str",
-                span,
-            )
-        return
-
-    if isinstance(inner, _IntegerSpec):
-        if base is not int:
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with integer() metadata; use int",
-                span,
-            )
-        return
-
-    if isinstance(inner, _BooleanSpec):
-        if base is not bool:
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with boolean() metadata; use bool",
-                span,
-            )
-        return
-
-    if isinstance(inner, _TimestampSpec):
-        if base not in (Timestamp, str):
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with timestamp_type(); "
-                "use Timestamp or str",
-                span,
-            )
-        return
-
-    if isinstance(inner, _DateSpec):
-        if base not in (Date, str):
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with date_type(); use Date or str",
-                span,
-            )
-        return
-
-    if isinstance(inner, _DurationSpec):
-        if base not in (Duration, str):
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with duration_type(); "
-                "use Duration or str",
+                f"field {field_name!r} has base type {base!r} which is incompatible with {spec_label}; use {expected_hint}",
                 span,
             )
         return
@@ -1857,7 +1831,11 @@ class DeploymentSpec:
                     "NORN-PY-DEPLOYMENT-ENDPOINT",
                     f"worker endpoint key {endpoint_key!r} must have form '<fn_id>@<semver>'",
                 )
-            if not (url.startswith("https://") or url.startswith("http://127.0.0.1") or url.startswith("http://localhost")):
+            parsed = urlsplit(url)
+            valid_url = (parsed.scheme == "https" and bool(parsed.hostname)) or (
+                parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1")
+            )
+            if not valid_url:
                 raise NornTracingError(
                     "NORN-PY-DEPLOYMENT-ENDPOINT",
                     f"worker endpoint {endpoint_key!r} must use https:// (or loopback http:// for local dev), got {url!r}",

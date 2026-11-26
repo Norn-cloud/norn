@@ -39,7 +39,7 @@
  * This is a demo bridge on one subscription login; a production Sidekick needs an API-key provider.
  */
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose"
-import { mkdirSync } from "node:fs"
+import { mkdirSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import type { Server, ServerWebSocket, Subprocess } from "bun"
 
@@ -92,6 +92,14 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
     return value
   }
   const list = (name: string) => new Set((env[name] ?? "").split(",").map((entry) => entry.trim()).filter(Boolean))
+  const intEnv = (name: string, fallback: number, min: number) => {
+    const raw = env[name]?.trim()
+    if (raw === undefined || raw === "") return fallback
+    if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer >= ${min}`)
+    const value = Number(raw)
+    if (!Number.isSafeInteger(value) || value < min) throw new Error(`${name} must be an integer >= ${min}`)
+    return value
+  }
   const studioOrigin = new URL(need("SIDEKICK_STUDIO_ORIGIN")).origin
   return {
     studioOrigin,
@@ -101,11 +109,11 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
     loginHeader: need("SIDEKICK_LOGIN_HEADER").toLowerCase(),
     allowedLogins: new Set([...list("SIDEKICK_ALLOWED_LOGINS")].map((login) => login.toLowerCase())),
     listenHost: env.SIDEKICK_LISTEN_HOST ?? "127.0.0.1",
-    listenPort: Number(env.SIDEKICK_LISTEN_PORT ?? "17950"),
-    mcpPort: Number(env.SIDEKICK_MCP_PORT ?? "17951"),
+    listenPort: intEnv("SIDEKICK_LISTEN_PORT", 17950, 0),
+    mcpPort: intEnv("SIDEKICK_MCP_PORT", 17951, 0),
     adapter: need("SIDEKICK_ADAPTER").split(/\s+/),
     scratch: need("SIDEKICK_SCRATCH"),
-    maxConnections: Number(env.SIDEKICK_MAX_CONNECTIONS ?? "3"),
+    maxConnections: intEnv("SIDEKICK_MAX_CONNECTIONS", 3, 1),
     ...env.SIDEKICK_MODEL ? { model: env.SIDEKICK_MODEL } : {},
   }
 }
@@ -462,6 +470,8 @@ interface Connection {
   inbox: Promise<void>
   /** Ids the relay used for its own requests to the adapter, mapped back to the browser's id. */
   readonly pendingFromBrowser: Map<string, { id: Message["id"]; method: string }>
+  initTimer: ReturnType<typeof setTimeout> | null
+  scratchDir: string | null
   nextId: number
   closed: boolean
 }
@@ -524,9 +534,29 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     connection.adapter?.stdin.write(`${JSON.stringify(message)}\n`)
   }
 
+  function removeScratch(connection: Connection) {
+    if (connection.scratchDir === null) return
+    const dir = connection.scratchDir
+    connection.scratchDir = null
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+
+  function cleanupConnection(connection: Connection) {
+    if (connection.initTimer !== null) {
+      clearTimeout(connection.initTimer)
+      connection.initTimer = null
+    }
+    if (connection.adapter !== null) {
+      connection.adapter.kill()
+    } else {
+      removeScratch(connection)
+    }
+  }
+
   function spawnAdapter(connection: Connection) {
     const cwd = join(config.scratch, connection.id)
     mkdirSync(cwd, { recursive: true, mode: 0o700 })
+    connection.scratchDir = cwd
     const child = Bun.spawn([...config.adapter], {
       cwd,
       stdin: "pipe", stdout: "pipe", stderr: "pipe",
@@ -550,6 +580,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     // The adapter's stderr is drained and counted, never echoed: it can hold prompt text.
     void (async () => { for await (const _ of child.stderr) { /* drained */ } })()
     void child.exited.then((code) => {
+      removeScratch(connection)
       log(`conn ${connection.id} adapter exited ${code}`)
       if (!connection.closed) connection.ws.close(1011, "agent stopped")
     })
@@ -596,7 +627,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         const id = `p${connection.nextId++}`
         const tool = nornToolName(message.params) as string
         connection.questions.set(id, { adapterId: message.id, question: decision.ask, approval: { tool, input: canonicalJson((message.params?.toolCall as Json | undefined)?.rawInput) } })
-        log(`conn ${connection.id} permission asked ${nornToolName(message.params)}`)
+        log(`conn ${connection.id} permission asked ${tool}`)
         send(connection.ws, { jsonrpc: "2.0", id, method: "session/request_permission", params: questionFor(message.params, decision.ask) }, secrets(connection))
         return
       }
@@ -635,8 +666,14 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     }
     const method = message.method
     if (!BROWSER_METHODS.has(method)) return message.id === undefined ? undefined : send(connection.ws, rpcError(message.id, -32601, `Sidekick does not offer ${method}.`), secrets(connection))
+    if (method === "_norn/grant" && connection.grant === null) {
+      send(connection.ws, rpcError(message.id, -32001, "Initialize with a Sidekick grant first."), [])
+      connection.ws.close(4401, "no grant")
+      return
+    }
     if (method === "initialize" || method === "_norn/grant") {
       const grant = await verifyGrant((message.params?._meta as Json | undefined)?.["norn.cloud/grant"] ?? message.params?.grant, keys, config.studioOrigin)
+      if (connection.closed) return
       if (grant === null || (connection.grant !== null && !sameGrantIdentity(connection.grant, grant))) {
         send(connection.ws, rpcError(message.id, -32001, "Sign in to Studio again: the Sidekick grant was not accepted."), [])
         log(`conn ${connection.id} grant refused`)
@@ -644,10 +681,14 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         return
       }
       connection.grant = grant
+      if (connection.initTimer !== null) {
+        clearTimeout(connection.initTimer)
+        connection.initTimer = null
+      }
       if (method === "_norn/grant") return send(connection.ws, { jsonrpc: "2.0", id: message.id ?? null, result: { expiresAt: grant.expiresAt } }, secrets(connection))
       if (connection.adapter === null) spawnAdapter(connection)
     }
-    if (connection.grant === null) {
+    if (connection.grant === null || connection.adapter === null) {
       send(connection.ws, rpcError(message.id, -32001, "Initialize with a Sidekick grant first."), [])
       connection.ws.close(4401, "no grant")
       return
@@ -660,17 +701,20 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       // A new session ends the last one's turn: its open questions answer `cancelled` and its approvals lapse.
       endTurn(connection)
       if (!(await workerAccepts(connection))) {
+        if (connection.closed) return
         send(connection.ws, rpcError(message.id, -32001, "Studio did not accept the Sidekick grant."), secrets(connection))
         connection.ws.close(4403, "worker refused grant")
         return
       }
+      if (connection.closed) return
       // A new session starts from nothing pre-allowed; if the listing fails, nothing is.
       connection.readOnly = new Set()
       connection.views = new Map()
       connection.labels = []
-      await listTools(connection).catch(() => { connection.readOnly = new Set(); connection.views = new Map(); connection.labels = [] })
+      await listTools(connection).catch(() => { /* leave empty pre-allow set */ })
+      if (connection.closed) return
       send(connection.ws, { jsonrpc: "2.0", method: "_norn/tools", params: { tools: connection.labels } }, secrets(connection))
-      params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${config.mcpPort}/mcp/${connection.capability}`, config.model, connection.readOnly)
+      params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${mcp.port}/mcp/${connection.capability}`, config.model, connection.readOnly)
     }
     if (method === "session/prompt") params = rewritePrompt(message.params)
     if (method === "session/cancel") {
@@ -768,13 +812,13 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       open(ws) {
         const id = crypto.randomUUID()
         const capability = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
-        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), labels: [], readOnly: new Set(), questions: new Map(), approvals: [], inbox: Promise.resolve(), pendingFromBrowser: new Map(), nextId: 1, closed: false }
+        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), labels: [], readOnly: new Set(), questions: new Map(), approvals: [], inbox: Promise.resolve(), pendingFromBrowser: new Map(), initTimer: null, scratchDir: null, nextId: 1, closed: false }
         ws.data.connection = connection
         connections.set(id, connection)
         byCapability.set(capability, connection)
         log(`conn ${id} open (${connections.size})`)
         // A socket that never initializes is closed.
-        setTimeout(() => { if (connection.grant === null && !connection.closed) ws.close(4401, "no grant") }, 15_000)
+        connection.initTimer = setTimeout(() => { if (connection.grant === null && !connection.closed) ws.close(4401, "no grant") }, 15_000)
       },
       message(ws, data) {
         const connection = ws.data.connection
@@ -788,7 +832,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         if (connection === undefined) return
         connection.closed = true
         connection.grant = null
-        connection.adapter?.kill()
+        cleanupConnection(connection)
         connections.delete(connection.id)
         byCapability.delete(connection.capability)
         log(`conn ${connection.id} closed (${connections.size})`)
@@ -796,7 +840,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     },
   })
   log(`sidekick relay on ${config.listenHost}:${server.port}, agent MCP on 127.0.0.1:${mcp.port}, studio ${config.studioOrigin}`)
-  return { server, mcp, connections, stop: () => { server.stop(true); mcp.stop(true); for (const connection of connections.values()) connection.adapter?.kill() } }
+  return { server, mcp, connections, stop: () => { server.stop(true); mcp.stop(true); for (const connection of connections.values()) { connection.closed = true; cleanupConnection(connection) } } }
 }
 
 if (import.meta.main) startRelay(configFromEnv(process.env))
