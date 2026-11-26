@@ -112,7 +112,9 @@ export const UI_SDK_PREFIX = "ui-sdk:"
 
 /** The text of `label` in `locale`, else English, else any locale's. */
 export function text(label: LocaleText, locale: string): string {
-  return label[locale] ?? label.en ?? Object.values(label)[0] ?? ""
+  if (Object.hasOwn(label, locale) && label[locale] !== undefined) return label[locale]
+  if (Object.hasOwn(label, "en") && label.en !== undefined) return label.en
+  return Object.values(label)[0] ?? ""
 }
 
 /** Every node of a tree, parents before children. */

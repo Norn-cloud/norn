@@ -73,7 +73,10 @@ export function checkPayload(declared: readonly MachineField[], payload: unknown
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return "the payload is not a record"
   const record = payload as Record<string, unknown>
   for (const name of Object.keys(record)) if (!declared.some((field) => field.fieldId === name)) return `undeclared member ${name}`
-  for (const field of declared) if (!fits(field, record[field.fieldId])) return `${field.fieldId} is not ${field.required ? "" : "an optional "}${field.type}`
+  for (const field of declared) {
+    const value = Object.hasOwn(record, field.fieldId) ? record[field.fieldId] : undefined
+    if (!fits(field, value)) return `${field.fieldId} is not ${field.required ? "" : "an optional "}${field.type}`
+  }
   return null
 }
 
@@ -124,7 +127,13 @@ export function createHost(options: HostOptions): Host {
       if (entry.machine && snapshot && internal) {
         // A component that decides its own guards says which declared target it took.
         const to = typeof msg.to === "string" ? { to: msg.to } : {}
-        const step = update(entry.machine, evaluate, snapshot, { kind: "user", eventId, payload, ...to })
+        let step
+        try {
+          step = update(entry.machine, evaluate, snapshot, { kind: "user", eventId, payload, ...to })
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          return refuse({ kind: "malformed_message", detail })
+        }
         if (step.fired === null) return refuse({ kind: "not_offered", eventId, state: snapshot.stateId })
         snapshot = step.snapshot
         options.onView(view())
@@ -142,7 +151,15 @@ export function createHost(options: HostOptions): Host {
 export function frameDocument(moduleSource: string): string {
   const csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:"
   const bridge = `
-    const ready = new Promise((resolve) => addEventListener("message", (event) => { if (event.data === "norn.port") resolve(event.ports[0]) }, { once: true }));
+    const ready = new Promise((resolve) => {
+      const onMessage = (event) => {
+        if (event.source === window.parent && event.data === "norn.port" && event.ports && event.ports[0]) {
+          removeEventListener("message", onMessage);
+          resolve(event.ports[0]);
+        }
+      };
+      addEventListener("message", onMessage);
+    });
     window.norn = {
       async connect(render) {
         const port = await ready;
@@ -150,7 +167,8 @@ export function frameDocument(moduleSource: string): string {
         return { emit: (eventId, payload = {}, to) => port.postMessage({ type: "emit", eventId, payload, ...(to ? { to } : {}) }) };
       },
     };`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bridge}</script></head><body><script type="module">${moduleSource.replaceAll("</script", "<\\/script")}</script></body></html>`
+  const safeSource = moduleSource.replace(/<\/script/gi, "<\\/script").replace(/<!--/g, "<\\!--")
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bridge}</script></head><body><script type="module">${safeSource}</script></body></html>`
 }
 
 /** A mounted frame: `show` sends the component a new view; `unmount` removes it. */
@@ -166,20 +184,27 @@ export function mountFrame(container: HTMLElement, moduleSource: string, host: H
   frame.setAttribute("title", title)
   frame.srcdoc = frameDocument(moduleSource)
   const channel = new MessageChannel()
+  const listeners = new AbortController()
   channel.port1.onmessage = (event) => host.receive(event.data)
   let connected = false
+  let unmounted = false
   frame.addEventListener("load", () => {
+    if (unmounted) return
     // The sandboxed frame has an opaque origin, so the port is handed over with "*"; it carries no data.
     frame.contentWindow?.postMessage("norn.port", "*", [channel.port2])
     connected = true
     channel.port1.postMessage(host.view())
-  }, { once: true })
+  }, { once: true, signal: listeners.signal })
   container.replaceChildren(frame)
   return {
     show: (view) => {
-      if (connected) channel.port1.postMessage(view)
+      if (connected && !unmounted) channel.port1.postMessage(view)
     },
     unmount: () => {
+      unmounted = true
+      listeners.abort()
+      if (!connected) channel.port2.close()
+      connected = false
       channel.port1.close()
       frame.remove()
     },

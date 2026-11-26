@@ -5,7 +5,7 @@
 export const SHEET_CSS = `
 .norn-sheet { display: grid; gap: 1.25rem; padding: 1.5rem; color: var(--foreground, #111); font: 14px/1.5 var(--font-sans, system-ui, sans-serif); }
 .norn-sheet-header { display: grid; gap: .375rem; }
-.norn-title { margin: 0; font-size: 1rem; font-weight: 600; }
+.norn-title { margin: 0; font-size: var(--text-heading, 1rem); font-weight: 500; }
 .norn-sheet-header .norn-title { padding-inline-end: 2rem; }
 .norn-meta { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
 .norn-legend { font-size: .875rem; font-weight: 500; margin-bottom: .5rem; }
@@ -61,8 +61,7 @@ export const SHEET_CSS = `
 .norn-hash .norn-button { height: 1.75rem; padding: 0 .5rem; font-size: .8125rem; }
 .norn-value { white-space: normal; }
 .norn-status[data-tone="danger"], .norn-confirm:not([data-tone="neutral"]) { border: 1px solid color-mix(in oklab, var(--destructive, #dc2626) 30%, transparent);
-  background: color-mix(in oklab, var(--destructive, #dc2626) 6%, transparent); color: var(--destructive, #b91c1c); }
-.norn-status[data-tone="info"] { color: var(--muted-foreground, #666); }
+  background: color-mix(in oklab, var(--destructive, #dc2626) 6%, transparent); color: var(--destructive-text, #b83228); }
 .norn-confirm p { margin: 0; }
 .norn-confirm-title { font-weight: 500; }
 .norn-outcome { border: 1px solid var(--node-border, var(--border, #e5e5e5)); background: var(--card, #fff); font-weight: 500;
@@ -77,19 +76,16 @@ export const SHEET_CSS = `
 .norn-button:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }
 .norn-button:disabled { opacity: .5; cursor: not-allowed; }
 .norn-button[data-variant="solid"] { background: var(--primary, #2563eb); color: var(--primary-foreground, #fff); }
-.norn-button[data-variant="danger"] { background: var(--destructive, #dc2626); color: #fff; }
+.norn-button[data-variant="danger"] { background: var(--destructive, #dc2626); color: var(--destructive-foreground, #fff); }
 .norn-button[data-variant="outline"] { border-color: var(--node-border, var(--border, #d4d4d8)); }
 .norn-button[data-variant="ghost"]:hover:not(:disabled), .norn-button[data-variant="outline"]:hover:not(:disabled) { background: var(--muted, #f4f4f5); }
-.norn-dialog { display: grid; gap: .75rem; max-width: 28rem; padding: 1.25rem; border-radius: var(--radius-node, .75rem); background: var(--card, #fff);
-  color: var(--foreground, #111); border: 1px solid var(--node-border, var(--border, #e5e5e5)); box-shadow: var(--elevation-float, 0 12px 32px rgb(0 0 0 / .18)); }
-ui-alert-dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .35); }
 .norn-form { display: grid; gap: 1.25rem; }
 .norn-link { font-size: .875rem; color: inherit; text-underline-offset: 4px; }
 .norn-link:hover, .norn-outcome-card .norn-link { text-decoration: underline; }
 .norn-note { font-size: .8125rem; color: var(--muted-foreground, #555); border-inline-start: 2px solid var(--node-border, var(--border, #d4d4d8)); padding-inline-start: .5rem; }
-.norn-problem { margin: 0; font-size: .8125rem; color: var(--destructive, #b91c1c); }
+.norn-problem { margin: 0; font-size: .8125rem; color: var(--destructive-text, #b83228); }
 .norn-field textarea[aria-invalid="true"] { border-color: var(--destructive, #dc2626); }
-[data-region="countdown"][data-urgent] { color: var(--destructive, #b91c1c); font-weight: 500; }
+[data-region="countdown"][data-urgent] { color: var(--destructive-text, #b83228); font-weight: 500; }
 [data-region="countdown"] { font-variant-numeric: tabular-nums; }
 .norn-outcome-card { display: grid; gap: .75rem; }
 .norn-outcome-card .norn-outcome { margin: 0; }
@@ -98,6 +94,8 @@ ui-alert-dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .3
 .norn-dl dt { color: var(--muted-foreground, #666); }
 .norn-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .norn-sheet [hidden] { display: none !important; }
+@media (max-width: 639px) { .norn-button, .norn-hash .norn-button { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .norn-option { transition: none; } }
 `
 
 /** Add the sheet's styles to a document once. */

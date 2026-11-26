@@ -6,7 +6,7 @@ export const LIFECYCLE_CSS = `
 .norn-life { display: grid; gap: .875rem; color: var(--foreground, #111); font: 14px/1.5 var(--font-sans, system-ui, sans-serif); }
 .norn-life-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .375rem 1rem; }
 .norn-life-head:empty { display: none; }
-.norn-life-title { margin: 0; font-size: .9375rem; font-weight: 600; }
+.norn-life-title { margin: 0; font-size: var(--text-heading, .9375rem); font-weight: 500; }
 .norn-life-meta { margin: 0; font-size: .8125rem; font-variant-numeric: tabular-nums; color: var(--muted-foreground, #666); }
 .norn-life-meta:empty { display: none; }
 .norn-life-board { overflow-x: auto; border-radius: var(--radius, .5rem); border: 1px solid var(--border, #e5e5e5);
@@ -21,8 +21,8 @@ export const LIFECYCLE_CSS = `
 .norn-life-state[data-current] { border-color: var(--edge-active, var(--ring, var(--primary, #2563eb)));
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--edge-active, var(--ring, var(--primary, #2563eb))) 25%, transparent); }
 .norn-life-name { font-weight: 500; }
-.norn-life-count { font-variant-numeric: tabular-nums; font-size: 1.25rem; font-weight: 600; line-height: 1.25; }
-.norn-life-count[data-lower-bound] { font-size: 1rem; font-weight: 600; }
+.norn-life-count { font-variant-numeric: tabular-nums; font-size: var(--text-figure, 1.25rem); font-weight: 500; line-height: 1.25; }
+.norn-life-count[data-lower-bound] { font-size: var(--text-heading, 1rem); font-weight: 500; }
 .norn-life-count[data-unlisted] { font-size: .875rem; font-weight: 500; color: var(--muted-foreground, #666); }
 .norn-life-count[data-pending] { color: var(--muted-foreground, #666); font-weight: 400; }
 .norn-life-role { font-size: .75rem; color: var(--muted-foreground, #666); }
@@ -33,7 +33,7 @@ export const LIFECYCLE_CSS = `
 .norn-life-arrows marker[id$="-on"] path { fill: var(--edge-active, var(--ring, var(--primary, #2563eb))); }
 .norn-life-arrows text { font-size: 11px; fill: var(--muted-foreground, #666); paint-order: stroke;
   stroke: var(--canvas-surface, var(--surface-subtle, var(--background, #fff))); stroke-width: 3px; }
-.norn-life-arrows text[data-active] { fill: var(--edge-active, var(--ring, var(--primary, #2563eb))); font-weight: 600; }
+.norn-life-arrows text[data-active] { fill: var(--edge-active, var(--ring, var(--primary, #2563eb))); font-weight: 500; }
 .norn-life-foot { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
 .norn-life-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .norn-life-refused { margin: 0; font-size: .875rem; border-radius: var(--radius, .5rem); padding: .5rem .75rem;
@@ -42,7 +42,7 @@ export const LIFECYCLE_CSS = `
   border: 1px solid var(--border, #d4d4d8); background: var(--background, #fff); color: inherit; cursor: pointer; }
 .norn-life-retry:focus-visible { outline: 2px solid var(--ring, #2563eb); outline-offset: 2px; }
 .norn-life-findings { display: grid; gap: .5rem; }
-.norn-life-findings h3 { margin: 0; font-size: .875rem; font-weight: 600; }
+.norn-life-findings h3 { margin: 0; font-size: .875rem; font-weight: 500; }
 .norn-life-finding { display: grid; gap: .5rem; padding: .625rem .75rem; border-radius: var(--radius, .5rem);
   border: 1px solid var(--border, #e5e5e5); background: var(--card, #fff); }
 .norn-life-finding[aria-current] { border-color: var(--edge-active, var(--ring, var(--primary, #2563eb))); }
@@ -51,12 +51,13 @@ export const LIFECYCLE_CSS = `
 .norn-life-technical { margin: 0; font-size: .75rem; color: var(--muted-foreground, #666); }
 .norn-life-technical code { font-family: var(--font-mono, ui-monospace, monospace); }
 .norn-life-steps { margin: 0; padding-inline-start: 1.25rem; display: grid; gap: .25rem; font-size: .8125rem; }
-.norn-life-steps li[aria-current] { font-weight: 600; color: var(--edge-active, var(--ring, var(--primary, #2563eb))); }
-.norn-life-side { display: inline-block; min-width: 3.25rem; font-size: .6875rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #666); }
+.norn-life-steps li[aria-current] { font-weight: 500; color: var(--edge-active, var(--ring, var(--primary, #2563eb))); }
+.norn-life-side { display: inline-block; min-width: 3.25rem; font-size: var(--text-meta, .75rem); color: var(--muted-foreground, #666); }
 .norn-life-step-controls { display: flex; gap: .5rem; align-items: center; }
 .norn-life-step-controls button { font: inherit; font-size: .8125rem; border-radius: var(--radius-md, .375rem); padding: .25rem .625rem;
   border: 1px solid var(--border, #d4d4d8); background: var(--background, #fff); color: inherit; cursor: pointer; }
 .norn-life-step-controls button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 639px) { .norn-life-retry, .norn-life-step-controls button { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .norn-life-state { transition: none; } }
 `
 
