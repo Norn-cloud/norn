@@ -201,20 +201,17 @@ fn folds_back(before: Coord<f64>, corner: Coord<f64>, after: Coord<f64>) -> bool
     orient(before, corner, after) == Orientation::Collinear && side(before) == side(after)
 }
 
-/// Whether two closed segments share at least one point.
+/// Whether two closed segments whose bounding boxes overlap share at least one point.
 fn segments_meet(left: &Edge, right: &Edge) -> bool {
     let (first, second) = (
         orient(left.start, left.end, right.start),
         orient(left.start, left.end, right.end),
     );
     if first == second {
-        // Both ends on one side, or all four points on one line. Collinear
-        // segments meet exactly when their bounding boxes do.
-        return first == Orientation::Collinear
-            && left.min_x <= right.max_x
-            && right.min_x <= left.max_x
-            && left.min_y <= right.max_y
-            && right.min_y <= left.max_y;
+        // Both ends on one side, or all four points on one line. Because
+        // `check_edges` already enforces overlapping bounding boxes, collinear
+        // segments meet iff all four points are collinear.
+        return first == Orientation::Collinear;
     }
     orient(right.start, right.end, left.start) != orient(right.start, right.end, left.end)
 }
@@ -236,31 +233,79 @@ fn check_winding(polygon: &Polygon<f64>) -> Result<(), GeoRefusal> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct BBox {
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+}
+
+impl BBox {
+    fn of_ring(ring: &LineString<f64>) -> Option<Self> {
+        let mut coords = ring.0.iter().copied();
+        let first = coords.next()?;
+        let mut bbox = Self {
+            min_x: first.x,
+            max_x: first.x,
+            min_y: first.y,
+            max_y: first.y,
+        };
+        for coord in coords {
+            bbox.min_x = bbox.min_x.min(coord.x);
+            bbox.max_x = bbox.max_x.max(coord.x);
+            bbox.min_y = bbox.min_y.min(coord.y);
+            bbox.max_y = bbox.max_y.max(coord.y);
+        }
+        Some(bbox)
+    }
+
+    fn contains(self, coord: Coord<f64>) -> bool {
+        coord.x >= self.min_x
+            && coord.x <= self.max_x
+            && coord.y >= self.min_y
+            && coord.y <= self.max_y
+    }
+}
+
 /// Where a ring lies relative to another ring it shares no point with: one
 /// vertex decides for the whole ring.
-fn ring_position(ring: &LineString<f64>, around: &LineString<f64>) -> CoordPos {
+fn ring_position(
+    ring: &LineString<f64>,
+    around: &LineString<f64>,
+    around_box: Option<BBox>,
+) -> CoordPos {
     ring.0.first().map_or(CoordPos::Outside, |vertex| {
-        coord_pos_relative_to_ring(*vertex, around)
+        if around_box.is_some_and(|bbox| bbox.contains(*vertex)) {
+            coord_pos_relative_to_ring(*vertex, around)
+        } else {
+            CoordPos::Outside
+        }
     })
 }
 
 /// Every hole is inside the exterior ring and no hole is inside another.
 fn check_holes(polygon: &Polygon<f64>) -> Result<(), GeoRefusal> {
-    for hole in polygon.interiors() {
-        if ring_position(hole, polygon.exterior()) != CoordPos::Inside {
+    let exterior_box = BBox::of_ring(polygon.exterior());
+    let holes = polygon.interiors();
+    for hole in holes {
+        if ring_position(hole, polygon.exterior(), exterior_box) != CoordPos::Inside {
             return Err(GeoRefusal::HoleOutsideExterior);
         }
     }
-    let mut rest = polygon.interiors();
-    while let [hole, later @ ..] = rest {
-        for other in later {
-            if ring_position(hole, other) != CoordPos::Outside
-                || ring_position(other, hole) != CoordPos::Outside
+    let hole_boxes: Vec<Option<BBox>> = holes.iter().map(BBox::of_ring).collect();
+    let mut rest_holes = holes;
+    let mut rest_boxes = hole_boxes.as_slice();
+    while let ([hole, later_holes @ ..], [hole_box, later_boxes @ ..]) = (rest_holes, rest_boxes) {
+        for (other, other_box) in later_holes.iter().zip(later_boxes) {
+            if ring_position(hole, other, *other_box) != CoordPos::Outside
+                || ring_position(other, hole, *hole_box) != CoordPos::Outside
             {
                 return Err(GeoRefusal::RingsIntersect);
             }
         }
-        rest = later;
+        rest_holes = later_holes;
+        rest_boxes = later_boxes;
     }
     Ok(())
 }
@@ -268,21 +313,28 @@ fn check_holes(polygon: &Polygon<f64>) -> Result<(), GeoRefusal> {
 /// No member polygon lies in another's area. One lying in another's hole is
 /// outside that polygon.
 fn check_members(polygons: &[Polygon<f64>]) -> Result<(), GeoRefusal> {
-    let outside = |member: &Polygon<f64>, around: &Polygon<f64>| {
-        member
-            .exterior()
-            .0
-            .first()
-            .is_none_or(|vertex| around.coordinate_position(vertex) == CoordPos::Outside)
+    let outside = |member: &Polygon<f64>, around: &Polygon<f64>, around_box: Option<BBox>| {
+        member.exterior().0.first().is_none_or(|vertex| {
+            !around_box.is_some_and(|bbox| bbox.contains(*vertex))
+                || around.coordinate_position(vertex) == CoordPos::Outside
+        })
     };
-    let mut rest = polygons;
-    while let [member, later @ ..] = rest {
-        for other in later {
-            if !outside(member, other) || !outside(other, member) {
+    let boxes: Vec<Option<BBox>> = polygons
+        .iter()
+        .map(|polygon| BBox::of_ring(polygon.exterior()))
+        .collect();
+    let mut rest_polys = polygons;
+    let mut rest_boxes = boxes.as_slice();
+    while let ([member, later_polys @ ..], [member_box, later_boxes @ ..]) =
+        (rest_polys, rest_boxes)
+    {
+        for (other, other_box) in later_polys.iter().zip(later_boxes) {
+            if !outside(member, other, *other_box) || !outside(other, member, *member_box) {
                 return Err(GeoRefusal::PolygonsOverlap);
             }
         }
-        rest = later;
+        rest_polys = later_polys;
+        rest_boxes = later_boxes;
     }
     Ok(())
 }

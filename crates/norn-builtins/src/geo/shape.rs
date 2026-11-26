@@ -202,6 +202,7 @@ impl Budget {
 }
 
 /// One decoded position. The altitude takes part only in ring closure.
+#[derive(Clone, Copy)]
 struct Position {
     coord: Coord<f64>,
     altitude: Option<f64>,
@@ -251,13 +252,9 @@ fn position(value: &RuntimeValue, budget: &mut Budget) -> Result<Position, GeoRe
         };
         nearest_binary64(decimal)
     };
-    let numbers = list(value)?
-        .iter()
-        .map(number)
-        .collect::<Result<Vec<f64>, GeoRefusal>>()?;
-    let (lon, lat, altitude) = match numbers.as_slice() {
-        [lon, lat] => (*lon, *lat, None),
-        [lon, lat, altitude] => (*lon, *lat, Some(*altitude)),
+    let (lon, lat, altitude) = match list(value)? {
+        [lon, lat] => (number(lon)?, number(lat)?, None),
+        [lon, lat, altitude] => (number(lon)?, number(lat)?, Some(number(altitude)?)),
         _ => return Err(GeoRefusal::PositionArity),
     };
     let point = Wgs84Point::new(lat, lon)?;
@@ -270,18 +267,14 @@ fn position(value: &RuntimeValue, budget: &mut Budget) -> Result<Position, GeoRe
     })
 }
 
-fn positions(value: &RuntimeValue, budget: &mut Budget) -> Result<Vec<Position>, GeoRefusal> {
-    list(value)?
-        .iter()
-        .map(|item| position(item, budget))
-        .collect()
-}
-
 fn line(value: &RuntimeValue, budget: &mut Budget) -> Result<(), GeoRefusal> {
-    if list(value)?.len() < 2 {
+    let items = list(value)?;
+    if items.len() < 2 {
         return Err(GeoRefusal::LineTooShort);
     }
-    positions(value, budget).map(|_line| ())
+    items
+        .iter()
+        .try_for_each(|item| position(item, budget).map(|_pos| ()))
 }
 
 /// One polygon ring, with the checks RFC 7946 puts on a linear ring.
@@ -291,27 +284,34 @@ fn ring(value: &RuntimeValue, budget: &mut Budget) -> Result<LineString<f64>, Ge
         MAX_SHAPE_RINGS,
         GeoRefusal::ShapeTooManyRings,
     )?;
-    if list(value)?.len() < 4 {
+    let items = list(value)?;
+    if items.len() < 4 {
         return Err(GeoRefusal::RingTooShort);
     }
-    let positions = positions(value, budget)?;
-    let (Some(first), Some(last)) = (positions.first(), positions.last()) else {
+    let mut coords = Vec::with_capacity(items.len());
+    let mut first = None;
+    let mut last = None;
+    for item in items {
+        let pos = position(item, budget)?;
+        if first.is_none() {
+            first = Some(pos);
+        }
+        last = Some(pos);
+        coords.push(pos.coord);
+    }
+    let (Some(first), Some(last)) = (first, last) else {
         return Err(GeoRefusal::RingTooShort);
     };
-    if !first.same(last) {
+    if !first.same(&last) {
         return Err(GeoRefusal::RingNotClosed);
     }
-    let ends = positions.iter().skip(1);
-    if positions
-        .iter()
-        .zip(ends)
-        .any(|(start, end)| (end.coord.x - start.coord.x).abs() > 180.0)
+    if coords
+        .windows(2)
+        .any(|pair| matches!(pair, [start, end] if (end.x - start.x).abs() > 180.0))
     {
         return Err(GeoRefusal::AntimeridianEdge);
     }
-    Ok(LineString::new(
-        positions.iter().map(|position| position.coord).collect(),
-    ))
+    Ok(LineString::new(coords))
 }
 
 /// One polygon's rings, exterior first.
@@ -373,8 +373,9 @@ fn geometry(
             Vec::new()
         }
         ShapeKind::MultiPoint => {
-            members(value)?;
-            positions(value, budget)?;
+            members(value)?
+                .iter()
+                .try_for_each(|item| position(item, budget).map(|_pos| ()))?;
             Vec::new()
         }
         ShapeKind::LineString => {
