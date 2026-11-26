@@ -595,28 +595,29 @@ def lit[T: (str, int, bool, Decimal, None)](value: T) -> Expr[T]:
     return _make_expr(_LiteralNode(value), span)
 
 
-def all_of(*conditions: Expr[bool]) -> Expr[bool]:
-    """Conjoin one or more Boolean expressions with ZEN `and` (left-associative, matching TS)."""
-    span = capture_caller_span()
+def _fold_logical(
+    op: Literal["and", "or"],
+    fn_name: str,
+    conditions: tuple[Expr[bool], ...],
+    span: SourceSpan | None,
+) -> Expr[bool]:
     if not conditions:
-        raise NornTracingError("NORN-PY-EXPRESSION", "all_of() requires at least one condition", span)
-    nodes = [_require_expr(c, "all_of() argument", span)._node for c in conditions]
+        raise NornTracingError("NORN-PY-EXPRESSION", f"{fn_name}() requires at least one condition", span)
+    nodes = [_require_expr(c, f"{fn_name}() argument", span)._node for c in conditions]
     acc = nodes[0]
     for nxt in nodes[1:]:
-        acc = _LogicalNode("and", acc, nxt)
+        acc = _LogicalNode(op, acc, nxt)
     return _make_expr(acc, span)
+
+
+def all_of(*conditions: Expr[bool]) -> Expr[bool]:
+    """Conjoin one or more Boolean expressions with ZEN `and` (left-associative, matching TS)."""
+    return _fold_logical("and", "all_of", conditions, capture_caller_span())
 
 
 def any_of(*conditions: Expr[bool]) -> Expr[bool]:
     """Disjoin one or more Boolean expressions with ZEN `or` (left-associative, matching TS)."""
-    span = capture_caller_span()
-    if not conditions:
-        raise NornTracingError("NORN-PY-EXPRESSION", "any_of() requires at least one condition", span)
-    nodes = [_require_expr(c, "any_of() argument", span)._node for c in conditions]
-    acc = nodes[0]
-    for nxt in nodes[1:]:
-        acc = _LogicalNode("or", acc, nxt)
-    return _make_expr(acc, span)
+    return _fold_logical("or", "any_of", conditions, capture_caller_span())
 
 
 def not_(condition: Expr[bool]) -> Expr[bool]:
@@ -747,6 +748,21 @@ def add_seconds(start: Expr[Timestamp], seconds: Expr[int] | int) -> Expr[Timest
     return _make_expr(_CallNode("add_seconds", (_as_timestamp(s_expr._node), _coerce_operand(seconds, span))), span)
 
 
+def _interval_call(
+    fn_name: str,
+    a_start: Expr[Timestamp],
+    a_end: Expr[Timestamp],
+    b_start: Expr[Timestamp],
+    b_end: Expr[Timestamp],
+    span: SourceSpan | None,
+) -> Expr[Any]:
+    nodes = tuple(
+        _as_timestamp(_require_expr(arg, f"{fn_name}() arg", span)._node)
+        for arg in (a_start, a_end, b_start, b_end)
+    )
+    return _make_expr(_CallNode(fn_name, nodes), span)
+
+
 def intervals_overlap(
     a_start: Expr[Timestamp],
     a_end: Expr[Timestamp],
@@ -754,12 +770,7 @@ def intervals_overlap(
     b_end: Expr[Timestamp],
 ) -> Expr[bool]:
     """norn-zen/7 fail-closed half-open interval overlap check."""
-    span = capture_caller_span()
-    nodes = tuple(
-        _as_timestamp(_require_expr(arg, "intervals_overlap() arg", span)._node)
-        for arg in (a_start, a_end, b_start, b_end)
-    )
-    return _make_expr(_CallNode("intervals_overlap", nodes), span)
+    return _interval_call("intervals_overlap", a_start, a_end, b_start, b_end, capture_caller_span())
 
 
 def interval_gap_seconds(
@@ -769,12 +780,7 @@ def interval_gap_seconds(
     b_end: Expr[Timestamp],
 ) -> Expr[Quantity[Literal["s"]]]:
     """norn-zen/7 fail-closed gap in exact Decimal seconds between two half-open intervals."""
-    span = capture_caller_span()
-    nodes = tuple(
-        _as_timestamp(_require_expr(arg, "interval_gap_seconds() arg", span)._node)
-        for arg in (a_start, a_end, b_start, b_end)
-    )
-    return _make_expr(_CallNode("interval_gap_seconds", nodes), span)
+    return _interval_call("interval_gap_seconds", a_start, a_end, b_start, b_end, capture_caller_span())
 
 
 def interval_intersection_seconds(
@@ -784,12 +790,7 @@ def interval_intersection_seconds(
     b_end: Expr[Timestamp],
 ) -> Expr[Quantity[Literal["s"]]]:
     """norn-zen/7 fail-closed overlap duration in exact Decimal seconds."""
-    span = capture_caller_span()
-    nodes = tuple(
-        _as_timestamp(_require_expr(arg, "interval_intersection_seconds() arg", span)._node)
-        for arg in (a_start, a_end, b_start, b_end)
-    )
-    return _make_expr(_CallNode("interval_intersection_seconds", nodes), span)
+    return _interval_call("interval_intersection_seconds", a_start, a_end, b_start, b_end, capture_caller_span())
 
 
 # ------------------------------------------------------------------ Dynamic Symbolic Record Proxy

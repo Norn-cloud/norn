@@ -149,7 +149,7 @@ const WORDS = {
 type WordKey = keyof (typeof WORDS)["en"]
 
 const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-const fill = (template: string, ...values: readonly string[]) => values.reduce((text, value, index) => text.replace(`{${index}}`, value), template)
+const fill = (template: string, ...values: readonly string[]) => values.reduce((text, value, index) => text.replace(`{${index}}`, () => value), template)
 
 function nodes(root: WidgetNodeDoc): Map<string, WidgetNodeDoc> {
   const out = new Map<string, WidgetNodeDoc>()
@@ -444,6 +444,7 @@ export interface MountedDecisionSheet {
   readonly choose: (optionId: string) => boolean
   readonly setNow: (ms: number) => void
   readonly setContext: (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => void
+  readonly dispose: () => void
 }
 
 /**
@@ -701,6 +702,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     return false
   }
+  const listeners = new AbortController()
+  const { signal } = listeners
   root.addEventListener("click", (event) => {
     const target = event.target as Element | null
     const link = target?.closest<HTMLAnchorElement>("a[data-link]")
@@ -720,23 +723,23 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     const button = target?.closest<HTMLButtonElement>("button[data-node]")
     if (button && !button.disabled) raise(button.dataset.node ?? "")
-  })
+  }, { signal })
   root.addEventListener("submit", (event) => {
     event.preventDefault()
     if (!raise("confirm-button")) raise("decide-button")
-  })
+  }, { signal })
   // UI SDK reports a change on the group itself (`valuechange`, not bubbling); its `value` is the checked radio.
   const group = q<HTMLElement & { value?: unknown }>('[data-node="option-choice"]')
   group?.addEventListener("valuechange", (event) => {
     const detail = (event as CustomEvent<{ value?: unknown }>).detail
     const value = typeof detail?.value === "string" ? detail.value : typeof group.value === "string" ? group.value : ""
     if (value !== "") raise("option-choice", { value, confirm: needsConfirm(decision, value) })
-  })
+  }, { signal })
   // The native textarea reports every edit, upgraded or not.
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLTextAreaElement | null
     if (target?.tagName === "TEXTAREA" && String(driver.snapshot().fields.note ?? "") !== target.value) raise("note-input", { value: target.value })
-  })
+  }, { signal })
   /** Pick an option exactly as a click on its radio does: a disabled or unknown option is not picked. */
   const choose = (optionId: string) => {
     const radio = [...root.querySelectorAll<HTMLElement>("ui-radio")].find((candidate) => candidate.getAttribute("value") === optionId)
@@ -753,17 +756,25 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     laws = next.laws
     paint(driver.snapshot())
   }
+  const dispose = () => {
+    listeners.abort()
+    driver.dispose()
+  }
   paint(driver.snapshot())
   if (engine === null) {
     void Promise.resolve(options.evaluate).then(
       (loaded) => {
+        if (signal.aborted) return
         engine = loaded
         paint(driver.snapshot())
       },
-      () => q(".norn-sheet")?.setAttribute("data-engine", "unavailable"),
+      () => {
+        if (signal.aborted) return
+        q(".norn-sheet")?.setAttribute("data-engine", "unavailable")
+      },
     )
   }
-  return { driver, raise, choose, setNow, setContext }
+  return { driver, raise, choose, setNow, setContext, dispose }
 }
 
 /** `<norn-decision-sheet>`: set `options` to mount; removing the element disposes the machine. */
@@ -807,7 +818,7 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
       if (this.#options && !this.#mounted) this.#mount()
     }
     disconnectedCallback() {
-      this.#mounted?.driver.dispose()
+      this.#mounted?.dispose()
       this.#mounted = null
     }
     get snapshot(): Snapshot | null {
@@ -829,7 +840,7 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
       this.#mounted?.setContext(next)
     }
     #mount() {
-      this.#mounted?.driver.dispose()
+      this.#mounted?.dispose()
       this.#mounted = this.#options ? mountDecisionSheet(this, this.#options) : null
     }
   }

@@ -338,8 +338,8 @@ class RivetNativeHost:
             "NORN_CONFORMANCE": "synthetic",
             "NORN_LINEAGE_KEY": self.lineage_key,
         }
-        log = open(self.state / f"runner-{index}.log", "ab")
-        self.children[index] = subprocess.Popen([self.binary], env=env, stdout=log, stderr=log, start_new_session=True)
+        with open(self.state / f"runner-{index}.log", "ab") as log:
+            self.children[index] = subprocess.Popen([self.binary], env=env, stdout=log, stderr=log, start_new_session=True)
 
     def start(self):
         started = time.perf_counter()
@@ -474,15 +474,10 @@ class Suite:
 
     def wait_marker(self, token, replied, seconds=60):
         """Whether the host printed `token`'s hold marker (read from its own log) before any reply left."""
-        line = f"{MARKER_LINE} {token}".encode()
         stop_at = time.time() + seconds
         while time.time() < stop_at and not replied:
-            for path in self.host.logs():
-                try:
-                    if line in path.read_bytes():
-                        return True
-                except OSError:
-                    pass
+            if self.log_has(token):
+                return True
             time.sleep(0.2)
         return False
 
@@ -524,7 +519,7 @@ class Suite:
             token = secrets.token_hex(16)
             replied = []
 
-            def send():
+            def send(step=step, point=point, token=token, replied=replied):
                 try:
                     status, _, _, got = scripted(self.base, step, self.now, hold=point, timeout=600, obj=obj, marker=token)
                     replied.append((status, header(got, "x-norn-conformance-hold-reached")))
@@ -824,7 +819,7 @@ class Suite:
             time.sleep(1)
             first = [cpu_ticks(tree(child.pid)) for child in self.host.children]
             time.sleep(1)
-            spent = [cpu_ticks(tree(child.pid)) - was for child, was in zip(self.host.children, first)]
+            spent = [cpu_ticks(tree(child.pid)) - was for child, was in zip(self.host.children, first, strict=True)]
             owner = spent.index(max(spent))
             other = 1 - owner
             group = self.host.children[owner].pid
@@ -835,9 +830,11 @@ class Suite:
                 moved = None
                 while time.time() - frozen_at < 180:
                     status, body, _, _ = request(urls[other], "GET", "/__conformance/head", at(ANALYTICS, obj), timeout=60)
-                    if status == 200 and json.loads(body).get("instance") != ident.get("instance") and isinstance(json.loads(body).get("headJson"), str):
-                        moved = json.loads(body)
-                        break
+                    if status == 200:
+                        doc = json.loads(body)
+                        if doc.get("instance") != ident.get("instance") and isinstance(doc.get("headJson"), str):
+                            moved = doc
+                            break
                     notes.append(status)
                     time.sleep(1)
                 moved_s = time.time() - frozen_at
@@ -882,7 +879,7 @@ class Suite:
             # The runner hosting the cell is the one whose thread spins at the hold.
             first = [cpu_ticks(tree(child.pid)) for child in self.host.children]
             time.sleep(1.5)
-            spent = [cpu_ticks(tree(child.pid)) - was for child, was in zip(self.host.children, first)]
+            spent = [cpu_ticks(tree(child.pid)) - was for child, was in zip(self.host.children, first, strict=True)]
             owner = spent.index(max(spent))
             other = 1 - owner
             moved_at = time.time()
@@ -1072,9 +1069,6 @@ class Suite:
         for path in self.host.data():
             sudo(["cp", "-a", str(path), str(backup / path.name)], mkdir=backup)
             sudo(["rm", "-rf", str(path)])
-        if hasattr(self.host, "start_engine"):
-            # The restore lands on a fresh engine: nothing but the copied data carries over.
-            pass
         for path in self.host.data():
             sudo(["cp", "-a", str(backup / path.name), str(path)])
         self.host.start()

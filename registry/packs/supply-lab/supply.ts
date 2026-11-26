@@ -37,7 +37,7 @@ export const Warehouse = Norn.type({
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["warehouse_id"] }],
   defaults: { status: "active" },
-  lifecycles: [{ property: "status", initial: ["active"], terminal: ["closed"], immutable: ["closed"], transitions: [
+  lifecycles: [{ property: "status", initial: ["active"], terminal: ["closed"], immutable: ["closed"], endings: { active: "resting", closed: "completed" }, transitions: [
     { id: "close", from: ["active"], to: "closed" },
   ] }],
 })
@@ -115,9 +115,26 @@ export const InventorySnapshot = Norn.type({
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["snapshot_id"] }],
   links: [
-    { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
+    { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true }, inverse: "positions" },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
   ],
+})
+
+// LAW-LINK-1: a position's unit always matches its catalog SKU's unit of measure.
+export const SnapshotMatchesSkuUnit = Norn.law("matches_sku_unit", {
+  id: "supply.position.matches_sku_unit",
+  on: InventorySnapshot,
+  must: (self) => self.unit === self.sku.unit_of_measure,
+  because: "A stock position must be counted in its catalog SKU's unit of measure.",
+})
+
+// LAW-LINK-MANY-1: a warehouse never closes while it still holds live stock.
+export const WarehouseClosedRequiresNoStock = Norn.law("closed_requires_no_stock", {
+  on: Warehouse,
+  inverses: { positions: InventorySnapshot },
+  when: (self) => self.status === "closed",
+  must: (self) => Norn.sum(self.positions.map((p) => p.on_hand_qty)) === 0,
+  because: "A warehouse cannot close while live inventory positions still hold non-zero stock there.",
 })
 
 /**
@@ -166,6 +183,13 @@ export const StockMovement = Norn.type({
   ],
 })
 
+// LAW-LINK-1: a stock movement uses its SKU's unit of measure.
+export const MovementMatchesSkuUnit = Norn.law("matches_sku_unit", {
+  on: StockMovement,
+  must: (self) => self.unit === self.sku.unit_of_measure,
+  because: "A stock movement must record quantities in its catalog SKU's unit of measure.",
+})
+
 export const MovementPositive = Norn.law("movement_positive", {
   on: StockMovement,
   must: (self) => self.movement_kind === "adjustment" || self.qty > 0,
@@ -211,7 +235,7 @@ export const PurchaseOrder = Norn.type({
   // The drafter is the verified principal that created the order; nobody may rewrite it.
   protected: ["created_by"],
   defaults: { status: "draft" },
-  lifecycles: [{ property: "status", initial: ["draft"], terminal: ["fulfilled", "cancelled"], immutable: ["fulfilled", "cancelled"], transitions: [
+  lifecycles: [{ property: "status", initial: ["draft"], terminal: ["fulfilled", "cancelled"], immutable: ["fulfilled", "cancelled"], endings: { fulfilled: "completed", cancelled: "cancelled" }, transitions: [
     { id: "submit", from: ["draft"], to: "submitted" },
     { id: "receive_partial", from: ["submitted"], to: "partially_received" },
     { id: "fulfil", from: ["submitted", "partially_received"], to: "fulfilled" },
@@ -242,9 +266,16 @@ export const OrderLine = Norn.type({
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["line_id"] }],
   links: [
-    { id: "order", target: PurchaseOrder, cardinality: { to: "one", from: "many", required: true } },
+    { id: "order", target: PurchaseOrder, cardinality: { to: "one", from: "many", required: true }, inverse: "lines" },
     { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
   ],
+})
+
+// LAW-LINK-1: an order line keeps its order's currency and its SKU's unit.
+export const OrderLineMatchesOrderAndSku = Norn.law("matches_order_and_sku", {
+  on: OrderLine,
+  must: (self) => self.currency === self.order.currency && self.unit === self.sku.unit_of_measure,
+  because: "An order line must use its purchase order's currency and its SKU's unit of measure.",
 })
 
 export const OrderedPositive = Norn.law("ordered_positive", {
@@ -316,9 +347,29 @@ export const ShipmentReceipt = Norn.type({
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["receipt_id"] }],
   links: [
-    { id: "order_line", target: OrderLine, cardinality: { to: "one", from: "many" } },
+    { id: "order_line", target: OrderLine, cardinality: { to: "one", from: "many" }, inverse: "receipts" },
     { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
   ],
+})
+
+// LAW-LINK-1: a linked shipment receipt uses its order line's unit.
+export const ReceiptMatchesOrderLineUnit = Norn.law("matches_order_line_unit", {
+  on: ShipmentReceipt,
+  when: (self): self is typeof self & { readonly order_line: NonNullable<typeof self.order_line> } => self.order_line !== null,
+  must: (self) => self.unit === self.order_line.unit,
+  because: "A receipt linked to an order line must use that line's unit of measure.",
+})
+
+// LAW-LINK-MANY-1: linked receipts against a line never exceed its ordered quantity,
+// and cumulative reconciled received_qty never exceeds the linked physical receipts.
+export const OrderLineReceiptsConsistent = Norn.law("receipts_consistent", {
+  on: OrderLine,
+  inverses: { receipts: ShipmentReceipt },
+  when: (self) => self.receipts.length > 0,
+  must: (self) =>
+    Norn.sum(self.receipts.map((r) => r.received_qty)) <= self.ordered_qty
+    && self.received_qty <= Norn.sum(self.receipts.map((r) => r.received_qty)),
+  because: "Total linked receipt quantities on a line never exceed ordered_qty, and recorded received_qty never exceeds its linked receipts.",
 })
 
 /**
@@ -339,7 +390,24 @@ export const Inspection = Norn.type({
   }),
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["inspection_id"] }],
-  links: [{ id: "receipt", target: ShipmentReceipt, cardinality: { to: "one", from: "many" } }],
+  links: [{ id: "receipt", target: ShipmentReceipt, cardinality: { to: "one", from: "many" }, inverse: "inspections" }],
+})
+
+// LAW-LINK-1: a linked inspection inspects no more than its receipt received, in the receipt's unit.
+export const InspectionWithinReceipt = Norn.law("within_receipt", {
+  on: Inspection,
+  when: (self): self is typeof self & { readonly receipt: NonNullable<typeof self.receipt> } => self.receipt !== null,
+  must: (self) => self.inspected_qty <= self.receipt.received_qty && self.unit === self.receipt.unit,
+  because: "An inspection linked to a shipment receipt must use the receipt's unit and inspect no more than was received.",
+})
+
+// LAW-LINK-MANY-1: total inspected quantity across all inspections of a receipt never exceeds received_qty.
+export const ReceiptInspectionsWithinReceived = Norn.law("inspections_within_received", {
+  on: ShipmentReceipt,
+  inverses: { inspections: Inspection },
+  when: (self) => self.inspections.length > 0,
+  must: (self) => Norn.sum(self.inspections.map((i) => i.inspected_qty)) <= self.received_qty,
+  because: "The sum of inspected quantities across all inspections of a shipment receipt cannot exceed the quantity received.",
 })
 
 export const RejectedWithinInspected = Norn.law("rejected_within_inspected", {
@@ -398,6 +466,10 @@ export const DemandObservation = Norn.type({
   }),
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["observation_id"] }],
+  links: [
+    { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
+    { id: "warehouse", target: Warehouse, cardinality: { to: "one", from: "many", required: true } },
+  ],
 })
 
 /** One prediction of `supply.demand_forecast`: written only from a production model version. */

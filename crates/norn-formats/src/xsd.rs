@@ -15,7 +15,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-const XS: &str = "http://www.w3.org/2001/XMLSchema";
+pub(crate) const XS_PREFIX: &str = "{http://www.w3.org/2001/XMLSchema}";
 /// The quick-xml version recorded as this importer's parser in every import's provenance; a
 /// test holds it equal to the crate's exact `quick-xml = "=…"` requirement.
 const QUICK_XML_VERSION: &str = "0.42.0";
@@ -126,7 +126,7 @@ impl XsdNode {
         self.attributes.get(key).map_or("", String::as_str)
     }
     pub(crate) fn is(&self, local: &str) -> bool {
-        self.name == format!("{{{XS}}}{local}")
+        self.name.strip_prefix(XS_PREFIX) == Some(local)
     }
     pub(crate) fn qname(&self, value: &str) -> Result<String, String> {
         let value = value.trim_matches([' ', '\t', '\r', '\n']);
@@ -352,7 +352,7 @@ pub(crate) fn semantic_nodes(nodes: &[XsdNode]) -> Vec<&XsdNode> {
         .iter()
         .filter(|node| {
             let skip = node.is("annotation")
-                || !node.name.starts_with(&format!("{{{XS}}}"))
+                || !node.name.starts_with(XS_PREFIX)
                 || node
                     .parent
                     .as_deref()
@@ -663,7 +663,7 @@ fn discover_file(
     let mut owners: BTreeMap<&str, Option<usize>> = BTreeMap::new();
     for node in semantic_nodes(nodes) {
         for key in ["ref", "type", "base", "itemType", "substitutionGroup"] {
-            if node.name.starts_with(&format!("{{{XS}}}")) && !node.attr(key).is_empty() {
+            if node.name.starts_with(XS_PREFIX) && !node.attr(key).is_empty() {
                 node.qname(node.attr(key))?;
             }
         }

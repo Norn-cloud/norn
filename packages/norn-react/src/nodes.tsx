@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogBackdrop, AlertDialogContent, AlertDialogDescri
 import { Button } from "@ui-sdk/react/button"
 import { Dialog, DialogBackdrop, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
 import { Input } from "@ui-sdk/react/input"
-import { useRef, type ReactNode } from "react"
+import { useLayoutEffect, useRef, type ReactNode } from "react"
 import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
@@ -220,12 +220,18 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   // Where focus returns when the machine closes the layer: what had it when the layer opened.
   const wasOpen = useRef(false)
   const returnTo = useRef<HTMLElement | null>(null)
-  if (open && !wasOpen.current && typeof document !== "undefined") {
-    // What had focus, or (an agent presses without focusing) the control whose event opened it.
-    const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
-    returnTo.current = active ?? document.querySelector<HTMLElement>(`[data-node="${scope.raisedBy.current ?? ""}"]`)
-  }
-  wasOpen.current = open
+  useLayoutEffect(() => {
+    if (open && !wasOpen.current && typeof document !== "undefined") {
+      // What had focus, or (an agent presses without focusing) the control whose event opened it.
+      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+      const raised = scope.raisedBy.current
+      const escaped = raised
+        ? (typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(raised) : raised.replace(/["\\]/g, "\\$&"))
+        : ""
+      returnTo.current = active ?? (escaped ? document.querySelector<HTMLElement>(`[data-node="${escaped}"]`) : null)
+    }
+    wasOpen.current = open
+  }, [open, scope])
   const finalFocus = () => returnTo.current
   const options = {
     open,

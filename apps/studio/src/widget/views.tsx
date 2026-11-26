@@ -109,14 +109,14 @@ const memberLabel = (id: string) => id.split("/").filter(Boolean).slice(-2).join
 const short = (hash: string | null | undefined) => (hash ? `${hash.slice(0, 10)}…` : "—")
 
 /** A bar table: label, a monochrome bar scaled to the largest value, and the exact value. */
-function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readonly { readonly key: string; readonly label: string; readonly value: string }[]; readonly label: string; readonly valueLabel: string; readonly onSelect?: (key: string) => void }) {
+function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readonly { readonly id?: string; readonly key: string; readonly label: string; readonly value: string }[]; readonly label: string; readonly valueLabel: string; readonly onSelect?: (key: string) => void }) {
   const max = Math.max(0, ...rows.map((row) => Math.abs(Number(row.value)) || 0))
   return (
     <Table>
       <TableHeader><TableRow><TableHead>{label}</TableHead><TableHead className="w-[45%]" /><TableHead className="text-end">{valueLabel}</TableHead></TableRow></TableHeader>
       <TableBody>
         {rows.map((row) => (
-          <TableRow key={row.key} className={onSelect ? "cursor-pointer" : undefined} onClick={onSelect ? () => onSelect(row.key) : undefined}>
+          <TableRow key={row.id ?? row.key} className={onSelect ? "cursor-pointer" : undefined} onClick={onSelect ? () => onSelect(row.key) : undefined}>
             <TableCell>{row.label}</TableCell>
             <TableCell><div className="h-1.5 rounded-full bg-foreground/70" style={{ width: `${max > 0 ? Math.max(2, (Math.abs(Number(row.value)) / max) * 100) : 0}%` }} /></TableCell>
             <TableCell className="text-end tabular-nums">{grouped(row.value)}</TableCell>
@@ -128,7 +128,7 @@ function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readon
 }
 
 function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: ToolHost }) {
-  const [traced, setTraced] = useState<{ readonly bucket: string; readonly read: Read<Trace> } | { readonly bucket: string; readonly refusal: Refusal } | null>(null)
+  const [traced, setTraced] = useState<{ readonly bucket: string; readonly read: Read<Trace> } | { readonly bucket: string; readonly refusal: Refusal } | { readonly bucket: string; readonly unavailable: true } | null>(null)
   const answer = read.document
   const buckets = answerBuckets(read)
   const latest = buckets.at(-1)
@@ -138,13 +138,18 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
   const title = typeof question === "string" ? question : typeof (question as { name?: unknown } | undefined)?.name === "string" ? String((question as { name: string }).name) : "Answer"
   const fetchTrace = traceThrough(bridge, input)
   const trace = async (bucket: string) => {
-    const result = await fetchTrace(answer.lineageRef, bucket)
-    if (result.kind === "read") setTraced({ bucket, read: result.read })
-    else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
+    try {
+      const result = await fetchTrace(answer.lineageRef, bucket)
+      if (result.kind === "read") setTraced({ bucket, read: result.read })
+      else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
+      else setTraced({ bucket, unavailable: true })
+    } catch {
+      setTraced({ bucket, unavailable: true })
+    }
   }
   // One bucket: its members are the breakdown. Several (a series): the buckets are.
   const rows = buckets.length === 1 && latest
-    ? latest.members.map((entry) => ({ key: latest.key, label: memberLabel(entry.id), value: entry.amounts?.[0] ?? "—" })).sort((a, b) => Number(b.value) - Number(a.value))
+    ? latest.members.map((entry, index) => ({ id: `${entry.id}:${index}`, key: latest.key, label: memberLabel(entry.id), value: entry.amounts?.[0] ?? "—" })).sort((a, b) => Number(b.value) - Number(a.value))
     : buckets.map((bucket) => ({ key: bucket.key, label: bucket.label, value: bucket.suppressed ? SUPPRESSED : bucket.value }))
   return (
     <Card size="sm">
@@ -163,6 +168,7 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
       </CardContent>
       {traced && "read" in traced && <CardContent><LineageTable read={traced.read} /></CardContent>}
       {traced && "refusal" in traced && <CardContent><RefusalBody refusal={traced.refusal} /></CardContent>}
+      {traced && "unavailable" in traced && <CardContent><p role="status" className="text-body text-muted-foreground">Lineage trace is unavailable right now.</p></CardContent>}
       <CardFooter className="text-meta text-muted-foreground">Select a row to trace it to its source records.</CardFooter>
     </Card>
   )

@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -71,8 +72,8 @@ REPOSITORY = "Norn-cloud/norn"
 SANDBOX = re.compile(r"\bbx_[a-z0-9]{6,}\b")
 
 
-def boat(args: argparse.Namespace, *rest: str, **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run([*args.boat.split(), *rest], text=True, **kwargs)
+def boat(args: argparse.Namespace, *rest: str, timeout: int = 60, **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run([*shlex.split(args.boat), *rest], text=True, timeout=timeout, **kwargs)
 
 
 def export(repo: Path, sha: str, into: Path) -> Path:
@@ -147,7 +148,8 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
         # checkout decides what is measured whatever ref is exported.
         tools = tree / "scripts" / "metrics"
         tools.mkdir(parents=True, exist_ok=True)
-        for name in ("run_probes.py", "record.py", "record.schema.json"):
+        for name in ("run_probes.py", "record.py", "record.schema.json",
+                     "probe_binary_sizes.py", "probe_studio_bundle.py"):
             shutil.copyfile(HERE / name, tools / name)
         shutil.copyfile(args.probes, tools / "probes.json")
         command = ["python3", "scripts/metrics/run_probes.py"]
@@ -156,7 +158,7 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
         ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
                    "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
                    "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
-                   capture_output=True)
+                   timeout=args.timeout + 300, capture_output=True)
     sys.stderr.write(ran.stderr[-4000:])
     sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
     if sandbox:
@@ -192,8 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     sha = record.git(repo, "rev-parse", "FETCH_HEAD^{commit}").stdout.decode().strip()
     date = record.git(repo, "show", "-s", "--format=%cI", sha).stdout.decode().strip()
     # The toolchain CI pins at this commit; the snapshot's default rustc may differ.
-    workflow = record.git(repo, "show", f"{sha}:.github/workflows/ci-policy.yml").stdout.decode()
-    rust = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", workflow, re.M).group(1)
+    rust = record.pinned_rust_toolchain(repo, sha)
+    if not rust:
+        raise SystemExit(f"could not find pinned rust toolchain in {sha}:.github/workflows/ci-policy.yml")
     limits = json.loads(boat(args, "limits", "--json", capture_output=True, check=True).stdout)
     starts_at = record.now_utc()
     if not limits.get("canStart") or limits["starts"]["day"]["remaining"] < 1:

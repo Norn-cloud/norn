@@ -19,6 +19,16 @@
       ],
       "lifecycles": [
         {
+          "endings": [
+            {
+              "outcome": "resting",
+              "state": "active"
+            },
+            {
+              "outcome": "completed",
+              "state": "closed"
+            }
+          ],
           "immutable": [
             "closed"
           ],

@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use datafusion::arrow::array::{ArrayRef, StringArray, UInt64Array};
 use datafusion::arrow::datatypes::{DataType, Field};
@@ -23,6 +24,8 @@ use super::values::{Cell, Dec};
 use super::{
     EXPORT_RESERVED, Engine, MAX_PAGE_ROWS, Outcome, Tenant, UNSUPPORTED, engine_error, refusal,
 };
+
+static NEXT_EXPORT: AtomicU64 = AtomicU64::new(0);
 
 /// One typed operand.
 enum Operand {
@@ -298,10 +301,16 @@ pub(super) fn export(
     }
     let mut rows: Vec<&Row> = scope.population().collect();
     rows.sort_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
+    let seq = NEXT_EXPORT.fetch_add(1, AtomicOrdering::Relaxed);
     let name = format!(
         "export-{}.{}",
         hex(&Sha256::digest(
-            format!("{request:?}{:?}", std::time::Instant::now()).as_bytes()
+            format!(
+                "{request:?}{:?}-{}-{seq}",
+                std::time::Instant::now(),
+                std::process::id()
+            )
+            .as_bytes()
         )),
         match request.format {
             ExportFormat::Parquet => "parquet",
@@ -309,9 +318,13 @@ pub(super) fn export(
         }
     );
     let path = scratch.join(name);
-    match request.format {
-        ExportFormat::Jsonl => export_jsonl(&path, &rows, &columns)?,
-        ExportFormat::Parquet => export_parquet(&path, &rows, &columns)?,
+    let written = match request.format {
+        ExportFormat::Jsonl => export_jsonl(&path, &rows, &columns),
+        ExportFormat::Parquet => export_parquet(&path, &rows, &columns),
+    };
+    if let Err(error) = written {
+        let _removed = std::fs::remove_file(&path);
+        return Err(error);
     }
     Ok(path)
 }

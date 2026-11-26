@@ -333,7 +333,7 @@ async function harness(mode: string, listing: "paged" | "fails" = "paged", rawIn
   const proxy = (body: unknown) => proxyRaw(JSON.stringify(body))
   const grant = await sign(GRANT)
   const done = () => { relay.stop(); rmSync(scratch, { recursive: true, force: true }) }
-  return { ws, inbox, next, proxy, proxyRaw, studio, studioRaw, grant, closed, done, send: (message: unknown) => ws.send(JSON.stringify(message)) }
+  return { ws, inbox, next, proxy, proxyRaw, studio, studioRaw, grant, closed, done, mcpPort: relay.mcp.port, send: (message: unknown) => ws.send(JSON.stringify(message)) }
 }
 
 const callAction = (args: unknown) => ({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "norn_call_action", arguments: args } })
@@ -345,7 +345,8 @@ test("relay: a call reaches Studio only with the person's approval for those arg
     h.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, _meta: { "norn.cloud/grant": h.grant } } })
     h.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/", mcpServers: [] } })
     h.send({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "s1", prompt: [{ type: "text", text: "close R-1" }] } })
-    const created = await h.next((message) => message.id === 2) as { result: { _echo: { configOptions: unknown; _meta: { claudeCode: { options: Record<string, unknown> } } } } }
+    const created = await h.next((message) => message.id === 2) as { result: { _echo: { mcpServers: { url: string }[]; configOptions: unknown; _meta: { claudeCode: { options: Record<string, unknown> } } } } }
+    expect(created.result._echo.mcpServers[0]?.url).toStartWith(`http://127.0.0.1:${h.mcpPort}/mcp/`)
     // Both pages of tools/list count: norn_inbox came on the second page.
     expect(created.result._echo._meta.claudeCode.options.allowedTools).toEqual(["mcp__norn__norn_answer", "mcp__norn__norn_inbox"])
     expect(created.result._echo._meta.claudeCode.options.allowDangerouslySkipPermissions).toBe(false)
@@ -462,4 +463,27 @@ test("relay: a config option update that moves the session out of the manual mod
     await prompted(h, "leave manual")
     expect(await h.closed).toBe(1011)
   } finally { h.done() }
+})
+
+test("relay: _norn/grant before initialize is refused and closes the connection", async () => {
+  const h = await harness("default")
+  try {
+    h.send({ jsonrpc: "2.0", id: 1, method: "_norn/grant", params: { grant: h.grant } })
+    const refused = await h.next((message) => message.id === 1) as { error?: { code: number } }
+    expect(refused.error?.code).toBe(-32001)
+    expect(await h.closed).toBe(4401)
+  } finally { h.done() }
+})
+
+test("configFromEnv rejects invalid integer caps and ports", () => {
+  const base = {
+    SIDEKICK_STUDIO_ORIGIN: "https://studio.example",
+    SIDEKICK_LOGIN_HEADER: "x-login",
+    SIDEKICK_ADAPTER: "bun adapter.ts",
+    SIDEKICK_SCRATCH: "/tmp/scratch",
+  }
+  expect(() => configFromEnv({ ...base, SIDEKICK_MAX_CONNECTIONS: "abc" })).toThrow()
+  expect(() => configFromEnv({ ...base, SIDEKICK_MAX_CONNECTIONS: "0" })).toThrow()
+  expect(() => configFromEnv({ ...base, SIDEKICK_MCP_PORT: "-1" })).toThrow()
+  expect(configFromEnv({ ...base, SIDEKICK_MCP_PORT: "0", SIDEKICK_MAX_CONNECTIONS: "2" }).maxConnections).toBe(2)
 })

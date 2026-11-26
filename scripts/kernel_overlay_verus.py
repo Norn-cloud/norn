@@ -80,7 +80,7 @@ def verify(path, tools, work, mutant_of=None):
     try:
         data = json.loads(result.stdout)
     except ValueError:
-        raise SystemExit(f"verus produced no verdict (exit {result.returncode}): {result.stdout[-2000:]}")
+        raise SystemExit(f"verus produced no verdict (exit {result.returncode}): {result.stdout[-2000:]}") from None
     check_verdict(data, result.returncode, mutant_of)
     return data["verification-results"]
 

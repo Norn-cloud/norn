@@ -25,7 +25,8 @@ export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedSc
     if (scope.environmentId === null) return { kind: "no-cell" }
     const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}`, accept: "application/json" })
     if (body !== undefined) headers.set("content-type", "application/json")
-    const response = await host.fetch(new Request(`https://norn-host${path}?${scopeQuery({ orgId: scope.orgId, environmentId: scope.environmentId })}`, { method, headers, body: body === undefined ? null : JSON.stringify(body) }))
+    const sep = path.includes("?") ? "&" : "?"
+    const response = await host.fetch(new Request(`https://norn-host${path}${sep}${scopeQuery({ orgId: scope.orgId, environmentId: scope.environmentId })}`, { method, headers, body: body === undefined ? null : JSON.stringify(body) }))
     const text = await response.text()
     let parsed: unknown = null
     try { parsed = JSON.parse(text) } catch { parsed = null }

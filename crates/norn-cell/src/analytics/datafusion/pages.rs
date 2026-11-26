@@ -124,9 +124,13 @@ impl<R: Read> Thrift<R> {
                     return Ok(());
                 }
                 let kinds = self.byte()?;
+                if count.saturating_mul(2) > self.left {
+                    return Err(malformed());
+                }
+                let (key_kind, value_kind) = (kinds.wrapping_shr(4), kinds & 0x0f);
                 for _ in 0..count {
-                    self.skip_value(kinds.wrapping_shr(4), depth)?;
-                    self.skip_value(kinds & 0x0f, depth)?;
+                    self.skip_container_item(key_kind, depth)?;
+                    self.skip_container_item(value_kind, depth)?;
                 }
                 Ok(())
             }
@@ -137,17 +141,23 @@ impl<R: Read> Thrift<R> {
         }
     }
 
+    /// Skip one container (list/set/map) element of compact type `kind`;
+    /// Thrift Compact encodes bool elements inside containers as one byte.
+    fn skip_container_item(&mut self, kind: u8, depth: u32) -> Outcome<()> {
+        if matches!(kind, 1 | 2) {
+            self.byte().map(drop)
+        } else {
+            self.skip_value(kind, depth)
+        }
+    }
+
     /// Skip `count` list items of compact type `kind`; a bool item is a byte.
     fn skip_items(&mut self, count: u64, kind: u8, depth: u32) -> Outcome<()> {
         if count > self.left {
             return Err(malformed());
         }
         for _ in 0..count {
-            if matches!(kind, 1 | 2) {
-                self.byte()?;
-            } else {
-                self.skip_value(kind, depth)?;
-            }
+            self.skip_container_item(kind, depth)?;
         }
         Ok(())
     }
@@ -469,5 +479,18 @@ mod tests {
             left: 20,
         };
         assert!(nested.page_header().is_err());
+        // Malformed MAP field with count = u64::MAX and bool->bool kinds (0x11)
+        // must fail immediately without spinning.
+        let huge_map: Vec<u8> = vec![
+            0x4b, // field 4, MAP (type 11)
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, // varint u64::MAX
+            0x11, // bool -> bool
+            0x00,
+        ];
+        let mut bounded = Thrift {
+            inner: huge_map.as_slice(),
+            left: u64::try_from(huge_map.len()).unwrap_or(0),
+        };
+        assert!(bounded.page_header().is_err());
     }
 }

@@ -116,7 +116,6 @@ pub fn lifecycle_state_diagram(states: &[&str], lifecycle: &Lifecycle) -> String
 
     let mut out = String::from("stateDiagram-v2\n");
     for (index, name) in names.iter().enumerate() {
-        // Infallible: writing to a String.
         #[expect(
             clippy::let_underscore_must_use,
             reason = "fmt::Write for String is infallible; its trait signature still returns Result"

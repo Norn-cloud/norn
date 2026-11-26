@@ -642,7 +642,7 @@ impl Actor for ProbeActor {
 
 impl Handler<WakeNow> for ProbeActor {
     async fn handle(self: Arc<Self>, ctx: Ctx<Self>, _action: WakeNow) -> Result<()> {
-        let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
+        let now = crate::actor::signed(now_ms());
         let fired = ctx.clone();
         self.alarm
             .fire(&ctx, now, |delivery| async move {
@@ -707,26 +707,23 @@ async fn count<A: Actor>(ctx: &Ctx<A>, kind: &str) -> Result<i64> {
 
 async fn log<A: Actor>(ctx: &Ctx<A>, kind: &str, detail: Option<Value>) -> Result<()> {
     ctx.sql()
-        .run(
-            "INSERT INTO log (kind, at, detail) VALUES (?, ?, ?)",
-            Some(vec![
-                BindParam::Text(kind.to_owned()),
-                BindParam::Integer(i64::try_from(now_ms()).unwrap_or(i64::MAX)),
-                detail.map_or(BindParam::Null, |detail| {
-                    BindParam::Text(detail.to_string())
-                }),
-            ]),
-        )
+        .run(LOG_INSERT, Some(log_row_params(kind, detail.as_ref())))
         .await?;
     Ok(())
 }
 
-fn log_params(kind: &str, detail: &Value) -> Vec<BindParam> {
+fn log_row_params(kind: &str, detail: Option<&Value>) -> Vec<BindParam> {
     vec![
         BindParam::Text(kind.to_owned()),
-        BindParam::Integer(i64::try_from(now_ms()).unwrap_or(i64::MAX)),
-        BindParam::Text(detail.to_string()),
+        BindParam::Integer(crate::actor::signed(now_ms())),
+        detail.map_or(BindParam::Null, |detail| {
+            BindParam::Text(detail.to_string())
+        }),
     ]
+}
+
+fn log_params(kind: &str, detail: &Value) -> Vec<BindParam> {
+    log_row_params(kind, Some(detail))
 }
 
 const LOG_INSERT: &str = "INSERT INTO log (kind, at, detail) VALUES (?, ?, ?)";
@@ -971,9 +968,7 @@ impl ProbeActor {
                 }
             }
             "alarm-set" => {
-                let at = i64::try_from(now_ms())
-                    .unwrap_or(i64::MAX)
-                    .saturating_add(number("in", 2000));
+                let at = crate::actor::signed(now_ms()).saturating_add(number("in", 2000));
                 self.alarm.set(ctx, at).await?;
                 log(ctx, "alarm-set", Some(json!({"at": at}))).await?;
                 ctx.sql()
@@ -1002,9 +997,7 @@ impl ProbeActor {
                 self.alarm
                     .set_in(
                         &tx,
-                        i64::try_from(now_ms())
-                            .unwrap_or(i64::MAX)
-                            .saturating_add(3_600_000),
+                        crate::actor::signed(now_ms()).saturating_add(3_600_000),
                     )
                     .await?;
                 tx.rollback().await?;

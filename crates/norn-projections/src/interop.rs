@@ -187,11 +187,6 @@ fn object<const N: usize>(members: [(&str, JsonValue); N]) -> JsonValue {
     )
 }
 
-/// The node at the end of `edge`.
-fn target<'c>(chain: &'c CausalChain, edge: &LineageEdge) -> Option<&'c LineageNode> {
-    chain.node(&edge.to)
-}
-
 /// The targets of `id`'s edges of kind `kind`, in discovery order.
 fn targets<'c>(
     chain: &'c CausalChain,
@@ -201,7 +196,7 @@ fn targets<'c>(
     chain
         .causes(id)
         .filter(move |edge| edge.kind == kind)
-        .filter_map(move |edge| target(chain, edge))
+        .filter_map(move |edge| chain.node(&edge.to))
 }
 
 /// A deterministic UUID (version 8, RFC 9562 §5.8) for `stable_id` within
@@ -227,7 +222,6 @@ pub fn stable_uuid(scope: &ExportScope, stable_id: &str) -> Result<String, Inter
         if matches!(index, 4 | 6 | 8 | 10) {
             out.push('-');
         }
-        // Writing to a `String` cannot fail.
         #[expect(
             clippy::let_underscore_must_use,
             reason = "fmt::Write for String is infallible; its trait signature still returns Result"
@@ -397,11 +391,6 @@ pub fn openlineage_run_events(
     Ok(events)
 }
 
-/// One stable id as a `cell:` compact IRI.
-fn qualified(scope: &ExportScope, id: &str) -> Result<String, InteropError> {
-    scope.resource_id(id)
-}
-
 fn values(items: &[&str]) -> JsonValue {
     JsonValue::Array(items.iter().map(|item| string(*item)).collect())
 }
@@ -426,7 +415,7 @@ fn node_kind_type(kind: LineageNodeKind) -> String {
 fn prov_node(scope: &ExportScope, node: &LineageNode) -> Result<JsonValue, InteropError> {
     let kind_type = node_kind_type(node.kind);
     let mut members: BTreeMap<String, JsonValue> = BTreeMap::from([
-        ("@id".to_owned(), string(qualified(scope, &node.id)?)),
+        ("@id".to_owned(), string(scope.resource_id(&node.id)?)),
         ("label".to_owned(), label(&node.label)),
     ]);
     let statement = match node.kind {
@@ -471,8 +460,8 @@ fn prov_relation(
     chain: &CausalChain,
     edge: &LineageEdge,
 ) -> Result<JsonValue, InteropError> {
-    let from = string(qualified(scope, &edge.from)?);
-    let to = string(qualified(scope, &edge.to)?);
+    let from = string(scope.resource_id(&edge.from)?);
+    let to = string(scope.resource_id(&edge.to)?);
     let edge_type = format!("norn:{}", edge.kind.name());
     let statement = match &edge.kind {
         LineageEdgeKind::WrittenBy | LineageEdgeKind::ScheduledBy => {
@@ -576,7 +565,7 @@ pub const DCTERMS_IRI: &str = "http://purl.org/dc/terms/";
 pub const SKOS_IRI: &str = "http://www.w3.org/2004/02/skos/core#";
 
 fn reference(scope: &ExportScope, id: &str) -> Result<JsonValue, InteropError> {
-    Ok(object([("@id", string(qualified(scope, id)?))]))
+    Ok(object([("@id", string(scope.resource_id(id)?))]))
 }
 
 fn global_reference(id: &str) -> JsonValue {
@@ -610,7 +599,7 @@ pub fn dcat_catalog(
             continue;
         }
         let stable_id = item.stable_id();
-        let id = qualified(scope, &stable_id)?;
+        let id = scope.resource_id(&stable_id)?;
         let mut members: BTreeMap<String, JsonValue> = BTreeMap::from([
             ("@id".to_owned(), string(id)),
             ("@type".to_owned(), string("dcat:Dataset")),
@@ -643,7 +632,7 @@ pub fn dcat_catalog(
                 ("cell", string(scope.cell_prefix_iri())),
             ]),
         ),
-        ("@id", string(qualified(scope, "catalog:technical-view")?)),
+        ("@id", string(scope.resource_id("catalog:technical-view")?)),
         ("@type", string("dcat:Catalog")),
         ("dcterms:title", string("Norn technical view")),
         (
@@ -692,7 +681,7 @@ pub fn skos_concept_scheme(
         let mut members: BTreeMap<String, JsonValue> = BTreeMap::from([
             (
                 "@id".to_owned(),
-                string(qualified(scope, &format!("type:{}", name.as_str()))?),
+                string(scope.resource_id(&format!("type:{}", name.as_str()))?),
             ),
             ("@type".to_owned(), string("skos:Concept")),
             ("skos:inScheme".to_owned(), reference(scope, &scheme)?),
@@ -732,7 +721,7 @@ pub fn skos_concept_scheme(
     let mut graph = Vec::new();
     for scheme in &schemes {
         graph.push(object([
-            ("@id", string(qualified(scope, scheme)?)),
+            ("@id", string(scope.resource_id(scheme)?)),
             ("@type", string("skos:ConceptScheme")),
             (
                 "skos:prefLabel",
