@@ -21,11 +21,11 @@ use super::types::{
     ActionReferenceReads, ActionRefusal,
 };
 
-fn create_preconditions_read_no_slice(action: &ActionRoot) -> bool {
-    action.preconditions.iter().all(|expression| {
-        norn_expr::expression_reads(&expression.0, "slice")
-            .is_ok_and(|reads| !reads.whole_root && reads.fields.is_empty())
-    })
+#[derive(Clone, Copy)]
+enum SliceReadMode<'a> {
+    Full,
+    Reference,
+    Projected(&'a [&'a str]),
 }
 
 fn reference_action(
@@ -185,6 +185,8 @@ pub(super) fn reference_read_proof<E, C, I>(
             &references,
         )?
     };
+    let laws_digest =
+        ActionReferenceReads::governing_laws_digest(catalog.law_artifacts.iter().copied())?;
     Some(ActionReferenceReads {
         reads: commit.reads.clone(),
         references,
@@ -193,6 +195,7 @@ pub(super) fn reference_read_proof<E, C, I>(
         links: commit.links.clone(),
         link_reads: commit.link_reads.clone(),
         event_count: commit.events.len(),
+        laws_digest,
     })
 }
 
@@ -315,7 +318,7 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
     context: &ActionSliceContext<'_, '_, '_, H>,
     state: &mut ActionSliceState,
     entry: &SliceDeclaration,
-    reference_only: bool,
+    read_mode: SliceReadMode<'_>,
 ) -> Result<(), ActionRefusal<H::Error>> {
     let ActionSliceContext {
         host,
@@ -402,7 +405,7 @@ fn load_action_slice_entry<H: CellHost + ?Sized>(
         observed_records,
         limits,
         read_types,
-        reference_only,
+        read_mode,
     )?;
     precondition_keys.insert(known_fact_key(facts, catalog, &requested));
     let Some(object) = state.values.as_ref() else {
@@ -655,8 +658,29 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let call = context.call;
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let reserved_bytes = meter.bytes();
-    let reference_only = context.host.supports_reference_reads()
+    let mut reference_only = context.host.supports_reference_reads()
         && reference_action(catalog, call.action, context.authorizer, action_target);
+    let create_only = matches!(
+        call.action.effect_program,
+        Some(ActionEffectProgram::UpsertInputObject {
+            write_mode: UpsertWriteMode::CreateOnly,
+            ..
+        })
+    );
+    let create_projection = if reference_only && create_only {
+        let planned = super::receipt::plan_create_projected_slice(
+            context.host,
+            catalog,
+            call.action,
+            context.effective_input,
+        );
+        if planned.is_none() {
+            reference_only = false;
+        }
+        planned
+    } else {
+        None
+    };
     // Keep the separately authorized target snapshot out of the slice cache
     // until declared entries have passed their read-type gates. If an entry
     // aliases the target, it must be loaded through the same bounded read and
@@ -686,20 +710,22 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         read_types,
         limits,
     };
-    for entry in &call.action.slice {
-        // A precise patch still loads the complete target to preserve its
-        // unmodified fields. The closed effect never consults those values
-        // for a predicate or derives a new value from them.
-        let identity_only = reference_only
-            && matches!(
-                call.action.effect_program,
-                Some(ActionEffectProgram::UpsertInputObject {
-                    write_mode: UpsertWriteMode::CreateOnly,
-                    ..
-                })
-            )
-            && create_preconditions_read_no_slice(call.action);
-        load_action_slice_entry(context, &mut state, entry, identity_only)?;
+    for (index, entry) in call.action.slice.iter().enumerate() {
+        // A precise patch loads the complete target to preserve unmodified
+        // fields; a closed create loads identity-only or projected properties.
+        let prop_refs: Vec<&str> = create_projection
+            .as_ref()
+            .and_then(|plan| plan.get(index))
+            .map(|props| props.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        let read_mode = if !reference_only || !create_only {
+            SliceReadMode::Full
+        } else if prop_refs.is_empty() {
+            SliceReadMode::Reference
+        } else {
+            SliceReadMode::Projected(&prop_refs)
+        };
+        load_action_slice_entry(context, &mut state, entry, read_mode)?;
     }
     let aggregates = load_action_aggregates(
         context,
@@ -851,9 +877,11 @@ fn load_action_fact<H: CellHost + ?Sized>(
     observed_records: &mut u32,
     limits: &crate::SliceLimits,
     read_types: &mut BTreeSet<ObjectTypeName>,
-    reference_only: bool,
+    read_mode: SliceReadMode<'_>,
 ) -> Result<FactState, ActionRefusal<H::Error>> {
-    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
+    if !matches!(read_mode, SliceReadMode::Full)
+        && !authorizer.supports_action_reference_lineage(call.action)
+    {
         return Err(ActionRefusal::TargetNotFound);
     }
     if relation_depth > limits.max_relation_depth {
@@ -914,10 +942,12 @@ fn load_action_fact<H: CellHost + ?Sized>(
         });
     }
     let remaining_bytes = limits.max_canonical_bytes.saturating_sub(meter.bytes());
-    let bounded = if reference_only {
-        host.load_reference(requested, remaining_bytes)
-    } else {
-        host.load_bounded(requested, remaining_bytes)
+    let bounded = match read_mode {
+        SliceReadMode::Full => host.load_bounded(requested, remaining_bytes),
+        SliceReadMode::Reference => host.load_reference(requested, remaining_bytes),
+        SliceReadMode::Projected(properties) => {
+            host.load_projected(requested, properties, remaining_bytes)
+        }
     }
     .map_err(host_failure)?
     // Unsupported and over-bound snapshots are indistinguishable from an

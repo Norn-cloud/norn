@@ -488,7 +488,7 @@ pub(crate) fn decode_law(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvalua
     decoded.map_err(|error| LawEvaluationError::Invalid(error.to_string()))
 }
 /// The catalog's decoded declaration of one of its own law artifacts.
-fn decode<'c>(
+pub(crate) fn decode<'c>(
     catalog: &'c TypeCatalog<'_>,
     artifact: &ArtifactEnvelope,
 ) -> Result<&'c LawIR, LawEvaluationError> {

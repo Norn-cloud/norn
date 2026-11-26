@@ -5958,7 +5958,7 @@ fn create_ifc_fixture(
 
 fn create_ifc_action(
     action_id: &str,
-    preconditions: serde_json::Value,
+    preconditions: &serde_json::Value,
     with_link: bool,
 ) -> norn_ir::ActionRoot {
     let create_links = if with_link {
@@ -6000,6 +6000,34 @@ fn create_ifc_action(
         }
     }))
     .expect("action")
+}
+
+fn create_ifc_law(id: &str, expression: &str) -> norn_ir::ArtifactEnvelope {
+    serde_json::from_value(json!({
+        "artifactId": format!("hr.{id}.law"),
+        "version": "1.0.0",
+        "kind": "law",
+        "name": id,
+        "namespace": "hr",
+        "irVersion": "0.1",
+        "lifecycle": "draft",
+        "dependencies": [],
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "provenance": {"source": "system", "sourcePath": "test"},
+        "payload": {
+            "id": id,
+            "lawVersion": "0.1",
+            "modality": {"kind": "always"},
+            "owner": "hr",
+            "provenance": {"source": "system", "sourcePath": "test"},
+            "rationale": id,
+            "response": {"kind": "predicate", "expression": expression},
+            "scope": {"objectTypes": ["hr.LeaveRequest"], "root": {"kind": "entity", "id": "hr.LeaveRequest"}},
+            "severity": "error",
+            "subject": "hr.LeaveRequest"
+        }
+    }))
+    .expect("law")
 }
 
 fn create_ifc_call<'a>(
@@ -6056,7 +6084,7 @@ fn create_only_field_level_ifc_allows_unmarked_precondition_and_refuses_classifi
     // 1. Unmarked precondition field + `createLinks` succeeds and stays unmarked.
     let clean_action = create_ifc_action(
         "hr.submit_leave",
-        json!(["slice.emp.status == 'active'"]),
+        &json!(["slice.emp.status == 'active'"]),
         true,
     );
     let clean_call = create_ifc_call(&clean_action, "L-CLEAN", "leave-clean");
@@ -6082,7 +6110,7 @@ fn create_only_field_level_ifc_allows_unmarked_precondition_and_refuses_classifi
     // 2. Classified precondition field refuses `createLinks` and taints non-link create.
     let pii_link_action = create_ifc_action(
         "hr.submit_leave_pii_link",
-        json!(["slice.emp.national_id == '123-45-6789'"]),
+        &json!(["slice.emp.national_id == '123-45-6789'"]),
         true,
     );
     let pii_link_call = create_ifc_call(&pii_link_action, "L-PII-LINK", "leave-pii-link");
@@ -6095,7 +6123,7 @@ fn create_only_field_level_ifc_allows_unmarked_precondition_and_refuses_classifi
 
     let pii_nolink_action = create_ifc_action(
         "hr.submit_leave_pii_nolink",
-        json!(["slice.emp.national_id == '123-45-6789'"]),
+        &json!(["slice.emp.national_id == '123-45-6789'"]),
         false,
     );
     let pii_nolink_call = create_ifc_call(&pii_nolink_action, "L-PII-FACT", "leave-pii-fact");
@@ -6120,9 +6148,49 @@ fn create_only_field_level_ifc_allows_unmarked_precondition_and_refuses_classifi
     );
 }
 
+/// Projected `CreateOnly` slice reads never load or meter unread classified fields
+/// against slice byte budgets, closing the slice-size covert channel.
+#[test]
+fn create_only_projected_slice_read_does_not_meter_unread_classified_field_size() {
+    let (model, mut cell) = create_ifc_fixture(&[]);
+    let catalog = model.type_catalog();
+    let oversized_secret = "S".repeat(300_000);
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new("hr.Employee", "E-BIG"),
+            expected: FactVersion(0),
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({
+                    "id": "E-BIG",
+                    "status": "active",
+                    "national_id": oversized_secret
+                }))
+                .expect("oversized employee"),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("seed oversized employee");
+    let clean_action = create_ifc_action(
+        "hr.submit_leave",
+        &json!(["slice.emp.status == 'active'"]),
+        true,
+    );
+    let mut big_call = create_ifc_call(&clean_action, "L-BIG", "leave-big");
+    big_call.input = serde_json::from_value(json!({
+        "id": "L-BIG",
+        "employee_id": "E-BIG",
+        "days": 1
+    }))
+    .expect("big input");
+    norn_kernel::commit_action(&mut cell, &catalog, &big_call, &ReferenceLineageAllowAll)
+        .expect("projected read must not meter unread classified national_id");
+}
+
 /// Fail-closed IFC guarantees for `CreateOnly` actions:
-/// conservative authorizers, computed properties, whole-object slice reads, and
-/// covert-channel `LAW-LINK-1` governing laws reading PII all refuse `createLinks`.
+/// conservative authorizers, computed properties, whole-object slice reads,
+/// `LAW-LINK-1` governing laws reading PII (with or without laws on the
+/// caller's catalog), and positive `LAW-LINK-1` unmarked reads.
 #[test]
 fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_closed() {
     let (model, mut cell) = create_ifc_fixture(&[]);
@@ -6130,7 +6198,7 @@ fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_clo
 
     let clean_action = create_ifc_action(
         "hr.submit_leave",
-        json!(["slice.emp.status == 'active'"]),
+        &json!(["slice.emp.status == 'active'"]),
         true,
     );
     let conservative_call = create_ifc_call(&clean_action, "L-CONSERV", "leave-conserv");
@@ -6145,7 +6213,7 @@ fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_clo
         ("L-COMP", json!(["slice.emp.summary != ''"])),
         ("L-WHOLE", json!(["slice.emp != null"])),
     ] {
-        let action = create_ifc_action(&format!("hr.{id}"), precond, true);
+        let action = create_ifc_action(&format!("hr.{id}"), &precond, true);
         let call = create_ifc_call(&action, id, id);
         assert_marking_refusal(norn_kernel::commit_action(
             &mut cell,
@@ -6155,41 +6223,39 @@ fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_clo
         ));
     }
 
-    let link_law: norn_ir::ArtifactEnvelope = serde_json::from_value(json!({
-        "artifactId": "hr.leave_reads_nid.law",
-        "version": "1.0.0",
-        "kind": "law",
-        "name": "leave_reads_nid",
-        "namespace": "hr",
-        "irVersion": "0.1",
-        "lifecycle": "draft",
-        "dependencies": [],
-        "scope": {"orgId": "org_demo", "environmentId": "dev"},
-        "provenance": {"source": "system", "sourcePath": "test"},
-        "payload": {
-            "id": "leave_reads_nid",
-            "lawVersion": "0.1",
-            "modality": {"kind": "always"},
-            "owner": "hr",
-            "provenance": {"source": "system", "sourcePath": "test"},
-            "rationale": "reads classified linked national_id",
-            "response": {"kind": "predicate", "expression": "self.employee.national_id != '000'"},
-            "scope": {"objectTypes": ["hr.LeaveRequest"], "root": {"kind": "entity", "id": "hr.LeaveRequest"}},
-            "severity": "error",
-            "subject": "hr.LeaveRequest"
-        }
-    }))
-    .expect("link law");
-    let (law_model, mut law_cell) = create_ifc_fixture(&[link_law]);
-    let law_catalog = law_model
+    // Covert-channel `LAW-LINK-1` governing law reading PII refuses `createLinks`
+    // BOTH when the caller attaches laws AND when a misconfigured caller omits them.
+    let pii_law = create_ifc_law("leave_reads_nid", "self.employee.national_id != '000'");
+    let (law_model, mut law_cell) = create_ifc_fixture(&[pii_law]);
+    let full_catalog = law_model
         .type_catalog()
         .with_governing_laws(law_model.law_artifacts());
-    let empty_precond_action = create_ifc_action("hr.submit_leave_empty", json!([]), true);
-    let law_call = create_ifc_call(&empty_precond_action, "L-LAW", "leave-law");
+    let empty_precond = create_ifc_action("hr.submit_leave_empty", &json!([]), true);
     assert_marking_refusal(norn_kernel::commit_action(
         &mut law_cell,
-        &law_catalog,
-        &law_call,
+        &full_catalog,
+        &create_ifc_call(&empty_precond, "L-LAW", "leave-law"),
         &ReferenceLineageAllowAll,
     ));
+    let stale_catalog = law_model.type_catalog();
+    assert_marking_refusal(norn_kernel::commit_action(
+        &mut law_cell,
+        &stale_catalog,
+        &create_ifc_call(&empty_precond, "L-LAW-STALE", "leave-law-stale"),
+        &ReferenceLineageAllowAll,
+    ));
+
+    // Positive control: `LAW-LINK-1` reading an unmarked linked property succeeds.
+    let status_law = create_ifc_law("leave_reads_status", "self.employee.status == 'active'");
+    let (ok_model, mut ok_cell) = create_ifc_fixture(&[status_law]);
+    let ok_catalog = ok_model
+        .type_catalog()
+        .with_governing_laws(ok_model.law_artifacts());
+    norn_kernel::commit_action(
+        &mut ok_cell,
+        &ok_catalog,
+        &create_ifc_call(&empty_precond, "L-LAW-OK", "leave-law-ok"),
+        &ReferenceLineageAllowAll,
+    )
+    .expect("unmarked LAW-LINK-1 read must allow createLinks");
 }

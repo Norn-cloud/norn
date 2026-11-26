@@ -117,6 +117,7 @@ fn reference_proof_rejects_changed_outputs_and_keeps_added_guards_full() {
         links: Vec::new(),
         link_reads: Vec::new(),
         event_count: 0,
+        laws_digest: ActionReferenceReads::governing_laws_digest(&[]).expect("digest"),
     };
     let mut changed = commit.clone();
     changed.writes[0].mutation = FactMutation::Put {
@@ -423,9 +424,9 @@ fn hr_create_types() -> Vec<norn_ir::ObjectTypeDef> {
 }
 
 fn hr_create_action(
-    preconditions: serde_json::Value,
-    slice: serde_json::Value,
-    create_links: serde_json::Value,
+    preconditions: &serde_json::Value,
+    slice: &serde_json::Value,
+    create_links: &serde_json::Value,
 ) -> ActionRoot {
     serde_json::from_value(serde_json::json!({
         "actionId": "hr.submit_leave",
@@ -492,15 +493,15 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
     let target = FactKey::new("hr.LeaveRequest", "L1");
     let catalog = crate::decision_commit::TypeCatalog::new(&types);
     let aliased_action = hr_create_action(
-        serde_json::json!([
+        &serde_json::json!([
             "slice.first.status == 'active'",
             "slice.second.department == 'eng'"
         ]),
-        serde_json::json!([
+        &serde_json::json!([
             {"name": "first", "objectType": "hr.Person", "key": {"property": {"from": "input", "property": "employee_id"}}},
             {"name": "second", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
         ]),
-        serde_json::json!([
+        &serde_json::json!([
             {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
         ]),
     );
@@ -554,11 +555,11 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
     let law_catalog = crate::decision_commit::TypeCatalog::new(&types)
         .with_governing_laws(std::slice::from_ref(&forward_law));
     let empty_precond = hr_create_action(
-        serde_json::json!([]),
-        serde_json::json!([
+        &serde_json::json!([]),
+        &serde_json::json!([
             {"name": "emp", "objectType": "hr.Person", "key": {"property": {"from": "input", "property": "employee_id"}}}
         ]),
-        serde_json::json!([
+        &serde_json::json!([
             {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
         ]),
     );
@@ -571,6 +572,10 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
     )
     .expect("forward link law read attributed");
     assert_eq!(law_reads, vec![(emp_ref, vec!["national_id".to_owned()])]);
+    assert_ne!(
+        ActionReferenceReads::governing_laws_digest(&[]),
+        ActionReferenceReads::governing_laws_digest(std::slice::from_ref(&forward_law))
+    );
 }
 
 #[test]
@@ -585,9 +590,22 @@ fn create_slice_property_reads_fails_closed_on_whole_object_computed_and_inverse
         serde_json::json!(["slice.emp != null"]),
         serde_json::json!(["slice.emp.computed_summary != ''"]),
     ] {
-        let action = hr_create_action(precond, emp_slice.clone(), serde_json::json!([]));
+        let action = hr_create_action(&precond, &emp_slice, &serde_json::json!([]));
         assert!(super::receipt::create_slice_property_reads(&catalog, &action, &target).is_none());
     }
+    let sourced_link = hr_create_action(
+        &serde_json::json!([]),
+        &emp_slice,
+        &serde_json::json!([{
+            "source": {"objectType": "hr.LeaveRequest", "idField": "id"},
+            "link": "employee",
+            "targetType": "hr.Employee",
+            "targetIdField": "employee_id"
+        }]),
+    );
+    assert!(
+        super::receipt::create_slice_property_reads(&catalog, &sourced_link, &target).is_none()
+    );
     let inverse_law = hr_law(
         "person_leave_cap",
         "hr.Person",
@@ -596,11 +614,11 @@ fn create_slice_property_reads_fails_closed_on_whole_object_computed_and_inverse
     let inverse_catalog = crate::decision_commit::TypeCatalog::new(&types)
         .with_governing_laws(std::slice::from_ref(&inverse_law));
     let empty_precond = hr_create_action(
-        serde_json::json!([]),
-        serde_json::json!([
+        &serde_json::json!([]),
+        &serde_json::json!([
             {"name": "emp", "objectType": "hr.Person", "key": {"property": {"from": "input", "property": "employee_id"}}}
         ]),
-        serde_json::json!([
+        &serde_json::json!([
             {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
         ]),
     );

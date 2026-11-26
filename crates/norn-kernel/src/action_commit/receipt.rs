@@ -305,9 +305,26 @@ pub struct ActionReferenceReads {
     pub(super) links: Vec<LinkWrite>,
     pub(super) link_reads: Vec<LinkReadExpectation>,
     pub(super) event_count: usize,
+    pub(super) laws_digest: String,
 }
 
 impl ActionReferenceReads {
+    /// Canonical order-independent digest of the governing law artifacts used
+    /// when this proof was constructed. Hosts reject precision when their
+    /// enforced governing-law set differs from the kernel's catalog.
+    pub(crate) fn governing_laws_digest<'a>(
+        laws: impl IntoIterator<Item = &'a norn_ir::ArtifactEnvelope>,
+    ) -> Option<String> {
+        let mut digests = Vec::new();
+        for artifact in laws {
+            let bytes = norn_ir::canonical::canonical_json_of(artifact).ok()?;
+            digests.push(norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes));
+        }
+        digests.sort();
+        let encoded = norn_ir::canonical::canonical_json_of(&digests).ok()?;
+        Some(norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&encoded))
+    }
+
     /// Exact-version references whose existence, rather than values, was used.
     #[must_use]
     pub fn reference_reads(&self) -> &[FactExpectation] {
@@ -319,6 +336,13 @@ impl ActionReferenceReads {
     #[must_use]
     pub fn property_reads(&self) -> &[(FactExpectation, Vec<String>)] {
         &self.property_reads
+    }
+
+    /// Whether the kernel built this proof against the exact governing-law set
+    /// the host enforces inside its commit transaction.
+    #[must_use]
+    pub fn matches_governing_laws(&self, laws: &[norn_ir::ArtifactEnvelope]) -> bool {
+        Self::governing_laws_digest(laws).is_some_and(|digest| digest == self.laws_digest)
     }
 
     /// Bind the one-use proof to the kernel-prepared transaction.
@@ -414,11 +438,7 @@ fn collect_create_law_property_reads<'a>(
         return None;
     }
     for artifact in catalog.governing_laws(&target.object_type).ok()? {
-        let law = catalog
-            .decoded_laws()
-            .get(&std::ptr::from_ref(artifact).addr())?
-            .as_ref()
-            .ok()?;
+        let law = crate::governing_laws::decode(catalog, artifact).ok()?;
         let link_reads =
             crate::governing_laws::law_link_reads(catalog, &target.object_type, law).ok()?;
         if link_reads.is_empty() {
@@ -446,7 +466,8 @@ fn collect_create_law_property_reads<'a>(
                     && matches!(
                         &entry.key,
                         SliceKey::Property { from, property }
-                            if from == "input" && property.as_str() == binding.target_id_field.as_str()
+                            if from == "input"
+                                && property.as_str() == binding.target_id_field.as_str()
                     )
             })?;
             link_to_entry.insert(link_id.as_str(), entry);
@@ -467,9 +488,7 @@ fn collect_create_law_property_reads<'a>(
                 return None;
             }
             for path in norn_expr::expression_read_paths(text, "self").ok()? {
-                let Some(head) = path.first() else {
-                    return None;
-                };
+                let head = path.first()?;
                 let Some(entry) = link_to_entry.get(head.as_str()) else {
                     continue;
                 };
@@ -488,14 +507,12 @@ fn collect_create_law_property_reads<'a>(
     Some(())
 }
 
-/// Exact non-computed slice property operands read by a closed `CreateOnly`
-/// action's preconditions and `LAW-LINK-1` governing laws, keyed by slice alias.
-/// Returns `None` (fail closed to whole-object lineage) for any unproved read.
-pub(super) fn create_slice_property_reads(
+/// Exact non-computed slice property operands read ONLY by `action.preconditions`,
+/// keyed by slice alias.
+fn create_precondition_alias_reads<'a>(
     catalog: &crate::decision_commit::TypeCatalog<'_>,
-    action: &ActionRoot,
-    target: &FactKey,
-) -> Option<BTreeMap<String, Vec<String>>> {
+    action: &'a ActionRoot,
+) -> Option<BTreeMap<&'a str, BTreeSet<String>>> {
     let mut entries: BTreeMap<&str, &SliceDeclaration> = BTreeMap::new();
     let mut alias_properties: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
     for entry in &action.slice {
@@ -533,6 +550,18 @@ pub(super) fn create_slice_property_reads(
                 .insert(property.clone());
         }
     }
+    Some(alias_properties)
+}
+
+/// Exact non-computed slice property operands read by a closed `CreateOnly`
+/// action's preconditions and `LAW-LINK-1` governing laws, keyed by slice alias.
+/// Returns `None` (fail closed to whole-object lineage) for any unproved read.
+pub(super) fn create_slice_property_reads(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &ActionRoot,
+    target: &FactKey,
+) -> Option<BTreeMap<String, Vec<String>>> {
+    let mut alias_properties = create_precondition_alias_reads(catalog, action)?;
     collect_create_law_property_reads(catalog, action, target, &mut alias_properties)?;
     Some(
         alias_properties
@@ -540,6 +569,60 @@ pub(super) fn create_slice_property_reads(
             .map(|(alias, props)| (alias.to_owned(), props.into_iter().collect()))
             .collect(),
     )
+}
+
+/// Plan the projected precondition properties per slice entry (merged by
+/// canonical key across duplicate aliases) and confirm `host` can project every
+/// non-empty property set without metering unread classified columns.
+pub(super) fn plan_create_projected_slice<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &ActionRoot,
+    effective_input: &JsonObject,
+) -> Option<Vec<Vec<String>>> {
+    let by_alias = create_precondition_alias_reads(catalog, action)?;
+    let model = crate::CommitModel::new(catalog);
+    let mut by_canonical: BTreeMap<FactKey, BTreeSet<String>> = BTreeMap::new();
+    let mut entry_canonicals: Vec<(&SliceDeclaration, FactKey)> =
+        Vec::with_capacity(action.slice.len());
+    for entry in &action.slice {
+        let SliceKey::Property { from, property } = &entry.key else {
+            return None;
+        };
+        if from != "input" {
+            return None;
+        }
+        let key = effective_input
+            .get(property.as_str())
+            .and_then(RuntimeValue::as_str)
+            .filter(|value| !value.trim().is_empty())?;
+        let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
+        let props = by_alias.get(entry.name.as_str())?;
+        by_canonical
+            .entry(canonical.clone())
+            .or_default()
+            .extend(props.iter().cloned());
+        entry_canonicals.push((entry, canonical));
+    }
+    let mut per_entry = Vec::with_capacity(entry_canonicals.len());
+    for (entry, canonical) in entry_canonicals {
+        let props = by_canonical.get(&canonical)?;
+        if !props
+            .iter()
+            .all(|prop| non_computed_property(catalog, &entry.object_type, prop))
+        {
+            return None;
+        }
+        let prop_list: Vec<String> = props.iter().cloned().collect();
+        if !prop_list.is_empty() {
+            let prop_refs: Vec<&str> = prop_list.iter().map(String::as_str).collect();
+            if !host.supports_projected_read(&entry.object_type, &prop_refs) {
+                return None;
+            }
+        }
+        per_entry.push(prop_list);
+    }
+    Some(per_entry)
 }
 
 /// Bind each proved `CreateOnly` slice alias's read properties onto its exact
@@ -567,7 +650,7 @@ pub(super) fn create_reference_property_reads(
             .get(property.as_str())
             .and_then(RuntimeValue::as_str)
             .filter(|value| !value.trim().is_empty())?;
-        let canonical = model.canonical(&FactKey::new(entry.object_type.clone(), key.to_owned()));
+        let canonical = model.canonical(&FactKey::new(entry.object_type.as_str(), key));
         let mut candidates = references
             .iter()
             .enumerate()
