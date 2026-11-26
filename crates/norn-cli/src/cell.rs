@@ -169,7 +169,7 @@ fn read_path(path: &Path, _budget: &mut u64, _read: &mut Vec<Artifact>) -> Resul
 /// Open `name` under `dir` read-only: never through a final link
 /// (`O_NOFOLLOW`), and never blocking on a FIFO (`O_NONBLOCK`).
 #[cfg(unix)]
-pub(super) fn open_no_follow<P: rustix::path::Arg>(
+fn open_no_follow<P: rustix::path::Arg>(
     dir: impl std::os::fd::AsFd,
     name: P,
 ) -> Result<std::fs::File, String> {
@@ -685,7 +685,7 @@ fn collect_cookies(headers: &ureq::http::HeaderMap) -> Option<String> {
             continue;
         }
         if let Some(existing) = cookies.iter_mut().find(|(k, _)| k == name) {
-            existing.1 = value.to_owned();
+            value.clone_into(&mut existing.1);
         } else {
             cookies.push((name.to_owned(), value.to_owned()));
         }

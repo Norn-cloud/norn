@@ -231,7 +231,7 @@ fn open_tree_entry<P: rustix::path::Arg>(
         .map_err(|error| {
             if error == rustix::io::Errno::LOOP {
                 format!("{}: symlinks are refused", display_path.display())
-            } else if error == rustix::io::Errno::NXIO {
+            } else if error == rustix::io::Errno::NXIO || error == rustix::io::Errno::OPNOTSUPP {
                 format!("{}: not a regular file", display_path.display())
             } else {
                 format!("{}: {error}", display_path.display())

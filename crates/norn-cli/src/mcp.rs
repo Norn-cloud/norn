@@ -317,7 +317,7 @@ mod tests {
             )
             .map(|_| ())
             .unwrap_err();
-        assert!(escaped.message.contains("working directory"));
+        assert!(escaped.explanation.contains("working directory"));
     }
 
     #[test]
