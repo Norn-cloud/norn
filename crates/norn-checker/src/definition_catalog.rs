@@ -2,7 +2,7 @@
 use crate::action_set::{AdmittedType, Model};
 use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
-use crate::entity_scopes::{ScopedViews, scope_visible};
+use crate::entity_scopes::{ScopedView, ScopedViews, scope_visible};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::ArtifactRef;
 /// Failure to compute a projected artifact's semantic identity.
@@ -71,24 +71,24 @@ pub fn project(
             .iter()
             .map(|(_, def)| def.clone())
             .collect();
-        rows.entity(artifact, view.catalog());
+        rows.entity(artifact, view);
         rows.depends_on(artifact, &all);
     }
     for artifact in &all {
-        let model = views.of(artifact).model();
+        let view = views.of(artifact);
         if matches!(artifact.payload, ArtifactPayload::Action(_)) {
-            rows.action(artifact, model);
+            rows.action(artifact, view);
         }
         if matches!(artifact.payload, ArtifactPayload::Mapping(_)) {
-            rows.mapping(artifact, model);
+            rows.mapping(artifact, view.model());
         }
         if matches!(artifact.payload, ArtifactPayload::Law(_)) {
-            rows.law(artifact, &all, model);
+            rows.law(artifact, &all, view);
         }
     }
     for (artifact, output) in fact_decisions(all.iter().copied()) {
         if let Some(schema) = FactSchema::of(&output) {
-            rows.fact_writes(artifact, &schema, views.of(artifact).model());
+            rows.fact_writes(artifact, &schema, views.of(artifact));
         }
     }
     Ok(rows.finish())
@@ -118,6 +118,62 @@ impl PinnedType {
             .collect()
     }
 
+    /// Object-type lineage followed by implemented interfaces in child-first
+    /// topological order, each pinned to its visible artifact in `view`.
+    fn transition_lineage(admitted: AdmittedType<'_, '_>, view: &ScopedView<'_>) -> Vec<Self> {
+        let mut out = Self::lineage(admitted, view.model());
+        if !matches!(
+            view.catalog().object_type(&admitted.artifact().artifact_id),
+            Some(Ok(_))
+        ) {
+            return out;
+        }
+        let layer = view.layer();
+        let pool = view.pool();
+        let mut objects: std::collections::BTreeMap<(ArtifactKey, &str), &ObjectTypeDef> =
+            std::collections::BTreeMap::new();
+        for (def, &owner) in layer.object_types.iter().zip(&layer.object_type_owners) {
+            if let Some(envelope) = pool.get(owner) {
+                objects
+                    .entry((key(envelope), def.name.as_str()))
+                    .or_insert(def);
+            }
+        }
+        let mut ifaces: std::collections::BTreeMap<&str, InterfaceSlot<'_>> =
+            std::collections::BTreeMap::new();
+        for (def, &owner) in layer.interfaces.iter().zip(&layer.interface_owners) {
+            if let Some(envelope) = pool.get(owner) {
+                ifaces
+                    .entry(def.name.as_str())
+                    .and_modify(|slot| *slot = None)
+                    .or_insert(Some((envelope, def)));
+            }
+        }
+        let mut visited: BTreeSet<&str> = BTreeSet::new();
+        let mut post_order: Vec<(&ArtifactEnvelope, &norn_ir::InterfaceDef)> = Vec::new();
+        for pinned in out.iter().rev() {
+            let Some(obj_def) = objects.get(&(pinned.artifact.clone(), pinned.name.as_str()))
+            else {
+                continue;
+            };
+            for iface_name in obj_def.implements.iter().rev() {
+                collect_interface_post_order(
+                    iface_name.as_str(),
+                    &ifaces,
+                    &mut visited,
+                    &mut post_order,
+                );
+            }
+        }
+        for (envelope, def) in post_order.into_iter().rev() {
+            out.push(Self {
+                artifact: key(envelope),
+                name: def.name.as_str().to_owned(),
+            });
+        }
+        out
+    }
+
     fn member(&self, member: Member) -> MemberRef {
         member_of(&self.artifact, member)
     }
@@ -127,6 +183,26 @@ impl PinnedType {
             type_name: self.name.clone(),
         })
     }
+}
+
+type InterfaceSlot<'a> = Option<(&'a ArtifactEnvelope, &'a norn_ir::InterfaceDef)>;
+
+fn collect_interface_post_order<'a>(
+    name: &'a str,
+    ifaces: &std::collections::BTreeMap<&'a str, InterfaceSlot<'a>>,
+    visited: &mut BTreeSet<&'a str>,
+    out: &mut Vec<(&'a ArtifactEnvelope, &'a norn_ir::InterfaceDef)>,
+) {
+    if !visited.insert(name) {
+        return;
+    }
+    let Some(Some((envelope, def))) = ifaces.get(name) else {
+        return;
+    };
+    for parent in def.extends.iter().rev() {
+        collect_interface_post_order(parent.as_str(), ifaces, visited, out);
+    }
+    out.push((*envelope, *def));
 }
 
 #[derive(Default)]
@@ -214,13 +290,20 @@ fn member_of(key: &ArtifactKey, member: Member) -> MemberRef {
 impl Rows {
     /// GRAPH-META-1: lifecycle metadata follows admission's local enum resolution.
     fn lifecycle(&self, property: &Property, lifecycles: &[Lifecycle]) -> Option<LifecycleStates> {
+        self.lifecycle_states(&property.id, &property.property_type, lifecycles)
+    }
+
+    fn lifecycle_states(
+        &self,
+        property_id: &norn_ir::PropertyId,
+        property_type: &PropertyType,
+        lifecycles: &[Lifecycle],
+    ) -> Option<LifecycleStates> {
         let lifecycle = lifecycles
             .iter()
-            .find(|lifecycle| lifecycle.property == property.id)?;
-        let PropertyType::Enum { values } = crate::property_types::resolved_property_type(
-            &property.property_type,
-            &self.property_types,
-        )?
+            .find(|lifecycle| lifecycle.property == *property_id)?;
+        let PropertyType::Enum { values } =
+            crate::property_types::resolved_property_type(property_type, &self.property_types)?
         else {
             return None;
         };
@@ -231,7 +314,46 @@ impl Rows {
         })
     }
 
-    fn entity(&mut self, artifact: &ArtifactEnvelope, effective: &crate::EffectiveCatalog) {
+    fn interface_effective_states(
+        &self,
+        def: &norn_ir::InterfaceDef,
+        property: &norn_ir::PropertyId,
+        view: &ScopedView<'_>,
+    ) -> Option<Vec<String>> {
+        let mut by_name: std::collections::BTreeMap<&str, &norn_ir::InterfaceDef> =
+            std::collections::BTreeMap::new();
+        for iface in &view.layer().interfaces {
+            by_name.entry(iface.name.as_str()).or_insert(iface);
+        }
+        let owners = def.contract_owners(|name| by_name.get(name.as_str()).copied());
+        let mut enum_lists: Vec<Vec<String>> = Vec::new();
+        let mut own_list: Option<Vec<String>> = None;
+        for owner in owners {
+            if let Some(member) = owner.properties.iter().find(|p| p.id == *property) {
+                let PropertyType::Enum { values } = crate::property_types::resolved_property_type(
+                    &member.property_type,
+                    &self.property_types,
+                )?
+                else {
+                    return None;
+                };
+                let list: Vec<String> = values.iter().map(|v| v.value.clone()).collect();
+                if owner.name == def.name {
+                    own_list = Some(list.clone());
+                }
+                enum_lists.push(list);
+            }
+        }
+        let base = own_list.or_else(|| enum_lists.first().cloned())?;
+        Some(
+            base.into_iter()
+                .filter(|state| enum_lists.iter().all(|list| list.contains(state)))
+                .collect(),
+        )
+    }
+
+    fn entity(&mut self, artifact: &ArtifactEnvelope, view: &ScopedView<'_>) {
+        let effective = view.catalog();
         let decoded = decode_v2(artifact);
         if let (Decoded::NotV2, ArtifactPayload::Entity(payload)) = (&decoded, &artifact.payload)
             && let Ok(Some(object)) = entity_object_type(payload)
@@ -245,37 +367,7 @@ impl Rows {
         };
         match *root {
             EntityRoot::V2(root) => self.object_type(artifact, &root.object_type, effective),
-            EntityRoot::V2Interface(root) => {
-                let def = &root.interface;
-                let name = def.name.as_str().to_owned();
-                self.types.insert(TypeRow {
-                    at: at(artifact, type_member(name.clone())),
-                    kind: TypeKind::Interface,
-                    role: self
-                        .roles
-                        .get(&key(artifact))
-                        .and_then(|roles| roles.get(&name))
-                        .copied()
-                        .unwrap_or(norn_ir::ConceptRole::Thing),
-                    extends: root
-                        .interface
-                        .extends
-                        .iter()
-                        .map(|n| n.as_str().to_owned())
-                        .collect(),
-                    implements: Vec::new(),
-                });
-                for property in &def.properties {
-                    self.properties.insert(PropertyRow {
-                        at: at(artifact, property_member(&name, property.id.as_str())),
-                        computed: false,
-                        lifecycle: None,
-                    });
-                }
-                for link in &def.links {
-                    self.link(artifact, &name, link.id.as_str(), link.target.as_str());
-                }
-            }
+            EntityRoot::V2Interface(root) => self.interface(artifact, &root.interface, view),
             EntityRoot::V2Extension(root) => {
                 let extension = root.object_type_extension;
                 let name = extension.target.as_str().to_owned();
@@ -287,6 +379,78 @@ impl Rows {
                 }
             }
             EntityRoot::V2PropertyTypes(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {}
+        }
+    }
+
+    fn interface(
+        &mut self,
+        artifact: &ArtifactEnvelope,
+        def: &norn_ir::InterfaceDef,
+        view: &ScopedView<'_>,
+    ) {
+        let name = def.name.as_str().to_owned();
+        self.types.insert(TypeRow {
+            at: at(artifact, type_member(name.clone())),
+            kind: TypeKind::Interface,
+            role: self
+                .roles
+                .get(&key(artifact))
+                .and_then(|roles| roles.get(&name))
+                .copied()
+                .unwrap_or(norn_ir::ConceptRole::Thing),
+            extends: def.extends.iter().map(|n| n.as_str().to_owned()).collect(),
+            implements: Vec::new(),
+        });
+        for property in &def.properties {
+            let lifecycle = def
+                .lifecycles
+                .iter()
+                .find(|lc| lc.property == property.id)
+                .and_then(|lc| {
+                    self.interface_effective_states(def, &property.id, view)
+                        .map(|states| LifecycleStates {
+                            states,
+                            initial: lc.initial.clone(),
+                            terminal: lc.terminal.clone(),
+                        })
+                });
+            self.properties.insert(PropertyRow {
+                at: at(artifact, property_member(&name, property.id.as_str())),
+                computed: false,
+                lifecycle,
+            });
+        }
+        for link in &def.links {
+            self.link(artifact, &name, link.id.as_str(), link.target.as_str());
+        }
+        for lifecycle in &def.lifecycles {
+            if let Some(states) = self.interface_effective_states(def, &lifecycle.property, view) {
+                self.states.extend(states.iter().map(|state| {
+                    at(
+                        artifact,
+                        Member::State {
+                            type_name: name.clone(),
+                            lifecycle: lifecycle.property.as_str().to_owned(),
+                            state: state.clone(),
+                        },
+                    )
+                }));
+            }
+            for transition in &lifecycle.transitions {
+                self.transitions.insert(TransitionRow {
+                    guards: transition.guards.clone(),
+                    at: at(
+                        artifact,
+                        Member::Transition {
+                            type_name: name.clone(),
+                            lifecycle: lifecycle.property.as_str().to_owned(),
+                            transition: transition.id.as_str().to_owned(),
+                        },
+                    ),
+                    from: transition.from.clone(),
+                    to: transition.to.clone(),
+                });
+            }
         }
     }
 
@@ -495,7 +659,8 @@ impl Rows {
         }
     }
 
-    fn action(&mut self, artifact: &ArtifactEnvelope, admission: &Model<'_>) {
+    fn action(&mut self, artifact: &ArtifactEnvelope, view: &ScopedView<'_>) {
+        let admission = view.model();
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
@@ -506,7 +671,7 @@ impl Rows {
         let Some(target) = admission.effect_target(program) else {
             return;
         };
-        let lineage = PinnedType::lineage(target, admission);
+        let transition_lineage = PinnedType::transition_lineage(target, view);
         let pinned = PinnedType::of(target);
         let mut writes: Vec<MemberRef> = Vec::new();
         let via = match program {
@@ -521,7 +686,7 @@ impl Rows {
                         lifecycle: lifecycle.as_str().to_owned(),
                         transition: transition.as_str().to_owned(),
                     },
-                    &lineage,
+                    &transition_lineage,
                 ));
                 WriteVia::FireTransition
             }
@@ -656,8 +821,9 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         schema: &FactSchema<'_>,
-        admission: &Model<'_>,
+        view: &ScopedView<'_>,
     ) {
+        let admission = view.model();
         let ops = schema.ops();
         let values = |name: &str| schema.values(name).unwrap_or_default();
         for type_name in values("objectType") {
@@ -665,6 +831,7 @@ impl Rows {
                 continue;
             };
             let lineage = PinnedType::lineage(admitted, admission);
+            let transition_lineage = PinnedType::transition_lineage(admitted, view);
             let owner = PinnedType::of(admitted);
             let mut candidates = Vec::new();
             if ops.contains(&FactChangeOp::Transition) {
@@ -676,7 +843,7 @@ impl Rows {
                                 lifecycle: lifecycle.to_owned(),
                                 transition: transition.to_owned(),
                             },
-                            &lineage,
+                            &transition_lineage,
                         ) {
                             candidates.push((declared, WriteVia::FactTransition));
                         }
@@ -801,8 +968,9 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         all: &[&ArtifactEnvelope],
-        admission: &Model<'_>,
+        view: &ScopedView<'_>,
     ) {
+        let admission = view.model();
         let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
             return;
         };
@@ -830,7 +998,7 @@ impl Rows {
                         lifecycle: property,
                         transition: transition_id,
                     },
-                    &PinnedType::lineage(admitted, admission),
+                    &PinnedType::transition_lineage(admitted, view),
                 ) else {
                     return;
                 };

@@ -454,6 +454,8 @@ declare module "@norn/authoring" {
         /** INTERFACE-DISJOINT-1: interfaces mutually exclusive with this one (`A ⊓ B = ∅`). */
         readonly disjointWith?: ReadonlyArray<InterfaceDefinition<unknown> | string>
         readonly links?: ReadonlyArray<InterfaceLinkSpec>
+        /** INTERFACE-LIFECYCLE-1: lifecycles every implementing type and child interface inherits with non-weakening narrowing. */
+        readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<undefined, P, S["Type"]>>>
       },
     ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
 

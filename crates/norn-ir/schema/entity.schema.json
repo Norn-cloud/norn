@@ -587,6 +587,13 @@
             "$ref": "#/$defs/Invariant"
           }
         },
+        "lifecycles": {
+          "description": "Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Lifecycle"
+          }
+        },
         "links": {
           "description": "Required links, in presentation order; their ids are distinct from\nthe required property ids. Omitted when empty.",
           "type": "array",

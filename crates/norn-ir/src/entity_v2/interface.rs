@@ -17,6 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::invariant::Invariant;
+use super::lifecycle::Lifecycle;
 use super::link::InterfaceLink;
 use super::object::{OBJECT_TYPE_NAME_PATTERN, PropertyId};
 use super::property::{PropertyConstraints, PropertyType};
@@ -93,6 +94,9 @@ pub struct InterfaceDef {
     /// its own and inherited invariants. Omitted when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariants: Vec<Invariant>,
+    /// Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lifecycles: Vec<Lifecycle>,
 }
 
 impl InterfaceDef {

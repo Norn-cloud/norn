@@ -253,6 +253,8 @@ export interface InterfaceDef extends TypeMetaBase {
   /** Links every implementing type must declare, at most this wide. */
   readonly links: ReadonlyArray<InterfaceLinkDecl>
   readonly invariants: ReadonlyArray<InvariantDecl>
+  /** Constitutional lifecycles every implementing type and child interface inherits (`INTERFACE-LIFECYCLE-1`). */
+  readonly lifecycles?: ReadonlyArray<LifecycleDecl>
   readonly at?: SourceLocation
 }
 
@@ -325,9 +327,10 @@ export function interfaceType(
     readonly disjointWith?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<InterfaceLinkDecl>
     readonly invariants?: ReadonlyArray<InvariantDecl>
+    readonly lifecycles?: ReadonlyArray<LifecycleDecl>
   } & At,
 ): InterfaceDef {
-  const { at, extends: parents = [], disjointWith = [], links = [], invariants = [], ...rest } = meta
+  const { at, extends: parents = [], disjointWith = [], links = [], invariants = [], lifecycles = [], ...rest } = meta
   const disjoint = disjointWith.map((target) => typeof target === "string" ? target : target.name)
   return located({
     _tag: "Interface" as const,
@@ -336,6 +339,7 @@ export function interfaceType(
     ...(disjoint.length > 0 ? { disjointWith: disjoint } : {}),
     links: [...links],
     invariants: [...invariants],
+    ...(lifecycles.length > 0 ? { lifecycles: [...lifecycles] } : {}),
   }, at)
 }
 
@@ -370,6 +374,17 @@ function cardinalityJson(c: LinkDecl["cardinality"]): Json {
   return { to: c.to, from: c.from, required: c.required === true ? true : undefined } as unknown as Json
 }
 
+function lifecycleJson(l: LifecycleDecl): Json {
+  return {
+    ...l,
+    terminal: omitEmpty(l.terminal ?? []),
+    immutable: omitEmpty(l.immutable ?? []),
+    transitions: omitEmpty(l.transitions.map((t) => ({ ...t, guards: omitEmpty(t.guards ?? []) }))),
+    endings: omitEmpty(l.endings ?? []),
+    events: omitEmpty((l.events ?? []).map((e) => ({ ...e, ignoredIn: omitEmpty(e.ignoredIn ?? []) }))),
+  } as unknown as Json
+}
+
 /** Lower one object type or interface to its `entity` artifact (`<name>.entity` / `<name>.interface`). */
 export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBuildResult {
   const diagnostics = new Diagnostics()
@@ -402,6 +417,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
               ...invariant,
               ...(classification === undefined || classification === "integrity" ? {} : { classification }),
             }))),
+            lifecycles: omitEmpty((def.lifecycles ?? []).map(lifecycleJson)),
           },
         }
       : {
@@ -429,16 +445,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
             ),
             ownedCollections: omitEmpty(def.ownedCollections ?? []),
             identity: omitEmpty(def.identity),
-            lifecycles: omitEmpty(
-              def.lifecycles.map((l) => ({
-                ...l,
-                terminal: omitEmpty(l.terminal ?? []),
-                immutable: omitEmpty(l.immutable ?? []),
-                transitions: omitEmpty(l.transitions.map((t) => ({ ...t, guards: omitEmpty(t.guards ?? []) }))),
-                endings: omitEmpty(l.endings ?? []),
-                events: omitEmpty((l.events ?? []).map((e) => ({ ...e, ignoredIn: omitEmpty(e.ignoredIn ?? []) }))),
-              })),
-            ),
+            lifecycles: omitEmpty(def.lifecycles.map(lifecycleJson)),
           },
         }
   const artifact = envelope(

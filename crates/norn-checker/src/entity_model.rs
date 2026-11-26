@@ -189,7 +189,7 @@ pub fn check_interface_local(def: &InterfaceDef) -> Vec<Diagnostic> {
         interfaces: std::slice::from_ref(def),
         ..EntityModel::EMPTY
     };
-    check_one_local(&model, "/interfaces/0", false)
+    check_one_local(&model, "/interfaces/0", !def.extends.is_empty())
 }
 
 /// Check one object type extension on its own: the per-definition (T2)
@@ -240,7 +240,8 @@ fn check_one_local(model: &EntityModel<'_>, prefix: &str, subtype: bool) -> Vec<
 
 /// Whether a finding of `code` on one definition, checked alone, may be an
 /// artifact of the missing context (see [`check_object_type_local`]);
-/// `subtype` when the definition is an object type that `extends` another.
+/// `subtype` when the definition is an object type or interface that `extends`
+/// another.
 fn depends_on_other_definitions(code: &str, subtype: bool) -> bool {
     // A stopped validation pass must never disappear through local/T3 filtering.
     if code == crate::inheritance::BUDGET_EXHAUSTED {
@@ -386,6 +387,9 @@ impl<'a, 'r> Checker<'a, 'r> {
             incoming: BTreeMap::new(),
             link_tables: BTreeMap::new(),
             machines: BTreeMap::new(),
+            machine_conflicts: BTreeMap::new(),
+            interface_machines: BTreeMap::new(),
+            interface_machine_conflicts: BTreeMap::new(),
             reported: BTreeSet::new(),
             out: Vec::new(),
         }
@@ -670,6 +674,12 @@ struct Checker<'a, 'r> {
     link_tables: BTreeMap<&'a ObjectTypeName, Rc<LinkTable<'a>>>,
     /// Effective lifecycle machines, memoized.
     machines: BTreeMap<&'a ObjectTypeName, Rc<crate::lifecycles::Machines<'a>>>,
+    /// Properties whose inherited lifecycle machines conflict on an object type.
+    machine_conflicts: BTreeMap<&'a ObjectTypeName, BTreeSet<&'a PropertyId>>,
+    /// Effective lifecycle machines of interfaces, memoized.
+    interface_machines: BTreeMap<&'a InterfaceName, Rc<crate::lifecycles::Machines<'a>>>,
+    /// Properties whose inherited lifecycle machines conflict on an interface.
+    interface_machine_conflicts: BTreeMap<&'a InterfaceName, BTreeSet<&'a PropertyId>>,
     /// `(code, pointer)` of member conflicts already reported: one conflict
     /// is seen from the table of every type it reaches.
     reported: BTreeSet<(String, String)>,
@@ -1226,6 +1236,7 @@ impl<'a> Checker<'a, '_> {
         let findings = interfaces::check_link_requirements(&base, def, known);
         self.out.extend(findings);
         self.check_interface_invariants(&base, def);
+        self.check_interface_lifecycles(&base, def);
     }
 
     fn check_interface_parents(&mut self, base: &[&str], def: &'a InterfaceDef) {
@@ -1585,7 +1596,7 @@ impl<'a> Checker<'a, '_> {
         self.check_owned_collections(&base, def, parent);
         self.check_link_requirements(&base, def, registered, &ancestors, &conflicted);
         self.check_invariants(&base, def, &ancestors);
-        self.check_lifecycles(&base, def, parent, &table);
+        self.check_lifecycles(&base, def, parent, &ancestors, &table);
         self.check_accounting_leg_declaration(&base, def, &ancestors, &table);
     }
 

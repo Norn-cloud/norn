@@ -26,9 +26,9 @@ use std::collections::BTreeSet;
 
 use norn_checker::{
     Diagnostic, EntityContext, EntityModel, LifecycleWrite, Span, check_entity_model,
-    check_lifecycle_writes, check_object_type_local, lifecycles::codes,
+    check_interface_local, check_lifecycle_writes, check_object_type_local, lifecycles::codes,
 };
-use norn_ir::{ExtensionNamespace, ObjectTypeDef, PropertyTypeName};
+use norn_ir::{ExtensionNamespace, InterfaceDef, ObjectTypeDef, PropertyTypeName};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/ir/entity-v2");
 
@@ -719,5 +719,661 @@ fn guard_diagnostics_require_runtime_errors_and_retain_inherited_identity() {
         run(&[base, subtype], &[], None)
             .iter()
             .any(|(code, _)| code == codes::INVALID_GUARD_DIAGNOSTIC)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// INTERFACE-LIFECYCLE-1
+// ---------------------------------------------------------------------------
+
+fn run_with_interfaces(
+    interfaces: &[InterfaceDef],
+    object_types: &[ObjectTypeDef],
+    base_interfaces: &[InterfaceDef],
+    base_types: &[ObjectTypeDef],
+) -> Vec<(String, String)> {
+    let registry = BTreeSet::<PropertyTypeName>::new();
+    let context = EntityContext {
+        catalog: &[],
+        registry: &registry,
+        base: EntityModel {
+            interfaces: base_interfaces,
+            object_types: base_types,
+            extensions: &[],
+        },
+        tenant: None,
+    };
+    let model = EntityModel {
+        interfaces,
+        object_types,
+        extensions: &[],
+    };
+    pairs(check_entity_model(&model, &context))
+}
+
+fn commitment_interface() -> InterfaceDef {
+    serde_json::from_value(serde_json::json!({
+        "name": "core.Commitment",
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "proposed" },
+                        { "value": "active" },
+                        { "value": "fulfilled" },
+                        { "value": "cancelled" }
+                    ]
+                }
+            }
+        ],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["proposed"],
+            "terminal": ["fulfilled", "cancelled"],
+            "immutable": ["fulfilled"],
+            "endings": [
+                { "state": "fulfilled", "outcome": "completed" },
+                { "state": "cancelled", "outcome": "cancelled" }
+            ],
+            "pathProperties": [{ "target": "fulfilled", "via": "active" }],
+            "transitions": [
+                { "id": "activate", "from": ["proposed"], "to": "active", "guards": ["self.code != \"\""] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["proposed", "active"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .expect("commitment interface decodes")
+}
+
+fn commitment_implementer(name: &str, extra: serde_json::Value) -> ObjectTypeDef {
+    let mut obj = serde_json::json!({
+        "name": name,
+        "implements": ["core.Commitment"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "proposed" },
+                        { "value": "active" },
+                        { "value": "fulfilled" },
+                        { "value": "cancelled" }
+                    ]
+                },
+                "default": "proposed"
+            }
+        ],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    });
+    if let Some(map) = extra.as_object() {
+        for (k, v) in map {
+            obj[k] = v.clone();
+        }
+    }
+    serde_json::from_value(obj).expect("implementer decodes")
+}
+
+#[test]
+fn interface_lifecycle_validates_standalone_and_enforces_life_sound() {
+    let iface = commitment_interface();
+    // Valid with zero implementors, including standalone local check.
+    assert_eq!(
+        run_with_interfaces(std::slice::from_ref(&iface), &[], &[], &[]),
+        Vec::new()
+    );
+    assert_eq!(check_interface_local(&iface), Vec::new());
+
+    // Unknown property, nullable property, non-enum property.
+    let bad_prop: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.BadProp",
+        "properties": [
+            { "id": "flag", "type": { "kind": "boolean" } },
+            {
+                "id": "nullable_status",
+                "type": { "kind": "enum", "values": [{ "value": "a" }, { "value": "b" }] },
+                "constraints": { "nullable": true }
+            }
+        ],
+        "lifecycles": [
+            { "property": "missing", "initial": ["a"] },
+            { "property": "flag", "initial": ["a"] },
+            {
+                "property": "nullable_status",
+                "initial": ["a"],
+                "terminal": ["b"],
+                "transitions": [{ "id": "go", "from": ["a"], "to": "b" }]
+            }
+        ]
+    }))
+    .expect("decodes");
+    let found = run_with_interfaces(&[bad_prop], &[], &[], &[]);
+    assert!(found.contains(&(
+        codes::UNKNOWN_PROPERTY.to_owned(),
+        "/interfaces/0/lifecycles/0/property".to_owned()
+    )));
+    assert!(found.contains(&(
+        codes::PROPERTY_NOT_ENUM.to_owned(),
+        "/interfaces/0/lifecycles/1/property".to_owned()
+    )));
+    assert!(found.contains(&(
+        codes::PROPERTY_NULLABLE.to_owned(),
+        "/interfaces/0/lifecycles/2/property".to_owned()
+    )));
+
+    // LIFE-SOUND on interface: trap cycle and guarded fact.
+    let unsound: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.Unsound",
+        "properties": [{
+            "id": "status",
+            "type": { "kind": "enum", "values": [
+                { "value": "a" }, { "value": "b" }, { "value": "done" }
+            ] }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["a"],
+            "terminal": ["done"],
+            "endings": [{ "state": "done", "outcome": "completed" }],
+            "transitions": [
+                { "id": "loop_ab", "from": ["a"], "to": "b", "mode": "fact", "guards": ["true"] },
+                { "id": "loop_ba", "from": ["b"], "to": "a" }
+            ]
+        }]
+    }))
+    .expect("decodes");
+    let found = run_with_interfaces(&[unsound], &[], &[], &[]);
+    assert!(
+        found
+            .iter()
+            .any(|(code, _)| code == "lifecycle.soundness.fact_guarded")
+    );
+    assert!(
+        found
+            .iter()
+            .any(|(code, _)| code == "lifecycle.soundness.trap")
+    );
+    assert!(
+        found
+            .iter()
+            .any(|(code, _)| code == codes::UNREACHABLE_STATE)
+    );
+}
+
+#[test]
+fn implementer_inherits_interface_lifecycle_and_refuses_invalid_property_or_default() {
+    let iface = commitment_interface();
+    // Clean implementer without redeclaring lifecycle.
+    let clean = commitment_implementer("sales.OrderCommitment", serde_json::json!({}));
+    assert_eq!(
+        run_with_interfaces(
+            std::slice::from_ref(&iface),
+            std::slice::from_ref(&clean),
+            &[],
+            &[]
+        ),
+        Vec::new()
+    );
+
+    // Non-initial default on implementer refuses.
+    let bad_default = commitment_implementer(
+        "sales.BadDefault",
+        serde_json::json!({
+            "properties": [
+                { "id": "code", "type": { "kind": "text" } },
+                {
+                    "id": "status",
+                    "type": {
+                        "kind": "enum",
+                        "values": [
+                            { "value": "proposed" }, { "value": "active" },
+                            { "value": "fulfilled" }, { "value": "cancelled" }
+                        ]
+                    },
+                    "default": "active"
+                }
+            ]
+        }),
+    );
+    assert_eq!(
+        run_with_interfaces(std::slice::from_ref(&iface), &[bad_default], &[], &[]),
+        vec![(
+            codes::DEFAULT_NOT_INITIAL.to_owned(),
+            "/objectTypes/0/properties/1".to_owned()
+        )]
+    );
+
+    // Computed implementation of an interface lifecycle property refuses.
+    let computed = commitment_implementer(
+        "sales.ComputedStatus",
+        serde_json::json!({
+            "properties": [
+                { "id": "code", "type": { "kind": "text" } },
+                {
+                    "id": "status",
+                    "type": {
+                        "kind": "enum",
+                        "values": [
+                            { "value": "proposed" }, { "value": "active" },
+                            { "value": "fulfilled" }, { "value": "cancelled" }
+                        ]
+                    },
+                    "computed": "\"proposed\""
+                }
+            ]
+        }),
+    );
+    assert!(
+        run_with_interfaces(std::slice::from_ref(&iface), &[computed], &[], &[])
+            .iter()
+            .any(|(code, at)| code == codes::PROPERTY_COMPUTED
+                && at == "/objectTypes/0/implements/0")
+    );
+
+    // Enum narrowing without redeclaring lifecycle that drops initial state refuses.
+    let drops_initial = commitment_implementer(
+        "sales.NoInitial",
+        serde_json::json!({
+            "properties": [
+                { "id": "code", "type": { "kind": "text" } },
+                {
+                    "id": "status",
+                    "type": {
+                        "kind": "enum",
+                        "values": [{ "value": "active" }, { "value": "fulfilled" }]
+                    }
+                }
+            ]
+        }),
+    );
+    assert_eq!(
+        run_with_interfaces(std::slice::from_ref(&iface), &[drops_initial], &[], &[]),
+        vec![(
+            codes::EMPTY_INITIAL.to_owned(),
+            "/objectTypes/0/properties/1".to_owned()
+        )]
+    );
+
+    // Enum narrowing without redeclaring lifecycle that leaves a dead end refuses.
+    let dead_end = commitment_implementer(
+        "sales.DeadEnd",
+        serde_json::json!({
+            "properties": [
+                { "id": "code", "type": { "kind": "text" } },
+                {
+                    "id": "status",
+                    "type": {
+                        "kind": "enum",
+                        "values": [{ "value": "proposed" }, { "value": "active" }]
+                    },
+                    "default": "proposed"
+                }
+            ]
+        }),
+    );
+    assert!(
+        run_with_interfaces(std::slice::from_ref(&iface), &[dead_end], &[], &[])
+            .iter()
+            .any(|(code, _)| code == codes::DEAD_END_STATE)
+    );
+}
+
+#[test]
+fn implementer_and_child_interface_narrowing_rules_match_object_inheritance() {
+    let iface = commitment_interface();
+
+    // Valid narrowing on implementer: drops `cancel` from `active`, appends guard on `activate`.
+    let valid_narrow = commitment_implementer(
+        "sales.StrictCommitment",
+        serde_json::json!({
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["proposed"],
+                "terminal": ["fulfilled", "cancelled"],
+                "immutable": ["active", "fulfilled"],
+                "endings": [
+                    { "state": "fulfilled", "outcome": "completed" },
+                    { "state": "cancelled", "outcome": "cancelled" }
+                ],
+                "transitions": [
+                    { "id": "activate", "from": ["proposed"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) > 2"] },
+                    { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                    { "id": "cancel", "from": ["proposed"], "to": "cancelled" }
+                ]
+            }]
+        }),
+    );
+    assert_eq!(
+        run_with_interfaces(std::slice::from_ref(&iface), &[valid_narrow], &[], &[]),
+        Vec::new()
+    );
+
+    // Widening initial, adding transition, dropping guard, flipping mode, relabelling ending all refuse.
+    let bad_narrow = commitment_implementer(
+        "sales.WeakCommitment",
+        serde_json::json!({
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["proposed", "active"],
+                "terminal": ["fulfilled", "cancelled"],
+                "endings": [
+                    { "state": "fulfilled", "outcome": "compensated" },
+                    { "state": "cancelled", "outcome": "cancelled" }
+                ],
+                "transitions": [
+                    { "id": "activate", "from": ["proposed"], "to": "active", "guards": [] },
+                    { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "request" },
+                    { "id": "cancel", "from": ["proposed", "active"], "to": "cancelled" },
+                    { "id": "reopen", "from": ["active"], "to": "proposed" }
+                ]
+            }]
+        }),
+    );
+    let found = run_with_interfaces(std::slice::from_ref(&iface), &[bad_narrow], &[], &[]);
+    assert!(found.iter().any(|(c, _)| c == codes::WIDENS_INITIAL));
+    assert!(found.iter().any(|(c, _)| c == codes::DROPS_GUARD));
+    assert!(
+        found
+            .iter()
+            .any(|(c, at)| c == codes::WIDENS_TRANSITION && at.ends_with("/endings/0/outcome"))
+    );
+    assert!(
+        found
+            .iter()
+            .any(|(c, at)| c == codes::WIDENS_TRANSITION && at.ends_with("/transitions/1/mode"))
+    );
+    assert!(
+        found
+            .iter()
+            .any(|(c, at)| c == codes::WIDENS_TRANSITION && at.ends_with("/transitions/3/id"))
+    );
+
+    // Child interface narrowing parent interface: local check passes (property inherited from parent)
+    // and model check rejects widening.
+    let child_iface: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "sales.ChildCommitment",
+        "extends": ["core.Commitment"],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["proposed"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["proposed"], "to": "active", "guards": [] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["proposed"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .expect("child interface decodes");
+    assert_eq!(check_interface_local(&child_iface), Vec::new());
+    let child_found = run_with_interfaces(&[iface, child_iface], &[], &[], &[]);
+    assert!(child_found.contains(&(
+        codes::DROPS_GUARD.to_owned(),
+        "/interfaces/1/lifecycles/0/transitions/0/id".to_owned()
+    )));
+}
+
+#[test]
+fn interface_lifecycle_diamond_meets_cleanly_and_conflicts_fail_closed() {
+    let base = commitment_interface();
+    let left: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.LeftCommitment",
+        "extends": ["core.Commitment"],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["proposed"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["proposed"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) > 1"] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["proposed", "active"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .expect("left decodes");
+    let right: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.RightCommitment",
+        "extends": ["core.Commitment"],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["proposed"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["proposed"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) < 50"] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["proposed"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .expect("right decodes");
+    let join_obj: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "test.DiamondCommitment",
+        "implements": ["test.LeftCommitment", "test.RightCommitment"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "proposed" }, { "value": "active" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }
+                    ]
+                },
+                "default": "proposed"
+            }
+        ],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))
+    .expect("diamond obj decodes");
+    assert_eq!(
+        run_with_interfaces(&[base.clone(), left, right], &[join_obj], &[], &[]),
+        Vec::new()
+    );
+
+    // Conflicting interfaces: same transition id `fulfill` has incompatible target (`cancelled` vs `fulfilled`).
+    let conflicting: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.ConflictingCommitment",
+        "properties": [{
+            "id": "status",
+            "type": {
+                "kind": "enum",
+                "values": [
+                    { "value": "proposed" }, { "value": "active" },
+                    { "value": "fulfilled" }, { "value": "cancelled" }
+                ]
+            }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["proposed"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["proposed"], "to": "active" },
+                { "id": "fulfill", "from": ["active"], "to": "cancelled", "mode": "fact" }
+            ]
+        }]
+    }))
+    .expect("conflicting decodes");
+    let bad_obj: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "test.ConflictedObj",
+        "implements": ["core.Commitment", "test.ConflictingCommitment"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "proposed" }, { "value": "active" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }
+                    ]
+                },
+                "default": "proposed"
+            }
+        ],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))
+    .expect("bad obj decodes");
+    let found = run_with_interfaces(&[base.clone(), conflicting.clone()], &[bad_obj], &[], &[]);
+    assert!(found.iter().any(|(code, at)| code
+        == norn_checker::object_types::codes::INTERFACE_REQUIREMENT_CONFLICT
+        && at == "/objectTypes/0/implements/1"));
+
+    let bad_iface: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.ConflictedIface",
+        "extends": ["core.Commitment", "test.ConflictingCommitment"]
+    }))
+    .expect("bad iface decodes");
+    let found_iface = run_with_interfaces(&[base, conflicting, bad_iface], &[], &[], &[]);
+    assert!(found_iface.iter().any(|(code, at)| code
+        == norn_checker::interfaces::codes::INVALID_INHERITANCE
+        && at == "/interfaces/2/extends"));
+}
+
+#[test]
+fn interface_lifecycle_sibling_narrowing_and_dangling_compensation_refuse() {
+    // Sibling parent interface narrowing out every initial state is caught even
+    // when the child interface declares no own properties or lifecycles.
+    let iface_a: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.IfaceA",
+        "properties": [{
+            "id": "status",
+            "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "done" }] }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["done"],
+            "transitions": [{ "id": "finish", "from": ["draft"], "to": "done" }]
+        }]
+    }))
+    .expect("iface_a decodes");
+    let iface_b: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.IfaceB",
+        "properties": [{
+            "id": "status",
+            "type": { "kind": "enum", "values": [{ "value": "done" }] }
+        }]
+    }))
+    .expect("iface_b decodes");
+    let iface_c: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.IfaceC",
+        "extends": ["test.IfaceA", "test.IfaceB"]
+    }))
+    .expect("iface_c decodes");
+    let narrowed_out = run_with_interfaces(&[iface_a, iface_b, iface_c], &[], &[], &[]);
+    assert!(
+        narrowed_out
+            .iter()
+            .any(|(code, at)| code == codes::EMPTY_INITIAL && at == "/interfaces/2/extends")
+    );
+
+    // Diamond meet dropping a compensating transition fails closed.
+    let comp_a: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.CompA",
+        "properties": [{
+            "id": "status",
+            "type": {
+                "kind": "enum",
+                "values": [
+                    { "value": "draft" }, { "value": "active" },
+                    { "value": "done" }, { "value": "reversed" }
+                ]
+            }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["done", "reversed"],
+            "transitions": [
+                { "id": "charge", "from": ["draft"], "to": "active", "compensatedBy": "refund" },
+                { "id": "complete", "from": ["active"], "to": "done" },
+                { "id": "refund", "from": ["active"], "to": "reversed" }
+            ],
+            "endings": [
+                { "state": "done", "outcome": "completed" },
+                { "state": "reversed", "outcome": "compensated" }
+            ]
+        }]
+    }))
+    .expect("comp_a decodes");
+    let comp_b: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.CompB",
+        "properties": [{
+            "id": "status",
+            "type": {
+                "kind": "enum",
+                "values": [
+                    { "value": "draft" }, { "value": "active" },
+                    { "value": "done" }, { "value": "reversed" }
+                ]
+            }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["done", "reversed"],
+            "transitions": [
+                { "id": "charge", "from": ["draft"], "to": "active" },
+                { "id": "complete", "from": ["active"], "to": "done" },
+                { "id": "abandon", "from": ["draft"], "to": "reversed" }
+            ],
+            "endings": [
+                { "state": "done", "outcome": "completed" },
+                { "state": "reversed", "outcome": "compensated" }
+            ]
+        }]
+    }))
+    .expect("comp_b decodes");
+    let comp_c: InterfaceDef = serde_json::from_value(serde_json::json!({
+        "name": "test.CompC",
+        "extends": ["test.CompA", "test.CompB"]
+    }))
+    .expect("comp_c decodes");
+    let comp_conflict = run_with_interfaces(&[comp_a, comp_b, comp_c], &[], &[], &[]);
+    assert!(comp_conflict.iter().any(|(code, at)| code
+        == norn_checker::interfaces::codes::INVALID_INHERITANCE
+        && at == "/interfaces/2/extends"));
+}
+
+#[test]
+fn interface_lifecycle_diamond_lattice_over_cycle_stays_linear() {
+    // A depth-25 two-wide diamond lattice stacked above a self-cyclic interface
+    // would take ~2^25 visits without memoization across cyclic subtrees.
+    let mut interfaces: Vec<InterfaceDef> = Vec::new();
+    interfaces.push(
+        serde_json::from_value(serde_json::json!({
+            "name": "test.CycleRoot",
+            "extends": ["test.CycleRoot"]
+        }))
+        .expect("cycle root decodes"),
+    );
+    let mut prev = vec!["test.CycleRoot".to_owned()];
+    for level in 0..25_u32 {
+        let left = format!("test.L{level}A");
+        let right = format!("test.L{level}B");
+        for name in [&left, &right] {
+            interfaces.push(
+                serde_json::from_value(serde_json::json!({
+                    "name": name,
+                    "extends": prev
+                }))
+                .expect("lattice node decodes"),
+            );
+        }
+        prev = vec![left, right];
+    }
+    let found = run_with_interfaces(&interfaces, &[], &[], &[]);
+    assert!(
+        found
+            .iter()
+            .any(|(code, _)| code == norn_checker::interfaces::codes::INVALID_INHERITANCE),
+        "cycle must still be reported: {found:?}"
     );
 }

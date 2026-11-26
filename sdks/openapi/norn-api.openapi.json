@@ -18168,6 +18168,13 @@
             },
             "description": "Invariants every implementing object type satisfies, in addition to\nits own and inherited invariants. Omitted when empty."
           },
+          "lifecycles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrLifecycle"
+            },
+            "description": "Lifecycles every implementing object type and child interface inherits with non-weakening narrowing. Omitted when empty."
+          },
           "links": {
             "type": "array",
             "items": {

@@ -922,6 +922,8 @@ struct ObjectTypeSnapshot {
 struct InterfaceSnapshot {
     artifact_id: String,
     extends: Vec<String>,
+    properties: BTreeMap<String, Value>,
+    lifecycles: BTreeMap<String, Value>,
     invariants: BTreeMap<String, InvariantSnapshot>,
 }
 
@@ -989,6 +991,8 @@ impl EntityModelSnapshot {
                     InterfaceSnapshot {
                         artifact_id: artifact.artifact_id.clone(),
                         extends: strings(interface.get("extends")),
+                        properties: named_array(interface.get("properties"), "id"),
+                        lifecycles: named_array(interface.get("lifecycles"), "property"),
                         invariants: invariant_array(interface.get("invariants")),
                     },
                 );
@@ -1098,24 +1102,166 @@ impl EntityModelSnapshot {
         members
     }
 
+    /// Owners of an interface contract in topological order (parents first),
+    /// iteratively in O(V + E) time without recursion.
+    fn interface_owners_topological(&self, root: &str) -> Vec<&str> {
+        let mut pending = vec![(root, false)];
+        let mut seen = BTreeSet::new();
+        let mut owners = Vec::new();
+        while let Some((name, exiting)) = pending.pop() {
+            if exiting {
+                owners.push(name);
+            } else if seen.insert(name)
+                && let Some(interface) = self.interfaces.get(name)
+            {
+                pending.push((name, true));
+                for parent in interface.extends.iter().rev() {
+                    pending.push((parent.as_str(), false));
+                }
+            }
+        }
+        owners
+    }
+
+    fn interface_effective_lifecycles(
+        &self,
+        name: &str,
+    ) -> (BTreeMap<String, LifecycleSnapshot>, BTreeSet<String>) {
+        let owners = self.interface_owners_topological(name);
+        if owners.iter().all(|owner| {
+            self.interfaces
+                .get(*owner)
+                .is_none_or(|iface| iface.lifecycles.is_empty())
+        }) {
+            return (BTreeMap::new(), BTreeSet::new());
+        }
+        let mut enum_cache: BTreeMap<&str, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
+        let mut cache: BTreeMap<&str, (BTreeMap<String, LifecycleSnapshot>, BTreeSet<String>)> =
+            BTreeMap::new();
+        for &owner in &owners {
+            let Some(interface) = self.interfaces.get(owner) else {
+                continue;
+            };
+            let mut states: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for parent in &interface.extends {
+                if let Some(parent_states) = enum_cache.get(parent.as_str()) {
+                    for (property, vals) in parent_states {
+                        states
+                            .entry(property.clone())
+                            .and_modify(|existing| existing.retain(|s| vals.contains(s)))
+                            .or_insert_with(|| vals.clone());
+                    }
+                }
+            }
+            for (property, value) in &interface.properties {
+                let own = enum_values(value);
+                if own.is_empty() {
+                    states.remove(property);
+                } else {
+                    states
+                        .entry(property.clone())
+                        .and_modify(|existing| existing.retain(|s| own.contains(s)))
+                        .or_insert(own);
+                }
+            }
+            let mut machines: BTreeMap<String, LifecycleSnapshot> = BTreeMap::new();
+            let mut conflicts: BTreeSet<String> = BTreeSet::new();
+            let mut seen_parents = BTreeSet::new();
+            for parent in &interface.extends {
+                if !seen_parents.insert(parent.as_str()) {
+                    continue;
+                }
+                let Some((parent_machines, parent_conflicts)) = cache.get(parent.as_str()) else {
+                    continue;
+                };
+                for prop in parent_conflicts {
+                    conflicts.insert(prop.clone());
+                    machines.remove(prop);
+                }
+                for (property, parent_machine) in parent_machines {
+                    if conflicts.contains(property) {
+                        continue;
+                    }
+                    let Some(property_states) = states.get(property) else {
+                        continue;
+                    };
+                    let mut restricted = parent_machine.clone();
+                    restricted.restrict(property_states);
+                    if let Some(existing) = machines.get_mut(property) {
+                        if !existing.meet(&restricted) {
+                            machines.remove(property);
+                            conflicts.insert(property.clone());
+                        }
+                    } else {
+                        machines.insert(property.clone(), restricted);
+                    }
+                }
+            }
+            for (property, value) in &interface.lifecycles {
+                if conflicts.contains(property) {
+                    continue;
+                }
+                let property_states = states.get(property).cloned().unwrap_or_default();
+                let mut declared = LifecycleSnapshot::from_value(value, &property_states);
+                if let Some(inherited) = machines.get(property) {
+                    declared.conjoin(inherited);
+                }
+                machines.insert(property.clone(), declared);
+            }
+            enum_cache.insert(owner, states);
+            cache.insert(owner, (machines, conflicts));
+        }
+        cache.remove(name).unwrap_or_default()
+    }
+
+    fn ancestor_interfaces(&self, name: &str, seen: &mut BTreeSet<String>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        let Some(definition) = self.object_types.get(name) else {
+            return out;
+        };
+        let Some(parent) = definition.extends.as_deref() else {
+            return out;
+        };
+        let mut current = Some(parent.to_owned());
+        while let Some(ancestor) = current {
+            if !seen.insert(ancestor.clone()) {
+                break;
+            }
+            let Some(ancestor_def) = self.object_types.get(&ancestor) else {
+                break;
+            };
+            let mut pending: Vec<String> = ancestor_def.implements.clone();
+            while let Some(iface_name) = pending.pop() {
+                if out.insert(iface_name.clone())
+                    && let Some(iface) = self.interfaces.get(&iface_name)
+                {
+                    pending.extend(iface.extends.iter().cloned());
+                }
+            }
+            current.clone_from(&ancestor_def.extends);
+        }
+        out
+    }
+
     fn effective_lifecycles(
         &self,
         name: &str,
         seen: &mut BTreeSet<String>,
-    ) -> BTreeMap<String, LifecycleSnapshot> {
+    ) -> (BTreeMap<String, LifecycleSnapshot>, BTreeSet<String>) {
         if !seen.insert(name.to_owned()) {
-            return BTreeMap::new();
+            return (BTreeMap::new(), BTreeSet::new());
         }
         let Some(definition) = self.object_types.get(name) else {
             seen.remove(name);
-            return BTreeMap::new();
+            return (BTreeMap::new(), BTreeSet::new());
         };
         let properties = self.effective_properties(name, &mut BTreeSet::new());
         let states = properties
             .iter()
+            .filter(|(_, value)| value.get("computed").is_none())
             .map(|(property, value)| (property.clone(), enum_values(value)))
             .collect::<BTreeMap<_, _>>();
-        let mut machines = definition
+        let (mut machines, mut conflicts) = definition
             .extends
             .as_deref()
             .map_or_default(|parent| self.effective_lifecycles(parent, seen));
@@ -1125,22 +1271,51 @@ impl EntityModelSnapshot {
                 machine.restrict(property_states);
             }
         }
+        let inherited_interfaces = self.ancestor_interfaces(name, &mut BTreeSet::new());
+        let mut seen_direct = BTreeSet::new();
+        for interface_name in &definition.implements {
+            if inherited_interfaces.contains(interface_name)
+                || !seen_direct.insert(interface_name.as_str())
+            {
+                continue;
+            }
+            let (iface_machines, iface_conflicts) =
+                self.interface_effective_lifecycles(interface_name);
+            for prop in iface_conflicts {
+                conflicts.insert(prop.clone());
+                machines.remove(&prop);
+            }
+            for (property, mut iface_machine) in iface_machines {
+                if conflicts.contains(&property) {
+                    continue;
+                }
+                let Some(property_states) = states.get(&property) else {
+                    continue;
+                };
+                iface_machine.restrict(property_states);
+                if let Some(existing) = machines.get_mut(&property) {
+                    if !existing.meet(&iface_machine) {
+                        machines.remove(&property);
+                        conflicts.insert(property);
+                    }
+                } else {
+                    machines.insert(property, iface_machine);
+                }
+            }
+        }
         for (property, value) in &definition.lifecycles {
+            if conflicts.contains(property) || !states.contains_key(property) {
+                continue;
+            }
             let property_states = states.get(property).cloned().unwrap_or_default();
             let mut declared = LifecycleSnapshot::from_value(value, &property_states);
             if let Some(inherited) = machines.get(property) {
-                for (id, transition) in &mut declared.transitions {
-                    if let Some(parent) = inherited.transitions.get(id) {
-                        transition.guards.extend(parent.guards.iter().cloned());
-                        transition.guards.sort();
-                        transition.guards.dedup();
-                    }
-                }
+                declared.conjoin(inherited);
             }
             machines.insert(property.clone(), declared);
         }
         seen.remove(name);
-        machines
+        (machines, conflicts)
     }
 
     fn effective_invariants(
@@ -1338,6 +1513,16 @@ struct TransitionSnapshot {
     from: BTreeSet<String>,
     to: String,
     guards: Vec<String>,
+    mode: Option<String>,
+    trigger: Option<Value>,
+    compensated_by: Option<String>,
+    guard_refusal_code: Option<String>,
+}
+
+impl TransitionSnapshot {
+    fn is_fact(&self) -> bool {
+        self.trigger.is_some() || self.mode.as_deref() == Some("fact")
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1345,6 +1530,8 @@ struct LifecycleSnapshot {
     states: BTreeSet<String>,
     initial: BTreeSet<String>,
     terminal: BTreeSet<String>,
+    immutable: BTreeSet<String>,
+    endings: BTreeMap<String, String>,
     transitions: BTreeMap<String, TransitionSnapshot>,
 }
 
@@ -1367,14 +1554,40 @@ impl LifecycleSnapshot {
                             .unwrap_or_default()
                             .to_owned(),
                         guards: strings(transition.get("guards")),
+                        mode: transition
+                            .get("mode")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        trigger: transition.get("trigger").cloned(),
+                        compensated_by: transition
+                            .get("compensatedBy")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        guard_refusal_code: transition
+                            .get("guardRefusalCode")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                     },
                 ))
+            })
+            .collect();
+        let endings = value
+            .get("endings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|ending| {
+                let state = ending.get("state")?.as_str()?.to_owned();
+                let outcome = ending.get("outcome")?.as_str()?.to_owned();
+                Some((state, outcome))
             })
             .collect();
         let mut machine = Self {
             states: states.clone(),
             initial: strings(value.get("initial")).into_iter().collect(),
             terminal: strings(value.get("terminal")).into_iter().collect(),
+            immutable: strings(value.get("immutable")).into_iter().collect(),
+            endings,
             transitions,
         };
         machine.restrict(states);
@@ -1385,10 +1598,137 @@ impl LifecycleSnapshot {
         self.states.clone_from(states);
         self.initial.retain(|state| states.contains(state));
         self.terminal.retain(|state| states.contains(state));
+        self.immutable.retain(|state| states.contains(state));
+        self.endings.retain(|state, _| states.contains(state));
         self.transitions.retain(|_, transition| {
             transition.from.retain(|state| states.contains(state));
             states.contains(&transition.to) && !transition.from.is_empty()
         });
+    }
+
+    fn conjoin(&mut self, inherited: &Self) {
+        self.terminal.extend(
+            inherited
+                .terminal
+                .iter()
+                .filter(|state| self.states.contains(*state))
+                .cloned(),
+        );
+        self.immutable.extend(
+            inherited
+                .immutable
+                .iter()
+                .filter(|state| self.states.contains(*state))
+                .cloned(),
+        );
+        for (state, outcome) in &inherited.endings {
+            if self.states.contains(state) {
+                self.endings
+                    .entry(state.clone())
+                    .or_insert_with(|| outcome.clone());
+            }
+        }
+        for (id, transition) in &mut self.transitions {
+            if let Some(parent) = inherited.transitions.get(id) {
+                if transition.mode.is_none() {
+                    transition.mode.clone_from(&parent.mode);
+                }
+                if transition.trigger.is_none() {
+                    transition.trigger.clone_from(&parent.trigger);
+                }
+                if transition.compensated_by.is_none() {
+                    transition.compensated_by.clone_from(&parent.compensated_by);
+                }
+                if parent.guard_refusal_code.is_some() {
+                    transition
+                        .guard_refusal_code
+                        .clone_from(&parent.guard_refusal_code);
+                }
+                transition.guards.extend(parent.guards.iter().cloned());
+                transition.guards.sort();
+                transition.guards.dedup();
+            }
+        }
+    }
+
+    fn meet(&mut self, other: &Self) -> bool {
+        self.initial.retain(|state| other.initial.contains(state));
+        if self.initial.is_empty() {
+            return false;
+        }
+        self.terminal.extend(other.terminal.iter().cloned());
+        self.immutable.extend(other.immutable.iter().cloned());
+        for (state, outcome) in &other.endings {
+            if let Some(existing) = self.endings.get(state) {
+                if existing != outcome {
+                    return false;
+                }
+            } else {
+                self.endings.insert(state.clone(), outcome.clone());
+            }
+        }
+        for (state, outcome) in &self.endings {
+            let is_final = outcome != "resting";
+            if is_final != self.terminal.contains(state) {
+                return false;
+            }
+        }
+        let mut conflict = false;
+        let terminal = &self.terminal;
+        self.transitions.retain(|id, transition| {
+            let Some(other_transition) = other.transitions.get(id) else {
+                return false;
+            };
+            if transition.to != other_transition.to
+                || transition.is_fact() != other_transition.is_fact()
+                || (transition.trigger.is_some()
+                    && other_transition.trigger.is_some()
+                    && transition.trigger != other_transition.trigger)
+                || (transition.compensated_by.is_some()
+                    && other_transition.compensated_by.is_some()
+                    && transition.compensated_by != other_transition.compensated_by)
+                || (transition.guard_refusal_code.is_some()
+                    && other_transition.guard_refusal_code.is_some()
+                    && transition.guard_refusal_code != other_transition.guard_refusal_code)
+            {
+                conflict = true;
+                return false;
+            }
+            transition
+                .from
+                .retain(|state| other_transition.from.contains(state) && !terminal.contains(state));
+            if transition.mode.is_none() {
+                transition.mode.clone_from(&other_transition.mode);
+            }
+            if transition.trigger.is_none() {
+                transition.trigger.clone_from(&other_transition.trigger);
+            }
+            if transition.compensated_by.is_none() {
+                transition
+                    .compensated_by
+                    .clone_from(&other_transition.compensated_by);
+            }
+            if transition.guard_refusal_code.is_none() {
+                transition
+                    .guard_refusal_code
+                    .clone_from(&other_transition.guard_refusal_code);
+            }
+            transition
+                .guards
+                .extend(other_transition.guards.iter().cloned());
+            transition.guards.sort();
+            transition.guards.dedup();
+            !transition.from.is_empty()
+        });
+        if conflict {
+            return false;
+        }
+        !self.transitions.iter().any(|(id, transition)| {
+            transition
+                .compensated_by
+                .as_ref()
+                .is_some_and(|comp| comp == id || !self.transitions.contains_key(comp))
+        })
     }
 }
 
@@ -1405,8 +1745,21 @@ fn diff_effective_lifecycles(
         let Some(after_type) = candidate.object_types.get(name) else {
             continue;
         };
-        let before = previous.effective_lifecycles(name, &mut BTreeSet::new());
-        let after = candidate.effective_lifecycles(name, &mut BTreeSet::new());
+        let (before, _) = previous.effective_lifecycles(name, &mut BTreeSet::new());
+        let (after, after_conflicts) = candidate.effective_lifecycles(name, &mut BTreeSet::new());
+        for property in &after_conflicts {
+            if before.contains_key(property) {
+                push_narrowing(
+                    out,
+                    "lifecycle_conflict",
+                    &after_type.artifact_id,
+                    Some(name),
+                    Some(property),
+                    vec![property.clone()],
+                    format!("inherited lifecycles for {name}.{property} conflict and fail closed"),
+                );
+            }
+        }
         for (property, next) in &after {
             let Some(old) = before.get(property) else {
                 if previous
@@ -1456,6 +1809,16 @@ fn diff_effective_lifecycles(
                 property,
                 &old.terminal,
                 &next.terminal,
+            );
+            push_set_addition(
+                out,
+                "lifecycle_immutable_added",
+                "immutable states added",
+                &after_type.artifact_id,
+                name,
+                property,
+                &old.immutable,
+                &next.immutable,
             );
             for (transition, old_transition) in &old.transitions {
                 let Some(new_transition) = next.transitions.get(transition) else {

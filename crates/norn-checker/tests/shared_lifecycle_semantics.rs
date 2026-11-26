@@ -19,8 +19,9 @@ use std::path::Path;
 use norn_checker::entity_scopes::ScopedView;
 use norn_checker::{lifecycle_writes, lifecycles};
 use norn_ir::{
-    ArtifactEnvelope, FiringRefusal, ObjectTypeDef, ObjectTypeExtension,
-    declared_lifecycle_properties, effective_lifecycles, lifecycle_codes,
+    ArtifactEnvelope, FiringRefusal, InterfaceDef, ObjectTypeDef, ObjectTypeExtension,
+    declared_lifecycle_properties, declared_lifecycle_properties_with_interfaces,
+    effective_lifecycles, effective_lifecycles_with_interfaces, lifecycle_codes,
 };
 use serde_json::{Value, json};
 
@@ -252,5 +253,280 @@ fn lifecycle_over_an_extension_property_is_effective() {
         declared_lifecycle_properties(&lookup, "commerce.AcmeTicket")
             .iter()
             .any(|property| property.as_str() == "acme__stage")
+    );
+}
+
+fn interface_envelope(interface: &Value) -> ArtifactEnvelope {
+    let name = interface["name"].as_str().expect("name");
+    serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": format!("{name}.interface"),
+        "kind": "entity",
+        "namespace": "commerce",
+        "name": name,
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": { "orgId": "org_demo", "environmentId": "dev" },
+        "dependencies": [],
+        "provenance": { "source": "authoring_sdk", "sourcePath": "tests/shared_lifecycle_semantics.rs" },
+        "payload": { "entityVersion": "2.0", "interface": interface }
+    }))
+    .expect("interface envelope decodes")
+}
+
+#[test]
+fn interface_effective_lifecycles_equal_checker_machines() {
+    let base_iface = json!({
+        "name": "commerce.Tracked",
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "draft" }, { "value": "active" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }
+                    ]
+                }
+            }
+        ],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["fulfilled", "cancelled"],
+            "immutable": ["fulfilled"],
+            "endings": [
+                { "state": "fulfilled", "outcome": "completed" },
+                { "state": "cancelled", "outcome": "cancelled" }
+            ],
+            "pathProperties": [{ "target": "fulfilled", "via": "active" }],
+            "transitions": [
+                { "id": "activate", "from": ["draft"], "to": "active", "guards": ["self.code != \"\""] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["draft", "active"], "to": "cancelled" }
+            ]
+        }]
+    });
+    let left_iface = json!({
+        "name": "commerce.LeftTracked",
+        "extends": ["commerce.Tracked"],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["draft"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) > 1"] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["draft", "active"], "to": "cancelled" }
+            ]
+        }]
+    });
+    let right_iface = json!({
+        "name": "commerce.RightTracked",
+        "extends": ["commerce.Tracked"],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["fulfilled", "cancelled"],
+            "immutable": ["active"],
+            "transitions": [
+                { "id": "activate", "from": ["draft"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) < 50"] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["draft"], "to": "cancelled" }
+            ]
+        }]
+    });
+    let direct_obj = json!({
+        "name": "commerce.DirectCommitment",
+        "implements": ["commerce.Tracked"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "draft" }, { "value": "active" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }
+                    ]
+                },
+                "default": "draft"
+            }
+        ]
+    });
+    let narrowed_enum_obj = json!({
+        "name": "commerce.NoCancelCommitment",
+        "implements": ["commerce.Tracked"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }
+                    ]
+                },
+                "default": "draft"
+            }
+        ]
+    });
+    let diamond_obj = json!({
+        "name": "commerce.DiamondCommitment",
+        "implements": ["commerce.LeftTracked", "commerce.RightTracked"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            {
+                "id": "status",
+                "type": {
+                    "kind": "enum",
+                    "values": [
+                        { "value": "draft" }, { "value": "active" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }
+                    ]
+                },
+                "default": "draft"
+            }
+        ]
+    });
+    let redeclared_sub = json!({
+        "name": "commerce.SubCommitment",
+        "extends": "commerce.DirectCommitment",
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["draft"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) > 3"] },
+                { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
+                { "id": "cancel", "from": ["draft"], "to": "cancelled" }
+            ]
+        }]
+    });
+
+    let ifaces = [&base_iface, &left_iface, &right_iface];
+    let objs = [
+        &direct_obj,
+        &narrowed_enum_obj,
+        &diamond_obj,
+        &redeclared_sub,
+    ];
+    let mut artifacts: Vec<ArtifactEnvelope> =
+        ifaces.iter().map(|i| interface_envelope(i)).collect();
+    artifacts.extend(objs.iter().map(|o| envelope(o)));
+
+    let iface_defs: Vec<InterfaceDef> = ifaces
+        .iter()
+        .map(|v| serde_json::from_value((*v).clone()).expect("iface decodes"))
+        .collect();
+    let obj_defs: Vec<ObjectTypeDef> = objs
+        .iter()
+        .map(|v| serde_json::from_value((*v).clone()).expect("obj decodes"))
+        .collect();
+    let by_type: BTreeMap<&str, &ObjectTypeDef> =
+        obj_defs.iter().map(|d| (d.name.as_str(), d)).collect();
+    let by_iface: BTreeMap<&str, &InterfaceDef> =
+        iface_defs.iter().map(|d| (d.name.as_str(), d)).collect();
+    let lookup = |name: &str| by_type.get(name).copied();
+    let lookup_iface = |name: &str| by_iface.get(name).copied();
+
+    let catalog =
+        ScopedView::uniform(&artifacts, &std::collections::BTreeSet::new()).into_catalog();
+    for def in &obj_defs {
+        let name = def.name.as_str();
+        let checker = catalog
+            .object_type(&format!("{name}.entity"))
+            .expect("defined")
+            .unwrap_or_else(|finding| panic!("{name} unavailable: {finding:?}"));
+        let expected: Vec<_> = checker
+            .lifecycles
+            .iter()
+            .map(|effective| effective.lifecycle.clone())
+            .collect();
+        let shared: Vec<_> =
+            effective_lifecycles_with_interfaces(&lookup, &lookup_iface, &[], name)
+                .into_values()
+                .collect();
+        assert_eq!(shared, expected, "{name}");
+        assert!(
+            declared_lifecycle_properties_with_interfaces(&lookup, &lookup_iface, name)
+                .iter()
+                .any(|p| p.as_str() == "status"),
+            "{name} declares status lifecycle via interface"
+        );
+    }
+
+    // Verify diamond meet conjoined guards and immutable states from both branches.
+    let diamond = effective_lifecycles_with_interfaces(
+        &lookup,
+        &lookup_iface,
+        &[],
+        "commerce.DiamondCommitment",
+    );
+    let status = &diamond[&norn_ir::PropertyId("status".to_owned())];
+    assert_eq!(status.immutable, ["active", "fulfilled"]);
+    let activate = status
+        .transitions
+        .iter()
+        .find(|t| t.id.as_str() == "activate")
+        .expect("activate");
+    assert_eq!(
+        activate
+            .guards
+            .iter()
+            .map(norn_ir::ZenExpression::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "self.code != \"\"",
+            "len(self.code) > 1",
+            "len(self.code) < 50"
+        ]
+    );
+    // Conflicting interfaces omit the machine from effective_lifecycles_with_interfaces
+    // while keeping the property in declared_lifecycle_properties_with_interfaces (fail closed).
+    let conflicting: InterfaceDef = serde_json::from_value(json!({
+        "name": "commerce.Conflicting",
+        "properties": [{
+            "id": "status",
+            "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }, { "value": "cancelled" }] }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["draft"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .expect("conflicting decodes");
+    let conflicted_obj: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "commerce.Conflicted",
+        "implements": ["commerce.Tracked", "commerce.Conflicting"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }, { "value": "cancelled" }] } }
+        ]
+    }))
+    .expect("conflicted obj decodes");
+    let mut by_type2 = by_type;
+    by_type2.insert(conflicted_obj.name.as_str(), &conflicted_obj);
+    let mut by_iface2 = by_iface;
+    by_iface2.insert(conflicting.name.as_str(), &conflicting);
+    let lookup2 = |name: &str| by_type2.get(name).copied();
+    let lookup_iface2 = |name: &str| by_iface2.get(name).copied();
+    assert!(
+        effective_lifecycles_with_interfaces(&lookup2, &lookup_iface2, &[], "commerce.Conflicted")
+            .is_empty()
+    );
+    assert!(
+        declared_lifecycle_properties_with_interfaces(
+            &lookup2,
+            &lookup_iface2,
+            "commerce.Conflicted"
+        )
+        .iter()
+        .any(|p| p.as_str() == "status")
     );
 }
