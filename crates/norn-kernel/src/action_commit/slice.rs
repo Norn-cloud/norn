@@ -96,6 +96,15 @@ fn patch_read_properties(
     // Derivations run before the slice is loaded and consume only caller
     // input and earlier derived values. No stored values enter that phase.
     for expression in &action.preconditions {
+        if norn_expr::expression_reads(&expression.0, "slice")
+            .ok()?
+            .whole_root
+            || !norn_expr::expression_element_paths(&expression.0, "slice")
+                .ok()?
+                .is_empty()
+        {
+            return None;
+        }
         for path in norn_expr::expression_read_paths(&expression.0, "slice").ok()? {
             let [alias, property] = path.as_slice() else {
                 return None;
@@ -103,25 +112,37 @@ fn patch_read_properties(
             if !action.slice.iter().any(|entry| entry.name == *alias) {
                 return None;
             }
-            effective.property(property)?;
+            let prop = effective.property(property)?;
+            if prop.computed {
+                return None;
+            }
             properties.insert(property.clone());
         }
     }
-    // Admission also evaluates effective invariants against the final object.
-    // Their operands remain classified even when they are unrelated to an
-    // action's explicit preconditions or supplied by the caller this time.
+    // Admission evaluates effective invariants and retained governing laws
+    // against the post-state; their operands remain classified even when
+    // unrelated to explicit preconditions or caller inputs.
     for invariant in catalog.invariants(&target.object_type).ok()? {
-        for path in
-            norn_expr::expression_read_paths(invariant.invariant.expression.as_str(), "self")
+        let text = invariant.invariant.expression.as_str();
+        if norn_expr::expression_reads(text, "self").ok()?.whole_root
+            || !norn_expr::expression_element_paths(text, "self")
                 .ok()?
+                .is_empty()
         {
+            return None;
+        }
+        for path in norn_expr::expression_read_paths(text, "self").ok()? {
             let [property] = path.as_slice() else {
                 return None;
             };
-            effective.property(property)?;
+            let prop = effective.property(property)?;
+            if prop.computed {
+                return None;
+            }
             properties.insert(property.clone());
         }
     }
+    super::receipt::collect_patch_law_property_reads(catalog, target, &mut properties)?;
     for property in &effective.properties {
         if !property.computed
             && matches!(

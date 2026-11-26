@@ -118,6 +118,18 @@ fn signed_principal_attributes_decode_typed_scalars_and_sets_and_reject_spoofing
         malformed["norn"]["attributes"] = bad;
         assert!(resolve(&token(&malformed)).is_err());
     }
+
+    // Duplicate attribute keys in raw JSON must fail closed even if the later value is valid.
+    let head = URL_SAFE_NO_PAD.encode(r#"{"alg":"EdDSA","kid":"k1"}"#);
+    let raw_payload = format!(
+        r#"{{"iss":"{ISSUER}","aud":"norn-host","sub":"u1","iat":{},"exp":{},"norn":{{"kind":"user","org":"org_a","role":"member","amr":"password","attributes":{{"team":1.5,"team":"ok"}}}}}}"#,
+        NOW - 10,
+        NOW + 290
+    );
+    let body = URL_SAFE_NO_PAD.encode(raw_payload.as_bytes());
+    let sig = key(1).sign(format!("{head}.{body}").as_bytes());
+    let dup_token = format!("{head}.{body}.{}", URL_SAFE_NO_PAD.encode(sig.to_bytes()));
+    assert!(resolve(&dup_token).is_err());
 }
 
 #[test]

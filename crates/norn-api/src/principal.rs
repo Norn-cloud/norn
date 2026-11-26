@@ -111,8 +111,8 @@ struct NornClaims {
     amr: String,
     #[serde(default, rename = "accountablePerson")]
     accountable_person: Option<String>,
-    #[serde(default)]
-    attributes: BTreeMap<String, serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_principal_attributes")]
+    attributes: BTreeMap<String, AttrValue>,
 }
 
 const MAX_PRINCIPAL_ATTRIBUTES: usize = 64;
@@ -128,50 +128,80 @@ fn valid_attribute_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn decode_principal_attributes(
-    raw: BTreeMap<String, serde_json::Value>,
-) -> Option<BTreeMap<String, AttrValue>> {
-    if raw.len() > MAX_PRINCIPAL_ATTRIBUTES {
-        return None;
-    }
-    let mut decoded = BTreeMap::new();
-    for (name, value) in raw {
-        if !valid_attribute_name(&name) {
-            return None;
-        }
-        let attr = match value {
-            serde_json::Value::Bool(flag) => AttrValue::Bool(flag),
-            serde_json::Value::Number(num) => AttrValue::Long(num.as_i64()?),
-            serde_json::Value::String(text) => AttrValue::String(text),
-            serde_json::Value::Array(items) => {
-                if items.len() > MAX_PRINCIPAL_SET_ITEMS {
-                    return None;
-                }
-                let mut set = Vec::with_capacity(items.len());
-                let mut elem_kind: Option<u8> = None;
-                for item in items {
-                    let (kind, elem) = match item {
-                        serde_json::Value::Bool(flag) => (0u8, AttrValue::Bool(flag)),
-                        serde_json::Value::Number(num) => (1u8, AttrValue::Long(num.as_i64()?)),
-                        serde_json::Value::String(text) => (2u8, AttrValue::String(text)),
-                        _ => return None,
-                    };
-                    if let Some(expected) = elem_kind {
-                        if expected != kind {
-                            return None;
-                        }
-                    } else {
-                        elem_kind = Some(kind);
-                    }
-                    set.push(elem);
-                }
-                AttrValue::Set(set)
+fn decode_attr_value(value: serde_json::Value) -> Option<AttrValue> {
+    match value {
+        serde_json::Value::Bool(flag) => Some(AttrValue::Bool(flag)),
+        serde_json::Value::Number(num) => Some(AttrValue::Long(num.as_i64()?)),
+        serde_json::Value::String(text) => Some(AttrValue::String(text)),
+        serde_json::Value::Array(items) => {
+            if items.len() > MAX_PRINCIPAL_SET_ITEMS {
+                return None;
             }
-            _ => return None,
-        };
-        decoded.insert(name, attr);
+            let mut set = Vec::with_capacity(items.len());
+            let mut elem_kind: Option<u8> = None;
+            for item in items {
+                let (kind, elem) = match item {
+                    serde_json::Value::Bool(flag) => (0u8, AttrValue::Bool(flag)),
+                    serde_json::Value::Number(num) => (1u8, AttrValue::Long(num.as_i64()?)),
+                    serde_json::Value::String(text) => (2u8, AttrValue::String(text)),
+                    _ => return None,
+                };
+                if let Some(expected) = elem_kind {
+                    if expected != kind {
+                        return None;
+                    }
+                } else {
+                    elem_kind = Some(kind);
+                }
+                set.push(elem);
+            }
+            Some(AttrValue::Set(set))
+        }
+        _ => None,
     }
-    Some(decoded)
+}
+
+/// Deserialize `norn.attributes` rejecting duplicate keys, oversized maps,
+/// invalid names (including `"id"`), and unsupported values before insertion.
+fn deserialize_principal_attributes<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, AttrValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct AttrMapVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for AttrMapVisitor {
+        type Value = BTreeMap<String, AttrValue>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a map of typed principal attributes without duplicate keys")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut decoded = BTreeMap::new();
+            while let Some((name, raw)) = map.next_entry::<String, serde_json::Value>()? {
+                if decoded.len() >= MAX_PRINCIPAL_ATTRIBUTES {
+                    return Err(serde::de::Error::custom("too many principal attributes"));
+                }
+                if !valid_attribute_name(&name) {
+                    return Err(serde::de::Error::custom("invalid principal attribute name"));
+                }
+                if decoded.contains_key(&name) {
+                    return Err(serde::de::Error::custom("duplicate principal attribute"));
+                }
+                let attr = decode_attr_value(raw)
+                    .ok_or_else(|| serde::de::Error::custom("invalid principal attribute value"))?;
+                decoded.insert(name, attr);
+            }
+            Ok(decoded)
+        }
+    }
+
+    deserializer.deserialize_map(AttrMapVisitor)
 }
 
 #[derive(Deserialize)]
@@ -301,7 +331,6 @@ impl TokenVerifier {
             }
             None => None,
         };
-        let attributes = decode_principal_attributes(norn.attributes)?;
         Some(Principal {
             subject_id,
             actor_kind,
@@ -310,7 +339,7 @@ impl TokenVerifier {
             auth_method: norn.amr,
             role_table: self.roles.version,
             accountable_person,
-            attributes,
+            attributes: norn.attributes,
         })
     }
 }

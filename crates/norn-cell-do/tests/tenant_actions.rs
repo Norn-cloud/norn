@@ -888,9 +888,24 @@ fn an_unverified_principal_attribute_never_permits() {
     assert_eq!(ok.status, 200, "{}", ok.body);
 }
 
-fn hr_abac_entities() -> (Value, Value) {
+fn hr_abac_entities() -> (Value, Value, Value) {
     let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
     let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    let markings_entity = json!({
+        "irVersion": "0.1", "artifactId": "hr.markings.entity", "kind": "entity",
+        "namespace": "hr", "name": "Markings", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "entityVersion": "2.0",
+            "markings": [{
+                "category": "pii.contact",
+                "id": "pii.contact",
+                "label": "Contact",
+                "mask": { "kind": "pseudonym", "subject": "Contact" },
+                "severity": "high"
+            }]
+        }
+    });
     let emp_entity = json!({
         "irVersion": "0.1", "artifactId": "hr.Employee.entity", "kind": "entity",
         "namespace": "hr", "name": "Employee", "version": "1.0.0", "lifecycle": "active",
@@ -925,7 +940,7 @@ fn hr_abac_entities() -> (Value, Value) {
             }]
         }}
     });
-    (emp_entity, leave_entity)
+    (markings_entity, emp_entity, leave_entity)
 }
 
 fn hr_leave_action(id: &str, precond: &str) -> Value {
@@ -965,17 +980,24 @@ fn hr_leave_action(id: &str, precond: &str) -> Value {
     })
 }
 
-fn hr_abac_ifc_artifacts() -> Vec<Value> {
+fn hr_employee_actions() -> (Value, Value) {
     let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
     let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
-    let (emp_entity, leave_entity) = hr_abac_entities();
+    let writes = json!([
+        { "entityKind": "hr.Employee", "change": "created" },
+        { "entityKind": "hr.Employee", "change": "modified" }
+    ]);
+    let effect = json!({
+        "kind": "upsert_input_object", "objectIdField": "id",
+        "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
+        "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
+    });
     let seed_emp = json!({
         "irVersion": "0.1", "artifactId": "hr.seed_employee.action", "kind": "action",
         "namespace": "hr", "name": "seed_employee", "version": "1.0.0", "lifecycle": "active",
         "scope": scope_val, "dependencies": [], "provenance": prov,
         "payload": {
-            "actionId": "hr.seed_employee",
-            "scopeRequired": ["orgId", "environmentId"],
+            "actionId": "hr.seed_employee", "scopeRequired": ["orgId", "environmentId"],
             "idempotent": true, "ledgered": true,
             "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
             "inputSchema": {
@@ -987,14 +1009,39 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
                 "required": ["id", "status", "branch_id", "national_id"]
             },
             "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
-            "writes": [{ "entityKind": "hr.Employee", "change": "created" }],
-            "effectProgram": {
-                "kind": "upsert_input_object", "objectIdField": "id",
-                "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
-                "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
-            }
+            "writes": writes, "effectProgram": effect
         }
     });
+    let patch_emp = json!({
+        "irVersion": "0.1", "artifactId": "hr.patch_employee_status.action", "kind": "action",
+        "namespace": "hr", "name": "patch_employee_status", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "actionId": "hr.patch_employee_status", "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": { "id": { "type": "string" }, "status": { "type": "string" } },
+                "required": ["id", "status"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "slice": [{
+                "name": "emp", "objectType": "hr.Employee",
+                "key": { "property": { "from": "input", "property": "id" } }
+            }],
+            "preconditions": ["slice.emp.status != 'terminated'"],
+            "writes": writes, "effectProgram": effect
+        }
+    });
+    (seed_emp, patch_emp)
+}
+
+fn hr_abac_ifc_artifacts() -> Vec<Value> {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    let (markings_entity, emp_entity, leave_entity) = hr_abac_entities();
+    let (seed_emp, patch_emp) = hr_employee_actions();
     let access_policy = json!({
         "irVersion": "0.1", "artifactId": "hr.access.policy", "kind": "policy",
         "namespace": "hr", "name": "access", "version": "1.0.0", "lifecycle": "active",
@@ -1003,7 +1050,7 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
             "accessVersion": "0.1", "policyId": "hr.access",
             "rules": [
                 {
-                    "ruleId": "seed-emp-scoped", "actions": ["hr.seed_employee"],
+                    "ruleId": "seed-emp-scoped", "actions": ["hr.seed_employee", "hr.patch_employee_status"],
                     "resourceType": "hr.Employee", "scope": { "dimensions": ["org", "environment"] },
                     "allOf": [
                         { "role": { "anyOf": ["admin"] } },
@@ -1022,9 +1069,11 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
         }
     });
     vec![
+        markings_entity,
         emp_entity,
         leave_entity,
         seed_emp,
+        patch_emp,
         hr_leave_action("hr.submit_leave", "slice.emp.status == 'active'"),
         hr_leave_action(
             "hr.submit_leave_pii",
@@ -1032,6 +1081,15 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
         ),
         access_policy,
     ]
+}
+
+fn post_action(cell: &mut Cell, action: &str, auth: &str, body: &Value) -> norn_cell_do::Response {
+    cell.call(
+        "POST",
+        &format!("/v1/actions/{action}"),
+        Some(auth),
+        &body.to_string(),
+    )
 }
 
 fn mcp_leave_tool_name(cell: &mut Cell, auth: &str) -> String {
@@ -1081,75 +1139,74 @@ fn hosted_abac_string_set_decides_current_and_proposed_resource_checks() {
         json!({ "managed_branches": ["cairo"] }),
     );
     let no_attrs = user("admin");
-    let emp_body = |branch: &str, key: &str| {
-        json!({ "input": { "id": "E1", "status": "active", "branch_id": branch, "national_id": "123-45-6789" }, "idempotencyKey": key }).to_string()
-    };
-    assert_eq!(
-        cell.call(
-            "POST",
-            "/v1/actions/hr.seed_employee",
-            Some(&no_attrs),
-            &emp_body("cairo", "k0")
-        )
-        .status,
-        403
-    );
-    assert_eq!(
-        cell.call(
-            "POST",
-            "/v1/actions/hr.seed_employee",
-            Some(&alex_mgr),
-            &emp_body("cairo", "k1")
-        )
-        .status,
-        403
-    );
-    assert_eq!(
-        cell.call(
-            "POST",
-            "/v1/actions/hr.seed_employee",
-            Some(&foreign_mgr),
-            &emp_body("cairo", "k2")
-        )
-        .status,
-        403
-    );
-    let spoofed = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789", "managed_branches": ["cairo"] }, "idempotencyKey": "k3" }).to_string();
+    let emp_body = |branch: &str, key: &str| json!({ "input": { "id": "E1", "status": "active", "branch_id": branch, "national_id": "123-45-6789" }, "idempotencyKey": key });
+    for (auth, key) in [(&no_attrs, "k0"), (&alex_mgr, "k1"), (&foreign_mgr, "k2")] {
+        let resp = post_action(&mut cell, "hr.seed_employee", auth, &emp_body("cairo", key));
+        assert_eq!(resp.status, 403, "{key}: {}", resp.body);
+    }
+    let spoofed = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789", "managed_branches": ["cairo"] }, "idempotencyKey": "k3" });
     assert_ne!(
-        cell.call(
-            "POST",
-            "/v1/actions/hr.seed_employee",
-            Some(&no_attrs),
-            &spoofed
-        )
-        .status,
+        post_action(&mut cell, "hr.seed_employee", &no_attrs, &spoofed).status,
         200
     );
 
-    let seeded = cell.call(
-        "POST",
-        "/v1/actions/hr.seed_employee",
-        Some(&cairo_mgr),
+    let seeded = post_action(
+        &mut cell,
+        "hr.seed_employee",
+        &cairo_mgr,
         &emp_body("cairo", "seed-1"),
     );
     assert_eq!(seeded.status, 200, "{}", seeded.body);
+    // Current-state check: `alex_mgr` cannot move a `cairo` record to `alex`.
     assert_eq!(
-        cell.call(
-            "POST",
-            "/v1/actions/hr.seed_employee",
-            Some(&cairo_mgr),
-            &emp_body("alex", "move-deny")
+        post_action(
+            &mut cell,
+            "hr.seed_employee",
+            &alex_mgr,
+            &emp_body("alex", "steal-deny"),
         )
         .status,
         403
     );
-    let moved = cell.call(
-        "POST",
-        "/v1/actions/hr.seed_employee",
-        Some(&cairo_mgr),
+    // Proposed-state check: `cairo_mgr` cannot move `cairo` to unmanaged `alex`, but can move to `giza`.
+    assert_eq!(
+        post_action(
+            &mut cell,
+            "hr.seed_employee",
+            &cairo_mgr,
+            &emp_body("alex", "move-deny"),
+        )
+        .status,
+        403
+    );
+    let moved = post_action(
+        &mut cell,
+        "hr.seed_employee",
+        &cairo_mgr,
         &emp_body("giza", "move-ok"),
     );
     assert_eq!(moved.status, 200, "{}", moved.body);
+
+    // Direct-target-slice `Upsert` exercises exact patch policy read footprint (`branch_id` + `status`).
+    let patch_body =
+        json!({ "input": { "id": "E1", "status": "on_leave" }, "idempotencyKey": "patch-1" });
+    assert_eq!(
+        post_action(
+            &mut cell,
+            "hr.patch_employee_status",
+            &alex_mgr,
+            &patch_body
+        )
+        .status,
+        403
+    );
+    let patched = post_action(
+        &mut cell,
+        "hr.patch_employee_status",
+        &cairo_mgr,
+        &patch_body,
+    );
+    assert_eq!(patched.status, 200, "{}", patched.body);
 }
 
 /// Lane A2 full-stack hosted DO HTTP + MCP correspondence: `KernelAuthorizer`
