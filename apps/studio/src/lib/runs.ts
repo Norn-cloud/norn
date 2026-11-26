@@ -64,8 +64,22 @@ export interface Run {
 
 export const RUNS_UNAVAILABLE = "This cell doesn't serve runs yet."
 
-export const getRun = (id: string, etag: string | null = null, fetcher: Fetch = defaultFetch): Promise<CellResult<Run>> =>
-  cellCall<Run>(`/v1/runs/${encodeURIComponent(id)}`, etag === null ? {} : { headers: { "if-none-match": etag } }, fetcher)
+export const getRun = (
+  id: string,
+  etag: string | null = null,
+  fetcher: Fetch = defaultFetch,
+  boundScope?: StudioScope | null,
+  signal?: AbortSignal,
+): Promise<CellResult<Run>> =>
+  cellCall<Run>(
+    `/v1/runs/${encodeURIComponent(id)}`,
+    {
+      ...(etag === null ? {} : { headers: { "if-none-match": etag } }),
+      ...(signal === undefined ? {} : { signal }),
+    },
+    fetcher,
+    boundScope,
+  )
 
 export const startRun = (flow: string, runId: string, fetcher: Fetch = defaultFetch, boundScope?: StudioScope | null): Promise<CellResult<Run>> =>
   cellCall<Run>("/v1/runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ flow, runId }) }, fetcher, boundScope)

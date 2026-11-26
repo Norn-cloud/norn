@@ -117,7 +117,7 @@ export class SidekickSession {
           if (!this.closed) this.scheduleRenew(grant.expiresAt)
         })
         .catch(() => { if (!this.closed) this.close("Sidekick's access ended; start a new chat to continue.") })
-    }, Math.max(10_000, expiresAt - Date.now() - RENEW_BEFORE_MS))
+    }, Math.min(2_147_483_647, Math.max(10_000, expiresAt - Date.now() - RENEW_BEFORE_MS)))
   }
 
   private ended(reason: string) {
