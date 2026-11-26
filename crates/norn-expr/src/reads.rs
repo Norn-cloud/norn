@@ -64,7 +64,11 @@ pub fn unary_test_reads(source: &str, root: &str) -> Result<ExpressionReads, Exp
     reads_in(source, root, true)
 }
 
-fn reads_in(source: &str, root: &str, unary: bool) -> Result<ExpressionReads, ExprError> {
+pub(crate) fn with_validated_ast<T>(
+    source: &str,
+    unary: bool,
+    f: impl FnOnce(&Node<'_>) -> T,
+) -> Result<T, ExprError> {
     let limits = ResourceLimitProfile::norn_limits_v1();
     let bounded = if unary {
         validate_unary_evaluation_source(source, &limits)
@@ -79,16 +83,20 @@ fn reads_in(source: &str, root: &str, unary: bool) -> Result<ExpressionReads, Ex
             .join("; "),
     })?;
 
-    let mut intellisense = IntelliSense::new().with_strict(true);
-    intellisense
-        .with_ast(source, unary, |ast, _metadata| {
-            let mut reads = ExpressionReads::default();
-            collect(ast, root, &BTreeMap::new(), &[], &mut reads);
-            reads
-        })
+    IntelliSense::new()
+        .with_strict(true)
+        .with_ast(source, unary, |ast, _metadata| f(ast))
         .ok_or_else(|| ExprError::Compile {
             message: "expression does not parse".to_owned(),
         })
+}
+
+fn reads_in(source: &str, root: &str, unary: bool) -> Result<ExpressionReads, ExprError> {
+    with_validated_ast(source, unary, |ast| {
+        let mut reads = ExpressionReads::default();
+        collect(ast, root, &BTreeMap::new(), &[], &mut reads);
+        reads
+    })
 }
 
 /// Extract complete literal member paths rooted at `root` from the ZEN AST.
@@ -99,18 +107,11 @@ fn reads_in(source: &str, root: &str, unary: bool) -> Result<ExpressionReads, Ex
 /// # Errors
 /// Returns an expression error for malformed or over-budget source.
 pub fn expression_read_paths(source: &str, root: &str) -> Result<BTreeSet<Vec<String>>, ExprError> {
-    // Apply exactly the source/AST bounds of the ordinary dependency walker.
-    expression_reads(source, root)?;
-    IntelliSense::new()
-        .with_strict(true)
-        .with_ast(source, false, |ast, _metadata| {
-            let mut paths = BTreeSet::new();
-            collect_paths(ast, root, &mut paths);
-            paths
-        })
-        .ok_or_else(|| ExprError::Compile {
-            message: "expression does not parse".to_owned(),
-        })
+    with_validated_ast(source, false, |ast| {
+        let mut paths = BTreeSet::new();
+        collect_paths(ast, root, &mut paths);
+        paths
+    })
 }
 
 /// LAW-LINK-MANY-1: the member paths each closure builtin reads from the
@@ -127,43 +128,37 @@ pub fn expression_element_paths(
     source: &str,
     root: &str,
 ) -> Result<BTreeMap<Vec<String>, BTreeSet<Vec<String>>>, ExprError> {
-    expression_reads(source, root)?;
-    IntelliSense::new()
-        .with_strict(true)
-        .with_ast(source, false, |ast, _metadata| {
-            let found = std::cell::RefCell::new(BTreeMap::new());
-            ast.walk(|node| {
-                let Node::FunctionCall { arguments, .. } = node else {
-                    return;
-                };
-                let [collection, closure, ..] = arguments else {
-                    return;
-                };
-                let Node::Closure { body, alias } = closure else {
-                    return;
-                };
-                let Some(path) = literal_path(collection) else {
-                    return;
-                };
-                let Some((first, below)) = path.split_first() else {
-                    return;
-                };
-                if first != root {
-                    return;
-                }
-                let mut reads = BTreeSet::new();
-                element_paths(body, *alias, &mut reads);
-                found
-                    .borrow_mut()
-                    .entry(below.to_vec())
-                    .or_insert_with(BTreeSet::new)
-                    .extend(reads);
-            });
-            found.into_inner()
-        })
-        .ok_or_else(|| ExprError::Compile {
-            message: "expression does not parse".to_owned(),
-        })
+    with_validated_ast(source, false, |ast| {
+        let found = std::cell::RefCell::new(BTreeMap::new());
+        ast.walk(|node| {
+            let Node::FunctionCall { arguments, .. } = node else {
+                return;
+            };
+            let [collection, closure, ..] = arguments else {
+                return;
+            };
+            let Node::Closure { body, alias } = closure else {
+                return;
+            };
+            let Some(path) = literal_path(collection) else {
+                return;
+            };
+            let Some((first, below)) = path.split_first() else {
+                return;
+            };
+            if first != root {
+                return;
+            }
+            let mut reads = BTreeSet::new();
+            element_paths(body, *alias, &mut reads);
+            found
+                .borrow_mut()
+                .entry(below.to_vec())
+                .or_insert_with(BTreeSet::new)
+                .extend(reads);
+        });
+        found.into_inner()
+    })
 }
 
 /// The literal member path `node` reads from the closure's element (`#`, or
@@ -505,9 +500,9 @@ fn collect_call(
     let Some((list, closures)) = arguments.split_first() else {
         return;
     };
-    collect(list, root, aliases, pointers, output);
     let mut list_reads = ExpressionReads::default();
     collect(list, root, aliases, pointers, &mut list_reads);
+    output.extend(&list_reads);
     for argument in closures {
         if let Node::Closure { body, alias } = argument {
             let mut nested_aliases = aliases.clone();

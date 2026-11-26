@@ -432,17 +432,8 @@ pub fn get_object_profile<E: SqlEngine>(
     access: &dyn ObjectAccess,
 ) -> Result<NornObjectProfile, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
-    let properties = {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        if !reader.model().has_type(object_type) {
-            return Err(not_found());
-        }
-        reader
-            .model()
-            .effective_property_types(object_type)
-            .map_err(Refusal::host)?
-    };
+    let properties =
+        crate::object_routes::effective_properties(host, object_type)?.ok_or_else(not_found)?;
     let scan = scan_listed(
         host,
         access,

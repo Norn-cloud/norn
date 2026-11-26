@@ -18,20 +18,19 @@ use super::{ActionSurface, FormInputInitialization, Usage, UxChecker};
 
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_tree_and_fields(&mut self) {
-        let fields = self.ux.fields.clone();
-        for (index, field) in fields.iter().enumerate() {
+        let ux = self.ux;
+        for (index, field) in ux.fields.iter().enumerate() {
             self.check_field_presentation(field, &format!("/payload/ux/fields/{index}"));
         }
-        let pages = self.ux.pages.clone();
-        for (page_index, page) in pages.iter().enumerate() {
+        for (page_index, page) in ux.pages.iter().enumerate() {
             self.check_node(
                 &page.root,
                 &format!("/payload/ux/pages/{page_index}/root"),
                 ActionSurface::Page,
             );
         }
-        self.check_field_inclusion_and_uniqueness(&fields);
-        self.check_form_and_property_coverage(&fields);
+        self.check_field_inclusion_and_uniqueness(&ux.fields);
+        self.check_form_and_property_coverage(&ux.fields);
     }
 
     fn check_field_presentation(&mut self, field: &WidgetFieldPresentation, path: &str) {
@@ -754,12 +753,12 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    pub(super) fn schema_control_type(&mut self, schema: &Schema) -> Type {
+    pub(super) fn schema_control_type(&self, schema: &Schema) -> Type {
         let mut records = BTreeMap::new();
         self.schema_type(schema, &mut records)
     }
 
-    pub(super) fn option_binding_key_type(&mut self, binding_id: &str, path: &str) -> Option<Type> {
+    pub(super) fn option_binding_key_type(&self, binding_id: &str, path: &str) -> Option<Type> {
         if !self.is_bounded_list_binding(binding_id) {
             self.error(
                 &format!("{path}/optionQueryBindingId"),
@@ -767,7 +766,7 @@ impl UxChecker<'_, '_, '_> {
             );
             return None;
         }
-        let binding = self.bindings.get(binding_id).copied()?.clone();
+        let binding = self.bindings.get(binding_id).copied()?;
         let artifact = self.resolve_ref(
             &binding.object.id,
             &binding.object.version,

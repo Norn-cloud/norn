@@ -1590,103 +1590,16 @@ fn required_date_field(
 }
 
 fn valid_iso_date(value: &str) -> bool {
-    if value.len() != 10 || !value.is_ascii() {
-        return false;
-    }
-    let mut parts = value.split('-');
-    let (Some(year), Some(month), Some(day), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return false;
-    };
-    if year.len() != 4 || month.len() != 2 || day.len() != 2 {
-        return false;
-    }
-    let Some(year) = parse_ascii_digits(year.as_bytes()) else {
-        return false;
-    };
-    let Some(month) =
-        parse_ascii_digits(month.as_bytes()).and_then(|value| u8::try_from(value).ok())
-    else {
-        return false;
-    };
-    let Some(day) = parse_ascii_digits(day.as_bytes()).and_then(|value| u8::try_from(value).ok())
-    else {
-        return false;
-    };
-    if year == 0 || !(1..=12).contains(&month) {
-        return false;
-    }
-    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days_in_month = match month {
-        2 if leap_year => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    };
-    (1..=days_in_month).contains(&day)
+    !value.starts_with("0000-") && norn_expr::temporal::validate_date(value).is_ok()
 }
 
 /// Accept the deliberately small timestamp subset shared with the TypeScript
 /// checker: a real Gregorian date, UTC `Z`, whole seconds, and optionally one
 /// to nine fractional-second digits. Offsets and leap seconds are rejected.
 fn valid_utc_date_time(value: &str) -> bool {
-    if !value.is_ascii() {
-        return false;
-    }
-    let Some((date, time_with_zone)) = value.split_once('T') else {
-        return false;
-    };
-    if !valid_iso_date(date) || time_with_zone.contains('T') {
-        return false;
-    }
-    let Some(time) = time_with_zone.strip_suffix('Z') else {
-        return false;
-    };
-    let (whole_seconds, fraction) = time
-        .split_once('.')
-        .map_or((time, None), |(whole, fraction)| (whole, Some(fraction)));
-    if fraction.is_some_and(|fraction| {
-        !(1..=9).contains(&fraction.len())
-            || !fraction.chars().all(|character| character.is_ascii_digit())
-    }) {
-        return false;
-    }
-    let mut parts = whole_seconds.split(':');
-    let (Some(hour), Some(minute), Some(second), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return false;
-    };
-    if hour.len() != 2 || minute.len() != 2 || second.len() != 2 {
-        return false;
-    }
-    let Some(hour) = parse_ascii_digits(hour.as_bytes()).and_then(|value| u8::try_from(value).ok())
-    else {
-        return false;
-    };
-    let Some(minute) =
-        parse_ascii_digits(minute.as_bytes()).and_then(|value| u8::try_from(value).ok())
-    else {
-        return false;
-    };
-    let Some(second) =
-        parse_ascii_digits(second.as_bytes()).and_then(|value| u8::try_from(value).ok())
-    else {
-        return false;
-    };
-    hour <= 23 && minute <= 59 && second <= 59
-}
-
-fn parse_ascii_digits(bytes: &[u8]) -> Option<u16> {
-    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    bytes.iter().try_fold(0_u16, |value, digit| {
-        value
-            .checked_mul(10)?
-            .checked_add(u16::from(digit.checked_sub(b'0')?))
-    })
+    value
+        .strip_suffix('Z')
+        .is_some_and(|local| norn_expr::temporal::validate_local_timestamp(local).is_ok())
 }
 
 fn valid_immutable_release_id(value: &str) -> bool {

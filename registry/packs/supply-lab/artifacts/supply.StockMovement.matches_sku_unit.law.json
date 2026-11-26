@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.StockMovement.matches_sku_unit.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StockMovement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A stock movement must record quantities in its catalog SKU's unit of measure.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.StockMovement.matches_sku_unit",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A stock movement must record quantities in its catalog SKU's unit of measure.",
+    "response": {
+      "expression": "self.unit == self.sku.unit_of_measure",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StockMovement"
+      ],
+      "root": {
+        "id": "supply.StockMovement",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StockMovement"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StockMovement.matches_sku_unit.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

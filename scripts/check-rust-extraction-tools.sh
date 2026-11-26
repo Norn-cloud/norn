@@ -35,7 +35,7 @@ test "$(git -C "$tool_root/sources/hax" rev-parse HEAD)" = "$expected_hax_commit
 require_clean_source_tree "hax" "$tool_root/sources/hax"
 printf '\nhax Rust toolchain\n'
 hax_rustc="$RUSTUP_HOME/toolchains/nightly-2025-11-08-x86_64-unknown-linux-gnu/bin/rustc"
-test "$($hax_rustc --version)" = "$expected_hax_rustc"
+test "$("$hax_rustc" --version)" = "$expected_hax_rustc"
 printf '%s\n' "$expected_hax_rustc"
 printf '\nAeneas\n'
 test "$(aeneas -version)" = 'aeneas 74a460a2'

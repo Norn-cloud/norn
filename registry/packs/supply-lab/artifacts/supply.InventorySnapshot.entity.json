@@ -28,6 +28,7 @@
             "to": "one"
           },
           "id": "warehouse",
+          "inverse": "positions",
           "target": "supply.Warehouse"
         },
         {

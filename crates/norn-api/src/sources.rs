@@ -515,15 +515,9 @@ impl Sources {
             .iter()
             .filter(|c| c.every_minutes > 0)
             .map(|c| {
-                let state = self.state.get(&c.id);
-                if let Some(run) = state
-                    .and_then(|s| s.run.as_ref())
-                    .filter(|run| held(run, now_ms))
-                {
-                    return run.stepped_ms.saturating_add(RUN_LEASE_MS);
-                }
                 let every = u64::from(c.every_minutes).saturating_mul(60_000);
-                state
+                self.state
+                    .get(&c.id)
                     .and_then(|s| s.last_end_ms)
                     .map_or(now_ms, |last| last.saturating_add(every))
                     .max(now_ms)
@@ -827,18 +821,12 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
             .ingest(&chunk)
             .map_err(|refusal| fail("source.ingest", refusal.message))?;
         for ingested in outcomes {
-            match &ingested.outcome {
-                MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
-                    run.landed = run.landed.saturating_add(1);
-                }
-                quarantined @ MappingOutcome::Quarantined(_) => {
-                    run.quarantined = run.quarantined.saturating_add(1);
-                    for code in quarantined.codes() {
-                        let n = run.reasons.entry(code).or_insert(0);
-                        *n = n.saturating_add(1);
-                    }
-                }
-            }
+            crate::pull::tally_outcome(
+                &ingested.outcome,
+                &mut run.landed,
+                &mut run.quarantined,
+                &mut run.reasons,
+            );
         }
     }
     if !run.queue.is_empty() {
@@ -1106,12 +1094,7 @@ fn report<E: SqlEngine>(
             },
         ));
     }
-    let profile = PullProfile {
-        source: REPORT_SOURCE.to_owned(),
-        pipeline: "norn-connect/1".to_owned(),
-        feeds: Vec::new(),
-        token: None,
-    };
+    let profile = connect_profile();
     let now = ended_ms.unwrap_or(run.started_ms);
     let batch: Vec<_> = rows
         .into_iter()
@@ -1138,6 +1121,15 @@ fn report<E: SqlEngine>(
         .collect();
     // A cell without the report definitions refuses these; the run still ends.
     let _reported = host.ingest(&batch);
+}
+
+fn connect_profile() -> PullProfile {
+    PullProfile {
+        source: REPORT_SOURCE.to_owned(),
+        pipeline: "norn-connect/1".to_owned(),
+        feeds: Vec::new(),
+        token: None,
+    }
 }
 
 /// The object type of a completed upload's durable record.
@@ -1206,12 +1198,7 @@ pub fn keep_upload<E: SqlEngine>(
         "format" => if upload.csv { "csv" } else { "other" }, "columns" => columns.as_str(),
         "owner" => upload.owner.as_str(), "completed_at" => upload.completed_at.as_str(),
     };
-    let profile = PullProfile {
-        source: REPORT_SOURCE.to_owned(),
-        pipeline: "norn-connect/1".to_owned(),
-        feeds: Vec::new(),
-        token: None,
-    };
+    let profile = connect_profile();
     let row = crate::pull::Row {
         dataset: "upload".to_owned(),
         source_id: key,

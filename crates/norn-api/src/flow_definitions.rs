@@ -498,16 +498,7 @@ pub fn restate(canonical: &str) -> Result<String, String> {
             ))
         })
         .collect();
-    let (_, rule_id) = owned_ids(flow_id);
-    let rule = value
-        .get("artifacts")
-        .and_then(Value::as_array)
-        .and_then(|artifacts| {
-            artifacts.iter().find(|artifact| {
-                artifact.get("artifactId").and_then(Value::as_str) == Some(rule_id.as_str())
-            })
-        })
-        .ok_or("the flow has no rule")?;
+    let rule = flow_rule(&value, flow_id).ok_or("the flow has no rule")?;
     let performs =
         norn_checker::flow_performs::perform_refs(rule.get("payload").unwrap_or(&Value::Null))
             .map_err(|refused| refused.message)?;
@@ -541,19 +532,19 @@ pub fn restate(canonical: &str) -> Result<String, String> {
     Ok(lines.join("\n"))
 }
 
+fn flow_rule<'a>(value: &'a Value, flow_id: &str) -> Option<&'a Value> {
+    let (_, rule_id) = owned_ids(flow_id);
+    value.get("artifacts")?.as_array()?.iter().find(|artifact| {
+        artifact.get("artifactId").and_then(Value::as_str) == Some(rule_id.as_str())
+    })
+}
+
 /// The binding version a flow's performs pin `binding_id` to, if any.
 #[must_use]
 pub fn pinned_version(canonical: &str, binding_id: &str) -> Option<String> {
     let value: Value = serde_json::from_str(canonical).ok()?;
     let flow_id = value.pointer("/flow/id")?.as_str()?;
-    let (_, rule_id) = owned_ids(flow_id);
-    let rule = value
-        .get("artifacts")?
-        .as_array()?
-        .iter()
-        .find(|artifact| {
-            artifact.get("artifactId").and_then(Value::as_str) == Some(rule_id.as_str())
-        })?;
+    let rule = flow_rule(&value, flow_id)?;
     norn_checker::flow_performs::perform_refs(rule.get("payload")?)
         .ok()?
         .into_iter()

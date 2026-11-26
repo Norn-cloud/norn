@@ -92,7 +92,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
         Command::Explain(args) => explain::execute(&args),
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
-        Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
+        Command::Remote(args) => remote::execute(&args),
         Command::Cell(args) => cell::execute(&args),
         Command::Source(args) => source::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()

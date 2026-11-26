@@ -164,15 +164,23 @@ pub(crate) fn check_local(
 /// and member. Two canonically equivalent spellings would otherwise be
 /// admitted as different texts, and hashing would then normalize them into one.
 fn non_nfc_texts(payload: &ArtifactPayload) -> Vec<(String, String, &'static str)> {
-    let wire = serde_json::to_value(payload.to_json_value()).unwrap_or_default();
-    let entries = wire.get("entries").and_then(serde_json::Value::as_array);
+    let ArtifactPayload::Labels(labels) = payload else {
+        return Vec::new();
+    };
+    let entries = labels
+        .entries
+        .as_value()
+        .and_then(norn_ir::JsonValue::as_array);
     let mut found = Vec::new();
     for (index, entry) in entries.into_iter().flatten().enumerate() {
+        let Some(entry) = entry.as_object() else {
+            continue;
+        };
         for member in ["label", "description"] {
-            let texts = entry.get(member).and_then(serde_json::Value::as_object);
+            let texts = entry.get(member).and_then(norn_ir::JsonValue::as_object);
             for (tag, text) in texts.into_iter().flatten() {
                 if text
-                    .as_str()
+                    .as_string()
                     .is_some_and(|text| norn_canonical::nfc(text) != text)
                 {
                     found.push((

@@ -17,17 +17,13 @@ use super::child_grid::widget_node_by_id;
 use super::{UxChecker, path_index};
 
 impl UxChecker<'_, '_, '_> {
-    pub(super) fn check_optional_condition(
-        &mut self,
-        condition: Option<&ZenCondition>,
-        path: &str,
-    ) {
+    pub(super) fn check_optional_condition(&self, condition: Option<&ZenCondition>, path: &str) {
         if let Some(condition) = condition {
             self.check_condition(condition, path);
         }
     }
 
-    pub(super) fn check_condition(&mut self, condition: &ZenCondition, path: &str) {
+    pub(super) fn check_condition(&self, condition: &ZenCondition, path: &str) {
         let Some(env) = self.expression_env(&condition.inputs, path) else {
             return;
         };
@@ -52,7 +48,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn expression_env(
-        &mut self,
+        &self,
         inputs: &WidgetExpressionInputs,
         path: &str,
     ) -> Option<ZenTypeEnv> {
@@ -98,7 +94,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn add_row_grid_input(
-        &mut self,
+        &self,
         grid_id: &str,
         path: &str,
         records: &mut BTreeMap<String, BTreeMap<String, Type>>,
@@ -157,7 +153,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn add_record_input(
-        &mut self,
+        &self,
         binding_id: &str,
         action_binding: bool,
         path: &str,
@@ -187,7 +183,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn add_draft_form_input(
-        &mut self,
+        &self,
         form_id: &str,
         action_binding: bool,
         path: &str,
@@ -205,7 +201,7 @@ impl UxChecker<'_, '_, '_> {
             );
             return false;
         }
-        let Some(form) = self.forms.get(form_id).copied().cloned() else {
+        let Some(form) = self.forms.get(form_id).copied() else {
             self.error(
                 &format!("{path}/inputs/draftFormId"),
                 "draft input names an unknown form",
@@ -216,7 +212,6 @@ impl UxChecker<'_, '_, '_> {
             .action_bindings
             .get(form.submit_binding_id.as_str())
             .copied()
-            .cloned()
         else {
             self.error(
                 &format!("{path}/inputs/draftFormId"),
@@ -224,7 +219,7 @@ impl UxChecker<'_, '_, '_> {
             );
             return false;
         };
-        let Some(action) = self.actions.get(binding.binding_id.as_str()).cloned() else {
+        let Some(action) = self.actions.get(binding.binding_id.as_str()) else {
             self.error(
                 &format!("{path}/inputs/draftFormId"),
                 "draft form ActionIR schema is unavailable",
@@ -233,23 +228,22 @@ impl UxChecker<'_, '_, '_> {
         };
         let fields = action
             .fields
-            .into_iter()
+            .iter()
             .filter(|(name, _)| form.input_names.contains(name))
             .map(|(name, (schema, required))| {
-                let mut type_ = self.schema_type(&schema, records);
+                let mut type_ = self.schema_type(schema, records);
                 if !required {
                     type_ = type_.optional();
                 }
-                (name, type_)
+                (name.clone(), type_)
             })
             .collect();
         let mut valid = true;
-        if form.input_names.iter().any(|name| {
-            !self
-                .actions
-                .get(binding.binding_id.as_str())
-                .is_some_and(|action| action.fields.contains_key(name))
-        }) {
+        if form
+            .input_names
+            .iter()
+            .any(|name| !action.fields.contains_key(name))
+        {
             self.error(
                 &format!("{path}/inputs/draftFormId"),
                 "draft form includes an input not declared by its ActionIR",
@@ -263,7 +257,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn add_selection_input(
-        &mut self,
+        &self,
         binding_id: &str,
         action_binding: bool,
         path: &str,
@@ -311,7 +305,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn add_context_page_input(
-        &mut self,
+        &self,
         page_id: &str,
         path: &str,
         records: &mut BTreeMap<String, BTreeMap<String, Type>>,
@@ -319,7 +313,7 @@ impl UxChecker<'_, '_, '_> {
     ) -> bool {
         let mut valid =
             self.check_context_page_at(page_id, &format!("{path}/inputs/contextPageId"));
-        if let Some(page) = self.pages.get(page_id).copied().cloned() {
+        if let Some(page) = self.pages.get(page_id).copied() {
             let name = self.unique_record_name();
             let fields = page
                 .context_params
@@ -343,8 +337,8 @@ impl UxChecker<'_, '_, '_> {
         valid
     }
 
-    fn binding_record(&mut self, binding_id: &str, path: &str) -> Option<BTreeMap<String, Type>> {
-        let Some(binding) = self.bindings.get(binding_id).copied().cloned() else {
+    fn binding_record(&self, binding_id: &str, path: &str) -> Option<BTreeMap<String, Type>> {
+        let Some(binding) = self.bindings.get(binding_id).copied() else {
             self.error(path, "expression input names an unknown data binding");
             return None;
         };
@@ -372,7 +366,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn schema_type(
-        &mut self,
+        &self,
         schema: &Schema,
         records: &mut BTreeMap<String, BTreeMap<String, Type>>,
     ) -> Type {
@@ -405,13 +399,14 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    fn unique_record_name(&mut self) -> String {
-        self.next_record = self.next_record.saturating_add(1);
-        format!("norn:WidgetUx:{}", self.next_record)
+    fn unique_record_name(&self) -> String {
+        let next = self.next_record.get().saturating_add(1);
+        self.next_record.set(next);
+        format!("norn:WidgetUx:{next}")
     }
 
     pub(super) fn filter_value_type(
-        &mut self,
+        &self,
         value: &WidgetFilterValue,
         record_contexts: &BTreeSet<String>,
         path: &str,

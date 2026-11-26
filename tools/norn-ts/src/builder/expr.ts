@@ -415,8 +415,9 @@ function infer(expr: Expr, scope: Scope, binders: Binders): ValueSchema {
       const left = infer(expr.left, scope, binders)
       const right = infer(expr.right, scope, binders)
       if (expr.op === "==" || expr.op === "!=") {
+        const nullCheck = (left.type === "null" && Array.isArray(right.type)) || (right.type === "null" && Array.isArray(left.type))
         const comparable =
-          isScalar(left) && isScalar(right) && (left.type === right.type || left.type === "null" || right.type === "null" || (isNumeric(left) && isNumeric(right)))
+          nullCheck || (isScalar(left) && isScalar(right) && (left.type === right.type || left.type === "null" || right.type === "null" || (isNumeric(left) && isNumeric(right))))
         if (!comparable) {
           throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} compares scalars of one type, not ${left.type} and ${right.type}`)
         }
@@ -427,13 +428,14 @@ function infer(expr: Expr, scope: Scope, binders: Binders): ValueSchema {
       }
       return boolean
     }
-    case "Logical":
+    case "Logical": {
+      const left = infer(expr.left, scope, binders), right = infer(expr.right, scope, binders)
+      if (left.type !== "boolean" || right.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.op} takes booleans, not ${left.type} and ${right.type}`)
+      return boolean
+    }
     case "Not": {
-      const operands = expr._tag === "Not" ? [expr.operand] : [expr.left, expr.right]
-      for (const operand of operands) {
-        const t = infer(operand, scope, binders)
-        if (t.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `${expr._tag === "Not" ? "not" : expr.op} takes booleans, not ${t.type}`)
-      }
+      const t = infer(expr.operand, scope, binders)
+      if (t.type !== "boolean") throw new ExprError("NORN-FLOW-EXPRESSION", `not takes booleans, not ${t.type}`)
       return boolean
     }
     case "List": {

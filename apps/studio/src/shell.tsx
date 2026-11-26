@@ -809,7 +809,9 @@ function useHashScroll() {
     let frame = 0
     const until = performance.now() + 2500
     const find = () => {
-      const element = document.getElementById(decodeURIComponent(hash))
+      let id = hash
+      try { id = decodeURIComponent(hash) } catch { /* malformed percent sequence */ }
+      const element = document.getElementById(id)
       if (element) element.scrollIntoView({ block: "start" })
       else if (performance.now() < until) frame = requestAnimationFrame(find)
     }

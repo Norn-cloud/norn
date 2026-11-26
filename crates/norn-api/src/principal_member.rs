@@ -13,22 +13,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_ir::rule::DECIDE_PRINCIPAL_MEMBER;
 use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, Visitor};
 
-use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes};
+use crate::refusal::{Refusal, RefusalDiagnostic, codes};
 
 /// The refusal of a submitted `principal` member at `pointer`.
 #[must_use]
 pub fn principal_member_refused(pointer: &str) -> Refusal {
     let message = "the principal is resolved by the host and is never accepted from a request";
     let mut refusal = Refusal::invalid(message);
-    refusal.diagnostics = vec![RefusalDiagnostic {
-        code: codes::INVALID_REQUEST.to_owned(),
-        severity: "error".to_owned(),
-        message: message.to_owned(),
-        span: Some(RefusalSpan {
-            pointer: pointer.to_owned(),
-        }),
-        law: None,
-    }];
+    refusal.diagnostics = vec![RefusalDiagnostic::error(
+        codes::INVALID_REQUEST,
+        message,
+        pointer,
+    )];
     refusal
 }
 

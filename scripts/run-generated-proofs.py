@@ -8,6 +8,9 @@ import subprocess
 import sys
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -31,18 +34,17 @@ def main():
     bun = str(Path(located_bun).resolve()) if located_bun else None
     if not bun or subprocess.check_output([quint, "--version"]).strip() != b"0.32.0" or subprocess.check_output([bun, "--version"]).strip() != b"1.3.14":
         raise ValueError("backend version mismatch")
-    package = Path("tools/norn-proofs")
-    if json.loads((package / "node_modules/tla-ts/package.json").read_text())["version"] != "0.0.7":
-        raise ValueError("tla-ts version mismatch")
+    package = ROOT / "tools/norn-proofs"
+    check_script = ROOT / "scripts/check-generated-quint.py"
     python_version = ".".join(map(str, sys.version_info[:3]))
     assets = [(f"python/{python_version}/interpreter", Path(sys.executable)), ("bun/1.3.14/bun", Path(bun)),
               ("quint/0.32.0/quint", quint), ("temurin/21.0.12.1_1/java", tools / "bin/java")]
     apalache = tools / "quint-home/apalache-dist-0.56.1/apalache"
     assets += [(f"apalache/0.56.1/{name}", apalache / name) for name in ["bin/apalache-mc", "lib/apalache.jar"]]
     assets += [(f"norn-proof-runner/1/{name}", path) for name, path in [
-        ("scripts/run-generated-proofs.py", Path(__file__)),
-        ("scripts/check-generated-quint.py", Path("scripts/check-generated-quint.py")),
-        ("scripts/quint_apalache.py", Path("scripts/quint_apalache.py")),
+        ("scripts/run-generated-proofs.py", Path(__file__).resolve()),
+        ("scripts/check-generated-quint.py", check_script),
+        ("scripts/quint_apalache.py", ROOT / "scripts/quint_apalache.py"),
         ("check.ts", package / "check.ts"), ("bun.lock", package / "bun.lock")]]
     for name, version in [("tla-ts", "0.0.7"), ("fflate", "0.8.3")]:
         root = package / "node_modules" / name
@@ -56,7 +58,7 @@ def main():
     for job in plan["jobs"]:
         if sha(job["model"]) != job["modelSha"]:
             raise ValueError("generated model changed")
-        subprocess.run([sys.executable, "scripts/check-generated-quint.py", "--model", job["model"], "--out", job["result"],
+        subprocess.run([sys.executable, str(check_script), "--model", job["model"], "--out", job["result"],
                         "--tools", str(tools), "--bun", bun, "--step", job["step"], "--invariant", job["invariant"], "--seed", str(job["seed"]),
                         "--expected-states", str(job["expectedStates"])], check=True)
         control["results"][job["key"]] = {"resultSha": sha(job["result"]), "modelSha": job["modelSha"], "challenge": job["challenge"]}

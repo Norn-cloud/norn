@@ -53,9 +53,10 @@ from .canonical import (
     SourceSpan,
     canonical_json,
     canonical_norn1_bytes,
-    canonical_norn1_sha256,
+    norn1_sha256_bytes,
 )
 from .expr import (
+    _FORBIDDEN_INTERNAL_ATTRS,
     NornTracingError,
     register_source,
     validate_callback_node,
@@ -133,20 +134,7 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
     }
 )
 
-_FORBIDDEN_ATTRS: frozenset[str] = frozenset(
-    {
-        "ag_frame",
-        "co_code",
-        "cr_frame",
-        "f_back",
-        "f_builtins",
-        "f_globals",
-        "f_locals",
-        "func_globals",
-        "gi_frame",
-        "tb_frame",
-    }
-)
+_FORBIDDEN_ATTRS: frozenset[str] = _FORBIDDEN_INTERNAL_ATTRS
 
 MAX_SOURCE_BYTES = 1_048_576
 MAX_AST_NODES = 100_000
@@ -665,11 +653,12 @@ def elaborate_file(
     parsed = json.loads(proc.stdout)
     artifacts: list[JsonValue] = parsed["artifacts"]
     source_map: dict[str, dict[str, object]] = parsed["sourceMap"]
+    norn1_bytes = canonical_norn1_bytes(artifacts)
     return ElaborationResult(
         artifacts=artifacts,
         canonical_text=canonical_json(artifacts),
-        norn1_bytes=canonical_norn1_bytes(artifacts),
-        norn1_sha256=canonical_norn1_sha256(artifacts),
+        norn1_bytes=norn1_bytes,
+        norn1_sha256=norn1_sha256_bytes(norn1_bytes),
         source_map=source_map,
     )
 

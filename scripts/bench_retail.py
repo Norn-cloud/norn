@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fetch licensed Olist/UCI data at test time; emit link-free extracts and a SQLite oracle."""
 import argparse
+import contextlib
 import csv
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_EVEN
@@ -22,12 +23,20 @@ BUDGET = 200_000_000
 
 def fetch(url, sha256, path):
     if not path.exists():
+        partial = path.with_suffix(path.suffix + ".partial")
         request = urllib.request.Request(url, headers={"User-Agent": "norn-bench"})
-        with urllib.request.urlopen(request, timeout=120) as response, path.open("xb") as out:
-            while chunk := response.read(1 << 20):
-                if out.tell() + len(chunk) > BUDGET:
-                    raise ValueError("download exceeds pinned size budget")
-                out.write(chunk)
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
+                while chunk := response.read(1 << 20):
+                    if out.tell() + len(chunk) > BUDGET:
+                        raise ValueError("download exceeds pinned size budget")
+                    out.write(chunk)
+            if hashlib.sha256(partial.read_bytes()).hexdigest() != sha256:
+                raise ValueError(f"checksum mismatch for {url}")
+            partial.replace(path)
+        finally:
+            partial.unlink(missing_ok=True)
+        return
     if hashlib.sha256(path.read_bytes()).hexdigest() != sha256:
         path.unlink()
         raise ValueError(f"checksum mismatch for {url}")
@@ -135,64 +144,65 @@ def extract(args):
     olist, uci = work / "olist.zip", work / "uci.zip"
     fetch(OLIST_URL, OLIST_SHA, olist)
     fetch(UCI_URL, UCI_SHA, uci)
-    database = sqlite3.connect(work / "oracle.sqlite")
-    database.execute("DROP TABLE IF EXISTS uci")
-    load_uci(database, uci)
-    database.commit()
-    one = lambda sql: database.execute(sql).fetchone()[0]
-    products = list(olist_rows(olist, "olist_products_dataset.csv"))
-    customers = list(olist_rows(olist, "olist_customers_dataset.csv"))
-    sellers = list(olist_rows(olist, "olist_sellers_dataset.csv"))
-    counts = {
-        "olist-products": write_jsonl(work / "olist-products.jsonl", (
-            {"product_id": r["product_id"], "label": r["product_category_name"]} for r in products)),
-        "olist-customers": write_jsonl(work / "olist-customers.jsonl", (
-            {"id": key, "kind": "person"} for key in sorted({r["customer_unique_id"] for r in customers}))),
-        "olist-sellers": write_jsonl(work / "olist-sellers.jsonl", (
-            {"id": r["seller_id"], "kind": "organization"} for r in sellers)),
-        # Description choice is an explicit grain decision: most frequent, then lexical.
-        "uci-items": write_jsonl(work / "uci-items.jsonl", (
-            {"product_id": code, "label": label or ""} for code, label in database.execute("""
-            SELECT code, (SELECT description FROM uci v WHERE v.code = c.code AND description IS NOT NULL
-                          GROUP BY description ORDER BY COUNT(*) DESC, description LIMIT 1)
-            FROM (SELECT DISTINCT code FROM uci) c ORDER BY code"""))),
-        "uci-customers": write_jsonl(work / "uci-customers.jsonl", (
-            {"id": key, "kind": "person"} for (key,) in database.execute(
-                "SELECT DISTINCT customer FROM uci WHERE customer IS NOT NULL ORDER BY customer"))),
-        "uci-lines": write_jsonl(work / "uci-lines.jsonl", (
-            {"id": f"{sheet}-{rowid}", "invoice": invoice, "code": code, "quantity": quantity,
-             "price": price, "customer": customer or "", "country": country}
-            for rowid, sheet, invoice, code, quantity, price, customer, country in database.execute(
-                "SELECT rowid, sheet, invoice, code, quantity, price, customer, country FROM uci ORDER BY rowid"))),
-    }
-    oracle = {
-        "extract_rows": counts,
-        "uci_sample": sample(database, work),
-        "olist": {
-            "products_missing_category": sum(not r["product_category_name"] for r in products),
-            "customer_rows": len(customers),
-            "distinct_customer_unique_id": len({r["customer_unique_id"] for r in customers}),
-        },
-        "uci": {
-            "rows": one("SELECT COUNT(*) FROM uci"),
-            "missing_customer": one("SELECT COUNT(*) FROM uci WHERE customer IS NULL"),
-            "negative_quantity": one("SELECT COUNT(*) FROM uci WHERE quantity < 0"),
-            "negative_price": one("SELECT COUNT(*) FROM uci WHERE CAST(price AS REAL) < 0"),
-            "zero_price": one("SELECT COUNT(*) FROM uci WHERE CAST(price AS REAL) = 0"),
-            "cancellation_prefix": one("SELECT COUNT(*) FROM uci WHERE invoice LIKE 'C%'"),
-            "negative_quantity_not_cancellation": one("SELECT COUNT(*) FROM uci WHERE quantity < 0 AND invoice NOT LIKE 'C%'"),
-            "cancellation_not_negative": one("SELECT COUNT(*) FROM uci WHERE quantity >= 0 AND invoice LIKE 'C%'"),
-            "price_more_than_3dp": one("SELECT COUNT(*) FROM uci WHERE LENGTH(price) - INSTR(price, '.') > 3 AND INSTR(price, '.') > 0"),
-            "items_without_description": one("SELECT COUNT(*) FROM (SELECT code FROM uci GROUP BY code HAVING COUNT(description) = 0)"),
-            "items_with_multiple_descriptions": one("SELECT COUNT(*) FROM (SELECT code FROM uci GROUP BY code HAVING COUNT(DISTINCT description) > 1)"),
-            "non_alnum5_codes": one("SELECT COUNT(DISTINCT code) FROM uci WHERE code NOT GLOB '[0-9][0-9][0-9][0-9][0-9]*'"),
-            "cross_sheet_duplicate_rows": one("""SELECT COUNT(*) FROM (SELECT 1 FROM uci GROUP BY invoice, code, description, quantity, at, price, customer, country
-                HAVING COUNT(DISTINCT sheet) > 1)"""),
-            "sum_quantity": one("SELECT SUM(quantity) FROM uci"),
-            "sum_quantity_by_country_top": database.execute(
-                "SELECT country, SUM(quantity) FROM uci GROUP BY country ORDER BY 2 DESC, 1 LIMIT 5").fetchall(),
-        },
-    }
+    with contextlib.closing(sqlite3.connect(work / "oracle.sqlite")) as database:
+        database.execute("DROP TABLE IF EXISTS uci")
+        load_uci(database, uci)
+        database.commit()
+        def one(sql):
+            return database.execute(sql).fetchone()[0]
+        products = list(olist_rows(olist, "olist_products_dataset.csv"))
+        customers = list(olist_rows(olist, "olist_customers_dataset.csv"))
+        sellers = list(olist_rows(olist, "olist_sellers_dataset.csv"))
+        counts = {
+            "olist-products": write_jsonl(work / "olist-products.jsonl", (
+                {"product_id": r["product_id"], "label": r["product_category_name"]} for r in products)),
+            "olist-customers": write_jsonl(work / "olist-customers.jsonl", (
+                {"id": key, "kind": "person"} for key in sorted({r["customer_unique_id"] for r in customers}))),
+            "olist-sellers": write_jsonl(work / "olist-sellers.jsonl", (
+                {"id": r["seller_id"], "kind": "organization"} for r in sellers)),
+            # Description choice is an explicit grain decision: most frequent, then lexical.
+            "uci-items": write_jsonl(work / "uci-items.jsonl", (
+                {"product_id": code, "label": label or ""} for code, label in database.execute("""
+                SELECT code, (SELECT description FROM uci v WHERE v.code = c.code AND description IS NOT NULL
+                              GROUP BY description ORDER BY COUNT(*) DESC, description LIMIT 1)
+                FROM (SELECT DISTINCT code FROM uci) c ORDER BY code"""))),
+            "uci-customers": write_jsonl(work / "uci-customers.jsonl", (
+                {"id": key, "kind": "person"} for (key,) in database.execute(
+                    "SELECT DISTINCT customer FROM uci WHERE customer IS NOT NULL ORDER BY customer"))),
+            "uci-lines": write_jsonl(work / "uci-lines.jsonl", (
+                {"id": f"{sheet}-{rowid}", "invoice": invoice, "code": code, "quantity": quantity,
+                 "price": price, "customer": customer or "", "country": country}
+                for rowid, sheet, invoice, code, quantity, price, customer, country in database.execute(
+                    "SELECT rowid, sheet, invoice, code, quantity, price, customer, country FROM uci ORDER BY rowid"))),
+        }
+        oracle = {
+            "extract_rows": counts,
+            "uci_sample": sample(database, work),
+            "olist": {
+                "products_missing_category": sum(not r["product_category_name"] for r in products),
+                "customer_rows": len(customers),
+                "distinct_customer_unique_id": len({r["customer_unique_id"] for r in customers}),
+            },
+            "uci": {
+                "rows": one("SELECT COUNT(*) FROM uci"),
+                "missing_customer": one("SELECT COUNT(*) FROM uci WHERE customer IS NULL"),
+                "negative_quantity": one("SELECT COUNT(*) FROM uci WHERE quantity < 0"),
+                "negative_price": one("SELECT COUNT(*) FROM uci WHERE CAST(price AS REAL) < 0"),
+                "zero_price": one("SELECT COUNT(*) FROM uci WHERE CAST(price AS REAL) = 0"),
+                "cancellation_prefix": one("SELECT COUNT(*) FROM uci WHERE invoice LIKE 'C%'"),
+                "negative_quantity_not_cancellation": one("SELECT COUNT(*) FROM uci WHERE quantity < 0 AND invoice NOT LIKE 'C%'"),
+                "cancellation_not_negative": one("SELECT COUNT(*) FROM uci WHERE quantity >= 0 AND invoice LIKE 'C%'"),
+                "price_more_than_3dp": one("SELECT COUNT(*) FROM uci WHERE LENGTH(price) - INSTR(price, '.') > 3 AND INSTR(price, '.') > 0"),
+                "items_without_description": one("SELECT COUNT(*) FROM (SELECT code FROM uci GROUP BY code HAVING COUNT(description) = 0)"),
+                "items_with_multiple_descriptions": one("SELECT COUNT(*) FROM (SELECT code FROM uci GROUP BY code HAVING COUNT(DISTINCT description) > 1)"),
+                "non_alnum5_codes": one("SELECT COUNT(DISTINCT code) FROM uci WHERE code NOT GLOB '[0-9][0-9][0-9][0-9][0-9]*'"),
+                "cross_sheet_duplicate_rows": one("""SELECT COUNT(*) FROM (SELECT 1 FROM uci GROUP BY invoice, code, description, quantity, at, price, customer, country
+                    HAVING COUNT(DISTINCT sheet) > 1)"""),
+                "sum_quantity": one("SELECT SUM(quantity) FROM uci"),
+                "sum_quantity_by_country_top": database.execute(
+                    "SELECT country, SUM(quantity) FROM uci GROUP BY country ORDER BY 2 DESC, 1 LIMIT 5").fetchall(),
+            },
+        }
     (work / "oracle.json").write_text(json.dumps(oracle, indent=1), encoding="utf-8")
     print(json.dumps(oracle))
 
@@ -200,7 +210,10 @@ def extract(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("work", help="existing scratch directory outside the checkout")
-    extract(parser.parse_args())
+    args = parser.parse_args()
+    if Path(args.work).resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+        parser.error("work directory must remain outside the source checkout")
+    extract(args)
 
 
 if __name__ == "__main__":

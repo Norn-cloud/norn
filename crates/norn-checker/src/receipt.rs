@@ -330,7 +330,10 @@ impl ReceiptSources {
         &'a self,
         context: &EntityArtifactSetContext<'a>,
     ) -> Result<EntityArtifactSetContext<'a>, ReceiptError> {
-        if ArtifactSetRef::of(&[], &self.base)? != ArtifactSetRef::of(&[], context.base)? {
+        if !std::ptr::eq(self.base.as_slice(), context.base)
+            && self.base != context.base
+            && self.identity.base != ArtifactSetRef::of(&[], context.base)?.base
+        {
             return Err(invalid_receipt("receipt base/context mismatch"));
         }
         Ok(EntityArtifactSetContext {
@@ -355,16 +358,7 @@ pub fn check_artifact_set_with_receipt(
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    let context = artifacts.validated_context(context)?;
-    check_artifact_set_with_profile(ReceiptCheckRequest {
-        artifacts: &artifacts.artifacts,
-        context: &context,
-        limits,
-        artifact_set: artifacts.identity.clone(),
-        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
-        flow_source_map: None,
-        retained: false,
-    })
+    check_artifact_set_with_flow_source_map(artifacts, context, limits, None)
 }
 
 /// Check retained exact semantic sources and bind their Norn1 bytes.
@@ -847,7 +841,6 @@ pub fn recover_legacy_admission_receipt(
         ));
     }
 
-    // The checker context's registry contains external property type names.
     let empty_registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &empty_registry,
@@ -904,17 +897,21 @@ pub fn recover_legacy_admission_receipt(
         .filter(|diagnostic| diagnostic.severity != DiagnosticSeverity::Error)
         .cloned()
         .collect();
+    let mut legacy_artifact_set = None;
     for &(checker_version, expr_profile) in HISTORIC_ADMISSION_PROFILES {
-        let artifact_set = if checker_version == LEGACY_INLINE_LAYOUT_CHECKER_VERSION {
-            ArtifactSetRef::of_legacy(artifacts, base)?
+        let current_artifact_set = if checker_version == LEGACY_INLINE_LAYOUT_CHECKER_VERSION {
+            if legacy_artifact_set.is_none() {
+                legacy_artifact_set = Some(ArtifactSetRef::of_legacy(artifacts, base)?);
+            }
+            legacy_artifact_set.as_ref().unwrap_or(&artifact_set)
         } else {
-            ArtifactSetRef::of(artifacts, base)?
+            &artifact_set
         };
         for findings in [&[][..], warnings.as_slice()] {
             let historical = CheckReceipt {
                 checker: CHECKER_NAME.to_owned(),
                 checker_version: checker_version.to_owned(),
-                artifact_set: artifact_set.clone(),
+                artifact_set: current_artifact_set.clone(),
                 limit_profile: limit_profile.clone(),
                 expr_profile: expr_profile.to_owned(),
                 identifier_profile: HISTORICAL_IDENTIFIER_PROFILE.to_owned(),
@@ -1062,7 +1059,6 @@ impl ArtifactSetRef {
         Self::of_with(artifacts, base, ArtifactRef::of)
     }
 
-    /// The full-envelope identity used by persisted checker 0.1.0 receipts.
     /// Full-envelope identity for checker 0.1.0 receipt reconstruction.
     /// New admissions use [`Self::of`] to exclude editor geometry.
     ///

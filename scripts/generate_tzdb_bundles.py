@@ -29,6 +29,7 @@ import re
 import struct
 import sys
 import tarfile
+import tempfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +40,6 @@ ENTRY_STRUCT = struct.Struct("<IIII")
 FORBIDDEN_ZONES = frozenset({"Factory"})
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "crates/norn-expr/data/tzdb"
-STANDARDS_DIR = ROOT / "registry/standards"
 
 
 @dataclass(frozen=True)
@@ -83,8 +83,23 @@ def load_verified_crate(spec: UpstreamRelease, crate_dir: Path, download: bool) 
             raise FileNotFoundError(
                 f"missing {crate_path}; pass --download or place the pinned crate in {crate_dir}"
             )
+        if not spec.crate_url.startswith("https://"):
+            raise ValueError(f"refusing non-HTTPS crate URL: {spec.crate_url!r}")
         crate_dir.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(spec.crate_url, crate_path)
+        partial = crate_path.with_suffix(".crate.partial")
+        try:
+            with urllib.request.urlopen(spec.crate_url, timeout=60) as response:
+                data = response.read()
+            actual = sha256_hex(data)
+            if actual != spec.crate_sha256:
+                raise ValueError(
+                    f"{crate_path}: SHA-256 mismatch: expected {spec.crate_sha256}, got {actual}"
+                )
+            partial.write_bytes(data)
+            partial.replace(crate_path)
+        finally:
+            partial.unlink(missing_ok=True)
+        return crate_path
     actual = sha256_hex(crate_path.read_bytes())
     if actual != spec.crate_sha256:
         raise ValueError(
@@ -178,13 +193,21 @@ def encode_bundle(release: str, zone_blobs: list[tuple[str, bytes]]) -> bytes:
     return bytes(out)
 
 
+def _extract_member(tf: tarfile.TarFile, member_name: str) -> bytes:
+    stream = tf.extractfile(member_name)
+    if stream is None:
+        raise ValueError(f"tar archive missing regular file {member_name!r}")
+    with stream:
+        return stream.read()
+
+
 def build_from_crate(spec: UpstreamRelease, crate_path: Path) -> tuple[bytes, bytes, str]:
     prefix = f"jiff-tzdb-{spec.crate_version}/"
     with tarfile.open(crate_path, "r:gz") as tf:
-        tzname_text = tf.extractfile(prefix + "tzname.rs").read().decode("utf-8")
-        concatenated = tf.extractfile(prefix + "concatenated-zoneinfo.dat").read()
-        license_mit = tf.extractfile(prefix + "LICENSE-MIT").read()
-        vcs_info = json.loads(tf.extractfile(prefix + ".cargo_vcs_info.json").read().decode("utf-8"))
+        tzname_text = _extract_member(tf, prefix + "tzname.rs").decode("utf-8")
+        concatenated = _extract_member(tf, prefix + "concatenated-zoneinfo.dat")
+        license_mit = _extract_member(tf, prefix + "LICENSE-MIT")
+        vcs_info = json.loads(_extract_member(tf, prefix + ".cargo_vcs_info.json").decode("utf-8"))
         vcs_commit = vcs_info["git"]["sha1"]
 
     raw_entries = parse_tzname_rs(tzname_text, spec.release)
@@ -216,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--crate-dir",
         type=Path,
-        default=Path("/tmp/norn-tzdb-inspect"),
+        default=Path(tempfile.gettempdir()) / "norn-tzdb-inspect",
         help="Directory holding pinned jiff-tzdb-<version>.crate tarballs",
     )
     parser.add_argument(
@@ -257,7 +280,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"WROTE {bundle_path.relative_to(ROOT)} sha256={bundle_sha} bytes={len(bundle)} vcs={vcs_commit}"
             )
 
-    assert expected_license is not None
+    if expected_license is None:
+        raise RuntimeError("no tzdb releases configured")
     license_path = OUTPUT_DIR / "LICENSE-MIT"
     license_sha = sha256_hex(expected_license)
     if args.check:

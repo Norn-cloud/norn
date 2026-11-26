@@ -97,9 +97,9 @@ impl Lineage {
             source_fields: BTreeMap::new(),
         };
         for artifact in artifacts {
-            let body = payload(artifact);
             match artifact.kind() {
                 ArtifactKind::Entity => {
+                    let body = payload(artifact);
                     if let Some(object) = body.get("objectType")
                         && let Some(name) = object.get("name").and_then(Value::as_str)
                     {
@@ -140,9 +140,12 @@ impl Lineage {
                     }
                 }
                 ArtifactKind::Mapping => {
-                    lineage.mappings.push((artifact.artifact_id.clone(), body));
+                    lineage
+                        .mappings
+                        .push((artifact.artifact_id.clone(), payload(artifact)));
                 }
                 ArtifactKind::SourceSchema => {
+                    let body = payload(artifact);
                     for field in body
                         .get("fields")
                         .and_then(Value::as_array)
@@ -210,23 +213,10 @@ impl Lineage {
                 .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(property))
                 .cloned()
         };
-        if let Some(own) = declared(object) {
-            push(strings(own.get("markings")), member.clone());
-            if let Some(shared) = own
-                .get("type")
-                .filter(|kind| kind.get("kind").and_then(Value::as_str) == Some("ref"))
-                .and_then(|kind| kind.get("name"))
-                .and_then(Value::as_str)
-                && let Some(markings) = self.property_types.get(shared)
-            {
-                push(
-                    markings.clone(),
-                    format!("{member} ← property type {shared}"),
-                );
-            }
-        }
-        for ext in self.extensions.get(object_type).into_iter().flatten() {
-            if let Some(own) = declared(ext) {
+        for holder in
+            std::iter::once(object).chain(self.extensions.get(object_type).into_iter().flatten())
+        {
+            if let Some(own) = declared(holder) {
                 push(strings(own.get("markings")), member.clone());
                 if let Some(shared) = own
                     .get("type")
@@ -348,14 +338,19 @@ pub(crate) fn check(
     finding: impl Fn(&str, String, String, &ArtifactEnvelope) -> Diagnostic,
 ) -> Vec<Diagnostic> {
     let mut views = crate::entity_scopes::ScopedViews::new(artifacts, base, &BTreeSet::new());
+    let mut scope_cache = BTreeMap::new();
     let mut findings = Vec::new();
     for (artifact, root) in models {
-        let pool = views.of(artifact).pool();
-        let lineage = Lineage::of(&pool.iter().collect::<Vec<_>>());
-        let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(pool)
-            .into_iter()
-            .map(|(id, marking)| (id.0, marking))
-            .collect();
+        let key = crate::entity_scopes::scope_key(&artifact.scope);
+        let (lineage, catalog) = &*scope_cache.entry(key).or_insert_with(|| {
+            let pool = views.of(artifact).pool();
+            let lineage = Lineage::of(&pool.iter().collect::<Vec<_>>());
+            let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(pool)
+                .into_iter()
+                .map(|(id, marking)| (id.0, marking))
+                .collect();
+            (lineage, catalog)
+        });
         let input = root.input.object_type().as_str();
         let uses = root
             .features
@@ -371,7 +366,7 @@ pub(crate) fn check(
             let carried: Vec<Carried> = lineage
                 .carried(input, property)
                 .into_iter()
-                .filter(|carried| trains_personal_data(&catalog, &carried.marking))
+                .filter(|carried| trains_personal_data(catalog, &carried.marking))
                 .collect();
             if carried.is_empty() {
                 continue;

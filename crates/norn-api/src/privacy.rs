@@ -27,7 +27,6 @@ use std::sync::Arc;
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
 use norn_ir::{MarkingIr, MaskPolicy, RuntimeValue};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
 use crate::{host::DevHost, refusal::Refusal, scope::CellScope};
@@ -93,7 +92,7 @@ impl PseudonymKey {
         info.push(0);
         info.extend_from_slice(scope.environment_id.as_bytes());
         let mut key = [0_u8; 32];
-        key.copy_from_slice(&hmac(secret, &info));
+        key.copy_from_slice(&crate::uploads::hmac(secret, &info));
         Some(Self(key))
     }
 
@@ -107,7 +106,7 @@ impl PseudonymKey {
         message.extend_from_slice(subject.as_bytes());
         message.push(0);
         message.extend_from_slice(&canonical);
-        let digest = hmac(&self.0, &message);
+        let digest = crate::uploads::hmac(&self.0, &message);
         // 50 bits as ten Crockford base32 digits.
         let mut bits = digest
             .iter()
@@ -133,7 +132,7 @@ impl PseudonymKey {
     pub fn keyed_id(&self, id: &str) -> String {
         let mut message = b"norn.row-id/1\0".to_vec();
         message.extend_from_slice(id.as_bytes());
-        crate::uploads::hex(&hmac(&self.0, &message))
+        crate::uploads::hex(&crate::uploads::hmac(&self.0, &message))
     }
 }
 
@@ -163,26 +162,6 @@ pub(crate) fn row_ids<E: SqlEngine>(
         .ok_or_else(crate::authz::read_denied)
 }
 
-/// HMAC-SHA256 (RFC 2104).
-pub(crate) fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut block = if key.len() > 64 {
-        Sha256::digest(key).to_vec()
-    } else {
-        key.to_vec()
-    };
-    block.resize(64, 0);
-    let inner: Vec<u8> = block.iter().map(|b| b ^ 0x36).collect();
-    let outer: Vec<u8> = block.iter().map(|b| b ^ 0x5c).collect();
-    let mut hasher = Sha256::new();
-    hasher.update(&inner);
-    hasher.update(data);
-    let inner_hash = hasher.finalize();
-    let mut hasher = Sha256::new();
-    hasher.update(&outer);
-    hasher.update(inner_hash);
-    hasher.finalize().to_vec()
-}
-
 /// The cell's declared markings and the kernel's own, by id. Empty exactly
 /// when the cell holds no marking label at all, current or past
 /// (`DevHost::marking_catalog`): then every field is served as itself.
@@ -207,9 +186,8 @@ fn built_in_markings() -> impl Iterator<Item = (String, MarkingIr)> {
 /// Whether `catalog` holds a marking the cell's definitions declare, not
 /// only the kernel's own.
 pub(crate) fn declares(catalog: &MarkingCatalog) -> bool {
-    catalog
-        .keys()
-        .any(|id| !built_in_markings().any(|(built_in, _)| built_in == *id))
+    let built_in = built_in_catalog();
+    catalog.keys().any(|id| !built_in.contains_key(id))
 }
 
 /// The catalog of a cell that declares no marking but holds labels: the
@@ -267,6 +245,23 @@ pub(crate) fn row_markings<E: SqlEngine>(
         .map_err(Refusal::host)
 }
 
+fn row_version_markings<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    catalog: &MarkingCatalog,
+    row: &ObjectRecord,
+) -> Result<Option<BTreeMap<String, Vec<String>>>, norn_cell::CellError> {
+    if catalog.is_empty() {
+        return Ok(Some(BTreeMap::new()));
+    }
+    let current = reader.version(MAIN_WORLD, &row.object_type, &row.id)? == row.version;
+    reader.effective_markings(
+        MAIN_WORLD,
+        &row.object_type,
+        &row.id,
+        (!current).then_some(row.version),
+    )
+}
+
 /// Whether the source lineage of `row` (one exact version) may be disclosed:
 /// a source row carries stored values, so an instance with any marked
 /// property, or whose marking snapshot is unavailable, discloses none.
@@ -278,17 +273,7 @@ pub(crate) fn discloses_source<E: SqlEngine>(
     catalog: &MarkingCatalog,
     row: &ObjectRecord,
 ) -> Result<bool, norn_cell::CellError> {
-    if catalog.is_empty() {
-        return Ok(true);
-    }
-    let current = reader.version(MAIN_WORLD, &row.object_type, &row.id)? == row.version;
-    Ok(reader
-        .effective_markings(
-            MAIN_WORLD,
-            &row.object_type,
-            &row.id,
-            (!current).then_some(row.version),
-        )?
+    Ok(row_version_markings(reader, catalog, row)?
         .is_some_and(|markings| markings.values().all(Vec::is_empty)))
 }
 
@@ -302,21 +287,7 @@ pub(crate) fn version_markings<E: SqlEngine>(
     catalog: &MarkingCatalog,
     row: &ObjectRecord,
 ) -> Result<Option<BTreeMap<String, Vec<String>>>, Refusal> {
-    if catalog.is_empty() {
-        return Ok(Some(BTreeMap::new()));
-    }
-    let current = reader
-        .version(MAIN_WORLD, &row.object_type, &row.id)
-        .map_err(Refusal::host)?
-        == row.version;
-    reader
-        .effective_markings(
-            MAIN_WORLD,
-            &row.object_type,
-            &row.id,
-            (!current).then_some(row.version),
-        )
-        .map_err(Refusal::host)
+    row_version_markings(reader, catalog, row).map_err(Refusal::host)
 }
 
 /// What a projection did to one row.

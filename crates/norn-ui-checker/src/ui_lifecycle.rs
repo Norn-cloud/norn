@@ -563,6 +563,33 @@ impl Page<'_> {
         }
     }
 
+    fn run_transitions<'a>(
+        &'a self,
+        ui: &'a Net,
+        backend: &'a Backend<'_>,
+        product: &'a Product,
+        run: &'a [usize],
+    ) -> impl Iterator<Item = (usize, Option<&'a str>, Option<&'a str>)> + 'a {
+        run.iter().filter_map(move |edge| {
+            let origin = product
+                .net()
+                .edges
+                .get(*edge)
+                .and_then(|step| product.origins.get(step.label))?;
+            let page = origin
+                .ui
+                .and_then(|index| ui.edges.get(index))
+                .and_then(|step| self.machine.transitions.get(step.label))
+                .map(|transition| transition.transition_id.as_str());
+            let object = origin
+                .backend
+                .and_then(|index| backend.net.edges.get(index))
+                .and_then(|step| backend.machine.transitions.get(step.label))
+                .map(|transition| transition.id.as_str());
+            Some((*edge, page, object))
+        })
+    }
+
     /// A product run as a witness: per step, the product edge and each side's transition.
     fn witness(
         &self,
@@ -571,34 +598,21 @@ impl Page<'_> {
         product: &Product,
         run: &[usize],
     ) -> DiagnosticWitness {
-        let steps = run
-            .iter()
-            .filter_map(|edge| {
-                let origin = product
-                    .net()
-                    .edges
-                    .get(*edge)
-                    .and_then(|step| product.origins.get(step.label))?;
-                let page = origin
-                    .ui
-                    .and_then(|index| ui.edges.get(index))
-                    .and_then(|step| self.machine.transitions.get(step.label))
-                    .map(|transition| WitnessMove {
-                        side: WitnessSide::Ui,
-                        label: transition.transition_id.clone(),
-                    });
-                let object = origin
-                    .backend
-                    .and_then(|index| backend.net.edges.get(index))
-                    .and_then(|step| backend.machine.transitions.get(step.label))
-                    .map(|transition| WitnessMove {
-                        side: WitnessSide::Backend,
-                        label: transition.id.as_str().to_owned(),
-                    });
-                Some(WitnessStep {
-                    edge: *edge,
+        let steps = self
+            .run_transitions(ui, backend, product, run)
+            .map(|(edge, page, object)| {
+                let page = page.map(|label| WitnessMove {
+                    side: WitnessSide::Ui,
+                    label: label.to_owned(),
+                });
+                let object = object.map(|label| WitnessMove {
+                    side: WitnessSide::Backend,
+                    label: label.to_owned(),
+                });
+                WitnessStep {
+                    edge,
                     moves: page.into_iter().chain(object).collect(),
-                })
+                }
             })
             .collect();
         DiagnosticWitness { steps }
@@ -622,25 +636,12 @@ impl Page<'_> {
         product: &Product,
         run: &[usize],
     ) -> Vec<String> {
-        run.iter()
-            .filter_map(|edge| product.net().edges.get(*edge))
-            .filter_map(|edge| product.origins.get(edge.label))
-            .map(|origin| {
-                let page = origin
-                    .ui
-                    .and_then(|edge| ui.edges.get(edge))
-                    .and_then(|edge| self.machine.transitions.get(edge.label))
-                    .map(|transition| format!("page {}", transition.transition_id));
-                let object = origin
-                    .backend
-                    .and_then(|edge| backend.net.edges.get(edge))
-                    .and_then(|edge| backend.machine.transitions.get(edge.label))
-                    .map(|transition| format!("object {}", transition.id.as_str()));
-                match (page, object) {
-                    (Some(page), Some(object)) => format!("{page} with {object}"),
-                    (Some(step), None) | (None, Some(step)) => step,
-                    (None, None) => String::new(),
-                }
+        self.run_transitions(ui, backend, product, run)
+            .map(|(_, page, object)| match (page, object) {
+                (Some(page), Some(object)) => format!("page {page} with object {object}"),
+                (Some(page), None) => format!("page {page}"),
+                (None, Some(object)) => format!("object {object}"),
+                (None, None) => String::new(),
             })
             .collect()
     }
