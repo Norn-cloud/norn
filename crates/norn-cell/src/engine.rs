@@ -52,23 +52,25 @@ impl WriteRevision {
     }
 }
 
+const WRITE_KEYWORDS: &[&str] = &[
+    "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "PRAGMA", "ATTACH",
+    "VACUUM", "REINDEX",
+];
+
 /// One `SELECT` statement: no second statement after a `;`, and no keyword
 /// that writes. Conservative: anything unsure is not read-only.
 fn read_only(sql: &str) -> bool {
     let text = sql.trim().trim_end_matches(';').trim_end();
-    let upper = text.to_ascii_uppercase();
-    upper.starts_with("SELECT")
+    text.get(..6)
+        .is_some_and(|head| head.eq_ignore_ascii_case("SELECT"))
         && !text.contains(';')
-        && ![
-            "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "PRAGMA", "ATTACH",
-            "VACUUM", "REINDEX",
-        ]
-        .iter()
-        .any(|keyword| {
-            upper
-                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .any(|word| word == *keyword)
-        })
+        && !text
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|word| {
+                WRITE_KEYWORDS
+                    .iter()
+                    .any(|keyword| word.eq_ignore_ascii_case(keyword))
+            })
 }
 
 /// Largest SQLite integer carried exactly by a JavaScript number.
@@ -754,10 +756,10 @@ struct DefinitionWrites<'a> {
 #[cfg(feature = "native")]
 impl Drop for DefinitionWrites<'_> {
     fn drop(&mut self) {
+        self.engine.next_statement();
         self.engine
             .definitions
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        self.engine.next_statement();
         self.engine.conn.flush_prepared_statement_cache();
     }
 }
@@ -877,12 +879,13 @@ impl SqlEngine for NativeEngine {
     }
 
     fn admitted(&self) -> Result<(), CellError> {
-        if let Some(mode) = self.journal_mode.take() {
+        if let Some(mode) = self.journal_mode.get() {
             let _applied: String =
                 self.conn
                     .query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
                         row.get(0)
                     })?;
+            self.journal_mode.set(None);
         }
         Ok(())
     }
@@ -981,7 +984,7 @@ impl SqlEngine for NativeEngine {
             return Ok(());
         }
         // Inside a definition-writes scope each statement of the batch is
-        // prepared with its own target, as `execute_batch` steps it: once.
+        // prepared with its own target and stepped to completion.
         let mut batch = rusqlite::Batch::new(&self.conn, sql);
         loop {
             self.next_statement();
@@ -991,7 +994,7 @@ impl SqlEngine for NativeEngine {
                 return Ok(());
             };
             let mut rows = statement.raw_query();
-            rows.next()?;
+            while rows.next()?.is_some() {}
         }
     }
 
@@ -1151,5 +1154,56 @@ mod definition_writes {
             )
             .expect("count");
         assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn definition_writes_clears_target_on_drop_and_runs_returning_batch() {
+        let engine = NativeEngine::open_in_memory().expect("engine");
+        engine
+            .execute_batch(
+                r#"CREATE TABLE "_norn_definition_active" ("id" INTEGER PRIMARY KEY, "version" INTEGER NOT NULL)"#,
+            )
+            .expect("table");
+        engine
+            .definition_writes(|| {
+                engine.execute(
+                    r#"INSERT INTO "_norn_definition_active" ("id", "version") VALUES (1, 1)"#,
+                    &[],
+                )?;
+                assert!(engine.target.lock().expect("target").is_some());
+                Ok(())
+            })
+            .expect("single write succeeds");
+        assert!(engine.target.lock().expect("target").is_none());
+        engine
+            .definition_writes(|| {
+                engine.execute_batch(
+                    r#"INSERT INTO "_norn_definition_active" ("id", "version") VALUES (2, 1), (3, 1) RETURNING "id""#,
+                )
+            })
+            .expect("multi-row batch succeeds");
+        assert!(engine.target.lock().expect("target").is_none());
+        let rows: i64 = engine
+            .query_row(
+                r#"SELECT COUNT(*) FROM "_norn_definition_active""#,
+                &[],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(rows, 3);
+    }
+
+    #[test]
+    fn read_only_sql_classification_handles_case_and_write_keywords() {
+        assert!(super::read_only("  select 1 ; "));
+        assert!(super::read_only("SELECT id FROM items WHERE name = 'ok'"));
+        assert!(!super::read_only("SELECT 1; SELECT 2"));
+        assert!(!super::read_only("SELECT * FROM t; DELETE FROM t"));
+        assert!(!super::read_only("INSERT INTO t VALUES (1)"));
+        assert!(!super::read_only(
+            "SELECT 1 WHERE EXISTS (UPDATE t SET a = 1)"
+        ));
+        assert!(!super::read_only("—SELECT 1"));
+        assert!(!super::read_only("a——"));
     }
 }

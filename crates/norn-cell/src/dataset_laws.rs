@@ -59,18 +59,15 @@ fn catalog(model: &Model) -> TypeCatalog<'_> {
         .with_governing_laws(model.law_artifacts())
 }
 
-/// Lower one admitted ZEN source over `self`, or `None` outside the subset.
-fn lower_source(source: &str, table: &TableSchema) -> Option<RowPredicate> {
-    let tree = norn_kernel::governing_laws::law_row_tree(source)?;
-    let lowered = lower(&tree)?;
-    lowered.kind(table)?;
-    Some(lowered)
-}
-
-/// MANIFEST-LAWS-1 (S2): the nodes of an admitted ZEN source's row tree,
-/// before lowering (0 outside the subset, whose rows are all residue).
-fn source_nodes(source: &str) -> u64 {
-    norn_kernel::governing_laws::law_row_tree(source).map_or(0, |tree| tree_nodes(&tree))
+/// Lower one admitted ZEN source over `self` and count its row-tree nodes
+/// (MANIFEST-LAWS-1 S2) in a single parse.
+fn lower_and_count(source: &str, table: &TableSchema) -> (Option<RowPredicate>, u64) {
+    let Some(tree) = norn_kernel::governing_laws::law_row_tree(source) else {
+        return (None, 0);
+    };
+    let nodes = tree_nodes(&tree);
+    let predicate = lower(&tree).filter(|lowered| lowered.kind(table).is_some());
+    (predicate, nodes)
 }
 
 fn tree_nodes(tree: &RowExpr) -> u64 {
@@ -195,14 +192,15 @@ impl<E: SqlEngine> CellStore<E> {
                 norn_ir::ConstraintClass::Integrity => DataQualitySeverity::Error,
                 norn_ir::ConstraintClass::Quality => DataQualitySeverity::Warning,
             };
+            let (predicate, nodes) = lower_and_count(invariant.expression.as_str(), table);
             checks.push(RuleCheck {
                 rule: rule_key(&rule_ref)?,
                 label: format!("invariant:{}", invariant.id.as_str()),
                 holds: quarantines(&rule_ref, severity)?,
                 condition: None,
-                predicate: lower_source(invariant.expression.as_str(), table),
+                predicate,
                 expect: true,
-                fuel: rule_fuel(source_nodes(invariant.expression.as_str())),
+                fuel: rule_fuel(nodes),
             });
         }
         let laws = catalog
@@ -213,19 +211,17 @@ impl<E: SqlEngine> CellStore<E> {
                 .map_err(|error| refused(error.to_string()))?;
             let (condition, predicate, nodes) = match &law.response {
                 LawResponse::Predicate { expression } => {
-                    let condition = match &law.condition {
-                        Some(condition) => lower_source(condition.as_str(), table).map(Some),
-                        None => Some(None),
-                    };
-                    let nodes = source_nodes(expression.as_str()).saturating_add(
-                        law.condition
-                            .as_ref()
-                            .map_or(0, |condition| source_nodes(condition.as_str())),
-                    );
-                    match condition {
+                    let (condition, cond_nodes) = match &law.condition {
                         Some(condition) => {
-                            (condition, lower_source(expression.as_str(), table), nodes)
+                            let (lowered, nodes) = lower_and_count(condition.as_str(), table);
+                            (lowered.map(Some), nodes)
                         }
+                        None => (Some(None), 0),
+                    };
+                    let (expr_pred, expr_nodes) = lower_and_count(expression.as_str(), table);
+                    let nodes = expr_nodes.saturating_add(cond_nodes);
+                    match condition {
+                        Some(condition) => (condition, expr_pred, nodes),
                         None => (None, None, nodes),
                     }
                 }
@@ -234,11 +230,9 @@ impl<E: SqlEngine> CellStore<E> {
                         .iter()
                         .find(|(_, invariant)| invariant.id.as_str() == invariant_id)
                         .map(|(_, invariant)| invariant.expression.as_str());
-                    (
-                        None,
-                        source.and_then(|source| lower_source(source, table)),
-                        source.map_or(0, source_nodes),
-                    )
+                    let (predicate, nodes) =
+                        source.map_or((None, 0), |source| lower_and_count(source, table));
+                    (None, predicate, nodes)
                 }
                 LawResponse::Action { .. }
                 | LawResponse::Transition { .. }
