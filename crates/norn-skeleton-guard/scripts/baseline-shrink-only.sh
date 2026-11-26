@@ -13,6 +13,8 @@ set -euo pipefail
 base="${1:-origin/main}"
 baseline_file="crates/norn-skeleton-guard/baseline.json"
 loc_file="crates/norn-skeleton-guard/loc-baseline.json"
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
 
 validate_baseline_schema() {
   local old_json="$1"
@@ -58,7 +60,8 @@ if ! git rev-parse --verify "${base}^{commit}" >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -z "$(git ls-tree --name-only "${base}" -- "${baseline_file}")" ]]; then
+baseline_entry="$(git ls-tree --full-tree --name-only "${base}^{commit}" -- "${baseline_file}")"
+if [[ -z "${baseline_entry}" ]]; then
   if [[ -f "${baseline_file}" ]]; then
     validate_baseline_schema "null"
   fi
@@ -87,7 +90,8 @@ else
   echo "${baseline_file}: no entries added and no ratchet raised relative to ${base}."
 fi
 
-if [[ -z "$(git ls-tree --name-only "${base}" -- "${loc_file}")" ]]; then
+loc_entry="$(git ls-tree --full-tree --name-only "${base}^{commit}" -- "${loc_file}")"
+if [[ -z "${loc_entry}" ]]; then
   if [[ -f "${loc_file}" ]]; then
     validate_loc_schema
   fi

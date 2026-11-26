@@ -52,6 +52,11 @@ def relative(path: Path) -> str:
 CHAR_ESCAPE_LITERAL = re.compile(
     r"'\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|u\{[0-9A-Fa-f]+\}|[0-9]{1,3}|[^\n])'"
 )
+RAW_STRING_OPEN = re.compile(r'r(#*)"')
+
+
+def _is_ident_tail(ch: str) -> bool:
+    return ch.isalnum() or ch in ("_", "'", "!", "?")
 
 
 def strip_comments_and_strings(
@@ -66,21 +71,24 @@ def strip_comments_and_strings(
     output: list[str] = []
     index = 0
     depth = 0
-    in_string = False
+    in_string: str | None = None
+    interp_braces: list[int] = []
     is_lean = line_marker == "--"
     while index < len(source):
         if depth:
             if source.startswith(block[0], index):
                 depth += 1
+                output.extend(" " * len(block[0]))
                 index += len(block[0])
             elif source.startswith(block[1], index):
                 depth -= 1
+                output.extend(" " * len(block[1]))
                 index += len(block[1])
             else:
                 output.append("\n" if source[index] == "\n" else " ")
                 index += 1
             continue
-        if in_string:
+        if in_string is not None:
             if source[index] == "\\":
                 width = min(2, len(source) - index)
                 output.extend(source[index : index + width] if preserve_strings else " " * width)
@@ -88,7 +96,12 @@ def strip_comments_and_strings(
             elif source[index] == '"':
                 output.append('"' if preserve_strings else " ")
                 index += 1
-                in_string = False
+                in_string = None
+            elif in_string == "interp" and source[index] == "{":
+                output.append("{")
+                index += 1
+                interp_braces.append(1)
+                in_string = None
             else:
                 output.append(
                     source[index]
@@ -113,15 +126,40 @@ def strip_comments_and_strings(
             if close < 0:
                 fail("unterminated French-quoted identifier in trusted Lean source")
             span = source[index : close + 1]
+            # Keep identifier text visible to hole patterns so `«ofReduceBool»`
+            # or `«implemented_by»` cannot hide behind French quotes, while
+            # neutralizing quote/brace characters so `«"»` or `«}»` cannot
+            # desynchronize string or interpolation lexing.
+            output.extend(
+                span
+                if preserve_strings
+                else "".join(" " if ch in ('«', '»', '"', "'", "{", "}") else ch for ch in span)
+            )
+            index = close + 1
+        elif (
+            is_lean
+            and source[index] == "r"
+            and (index == 0 or not _is_ident_tail(source[index - 1]))
+            and (raw_open := RAW_STRING_OPEN.match(source, index)) is not None
+        ):
+            hashes = raw_open.group(1)
+            closing = '"' + hashes
+            close = source.find(closing, raw_open.end())
+            if close < 0:
+                fail("unterminated raw string in trusted Lean source")
+            end = close + len(closing)
+            span = source[index:end]
             output.extend(
                 span
                 if preserve_strings
                 else "".join("\n" if ch == "\n" else " " for ch in span)
             )
-            index = close + 1
-        elif source[index] == "'" and (
-            index == 0 or not (source[index - 1].isalnum() or source[index - 1] in ("_", "'"))
-        ):
+            index = end
+        elif is_lean and source.startswith('!"', index):
+            output.extend('!"' if preserve_strings else "  ")
+            index += 2
+            in_string = "interp"
+        elif source[index] == "'" and (index == 0 or not _is_ident_tail(source[index - 1])):
             char_width = 0
             if (
                 index + 2 < len(source)
@@ -144,13 +182,24 @@ def strip_comments_and_strings(
         elif source[index] == '"':
             output.append('"' if preserve_strings else " ")
             index += 1
-            in_string = True
+            in_string = "plain"
+        elif interp_braces and source[index] == "{":
+            interp_braces[-1] += 1
+            output.append("{")
+            index += 1
+        elif interp_braces and source[index] == "}":
+            interp_braces[-1] -= 1
+            output.append("}")
+            index += 1
+            if interp_braces[-1] == 0:
+                interp_braces.pop()
+                in_string = "interp"
         else:
             output.append(source[index])
             index += 1
     if depth:
         fail("unterminated block comment in trusted proof source")
-    if in_string:
+    if in_string is not None or interp_braces:
         fail("unterminated string in trusted proof source")
     return "".join(output)
 
@@ -177,24 +226,26 @@ FSTAR_ADMISSION_OPTION = re.compile(
 )
 
 FSTAR_PROOF_HOLE = re.compile(
-    r"\b(?:admit|assume|axiom|val|admit_smt_query|admit_smt_queries|"
-    r"magic|tadmit|admitP|unsafe_coerce)\b"
+    r"\b(?:admit|_assume|assume|admitted|admit_termination|axiom|val|"
+    r"admit_smt_query|admit_smt_queries|expect_failure|expect_lax_failure|"
+    r"magic|tadmit|tadmit_t|admitP|unsafe_coerce)\b"
 )
 
 # `constant` is Lean's general constant-declaration command. `native_decide`,
 # `+native`, `ofReduceBool`, `ofReduceNat`, `bv_decide`, `implemented_by`,
-# `extern`, `skipKernelTC`, `addDecl`, `run_cmd`, `elab`, `elab_rules`, and
-# `unsafe` move trust outside Lean's kernel or inject arbitrary declarations.
-# `opaque` definitions can be kernel-sound when they include a body,
-# but rejecting them in promoted proof sources keeps selector and extraction
-# correspondence transparent and avoids a declaration-shaped escape hatch.
-# The scanner always runs after comments and strings have been removed by the
-# nested-comment-aware lexer.
+# `extern`, `skipKernelTC`, `addDecl*`, `addAndCompile`, `axiomDecl`,
+# `modifyEnv`, `setEnv`, `#eval`, `initialize`, `run_cmd`, `elab`,
+# `elab_rules`, `sorryAx`, and `unsafe` move trust outside Lean's kernel or
+# inject arbitrary declarations. `opaque` definitions can be kernel-sound when
+# they include a body, but rejecting them in promoted proof sources keeps
+# selector and extraction correspondence transparent and avoids a
+# declaration-shaped escape hatch. The scanner always runs after comments and
+# strings have been removed by the nested-comment-aware lexer.
 LEAN_PROOF_HOLE = re.compile(
-    r"\b(?:sorry|admit|axiom|constant|native_decide|implemented_by|unsafe|opaque|"
-    r"ofReduceBool|ofReduceNat|bv_decide|skipKernelTC|addDecl|extern|"
-    r"run_cmd|elab|elab_rules)\b|"
-    r"\+native\b|"
+    r"\b(?:sorry|sorryAx|admit|axiom|constant|native_decide|implemented_by|unsafe|opaque|"
+    r"ofReduceBool|ofReduceNat|bv_decide|skipKernelTC|addDecl\w*|addAndCompile|"
+    r"axiomDecl|modifyEnv|setEnv|initialize|extern|run_cmd|elab|elab_rules)\b|"
+    r"(?<!\w)(?:\+native|#eval)\b|"
     r"\bset_option\s+warningAsError\s+false\b"
 )
 
@@ -233,6 +284,8 @@ def run_lexer_canaries() -> None:
         '-- sorry native_decide unsafe\n'
         '/- axiom /- constant hidden : False -/ implemented_by opaque -/\n'
         'def quoted := "constant native_decide implemented_by unsafe opaque"\n'
+        'def rawQuoted := r#"sorry \\" axiom"#\n'
+        'def interpClean (n : Nat) := s!"count={n} sorry"\n'
         "def quoteChar := '\"'\n"
         "def x' := \"still clean\"\n"
         'def «"» := true\n'
@@ -245,6 +298,13 @@ def run_lexer_canaries() -> None:
         "def quote_blind := '\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
         "def esc_blind := '\\\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
         'def «"» := 1\ndef theorem_bad : True := by sorry\ndef close := ""\n',
+        'def raw_blind := r"\\"\naxiom impossible : False\ndef close := \'"\'\n',
+        'def interp_hide := s!"{(Lean.ofReduceBool : Nat)}"\n',
+        "def guillemet_hide := Lean.«ofReduceBool»\n",
+        "set_option debug.«skipKernelTC» true\n",
+        "set_option «warningAsError» false\n",
+        "@[«implemented_by» alt] def forged : True := True.intro\n",
+        "def forged := «sorryAx» _ false\n",
         "axiom impossible : False\n",
         "constant impossible : False\n",
         "example : True := by native_decide\n",
@@ -254,6 +314,11 @@ def run_lexer_canaries() -> None:
         "example : True := by bv_decide\n",
         "set_option debug.skipKernelTC true\n",
         "def forged := Lean.addDecl\n",
+        "def forged := Lean.Kernel.Environment.addDeclWithoutChecking\n",
+        "#eval Lean.addAndCompile (.axiomDecl default)\n",
+        "initialize pure ()\n",
+        "def forged := Lean.modifyEnv\n",
+        "def forged := Lean.setEnv\n",
         '@[extern "c_forged"] def forged : True := True.intro\n',
         "run_cmd pure ()\n",
         "elab \"x\" : term => pure ()\n",
@@ -275,8 +340,11 @@ def run_lexer_canaries() -> None:
     for fstar_bad_src in (
         "let theorem_bad = admit ()\n",
         "let q = '\"'\nlet theorem_bad = admit ()\nlet s = \"\"\n",
+        "let theorem_bad = _assume ()\n",
+        "let theorem_bad = admitted ()\n",
         "let theorem_bad = magic ()\n",
         "let theorem_bad = tadmit ()\n",
+        "let theorem_bad = tadmit_t ()\n",
         "let theorem_bad = admitP True\n",
         "let theorem_bad = unsafe_coerce ()\n",
     ):
