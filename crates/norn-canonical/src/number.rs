@@ -92,10 +92,16 @@ impl JsonNumber {
             })?;
         if is_integer_literal {
             if let Ok(integer) = literal.parse::<u64>() {
-                return Ok(Self::from_non_negative(integer));
+                return Ok(Self {
+                    kind: JsonNumberKind::NonNegativeInteger(integer),
+                    value,
+                });
             }
             if let Ok(integer) = literal.parse::<i64>() {
-                return Ok(Self::from_negative(integer));
+                return Ok(Self {
+                    kind: JsonNumberKind::NegativeInteger(integer),
+                    value,
+                });
             }
         }
         Ok(Self::from_float(value))
@@ -162,7 +168,7 @@ impl JsonNumber {
     fn from_non_negative(value: u64) -> Self {
         Self {
             kind: JsonNumberKind::NonNegativeInteger(value),
-            value: integer_as_f64(value.to_string().as_str()),
+            value: u64_as_f64(value),
         }
     }
 
@@ -179,7 +185,7 @@ impl JsonNumber {
         }
         Self {
             kind: JsonNumberKind::NegativeInteger(value),
-            value: integer_as_f64(value.to_string().as_str()),
+            value: i64_as_f64(value),
         }
     }
 
@@ -241,11 +247,33 @@ fn serde_json_keeps_literals() -> bool {
     })
 }
 
-/// Binary64 value of an integer literal via `serde_json`'s primitive parser
-/// (round-to-nearest-even, as the default profile's `u64`/`i64` to `f64`
-/// conversion). The literal is a formatted integer, so parsing cannot fail.
-fn integer_as_f64(literal: &str) -> f64 {
-    serde_json::from_str::<f64>(literal).unwrap_or(0.0)
+fn u64_as_f64(value: u64) -> f64 {
+    if let Ok(small) = u32::try_from(value) {
+        return f64::from(small);
+    }
+    integer_as_f64_display(value)
+}
+
+fn i64_as_f64(value: i64) -> f64 {
+    if let Ok(small) = i32::try_from(value) {
+        return f64::from(small);
+    }
+    integer_as_f64_display(value)
+}
+
+/// Binary64 value of an integer outside `u32`/`i32` via `serde_json`'s
+/// primitive parser over a stack buffer (zero heap allocation, bit-identical
+/// to the historical default profile).
+fn integer_as_f64_display(value: impl std::fmt::Display) -> f64 {
+    let mut buf = [0_u8; 24];
+    let mut cursor = std::io::Cursor::new(buf.as_mut_slice());
+    if std::io::Write::write_fmt(&mut cursor, format_args!("{value}")).is_err() {
+        return 0.0;
+    }
+    let len = usize::try_from(cursor.position()).unwrap_or(0);
+    buf.get(..len)
+        .and_then(|bytes| serde_json::from_slice::<f64>(bytes).ok())
+        .unwrap_or(0.0)
 }
 
 /// Validate the RFC 8259 number grammar. Returns `Some(true)` for an integer
@@ -322,7 +350,27 @@ where
     D: serde::Deserializer<'de>,
     T: JsonTree,
 {
-    deserializer.deserialize_any(JsonTreeVisitor(std::marker::PhantomData))
+    deserialize_json_tree_at(deserializer, 0)
+}
+
+fn deserialize_json_tree_at<'de, D, T>(deserializer: D, depth: usize) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: JsonTree,
+{
+    if depth > crate::MAX_JSON_NESTING_DEPTH {
+        return Err(serde::de::Error::custom(
+            CanonicalJsonError::NestingTooDeep {
+                depth,
+                limit: crate::MAX_JSON_NESTING_DEPTH,
+                offset: 0,
+            },
+        ));
+    }
+    deserializer.deserialize_any(JsonTreeVisitor {
+        depth,
+        marker: std::marker::PhantomData,
+    })
 }
 
 /// The map key `serde_json` uses for an unparsed number literal under
@@ -332,7 +380,10 @@ where
 /// pins it against the running `serde_json`.
 const SERDE_JSON_NUMBER_TOKEN: &str = "$serde_json::private::Number";
 
-struct JsonTreeVisitor<T>(std::marker::PhantomData<T>);
+struct JsonTreeVisitor<T> {
+    depth: usize,
+    marker: std::marker::PhantomData<T>,
+}
 
 impl<'de, T: JsonTree> serde::de::Visitor<'de> for JsonTreeVisitor<T> {
     type Value = T;
@@ -350,7 +401,7 @@ impl<'de, T: JsonTree> serde::de::Visitor<'de> for JsonTreeVisitor<T> {
     }
 
     fn visit_some<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<T, D::Error> {
-        deserialize_json_tree(deserializer)
+        deserialize_json_tree_at(deserializer, self.depth)
     }
 
     fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<T, E> {
@@ -398,9 +449,11 @@ impl<'de, T: JsonTree> serde::de::Visitor<'de> for JsonTreeVisitor<T> {
 
     fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut access: A) -> Result<T, A::Error> {
         let mut values = Vec::new();
-        while let Some(value) =
-            access.next_element_seed(JsonTreeSeed::<T>(std::marker::PhantomData))?
-        {
+        let next = self.depth.saturating_add(1);
+        while let Some(value) = access.next_element_seed(JsonTreeSeed::<T> {
+            depth: next,
+            marker: std::marker::PhantomData,
+        })? {
             values.push(value);
         }
         Ok(T::array(values))
@@ -408,6 +461,7 @@ impl<'de, T: JsonTree> serde::de::Visitor<'de> for JsonTreeVisitor<T> {
 
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut access: A) -> Result<T, A::Error> {
         let mut entries = Vec::new();
+        let next = self.depth.saturating_add(1);
         while let Some(key) = access.next_key::<String>()? {
             if entries.is_empty() && key == SERDE_JSON_NUMBER_TOKEN && serde_json_keeps_literals() {
                 let literal = access.next_value::<String>()?;
@@ -420,20 +474,26 @@ impl<'de, T: JsonTree> serde::de::Visitor<'de> for JsonTreeVisitor<T> {
                     .map(T::number)
                     .map_err(serde::de::Error::custom);
             }
-            let value = access.next_value_seed(JsonTreeSeed::<T>(std::marker::PhantomData))?;
+            let value = access.next_value_seed(JsonTreeSeed::<T> {
+                depth: next,
+                marker: std::marker::PhantomData,
+            })?;
             entries.push((key, value));
         }
         Ok(T::object(entries))
     }
 }
 
-struct JsonTreeSeed<T>(std::marker::PhantomData<T>);
+struct JsonTreeSeed<T> {
+    depth: usize,
+    marker: std::marker::PhantomData<T>,
+}
 
 impl<'de, T: JsonTree> serde::de::DeserializeSeed<'de> for JsonTreeSeed<T> {
     type Value = T;
 
     fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<T, D::Error> {
-        deserialize_json_tree(deserializer)
+        deserialize_json_tree_at(deserializer, self.depth)
     }
 }
 
@@ -445,11 +505,12 @@ impl<'de, T: JsonTree> serde::de::DeserializeSeed<'de> for JsonTreeSeed<T> {
 /// # Errors
 ///
 /// Returns [`CanonicalJsonError::NumberTooLarge`] for a number that is not a
-/// finite binary64 value.
+/// finite binary64 value, or [`CanonicalJsonError::NestingTooDeep`] if nesting
+/// exceeds [`crate::MAX_JSON_NESTING_DEPTH`].
 pub fn json_tree_from_value<T: JsonTree>(
     value: serde_json::Value,
 ) -> Result<T, CanonicalJsonError> {
-    json_tree_from(value, NumberOrigin::Constructed)
+    json_tree_from(value, NumberOrigin::Constructed, 0)
 }
 
 /// Where the numbers of a `serde_json` value came from; see
@@ -477,24 +538,149 @@ impl NumberOrigin {
 fn json_tree_from<T: JsonTree>(
     value: serde_json::Value,
     origin: NumberOrigin,
+    depth: usize,
 ) -> Result<T, CanonicalJsonError> {
+    if depth > crate::MAX_JSON_NESTING_DEPTH {
+        return Err(CanonicalJsonError::NestingTooDeep {
+            depth,
+            limit: crate::MAX_JSON_NESTING_DEPTH,
+            offset: 0,
+        });
+    }
     Ok(match value {
         serde_json::Value::Null => T::null(),
         serde_json::Value::Bool(value) => T::boolean(value),
         serde_json::Value::Number(number) => T::number(origin.classify(&number)?),
         serde_json::Value::String(value) => T::string(value),
-        serde_json::Value::Array(values) => T::array(
-            values
+        serde_json::Value::Array(values) => {
+            let child_depth = if values.is_empty() {
+                depth
+            } else {
+                crate::next_depth(depth, 0)?
+            };
+            T::array(
+                values
+                    .into_iter()
+                    .map(|value| json_tree_from(value, origin, child_depth))
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+        serde_json::Value::Object(entries) => {
+            let child_depth = if entries.is_empty() {
+                depth
+            } else {
+                crate::next_depth(depth, 0)?
+            };
+            T::object(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| {
+                        json_tree_from(value, origin, child_depth).map(|value| (key, value))
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+    })
+}
+
+pub(crate) fn legacy_canonicalize(
+    mut value: serde_json::Value,
+    origin: NumberOrigin,
+) -> Result<Vec<u8>, CanonicalJsonError> {
+    prune_legacy_optional_nulls(&mut value);
+    let value = sort_legacy_json_value(value, origin, 0)?;
+    serde_json::to_vec(&value).map_err(|error| CanonicalJsonError::LegacySerialize {
+        message: error.to_string(),
+    })
+}
+
+fn prune_legacy_optional_nulls(value: &mut serde_json::Value) {
+    if let Some(scope) = value
+        .get_mut("scope")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        scope.retain(|_, item| !item.is_null());
+    }
+
+    if let Some(provenance) = value
+        .get_mut("provenance")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        provenance.retain(|_, item| !item.is_null());
+    }
+
+    if let Some(dependencies) = value
+        .get_mut("dependencies")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for dependency in dependencies {
+            if let Some(dependency) = dependency.as_object_mut() {
+                dependency.retain(|_, item| !item.is_null());
+            }
+        }
+    }
+}
+
+/// Sort object keys recursively and rewrite every number to the form the
+/// `serde_json` default profile produces, so Legacy0 bytes do not depend on
+/// whether `serde_json/arbitrary_precision` is enabled (issue #2440).
+fn sort_legacy_json_value(
+    value: serde_json::Value,
+    origin: NumberOrigin,
+    depth: usize,
+) -> Result<serde_json::Value, CanonicalJsonError> {
+    if depth > crate::MAX_JSON_NESTING_DEPTH {
+        return Err(CanonicalJsonError::NestingTooDeep {
+            depth,
+            limit: crate::MAX_JSON_NESTING_DEPTH,
+            offset: 0,
+        });
+    }
+    Ok(match value {
+        serde_json::Value::Array(values) => {
+            let child_depth = if values.is_empty() {
+                depth
+            } else {
+                crate::next_depth(depth, 0)?
+            };
+            serde_json::Value::Array(
+                values
+                    .into_iter()
+                    .map(|value| sort_legacy_json_value(value, origin, child_depth))
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+        serde_json::Value::Object(object) => {
+            let child_depth = if object.is_empty() {
+                depth
+            } else {
+                crate::next_depth(depth, 0)?
+            };
+            let mut entries = object
                 .into_iter()
-                .map(|value| json_tree_from(value, origin))
-                .collect::<Result<_, _>>()?,
+                .map(|(key, value)| {
+                    sort_legacy_json_value(value, origin, child_depth).map(|value| (key, value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+
+            let mut sorted = serde_json::Map::new();
+            for (key, value) in entries {
+                sorted.insert(key, value);
+            }
+            serde_json::Value::Object(sorted)
+        }
+        serde_json::Value::Number(number) => serde_json::Value::Number(
+            origin
+                .classify(&number)
+                .map_err(|error| CanonicalJsonError::LegacyParse {
+                    message: error.to_string(),
+                })?
+                .to_serde(),
         ),
-        serde_json::Value::Object(entries) => T::object(
-            entries
-                .into_iter()
-                .map(|(key, value)| json_tree_from(value, origin).map(|value| (key, value)))
-                .collect::<Result<_, _>>()?,
-        ),
+        other @ (serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::String(_)) => other,
     })
 }
 

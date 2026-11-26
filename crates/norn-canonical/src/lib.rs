@@ -186,6 +186,10 @@ pub const NORN1_DOMAIN_TAG: &[u8] = b"norn.canonical.json/norn1\0";
 /// Norn1 ingress profile; callers may impose a smaller document limit.
 pub const MAX_CANONICAL_NUMBER_BYTES: usize = 1_048_576;
 
+/// Maximum cumulative UTF-8 bytes of expanded Norn1 numbers in a single
+/// document, preventing many small exponential tokens from amplifying memory.
+pub const MAX_DOCUMENT_NUMBER_BYTES: usize = 4 * MAX_CANONICAL_NUMBER_BYTES;
+
 /// Maximum nesting depth for Norn1 JSON values.
 ///
 /// The root value starts at depth zero. The limit is deliberately broader than
@@ -601,49 +605,16 @@ pub fn serialize_json_verbatim<T: Serialize + ?Sized>(
 /// This is distinct from Norn1 equivalence and from raw source-byte commitments.
 ///
 /// # Errors
-/// Returns serialization errors or the validation errors of [`parse_json_verbatim`].
+/// Returns serialization errors or the validation errors of [`parse_json_tokens`].
 pub fn canonical_json_exact_of<T: Serialize + ?Sized>(
     value: &T,
 ) -> Result<Vec<u8>, CanonicalJsonError> {
     let bytes = serialize_json_verbatim(value)?;
-    parse_json_verbatim(&bytes)?;
-    let sorted = sort_exact_json(
-        serde_json::from_slice(&bytes).map_err(|error| json_encoding_error(&error))?,
-    )
-    .map_err(|error| json_encoding_error(&error))?;
-    Ok(sorted.get().as_bytes().to_vec())
-}
-
-fn json_encoding_error(error: &serde_json::Error) -> CanonicalJsonError {
-    CanonicalJsonError::Serialize {
-        message: error.to_string(),
-    }
-}
-
-fn sort_exact_json(
-    raw: &serde_json::value::RawValue,
-) -> Result<Box<serde_json::value::RawValue>, serde_json::Error> {
-    let bytes = match raw.get().as_bytes().first() {
-        Some(b'{') => {
-            let fields: BTreeMap<String, &serde_json::value::RawValue> =
-                serde_json::from_str(raw.get())?;
-            let sorted = fields
-                .into_iter()
-                .map(|(key, value)| sort_exact_json(value).map(|value| (key, value)))
-                .collect::<Result<BTreeMap<_, _>, _>>()?;
-            serde_json::to_string(&sorted)?
-        }
-        Some(b'[') => {
-            let values: Vec<&serde_json::value::RawValue> = serde_json::from_str(raw.get())?;
-            let sorted = values
-                .into_iter()
-                .map(sort_exact_json)
-                .collect::<Result<Vec<_>, _>>()?;
-            serde_json::to_string(&sorted)?
-        }
-        _ => return Ok(raw.to_owned()),
-    };
-    serde_json::value::RawValue::from_string(bytes)
+    let tree = parse_json_tokens(&bytes)?;
+    let mut output = String::with_capacity(bytes.len());
+    let mut number_bytes = 0;
+    write_value(&tree, &mut output, 0, false, &mut number_bytes)?;
+    Ok(output.into_bytes())
 }
 
 /// Stream the same JSON bytes as [`serialize_json_verbatim`] into a writer.
@@ -679,7 +650,8 @@ pub fn parse_json(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonErr
 /// not a valid finite JSON decimal or when normalized object keys collide.
 pub fn serialize(value: &JsonValue) -> Result<Vec<u8>, CanonicalJsonError> {
     let mut output = String::new();
-    write_value(value, &mut output, 0)?;
+    let mut number_bytes = 0;
+    write_value(value, &mut output, 0, true, &mut number_bytes)?;
     Ok(output.into_bytes())
 }
 
@@ -698,8 +670,12 @@ pub fn serialize_json(value: &JsonValue) -> Result<Vec<u8>, CanonicalJsonError> 
 ///
 /// Returns the same errors as [`parse`] and [`serialize`].
 pub fn canonicalize_json(input: impl AsRef<[u8]>) -> Result<Vec<u8>, CanonicalJsonError> {
+    let input = input.as_ref();
     let value = parse(input)?;
-    serialize(&value)
+    let mut output = String::with_capacity(input.len());
+    let mut number_bytes = 0;
+    write_value(&value, &mut output, 0, false, &mut number_bytes)?;
+    Ok(output.into_bytes())
 }
 
 /// Norn1 canonical bytes of a typed value.
@@ -796,7 +772,7 @@ pub fn legacy_canonicalize_json(input: &[u8]) -> Result<Vec<u8>, CanonicalJsonEr
             message: error.to_string(),
         }
     })?;
-    legacy_canonicalize(&value, NumberOrigin::Parsed)
+    number::legacy_canonicalize(value, NumberOrigin::Parsed)
 }
 
 /// Apply the historical Legacy0 transformation to an in-memory Serde JSON
@@ -814,21 +790,11 @@ pub fn legacy_canonicalize_json(input: &[u8]) -> Result<Vec<u8>, CanonicalJsonEr
 /// # Errors
 ///
 /// Returns [`CanonicalJsonError::LegacyParse`] if the value contains a
-/// number that is not a finite binary64 value.
+/// number that is not a finite binary64 value, or
+/// [`CanonicalJsonError::NestingTooDeep`] if nesting exceeds
+/// [`MAX_JSON_NESTING_DEPTH`].
 pub fn legacy_canonicalize_value(value: &serde_json::Value) -> Result<Vec<u8>, CanonicalJsonError> {
-    legacy_canonicalize(value, NumberOrigin::Constructed)
-}
-
-fn legacy_canonicalize(
-    value: &serde_json::Value,
-    origin: NumberOrigin,
-) -> Result<Vec<u8>, CanonicalJsonError> {
-    let mut value = value.clone();
-    prune_legacy_optional_nulls(&mut value);
-    let value = sort_legacy_json_value(value, origin)?;
-    serde_json::to_vec(&value).map_err(|error| CanonicalJsonError::LegacySerialize {
-        message: error.to_string(),
-    })
+    number::legacy_canonicalize(value.clone(), NumberOrigin::Constructed)
 }
 
 /// Hash an already parsed Serde JSON value using Legacy0.
@@ -841,74 +807,6 @@ pub fn legacy_hash_value(value: &serde_json::Value) -> Result<String, CanonicalJ
     Ok(HashProfile::Legacy0.hash_canonical_bytes(bytes.as_slice()))
 }
 
-fn prune_legacy_optional_nulls(value: &mut serde_json::Value) {
-    if let Some(scope) = value
-        .get_mut("scope")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        scope.retain(|_, item| !item.is_null());
-    }
-
-    if let Some(provenance) = value
-        .get_mut("provenance")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        provenance.retain(|_, item| !item.is_null());
-    }
-
-    if let Some(dependencies) = value
-        .get_mut("dependencies")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for dependency in dependencies {
-            if let Some(dependency) = dependency.as_object_mut() {
-                dependency.retain(|_, item| !item.is_null());
-            }
-        }
-    }
-}
-
-/// Sort object keys recursively and rewrite every number to the form the
-/// `serde_json` default profile produces, so Legacy0 bytes do not depend on
-/// whether `serde_json/arbitrary_precision` is enabled (issue #2440).
-fn sort_legacy_json_value(
-    value: serde_json::Value,
-    origin: NumberOrigin,
-) -> Result<serde_json::Value, CanonicalJsonError> {
-    Ok(match value {
-        serde_json::Value::Array(values) => serde_json::Value::Array(
-            values
-                .into_iter()
-                .map(|value| sort_legacy_json_value(value, origin))
-                .collect::<Result<_, _>>()?,
-        ),
-        serde_json::Value::Object(object) => {
-            let mut entries = object
-                .into_iter()
-                .map(|(key, value)| sort_legacy_json_value(value, origin).map(|value| (key, value)))
-                .collect::<Result<Vec<_>, _>>()?;
-            entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-
-            let mut sorted = serde_json::Map::new();
-            for (key, value) in entries {
-                sorted.insert(key, value);
-            }
-            serde_json::Value::Object(sorted)
-        }
-        serde_json::Value::Number(number) => serde_json::Value::Number(
-            origin
-                .classify(&number)
-                .map_err(|error| CanonicalJsonError::LegacyParse {
-                    message: error.to_string(),
-                })?
-                .to_serde(),
-        ),
-        other @ (serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::String(_)) => other,
-    })
-}
-
 struct Parser<'a> {
     input: &'a [u8],
     position: usize,
@@ -916,6 +814,8 @@ struct Parser<'a> {
     normalize_strings: bool,
     /// Whether numbers are expanded to Norn1 decimals or kept as their token.
     normalize_numbers: bool,
+    /// Cumulative expanded decimal bytes parsed in this document.
+    number_bytes: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -925,6 +825,7 @@ impl<'a> Parser<'a> {
             position: 0,
             normalize_strings: true,
             normalize_numbers: true,
+            number_bytes: 0,
         }
     }
 
@@ -1064,11 +965,16 @@ impl<'a> Parser<'a> {
             match self.peek() {
                 Some(b'"') => {
                     self.expect_byte(b'"')?;
-                    return Ok(if self.normalize_strings {
-                        nfc(&value)
-                    } else {
-                        value
-                    });
+                    return Ok(
+                        if self.normalize_strings
+                            && unicode_normalization::is_nfc_quick(value.chars())
+                                != unicode_normalization::IsNormalized::Yes
+                        {
+                            value.nfc().collect()
+                        } else {
+                            value
+                        },
+                    );
                 }
                 Some(b'\\') => {
                     self.expect_byte(b'\\')?;
@@ -1078,8 +984,19 @@ impl<'a> Parser<'a> {
                     return Err(self.invalid("unescaped control character in string"));
                 }
                 Some(byte) if byte < 0x80 => {
-                    self.expect_byte(byte)?;
-                    value.push(char::from(byte));
+                    let start = self.position;
+                    while self
+                        .peek()
+                        .is_some_and(|b| (0x20..0x80).contains(&b) && b != b'"' && b != b'\\')
+                    {
+                        self.position = self.position.saturating_add(1);
+                    }
+                    let slice = self
+                        .input
+                        .get(start..self.position)
+                        .and_then(|bytes| str::from_utf8(bytes).ok())
+                        .ok_or_else(|| self.invalid("string slice overflow"))?;
+                    value.push_str(slice);
                 }
                 Some(byte) => {
                     // The entry point validates the document once. Rechecking
@@ -1230,7 +1147,7 @@ impl<'a> Parser<'a> {
         let raw = str::from_utf8(raw)
             .map_err(|_error| CanonicalJsonError::InvalidUtf8 { offset: start })?;
         if self.normalize_numbers {
-            normalize_number(raw, start)
+            normalize_number(raw, start, &mut self.number_bytes)
         } else {
             Ok(raw.to_owned())
         }
@@ -1409,15 +1326,6 @@ fn decimal_parts(raw: &str, offset: usize) -> Result<DecimalParts<'_>, Canonical
         None => (magnitude, None),
     };
 
-    let exponent = match exponent_text {
-        Some(text) => text
-            .parse::<i64>()
-            .map_err(|_error| CanonicalJsonError::NumberTooLarge {
-                value: raw.to_owned(),
-                offset,
-            })?,
-        None => 0,
-    };
     let (integer, fraction) = match mantissa.split_once('.') {
         Some((integer, fraction)) => (integer, fraction),
         None => (mantissa, ""),
@@ -1429,6 +1337,28 @@ fn decimal_parts(raw: &str, offset: usize) -> Result<DecimalParts<'_>, Canonical
         return Err(invalid_decimal(raw, offset));
     }
 
+    let exponent = match exponent_text {
+        Some(text) => {
+            let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+            if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(invalid_decimal(raw, offset));
+            }
+            match text.parse::<i64>() {
+                Ok(value) => value,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
+                    ) =>
+                {
+                    return Err(number_too_large(raw, offset));
+                }
+                Err(_) => return Err(invalid_decimal(raw, offset)),
+            }
+        }
+        None => 0,
+    };
+
     Ok(DecimalParts {
         negative: raw.starts_with('-'),
         integer,
@@ -1437,13 +1367,19 @@ fn decimal_parts(raw: &str, offset: usize) -> Result<DecimalParts<'_>, Canonical
     })
 }
 
-fn normalize_number(raw: &str, offset: usize) -> Result<String, CanonicalJsonError> {
+fn normalize_number(
+    raw: &str,
+    offset: usize,
+    budget: &mut usize,
+) -> Result<String, CanonicalJsonError> {
     let parts = decimal_parts(raw, offset)?;
-    let mut digits = String::new();
+    let mut digits =
+        String::with_capacity(parts.integer.len().saturating_add(parts.fraction.len()));
     digits.push_str(parts.integer);
     digits.push_str(parts.fraction);
     let significant_all = digits.trim_start_matches('0');
     if significant_all.is_empty() {
+        charge_number_bytes(raw, offset, 1, budget)?;
         return Ok("0".to_owned());
     }
     let significant = significant_all.trim_end_matches('0');
@@ -1460,7 +1396,23 @@ fn normalize_number(raw: &str, offset: usize) -> Result<String, CanonicalJsonErr
         .checked_sub(fraction_len)
         .and_then(|value| value.checked_add(trailing_zero_count))
         .ok_or_else(|| number_too_large(raw, offset))?;
-    format_decimal(raw, offset, parts.negative, significant, scale)
+    format_decimal(raw, offset, parts.negative, significant, scale, budget)
+}
+
+fn charge_number_bytes(
+    raw: &str,
+    offset: usize,
+    output_len: usize,
+    budget: &mut usize,
+) -> Result<(), CanonicalJsonError> {
+    let next = budget
+        .checked_add(output_len)
+        .ok_or_else(|| number_too_large(raw, offset))?;
+    if output_len > MAX_CANONICAL_NUMBER_BYTES || next > MAX_DOCUMENT_NUMBER_BYTES {
+        return Err(number_too_large(raw, offset));
+    }
+    *budget = next;
+    Ok(())
 }
 
 fn format_decimal(
@@ -1469,6 +1421,7 @@ fn format_decimal(
     negative: bool,
     significant: &str,
     scale: i64,
+    budget: &mut usize,
 ) -> Result<String, CanonicalJsonError> {
     let significant_len =
         i64::try_from(significant.len()).map_err(|_error| number_too_large(raw, offset))?;
@@ -1498,9 +1451,7 @@ fn format_decimal(
         }
     }
     .ok_or_else(|| number_too_large(raw, offset))?;
-    if output_len > MAX_CANONICAL_NUMBER_BYTES {
-        return Err(number_too_large(raw, offset));
-    }
+    charge_number_bytes(raw, offset, output_len, budget)?;
 
     let mut output = String::with_capacity(output_len);
     if negative {
@@ -1586,7 +1537,7 @@ fn append_zeros(output: &mut String, count: usize) {
 }
 
 fn lower_hex(digest: [u8; 32]) -> String {
-    let mut output = String::new();
+    let mut output = String::with_capacity(64);
     for byte in digest {
         #[expect(
             clippy::let_underscore_must_use,
@@ -1601,6 +1552,8 @@ fn write_value(
     value: &JsonValue,
     output: &mut String,
     depth: usize,
+    normalize: bool,
+    number_bytes: &mut usize,
 ) -> Result<(), CanonicalJsonError> {
     if depth > MAX_JSON_NESTING_DEPTH {
         return Err(CanonicalJsonError::NestingTooDeep {
@@ -1612,8 +1565,20 @@ fn write_value(
     match value {
         JsonValue::Null => output.push_str("null"),
         JsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        JsonValue::Number(value) => output.push_str(normalize_number(value, 0)?.as_str()),
-        JsonValue::String(value) => write_string(value, output),
+        JsonValue::Number(value) => {
+            if normalize {
+                output.push_str(normalize_number(value, 0, number_bytes)?.as_str());
+            } else {
+                output.push_str(value);
+            }
+        }
+        JsonValue::String(value) => {
+            if normalize {
+                write_string(value, output);
+            } else {
+                write_string_raw(value, output);
+            }
+        }
         JsonValue::Array(values) => {
             output.push('[');
             let mut first = true;
@@ -1623,11 +1588,11 @@ fn write_value(
                 }
                 first = false;
                 let child_depth = next_depth(depth, 0)?;
-                write_value(value, output, child_depth)?;
+                write_value(value, output, child_depth, normalize, number_bytes)?;
             }
             output.push(']');
         }
-        JsonValue::Object(values) => write_object(values, output, depth)?,
+        JsonValue::Object(values) => write_object(values, output, depth, normalize, number_bytes)?,
     }
     Ok(())
 }
@@ -1636,11 +1601,34 @@ fn write_object(
     values: &BTreeMap<String, JsonValue>,
     output: &mut String,
     depth: usize,
+    normalize: bool,
+    number_bytes: &mut usize,
 ) -> Result<(), CanonicalJsonError> {
+    let already_sorted = !normalize
+        || values.keys().all(|key| {
+            unicode_normalization::is_nfc_quick(key.chars())
+                == unicode_normalization::IsNormalized::Yes
+        });
+    output.push('{');
+    if already_sorted {
+        let mut first = true;
+        for (key, value) in values {
+            if !first {
+                output.push(',');
+            }
+            first = false;
+            write_string_raw(key, output);
+            output.push(':');
+            let child_depth = next_depth(depth, 0)?;
+            write_value(value, output, child_depth, normalize, number_bytes)?;
+        }
+        output.push('}');
+        return Ok(());
+    }
+
     let mut entries = Vec::with_capacity(values.len());
     for (key, value) in values {
-        let normalized_key = nfc_borrowed(key);
-        entries.push((normalized_key, value));
+        entries.push((nfc_borrowed(key), value));
     }
     entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     for window in entries.windows(2) {
@@ -1654,28 +1642,31 @@ fn write_object(
         }
     }
 
-    output.push('{');
     let mut first = true;
     for (key, value) in entries {
         if !first {
             output.push(',');
         }
         first = false;
-        write_string(&key, output);
+        write_string_raw(&key, output);
         output.push(':');
         let child_depth = next_depth(depth, 0)?;
-        write_value(value, output, child_depth)?;
+        write_value(value, output, child_depth, normalize, number_bytes)?;
     }
     output.push('}');
     Ok(())
 }
 
 fn write_string(value: &str, output: &mut String) {
+    let normalized = nfc_borrowed(value);
+    write_string_raw(&normalized, output);
+}
+
+fn write_string_raw(value: &str, output: &mut String) {
     output.push('"');
     // Runs that need no escape are copied whole; only `"`, `\\` and the C0
     // controls (all ASCII) are escaped, exactly as one character at a time.
-    let normalized = nfc_borrowed(value);
-    let mut rest: &str = &normalized;
+    let mut rest = value;
     while let Some(at) =
         rest.find(|character: char| matches!(character, '"' | '\\' | '\u{0}'..='\u{1f}'))
     {
@@ -2566,6 +2557,71 @@ mod tests {
         assert!(matches!(
             parse(input),
             Err(CanonicalJsonError::NumberTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn norn1_rejects_cumulative_decimal_expansion_amplification() {
+        let item = format!("1e{}", MAX_CANONICAL_NUMBER_BYTES.saturating_sub(1));
+        let count = (MAX_DOCUMENT_NUMBER_BYTES / MAX_CANONICAL_NUMBER_BYTES).saturating_add(1);
+        let mut input = String::from("[");
+        for index in 0..count {
+            if index > 0 {
+                input.push(',');
+            }
+            input.push_str(&item);
+        }
+        input.push(']');
+        assert!(matches!(
+            parse(input),
+            Err(CanonicalJsonError::NumberTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn serialize_classifies_malformed_exponent_as_invalid_decimal() {
+        for bad in [
+            "1e",
+            "1eabc",
+            "1e1e1",
+            "1e+1.5",
+            "bad.e99999999999999999999999",
+        ] {
+            assert!(
+                matches!(
+                    serialize(&JsonValue::Number(bad.to_owned())),
+                    Err(CanonicalJsonError::InvalidDecimal { .. })
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_json_exact_of_handles_depth_above_128_up_to_limit() {
+        let mut json = String::new();
+        for _ in 0..160 {
+            json.push_str(r#"{"b":1,"a":"#);
+        }
+        json.push('0');
+        for _ in 0..160 {
+            json.push('}');
+        }
+        let raw = serde_json::value::RawValue::from_string(json).expect("raw");
+        let sorted = canonical_json_exact_of(&raw).expect("depth 160 exact json");
+        let text = String::from_utf8(sorted).expect("utf8");
+        assert!(text.starts_with(r#"{"a":{"a":"#));
+    }
+
+    #[test]
+    fn legacy_canonicalize_value_bounds_nesting_depth() {
+        let mut value = serde_json::Value::Null;
+        for _ in 0..=MAX_JSON_NESTING_DEPTH {
+            value = serde_json::Value::Array(vec![value]);
+        }
+        assert!(matches!(
+            legacy_canonicalize_value(&value),
+            Err(CanonicalJsonError::NestingTooDeep { .. })
         ));
     }
 
