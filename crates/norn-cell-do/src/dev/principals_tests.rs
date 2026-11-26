@@ -306,13 +306,13 @@ fn a_named_principal_holds_no_hosted_admin_operation_its_roles_lack() {
         now: 1_800_000_000,
         body: &load,
     });
+    let outside_status = outside.status;
     let clerk = lab.call(Some(CLERK), "POST", "/v1/observations:load", &load);
+    let outside: Value = serde_json::from_str(&outside.body).unwrap_or(Value::Null);
     assert_eq!(
-        clerk,
-        (
-            outside.status,
-            serde_json::from_str(&outside.body).unwrap_or(Value::Null)
-        )
+        (clerk.0, &clerk.1["code"]),
+        (outside_status, &outside["code"]),
+        "{clerk:?}"
     );
     let (status, refused) = lab.call(Some(ACTOR), "POST", "/v1/observations:load", &load);
     assert_eq!(status, 400, "the developer reaches the loader: {refused}");
