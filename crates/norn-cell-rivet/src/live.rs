@@ -14,7 +14,8 @@
 //! actor awake.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 
 use norn_api::live::{LiveRefusal, LiveServerMessage};
 use norn_api::scope::CellScope;
@@ -33,6 +34,10 @@ pub const MAX_SUBSCRIPTIONS: usize = norn_api::live::MAX_SUBSCRIPTIONS;
 /// Sockets per cell actor.
 pub const MAX_SOCKETS: usize = 256;
 const MAX_MESSAGE: usize = norn_api::live::MAX_MESSAGE;
+/// Maximum size of the router's initial `norn.hello` frame, in bytes.
+const MAX_HELLO_MESSAGE: usize = 16_384;
+/// Maximum inbound frames buffered per live socket before shedding slow readers.
+const MAX_QUEUED_FRAMES: usize = 64;
 /// The router's first frame.
 pub const HELLO: &str = "norn.hello";
 
@@ -58,7 +63,9 @@ struct LiveSocket {
 #[derive(Default)]
 pub struct Sockets {
     open: std::sync::Mutex<Vec<Arc<LiveSocket>>>,
-    next: std::sync::atomic::AtomicU64,
+    next: AtomicU64,
+    publishing: AtomicBool,
+    dirty: AtomicBool,
 }
 
 impl Sockets {
@@ -150,15 +157,25 @@ pub fn accept(actor: Arc<CellActor>, ctx: Ctx<CellActor>, ws: &WebSocket) {
         });
         return;
     }
-    let (frames, mut queue) = mpsc::unbounded_channel::<WsMessage>();
+    let (frames, mut queue) = mpsc::channel::<WsMessage>(MAX_QUEUED_FRAMES);
+    let ws_overflow = ws.clone();
     ws.configure_message_event_callback(Some(Arc::new(move |message, _index| {
-        // A frame after the reader stopped has nowhere to go.
-        let _sent = frames.send(message);
+        if let Err(mpsc::error::TrySendError::Full(_)) = frames.try_send(message) {
+            let ws = ws_overflow.clone();
+            tokio::spawn(async move {
+                ws.close(Some(1008), Some("live reader overwhelmed".to_owned()))
+                    .await;
+            });
+        }
         Ok(())
     })));
-    let closing = Arc::clone(&actor);
+    // Hold only a weak actor reference in the WebSocket callback to avoid an
+    // Arc<CellActor> -> Sockets -> LiveSocket -> WebSocket -> CellActor cycle.
+    let closing: Weak<CellActor> = Arc::downgrade(&actor);
     ws.configure_close_event_callback(Some(Arc::new(move |_code, _reason, _clean| {
-        closing.sockets().remove(id);
+        if let Some(actor) = closing.upgrade() {
+            actor.sockets().remove(id);
+        }
         Box::pin(async { Ok::<(), anyhow::Error>(()) })
     })));
     tokio::spawn(async move {
@@ -186,7 +203,12 @@ async fn handle(
         return false;
     };
     let hello = socket.state.lock().await.hello.clone();
-    if hello.is_some() && raw.len() > MAX_MESSAGE {
+    let max_len = if hello.is_some() {
+        MAX_MESSAGE
+    } else {
+        MAX_HELLO_MESSAGE
+    };
+    if raw.len() > max_len {
         socket
             .ws
             .close(Some(1009), Some("message too large".to_owned()))
@@ -348,11 +370,37 @@ async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option
     true
 }
 
-/// After a commit: answer every live subscription on this actor again.
+/// After a commit: answer every live subscription on this actor again,
+/// coalescing concurrent commit bursts into one active publish loop.
 pub async fn publish(actor: &Arc<CellActor>) {
-    for socket in actor.sockets().all() {
-        if !evaluate(actor, &socket, None).await {
-            actor.sockets().remove(socket.id);
+    struct PublishGuard<'a>(&'a Sockets);
+    impl Drop for PublishGuard<'_> {
+        fn drop(&mut self) {
+            self.0.publishing.store(false, Ordering::Release);
+        }
+    }
+
+    let sockets = actor.sockets();
+    sockets.dirty.store(true, Ordering::Release);
+    loop {
+        if sockets
+            .publishing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let guard = PublishGuard(sockets);
+        while sockets.dirty.swap(false, Ordering::AcqRel) {
+            for socket in sockets.all() {
+                if !evaluate(actor, &socket, None).await {
+                    sockets.remove(socket.id);
+                }
+            }
+        }
+        drop(guard);
+        if !sockets.dirty.load(Ordering::Acquire) {
+            return;
         }
     }
 }

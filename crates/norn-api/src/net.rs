@@ -21,8 +21,14 @@ pub fn internal_ip(ip: std::net::IpAddr) -> bool {
 pub fn internal_host(host: &url::Host<&str>) -> bool {
     match host {
         url::Host::Domain(domain) => {
+            const DOT_LOCALHOST: &[u8] = b".localhost";
             let domain = domain.trim_end_matches('.');
-            domain == "localhost" || domain.ends_with(".localhost") || !domain.contains('.')
+            let is_localhost_sub = domain.len() > DOT_LOCALHOST.len()
+                && domain
+                    .as_bytes()
+                    .get(domain.len().saturating_sub(DOT_LOCALHOST.len())..)
+                    .is_some_and(|tail| tail.eq_ignore_ascii_case(DOT_LOCALHOST));
+            domain.eq_ignore_ascii_case("localhost") || is_localhost_sub || !domain.contains('.')
         }
         url::Host::Ipv4(ip) => internal_ipv4(*ip),
         url::Host::Ipv6(ip) => internal_ipv6(*ip),
@@ -59,20 +65,56 @@ pub fn internal_ipv6(ip: std::net::Ipv6Addr) -> bool {
     let segments = ip.segments();
     let [first, second, third, ..] = segments;
     // Addresses that carry or reach an IPv4 destination are refused whatever
-    // the IPv4 part: IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96),
-    // NAT64 (64:ff9b::/96 and the local-use 64:ff9b:1::/48), 6to4
-    // (2002::/16) and Teredo (2001::/32).
+    // the IPv4 part: IPv4-mapped (::ffff:0:0/96), IPv4-translated
+    // (::ffff:0:0:0/96), IPv4-compatible (::/96), NAT64 (64:ff9b::/96 and the
+    // local-use 64:ff9b:1::/48), 6to4 (2002::/16) and Teredo (2001::/32).
     let carries_ipv4 = matches!(segments, [0, 0, 0, 0, 0, 0xffff | 0, _, _])
+        || matches!(segments, [0, 0, 0, 0, 0xffff, 0, _, _])
         || matches!(segments, [0x64, 0xff9b, 0, 0, 0, 0, _, _])
         || (first == 0x64 && second == 0xff9b && third == 1)
         || first == 0x2002
         || (first == 0x2001 && second == 0);
+    // Non-globally-reachable special-purpose IPv6 ranges: discard-only
+    // (100::/64), benchmarking (2001:2::/48), ORCHID / ORCHIDv2
+    // (2001:10::/28, 2001:20::/28), and documentation (2001:db8::/32).
+    let special_reserved = matches!(segments, [0x0100, 0, 0, 0, ..])
+        || (first == 0x2001 && second == 0x0002 && third == 0)
+        || (first == 0x2001 && matches!(second & 0xfff0, 0x0010 | 0x0020))
+        || (first == 0x2001 && second == 0x0db8);
     ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
         || carries_ipv4
+        || special_reserved
         // fc00::/7 unique-local, fe80::/10 link-local, fec0::/10 site-local.
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
         || (first & 0xffc0) == 0xfec0
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "literal test IP addresses")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_host_and_ipv6_cover_case_and_reserved_ranges() {
+        for host in ["LOCALHOST", "Localhost.", "api.LOCALHOST", "sub.LocalHost."] {
+            assert!(internal_host(&url::Host::Domain(host)), "{host}");
+        }
+        assert!(!internal_host(&url::Host::Domain("api.example.com")));
+        for addr in [
+            "::ffff:0:127.0.0.1",
+            "100::1",
+            "2001:2::1",
+            "2001:10::1",
+            "2001:20::1",
+            "2001:db8::1",
+        ] {
+            let ip: std::net::Ipv6Addr = addr.parse().expect("valid IPv6 literal");
+            assert!(internal_ipv6(ip), "{addr}");
+        }
+        let public: std::net::Ipv6Addr = "2606:2800:220:1::1".parse().expect("valid IPv6");
+        assert!(!internal_ipv6(public));
+    }
 }
