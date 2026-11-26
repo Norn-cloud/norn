@@ -627,3 +627,146 @@ fn the_refusal_follows_mapping_lineage_from_a_classified_source_field() {
         "{message}"
     );
 }
+
+#[test]
+fn privacy_3_follows_supertype_and_transitive_interface_inheritance() {
+    let redacted = json!({ "kind": "redacted" });
+    let base_iface = envelope(
+        "sales.BaseContact.entity",
+        "entity",
+        &json!({
+            "entityVersion": "2.0",
+            "interface": {
+                "name": "sales.BaseContact",
+                "properties": [
+                    { "id": "region", "type": { "kind": "text" }, "markings": ["pii.contact"] }
+                ]
+            }
+        }),
+    );
+    let child_iface = envelope(
+        "sales.ExtendedContact.entity",
+        "entity",
+        &json!({
+            "entityVersion": "2.0",
+            "interface": {
+                "name": "sales.ExtendedContact",
+                "extends": ["sales.BaseContact"],
+                "properties": []
+            }
+        }),
+    );
+    let iface_customer = entity(
+        "sales.Customer.entity",
+        &json!({
+            "name": "sales.Customer",
+            "implements": ["sales.ExtendedContact"],
+            "properties": [
+                { "id": "tenure_months", "type": { "kind": "integer" } },
+                { "id": "monthly_spend", "type": { "kind": "decimal", "scale": 2 } },
+                { "id": "plan", "type": { "kind": "enum", "values": [ { "value": "basic" }, { "value": "pro" } ] } },
+                { "id": "region", "type": { "kind": "text" } },
+                { "id": "churned", "type": { "kind": "boolean" } }
+            ]
+        }),
+    );
+    let iface_msg = refusal(&[
+        base_iface,
+        child_iface,
+        iface_customer,
+        markings(&redacted),
+        model(&churn_payload()),
+    ])
+    .expect("transitive parent interface PII marking must refuse");
+    assert!(
+        iface_msg.contains("sales.BaseContact.region"),
+        "{iface_msg}"
+    );
+
+    let person = entity(
+        "sales.Person.entity",
+        &json!({
+            "name": "sales.Person",
+            "properties": [
+                { "id": "region", "type": { "kind": "text" }, "markings": ["pii.contact"] }
+            ]
+        }),
+    );
+    let sub_customer = entity(
+        "sales.Customer.entity",
+        &json!({
+            "name": "sales.Customer",
+            "extends": "sales.Person",
+            "properties": [
+                { "id": "tenure_months", "type": { "kind": "integer" } },
+                { "id": "monthly_spend", "type": { "kind": "decimal", "scale": 2 } },
+                { "id": "plan", "type": { "kind": "enum", "values": [ { "value": "basic" }, { "value": "pro" } ] } },
+                { "id": "churned", "type": { "kind": "boolean" } }
+            ]
+        }),
+    );
+    let super_msg = refusal(&[
+        person,
+        sub_customer,
+        markings(&redacted),
+        model(&churn_payload()),
+    ])
+    .expect("inherited supertype PII marking must refuse");
+    assert!(super_msg.contains("sales.Person.region"), "{super_msg}");
+}
+
+#[test]
+fn privacy_3_follows_bracket_dynamic_and_when_mapping_reads() {
+    let redacted = json!({ "kind": "redacted" });
+    let source = envelope(
+        "crm.source.source",
+        "source_schema",
+        &json!({ "fields": [
+            { "dataset": "contacts", "name": "postal_region", "ordinal": 0, "nativeType": "varchar",
+              "typeCandidate": { "type": "string", "origin": "declared" }, "markings": ["pii.contact"] },
+            { "dataset": "contacts", "name": "tier", "ordinal": 1, "nativeType": "varchar",
+              "typeCandidate": { "type": "string", "origin": "declared" } }
+        ] }),
+    );
+    for expr in ["input['postal_region']", "input[tier]"] {
+        let mapping = envelope(
+            "crm.contacts.mapping",
+            "mapping",
+            &json!({ "format": "norn.mapping/1", "maps": [{
+                "id": "customer", "source": { "dataset": "contacts" },
+                "target": { "entity": "sales.Customer.entity" },
+                "properties": [{ "property": "region", "value": expr }]
+            }] }),
+        );
+        let msg = refusal(&[
+            account(),
+            customer(),
+            markings(&redacted),
+            source.clone(),
+            mapping,
+            model(&churn_payload()),
+        ])
+        .expect("bracket or dynamic mapping expression must refuse PII training");
+        assert!(msg.contains("contacts.postal_region"), "{msg}");
+    }
+    let when_mapping = envelope(
+        "crm.contacts.mapping",
+        "mapping",
+        &json!({ "format": "norn.mapping/1", "maps": [{
+            "id": "customer", "source": { "dataset": "contacts" },
+            "target": { "entity": "sales.Customer.entity" },
+            "when": "input['postal_region'] != ''",
+            "properties": [{ "property": "region", "value": "input.tier" }]
+        }] }),
+    );
+    let when_msg = refusal(&[
+        account(),
+        customer(),
+        markings(&redacted),
+        source,
+        when_mapping,
+        model(&churn_payload()),
+    ])
+    .expect("map.when reading PII source field must refuse");
+    assert!(when_msg.contains("contacts.postal_region"), "{when_msg}");
+}

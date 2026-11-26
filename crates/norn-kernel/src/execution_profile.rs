@@ -13,6 +13,24 @@ use crate::{CellCommit, CommitError, CommitView, Consumed, FactKey, FactVersion,
 
 pub use crate::profile_ownership::{AtomicOwnership, supports_local};
 
+/// Whether `error` is a pre-storage syntactic/shape refusal produced before
+/// reading cell state, so [`ProfileView::validate`] must not probe ownership on
+/// unvalidated keys.
+pub(crate) const fn is_shape_refusal<E>(error: &CommitError<E>) -> bool {
+    matches!(
+        error,
+        CommitError::EventLimitExceeded { .. }
+            | CommitError::IdentifierTooLong { .. }
+            | CommitError::DuplicateKey { .. }
+            | CommitError::DuplicateLink { .. }
+            | CommitError::DuplicateLinkRead { .. }
+            | CommitError::LinkReadTooLarge { .. }
+            | CommitError::InvalidLinkRead { .. }
+            | CommitError::InvalidPredicateRead { .. }
+            | CommitError::LinkTarget { .. }
+    )
+}
+
 pub(crate) struct ProfileView<'a, V: ?Sized> {
     inner: &'a V,
     reads: RefCell<BTreeSet<FactKey>>,
@@ -51,6 +69,18 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn validate_after_local<E, C, T, R>(
+        &self,
+        commit: &CellCommit<E, C, T>,
+        model: crate::CommitModel<'_, '_>,
+        result: &Result<R, CommitError<V::Error>>,
+    ) -> Result<(), CommitError<V::Error>> {
+        if result.as_ref().is_err_and(is_shape_refusal) {
+            return Ok(());
+        }
+        self.validate(commit, model)
     }
 
     pub(crate) fn validate<E, C, T>(

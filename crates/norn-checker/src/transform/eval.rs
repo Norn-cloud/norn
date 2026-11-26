@@ -11,7 +11,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EvaluationBudget, Type, Value};
+use norn_expr::{ExprError, TurnFuel, Type, Value};
 use norn_ir::metric::TimeGrain;
 use norn_ir::{AggregateFn, Decimal, DedupeKeep, JoinKind, RuntimeValue, SortDirection, WindowFn};
 
@@ -192,12 +192,13 @@ pub fn evaluate(
 ) -> Result<TransformOutput, EvalError> {
     let mut results: BTreeMap<&str, Vec<Row>> = BTreeMap::new();
     let mut node_rows = BTreeMap::new();
+    let mut fuel = TurnFuel::new(plan.fuel_units);
     for id in &plan.order {
         let node = plan
             .nodes
             .get(id)
             .ok_or_else(|| EvalError::Input(format!("node {id:?} is not admitted")))?;
-        let rows = run(plan, input, &results, &node.step)?;
+        let rows = run(plan, input, &results, &node.step, &mut fuel)?;
         node_rows.insert(id.clone(), u64::try_from(rows.len()).unwrap_or(u64::MAX));
         results.insert(id.as_str(), rows);
     }
@@ -217,17 +218,18 @@ fn run(
     input: &TransformInput,
     results: &BTreeMap<&str, Vec<Row>>,
     step: &Step,
+    fuel: &mut TurnFuel,
 ) -> Result<Vec<Row>, EvalError> {
     match step {
         Step::Scan { alias } => scan(plan, input, alias),
         Step::Filter {
             input: from,
             predicate,
-        } => filter(rows_of(results, from)?, predicate, plan.fuel_units),
+        } => filter(rows_of(results, from)?, predicate, fuel),
         Step::Project {
             input: from,
             columns,
-        } => project(rows_of(results, from)?, columns, plan.fuel_units),
+        } => project(rows_of(results, from)?, columns, fuel),
         Step::Join {
             left,
             right,
@@ -424,35 +426,35 @@ fn scan(plan: &TransformPlan, input: &TransformInput, alias: &str) -> Result<Vec
     Ok(rows)
 }
 
-fn evaluate_expression(typed: &TypedExpression, row: &Row, fuel: u64) -> Result<Value, EvalError> {
-    let context = Value::object([(ROW_ROOT, Value::Object(row.values.clone()))]);
-    let attempt = typed.expression.evaluate_admitted_metered(
-        &context,
-        EvaluationBudget::new(fuel),
-        &typed.env,
-        &typed.expected,
-    );
-    attempt
-        .result
-        .map(norn_expr::Evaluation::into_value)
-        .map_err(|error| EvalError::Expression(error.to_string()))
+fn eval_expr(expr: &TypedExpression, row: &Row, fuel: &mut TurnFuel) -> Result<Value, EvalError> {
+    let ctx = Value::object([(ROW_ROOT, Value::Object(row.values.clone()))]);
+    let attempt = fuel.spend(|b| {
+        expr.expression
+            .evaluate_admitted_metered(&ctx, b, &expr.env, &expr.expected)
+    });
+    match attempt.result {
+        Ok(value) => Ok(value.into_value()),
+        Err(e) if matches!(e, ExprError::BudgetExhausted { .. }) => Err(EvalError::BoundExceeded),
+        Err(e) => Err(EvalError::Expression(e.to_string())),
+    }
 }
 
-fn filter(rows: &[Row], predicate: &TypedExpression, fuel: u64) -> Result<Vec<Row>, EvalError> {
+fn filter(
+    rows: &[Row],
+    pred: &TypedExpression,
+    fuel: &mut TurnFuel,
+) -> Result<Vec<Row>, EvalError> {
     let mut kept = Vec::new();
     for row in rows {
-        match evaluate_expression(predicate, row, fuel)? {
-            Value::Bool(true) => kept.push(row.clone()),
-            Value::Bool(false) => {}
-            other @ (Value::Null
-            | Value::Number(_)
-            | Value::String(_)
-            | Value::Array(_)
-            | Value::Object(_)) => {
-                return Err(EvalError::Expression(format!(
-                    "a predicate returned {other:?}"
-                )));
+        let value = eval_expr(pred, row, fuel)?;
+        if let Value::Bool(keep) = value {
+            if keep {
+                kept.push(row.clone());
             }
+        } else {
+            return Err(EvalError::Expression(format!(
+                "a predicate returned {value:?}"
+            )));
         }
     }
     Ok(kept)
@@ -461,7 +463,7 @@ fn filter(rows: &[Row], predicate: &TypedExpression, fuel: u64) -> Result<Vec<Ro
 fn project(
     rows: &[Row],
     columns: &[(String, Projection)],
-    fuel: u64,
+    fuel: &mut TurnFuel,
 ) -> Result<Vec<Row>, EvalError> {
     rows.iter()
         .map(|row| {
@@ -471,7 +473,7 @@ fn project(
                     Projection::Column(source) => {
                         row.values.get(source).cloned().unwrap_or(Value::Null)
                     }
-                    Projection::Expression(typed) => evaluate_expression(typed, row, fuel)?,
+                    Projection::Expression(typed) => eval_expr(typed, row, fuel)?,
                 };
                 values.insert(name.clone(), value);
             }

@@ -13,11 +13,12 @@ use std::collections::BTreeSet;
 fn inverse_subjects<V: CommitView + ?Sized>(
     post: &Projection<'_, '_, V>,
     index: &crate::governing_laws::LinkLawIndex,
+    written: &FactKey,
     source: &FactKey,
     concrete: &ObjectTypeName,
     skip: &BTreeSet<FactKey>,
     out: &mut BTreeSet<FactKey>,
-) -> Result<(), CommitError<V::Error>> {
+) -> Result<usize, CommitError<V::Error>> {
     let model = post.model();
     let readers: Vec<_> = index
         .inverse
@@ -25,7 +26,7 @@ fn inverse_subjects<V: CommitView + ?Sized>(
         .filter(|(_, declared, _)| model.is_a(concrete, declared))
         .collect();
     if readers.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let before: BTreeSet<LinkKey> = post
         .before()
@@ -35,6 +36,7 @@ fn inverse_subjects<V: CommitView + ?Sized>(
         .map(|link| model.canonical_link(link))
         .collect();
     let after = post.incident(source)?;
+    let mut count = 0_usize;
     for link in before.union(&after) {
         if link.source != *source || skip.contains(&link.target) {
             continue;
@@ -47,10 +49,20 @@ fn inverse_subjects<V: CommitView + ?Sized>(
             .iter()
             .any(|(reader, _, id)| *id == link.link && model.is_a(&subject.object_type, reader))
         {
+            count = count.saturating_add(1);
+            if count > MAX_LINK_LAW_SUBJECTS {
+                return Err(CommitError::Law {
+                    key: written.clone(),
+                    reason: crate::governing_laws::LawEvaluationError::LinkFanOutExceeded {
+                        target: format!("{}/{}", concrete.as_str(), source.key),
+                        limit: MAX_LINK_LAW_SUBJECTS,
+                    },
+                });
+            }
             out.insert(subject);
         }
     }
-    Ok(())
+    Ok(count)
 }
 
 /// LAW-LINK-1: the live subjects whose governing law reads a link to the
@@ -69,7 +81,7 @@ pub(crate) fn linked_subjects<V: CommitView + ?Sized>(
     let Some(concrete) = post.concrete(&target)? else {
         return Ok(());
     };
-    inverse_subjects(post, index, &target, &concrete, skip, out)?;
+    let mut count = inverse_subjects(post, index, written, &target, &concrete, skip, out)?;
     let readers: Vec<_> = index
         .forward
         .iter()
@@ -80,7 +92,6 @@ pub(crate) fn linked_subjects<V: CommitView + ?Sized>(
     if readers.is_empty() {
         return Ok(());
     }
-    let mut count = 0_usize;
     for link in post.incident(&target)? {
         if link.target != target || skip.contains(&link.source) {
             continue;
