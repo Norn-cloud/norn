@@ -1,4 +1,9 @@
 import { expect, test } from "bun:test"
+import { renderToStaticMarkup } from "react-dom/server"
+import { ChartStyle } from "../src/components/ui/chart.tsx"
+import { safeConnectorUrl } from "../src/connections.tsx"
+import { safeDirectEvidenceUri, safeScanImageUrl } from "../src/evidence/evidence-crop.tsx"
+import { nextUrl } from "../src/oauth.tsx"
 import { CellUnavailable, fetchWithTimeout, isReadMethod, lastReachableAt, recordCellReachable, resetCellReachable, scopedHostFetch } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed, cellRead, isRetryableModeError, readMode } from "../src/lib/live-transport.ts"
 import { explainError, plainMetricLabel, plainWords } from "../src/lib/plain-words.ts"
@@ -243,4 +248,40 @@ test("formatLastReachable reports null when unseen and keys reachability by work
   expect(lastReachableAt(undefined)).toBeNull()
   expect(formatLastReachable(now - 10_000, now)).toBe("just now")
   expect(formatLastReachable(now - 5 * 60_000, now)).toBe("5 min ago")
+})
+
+test("ChartStyle strips unsafe CSS/HTML injection payloads from id, keys, and colors", () => {
+  const html = renderToStaticMarkup(
+    ChartStyle({
+      id: 'evil]</style><script>alert(1)</script>',
+      config: {
+        safe_series: { color: "var(--chart-1)" },
+        bad_color: { color: "red; } </style><script>alert(1)</script>" },
+        "bad key}": { color: "#123456" },
+      },
+    }),
+  )
+  expect(html).not.toContain("<script>")
+  expect(html).not.toContain("alert(1)")
+  expect(html).toContain('--color-safe_series: var(--chart-1);')
+  expect(html).not.toContain("bad_color")
+  expect(html).not.toContain("bad key")
+})
+
+test("connector, OAuth, and evidence URL guards reject unsafe schemes and external image tracking URLs", () => {
+  expect(safeConnectorUrl("javascript:alert(1)", "https://studio.norn.cloud")).toBeNull()
+  expect(safeConnectorUrl("http://evil.example/cb", "https://studio.norn.cloud")).toBeNull()
+  expect(safeConnectorUrl("https://gateway.norn.cloud/auth", "https://studio.norn.cloud")).toBe("https://gateway.norn.cloud/auth")
+  expect(safeConnectorUrl("http://127.0.0.1:8787/cb", "https://studio.norn.cloud")).toBe("http://127.0.0.1:8787/cb")
+
+  expect(nextUrl({ url: "custom://localhost/steal" }, "https://studio.norn.cloud")).toBeNull()
+  expect(nextUrl({ url: "javascript:alert(1)" }, "https://studio.norn.cloud")).toBeNull()
+  expect(nextUrl({ url: "http://localhost:8787/cb" }, "https://studio.norn.cloud")).toBe("http://localhost:8787/cb")
+  expect(nextUrl({ url: "https://assistant.example/cb" }, "https://studio.norn.cloud")).toBe("https://assistant.example/cb")
+
+  expect(safeDirectEvidenceUri("https://tracker.example/pixel.png", "https://studio.norn.cloud")).toBeNull()
+  expect(safeDirectEvidenceUri("https://studio.norn.cloud/scans/p1.png", "https://studio.norn.cloud")).toBe("https://studio.norn.cloud/scans/p1.png")
+  expect(safeDirectEvidenceUri("http://127.0.0.1:8787/scans/p1.png", "https://studio.norn.cloud")).toBe("http://127.0.0.1:8787/scans/p1.png")
+  expect(safeScanImageUrl("javascript:alert(1)", "https://studio.norn.cloud")).toBeNull()
+  expect(safeScanImageUrl("https://r2.example/signed?sig=1", "https://studio.norn.cloud")).toBe("https://r2.example/signed?sig=1")
 })

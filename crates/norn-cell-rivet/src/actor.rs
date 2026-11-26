@@ -44,6 +44,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use crate::alarm::{Alarm, WAKE_ACTION};
 use crate::config::{FIXTURE_STAGES, HostConfig};
 use crate::core::{Call, CellCore, OpenArgs, Reply};
+use crate::egress::{perform, read_bounded};
 use crate::thread::{CellGone, CellThread};
 
 /// The cell actor's name in the registry.
@@ -66,14 +67,12 @@ pub const RECOVERY_MS: u64 = 60_000;
 pub(crate) const OPEN_RETRY_MS: u64 = 60_000;
 /// Engine steps one request may take (D102).
 const ENGINE_STEPS: usize = 64;
+/// Continuation steps (`reply.then`) one request may take.
+const MAX_THEN_STEPS: usize = 16;
 /// A hung engine call must not hold the cell.
 const ENGINE_TIMEOUT: Duration = Duration::from_mins(2);
 /// The largest engine answer read back, in bytes.
 const MAX_ENGINE_BODY: usize = 64 * 1024 * 1024;
-/// A source page or an uploaded object, read once and bounded.
-const MAX_SOURCE_BODY: usize = 20 * 1024 * 1024;
-/// One outbound source or storage request may take this long.
-const SOURCE_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const FIRST_STEP_ROWS: usize = 8;
 const MAX_STEP_ROWS: usize = 500;
 
@@ -91,8 +90,51 @@ pub fn now_ms() -> u64 {
         })
 }
 
-fn signed(ms: u64) -> i64 {
+pub(crate) fn signed(ms: u64) -> i64 {
     i64::try_from(ms).unwrap_or(i64::MAX)
+}
+
+fn unavailable_body() -> String {
+    json!({
+        "format": "norn/refusal@2",
+        "retryable": true,
+        "reason": null,
+        "code": "host.unavailable",
+        "category": "host",
+        "message": "the cell is unavailable",
+        "explanation": "retry the request"
+    })
+    .to_string()
+}
+
+fn unavailable_response(code: &str) -> Response {
+    refusal(
+        503,
+        code,
+        "host",
+        "the cell is unavailable",
+        "retry the request",
+        true,
+    )
+}
+
+struct WriteGuard<'a> {
+    actor: &'a CellActor,
+    armed: bool,
+}
+
+impl WriteGuard<'_> {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for WriteGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.actor.release_writer();
+        }
+    }
 }
 
 /// `CellScope::key`: `%` and `/` escaped in each part.
@@ -173,6 +215,8 @@ pub fn refusal(
 struct OpenState {
     /// The last failed open, its error and when (Unix ms).
     failure: Option<(String, u64)>,
+    /// Cold-open post-steps (`keep_scope` + `opened`) finished for a serving cell.
+    bootstrapped: bool,
     /// The scope was stored for alarms.
     scope_kept: bool,
     /// The last operator error logged.
@@ -234,11 +278,18 @@ impl Actor for CellActor {
 
     async fn create(ctx: &Ctx<Self>) -> Result<Self> {
         let config = crate::config::get();
+        let checkpoint_key = config
+            .checkpoint_key
+            .as_deref()
+            .map(norn_cell::CheckpointKey::from_hex)
+            .transpose()
+            .map_err(|error| anyhow!("NORN_CHECKPOINT_KEY: {error}"))?;
         let http = crate::egress::Outbound::new(&config.connect_vars)?;
         let cell = CellThread::spawn(
             ctx.actor_id(),
             ctx.sql().clone(),
             tokio::runtime::Handle::current(),
+            checkpoint_key,
             config.conformance,
         )?;
         Ok(Self {
@@ -333,6 +384,7 @@ impl CellActor {
     pub(crate) async fn forget_open(&self) {
         let mut state = self.open.lock().await;
         state.failure = None;
+        state.bootstrapped = false;
         state.scope_kept = false;
     }
 
@@ -410,6 +462,23 @@ impl CellActor {
                 false,
             );
         }
+        let body = if req.method() == http::Method::POST {
+            match std::str::from_utf8(req.body()) {
+                Ok(text) => Some(text.to_owned()),
+                Err(_invalid) => {
+                    return refusal(
+                        400,
+                        "request.invalid",
+                        "invalid",
+                        "the request body is not valid UTF-8",
+                        "send UTF-8 JSON",
+                        false,
+                    );
+                }
+            }
+        } else {
+            None
+        };
         let call = Call {
             method: req.method().as_str().to_owned(),
             path,
@@ -420,8 +489,7 @@ impl CellActor {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned),
             now_ms: now_ms(),
-            body: (req.method() == http::Method::POST)
-                .then(|| String::from_utf8_lossy(req.body()).into_owned()),
+            body,
         };
         #[cfg(feature = "conformance")]
         if self.config.conformance {
@@ -452,37 +520,28 @@ impl CellActor {
         }
         if let Err(error) = self.ready(ctx, &scope).await {
             tracing::error!(error = %error, "cell open refused");
-            return refusal(
-                503,
-                "host.unavailable",
-                "host",
-                "the cell is unavailable",
-                "retry the request",
-                true,
-            );
+            return unavailable_response("host.unavailable");
         }
         if call.method == "GET" {
             return self.respond(ctx, call).await;
         }
-        if let Err(error) = self.before_write(ctx, now_ms()).await {
-            tracing::error!(error = %format!("{error:#}"), "write guard failed");
-            return refusal(
-                503,
-                "host.unavailable",
-                "host",
-                "the cell is unavailable",
-                "retry the request",
-                true,
-            );
-        }
+        let guard = match self.before_write(ctx, now_ms()).await {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "write guard failed");
+                return unavailable_response("host.unavailable");
+            }
+        };
         let response = self.respond(ctx, call).await;
         #[cfg(feature = "conformance")]
         self.seam.after_respond().await;
-        if let Err(error) = self.after_write(ctx, now_ms()).await {
-            tracing::error!(error = %format!("{error:#}"), "alarm rearm failed; the recovery wake stands");
-        }
+        // Persist `_norn_host_scope` BEFORE `after_write` arms the alarm so a newly provisioned
+        // cell's first wake never fires without a stored scope and strands timers/syncs.
         if let Err(error) = self.keep_scope(ctx, &scope).await {
             tracing::error!(error = %format!("{error:#}"), "keeping the scope failed");
+        }
+        if let Err(error) = self.after_write(ctx, now_ms(), guard).await {
+            tracing::error!(error = %format!("{error:#}"), "alarm rearm failed; the recovery wake stands");
         }
         response
     }
@@ -493,10 +552,13 @@ impl CellActor {
     /// The cell does not open.
     pub async fn ready(self: &Arc<Self>, ctx: &Ctx<Self>, scope: &CellScope) -> Result<()> {
         self.open_cell(ctx, scope).await?;
-        let now = now_ms();
         if self
             .cell
-            .call(move |slot| slot.core.as_ref().is_some_and(|core| core.jwks_due(now)))
+            .call(|slot| {
+                slot.core
+                    .as_ref()
+                    .is_some_and(|core| core.jwks_due(now_ms()))
+            })
             .await?
         {
             self.refresh_jwks().await;
@@ -538,6 +600,13 @@ impl CellActor {
     async fn open_cell(self: &Arc<Self>, ctx: &Ctx<Self>, scope: &CellScope) -> Result<()> {
         let mut state = self.open.lock().await;
         if self.cell.call(|slot| slot.core.is_some()).await? {
+            if state.bootstrapped || !self.serving().await? {
+                return Ok(());
+            }
+            drop(state);
+            self.keep_scope(ctx, scope).await?;
+            self.opened(ctx, now_ms()).await?;
+            self.open.lock().await.bootstrapped = true;
             return Ok(());
         }
         if let Some((error, at)) = &state.failure {
@@ -549,12 +618,14 @@ impl CellActor {
             }
             state.failure = None;
         }
+        state.bootstrapped = false;
         match self.cold_open(scope).await {
             Ok(serving) => {
                 if serving {
                     drop(state);
                     self.keep_scope(ctx, scope).await?;
                     self.opened(ctx, now_ms()).await?;
+                    self.open.lock().await.bootstrapped = true;
                 }
                 Ok(())
             }
@@ -708,21 +779,18 @@ impl CellActor {
     }
 
     /// Before a request that may write: the guard wake is durable first.
-    async fn before_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<()> {
+    async fn before_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<WriteGuard<'_>> {
         let _admission = self.deadline_lock().await;
         self.writing.fetch_add(1, Ordering::AcqRel);
-        let guarded = async {
-            if !self.serving().await? {
-                return Ok(());
-            }
-            self.earliest(ctx, Some(now.saturating_add(RECOVERY_MS)), now)
-                .await
+        let guard = WriteGuard {
+            actor: self,
+            armed: true,
         };
-        let result = guarded.await;
-        if result.is_err() {
-            self.release_writer();
+        if self.serving().await? {
+            self.earliest(ctx, Some(now.saturating_add(RECOVERY_MS)), now)
+                .await?;
         }
-        result
+        Ok(guard)
     }
 
     fn release_writer(&self) {
@@ -735,8 +803,9 @@ impl CellActor {
 
     /// After that request, whatever its reply: the alarm follows the cell's
     /// next deadline.
-    async fn after_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<()> {
+    async fn after_write(&self, ctx: &Ctx<Self>, now: u64, guard: WriteGuard<'_>) -> Result<()> {
         let _decision = self.deadline_lock().await;
+        guard.disarm();
         self.release_writer();
         if !self.serving().await? {
             return Ok(());
@@ -814,15 +883,21 @@ impl CellActor {
         self.cell_fetch(call).await
     }
 
-    async fn cell_fetch(&self, call: Call) -> Result<Reply, CellGone> {
+    async fn cell_fetch(&self, mut call: Call) -> Result<Reply, CellGone> {
+        let refresh_clock = !self.config.conformance;
         self.cell
-            .call(move |slot| match slot.core.as_mut() {
-                Some(core) => core.fetch(&call),
-                None => Reply {
-                    status: 503,
-                    body: json!({"format": "norn/refusal@2", "retryable": true, "reason": null, "code": "host.unavailable", "category": "host", "message": "the cell is unavailable", "explanation": "retry the request"}).to_string(),
-                    ..Reply::default()
-                },
+            .call(move |slot| {
+                if refresh_clock {
+                    call.now_ms = now_ms();
+                }
+                match slot.core.as_mut() {
+                    Some(core) => core.fetch(&call),
+                    None => Reply {
+                        status: 503,
+                        body: unavailable_body(),
+                        ..Reply::default()
+                    },
+                }
             })
             .await
     }
@@ -833,14 +908,7 @@ impl CellActor {
             Ok(response) => response,
             Err(error) => {
                 tracing::error!(error = %format!("{error:#}"), "request failed");
-                refusal(
-                    503,
-                    "host.unavailable",
-                    "host",
-                    "the cell is unavailable",
-                    "retry the request",
-                    true,
-                )
+                unavailable_response("host.unavailable")
             }
         }
     }
@@ -850,8 +918,13 @@ impl CellActor {
         if reply.refresh_jwks && self.refresh_jwks().await {
             reply = self.cell_fetch(call.clone()).await?;
         }
+        let mut then_steps = 0_usize;
         while let Some((token, planned)) = reply.then.take() {
-            let (status, bytes) = Self::perform(&self.http.any, &planned).await;
+            if then_steps >= MAX_THEN_STEPS {
+                return Ok(unavailable_response("host.unavailable"));
+            }
+            then_steps = then_steps.saturating_add(1);
+            let (status, bytes) = perform(&self.http.any, &planned).await;
             let now = now_ms();
             reply = self
                 .cell
@@ -913,16 +986,22 @@ impl CellActor {
                 EngineAnswer::Answer(status, body) => (status, body),
                 EngineAnswer::Stream(response) => return Ok(Settled::Stream(response)),
             };
-            let resumed = call.clone();
+            let mut resumed = call.clone();
+            let refresh_clock = !self.config.conformance;
             reply = self
                 .cell
-                .call(move |slot| match slot.core.as_mut() {
-                    Some(core) => core.resume_engine(&resumed, &engine, status, body),
-                    None => Reply {
-                        status: 503,
-                        body: "{}".to_owned(),
-                        ..Reply::default()
-                    },
+                .call(move |slot| {
+                    if refresh_clock {
+                        resumed.now_ms = now_ms();
+                    }
+                    match slot.core.as_mut() {
+                        Some(core) => core.resume_engine(&resumed, &engine, status, body),
+                        None => Reply {
+                            status: 503,
+                            body: "{}".to_owned(),
+                            ..Reply::default()
+                        },
+                    }
                 })
                 .await?;
         }
@@ -1002,42 +1081,6 @@ impl CellActor {
         }
     }
 
-    /// Perform exactly the request the cell planned, on `http`; the status and
-    /// bytes go back to the cell, unread here. A network failure is status 0.
-    async fn perform(http: &reqwest::Client, planned: &str) -> (u16, Vec<u8>) {
-        let Ok(planned) = serde_json::from_str::<Value>(planned) else {
-            return (0, Vec::new());
-        };
-        let Some(url) = planned.get("url").and_then(Value::as_str) else {
-            return (0, Vec::new());
-        };
-        let method = planned
-            .get("method")
-            .and_then(Value::as_str)
-            .and_then(|method| reqwest::Method::from_bytes(method.as_bytes()).ok())
-            .unwrap_or(reqwest::Method::GET);
-        let mut request = http.request(method, url).timeout(SOURCE_FETCH_TIMEOUT);
-        if let Some(headers) = planned.get("headers").and_then(Value::as_object) {
-            for (name, value) in headers {
-                if let Some(value) = value.as_str() {
-                    request = request.header(name.as_str(), value);
-                }
-            }
-        }
-        if let Some(body) = planned.get("body").and_then(Value::as_str) {
-            request = request.body(body.to_owned());
-        }
-        match request.send().await {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                read_bounded(response, MAX_SOURCE_BODY)
-                    .await
-                    .map_or((413, Vec::new()), |bytes| (status, bytes))
-            }
-            Err(_error) => (0, Vec::new()),
-        }
-    }
-
     /// After a commit, every live subscription on this actor is answered again.
     pub fn publish(self: &Arc<Self>, ctx: &Ctx<Self>) {
         if self.live.is_empty() {
@@ -1061,14 +1104,17 @@ impl CellActor {
 
     /// Run one claimed sync to its end (`Cell.runSync`).
     async fn run_sync(self: &Arc<Self>, ctx: &Ctx<Self>, id: String) {
-        if let Err(error) = self.before_write(ctx, now_ms()).await {
-            tracing::error!(error = %format!("{error:#}"), "source sync not started");
-            return;
-        }
+        let guard = match self.before_write(ctx, now_ms()).await {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "source sync not started");
+                return;
+            }
+        };
         if let Err(error) = self.sync_run(ctx, &id).await {
             tracing::error!(error = %format!("{error:#}"), "source sync failed");
         }
-        if let Err(error) = self.after_write(ctx, now_ms()).await {
+        if let Err(error) = self.after_write(ctx, now_ms(), guard).await {
             tracing::error!(error = %format!("{error:#}"), "alarm rearm after a sync failed");
         }
     }
@@ -1123,7 +1169,7 @@ impl CellActor {
             }
             if let Some(planned) = step.get("request") {
                 fetches = fetches.saturating_add(1);
-                response = Some(Self::perform(&self.http.sources, &planned.to_string()).await);
+                response = Some(perform(&self.http.sources, &planned.to_string()).await);
                 continue;
             }
             if step.get("continue").is_some() {
@@ -1157,23 +1203,6 @@ enum Settled {
 enum EngineAnswer {
     Answer(u16, String),
     Stream(Response),
-}
-
-/// A response body counted as it arrives; `None` once it passes `limit`.
-async fn read_bounded(mut response: reqwest::Response, limit: usize) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    loop {
-        match response.chunk().await {
-            Ok(Some(chunk)) => {
-                if bytes.len().saturating_add(chunk.len()) > limit {
-                    return None;
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            Ok(None) => return Some(bytes),
-            Err(_error) => return None,
-        }
-    }
 }
 
 /// ENGINE-UPGRADE-1 on this host: what it does with a cell whose metadata

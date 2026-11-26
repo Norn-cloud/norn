@@ -3086,7 +3086,6 @@ fn text(expression: &Expression, context: &Value) -> Result<String, (&'static st
     }
 }
 
-/// Check one raw field value against its `input` type and convert it.
 /// MAP-DERIVATION-1: the runtime derivation a mapping bundle was captured
 /// under. Retained evidence is verified under its own derivation, so a newer
 /// parser never changes what an old bundle proves; reprocessing a row under

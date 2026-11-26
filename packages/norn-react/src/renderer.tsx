@@ -14,12 +14,14 @@
  * A live page is keyed by its decided scope: another workspace gets another page, its own machine,
  * reads and calls, never one carried from the last.
  */
+import { Button } from "@ui-sdk/react/button"
 import { useMemo, useRef, type ReactNode } from "react"
 import type { ActionEffects } from "./agent.ts"
 import { missingCapabilities } from "./capabilities.ts"
 import { islandsOf, type IslandRegistry } from "./islands.ts"
 import type { Clock } from "./machine/driver.ts"
 import type { EngineLoader } from "./machine/evaluate.ts"
+import type { Machine } from "./machine/machine.ts"
 import { Node, type PageScope } from "./nodes.tsx"
 import type { WidgetCalls, WidgetLive, WidgetReader } from "./reads.ts"
 import { useWidgetMachine } from "./runtime.ts"
@@ -61,6 +63,7 @@ export interface NornAppRendererProps<Scope, Reader extends WidgetReader, Record
 }
 
 const NO_ISLANDS: IslandRegistry = Object.freeze({})
+const EMPTY_CONTEXT: Readonly<Record<string, unknown>> = Object.freeze({})
 const NO_EFFECTS = (): undefined => undefined
 const NO_NAVIGATION = () => {}
 
@@ -74,7 +77,7 @@ function pageOf(ux: WidgetUx, pageId: string | undefined): WidgetPage | undefine
 export function refusalsOf(ux: WidgetUx, islands: IslandRegistry, live: boolean): string[] {
   const missing = missingCapabilities(ux)
   for (const { entry } of islandsOf(ux.catalog)) {
-    if (!(entry.entryId in islands)) missing.push(`island:${entry.entryId}`)
+    if (!Object.hasOwn(islands, entry.entryId)) missing.push(`island:${entry.entryId}`)
   }
   if (!live && ux.pages.some((page) => page.machine?.events.some((event) => event.source.kind === "subscription"))) missing.push("live:feed")
   return missing
@@ -87,9 +90,17 @@ export function refusalsOf(ux: WidgetUx, islands: IslandRegistry, live: boolean)
 function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "workspace" | "engine"; readonly title: string; readonly message: string; readonly onRetry?: (() => void) | undefined; readonly dir: "ltr" | "rtl" }) {
   return (
     <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable" } : {})} className="grid gap-2">
-      <p className="text-body font-medium">{title}</p>
+      <p className="text-body">{title}</p>
       <p className="text-meta text-muted-foreground">{message}</p>
-      {onRetry !== undefined && <button type="button" className="justify-self-start text-meta underline" onClick={onRetry}>Retry</button>}
+      {onRetry !== undefined && (
+        <Button
+          type="button"
+          className="inline-flex h-9 items-center justify-self-start rounded-full border border-border bg-background px-4 text-meta text-foreground outline-none transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      )}
     </div>
   )
 }
@@ -97,15 +108,15 @@ function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "w
 function Refused({ missing, dir }: { readonly missing: readonly string[]; readonly dir: "ltr" | "rtl" }) {
   return (
     <div role="alert" dir={dir} data-norn-refused="" className="grid gap-2 rounded-[var(--radius-panel)] border border-border bg-card p-4">
-      <p className="text-body font-medium">This page needs what this renderer does not draw.</p>
+      <p className="text-body">This page needs what this renderer does not draw.</p>
       <ul className="text-meta text-muted-foreground">{missing.map((capability) => <li key={capability} data-missing={capability}><code>{capability}</code></li>)}</ul>
     </div>
   )
 }
 
-function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unknown, Reader, Reader>, "workspace"> & { readonly page: WidgetPage; readonly reader: Reader }) {
+function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unknown, Reader, Reader>, "workspace"> & { readonly page: WidgetPage & { readonly machine: Machine }; readonly reader: Reader }) {
   const { ux, page, reader } = props
-  const machine = page.machine!
+  const machine = page.machine
   const runtime = useWidgetMachine({
     ux,
     machine,
@@ -113,7 +124,7 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
     calls: props.calls,
     ...(props.live === undefined ? {} : { live: props.live }),
     engine: props.engine,
-    context: props.context ?? {},
+    context: props.context ?? EMPTY_CONTEXT,
     objectTypeOf: props.objectTypeOf,
     actionIdOf: props.actionIdOf,
     ...(props.navigate === undefined ? {} : { navigate: props.navigate }),
@@ -169,12 +180,13 @@ export function NornAppRenderer<Scope, Reader extends WidgetReader, Recorded ext
   if (page === undefined) return <Refused missing={[`page:${props.pageId ?? "entry"}`]} dir={dir} />
   if (page.machine === undefined) return <Refused missing={["machine"]} dir={dir} />
   if (missing.length > 0) return <Refused missing={missing} dir={dir} />
+  const activePage = { ...page, machine: page.machine }
   return matchWorkspaceState(workspace, {
     deciding: () => <p role="status" aria-busy="true" dir={dir} data-workspace="deciding" className="text-meta text-muted-foreground">Deciding the workspace…</p>,
     unavailable: ({ error }) => <Unavailable what="workspace" dir={dir} title="Workspace unavailable" message={error.message} onRetry={props.onRetryWorkspace} />,
-    // Keyed by the decided workspace: a page never carries one workspace's machine, reads or calls into another.
-    recorded: ({ reader }) => <Page key="recorded" {...props} page={page} reader={reader as WidgetReader} />,
-    live: ({ scope, reader }) => <Page key={pageKey({ kind: "live", scope })} {...props} page={page} reader={reader as WidgetReader} />,
+    // Keyed by the decided workspace and page: never carries one workspace or page's machine, reads, calls or focus return into another.
+    recorded: ({ reader }) => <Page key={`recorded:${activePage.pageId}`} {...props} page={activePage} reader={reader as WidgetReader} />,
+    live: ({ scope, reader }) => <Page key={`${pageKey({ kind: "live", scope })}:${activePage.pageId}`} {...props} page={activePage} reader={reader as WidgetReader} />,
   })
 }
 

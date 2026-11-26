@@ -1,7 +1,7 @@
 import { client, type RequestPermissionRequest, type RequestPermissionResponse, type SessionNotification } from "@agentclientprotocol/sdk"
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client"
 import type { ToolResult } from "@/widget/bridge"
-import { defaultFetch, getDisplayedScope, isDefaultFetch, scopeHeaders, type StudioScope } from "../lib/definitions.ts"
+import { defaultFetch, getDisplayedScope, scopeHeaders, type StudioScope } from "../lib/definitions.ts"
 import { toolLabels, type ToolLabels } from "./transcript.ts"
 
 /**
@@ -107,11 +107,17 @@ export class SidekickSession {
 
   private scheduleRenew(expiresAt: number) {
     clearTimeout(this.renewTimer)
+    if (this.closed) return
     this.renewTimer = setTimeout(() => {
+      if (this.closed) return
       void this.getGrant()
-        .then(async (grant) => { await this.connection.agent.request("_norn/grant", { grant: grant.token }); this.scheduleRenew(grant.expiresAt) })
-        .catch(() => this.close("Sidekick's access ended; start a new chat to continue."))
-    }, Math.max(10_000, expiresAt - Date.now() - RENEW_BEFORE_MS))
+        .then(async (grant) => {
+          if (this.closed) return
+          await this.connection.agent.request("_norn/grant", { grant: grant.token })
+          if (!this.closed) this.scheduleRenew(grant.expiresAt)
+        })
+        .catch(() => { if (!this.closed) this.close("Sidekick's access ended; start a new chat to continue.") })
+    }, Math.min(2_147_483_647, Math.max(10_000, expiresAt - Date.now() - RENEW_BEFORE_MS)))
   }
 
   private ended(reason: string) {

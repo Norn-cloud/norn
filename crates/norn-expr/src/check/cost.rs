@@ -750,21 +750,13 @@ impl<'a, 'n> Estimator<'a, 'n> {
                 operator,
             } => {
                 let inner = self.eval(operand);
-                match operator {
-                    Operator::Arithmetic(ArithmeticOperator::Add) => inner,
-                    Operator::Arithmetic(_)
-                    | Operator::Logical(_)
-                    | Operator::Comparison(_)
-                    | Operator::Range
-                    | Operator::Comma
-                    | Operator::Slice
-                    | Operator::Dot
-                    | Operator::QuestionMark
-                    | Operator::Assign
-                    | Operator::Semi => Out {
+                if matches!(operator, Operator::Arithmetic(ArithmeticOperator::Add)) {
+                    inner
+                } else {
+                    Out {
                         cost: inner.cost.plus(1),
                         val: Val::scalar(),
-                    },
+                    }
                 }
             }
             Node::Binary {
@@ -866,43 +858,47 @@ impl<'a, 'n> Estimator<'a, 'n> {
     }
 
     /// A member read: one `FetchFast` for a path from a variable, otherwise
-    /// the target, `PushString`/`PushNumber`, and `Fetch` (at most 2 more).
-    fn member(&mut self, node: &'n Node<'n>, target: &'n Node<'n>, property: &Node<'_>) -> Out {
+    /// the target, `PushString`/`PushNumber`, and `Fetch` (at most 2 more,
+    /// plus the string key's byte length when fetching from an object).
+    fn member(&mut self, node: &'n Node<'n>, target: &'n Node<'n>, property: &'n Node<'n>) -> Out {
         let base = self.eval(target);
-        let cost = base.cost.plus(2);
-        let val = if matches!(self.type_of(target), Some(T::List(_))) {
-            // An in-bounds literal index into a list literal.
-            base.val.elem.map_or_else(|| self.top(), |elem| *elem)
-        } else if let (Some(fields), Node::String(key)) = (&base.val.fields, property) {
-            fields.get(*key).cloned().unwrap_or_else(|| self.top())
+        if let Some(fields) = &base.val.fields {
+            if let Node::String(key) = property {
+                let val = fields.get(*key).cloned().unwrap_or_else(|| self.top());
+                return Out {
+                    cost: base.cost.plus(2_u64.saturating_add(len64(key.len()))),
+                    val,
+                };
+            }
+            // Bounded literal-table lookup: build table, evaluate key, Fetch (1 + key size).
+            let key = self.eval(property);
+            let mut cost = base.cost.plus(1);
+            cost.add(&key.cost);
+            cost.add(&key.val.size);
+            let mut val = fields
+                .values()
+                .cloned()
+                .reduce(|acc, entry| join(&acc, &entry))
+                .unwrap_or_else(Val::scalar);
+            val.size = val.size.at_least_one();
+            return Out { cost, val };
+        }
+        let key_charge = if let Node::String(key) = property {
+            len64(key.len())
         } else {
-            let origin = match property {
-                Node::String(key) => base
-                    .val
+            0
+        };
+        let cost = base.cost.plus(2_u64.saturating_add(key_charge));
+        let val = if matches!(self.type_of(target), Some(T::List(_))) {
+            base.val.elem.map_or_else(|| self.top(), |elem| *elem)
+        } else {
+            let origin = if let Node::String(key) = property {
+                base.val
                     .origin
                     .as_ref()
-                    .map(|path| child(path, Seg::Field(Rc::from(*key)))),
-                Node::Null
-                | Node::Bool(_)
-                | Node::Number(_)
-                | Node::TemplateString(_)
-                | Node::Pointer
-                | Node::Array(_)
-                | Node::Object(_)
-                | Node::Assignments { .. }
-                | Node::Identifier(_)
-                | Node::Closure { .. }
-                | Node::Parenthesized(_)
-                | Node::Root
-                | Node::Member { .. }
-                | Node::Slice { .. }
-                | Node::Interval { .. }
-                | Node::Conditional { .. }
-                | Node::Unary { .. }
-                | Node::Binary { .. }
-                | Node::FunctionCall { .. }
-                | Node::MethodCall { .. }
-                | Node::Error { .. } => None,
+                    .map(|path| child(path, Seg::Field(Rc::from(*key))))
+            } else {
+                None
             };
             let ty = self.type_of(node);
             self.env_val(ty, origin)

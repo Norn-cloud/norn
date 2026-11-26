@@ -23,6 +23,13 @@ type JsonScalar = None | bool | int | str
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 NORN1_DOMAIN_TAG: bytes = b"norn.canonical.json/norn1\0"
+MAX_JSON_DEPTH: int = 128
+
+
+def _check_valid_unicode(text: str, path: str) -> None:
+    """Reject unpaired UTF-16 surrogates that cannot be encoded as valid UTF-8/UTF-16."""
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in text):
+        raise NonJsonValueError(path, "string contains unpaired UTF-16 surrogate")
 
 
 class NonJsonValueError(ValueError):
@@ -49,6 +56,87 @@ def _utf16_sort_key(text: str) -> bytes:
     return text.encode("utf-16-be")
 
 
+def _normalize_json(
+    value: object,
+    *,
+    norn1: bool,
+    path: str = "$",
+    seen: set[int] | None = None,
+    depth: int = 0,
+) -> JsonValue:
+    if depth > MAX_JSON_DEPTH:
+        raise NonJsonValueError(path, f"nesting depth exceeds {MAX_JSON_DEPTH}")
+    if seen is None:
+        seen = set()
+
+    if value is None or type(value) is bool:
+        return value
+    if type(value) is str:
+        _check_valid_unicode(value, path)
+        return unicodedata.normalize("NFC", value) if norn1 else value
+    if type(value) is int:
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise NonJsonValueError(path, f"non-finite number {value}")
+        label = "Norn1 canonical JSON" if norn1 else "canonical JSON"
+        raise NornFloatRefusalError(value, context=f"{label} at {path}")
+
+    obj_id = id(value)
+    if obj_id in seen:
+        raise NonJsonValueError(path, "cycle")
+
+    if type(value) is list or type(value) is tuple:
+        seen.add(obj_id)
+        try:
+            return [
+                _normalize_json(item, norn1=norn1, path=f"{path}[{idx}]", seen=seen, depth=depth + 1)
+                for idx, item in enumerate(value)
+            ]
+        finally:
+            seen.remove(obj_id)
+
+    if type(value) is dict:
+        seen.add(obj_id)
+        try:
+            entries: dict[str, object] = {}
+            for raw_key, member in value.items():
+                if type(raw_key) is not str:
+                    raise NonJsonValueError(path, f"non-string object key {raw_key!r}")
+                _check_valid_unicode(raw_key, path)
+                if raw_key == "__proto__":
+                    raise NonJsonValueError(
+                        f"{path}.{raw_key}", "__proto__ is not a portable JSON member name"
+                    )
+                if member is OMIT:
+                    continue
+                if norn1:
+                    key = unicodedata.normalize("NFC", raw_key)
+                    if key in entries:
+                        raise NonJsonValueError(
+                            f"{path}.{key}",
+                            f"duplicate JSON key {key!r} after NFC normalization",
+                        )
+                else:
+                    key = raw_key
+                entries[key] = member
+            ordered_keys = sorted(entries.keys()) if norn1 else sorted(entries.keys(), key=_utf16_sort_key)
+            return {
+                key: _normalize_json(
+                    entries[key],
+                    norn1=norn1,
+                    path=f"{path}.{key}",
+                    seen=seen,
+                    depth=depth + 1,
+                )
+                for key in ordered_keys
+            }
+        finally:
+            seen.remove(obj_id)
+
+    raise NonJsonValueError(path, f"instance of {type(value).__name__} is not plain JSON data")
+
+
 def to_json(value: object, path: str = "$", seen: set[int] | None = None) -> JsonValue:
     """Return a UTF-16 sorted-key, closure-free plain JSON copy of `value`.
 
@@ -56,106 +144,12 @@ def to_json(value: object, path: str = "$", seen: set[int] | None = None) -> Jso
     cycles, and `__proto__`. Dict entries whose value is `None` are kept; use
     `OMIT` to elide optional members matching JS `undefined`.
     """
-    if seen is None:
-        seen = set()
-
-    if value is None or isinstance(value, (bool, str)):
-        return value
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise NonJsonValueError(path, f"non-finite number {value}")
-        raise NornFloatRefusalError(value, context=f"canonical JSON at {path}")
-
-    obj_id = id(value)
-    if obj_id in seen:
-        raise NonJsonValueError(path, "cycle")
-
-    if isinstance(value, (list, tuple)):
-        seen.add(obj_id)
-        try:
-            return [to_json(item, f"{path}[{idx}]", seen) for idx, item in enumerate(value)]
-        finally:
-            seen.remove(obj_id)
-
-    if isinstance(value, dict):
-        seen.add(obj_id)
-        try:
-            out: dict[str, JsonValue] = {}
-            for key in sorted(value.keys(), key=_utf16_sort_key):
-                if not isinstance(key, str):
-                    raise NonJsonValueError(path, f"non-string object key {key!r}")
-                if key == "__proto__":
-                    raise NonJsonValueError(
-                        f"{path}.{key}", "__proto__ is not a portable JSON member name"
-                    )
-                member = value[key]
-                if member is OMIT:
-                    continue
-                out[key] = to_json(member, f"{path}.{key}", seen)
-            return out
-        finally:
-            seen.remove(obj_id)
-
-    raise NonJsonValueError(path, f"instance of {type(value).__name__} is not plain JSON data")
+    return _normalize_json(value, norn1=False, path=path, seen=seen)
 
 
 def _to_norn1_json(value: object, path: str = "$", seen: set[int] | None = None) -> JsonValue:
     """Normalize `value` into Norn1 canonical structure (NFC strings/keys, code-point key sort)."""
-    if seen is None:
-        seen = set()
-
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return unicodedata.normalize("NFC", value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise NonJsonValueError(path, f"non-finite number {value}")
-        raise NornFloatRefusalError(value, context=f"Norn1 canonical JSON at {path}")
-
-    obj_id = id(value)
-    if obj_id in seen:
-        raise NonJsonValueError(path, "cycle")
-
-    if isinstance(value, (list, tuple)):
-        seen.add(obj_id)
-        try:
-            return [_to_norn1_json(item, f"{path}[{idx}]", seen) for idx, item in enumerate(value)]
-        finally:
-            seen.remove(obj_id)
-
-    if isinstance(value, dict):
-        seen.add(obj_id)
-        try:
-            normalized_entries: dict[str, object] = {}
-            for raw_key, member in value.items():
-                if not isinstance(raw_key, str):
-                    raise NonJsonValueError(path, f"non-string object key {raw_key!r}")
-                if raw_key == "__proto__":
-                    raise NonJsonValueError(
-                        f"{path}.{raw_key}", "__proto__ is not a portable JSON member name"
-                    )
-                if member is OMIT:
-                    continue
-                nfc_key = unicodedata.normalize("NFC", raw_key)
-                if nfc_key in normalized_entries:
-                    raise NonJsonValueError(
-                        f"{path}.{nfc_key}",
-                        f"duplicate JSON key {nfc_key!r} after NFC normalization",
-                    )
-                normalized_entries[nfc_key] = member
-            out: dict[str, JsonValue] = {}
-            for key in sorted(normalized_entries.keys()):
-                out[key] = _to_norn1_json(normalized_entries[key], f"{path}.{key}", seen)
-            return out
-        finally:
-            seen.remove(obj_id)
-
-    raise NonJsonValueError(path, f"instance of {type(value).__name__} is not plain JSON data")
+    return _normalize_json(value, norn1=True, path=path, seen=seen)
 
 
 class _OmitType:
@@ -186,9 +180,14 @@ def canonical_norn1_bytes(value: object) -> bytes:
     return json.dumps(plain, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+def norn1_sha256_bytes(norn1_bytes: bytes) -> str:
+    """Lower-case hex SHA-256 of `NORN1_DOMAIN_TAG || norn1_bytes`."""
+    return hashlib.sha256(NORN1_DOMAIN_TAG + norn1_bytes).hexdigest()
+
+
 def canonical_norn1_sha256(value: object) -> str:
     """Lower-case hex SHA-256 of `NORN1_DOMAIN_TAG || canonical_norn1_bytes(value)`."""
-    return hashlib.sha256(NORN1_DOMAIN_TAG + canonical_norn1_bytes(value)).hexdigest()
+    return norn1_sha256_bytes(canonical_norn1_bytes(value))
 
 
 @dataclass(frozen=True, slots=True)

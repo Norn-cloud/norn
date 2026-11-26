@@ -18,7 +18,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
@@ -252,7 +251,7 @@ fn presign(p: &Presign<'_>) -> Option<String> {
 }
 
 /// HMAC-SHA256 (RFC 2104).
-fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub(crate) fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut block = if key.len() > 64 {
         Sha256::digest(key).to_vec()
     } else {
@@ -276,14 +275,13 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
 pub fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().saturating_mul(2));
     for byte in bytes {
-        // Writing to a String cannot fail.
         let _written = write!(out, "{byte:02x}");
     }
     out
 }
 
-/// URI-encode per `SigV4`: unreserved characters stay; `/` stays when asked.
-fn encode(text: &str, keep_slash: bool) -> String {
+/// URI-encode per `SigV4` / RFC 3986: unreserved characters stay; `/` stays when asked.
+pub(crate) fn encode(text: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric()
@@ -391,7 +389,7 @@ pub fn parse_csv(text: &str) -> Result<Table, String> {
     let mut present: Vec<bool> = vec![false; columns.len()];
     for (index, record) in records.enumerate() {
         if record.len() == 1 && record.first().is_some_and(|c| c.trim().is_empty()) {
-            continue; // a blank line
+            continue;
         }
         if record.len() != columns.len() {
             return Err(format!(
@@ -445,46 +443,47 @@ pub fn parse_csv(text: &str) -> Result<Table, String> {
 
 /// The records of RFC 4180 text, header included.
 fn records(text: &str) -> Result<Vec<Vec<String>>, String> {
-    let mut records = Vec::new();
-    let mut record: Vec<String> = Vec::new();
-    let mut cell = String::new();
-    let mut quoted = false;
-    let mut in_quotes = false;
+    let (mut records, mut record, mut cell) = (Vec::new(), Vec::new(), String::new());
+    let (mut quoted, mut in_quotes, mut pending) = (false, false, false);
     let mut chars = text.chars().peekable();
-    let mut pending = false;
+    let finish_row =
+        |records: &mut Vec<Vec<String>>, record: &mut Vec<String>, cell: &mut String| {
+            record.push(std::mem::take(cell));
+            if record.len() > MAX_COLUMNS {
+                return Err(format!("more than {MAX_COLUMNS} columns"));
+            }
+            records.push(std::mem::take(record));
+            if records.len() > MAX_ROWS {
+                return Err(format!("more than {MAX_ROWS} rows"));
+            }
+            Ok(())
+        };
     while let Some(c) = chars.next() {
         pending = true;
         if in_quotes {
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    cell.push('"');
-                    chars.next();
-                } else {
-                    in_quotes = false;
-                }
+            if c == '"' && chars.peek() == Some(&'"') {
+                cell.push('"');
+                chars.next();
+            } else if c == '"' {
+                in_quotes = false;
             } else {
                 cell.push(c);
             }
             continue;
         }
         match c {
-            '"' if cell.is_empty() && !quoted => {
-                in_quotes = true;
-                quoted = true;
-            }
+            '"' if cell.is_empty() && !quoted => (in_quotes, quoted) = (true, true),
             ',' => {
                 record.push(std::mem::take(&mut cell));
+                if record.len() > MAX_COLUMNS {
+                    return Err(format!("more than {MAX_COLUMNS} columns"));
+                }
                 quoted = false;
             }
             '\r' if chars.peek() == Some(&'\n') => {}
             '\n' => {
-                record.push(std::mem::take(&mut cell));
-                quoted = false;
-                records.push(std::mem::take(&mut record));
-                pending = false;
-                if records.len() > MAX_ROWS {
-                    return Err(format!("more than {MAX_ROWS} rows"));
-                }
+                finish_row(&mut records, &mut record, &mut cell)?;
+                (quoted, pending) = (false, false);
             }
             other => cell.push(other),
         }
@@ -493,8 +492,7 @@ fn records(text: &str) -> Result<Vec<Vec<String>>, String> {
         return Err("a quoted cell is not closed".into());
     }
     if pending {
-        record.push(cell);
-        records.push(record);
+        finish_row(&mut records, &mut record, &mut cell)?;
     }
     Ok(records)
 }
@@ -862,13 +860,11 @@ fn shapes(
         fields.push(json!({"dataset": "rows", "name": column.id, "ordinal": ordinal, "nativeType": "csv",
             "typeCandidate": {"type": kind.candidate(), "origin": "declared"}, "required": !column.nullable}));
         let input = format!("input.{}", column.id);
-        let value = match (kind, column.nullable) {
-            (ColumnKind::Datetime, true) => format!("{input} == null ? null : timestamp({input})"),
-            (ColumnKind::Datetime, false) => format!("timestamp({input})"),
-            (
-                ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Text,
-                _,
-            ) => input,
+        let value = match kind {
+            ColumnKind::Datetime => format!("timestamp({input})"),
+            ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Text => {
+                input
+            }
         };
         map_properties.push(json!({"property": column.id, "value": value}));
     }
@@ -966,18 +962,12 @@ pub fn load_rows<E: SqlEngine>(
             .rows_read
             .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
-            match &ingested.outcome {
-                MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
-                    loaded.rows_landed = loaded.rows_landed.saturating_add(1);
-                }
-                quarantined @ MappingOutcome::Quarantined(_) => {
-                    loaded.rows_quarantined = loaded.rows_quarantined.saturating_add(1);
-                    for code in quarantined.codes() {
-                        let n = loaded.quarantine_reasons.entry(code).or_insert(0);
-                        *n = n.saturating_add(1);
-                    }
-                }
-            }
+            crate::pull::tally_outcome(
+                &ingested.outcome,
+                &mut loaded.rows_landed,
+                &mut loaded.rows_quarantined,
+                &mut loaded.quarantine_reasons,
+            );
         }
     }
     Ok(loaded)
@@ -1264,5 +1254,22 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn csv_records_enforce_column_and_eof_row_limits() {
+        let too_wide = ",".repeat(MAX_COLUMNS.saturating_add(1));
+        let err = records(&too_wide).expect_err("column cap enforced inside records()");
+        assert!(err.contains("columns"), "{err}");
+
+        let mut eof_rows = String::with_capacity(MAX_ROWS.saturating_add(1).saturating_mul(2));
+        for index in 0..=MAX_ROWS {
+            if index > 0 {
+                eof_rows.push('\n');
+            }
+            eof_rows.push('a');
+        }
+        let err = records(&eof_rows).expect_err("EOF row cap enforced without trailing newline");
+        assert!(err.contains("rows"), "{err}");
     }
 }

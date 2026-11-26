@@ -273,19 +273,9 @@ pub(crate) fn approval_context<E: SqlEngine>(
         reader
             .installed_definitions(None)
             .map_err(Refusal::host)?
-            .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
-            .transpose()
-            .map_err(Refusal::host)?
+            .map(|active| crate::cell_definitions::set_actions(&active.canonical_set))
+            .transpose()?
             .unwrap_or_default()
-            .iter()
-            .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
-            .filter_map(|artifact| {
-                artifact
-                    .pointer("/payload/actionId")?
-                    .as_str()
-                    .map(str::to_owned)
-            })
-            .collect()
     };
     Ok((actions, gated_except(host, &|other| other == id)?))
 }
@@ -311,9 +301,16 @@ pub(crate) fn gated_except<E: SqlEngine>(
 pub(crate) fn active_approvals<E: SqlEngine>(
     host: &DevHost<E>,
 ) -> Result<Vec<RetainedDefinition>, Refusal> {
-    let limit = crate::definition_routes::MAX_LIST_LIMIT;
     let cell = host.cell()?;
     let reader = cell.store().read();
+    active_approvals_in(&reader)
+}
+
+/// Every active approval revision from an open store reader, ordered by id.
+pub(crate) fn active_approvals_in<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+) -> Result<Vec<RetainedDefinition>, Refusal> {
+    let limit = crate::definition_routes::MAX_LIST_LIMIT;
     let mut approvals = Vec::new();
     let mut after: Option<String> = None;
     loop {

@@ -23,6 +23,7 @@ type Event = Record<string, any>
 class Dev {
   readonly events: Event[] = []
   readonly child: ChildProcessWithoutNullStreams
+  stderr = ""
   constructor(dir: string) {
     this.child = spawn(process.execPath, [CLI, "dev", "--json", "--port", "0"], { cwd: dir, env })
     let buffer = ""
@@ -35,14 +36,15 @@ class Dev {
         if (line.trim()) this.events.push(JSON.parse(line))
       }
     })
+    this.child.stderr.on("data", (chunk: Buffer) => { this.stderr = (this.stderr + chunk.toString()).slice(-16_384) })
   }
   async next(kind: string, from: number, timeoutMs = 90_000): Promise<Event> {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const found = this.events.slice(from).find((event) => event.event === kind)
       if (found) return found
-      if (this.child.exitCode !== null) throw new Error(`norn dev exited ${this.child.exitCode} waiting for ${kind}: ${JSON.stringify(this.events)}`)
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${kind}: ${JSON.stringify(this.events)}`)
+      if (this.child.exitCode !== null) throw new Error(`norn dev exited ${this.child.exitCode} waiting for ${kind}: ${JSON.stringify(this.events)}\n${this.stderr}`)
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${kind}: ${JSON.stringify(this.events)}\n${this.stderr}`)
       await new Promise((wake) => setTimeout(wake, 250))
     }
   }

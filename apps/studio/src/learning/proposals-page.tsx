@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { formatTimestamp as when } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { ActionSheet, type OpenAction } from "../actions/action-sheet.tsx"
@@ -23,7 +24,7 @@ import {
 } from "../lib/learning/proposals.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
-import { LearningGate, useBoundLearningRead } from "./gate.tsx"
+import { LEARNING_SELECT_CLASS as selectClass, LearningGate, useBoundLearningRead } from "./gate.tsx"
 import { RecordActions, TypeActions } from "./record-actions.tsx"
 
 const STATUS_STYLE: Readonly<Record<ProposalStatus, { readonly label: string; readonly tone: Tone }>> = {
@@ -41,9 +42,6 @@ const REPLAY_OUTCOME_STYLE: Readonly<Record<ReplayOutcome, { readonly label: str
   would_block: { label: "Would block", tone: "amber" },
   waived: { label: "Waived", tone: "amber" },
 }
-
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
 /**
  * `/learning/proposals`: server-driven list of `learning.GapProposal` records (#1220 L-5).
@@ -337,7 +335,7 @@ function ProposalReview({ proposal: p, record, onOpen }: {
             <Chip tone="gray" mono={technical}>{p.target.label ?? p.target.artifactId}</Chip>
           </>
         }
-        actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/proposals"><ArrowLeft /> All proposals</Link></Button>}
+        actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/proposals"><ArrowLeft aria-hidden className="rtl:rotate-180" /> All proposals</Link></Button>}
       />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">

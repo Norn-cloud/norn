@@ -40,6 +40,7 @@ import base64
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -140,8 +141,12 @@ def schema_errors(value, schema: dict, path: str = "$") -> list[str]:
     if "enum" in schema and value not in schema["enum"]:
         errors.append(f"{path}: {value!r} is not one of {schema['enum']}")
     if isinstance(value, str):
-        if "pattern" in schema and not re.search(schema["pattern"], value):
-            errors.append(f"{path}: {value!r} does not match {schema['pattern']}")
+        if "pattern" in schema:
+            pattern = schema["pattern"]
+            if pattern.endswith("$") and not pattern.endswith("\\$"):
+                pattern = pattern[:-1] + r"\Z"
+            if not re.search(pattern, value):
+                errors.append(f"{path}: {value!r} does not match {schema['pattern']}")
         if len(value) < schema.get("minLength", 0):
             errors.append(f"{path}: shorter than {schema['minLength']}")
         if "maxLength" in schema and len(value) > schema["maxLength"]:
@@ -174,11 +179,14 @@ def record_errors(record, schema: dict) -> list[str]:
     errors = schema_errors(record, schema)
     if errors:
         return errors
-    if isinstance(record["value"], float) and record["value"] != record["value"]:
-        errors.append("$.value: NaN")
+    if isinstance(record["value"], float) and not math.isfinite(record["value"]):
+        errors.append("$.value: non-finite")
     spread = record.get("range")
-    if spread and not spread["min"] <= record["value"] <= spread["max"]:
-        errors.append(f"$.value: {record['value']} lies outside range {spread}")
+    if spread:
+        if not (math.isfinite(spread["min"]) and math.isfinite(spread["max"])):
+            errors.append(f"$.range: non-finite bounds {spread}")
+        elif not spread["min"] <= record["value"] <= spread["max"]:
+            errors.append(f"$.value: {record['value']} lies outside range {spread}")
     if record.get("supersedes") == record["id"]:
         errors.append("$.supersedes: a record cannot supersede itself")
     if (record["commit"]["sha"] is None) != (record["commit"]["date"] is None):
@@ -234,7 +242,7 @@ def now_utc() -> str:
 
 
 def canonical(record: dict) -> str:
-    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
 def complete(record: dict, recorded_at: str | None = None) -> dict:
@@ -257,32 +265,65 @@ def shard_of(record: dict) -> str:
 
 # --- git -----------------------------------------------------------------------------
 
-def _auth_config() -> list[str]:
+def _auth_env() -> dict[str, str]:
     token = os.environ.get("METRICS_PUSH_TOKEN")
     if not token:
-        return []
+        return {}
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    return ["-c", f"http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}"]
+    raw_count = os.environ.get("GIT_CONFIG_COUNT", "0")
+    try:
+        index = max(0, int(raw_count))
+    except ValueError:
+        index = 0
+    return {
+        "GIT_CONFIG_COUNT": str(index + 1),
+        f"GIT_CONFIG_KEY_{index}": "http.https://github.com/.extraheader",
+        f"GIT_CONFIG_VALUE_{index}": f"AUTHORIZATION: basic {basic}",
+    }
+
+
+def _git_command_label(args: tuple[str, ...]) -> str:
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ("-c", "-C"):
+            skip_next = True
+            continue
+        if not arg.startswith("-"):
+            return arg
+    return "git"
 
 
 def git(repo: Path, *args: str, data: bytes | None = None, env: dict | None = None,
-        check: bool = True) -> subprocess.CompletedProcess:
+        check: bool = True, timeout: int = 120) -> subprocess.CompletedProcess:
     result = subprocess.run(["git", "-C", str(repo), *args], input=data, capture_output=True,
-                            env={**os.environ, **(env or {})})
+                            env={**os.environ, **(env or {})}, timeout=timeout)
     if check and result.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args[:3])} failed: {result.stderr.decode(errors='replace').strip()}")
+        raise RuntimeError(f"git {_git_command_label(args)} failed: {result.stderr.decode(errors='replace').strip()}")
     return result
+
+
+def pinned_rust_toolchain(repo: Path, sha: str) -> str | None:
+    """Rust toolchain pinned by `.github/workflows/ci-policy.yml` at `sha`, or None."""
+    shown = git(repo, "show", f"{sha}:.github/workflows/ci-policy.yml", check=False)
+    if shown.returncode != 0:
+        return None
+    match = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", shown.stdout.decode(errors="replace"), re.M)
+    return match.group(1) if match else None
 
 
 def fetch_tip(repo: Path, remote: str, branch: str) -> str | None:
     """Fetch the branch into refs/remotes/<remote>/<branch>; None when it does not exist yet."""
-    probe = git(repo, *_auth_config(), "ls-remote", "--exit-code", remote, f"refs/heads/{branch}", check=False)
+    auth_env = _auth_env()
+    probe = git(repo, "ls-remote", "--exit-code", remote, f"refs/heads/{branch}", env=auth_env, check=False)
     if probe.returncode == 2:
         return None
     if probe.returncode != 0:
         raise RuntimeError(f"git ls-remote {remote} failed: {probe.stderr.decode(errors='replace').strip()}")
-    git(repo, *_auth_config(), "fetch", "--quiet", "--no-tags", remote,
-        f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}")
+    git(repo, "fetch", "--quiet", "--no-tags", remote,
+        f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}", env=auth_env)
     return git(repo, "rev-parse", f"refs/remotes/{remote}/{branch}^{{commit}}").stdout.decode().strip()
 
 
@@ -373,8 +414,8 @@ def append(repo: Path, records: list[dict], *, remote: str = "origin", branch: s
                 print(warning, file=sys.stderr)
         if commit is None or not push:
             return commit, fresh
-        result = git(repo, "-c", "http.version=HTTP/1.1", *_auth_config(), "push", "--quiet", remote,
-                     f"{commit}:refs/heads/{branch}", check=False)
+        result = git(repo, "-c", "http.version=HTTP/1.1", "push", "--quiet", remote,
+                     f"{commit}:refs/heads/{branch}", env=_auth_env(), check=False)
         if result.returncode == 0:
             git(repo, "update-ref", f"refs/remotes/{remote}/{branch}", commit, check=False)
             return commit, fresh
@@ -521,7 +562,7 @@ def _scalar(text: str):
         return text == "true"
     if re.fullmatch(r"-?\d+", text):
         return int(text)
-    if re.fullmatch(r"-?\d+\.\d+([eE][-+]?\d+)?", text):
+    if re.fullmatch(r"-?\d+(?:\.\d+[eE][-+]?\d+|\.\d+|[eE][-+]?\d+)", text):
         return float(text)
     return text
 
@@ -564,8 +605,10 @@ def record_from_args(args, repo: Path) -> dict:
     if toolchain:
         env["toolchain"] = toolchain
     env["runner"] = args.runner
+    parsed_value = _scalar(args.value)
     record = {
-        "metric": args.metric, "value": _scalar(args.value) if isinstance(_scalar(args.value), (int, float)) else args.value,
+        "metric": args.metric,
+        "value": parsed_value if isinstance(parsed_value, (int, float)) and not isinstance(parsed_value, bool) else args.value,
         "unit": args.unit, "statistic": args.statistic,
         "commit": commit_of(repo, args.commit, args.commit_date, args.commit_ref),
         "measured_at": args.measured_at or now_utc(),

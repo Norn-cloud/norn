@@ -203,6 +203,8 @@ def attempt_document(rows, merges):
 
 
 def collect_merges(rows):
+    if not rows:
+        return []
     start = min(r["created_at"] for r in rows)
     end = max(r["completed_at"] for r in rows)
     result = []
@@ -294,7 +296,7 @@ def self_test():
         (1, ready_title, True, "missing-source", None),
         (1, ready_title, True, "moved-ref", None),
     ):
-        def ready_api(path):
+        def ready_api(path, attempt=attempt, name=name, pinned=pinned, availability=availability):
             if path == f"actions/runs/4/attempts/{attempt}":
                 return {"id": 4, "path": WORKFLOW, "status": "completed", "created_at": finish,
                         "run_started_at": finish, "updated_at": finish, "event": "pull_request",
@@ -441,7 +443,8 @@ def main(argv):
         sys.stdout.write("\n")
         return 0
     if len(argv) == 2 and argv[0] == "check":
-        stored = json.load(open(argv[1], encoding="utf-8"))
+        with open(argv[1], encoding="utf-8") as handle:
+            stored = json.load(handle)
         try:
             recomputed = document(stored["rows"], stored.get("merges"))
         except ValueError as error:

@@ -14,7 +14,8 @@
 //! actor awake.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 
 use norn_api::live::{LiveRefusal, LiveServerMessage};
 use norn_api::scope::CellScope;
@@ -33,6 +34,10 @@ pub const MAX_SUBSCRIPTIONS: usize = norn_api::live::MAX_SUBSCRIPTIONS;
 /// Sockets per cell actor.
 pub const MAX_SOCKETS: usize = 256;
 const MAX_MESSAGE: usize = norn_api::live::MAX_MESSAGE;
+/// Maximum size of the router's initial `norn.hello` frame, in bytes.
+const MAX_HELLO_MESSAGE: usize = 16_384;
+/// Maximum inbound frames buffered per live socket before shedding slow readers.
+const MAX_QUEUED_FRAMES: usize = 64;
 /// The router's first frame.
 pub const HELLO: &str = "norn.hello";
 
@@ -58,7 +63,9 @@ struct LiveSocket {
 #[derive(Default)]
 pub struct Sockets {
     open: std::sync::Mutex<Vec<Arc<LiveSocket>>>,
-    next: std::sync::atomic::AtomicU64,
+    next: AtomicU64,
+    publishing: AtomicBool,
+    dirty: AtomicBool,
 }
 
 impl Sockets {
@@ -85,9 +92,13 @@ fn send(ws: &WebSocket, message: &LiveServerMessage) {
     }
 }
 
-fn digest(text: &str) -> String {
+fn digest(status: u16, body: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(status.to_string().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(body.as_bytes());
     let mut out = String::with_capacity(24);
-    for byte in Sha256::digest(text.as_bytes()).iter().take(12) {
+    for byte in hasher.finalize().iter().take(12) {
         for nibble in [byte >> 4, byte & 0x0f] {
             out.push(char::from_digit(u32::from(nibble), 16).unwrap_or('0'));
         }
@@ -146,15 +157,29 @@ pub fn accept(actor: Arc<CellActor>, ctx: Ctx<CellActor>, ws: &WebSocket) {
         });
         return;
     }
-    let (frames, mut queue) = mpsc::unbounded_channel::<WsMessage>();
+    let (frames, mut queue) = mpsc::channel::<WsMessage>(MAX_QUEUED_FRAMES);
+    let weak_socket = Arc::downgrade(&socket);
+    let overflowed = AtomicBool::new(false);
     ws.configure_message_event_callback(Some(Arc::new(move |message, _index| {
-        // A frame after the reader stopped has nowhere to go.
-        let _sent = frames.send(message);
+        if let Err(mpsc::error::TrySendError::Full(_)) = frames.try_send(message)
+            && !overflowed.swap(true, Ordering::AcqRel)
+            && let Some(live) = weak_socket.upgrade()
+        {
+            tokio::spawn(async move {
+                live.ws
+                    .close(Some(1008), Some("live reader overwhelmed".to_owned()))
+                    .await;
+            });
+        }
         Ok(())
     })));
-    let closing = Arc::clone(&actor);
+    // Hold only a weak actor reference in the WebSocket callback to avoid an
+    // Arc<CellActor> -> Sockets -> LiveSocket -> WebSocket -> CellActor cycle.
+    let closing: Weak<CellActor> = Arc::downgrade(&actor);
     ws.configure_close_event_callback(Some(Arc::new(move |_code, _reason, _clean| {
-        closing.sockets().remove(id);
+        if let Some(actor) = closing.upgrade() {
+            actor.sockets().remove(id);
+        }
         Box::pin(async { Ok::<(), anyhow::Error>(()) })
     })));
     tokio::spawn(async move {
@@ -181,6 +206,19 @@ async fn handle(
             .await;
         return false;
     };
+    let hello = socket.state.lock().await.hello.clone();
+    let max_len = if hello.is_some() {
+        MAX_MESSAGE
+    } else {
+        MAX_HELLO_MESSAGE
+    };
+    if raw.len() > max_len {
+        socket
+            .ws
+            .close(Some(1009), Some("message too large".to_owned()))
+            .await;
+        return false;
+    }
     let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
         socket
             .ws
@@ -188,17 +226,9 @@ async fn handle(
             .await;
         return false;
     };
-    let hello = socket.state.lock().await.hello.clone();
     let Some((scope, _authorization)) = hello else {
         return greet(actor, ctx, socket, &parsed).await;
     };
-    if raw.len() > MAX_MESSAGE {
-        socket
-            .ws
-            .close(Some(1009), Some("message too large".to_owned()))
-            .await;
-        return false;
-    }
     if actor.ready(ctx, &scope).await.is_err() {
         socket
             .ws
@@ -300,19 +330,14 @@ async fn greet(
 /// whether the socket stays open. A refused token closes it (4401).
 async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option<&str>) -> bool {
     let mut state = socket.state.lock().await;
-    let Some((_, authorization)) = state.hello.clone() else {
+    let Attachment { hello, subs } = &mut *state;
+    let Some((_, authorization)) = hello.as_ref() else {
         return false;
     };
-    let ids: Vec<String> = state
-        .subs
-        .keys()
-        .filter(|id| only.is_none_or(|only| only == id.as_str()))
-        .cloned()
-        .collect();
-    for id in ids {
-        let Some(sub) = state.subs.get(&id) else {
+    for (id, sub) in subs.iter_mut() {
+        if only.is_some_and(|only| only != id.as_str()) {
             continue;
-        };
+        }
         let call = Call {
             method: "GET".to_owned(),
             path: sub.pathname.clone(),
@@ -335,10 +360,7 @@ async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option
                 .await;
             return false;
         }
-        let value = digest(&format!("{}\n{}", reply.status, reply.body));
-        let Some(sub) = state.subs.get_mut(&id) else {
-            continue;
-        };
+        let value = digest(reply.status, &reply.body);
         if sub.digest == value {
             continue;
         }
@@ -346,17 +368,43 @@ async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option
         // The GET's own bytes: exact decimals stay the number tokens it sent.
         send(
             &socket.ws,
-            &LiveServerMessage::snapshot(&id, reply.status, &value, reply.body),
+            &LiveServerMessage::snapshot(id, reply.status, &value, reply.body),
         );
     }
     true
 }
 
-/// After a commit: answer every live subscription on this actor again.
+/// After a commit: answer every live subscription on this actor again,
+/// coalescing concurrent commit bursts into one active publish loop.
 pub async fn publish(actor: &Arc<CellActor>) {
-    for socket in actor.sockets().all() {
-        if !evaluate(actor, &socket, None).await {
-            actor.sockets().remove(socket.id);
+    struct PublishGuard<'a>(&'a Sockets);
+    impl Drop for PublishGuard<'_> {
+        fn drop(&mut self) {
+            self.0.publishing.store(false, Ordering::SeqCst);
+        }
+    }
+
+    let sockets = actor.sockets();
+    sockets.dirty.store(true, Ordering::SeqCst);
+    loop {
+        if sockets
+            .publishing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        let guard = PublishGuard(sockets);
+        while sockets.dirty.swap(false, Ordering::SeqCst) {
+            for socket in sockets.all() {
+                if !evaluate(actor, &socket, None).await {
+                    sockets.remove(socket.id);
+                }
+            }
+        }
+        drop(guard);
+        if !sockets.dirty.load(Ordering::SeqCst) {
+            return;
         }
     }
 }

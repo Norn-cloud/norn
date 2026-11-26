@@ -187,8 +187,6 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-// ----- the loss report -------------------------------------------------------
-
 /// One inventoried source element.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(
@@ -842,8 +840,6 @@ impl LossLedger {
         }
     }
 }
-
-// ----- canonical output -------------------------------------------------------
 
 impl SchemaImport {
     /// The canonical JSON form: every object's keys sorted, arrays in output

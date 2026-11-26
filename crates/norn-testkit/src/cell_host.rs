@@ -100,8 +100,6 @@ use proptest_state_machine::{ReferenceStateMachine, StateMachineTest};
 use crate::coverage::{self, Coverage};
 use crate::runner::{Failure, Settings};
 
-// ------------------------------------------------------------ reference host
-
 /// One committed ledger entry of a [`MemoryCell`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct LedgerEntry<E> {
@@ -823,8 +821,6 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
     }
 }
 
-// ------------------------------------------------------------ law vocabulary
-
 /// Ledger event type of the law machine.
 pub type LawEvent = u8;
 /// Command payload type of the law machine.
@@ -1145,8 +1141,6 @@ impl SimulatedCell for MemoryCell<LawEvent, LawCommand, LawInput> {
         self.ledger().to_vec()
     }
 }
-
-// ------------------------------------------------------------ model
 
 /// One generated operation on a cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -1761,9 +1755,10 @@ impl CellModel {
     )]
     fn commit(&mut self, commit: &LawCommit) -> Result<CommitReceipt, CommitError<Infallible>> {
         let CommitVersions { written, linked } = self.admit(commit)?;
-        let effective_writes = {
+        let (effective_writes, effective_links, fact_keys, link_keys) = {
             let catalog = TypeCatalog::new(&self.types);
-            commit
+            let model = CommitModel::new(&catalog);
+            let effective_writes = commit
                 .writes
                 .iter()
                 .map(|write| match &write.mutation {
@@ -1776,12 +1771,8 @@ impl CellModel {
                         }),
                     FactMutation::Delete => Ok(None),
                 })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let effective_links = {
-            let catalog = TypeCatalog::new(&self.types);
-            let model = CommitModel::new(&catalog);
-            commit
+                .collect::<Result<Vec<_>, _>>()?;
+            let effective_links = commit
                 .links
                 .iter()
                 .map(|write| match &write.mutation {
@@ -1799,7 +1790,18 @@ impl CellModel {
                     }
                     LinkMutation::Remove => Ok(None),
                 })
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?;
+            let fact_keys: Vec<FactKey> = commit
+                .writes
+                .iter()
+                .map(|write| model.canonical(&write.key))
+                .collect();
+            let link_keys: Vec<LinkKey> = commit
+                .links
+                .iter()
+                .map(|write| model.canonical_link(&write.key))
+                .collect();
+            (effective_writes, effective_links, fact_keys, link_keys)
         };
         let seq = self.seq.checked_add(1).ok_or(CommitError::Overflow)?;
         match &commit.consumes {
@@ -1815,10 +1817,13 @@ impl CellModel {
             Some(Consumed::Observation { id }) => self.inbox.retain(|observed| observed.id != *id),
             None => {}
         }
-        for ((write, version), effective) in
-            commit.writes.iter().zip(&written).zip(effective_writes)
+        for (((write, version), effective), canonical) in commit
+            .writes
+            .iter()
+            .zip(&written)
+            .zip(effective_writes)
+            .zip(fact_keys)
         {
-            let canonical = self.with_model(|model| model.canonical(&write.key));
             let values = match (&write.mutation, effective) {
                 (FactMutation::Put { .. }, Some(values)) => {
                     self.concrete
@@ -1844,8 +1849,7 @@ impl CellModel {
                 },
             );
         }
-        for ((write, version), values) in commit.links.iter().zip(&linked).zip(effective_links) {
-            let canonical = self.with_model(|model| model.canonical_link(&write.key));
+        for ((version, values), canonical) in linked.iter().zip(effective_links).zip(link_keys) {
             self.links.insert(
                 canonical,
                 LinkState {
@@ -3509,8 +3513,8 @@ pub fn check_link_override<H: CellHost>(cell: &mut H)
 where
     H::Error: std::fmt::Debug,
 {
-    let put = |object_type: &str, key: &str| FactWrite {
-        key: FactKey::new(object_type, key),
+    let put = |ty: &str, key: &str| FactWrite {
+        key: FactKey::new(ty, key),
         expected: FactVersion::ABSENT,
         mutation: FactMutation::Put {
             values: JsonObject::new(),
@@ -3527,41 +3531,43 @@ where
         ..CellCommit::empty()
     });
     assert!(created.is_ok(), "creates the objects: {created:?}");
-    let owner = |source: &str, target: &str| LinkWrite {
-        key: LinkKey::new(
-            FactKey::new(OVERRIDE_BASE, source),
-            LAW_OWNER,
-            FactKey::new(OVERRIDE_BASE, target),
-        ),
-        expected: FactVersion::ABSENT,
-        mutation: LinkMutation::Add {
-            values: JsonObject::new(),
-        },
-    };
-    let refused = |cell: &mut H, links: Vec<LinkWrite>| {
+    let base = |id: &str| FactKey::new(OVERRIDE_BASE, id);
+    let key = |src: &str, dst: &str| LinkKey::new(base(src), LAW_OWNER, base(dst));
+    let apply = |cell: &mut H, pairs: &[(&str, &str)]| {
+        let links = pairs
+            .iter()
+            .map(|&(src, dst)| LinkWrite {
+                key: key(src, dst),
+                expected: FactVersion::ABSENT,
+                mutation: LinkMutation::Add {
+                    values: JsonObject::new(),
+                },
+            })
+            .collect();
         cell.commit(CellCommit {
             links,
             ..CellCommit::empty()
         })
         .map(|_| ())
-        .map_err(|error| error.code())
+        .map_err(|e| e.code())
     };
+    assert_eq!(apply(cell, &[("s", "t")]), Err("commit.link_target"));
     assert_eq!(
-        refused(cell, vec![owner("s", "t")]),
-        Err("commit.link_target"),
-        "Child.owner targets override.Child, even through a Base name"
+        apply(cell, &[("s", "u"), ("s", "v")]),
+        Err("commit.link_cardinality")
     );
-    assert_eq!(
-        refused(cell, vec![owner("s", "u"), owner("s", "v")]),
-        Err("commit.link_cardinality"),
-        "Child.owner is to-one, even through a Base name"
-    );
-    assert_eq!(refused(cell, vec![owner("s", "u")]), Ok(()));
-    assert_eq!(
-        refused(cell, vec![owner("b", "t"), owner("b", "u")]),
-        Ok(()),
-        "Base.owner stays many, to override.Base"
-    );
+    assert_eq!(apply(cell, &[("s", "u")]), Ok(()));
+    assert_eq!(apply(cell, &[("b", "t"), ("b", "u")]), Ok(()));
+    for (src, dst, present) in [
+        ("s", "t", false),
+        ("s", "v", false),
+        ("s", "u", true),
+        ("b", "t", true),
+        ("b", "u", true),
+    ] {
+        let loaded = cell.load_link(&key(src, dst)).map(|s| s.values.is_some());
+        assert_eq!(loaded.ok(), Some(present), "link {src}->{dst}");
+    }
 }
 
 /// Coverage labels a healthy run of the law machine hits.

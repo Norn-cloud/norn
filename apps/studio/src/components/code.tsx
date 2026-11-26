@@ -10,7 +10,10 @@ const load = () => highlighter ??= Promise.all([import("shiki/core"), import("sh
     themes: [import("shiki/themes/github-light.mjs"), import("shiki/themes/github-dark.mjs")],
     langs: [import("shiki/langs/json.mjs")],
     engine: createJavaScriptRegexEngine(),
-  }))
+  })).catch((error: unknown) => {
+    highlighter = undefined
+    throw error
+  })
 
 /**
  * A server document's text, highlighted. The text is shown as given, plain
@@ -21,7 +24,10 @@ export function Code({ code, className }: { readonly code: string; readonly clas
   const [html, setHtml] = useState<string>()
   useEffect(() => {
     let live = true
-    void load().then((shiki) => { if (live) setHtml(shiki.codeToHtml(code, { lang: "json", themes: { light: "github-light", dark: "github-dark" }, defaultColor: false })) })
+    void load().then(
+      (shiki) => { if (live) setHtml(shiki.codeToHtml(code, { lang: "json", themes: { light: "github-light", dark: "github-dark" }, defaultColor: false })) },
+      () => undefined,
+    )
     return () => { live = false }
   }, [code])
   const frame = cn("max-h-96 overflow-auto rounded-md border bg-background p-3 font-mono text-meta leading-relaxed", className)

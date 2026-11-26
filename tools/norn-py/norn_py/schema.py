@@ -18,12 +18,14 @@ Design guarantees:
 from __future__ import annotations
 
 import ast
+import contextvars
 import re
 import types
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -38,11 +40,13 @@ from typing import (
     get_args,
     get_origin,
 )
+from urllib.parse import urlsplit
 
 from .canonical import (
     OMIT,
     DependencyPin,
     EnvelopeOptions,
+    FinalOmit,
     JsonValue,
     NornFloatRefusalError,
     SourceSpan,
@@ -62,6 +66,7 @@ from .expr import (
     Sym,
     Timestamp,
     capture_caller_span,
+    format_exact_decimal,
     trace_bool_callback,
 )
 
@@ -263,6 +268,19 @@ def ref_type(name: str) -> PropertyTypeSpec:
     return _make_spec(_RefSpec(name))
 
 
+_VALID_ROUNDING: frozenset[str] = frozenset({"refuse", "toward_zero", "half_even", "half_away_from_zero"})
+
+
+def _require_non_negative_int(value: int, label: str) -> None:
+    if isinstance(value, bool) or isinstance(value, float) or not isinstance(value, int) or value < 0:
+        raise NornTracingError("NORN-PY-SCHEMA", f"{label} must be a non-negative int, got {value!r}")
+
+
+def _require_rounding(rounding: Rounding | None) -> None:
+    if rounding is not None and rounding not in _VALID_ROUNDING:
+        raise NornTracingError("NORN-PY-SCHEMA", f"unsupported rounding mode {rounding!r}")
+
+
 def decimal_type(
     scale: int,
     *,
@@ -270,14 +288,12 @@ def decimal_type(
     currency: str | None = None,
     rounding: Rounding | None = None,
 ) -> PropertyTypeSpec:
-    if isinstance(scale, bool) or isinstance(scale, float) or not isinstance(scale, int) or scale < 0:
-        raise NornTracingError("NORN-PY-SCHEMA", f"decimal scale must be a non-negative int, got {scale!r}")
+    _require_non_negative_int(scale, "decimal scale")
     if unit is not None and not isinstance(unit, UnitRef):
         raise NornTracingError("NORN-PY-SCHEMA", f"decimal unit must be a UnitRef, got {type(unit).__name__}")
     if unit is not None and currency is not None:
         raise NornTracingError("NORN-PY-SCHEMA", "decimal cannot specify both unit and currency")
-    if rounding is not None and rounding not in ("refuse", "toward_zero", "half_even", "half_away_from_zero"):
-        raise NornTracingError("NORN-PY-SCHEMA", f"unsupported rounding mode {rounding!r}")
+    _require_rounding(rounding)
     return _make_spec(_DecimalSpec(scale=scale, unit=unit, currency=currency, rounding=rounding))
 
 
@@ -288,12 +304,10 @@ def rate_type(
     per_unit: UnitRef,
     rounding: Rounding | None = None,
 ) -> PropertyTypeSpec:
-    if isinstance(scale, bool) or isinstance(scale, float) or not isinstance(scale, int) or scale < 0:
-        raise NornTracingError("NORN-PY-SCHEMA", f"rate scale must be a non-negative int, got {scale!r}")
+    _require_non_negative_int(scale, "rate scale")
     if not isinstance(per_unit, UnitRef):
         raise NornTracingError("NORN-PY-SCHEMA", f"rate per_unit must be a UnitRef, got {type(per_unit).__name__}")
-    if rounding is not None and rounding not in ("refuse", "toward_zero", "half_even", "half_away_from_zero"):
-        raise NornTracingError("NORN-PY-SCHEMA", f"unsupported rounding mode {rounding!r}")
+    _require_rounding(rounding)
     return _make_spec(_DecimalSpec(scale=scale, currency=currency, per_unit=per_unit, rounding=rounding))
 
 
@@ -308,11 +322,13 @@ class FieldMeta:
     """Optional description or exact default on a Concept field."""
 
     description: str | None = None
-    default: str | bool | Decimal | StrEnum | int | None = None
+    default: str | bool | Decimal | StrEnum | int | FinalOmit | None = OMIT
 
     def __post_init__(self) -> None:
         if isinstance(self.default, float):
             raise NornFloatRefusalError(self.default, context="FieldMeta.default")
+        if isinstance(self.default, Decimal):
+            format_exact_decimal(self.default)
 
 
 # ------------------------------------------------------------------ Links, Keys, Lifecycles, Invariants
@@ -595,8 +611,7 @@ def mask_refuse() -> MaskSpec:
 
 
 def mask_last_n(count: int) -> MaskSpec:
-    if isinstance(count, bool) or isinstance(count, float) or not isinstance(count, int) or count < 0:
-        raise NornTracingError("NORN-PY-SCHEMA", f"mask_last_n count must be a non-negative int, got {count!r}")
+    _require_non_negative_int(count, "mask_last_n count")
     return _make_mask(_LastNMask(count=count))
 
 
@@ -855,8 +870,33 @@ def _is_safe_namespace_binding(val: object) -> bool:
     return origin in (Annotated, Link, Field, Quantity, Money, Rate, Literal, Union, types.UnionType)
 
 
-def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: SourceSpan | None) -> Any:
+MAX_ANNOTATION_DEPTH: int = 64
+
+_ANNOTATION_PARSE_ACTIVE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_norn_annotation_parse_active",
+    default=False,
+)
+
+
+def is_annotation_parse_active() -> bool:
+    """Return True only while `resolve_annotation` is executing its internal `ast.parse`."""
+    return _ANNOTATION_PARSE_ACTIVE.get()
+
+
+def _eval_annotation_ast(
+    node: ast.AST,
+    namespace: Mapping[str, object],
+    span: SourceSpan | None,
+    *,
+    depth: int = 0,
+) -> Any:
     """Safely evaluate a field annotation AST node without calling `eval()`."""
+    if depth > MAX_ANNOTATION_DEPTH:
+        raise NornTracingError(
+            "NORN-PY-UNSAFE-ANNOTATION",
+            f"field annotation exceeds maximum nesting depth ({MAX_ANNOTATION_DEPTH})",
+            span,
+        )
     if isinstance(node, ast.Constant):
         if isinstance(node.value, float):
             raise NornFloatRefusalError(node.value, context="field annotation")
@@ -869,7 +909,7 @@ def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: S
         )
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
-        operand = _eval_annotation_ast(node.operand, namespace, span)
+        operand = _eval_annotation_ast(node.operand, namespace, span, depth=depth + 1)
         if isinstance(operand, int) and not isinstance(operand, bool):
             return -operand if isinstance(node.op, ast.USub) else +operand
         raise NornTracingError(
@@ -912,7 +952,7 @@ def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: S
                 f"dunder attribute .{node.attr} is forbidden in field annotations",
                 span,
             )
-        owner = _eval_annotation_ast(node.value, namespace, span)
+        owner = _eval_annotation_ast(node.value, namespace, span, depth=depth + 1)
         if isinstance(owner, type) and issubclass(owner, StrEnum) and node.attr in owner.__members__:
             return owner.__members__[node.attr]
         raise NornTracingError(
@@ -922,8 +962,8 @@ def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: S
         )
 
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        left = _eval_annotation_ast(node.left, namespace, span)
-        right = _eval_annotation_ast(node.right, namespace, span)
+        left = _eval_annotation_ast(node.left, namespace, span, depth=depth + 1)
+        right = _eval_annotation_ast(node.right, namespace, span, depth=depth + 1)
         union_form: Any = Union
         if left is None:
             return union_form[right, None]
@@ -936,12 +976,12 @@ def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: S
         )
 
     if isinstance(node, ast.Subscript):
-        base = _eval_annotation_ast(node.value, namespace, span)
+        base = _eval_annotation_ast(node.value, namespace, span, depth=depth + 1)
         slice_node = node.slice
         args_tuple = (
-            tuple(_eval_annotation_ast(elt, namespace, span) for elt in slice_node.elts)
+            tuple(_eval_annotation_ast(elt, namespace, span, depth=depth + 1) for elt in slice_node.elts)
             if isinstance(slice_node, ast.Tuple)
-            else (_eval_annotation_ast(slice_node, namespace, span),)
+            else (_eval_annotation_ast(slice_node, namespace, span, depth=depth + 1),)
         )
         base_any: Any = base
         if base is Annotated:
@@ -978,16 +1018,32 @@ def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: S
         for kw in node.keywords:
             if kw.arg is None:
                 raise NornTracingError("NORN-PY-UNSAFE-ANNOTATION", "kwargs unpacking forbidden in annotations", span)
-        callee = _eval_annotation_ast(node.func, namespace, span)
+        callee = _eval_annotation_ast(node.func, namespace, span, depth=depth + 1)
         if callee not in _ANNOTATION_ALLOWED_CALLABLES:
             raise NornTracingError(
                 "NORN-PY-UNSAFE-ANNOTATION",
                 f"call to {callee!r} is not an admitted Norn schema annotation constructor",
                 span,
             )
-        pos_args = [_eval_annotation_ast(a, namespace, span) for a in node.args]
-        kw_args = {kw.arg: _eval_annotation_ast(kw.value, namespace, span) for kw in node.keywords if kw.arg is not None}
-        return callee(*pos_args, **kw_args)
+        pos_args = [_eval_annotation_ast(a, namespace, span, depth=depth + 1) for a in node.args]
+        kw_args = {
+            kw.arg: _eval_annotation_ast(kw.value, namespace, span, depth=depth + 1)
+            for kw in node.keywords
+            if kw.arg is not None
+        }
+        try:
+            result = callee(*pos_args, **kw_args)
+        except (NornTracingError, NornFloatRefusalError):
+            raise
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise NornTracingError(
+                "NORN-PY-UNSAFE-ANNOTATION",
+                f"invalid annotation constructor call {callee!r}: {exc}",
+                span,
+            ) from exc
+        if isinstance(result, Decimal):
+            format_exact_decimal(result, span)
+        return result
 
     raise NornTracingError(
         "NORN-PY-UNSAFE-ANNOTATION",
@@ -999,6 +1055,7 @@ def _eval_annotation_ast(node: ast.AST, namespace: Mapping[str, object], span: S
 def resolve_annotation(raw_annotation: Any, namespace: Mapping[str, object], span: SourceSpan | None) -> Any:
     """Resolve a raw annotation (string or type object) without ever calling `eval()`."""
     if isinstance(raw_annotation, str):
+        token = _ANNOTATION_PARSE_ACTIVE.set(True)
         try:
             expr_tree = ast.parse(raw_annotation, filename="<norn-annotation>", mode="eval")
         except SyntaxError as exc:
@@ -1007,6 +1064,8 @@ def resolve_annotation(raw_annotation: Any, namespace: Mapping[str, object], spa
                 f"invalid annotation syntax {raw_annotation!r}: {exc.msg}",
                 span,
             ) from exc
+        finally:
+            _ANNOTATION_PARSE_ACTIVE.reset(token)
         return _eval_annotation_ast(expr_tree.body, namespace, span)
     return raw_annotation
 
@@ -1050,6 +1109,16 @@ def _extract_literal_tag(
         f"got {type_arg!r}",
         span,
     )
+
+
+_SIMPLE_SPEC_BASE_TYPES: dict[type[object], tuple[tuple[type[object], ...], str, str]] = {
+    _TextSpec: ((str,), "text() metadata", "str"),
+    _IntegerSpec: ((int,), "integer() metadata", "int"),
+    _BooleanSpec: ((bool,), "boolean() metadata", "bool"),
+    _TimestampSpec: ((Timestamp, str), "timestamp_type()", "Timestamp or str"),
+    _DateSpec: ((Date, str), "date_type()", "Date or str"),
+    _DurationSpec: ((Duration, str), "duration_type()", "Duration or str"),
+}
 
 
 def _validate_base_matches_spec(
@@ -1151,58 +1220,13 @@ def _validate_base_matches_spec(
             span,
         )
 
-    if isinstance(inner, _TextSpec):
-        if base is not str:
+    simple_spec = _SIMPLE_SPEC_BASE_TYPES.get(type(inner))
+    if simple_spec is not None:
+        allowed_bases, spec_label, expected_hint = simple_spec
+        if base not in allowed_bases:
             raise NornTracingError(
                 "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with text() metadata; use str",
-                span,
-            )
-        return
-
-    if isinstance(inner, _IntegerSpec):
-        if base is not int:
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with integer() metadata; use int",
-                span,
-            )
-        return
-
-    if isinstance(inner, _BooleanSpec):
-        if base is not bool:
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with boolean() metadata; use bool",
-                span,
-            )
-        return
-
-    if isinstance(inner, _TimestampSpec):
-        if base not in (Timestamp, str):
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with timestamp_type(); "
-                "use Timestamp or str",
-                span,
-            )
-        return
-
-    if isinstance(inner, _DateSpec):
-        if base not in (Date, str):
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with date_type(); use Date or str",
-                span,
-            )
-        return
-
-    if isinstance(inner, _DurationSpec):
-        if base not in (Duration, str):
-            raise NornTracingError(
-                "NORN-PY-TYPE-MISMATCH",
-                f"field {field_name!r} has base type {base!r} which is incompatible with duration_type(); "
-                "use Duration or str",
+                f"field {field_name!r} has base type {base!r} which is incompatible with {spec_label}; use {expected_hint}",
                 span,
             )
         return
@@ -1386,6 +1410,10 @@ class Concept:
     ) -> None:
         super().__init_subclass__()
         if not name:
+            # Reset inherited Norn metadata so anonymous helper subclasses are never
+            # re-emitted under a parent Concept's artifact id.
+            cls.__norn_name__ = ""
+            cls.__norn_field_defaults__ = {}
             return
         span = capture_caller_span(skip=2)
         if not OBJECT_TYPE_NAME_RE.match(name):
@@ -1529,7 +1557,7 @@ class Concept:
                         span,
                     )
                 class_link_default = cls.__norn_field_defaults__.get(field_name, OMIT)
-                if meta.default is not None or class_link_default is not OMIT:
+                if meta.default is not OMIT or class_link_default is not OMIT:
                     raise NornTracingError(
                         "NORN-PY-SCHEMA",
                         f"link {cls.__norn_name__}.{field_name} cannot declare a default value",
@@ -1551,8 +1579,15 @@ class Concept:
                 continue
 
             class_default = cls.__norn_field_defaults__.get(field_name, OMIT)
+            if meta.default is not OMIT and class_default is not OMIT:
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"field {cls.__norn_name__}.{field_name} cannot declare both "
+                    "FieldMeta(default=...) and a class-body default",
+                    span,
+                )
             default_val: object = OMIT
-            raw_default = meta.default if meta.default is not None else class_default
+            raw_default = meta.default if meta.default is not OMIT else class_default
             if raw_default is not OMIT:
                 if cls.__norn_is_interface__:
                     raise NornTracingError(
@@ -1563,7 +1598,7 @@ class Concept:
                 if isinstance(raw_default, float):
                     raise NornFloatRefusalError(raw_default, context=f"default on {cls.__norn_name__}.{field_name}")
                 if isinstance(raw_default, Decimal):
-                    default_val = format(raw_default, "f")
+                    default_val = format_exact_decimal(raw_default, span)
                 elif isinstance(raw_default, StrEnum):
                     default_val = raw_default.value
                 elif isinstance(raw_default, (str, bool)):
@@ -1769,7 +1804,12 @@ def compose_packs(
     *packs: PackManifest,
     conflict_policy: PackConflictPolicy = "fail_closed",
 ) -> dict[str, object]:
-    """Spike prototype: compose packs conjunctively (`A ∧ B ∧ C`), failing closed on missing deps or conflicts."""
+    """Spike prototype: compose packs conjunctively (`A ∧ B ∧ C`), failing closed on missing deps, cycles, or conflicts."""
+    if conflict_policy not in ("fail_closed", "explicit_precedence"):
+        raise NornTracingError(
+            "NORN-PY-PACK-CONFLICT",
+            f"unsupported pack conflict_policy {conflict_policy!r} (expected 'fail_closed' or 'explicit_precedence')",
+        )
     by_id: dict[str, PackManifest] = {}
     for pack in packs:
         if pack.id in by_id:
@@ -1783,6 +1823,34 @@ def compose_packs(
                     "NORN-PY-PACK-MISSING-DEP",
                     f"pack {pack.id!r} requires {req!r}, which is not in the composed set",
                 )
+
+    # Detect cyclic `requires` edges (iterative 3-color DFS).
+    visit_state: dict[str, int] = {}  # 1 = visiting, 2 = visited
+    for start_pack in packs:
+        if visit_state.get(start_pack.id, 0) != 0:
+            continue
+        stack: list[tuple[str, int]] = [(start_pack.id, 0)]
+        path: list[str] = [start_pack.id]
+        visit_state[start_pack.id] = 1
+        while stack:
+            cur_id, idx = stack[-1]
+            reqs = by_id[cur_id].requires
+            if idx < len(reqs):
+                stack[-1] = (cur_id, idx + 1)
+                nxt = reqs[idx]
+                nxt_state = visit_state.get(nxt, 0)
+                if nxt_state == 1:
+                    cycle_start = path.index(nxt)
+                    cycle = " -> ".join([*path[cycle_start:], nxt])
+                    raise NornTracingError("NORN-PY-PACK-CYCLE", f"cyclic pack dependency detected: {cycle}")
+                if nxt_state == 0:
+                    visit_state[nxt] = 1
+                    path.append(nxt)
+                    stack.append((nxt, 0))
+            else:
+                visit_state[cur_id] = 2
+                stack.pop()
+                path.pop()
 
     seen_entities: dict[str, str] = {}
     seen_laws: dict[str, str] = {}
@@ -1831,6 +1899,23 @@ class SecretRef:
         }
 
 
+def _is_valid_worker_endpoint_url(url: str) -> bool:
+    if not url or any(ord(ch) <= 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in ("\\", "?", "#") for ch in url):
+        return False
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    if port == 0 or parsed.query or parsed.fragment:
+        return False
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        return False
+    return (parsed.scheme == "https" and bool(parsed.hostname)) or (
+        parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DeploymentSpec:
     """Spike prototype (outside `collect_artifacts`): live Norn Deployment binding packs to a cell host."""
@@ -1840,28 +1925,36 @@ class DeploymentSpec:
     environment_id: str
     packs: tuple[PackManifest, ...]
     cell_host: CellHostKind = "rivet"
-    worker_endpoints: dict[str, str] = field(default_factory=dict)
+    worker_endpoints: Mapping[str, str] = field(default_factory=dict)
     secret_refs: tuple[SecretRef, ...] = ()
-    initial_settings: dict[str, str | int | bool | Decimal] = field(default_factory=dict)
+    initial_settings: Mapping[str, str | int | bool | Decimal] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.org_id or not self.environment_id:
+        if (
+            not isinstance(self.org_id, str)
+            or not self.org_id.strip()
+            or not isinstance(self.environment_id, str)
+            or not self.environment_id.strip()
+        ):
             raise NornTracingError(
                 "NORN-PY-DEPLOYMENT-SCOPE",
                 "DeploymentSpec requires non-empty org_id and environment_id (scope fails closed)",
             )
         compose_packs(*self.packs)
+        frozen_endpoints: dict[str, str] = {}
         for endpoint_key, url in sorted(self.worker_endpoints.items()):
-            if not _ENDPOINT_KEY_RE.match(endpoint_key):
+            if not isinstance(endpoint_key, str) or not _ENDPOINT_KEY_RE.match(endpoint_key):
                 raise NornTracingError(
                     "NORN-PY-DEPLOYMENT-ENDPOINT",
                     f"worker endpoint key {endpoint_key!r} must have form '<fn_id>@<semver>'",
                 )
-            if not (url.startswith("https://") or url.startswith("http://127.0.0.1") or url.startswith("http://localhost")):
+            if not isinstance(url, str) or not _is_valid_worker_endpoint_url(url):
                 raise NornTracingError(
                     "NORN-PY-DEPLOYMENT-ENDPOINT",
                     f"worker endpoint {endpoint_key!r} must use https:// (or loopback http:// for local dev), got {url!r}",
                 )
+            frozen_endpoints[endpoint_key] = url
+        frozen_settings: dict[str, str | int | bool | Decimal] = {}
         for key, val in sorted(self.initial_settings.items()):
             lowered_key = key.lower()
             if any(tok in lowered_key for tok in _FORBIDDEN_SETTING_SECRET_TOKENS):
@@ -1871,11 +1964,21 @@ class DeploymentSpec:
                 )
             if isinstance(val, float):
                 raise NornFloatRefusalError(val, context=f"DeploymentSpec.initial_settings[{key!r}]")
+            if isinstance(val, Decimal):
+                format_exact_decimal(val)
+            elif type(val) not in (str, int, bool):
+                raise NornTracingError(
+                    "NORN-PY-SCHEMA",
+                    f"DeploymentSpec.initial_settings[{key!r}] has unsupported type {type(val).__name__}",
+                )
+            frozen_settings[key] = val
+        object.__setattr__(self, "worker_endpoints", MappingProxyType(frozen_endpoints))
+        object.__setattr__(self, "initial_settings", MappingProxyType(frozen_settings))
 
     def to_ir(self) -> dict[str, object]:
         composed = compose_packs(*self.packs)
         serialized_settings: dict[str, object] = {
-            k: (format(v, "f") if isinstance(v, Decimal) else v)
+            k: (format_exact_decimal(v) if isinstance(v, Decimal) else v)
             for k, v in sorted(self.initial_settings.items())
         }
         return {

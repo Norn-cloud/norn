@@ -1,0 +1,43 @@
+{
+  "generated_by": "crates/norn-skeleton-guard/scripts/bundle_durations.py",
+  "runs": [
+    45761213790,
+    45770378775,
+    45770379963,
+    45774389733,
+    45774392389,
+    45781843973,
+    45781846497,
+    45785424349,
+    45786649271,
+    45790534200
+  ],
+  "statistic": "median",
+  "test_build_seconds": 187,
+  "wasm_pkg_seconds": 316,
+  "task_seconds": {
+    "phase/browser": 484,
+    "phase/clippy": 67,
+    "phase/doc": 54,
+    "phase/doctest": 98,
+    "phase/duckdb": 672,
+    "phase/features": 402,
+    "phase/guards": 440,
+    "phase/integration-authoring": 895,
+    "phase/integration-clients": 104,
+    "phase/integration-wasm": 326,
+    "phase/provenance": 6,
+    "phase/rivet": 300,
+    "phase/test-shards": 4,
+    "phase/wasm": 143,
+    "test/heavy-1": 38,
+    "test/heavy-2": 162,
+    "test/heavy-3": 80,
+    "test/heavy-4": 38,
+    "test/heavy-5": 38,
+    "test/heavy-6": 74,
+    "test/rest-1": 278,
+    "test/rest-2": 666,
+    "test/rest-3": 411
+  }
+}

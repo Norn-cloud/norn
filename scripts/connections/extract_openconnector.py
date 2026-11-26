@@ -65,14 +65,25 @@ PROVIDERS = [
 ]
 
 OUTPUT = Path(__file__).resolve().parents[2] / "registry" / "connections" / "providers.json"
+MAX_FETCH_BYTES = 8 * 1024 * 1024
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise SystemExit(f"{req.full_url}: refused non-HTTPS redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def fetch(path: str, source: Path | None) -> str:
     if source is not None:
         data = (source / path).read_bytes()
     else:
-        with urllib.request.urlopen(RAW + path, timeout=30) as response:  # noqa: S310 (pinned https URL)
-            data = response.read()
+        opener = urllib.request.build_opener(_HttpsOnlyRedirects())
+        with opener.open(RAW + path, timeout=30) as response:
+            data = response.read(MAX_FETCH_BYTES + 1)
+        if len(data) > MAX_FETCH_BYTES:
+            raise SystemExit(f"{path}: exceeds {MAX_FETCH_BYTES}-byte download budget")
     digest = hashlib.sha256(data).hexdigest()
     if digest != PINNED[path]:
         raise SystemExit(f"{path}: sha256 {digest} is not the pinned {PINNED[path]}")
@@ -117,8 +128,12 @@ def constants(*sources: str) -> dict[str, object]:
 
 
 def split_items(body: str) -> list[str]:
-    body = re.sub(r"//[^\n]*", "", body)
-    return [item.strip() for item in body.split(",") if item.strip()]
+    stripped = re.sub(
+        r'"(?:\\.|[^"\\])*"|//[^\n]*',
+        lambda m: m.group(0) if m.group(0).startswith('"') else "",
+        body,
+    )
+    return [item.strip() for item in stripped.split(",") if item.strip()]
 
 
 def oauth_block(definition: str) -> str:
@@ -136,14 +151,23 @@ def oauth_block(definition: str) -> str:
 
 
 def field(block: str, name: str, consts: dict[str, object]) -> object | None:
-    match = re.search(rf"\n\s*{name}\s*:\s*(\"[^\"]*\"|\[[^\]]*\]|\w+)\s*,", block)
+    match = re.search(rf"\n\s*{name}\s*:\s*(\"[^\"]*\"|\[[^\]]*\]|\w+)\s*(?:,|\n|\}})", block)
     if match is None:
         return None
     token = match.group(1)
     if token.startswith('"'):
         return json.loads(token)
     if token.startswith("["):
-        return [str(consts[item]) if item in consts else json.loads(item) for item in split_items(token[1:-1])]
+        out: list[str] = []
+        for item in split_items(token[1:-1]):
+            if item.startswith("..."):
+                item = item[3:].strip()
+            if item in consts:
+                resolved = consts[item]
+                out.extend(resolved if isinstance(resolved, list) else [str(resolved)])
+            else:
+                out.append(json.loads(item))
+        return out
     if token in consts:
         return consts[token]
     raise SystemExit(f"{name}: unresolved {token}")
@@ -192,8 +216,12 @@ def extract(service: str, source: Path | None) -> dict[str, object]:
         ]
     else:
         scopes = declared
-    authorization_url = str(field(block, "authorizationUrl", consts))
-    token_url = str(field(block, "tokenUrl", consts))
+    authorization_url = field(block, "authorizationUrl", consts)
+    token_url = field(block, "tokenUrl", consts)
+    if not isinstance(authorization_url, str) or not authorization_url:
+        raise SystemExit(f"{service}: missing authorizationUrl")
+    if not isinstance(token_url, str) or not token_url:
+        raise SystemExit(f"{service}: missing tokenUrl")
     auth: dict[str, object] = {
         "kind": "oauth2",
         "authId": f"{service}.oauth2",

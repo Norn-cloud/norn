@@ -1083,3 +1083,63 @@ fn fuel_certificate_replay_preserves_certified_bound() {
         .expect("replay");
     assert!(certificate.units > 0);
 }
+
+#[test]
+fn literal_table_lookup_stays_within_decide_fuel_and_bounds_runtime() {
+    let env = ZenTypeEnv::input_only(
+        BTreeMap::from([("uom".to_owned(), Type::text())]),
+        EnvOptions::default(),
+    )
+    .expect("input env");
+    let source = "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l', 'Box': 'each', 'Gram': 'kg', 'Ml': 'l'})[input.uom] ?? input.uom";
+    let expr = Expression::compile(source).expect("compile");
+    let checked = check_expression_with(&expr, &env, &Type::text(), &limits())
+        .expect("bounded literal-table lookup stays within norn.limits/1 decide fuel");
+    let bound = checked.cost().units();
+    assert!(
+        bound < limits().decide.fuel_units,
+        "bound {bound} exceeded decide fuel"
+    );
+
+    for uom in [
+        "Nos".to_owned(),
+        "Litre".to_owned(),
+        "PALLET".to_owned(),
+        "x".repeat(4096),
+    ] {
+        let ctx = Value::object([("input", Value::object([("uom", Value::String(uom))]))]);
+        let eval = expr
+            .evaluate(&ctx, EvaluationBudget::new(bound))
+            .expect("certified bound covers hit, miss, and long strings");
+        assert!(eval.units_used() <= bound);
+    }
+
+    // Record-valued lookup tables must retain `fields` so copy-out bounds cover nested strings.
+    let rec_env = ZenTypeEnv::input_only(
+        BTreeMap::from([
+            ("k".to_owned(), Type::text()),
+            ("s".to_owned(), Type::text()),
+        ]),
+        EnvOptions::default(),
+    )
+    .expect("record lookup env");
+    let rec_expr =
+        Expression::compile("({'a': {'x': input.s}})[input.k] ?? {'x': ''}").expect("compile");
+    let rec_checked = check_expression_with(&rec_expr, &rec_env, &Type::Json, &limits())
+        .expect("record-valued literal-table lookup checks");
+    let rec_bound = rec_checked.cost().units();
+    for (k, s) in [("a", "x".repeat(4096)), ("miss", "x".repeat(4096))] {
+        let ctx = Value::object([(
+            "input",
+            Value::object([("k", Value::String(k.to_owned())), ("s", Value::String(s))]),
+        )]);
+        let eval = rec_expr
+            .evaluate(&ctx, EvaluationBudget::new(rec_bound))
+            .expect("certified bound covers record-valued table hit and miss copy-out");
+        assert!(
+            eval.units_used() <= rec_bound,
+            "metered {}, bound {rec_bound}",
+            eval.units_used()
+        );
+    }
+}

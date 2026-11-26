@@ -1019,8 +1019,9 @@ impl LawContext<'_> {
             );
         }
         for (index, exception) in law.exceptions.iter().enumerate() {
-            predicate(
+            guarded_predicate(
                 exception.condition.as_str(),
+                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                 &env,
                 artifact,
                 &format!("/payload/exceptions/{index}/condition"),
@@ -1037,6 +1038,7 @@ impl LawContext<'_> {
             );
         }
         self.check_interface_response(law, artifact, &owners, &env, out);
+        link_reads(law, artifact, interface.name.as_str(), &env, out);
     }
 
     fn check_interface_response(
@@ -1125,8 +1127,9 @@ impl LawContext<'_> {
                 predicate(condition.as_str(), env, artifact, "/payload/condition", out);
             }
             for (index, exception) in law.exceptions.iter().enumerate() {
-                predicate(
+                guarded_predicate(
                     exception.condition.as_str(),
+                    law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                     env,
                     artifact,
                     &format!("/payload/exceptions/{index}/condition"),
@@ -1388,6 +1391,7 @@ fn link_reads(
     env: &ZenTypeEnv,
     out: &mut Vec<Diagnostic>,
 ) {
+    use std::borrow::Cow;
     let Some(record) = env.record(subject) else {
         return;
     };
@@ -1399,8 +1403,14 @@ fn link_reads(
     let sources = law
         .condition
         .iter()
-        .map(|condition| ("/payload/condition", condition.as_str()))
-        .chain(response);
+        .map(|c| (Cow::Borrowed("/payload/condition"), c.as_str()))
+        .chain(law.exceptions.iter().enumerate().map(|(i, ex)| {
+            (
+                Cow::Owned(format!("/payload/exceptions/{i}/condition")),
+                ex.condition.as_str(),
+            )
+        }))
+        .chain(response.map(|(p, s)| (Cow::Borrowed(p), s)));
     for (pointer, source) in sources {
         // An unparsable source is reported by its predicate check.
         let Ok(paths) = norn_expr::expression_read_paths(source, "self") else {
@@ -1425,7 +1435,7 @@ fn link_reads(
             )
         {
             if said.insert(message.clone()) {
-                out.push(finding(codes::UNKNOWN_BINDING, artifact, pointer, message));
+                out.push(finding(codes::UNKNOWN_BINDING, artifact, &pointer, message));
             }
         }
     }
@@ -1509,9 +1519,9 @@ fn element_read_refusal(
     })
 }
 
-/// A law's response is evaluated only when its condition holds, so it is
-/// checked with every read path the condition proves non-null as non-null
-/// (`when: self.link != null`, then `self.link.amount`).
+/// A law's exception conditions and response are evaluated only when its
+/// condition holds, so they are checked with every read path the condition
+/// proves non-null as non-null (`when: self.link != null`, then `self.link.amount`).
 fn guarded_predicate(
     source: &str,
     condition: Option<&str>,

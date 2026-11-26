@@ -25,10 +25,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import struct
 import sys
 import tarfile
+import tempfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,7 +41,6 @@ ENTRY_STRUCT = struct.Struct("<IIII")
 FORBIDDEN_ZONES = frozenset({"Factory"})
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "crates/norn-expr/data/tzdb"
-STANDARDS_DIR = ROOT / "registry/standards"
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,31 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+MAX_CRATE_BYTES = 32 * 1024 * 1024
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"{req.full_url}: refused non-HTTPS redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(data)
+            tmp.flush()
+        os.chmod(tmp_path, 0o644)
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def load_verified_crate(spec: UpstreamRelease, crate_dir: Path, download: bool) -> Path:
     crate_path = crate_dir / f"jiff-tzdb-{spec.crate_version}.crate"
     if not crate_path.is_file():
@@ -83,8 +109,21 @@ def load_verified_crate(spec: UpstreamRelease, crate_dir: Path, download: bool) 
             raise FileNotFoundError(
                 f"missing {crate_path}; pass --download or place the pinned crate in {crate_dir}"
             )
+        if not spec.crate_url.startswith("https://"):
+            raise ValueError(f"refusing non-HTTPS crate URL: {spec.crate_url!r}")
         crate_dir.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(spec.crate_url, crate_path)
+        opener = urllib.request.build_opener(_HttpsOnlyRedirects())
+        with opener.open(spec.crate_url, timeout=60) as response:
+            data = response.read(MAX_CRATE_BYTES + 1)
+        if len(data) > MAX_CRATE_BYTES:
+            raise ValueError(f"{crate_path}: download exceeds {MAX_CRATE_BYTES}-byte budget")
+        actual = sha256_hex(data)
+        if actual != spec.crate_sha256:
+            raise ValueError(
+                f"{crate_path}: SHA-256 mismatch: expected {spec.crate_sha256}, got {actual}"
+            )
+        _write_atomic(crate_path, data)
+        return crate_path
     actual = sha256_hex(crate_path.read_bytes())
     if actual != spec.crate_sha256:
         raise ValueError(
@@ -178,13 +217,21 @@ def encode_bundle(release: str, zone_blobs: list[tuple[str, bytes]]) -> bytes:
     return bytes(out)
 
 
+def _extract_member(tf: tarfile.TarFile, member_name: str) -> bytes:
+    stream = tf.extractfile(member_name)
+    if stream is None:
+        raise ValueError(f"tar archive missing regular file {member_name!r}")
+    with stream:
+        return stream.read()
+
+
 def build_from_crate(spec: UpstreamRelease, crate_path: Path) -> tuple[bytes, bytes, str]:
     prefix = f"jiff-tzdb-{spec.crate_version}/"
     with tarfile.open(crate_path, "r:gz") as tf:
-        tzname_text = tf.extractfile(prefix + "tzname.rs").read().decode("utf-8")
-        concatenated = tf.extractfile(prefix + "concatenated-zoneinfo.dat").read()
-        license_mit = tf.extractfile(prefix + "LICENSE-MIT").read()
-        vcs_info = json.loads(tf.extractfile(prefix + ".cargo_vcs_info.json").read().decode("utf-8"))
+        tzname_text = _extract_member(tf, prefix + "tzname.rs").decode("utf-8")
+        concatenated = _extract_member(tf, prefix + "concatenated-zoneinfo.dat")
+        license_mit = _extract_member(tf, prefix + "LICENSE-MIT")
+        vcs_info = json.loads(_extract_member(tf, prefix + ".cargo_vcs_info.json").decode("utf-8"))
         vcs_commit = vcs_info["git"]["sha1"]
 
     raw_entries = parse_tzname_rs(tzname_text, spec.release)
@@ -216,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--crate-dir",
         type=Path,
-        default=Path("/tmp/norn-tzdb-inspect"),
+        default=Path(tempfile.gettempdir()) / "norn-tzdb-inspect",
         help="Directory holding pinned jiff-tzdb-<version>.crate tarballs",
     )
     parser.add_argument(
@@ -233,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     expected_license: bytes | None = None
+    built: list[tuple[UpstreamRelease, bytes, str]] = []
     drift = False
 
     for spec in RELEASES:
@@ -242,7 +290,12 @@ def main(argv: list[str] | None = None) -> int:
             expected_license = license_mit
         elif license_mit != expected_license:
             raise ValueError(f"{spec.release}: LICENSE-MIT differs across pinned jiff-tzdb crates")
+        built.append((spec, bundle, vcs_commit))
 
+    if expected_license is None:
+        raise RuntimeError("no tzdb releases configured")
+
+    for spec, bundle, vcs_commit in built:
         bundle_path = OUTPUT_DIR / f"{spec.release}.tzdb"
         bundle_sha = sha256_hex(bundle)
         if args.check:
@@ -252,12 +305,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"OK {bundle_path.relative_to(ROOT)} sha256={bundle_sha} bytes={len(bundle)}")
         else:
-            bundle_path.write_bytes(bundle)
+            _write_atomic(bundle_path, bundle)
             print(
                 f"WROTE {bundle_path.relative_to(ROOT)} sha256={bundle_sha} bytes={len(bundle)} vcs={vcs_commit}"
             )
 
-    assert expected_license is not None
     license_path = OUTPUT_DIR / "LICENSE-MIT"
     license_sha = sha256_hex(expected_license)
     if args.check:
@@ -267,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"OK {license_path.relative_to(ROOT)} sha256={license_sha}")
     else:
-        license_path.write_bytes(expected_license)
+        _write_atomic(license_path, expected_license)
         print(f"WROTE {license_path.relative_to(ROOT)} sha256={license_sha}")
 
     return 1 if drift else 0

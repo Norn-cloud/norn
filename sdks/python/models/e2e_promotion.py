@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from norn_regression import Cell
-from norn_regression.cell import Refused
 
 cell = Cell.from_project(sys.argv[1])
 http = cell.client.get_httpx_client()

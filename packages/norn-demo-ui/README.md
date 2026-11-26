@@ -14,8 +14,6 @@ or drives what the server's admitted documents declare.
 - `src/catalog-host/`: the sandboxed host for a catalog component
   (UI-CATALOG-1), and the compiler from a Foldkit component's machine to
   Norn's machine IR.
-- `src/live/client.ts`: the client side of live reads (UI-LIVE-1,
-  `norn.live.v1`).
 
 Run `bun install --frozen-lockfile --ignore-scripts --backend copyfile`,
 `bun run typecheck` and `bun test` from this package on Boat.

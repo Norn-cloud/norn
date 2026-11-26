@@ -54,37 +54,32 @@ impl<'a> ScopedView<'a> {
         base: &'a [ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
     ) -> Self {
-        let (mut visible, mut hidden) = (Vec::new(), Vec::new());
-        for (installed, artifact) in base
-            .iter()
-            .map(|artifact| (true, artifact))
-            .chain(artifacts.iter().map(|artifact| (false, artifact)))
-        {
+        let mut visible_base = Vec::new();
+        let mut visible_artifacts = Vec::new();
+        let mut hidden = Vec::new();
+        for artifact in base {
             if scope_visible(scope, &artifact.scope) {
-                visible.push((installed, artifact));
+                visible_base.push(artifact);
             } else {
                 hidden.push(artifact);
             }
         }
-        let base: Vec<_> = visible
+        for artifact in artifacts {
+            if scope_visible(scope, &artifact.scope) {
+                visible_artifacts.push(artifact);
+            } else {
+                hidden.push(artifact);
+            }
+        }
+        let pool = visible_base
             .iter()
-            .filter(|(installed, _)| *installed)
-            .map(|(_, a)| *a)
-            .collect();
-        let artifacts = visible
-            .iter()
-            .filter(|(installed, _)| !installed)
-            .map(|(_, a)| *a)
-            .collect();
-        let pool = base
-            .iter()
-            .chain(&artifacts)
+            .chain(&visible_artifacts)
             .map(|a| (*a).clone())
             .collect();
         Self {
-            artifacts,
+            artifacts: visible_artifacts,
             hidden,
-            base,
+            base: visible_base,
             pool,
             registry: registry.clone(),
             catalog: OnceCell::new(),

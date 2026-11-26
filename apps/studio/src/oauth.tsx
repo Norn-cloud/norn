@@ -24,13 +24,17 @@ export function signedQuery(search: string): string | undefined {
   return kept.toString()
 }
 
-/** Where to go next: a relative path on this origin, or the assistant's https callback. */
+/** Where to go next: a relative path on this origin, or the assistant's https (or loopback http) callback. */
 export function nextUrl(body: unknown, origin: string): string | null {
   const url = (body as { url?: unknown } | null)?.url
-  if (typeof url !== "string") return null
+  if (typeof url !== "string" || url.trim() === "") return null
   try {
     const next = new URL(url, origin)
-    return next.origin === origin || next.protocol === "https:" || next.hostname === "localhost" || next.hostname === "127.0.0.1" ? next.href : null
+    if (next.protocol === "https:") return next.href
+    if (next.protocol === "http:" && (next.origin === origin || next.hostname === "localhost" || next.hostname === "127.0.0.1" || next.hostname === "[::1]")) {
+      return next.href
+    }
+    return null
   } catch {
     return null
   }
@@ -119,48 +123,76 @@ export function OAuthConsent() {
   const query = signedQuery(window.location.search)
   const clientId = new URLSearchParams(window.location.search).get("client_id")
   const [client, setClient] = useState<{ client_name?: unknown; client_uri?: unknown } | null | undefined>(undefined)
-  const [workspace, setWorkspace] = useState<Workspace | null | undefined>(undefined)
+  const [workspace, setWorkspace] = useState<
+    | { readonly kind: "loading" }
+    | { readonly kind: "error"; readonly message: string }
+    | { readonly kind: "ready"; readonly value: Workspace | null }
+  >({ kind: "loading" })
+  const [reloadKey, setReloadKey] = useState(0)
   const [pending, setPending] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
 
   useEffect(() => {
-    if (clientId === null) { setClient(null); return }
-    void fetch(`/api/auth/oauth2/public-client?${new URLSearchParams({ client_id: clientId })}`, { headers: { accept: "application/json" } })
-      .then(async (response) => setClient(response.ok ? await response.json() : null))
-      .catch(() => setClient(null))
-    if (query === undefined) { setWorkspace(null); return }
+    const controller = new AbortController()
+    const { signal } = controller
+    if (clientId === null) { setClient(null); return () => controller.abort() }
+    setClient(undefined)
+    setWorkspace({ kind: "loading" })
+    void fetch(`/api/auth/oauth2/public-client?${new URLSearchParams({ client_id: clientId })}`, { headers: { accept: "application/json" }, signal })
+      .then(async (response) => {
+        const parsed = response.ok ? await response.json() as { client_name?: unknown; client_uri?: unknown } : null
+        if (!signal.aborted) setClient(parsed)
+      })
+      .catch(() => { if (!signal.aborted) setClient(null) })
+    if (query === undefined) { setWorkspace({ kind: "ready", value: null }); return () => controller.abort() }
     void fetch("/api/oauth/consent-context", {
       method: "POST",
       credentials: "same-origin",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ oauth_query: query }),
+      signal,
     })
       .then(async (response) => {
-        if (!response.ok) { setWorkspace(null); return }
+        if (signal.aborted) return
+        if (!response.ok) {
+          const body = await response.json().catch(() => null) as { message?: unknown } | null
+          if (signal.aborted) return
+          const message = typeof body?.message === "string" && body.message !== "" ? body.message : `Could not check your active workspace (${response.status}).`
+          setWorkspace({ kind: "error", message })
+          return
+        }
         const context = await response.json() as {
           user: { email: string }
           organization: { id: string; name: string } | null
           approvalToken: string | null
         }
+        if (signal.aborted) return
         setWorkspace({
-          user: context.user.email,
-          organizationId: context.organization?.id ?? null,
-          organization: context.organization?.name ?? null,
-          approvalToken: typeof context.approvalToken === "string" && context.approvalToken !== "" ? context.approvalToken : null,
+          kind: "ready",
+          value: {
+            user: context.user.email,
+            organizationId: context.organization?.id ?? null,
+            organization: context.organization?.name ?? null,
+            approvalToken: typeof context.approvalToken === "string" && context.approvalToken !== "" ? context.approvalToken : null,
+          },
         })
       })
-      .catch(() => setWorkspace(null))
-  }, [clientId, query])
+      .catch(() => {
+        if (!signal.aborted) setWorkspace({ kind: "error", message: "Could not reach Studio to check your active workspace." })
+      })
+    return () => controller.abort()
+  }, [clientId, query, reloadKey])
 
   async function decide(accept: boolean) {
-    if (accept && (workspace?.organizationId == null || workspace.approvalToken == null)) {
+    const resolved = workspace.kind === "ready" ? workspace.value : null
+    if (accept && (resolved?.organizationId == null || resolved.approvalToken == null)) {
       setFailure("Select an active workspace in Studio before authorizing an assistant.")
       return
     }
     setPending(true)
     setFailure(null)
-    const headers: HeadersInit = accept && workspace?.organizationId != null && workspace.approvalToken != null
-      ? { [EXPECTED_ORG_HEADER]: workspace.organizationId, [CONSENT_APPROVAL_HEADER]: workspace.approvalToken }
+    const headers: HeadersInit = accept && resolved?.organizationId != null && resolved.approvalToken != null
+      ? { [EXPECTED_ORG_HEADER]: resolved.organizationId, [CONSENT_APPROVAL_HEADER]: resolved.approvalToken }
       : {}
     const answer = await post("/oauth2/consent", { accept, oauth_query: query }, headers).catch(() => null)
     const next = answer?.ok === true ? nextUrl(answer.body, window.location.origin) : null
@@ -174,19 +206,40 @@ export function OAuthConsent() {
   }
 
   if (query === undefined || clientId === null) return <Frame title="Link expired" description="Start connecting Norn again from your assistant.">{null}</Frame>
-  if (client === undefined || workspace === undefined) return null
+  if (client === undefined || workspace.kind === "loading") {
+    return (
+      <Frame title="Checking connection request…" description="Loading the application details and your active workspace.">
+        <CardContent className="text-body text-muted-foreground">Please wait…</CardContent>
+      </Frame>
+    )
+  }
   const { requester, callbackHost } = consentFacts(window.location.search, client)
-  const readyWorkspace = workspace?.organizationId != null && workspace.organization != null && workspace.approvalToken != null
+  if (workspace.kind === "error") {
+    return (
+      <Frame title={`Allow ${requester.name} to use Norn?`} description="Your active workspace could not be verified right now.">
+        <CardContent className="grid gap-3 text-body">
+          <Failure text={workspace.message} />
+          <Failure text={failure} />
+        </CardContent>
+        <CardFooter className="flex gap-2 pt-4">
+          <Button variant="outline" className="flex-1" disabled={pending} onClick={() => void decide(false)}>Deny</Button>
+          <Button className="flex-1" disabled={pending} onClick={() => { setFailure(null); setReloadKey((k) => k + 1) }}>Retry</Button>
+        </CardFooter>
+      </Frame>
+    )
+  }
+  const resolved = workspace.value
+  const readyWorkspace = resolved?.organizationId != null && resolved.organization != null && resolved.approvalToken != null
   return (
     <Frame
       title={`Allow ${requester.name} to use Norn?`}
-      description={readyWorkspace ? `It will act as ${workspace.user} in ${workspace.organization}.` : "You do not have an active workspace to connect right now."}
+      description={readyWorkspace ? `It will act as ${resolved.user} in ${resolved.organization}.` : "You do not have an active workspace to connect right now."}
     >
       <CardContent className="grid gap-3 text-body">
         <p>It can read what you may read and ask Norn to run actions you may run. Norn's rules decide every request, exactly as they do in Studio, and refuse anything you could not do yourself.</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
-          {requester.site === null ? null : <><dt>Site</dt><dd className="font-mono">{requester.site}</dd></>}
-          {callbackHost === null ? null : <><dt>Returns to</dt><dd className="font-mono">{callbackHost}</dd></>}
+          {requester.site === null ? null : <><dt>Site</dt><dd className="font-mono"><bdi dir="ltr">{requester.site}</bdi></dd></>}
+          {callbackHost === null ? null : <><dt>Returns to</dt><dd className="font-mono"><bdi dir="ltr">{callbackHost}</bdi></dd></>}
         </dl>
         <p className="text-muted-foreground">You can disconnect it at any time in your assistant's settings.</p>
         <Failure text={failure} />

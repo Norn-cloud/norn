@@ -253,6 +253,18 @@ const REFUSED: &[(&str, GeoRefusal)] = &[
         GeoRefusal::ShapeNotAGeometry,
     ),
     (
+        r#"{"type":"Point","coordinates":[null]}"#,
+        GeoRefusal::ShapeNotAGeometry,
+    ),
+    (
+        r#"{"type":"Point","coordinates":["x",1,2,3]}"#,
+        GeoRefusal::ShapeNotAGeometry,
+    ),
+    (
+        r#"{"type":"Point","coordinates":[0,0,0,null]}"#,
+        GeoRefusal::ShapeNotAGeometry,
+    ),
+    (
         r#"{"type":"Point","coordinates":[1,2],"geometries":[]}"#,
         GeoRefusal::ShapeNotAGeometry,
     ),

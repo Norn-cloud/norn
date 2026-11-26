@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import ast
 import builtins
-import dataclasses
 import decimal
 import enum
 import json
@@ -39,13 +38,15 @@ import math
 import os
 import subprocess
 import sys
+import threading
+import time
 import types
 import typing
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import IO, Any, Protocol
 
 from .canonical import (
     EnvelopeOptions,
@@ -53,19 +54,24 @@ from .canonical import (
     SourceSpan,
     canonical_json,
     canonical_norn1_bytes,
-    canonical_norn1_sha256,
+    norn1_sha256_bytes,
 )
 from .expr import (
+    _FORBIDDEN_INTERNAL_ATTRS,
     NornTracingError,
+    read_regular_file_bounded,
     register_source,
+    restore_source_entry,
+    snapshot_source_entry,
     validate_callback_node,
 )
-from .schema import Concept, collect_artifacts
+from .schema import Concept, collect_artifacts, is_annotation_parse_active
 
 # Closed per-module symbol allowlist: prevents transitive escapes like `typing.sys` or `enum.sys`.
+# Note: `dataclasses` is intentionally excluded because `@dataclass` calls `exec()` to
+# synthesize methods, which Layer 2's audit hook blocks; authored modules use `Concept`.
 ALLOWED_IMPORT_SYMBOLS: Mapping[str, frozenset[str]] = {
     "__future__": frozenset({"annotations"}),
-    "dataclasses": frozenset({"dataclass", "field"}),
     "decimal": frozenset({"Decimal"}),
     "enum": frozenset({"Enum", "StrEnum", "auto"}),
     "typing": frozenset(
@@ -133,23 +139,12 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
     }
 )
 
-_FORBIDDEN_ATTRS: frozenset[str] = frozenset(
-    {
-        "ag_frame",
-        "co_code",
-        "cr_frame",
-        "f_back",
-        "f_builtins",
-        "f_globals",
-        "f_locals",
-        "func_globals",
-        "gi_frame",
-        "tb_frame",
-    }
-)
+_FORBIDDEN_ATTRS: frozenset[str] = _FORBIDDEN_INTERNAL_ATTRS | frozenset({"format", "format_map"})
 
 MAX_SOURCE_BYTES = 1_048_576
 MAX_AST_NODES = 100_000
+MAX_SUBPROCESS_OUTPUT_BYTES = 16 * 1024 * 1024
+MAX_SUBPROCESS_STDERR_BYTES = 256 * 1024
 DEFAULT_TIMEOUT_SECS = 15.0
 DEFAULT_MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024  # 1 GiB virtual address space cap
 
@@ -234,6 +229,12 @@ def preflight_source(source: str, filename: str) -> PreflightResult:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 _check_import_module_and_names(alias.name, None, span)
+                if alias.asname is not None and (alias.asname.startswith("__") or alias.asname in FORBIDDEN_NAMES):
+                    raise NornTracingError(
+                        "NORN-PY-FORBIDDEN-NAME",
+                        f"import alias {alias.asname!r} is forbidden in Norn authoring modules",
+                        span,
+                    )
         elif isinstance(node, ast.ImportFrom):
             if node.level > 0 or node.module is None:
                 raise NornTracingError(
@@ -242,6 +243,20 @@ def preflight_source(source: str, filename: str) -> PreflightResult:
                     span,
                 )
             _check_import_module_and_names(node.module, [a.name for a in node.names], span)
+            for alias in node.names:
+                if alias.asname is not None and (alias.asname.startswith("__") or alias.asname in FORBIDDEN_NAMES):
+                    raise NornTracingError(
+                        "NORN-PY-FORBIDDEN-NAME",
+                        f"import alias {alias.asname!r} is forbidden in Norn authoring modules",
+                        span,
+                    )
+        elif isinstance(node, ast.arg):
+            if node.arg.startswith("__") or node.arg in FORBIDDEN_NAMES:
+                raise NornTracingError(
+                    "NORN-PY-FORBIDDEN-NAME",
+                    f"parameter name {node.arg!r} is forbidden in Norn authoring modules",
+                    span,
+                )
         elif isinstance(node, ast.Constant) and isinstance(node.value, float):
             raise NornTracingError(
                 "NORN-PY-FLOAT-LITERAL",
@@ -263,6 +278,12 @@ def preflight_source(source: str, filename: str) -> PreflightResult:
                     span,
                 )
         elif isinstance(node, ast.ClassDef):
+            if node.name.startswith("__") or node.name in FORBIDDEN_NAMES:
+                raise NornTracingError(
+                    "NORN-PY-FORBIDDEN-SYNTAX",
+                    f"class name {node.name!r} is forbidden in Norn authoring modules",
+                    span,
+                )
             for kw in node.keywords:
                 if kw.arg == "metaclass":
                     raise NornTracingError(
@@ -278,10 +299,10 @@ def preflight_source(source: str, filename: str) -> PreflightResult:
                         SourceSpan(filename, item.lineno, item.col_offset),
                     )
         elif isinstance(node, (ast.FunctionDef, ast.Lambda)):
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("__"):
+            if isinstance(node, ast.FunctionDef) and (node.name.startswith("__") or node.name in FORBIDDEN_NAMES):
                 raise NornTracingError(
                     "NORN-PY-FORBIDDEN-SYNTAX",
-                    f"dunder function {node.name!r} is forbidden in Norn authoring modules",
+                    f"function name {node.name!r} is forbidden in Norn authoring modules",
                     span,
                 )
             validate_callback_node(node, filename)
@@ -355,7 +376,6 @@ def _build_closed_module_proxies() -> dict[str, types.SimpleNamespace]:
 
     source_modules: dict[str, object] = {
         "__future__": future_mod,
-        "dataclasses": dataclasses,
         "decimal": decimal,
         "enum": enum,
         "typing": typing,
@@ -437,21 +457,38 @@ def _make_restricted_builtins() -> dict[str, object]:
 
 
 _FORBIDDEN_AUDIT_PREFIXES: tuple[str, ...] = (
+    "code.__new__",
     "compile",
     "ctypes.",
+    "fcntl.",
+    "ftplib.",
+    "function.__new__",
+    "gc.",
     "http.",
+    "imaplib.",
+    "marshal.",
+    "mmap.",
     "open",
-    "os.exec",
-    "os.fork",
-    "os.popen",
-    "os.posix_spawn",
-    "os.system",
+    "os.",
     "pathlib.",
+    "pickle.",
+    "poplib.",
+    "posix.",
     "shutil.",
+    "signal.",
+    "smtplib.",
     "socket.",
+    "sqlite3.",
+    "ssl.",
     "subprocess.",
+    "sys.addaudithook",
+    "sys.setprofile",
+    "sys.settrace",
+    "telnetlib.",
     "tempfile.",
     "urllib.",
+    "webbrowser.",
+    "winreg.",
 )
 
 
@@ -462,13 +499,19 @@ def _install_audit_hook(allowed_code: types.CodeType) -> None:
                 raise PermissionError("[NORN-PY-SANDBOX] dynamic exec blocked during elaboration")
             return
         if event == "compile":
-            # Permit AST-only parsing of field annotations via `resolve_annotation`, never arbitrary compile().
-            if len(args) >= 2 and args[1] == "<norn-annotation>":
+            # Permit AST-only parsing of field annotations strictly inside `resolve_annotation`,
+            # never arbitrary `compile(..., "<norn-annotation>", ...)` from authored code.
+            if (
+                is_annotation_parse_active()
+                and len(args) >= 2
+                and args[1] == "<norn-annotation>"
+                and isinstance(args[0], (str, bytes))
+            ):
                 return
             raise PermissionError("[NORN-PY-SANDBOX] dynamic compile blocked during elaboration")
         if event == "import":
             mod_name = args[0] if args else ""
-            if isinstance(mod_name, str) and mod_name.split(".", 1)[0] not in ALLOWED_IMPORT_ROOTS:
+            if not isinstance(mod_name, str) or mod_name not in ALLOWED_IMPORT_ROOTS:
                 raise PermissionError(f"[NORN-PY-SANDBOX] import {mod_name!r} blocked during elaboration")
             return
         for prefix in _FORBIDDEN_AUDIT_PREFIXES:
@@ -521,23 +564,8 @@ def _read_source_bounded(
     *,
     max_bytes: int = MAX_SOURCE_BYTES,
 ) -> str:
-    """Read at most `max_bytes + 1` bytes from disk, failing closed before buffering oversized files."""
-    with file_path.open("rb") as fh:
-        raw = fh.read(max_bytes + 1)
-    if len(raw) > max_bytes:
-        raise NornTracingError(
-            "NORN-PY-UNBOUNDED",
-            f"source exceeds {max_bytes} byte limit",
-            SourceSpan(rel_source_path, 1, 0),
-        )
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise NornTracingError(
-            "NORN-PY-SYNTAX",
-            f"source is not valid UTF-8: {exc}",
-            SourceSpan(rel_source_path, 1, 0),
-        ) from exc
+    """Read at most `max_bytes` bytes from a regular file without following final symlinks or blocking on FIFOs."""
+    return read_regular_file_bounded(file_path, rel_source_path, max_bytes=max_bytes)
 
 
 def _elaborate_in_current_process(
@@ -548,28 +576,32 @@ def _elaborate_in_current_process(
     enable_audit_hook: bool = False,
 ) -> dict[str, object]:
     preflight = preflight_source(source, filename)
+    prior_source = snapshot_source_entry(filename)
     register_source(filename, source, preflight.tree)
-    code = compile(preflight.tree, filename, "exec")
-    restricted_builtins = _make_restricted_builtins()
-    ns: dict[str, object] = {
-        "__builtins__": restricted_builtins,
-        "__file__": filename,
-        "__name__": "__norn_authoring__",
-    }
-    if enable_audit_hook:
-        # Pre-warm stdlib codecs and Unicode tables before locking down IO.
-        _ = "".encode("utf-16-be")
-        _install_audit_hook(code)
-    exec(code, ns, ns)  # noqa: S102 - gated by Layer 1 AST preflight, closed builtins, and Layer 2 audit hook
-    artifacts = collect_artifacts(ns, options)
-    source_map = {
-        name: {"column": sp.column, "file": sp.file, "line": sp.line}
-        for name, sp in sorted(preflight.spans.items())
-    }
-    return {
-        "artifacts": artifacts,
-        "sourceMap": source_map,
-    }
+    try:
+        code = compile(preflight.tree, filename, "exec")
+        restricted_builtins = _make_restricted_builtins()
+        ns: dict[str, object] = {
+            "__builtins__": restricted_builtins,
+            "__file__": filename,
+            "__name__": "__norn_authoring__",
+        }
+        if enable_audit_hook:
+            # Pre-warm stdlib codecs and Unicode tables before locking down IO.
+            _ = "".encode("utf-16-be")
+            _install_audit_hook(code)
+        exec(code, ns, ns)  # noqa: S102 - gated by Layer 1 AST preflight, closed builtins, and Layer 2 audit hook
+        artifacts = collect_artifacts(ns, options)
+        source_map = {
+            name: {"column": sp.column, "file": sp.file, "line": sp.line}
+            for name, sp in sorted(preflight.spans.items())
+        }
+        return {
+            "artifacts": artifacts,
+            "sourceMap": source_map,
+        }
+    finally:
+        restore_source_entry(filename, prior_source)
 
 
 @dataclass(frozen=True, slots=True)
@@ -599,6 +631,122 @@ def sandbox_subprocess_env(package_root: Path) -> dict[str, str]:
     }
 
 
+def _run_bounded_subprocess(
+    cmd: list[str],
+    *,
+    payload_bytes: bytes,
+    env: Mapping[str, str],
+    timeout_secs: float,
+    max_stdout_bytes: int,
+    max_stderr_bytes: int,
+    rel_source_path: str,
+) -> tuple[int, bytes, bytes]:
+    """Run isolated subprocess with bounded stdout/stderr pipes and strict monotonic timeout."""
+    span = SourceSpan(rel_source_path, 1, 0)
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=dict(env),
+        bufsize=0,
+    )
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    stdout_overflow = threading.Event()
+
+    def _read_pipe(
+        stream: IO[bytes],
+        out: list[bytes],
+        limit: int,
+        overflow_event: threading.Event | None,
+    ) -> None:
+        total = 0
+        try:
+            while True:
+                chunk = stream.read(65_536)
+                if not chunk:
+                    break
+                if total <= limit:
+                    remaining = (limit + 1) - total
+                    out.append(chunk[:remaining])
+                    total += min(len(chunk), remaining)
+                    if total > limit and overflow_event is not None:
+                        overflow_event.set()
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                        break
+        except OSError:
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    def _write_stdin(stream: IO[bytes]) -> None:
+        try:
+            stream.write(payload_bytes)
+            stream.flush()
+        except OSError:
+            pass
+        finally:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+    t_out = threading.Thread(
+        target=_read_pipe,
+        args=(proc.stdout, stdout_chunks, max_stdout_bytes, stdout_overflow),
+        daemon=True,
+    )
+    t_err = threading.Thread(
+        target=_read_pipe,
+        args=(proc.stderr, stderr_chunks, max_stderr_bytes, None),
+        daemon=True,
+    )
+    t_in = threading.Thread(target=_write_stdin, args=(proc.stdin,), daemon=True)
+    t_out.start()
+    t_err.start()
+    t_in.start()
+
+    deadline = time.monotonic() + timeout_secs
+    try:
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            returncode = proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            raise NornTracingError(
+                "NORN-PY-TIMEOUT",
+                f"elaboration exceeded {timeout_secs}s timeout",
+                span,
+            ) from exc
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        t_out.join(timeout=1.0)
+        t_err.join(timeout=1.0)
+        t_in.join(timeout=1.0)
+
+    if stdout_overflow.is_set():
+        raise NornTracingError(
+            "NORN-PY-UNBOUNDED",
+            f"elaboration output exceeded {max_stdout_bytes} byte limit",
+            span,
+        )
+    return returncode, b"".join(stdout_chunks), b"".join(stderr_chunks)
+
+
 def elaborate_file(
     path: str | Path,
     *,
@@ -607,10 +755,12 @@ def elaborate_file(
     registry_package_path: str | None = None,
     timeout_secs: float = DEFAULT_TIMEOUT_SECS,
     memory_limit_bytes: int = DEFAULT_MEMORY_LIMIT_BYTES,
+    max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
 ) -> ElaborationResult:
     """Elaborate an authored `.py` file inside an isolated deterministic subprocess."""
-    file_path = Path(path).resolve()
+    file_path = Path(path)
     rel_source_path = source_path if source_path is not None else str(path)
+    span = SourceSpan(rel_source_path, 1, 0)
     source = _read_source_bounded(file_path, rel_source_path)
 
     # Run Layer 1 preflight locally first for instant crisp diagnostics.
@@ -649,27 +799,49 @@ def elaborate_file(
         "sys.stdout.write(canonical_json(res))\n"
     )
 
-    proc = subprocess.run(
+    returncode, raw_stdout, raw_stderr = _run_bounded_subprocess(
         sandbox_subprocess_cmd(runner),
-        input=payload,
-        capture_output=True,
-        text=True,
+        payload_bytes=payload.encode("utf-8"),
         env=sandbox_subprocess_env(package_root),
-        timeout=timeout_secs,
-        check=False,
+        timeout_secs=timeout_secs,
+        max_stdout_bytes=max_output_bytes,
+        max_stderr_bytes=MAX_SUBPROCESS_STDERR_BYTES,
+        rel_source_path=rel_source_path,
     )
-    if proc.returncode != 0:
-        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit code {proc.returncode}"
-        raise NornTracingError("NORN-PY-ELABORATION", detail, SourceSpan(rel_source_path, 1, 0))
+    if returncode != 0:
+        stderr_text = raw_stderr.decode("utf-8", errors="replace").strip()
+        stdout_text = raw_stdout.decode("utf-8", errors="replace").strip()
+        detail = stderr_text or stdout_text or f"exit code {returncode}"
+        raise NornTracingError("NORN-PY-ELABORATION", detail, span)
 
-    parsed = json.loads(proc.stdout)
+    try:
+        parsed = json.loads(raw_stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise NornTracingError(
+            "NORN-PY-ELABORATION",
+            f"sandbox subprocess emitted malformed JSON output: {exc}",
+            span,
+        ) from exc
+
+    if (
+        not isinstance(parsed, dict)
+        or not isinstance(parsed.get("artifacts"), list)
+        or not isinstance(parsed.get("sourceMap"), dict)
+    ):
+        raise NornTracingError(
+            "NORN-PY-ELABORATION",
+            "sandbox subprocess emitted invalid elaboration envelope",
+            span,
+        )
+
     artifacts: list[JsonValue] = parsed["artifacts"]
     source_map: dict[str, dict[str, object]] = parsed["sourceMap"]
+    norn1_bytes = canonical_norn1_bytes(artifacts)
     return ElaborationResult(
         artifacts=artifacts,
         canonical_text=canonical_json(artifacts),
-        norn1_bytes=canonical_norn1_bytes(artifacts),
-        norn1_sha256=canonical_norn1_sha256(artifacts),
+        norn1_bytes=norn1_bytes,
+        norn1_sha256=norn1_sha256_bytes(norn1_bytes),
         source_map=source_map,
     )
 

@@ -1,10 +1,9 @@
-import { Database } from "bun:sqlite"
+import type { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
 import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER } from "../actor.ts"
-import worker, { type Env } from "../index.ts"
+import type { Env } from "../index.ts"
 import { GRANTS_PER_WINDOW, GRANT_SECONDS, GRANT_WINDOW_MS, SIDEKICK_CLIENT, grantAllowed } from "../sidekick.ts"
+import { BASE_MIGRATIONS, claimsOf, cookieOf, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 /**
  * Sidekick's grant end to end: a signed-in person mints their own /mcp access, the agent's MCP
@@ -14,11 +13,8 @@ import { GRANTS_PER_WINDOW, GRANT_SECONDS, GRANT_WINDOW_MS, SIDEKICK_CLIENT, gra
  */
 
 const ORIGIN = "https://studio-alpha.norn.test"
-const migration = (name: string) => readFileSync(join(import.meta.dir, "../migrations", name), "utf8")
 
 function stage(mcp = true): Env & { forwarded: { url: string; authorization: string | null }[] } {
-  const db = new Database(":memory:")
-  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql"]) db.exec(migration(name))
   const forwarded: { url: string; authorization: string | null }[] = []
   const host = {
     fetch: async (request: Request) => {
@@ -27,28 +23,23 @@ function stage(mcp = true): Env & { forwarded: { url: string; authorization: str
       return Response.json({ jsonrpc: "2.0", id: message.id, result: { served: true } })
     },
   } as unknown as Fetcher
-  const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "s".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {}, forwarded }
+  const { env } = createWorkerEnv({
+    migrations: [...BASE_MIGRATIONS, "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql"],
+    origin: ORIGIN,
+    secret: "s".repeat(40),
+    overrides: { NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {} },
+  })
+  return { ...env, forwarded }
 }
 
-let address = 0
-const call = (env: Env, path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers)
-  headers.set("cf-connecting-ip", `198.51.100.${++address % 250}`)
-  return worker.fetch(new Request(`${ORIGIN}${path}`, { redirect: "manual", ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
-}
-const postJson = (env: Env, path: string, body: unknown, headers: HeadersInit = {}) =>
-  call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } })
+const { call, enroll } = createWorkerClient(ORIGIN, { redirect: "manual" })
 const db = (env: Env) => env.AUTH_DB as unknown as Database
-const claimsOf = (token: string) => JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
 
 async function signUp(env: Env, email: string) {
-  await postJson(env, "/api/auth/sign-up/email", { email, password: "correct horse battery", name: email }, { origin: ORIGIN })
-  const signIn = await postJson(env, "/api/auth/sign-in/email", { email, password: "correct horse battery" }, { origin: ORIGIN })
+  const signIn = await enroll(env, email, email)
   expect(signIn.status).toBe(200)
-  const cookie = signIn.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   const user = (db(env).query("select id from user where email = ?").get(email) as { id: string }).id
-  return { cookie, user }
+  return { cookie: cookieOf(signIn), user }
 }
 
 /** An owner whose workspace has the `analytics` cell, and an analyst (member) working in it. */

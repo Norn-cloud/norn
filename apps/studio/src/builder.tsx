@@ -130,16 +130,21 @@ export async function readCatalog(boundScope?: StudioScope | null): Promise<Ques
 export const checkedFor = <D, R>(check: { readonly variables: D | undefined; readonly data: R | undefined; readonly error: Error | null }, draft: D, at?: { readonly ranAt: object | undefined; readonly revision: object }) =>
   check.variables === draft && (at === undefined || at.ranAt === at.revision) ? { data: check.data, error: check.error } : { data: undefined, error: null }
 
-async function checkQuestion(question: unknown, boundScope?: StudioScope | null): Promise<QuestionVerdict> {
+export async function postQuestionCheck(question: unknown, boundScope?: StudioScope | null): Promise<{ readonly verdict: QuestionVerdict; readonly body: unknown }> {
   const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
   const response = await fetch("/api/questions/check", {
     method: "POST",
     headers: { "content-type": "application/json", ...scopeHeaders(scope) },
     body: JSON.stringify({ question }),
   })
-  const verdict = questionVerdictOf(await response.json().catch(() => null))
+  const body = await response.json().catch(() => null)
+  const verdict = questionVerdictOf(body)
   if (!response.ok || verdict === undefined) throw new Error("The checker could not be reached.")
-  return verdict
+  return { verdict, body }
+}
+
+async function checkQuestion(question: unknown, boundScope?: StudioScope | null): Promise<QuestionVerdict> {
+  return (await postQuestionCheck(question, boundScope)).verdict
 }
 
 const fieldClass = "h-9 w-full rounded-3xl border border-transparent bg-input/50 px-3 text-body outline-none focus-visible:border-ring focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-invalid:border-destructive"
@@ -267,7 +272,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
           {served === false && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{CHECKER_UNSERVED}</p>}
           <fieldset disabled={served === false} className="contents">
-          <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
+          <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Records by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
             <span className={invalid("measures") ? "text-body text-destructive" : "text-body text-muted-foreground"}>Measures</span>
             {draft.measures.length === 0 && <p className="text-body text-muted-foreground">No measure yet.</p>}

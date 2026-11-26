@@ -8,27 +8,21 @@
 //! before anything is decoded or read. A deeper business field of the same
 //! name is not the reserved member and is left alone.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use norn_ir::rule::DECIDE_PRINCIPAL_MEMBER;
-use serde::de::{Deserialize, Deserializer, IgnoredAny, MapAccess, Visitor};
+use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 
-use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes};
+use crate::refusal::{Refusal, RefusalDiagnostic, codes};
 
 /// The refusal of a submitted `principal` member at `pointer`.
 #[must_use]
 pub fn principal_member_refused(pointer: &str) -> Refusal {
     let message = "the principal is resolved by the host and is never accepted from a request";
     let mut refusal = Refusal::invalid(message);
-    refusal.diagnostics = vec![RefusalDiagnostic {
-        code: codes::INVALID_REQUEST.to_owned(),
-        severity: "error".to_owned(),
-        message: message.to_owned(),
-        span: Some(RefusalSpan {
-            pointer: pointer.to_owned(),
-        }),
-        law: None,
-    }];
+    refusal.diagnostics = vec![RefusalDiagnostic::error(
+        codes::INVALID_REQUEST,
+        message,
+        pointer,
+    )];
     refusal
 }
 
@@ -41,18 +35,20 @@ pub fn principal_member_refused(pointer: &str) -> Refusal {
 ///
 /// `request.invalid` (400) with the member's pointer.
 pub fn refuse_principal_member(body: &str, nested: Option<&str>) -> Result<(), Refusal> {
-    let Ok(members) = serde_json::from_str::<BTreeMap<String, Member>>(body) else {
+    let mut deserializer = serde_json::Deserializer::from_str(body);
+    let Ok((top_found, nested_found)) = TopPrincipalSeed { nested }.deserialize(&mut deserializer)
+    else {
         return Ok(());
     };
-    if members.contains_key(DECIDE_PRINCIPAL_MEMBER) {
+    if deserializer.end().is_err() {
+        return Ok(());
+    }
+    if top_found {
         return Err(principal_member_refused(&format!(
             "/{DECIDE_PRINCIPAL_MEMBER}"
         )));
     }
-    if let Some(nested) = nested
-        && let Some(inner) = members.get(nested).and_then(Member::names)
-        && inner.0.contains(DECIDE_PRINCIPAL_MEMBER)
-    {
+    if nested_found && let Some(nested) = nested {
         return Err(principal_member_refused(&format!(
             "/{nested}/{DECIDE_PRINCIPAL_MEMBER}"
         )));
@@ -60,44 +56,92 @@ pub fn refuse_principal_member(body: &str, nested: Option<&str>) -> Result<(), R
     Ok(())
 }
 
-/// The member names of one JSON object.
-struct Names(BTreeSet<String>);
+struct TopPrincipalSeed<'a> {
+    nested: Option<&'a str>,
+}
 
-impl<'de> Deserialize<'de> for Names {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct NamesVisitor;
-        impl<'de> Visitor<'de> for NamesVisitor {
-            type Value = Names;
+impl<'de> DeserializeSeed<'de> for TopPrincipalSeed<'_> {
+    type Value = (bool, bool);
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        struct TopVisitor<'a> {
+            nested: Option<&'a str>,
+        }
+        impl<'de> Visitor<'de> for TopVisitor<'_> {
+            type Value = (bool, bool);
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("a JSON object")
             }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Names, A::Error> {
-                let mut names = BTreeSet::new();
-                while let Some(name) = map.next_key::<String>()? {
-                    map.next_value::<IgnoredAny>()?;
-                    names.insert(name);
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut top_found = false;
+                let mut nested_found = false;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == DECIDE_PRINCIPAL_MEMBER {
+                        map.next_value::<IgnoredAny>()?;
+                        top_found = true;
+                    } else if self.nested == Some(key.as_str()) {
+                        if map.next_value_seed(NestedPrincipalSeed)? {
+                            nested_found = true;
+                        }
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
                 }
-                Ok(Names(names))
+                Ok((top_found, nested_found))
             }
         }
-        deserializer.deserialize_map(NamesVisitor)
+        deserializer.deserialize_map(TopVisitor {
+            nested: self.nested,
+        })
     }
 }
 
-/// One top-level member: its own member names when it is an object.
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum Member {
-    Object(Names),
-    Other(IgnoredAny),
-}
+struct NestedPrincipalSeed;
 
-impl Member {
-    const fn names(&self) -> Option<&Names> {
-        match self {
-            Self::Object(names) => Some(names),
-            Self::Other(IgnoredAny) => None,
+impl<'de> DeserializeSeed<'de> for NestedPrincipalSeed {
+    type Value = bool;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        struct NestedVisitor;
+        impl<'de> Visitor<'de> for NestedVisitor {
+            type Value = bool;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("any JSON value")
+            }
+            fn visit_bool<E>(self, _v: bool) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_i64<E>(self, _v: i64) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_u64<E>(self, _v: u64) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_f64<E>(self, _v: f64) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_str<E>(self, _v: &str) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_unit<E>(self) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<bool, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(false)
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+                let mut found = false;
+                while let Some(key) = map.next_key::<String>()? {
+                    map.next_value::<IgnoredAny>()?;
+                    if key == DECIDE_PRINCIPAL_MEMBER {
+                        found = true;
+                    }
+                }
+                Ok(found)
+            }
         }
+        deserializer.deserialize_any(NestedVisitor)
     }
 }
 
@@ -153,6 +197,8 @@ mod tests {
                 r#"{"input":{"loan":{"principal":"900.00"}}}"#,
                 Some("input"),
             ),
+            (r#"{"principal":1} trailing"#, Some("input")),
+            (r#"{"input":[1, true, null, "principal"]}"#, Some("input")),
             (r#"{"input":[{"principal":1}]}"#, Some("input")),
             ("not json", Some("input")),
             (r#"["principal"]"#, None),

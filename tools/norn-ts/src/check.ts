@@ -125,6 +125,8 @@ export const COMPILER_OPTIONS: ts.CompilerOptions = {
   allowImportingTsExtensions: true,
 }
 
+let cachedEffectVersion: string | undefined
+
 /** Refuse to run against anything but the pinned Effect and Compiler API. */
 export function assertPins(profile: Profile): void {
   if (ts.version !== profile.pins.typescript.version) {
@@ -132,12 +134,15 @@ export function assertPins(profile: Profile): void {
       `Compiler API ${ts.version} does not match pinned typescript@${profile.pins.typescript.version}`,
     )
   }
-  const effectPkg = JSON.parse(
-    readFileSync(join(dependencyDir("effect"), "package.json"), "utf8"),
-  ) as { version: string }
-  if (effectPkg.version !== profile.pins.effect.version) {
+  if (cachedEffectVersion === undefined) {
+    const effectPkg = JSON.parse(
+      readFileSync(join(dependencyDir("effect"), "package.json"), "utf8"),
+    ) as { version: string }
+    cachedEffectVersion = effectPkg.version
+  }
+  if (cachedEffectVersion !== profile.pins.effect.version) {
     throw new ProfileError(
-      `effect ${effectPkg.version} does not match pinned effect@${profile.pins.effect.version}`,
+      `effect ${cachedEffectVersion} does not match pinned effect@${profile.pins.effect.version}`,
     )
   }
 }
@@ -170,6 +175,33 @@ interface Resolved {
   readonly namespace: boolean
   readonly target?: ts.Symbol
   readonly declaration?: ts.Declaration
+}
+
+function resolveSymbol(checker: ts.TypeChecker, intrinsicsModuleName: string, node: ts.Node): Resolved {
+  // `{ x }` names the property; the value it reads is the binding `x`.
+  const direct =
+    ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+      ? checker.getShorthandAssignmentValueSymbol(node.parent)
+      : checker.getSymbolAtLocation(node)
+  if (!direct) return { namespace: false }
+  const target = direct.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(direct) : direct
+  const declaration = target.declarations?.[0]
+  const namespace = (target.flags & (ts.SymbolFlags.ValueModule | ts.SymbolFlags.NamespaceModule)) !== 0
+  if (!declaration) return { namespace, target }
+  const file = declaration.getSourceFile().fileName
+  const fqn = checker.getFullyQualifiedName(target)
+  // Exported declarations print as `"<file>".Name`; locally declared symbols
+  // exported under another name (`export { ArraySchema as Array }`) print bare.
+  const quoted = /^"[^"]*"(?:\.(.*))?$/.exec(fqn)
+  const qualified = quoted ? (quoted[1] ?? "") : fqn
+  if (file.startsWith(EFFECT_DIST)) {
+    const module = `effect/${file.slice(EFFECT_DIST.length).replace(/\.d\.ts$/, "").split(sep).join("/")}`
+    return { id: `${module}#${qualified}`, namespace, target, declaration }
+  }
+  if (resolvePath(file) === INTRINSICS_PATH) {
+    return { id: `${intrinsicsModuleName}#${qualified}`, namespace, target, declaration }
+  }
+  return { namespace, target, declaration }
 }
 
 export class ProfileChecker {
@@ -312,7 +344,7 @@ export class ProfileChecker {
 
   /** Shared resolved identity for syntax lowering; uses the checker's pinned provenance rules. */
   identity(program: ts.Program, node: ts.Node): string | undefined {
-    return new FileWalk(this, program, program.getTypeChecker(), node.getSourceFile()).identity(node)
+    return resolveSymbol(program.getTypeChecker(), this.profile.intrinsicsModule, node).id
   }
 
   /** Stable code for a profile-module symbol that is not admitted. */
@@ -407,30 +439,7 @@ class FileWalk {
   }
 
   private resolve(node: ts.Node): Resolved {
-    // `{ x }` names the property; the value it reads is the binding `x`.
-    const direct =
-      ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
-        ? this.checker.getShorthandAssignmentValueSymbol(node.parent)
-        : this.checker.getSymbolAtLocation(node)
-    if (!direct) return { namespace: false }
-    const target = direct.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(direct) : direct
-    const declaration = target.declarations?.[0]
-    const namespace = (target.flags & (ts.SymbolFlags.ValueModule | ts.SymbolFlags.NamespaceModule)) !== 0
-    if (!declaration) return { namespace, target }
-    const file = declaration.getSourceFile().fileName
-    const fqn = this.checker.getFullyQualifiedName(target)
-    // Exported declarations print as `"<file>".Name`; locally declared symbols
-    // exported under another name (`export { ArraySchema as Array }`) print bare.
-    const quoted = /^"[^"]*"(?:\.(.*))?$/.exec(fqn)
-    const qualified = quoted ? (quoted[1] ?? "") : fqn
-    if (file.startsWith(EFFECT_DIST)) {
-      const module = `effect/${file.slice(EFFECT_DIST.length).replace(/\.d\.ts$/, "").split(sep).join("/")}`
-      return { id: `${module}#${qualified}`, namespace, target, declaration }
-    }
-    if (resolvePath(file) === INTRINSICS_PATH) {
-      return { id: `${this.owner.profile.intrinsicsModule}#${qualified}`, namespace, target, declaration }
-    }
-    return { namespace, target, declaration }
+    return resolveSymbol(this.checker, this.owner.profile.intrinsicsModule, node)
   }
 
   private isDefaultLib(declaration: ts.Declaration | undefined): boolean {
@@ -496,6 +505,15 @@ class FileWalk {
       ts.TypeFlags.EnumLike |
       ts.TypeFlags.Null
     return this.every(this.typeOf(node), (t) => (t.flags & scalar) !== 0)
+  }
+
+  private isNullableNullCheck(left: ts.Expression, right: ts.Expression): boolean {
+    const check = (a: ts.Expression, b: ts.Expression): boolean => {
+      if (a.kind !== ts.SyntaxKind.NullKeyword) return false
+      const t = this.typeOf(b)
+      return t.isUnion() && t.types.some((member) => (member.flags & ts.TypeFlags.Null) !== 0)
+    }
+    return check(left, right) || check(right, left)
   }
 
   // --------------------------------------------------------------- top level
@@ -1041,7 +1059,7 @@ class FileWalk {
     switch (op) {
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-        if (operands() && !(this.isScalar(b.left) && this.isScalar(b.right))) {
+        if (operands() && !(this.isScalar(b.left) && this.isScalar(b.right)) && !this.isNullableNullCheck(b.left, b.right)) {
           this.report(b, "NORN-FLOW-EXPRESSION", "===/!== compares scalars only (no object equality)")
         }
         return

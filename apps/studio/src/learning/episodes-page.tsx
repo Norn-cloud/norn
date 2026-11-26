@@ -10,6 +10,7 @@ import { TableCard } from "@/components/system/table-card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatTimestamp as when } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { humanize } from "../lib/cell-read.ts"
@@ -21,7 +22,7 @@ import {
 } from "../lib/learning/episode.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import { AGREEMENT_STYLE, VERDICT_LABEL } from "./episode-page.tsx"
-import { LearningGate, useBoundLearningRead } from "./gate.tsx"
+import { LEARNING_SELECT_CLASS as selectClass, LearningGate, useBoundLearningRead } from "./gate.tsx"
 
 const AGREEMENT_TONE: Readonly<Record<Agreement, Tone>> = {
   accepted: "green",
@@ -42,9 +43,6 @@ const VERDICT_TONE: Readonly<Record<Verdict, Tone>> = {
   pattern: "green",
   gap: "amber",
 }
-
-const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring"
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 function rulesSummary(episode: Episode): { readonly text: string; readonly tone: Tone } {
   const waived = episode.ruleOutcomes.filter((r) => r.outcome === "blocked" && r.waiver !== null).length

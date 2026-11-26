@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"
+import { formatRelativeOrTimestamp } from "@/lib/format"
 import { NotServed, retryWorkspace, useMode } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
@@ -29,11 +30,7 @@ export function isWorkspaceUnavailableError(error: unknown): boolean {
 
 /** Human-readable relative/absolute timestamp for when the workspace last responded cleanly. */
 export function formatLastReachable(atMs: number | null, now = Date.now()): string | null {
-  if (atMs === null) return null
-  const seconds = Math.round((now - atMs) / 1000)
-  if (seconds >= 0 && seconds < 60) return "just now"
-  if (seconds >= 60 && seconds < 3600) return `${Math.round(seconds / 60)} min ago`
-  return new Date(atMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+  return atMs === null ? null : formatRelativeOrTimestamp(atMs, now)
 }
 
 /**

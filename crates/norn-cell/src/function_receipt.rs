@@ -116,10 +116,11 @@ pub type ResultAuthority = Box<dyn ResultAuthorizer + Send>;
 
 /// How one commit treats a consumed `norn.function/v1` delivery, chosen per
 /// call by its entry point, never by inspecting the commit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum ReceiptCommitMode {
     /// Every ordinary commit: consuming a Function delivery applies its
     /// result and always runs the authority recheck.
+    #[default]
     Normal,
     /// [`SqliteCell::commit_result_refusal`]: consumes a pending Function
     /// delivery and its final store batch applies nothing.
@@ -223,16 +224,13 @@ where
             consumes: Some(consumed),
             ..CellCommit::empty()
         };
-        let args: crate::host::AdmissionArgs<'_> = (
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            ReceiptCommitMode::ResultRefusal,
-            None,
-        );
-        self.commit_admitted(commit, None, None, None, args)
+        self.commit_admitted(
+            commit,
+            crate::host::CommitOptions {
+                mode: ReceiptCommitMode::ResultRefusal,
+                ..Default::default()
+            },
+        )
     }
 }
 

@@ -35,26 +35,29 @@ const DEMO: (&str, &str) = ("org_demo", "dev");
 pub const HEALTH_PATH: &str = "/healthz";
 /// The parameter a conformance request names its own cell object with.
 const OBJECT_PARAM: &str = "conformanceObject";
+/// Edge bound on client WebSocket frames (above `norn_api::live::MAX_MESSAGE` so
+/// moderately oversize frames still receive the cell's protocol close 1009, while
+/// multi-megabyte frames are rejected before buffering at the router).
+const MAX_CLIENT_WS_FRAME: usize = 64 * 1024;
 
-/// Whether `part` can name an organization.
-fn org_part(part: &str) -> bool {
+fn scope_part(part: &str, max_len: usize) -> bool {
     let bytes = part.as_bytes();
-    (1..=128).contains(&bytes.len())
+    (1..=max_len).contains(&bytes.len())
         && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
         && bytes
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(b))
 }
 
+/// Whether `part` can name an organization.
+fn org_part(part: &str) -> bool {
+    scope_part(part, 128)
+}
+
 /// Whether `part` can name an environment.
 #[must_use]
 pub fn environment_part(part: &str) -> bool {
-    let bytes = part.as_bytes();
-    (1..=64).contains(&bytes.len())
-        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(b))
+    scope_part(part, 64)
 }
 
 fn is_demo(org: &str, env: &str) -> bool {
@@ -83,10 +86,6 @@ struct Target {
     key: String,
     scope: Option<CellScope>,
     query: String,
-}
-
-fn params(query: &str) -> Vec<(String, String)> {
-    form_pairs(query)
 }
 
 fn form_pairs(query: &str) -> Vec<(String, String)> {
@@ -126,8 +125,9 @@ fn refuse(
     category: &str,
     message: &str,
     explanation: &str,
+    retryable: bool,
 ) -> Response {
-    let body = json!({"format": "norn/refusal@2", "retryable": false, "reason": null, "code": code, "category": category, "message": message, "explanation": explanation});
+    let body = json!({"format": "norn/refusal@2", "retryable": retryable, "reason": null, "code": code, "category": category, "message": message, "explanation": explanation});
     (
         status,
         [("content-type", "application/json")],
@@ -188,7 +188,7 @@ impl Router {
     }
 
     fn target(&self, path: &str, query: &str) -> Result<Target, Box<Response>> {
-        let pairs = params(query);
+        let pairs = form_pairs(query);
         let all = |name: &str| {
             pairs
                 .iter()
@@ -213,9 +213,10 @@ impl Router {
             }
             let synthetic = crate::synthetic_scope();
             if let Some(object) = all(OBJECT_PARAM).into_iter().next() {
+                let prefix = format!("{OBJECT_PARAM}=");
                 let kept = query
                     .split('&')
-                    .filter(|pair| !pair.starts_with(&format!("{OBJECT_PARAM}=")))
+                    .filter(|pair| !pair.starts_with(&prefix))
                     .collect::<Vec<_>>()
                     .join("&");
                 return Ok(Target {
@@ -240,6 +241,7 @@ impl Router {
                     "permission",
                     "this conformance entry serves only its synthetic scope",
                     "a conformance build serves only an opted-in test stage and its synthetic scope",
+                    false,
                 )));
             }
         }
@@ -322,6 +324,7 @@ impl Router {
                         "limit",
                         "the request body is too large",
                         &format!("submissions are at most {limit} bytes"),
+                        false,
                     );
                 }
             }
@@ -333,7 +336,7 @@ impl Router {
             let name_text = name.as_str();
             if name_text == "authorization"
                 || name_text == "content-type"
-                || name_text.starts_with("x-norn-conformance-")
+                || (self.config.conformance && name_text.starts_with("x-norn-conformance-"))
             {
                 headers.insert(name.clone(), value.clone());
             }
@@ -398,6 +401,7 @@ impl Router {
                     "open a WebSocket with the {} protocol",
                     crate::live::PROTOCOL
                 ),
+                false,
             )
         };
         let asked = parts
@@ -423,6 +427,7 @@ impl Router {
                 "permission",
                 "sign in first",
                 "a live socket carries the caller's token",
+                false,
             );
         };
         if let Err(refused) = self.admitted(&parts.headers, &target).await {
@@ -438,11 +443,14 @@ impl Router {
                 "invalid",
                 "no cell here",
                 "live reads name a cell scope",
+                false,
             );
         };
         let router = Arc::clone(self);
         upgrade
             .protocols([crate::live::PROTOCOL])
+            .max_message_size(MAX_CLIENT_WS_FRAME)
+            .max_frame_size(MAX_CLIENT_WS_FRAME)
             .on_upgrade(move |socket| async move {
                 if let Err(error) = router
                     .join(socket, target.actor, target.key, &scope, authorization)
@@ -524,6 +532,7 @@ fn denied() -> Response {
         "permission",
         "the request is not authorized",
         "the request carries no valid identity for this cell",
+        false,
     )
 }
 
@@ -533,13 +542,14 @@ fn unavailable(error: &anyhow::Error) -> Response {
 }
 
 fn unavailable_now() -> Response {
-    let body = json!({"format": "norn/refusal@2", "retryable": true, "reason": null, "code": "host.unavailable", "category": "host", "message": "the cell is unavailable", "explanation": "retry the request"});
-    (
+    refuse(
         StatusCode::SERVICE_UNAVAILABLE,
-        [("content-type", "application/json")],
-        body.to_string(),
+        "host.unavailable",
+        "host",
+        "the cell is unavailable",
+        "retry the request",
+        true,
     )
-        .into_response()
 }
 
 /// The router as an axum service on every path.

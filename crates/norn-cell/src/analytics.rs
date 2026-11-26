@@ -80,10 +80,13 @@ pub fn hex_digest(bytes: &[u8]) -> String {
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _infallible = write!(out, "{b:02x}");
-        out
-    })
+    bytes.iter().fold(
+        String::with_capacity(bytes.len().saturating_mul(2)),
+        |mut out, b| {
+            let _infallible = write!(out, "{b:02x}");
+            out
+        },
+    )
 }
 
 /// How a property is stored and compared in the analytics database.

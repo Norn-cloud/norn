@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use utoipa::ToSchema;
 use utoipa::openapi::Type;
-use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
+use utoipa::openapi::schema::{Object, ObjectBuilder, SchemaType};
 
 /// The backend's unchanged payload and failure classification.
 pub struct CallOutput {
@@ -43,10 +43,19 @@ pub struct Session {
 #[derive(Deserialize)]
 struct Request {
     jsonrpc: String,
+    /// Absent for notifications (`None`); present `"id": null` decodes as `Some(RuntimeValue::Null)`
+    /// so `Session::handle` rejects it with `-32600` instead of silently treating it as a notification.
+    #[serde(default, deserialize_with = "deserialize_present_id")]
     id: Option<RuntimeValue>,
     method: String,
     #[serde(default = "empty_parameters")]
     params: RuntimeValue,
+}
+fn deserialize_present_id<'de, D>(deserializer: D) -> Result<Option<RuntimeValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    RuntimeValue::deserialize(deserializer).map(Some)
 }
 fn empty_parameters() -> RuntimeValue {
     RuntimeValue::Object(RuntimeObject::new())
@@ -409,22 +418,18 @@ fn request_id_schema() -> Object {
         .build()
 }
 
-fn free_form(description: &str) -> Object {
-    ObjectBuilder::new()
-        .schema_type(SchemaType::Type(Type::Object))
-        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(description))
-        .build()
-}
-
 fn params_schema() -> Object {
-    free_form("The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.")
+    crate::objects::free_form(
+        "The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.",
+        false,
+    )
 }
 
 fn result_schema() -> Object {
-    free_form(
+    crate::objects::free_form(
         "The method's result. A tool's refusal is a result with `isError: true` whose \
          `structuredContent` is the route's own refusal.",
+        false,
     )
 }
 

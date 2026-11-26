@@ -5,7 +5,7 @@ import sys
 from norn_regression import Cell, check_regression
 
 cell = Cell.from_project(sys.argv[1])
-args = dict(target="y", features=["x1", "x2", "x3"], order="t", cell=cell)
+args = {"target": "y", "features": ["x1", "x2", "x3"], "order": "t", "cell": cell}
 
 
 def status(result, test, subject=None):

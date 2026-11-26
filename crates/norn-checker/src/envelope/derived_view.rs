@@ -10,10 +10,6 @@ use super::helpers::{
     expect_object, kind_invalid, require_non_empty_field, validate_non_empty_string_array_field,
 };
 
-// ---------------------------------------------------------------------------
-// Derived / ViewIR v0 payload validation
-// ---------------------------------------------------------------------------
-
 pub(super) fn validate_derived_payload(
     value: &JsonValue,
     diagnostics: &mut Vec<Diagnostic>,
@@ -24,7 +20,6 @@ pub(super) fn validate_derived_payload(
         return;
     };
 
-    // viewVersion must be "0.1"
     match payload.get("viewVersion") {
         None => {
             diagnostics.push(kind_invalid(
@@ -45,7 +40,6 @@ pub(super) fn validate_derived_payload(
         }
     }
 
-    // viewId is required
     require_non_empty_field(
         payload,
         "viewId",
@@ -55,13 +49,10 @@ pub(super) fn validate_derived_payload(
         CODE,
     );
 
-    // inputs: required, non-empty array of view input refs
     validate_view_inputs(payload.get("inputs"), diagnostics, artifact_id, CODE);
 
-    // calc: required, serializable, must not be effectful_ts (IO-in-view rejection)
     validate_view_calc(payload.get("calc"), diagnostics, artifact_id, CODE);
 
-    // outputSchema: required object
     match payload.get("outputSchema") {
         None => {
             diagnostics.push(kind_invalid(
@@ -162,7 +153,7 @@ fn validate_view_inputs(
             ));
         }
         Some(JsonValue::Array(inputs)) => {
-            let mut aliases: BTreeSet<String> = BTreeSet::new();
+            let mut aliases = BTreeSet::new();
             for (i, input) in inputs.iter().enumerate() {
                 let path = format!("payload.inputs[{i}]");
                 let Some(inp) = input.as_object() else {
@@ -175,7 +166,6 @@ fn validate_view_inputs(
                     continue;
                 };
 
-                // artifactId
                 match inp.get("artifactId") {
                     Some(JsonValue::String(s)) if !s.trim().is_empty() => {}
                     _ => {
@@ -188,7 +178,6 @@ fn validate_view_inputs(
                     }
                 }
 
-                // kind — only entity, relation, or derived are valid inputs
                 match inp.get("kind") {
                     Some(JsonValue::String(k))
                         if k == "entity" || k == "relation" || k == "derived" => {}
@@ -204,7 +193,6 @@ fn validate_view_inputs(
                     }
                 }
 
-                // version — must be exact (non-empty)
                 match inp.get("version") {
                     Some(JsonValue::String(v)) if !v.trim().is_empty() => {}
                     _ => {
@@ -219,11 +207,9 @@ fn validate_view_inputs(
                     }
                 }
 
-                // alias — must be a non-empty string, unique across inputs
                 match inp.get("alias") {
-                    Some(JsonValue::String(a)) if !a.trim().is_empty() => {
-                        let alias = a.clone();
-                        if !aliases.insert(alias.clone()) {
+                    Some(JsonValue::String(alias)) if !alias.trim().is_empty() => {
+                        if !aliases.insert(alias.as_str()) {
                             diagnostics.push(kind_invalid(
                                 &format!("duplicate input alias \"{alias}\""),
                                 &format!("{path}.alias"),

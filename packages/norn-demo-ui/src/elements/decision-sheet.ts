@@ -149,7 +149,8 @@ const WORDS = {
 type WordKey = keyof (typeof WORDS)["en"]
 
 const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-const fill = (template: string, ...values: readonly string[]) => values.reduce((text, value, index) => text.replace(`{${index}}`, value), template)
+const fill = (template: string, ...values: readonly string[]) =>
+  template.replace(/\{(\d+)\}/g, (match, index) => values[Number(index)] ?? match)
 
 function nodes(root: WidgetNodeDoc): Map<string, WidgetNodeDoc> {
   const out = new Map<string, WidgetNodeDoc>()
@@ -249,7 +250,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
       <form class="norn-form" data-region="form" novalidate aria-label="${escape(label(byId.get("decision-actions"), locale))}">
         <fieldset class="norn-fieldset" data-region="decision-choices">
           <legend class="norn-legend">${escape(label(byId.get("decision-choices"), locale))}</legend>
-          <ui-radio-group data-node="option-choice" aria-label="${escape(label(byId.get("option-choice"), locale))}">${options}</ui-radio-group>
+          <ui-radio-group data-node="option-choice" aria-label="${escape(label(byId.get("option-choice"), locale))}" aria-describedby="norn-choice-${id}">${options}</ui-radio-group>
           <p class="norn-problem" role="alert" data-problem="/choice" id="norn-choice-${id}" hidden></p>
         </fieldset>
         <div class="norn-field" data-region="decision-note">
@@ -289,6 +290,8 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
 const record = (value: unknown): Readonly<Record<string, unknown>> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {})
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null)
 const time = (ms: number, locale: Locale) => new Date(ms).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+const ownLaw = (laws: Readonly<Record<string, SheetLawInfo>> | undefined, key: string | null): SheetLawInfo | undefined =>
+  laws !== undefined && key !== null && Object.hasOwn(laws, key) ? laws[key] : undefined
 
 interface Problem {
   readonly code: string
@@ -352,7 +355,7 @@ export function refusalPanelMarkup(
   const unevaluated = disclosed && code === "decision.law_not_satisfied"
     && (checkedEntries.length === 0 || /cannot evaluate/i.test(explanation))
   // Catalog metadata is read ONLY when the server disclosed the law reason; never on a redacted refusal.
-  const lawInfo = disclosed ? (context.laws?.[pinArtifact ?? ""] ?? context.laws?.[law]) : undefined
+  const lawInfo = disclosed ? (ownLaw(context.laws, pinArtifact) ?? ownLaw(context.laws, law)) : undefined
 
   const cellTime = decidedAt !== null && !Number.isNaN(Date.parse(decidedAt)) ? new Date(decidedAt) : null
   const shownTime = cellTime ?? context.receivedAt
@@ -375,7 +378,7 @@ export function refusalPanelMarkup(
         const extraNote = explanation !== "" && explanation !== lead && explanation !== message && explanation !== UNPROVEN_DETAIL
           ? `<p class="norn-meta">${escape(explanation)}</p>` : ""
         const tech = context.technical
-          ? `<div class="norn-refusal-tech"><span>${escape([code, subject].filter(Boolean).join(" · "))}</span>${pinArtifact ? `<span>${escape(`${pinArtifact}@${pinVersion ?? "?"}`)}</span>` : ""}${explanation ? `<span>${escape(explanation)}</span>` : ""}</div>`
+          ? `<div class="norn-refusal-tech"><span><bdi>${escape([code, subject].filter(Boolean).join(" · "))}</bdi></span>${pinArtifact ? `<span><bdi>${escape(`${pinArtifact}@${pinVersion ?? "?"}`)}</bdi></span>` : ""}${explanation ? `<span>${escape(explanation)}</span>` : ""}</div>`
           : ""
         const verdictTone = unevaluated ? "risk-medium" : "risk-high"
         const verdictAttr = unevaluated ? "not-evaluated" : "fails"
@@ -391,7 +394,7 @@ export function refusalPanelMarkup(
         if (explanation === "" || explanation === UNPROVEN_DETAIL) {
           parts.push(`<p class="norn-meta">${escape(w.refusedRedactedCheck)}</p>`)
         }
-        const tech = context.technical && code !== "" ? `<div class="norn-refusal-tech"><span>${escape(code)}</span></div>` : ""
+        const tech = context.technical && code !== "" ? `<div class="norn-refusal-tech"><span><bdi>${escape(code)}</bdi></span></div>` : ""
         return `${parts.join("")}${tech}`
       })()
 
@@ -444,6 +447,7 @@ export interface MountedDecisionSheet {
   readonly choose: (optionId: string) => boolean
   readonly setNow: (ms: number) => void
   readonly setContext: (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => void
+  readonly dispose: () => void
 }
 
 /**
@@ -467,8 +471,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   adoptSheetStyles(root.ownerDocument)
   root.innerHTML = sheetMarkup(document, decision, locale)
   let lastBody: unknown
+  let lastRefusalBody: unknown
+  let lastRefusalNote = ""
   let lastRefusedAt: Date = new Date()
-  let lastSentNote = ""
   // The server's refusal panel for the refused choice, kept from the refusal that refused it.
   let refusedPanel: { readonly html: string; readonly variant: "" | "disclosed" | "redacted" } = { html: "", variant: "" }
   let now = options.now
@@ -477,10 +482,14 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   let laws = options.laws
   const transport: Transport = {
     async call(call, input, callOptions) {
-      lastSentNote = typeof input.note === "string" ? input.note : ""
+      const sentNote = typeof input.note === "string" ? input.note : ""
       const classified = await options.transport.call(call, input, callOptions)
       lastBody = classified.body
-      if (classified.outcome === "refused") lastRefusedAt = new Date()
+      if (classified.outcome === "refused") {
+        lastRefusalBody = classified.body
+        lastRefusalNote = sentNote
+        lastRefusedAt = new Date()
+      }
       return classified
     },
   }
@@ -548,8 +557,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
       // Dates, numbers and ids read whole; only the receipt hash shortens, with a copy button for all of it.
       const cell = (term: string, value: string) =>
         term === w.receipt && value.length > 20
-          ? `<dd class="norn-hash"><code title="${escape(value)}">${escape(value.slice(0, 16))}…</code><button type="button" class="norn-button" data-variant="ghost" data-copy="${escape(value)}">${escape(w.copy)}</button></dd>`
-          : `<dd><span class="norn-value">${escape(value)}</span></dd>`
+          ? `<dd class="norn-hash"><bdi><code title="${escape(value)}">${escape(value.slice(0, 16))}…</code></bdi><button type="button" class="norn-button" data-variant="ghost" data-copy="${escape(value)}">${escape(w.copy)}</button></dd>`
+          : `<dd><span class="norn-value"><bdi>${escape(value)}</bdi></span></dd>`
       if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt>${cell(term, value)}`).join("")
       details.hidden = false
     } else if (state === "resolved") {
@@ -638,11 +647,11 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     // A choice the cell refused by law or permission stays refused: its radio is disabled and the
     // server's structured request/check/result refusal panel reads under it, while other options stay open.
     const refusedChoice = typeof snapshot.fields.refusedChoice === "string" ? snapshot.fields.refusedChoice : null
-    if (state === "refused" && refusedChoice !== null) {
-      refusedPanel = refusalPanelMarkup(lastBody, {
+    if (refusedChoice !== null && lastRefusalBody !== undefined) {
+      refusedPanel = refusalPanelMarkup(lastRefusalBody, {
         decision,
         choiceLabel: optionLabel(refusedChoice),
-        note: lastSentNote,
+        note: lastRefusalNote,
         locale,
         technical,
         caller,
@@ -701,6 +710,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     return false
   }
+  const listeners = new AbortController()
+  const { signal } = listeners
+
   root.addEventListener("click", (event) => {
     const target = event.target as Element | null
     const link = target?.closest<HTMLAnchorElement>("a[data-link]")
@@ -711,7 +723,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     const copy = target?.closest<HTMLElement>("[data-copy]")
     if (copy) {
-      void navigator.clipboard?.writeText(copy.dataset.copy ?? "")
+      void navigator.clipboard?.writeText(copy.dataset.copy ?? "").catch(() => {})
       return
     }
     if (target?.closest("[data-host=back]")) {
@@ -720,23 +732,23 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     const button = target?.closest<HTMLButtonElement>("button[data-node]")
     if (button && !button.disabled) raise(button.dataset.node ?? "")
-  })
+  }, { signal })
   root.addEventListener("submit", (event) => {
     event.preventDefault()
     if (!raise("confirm-button")) raise("decide-button")
-  })
+  }, { signal })
   // UI SDK reports a change on the group itself (`valuechange`, not bubbling); its `value` is the checked radio.
   const group = q<HTMLElement & { value?: unknown }>('[data-node="option-choice"]')
   group?.addEventListener("valuechange", (event) => {
     const detail = (event as CustomEvent<{ value?: unknown }>).detail
     const value = typeof detail?.value === "string" ? detail.value : typeof group.value === "string" ? group.value : ""
     if (value !== "") raise("option-choice", { value, confirm: needsConfirm(decision, value) })
-  })
+  }, { signal })
   // The native textarea reports every edit, upgraded or not.
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLTextAreaElement | null
     if (target?.tagName === "TEXTAREA" && String(driver.snapshot().fields.note ?? "") !== target.value) raise("note-input", { value: target.value })
-  })
+  }, { signal })
   /** Pick an option exactly as a click on its radio does: a disabled or unknown option is not picked. */
   const choose = (optionId: string) => {
     const radio = [...root.querySelectorAll<HTMLElement>("ui-radio")].find((candidate) => candidate.getAttribute("value") === optionId)
@@ -745,7 +757,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   }
   const setNow = (ms: number) => {
     now = ms
-    paint(driver.snapshot())
+    const state = driver.snapshot().stateId
+    const settled = machine.states.find((candidate) => candidate.stateId === state)?.role === "terminal"
+    paintCountdown(settled)
   }
   const setContext = (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => {
     technical = next.technical === true
@@ -753,17 +767,25 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     laws = next.laws
     paint(driver.snapshot())
   }
+  const dispose = () => {
+    listeners.abort()
+    driver.dispose()
+  }
   paint(driver.snapshot())
   if (engine === null) {
     void Promise.resolve(options.evaluate).then(
       (loaded) => {
+        if (signal.aborted) return
         engine = loaded
         paint(driver.snapshot())
       },
-      () => q(".norn-sheet")?.setAttribute("data-engine", "unavailable"),
+      () => {
+        if (signal.aborted) return
+        q(".norn-sheet")?.setAttribute("data-engine", "unavailable")
+      },
     )
   }
-  return { driver, raise, choose, setNow, setContext }
+  return { driver, raise, choose, setNow, setContext, dispose }
 }
 
 /** `<norn-decision-sheet>`: set `options` to mount; removing the element disposes the machine. */
@@ -807,7 +829,7 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
       if (this.#options && !this.#mounted) this.#mount()
     }
     disconnectedCallback() {
-      this.#mounted?.driver.dispose()
+      this.#mounted?.dispose()
       this.#mounted = null
     }
     get snapshot(): Snapshot | null {
@@ -829,7 +851,7 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
       this.#mounted?.setContext(next)
     }
     #mount() {
-      this.#mounted?.driver.dispose()
+      this.#mounted?.dispose()
       this.#mounted = this.#options ? mountDecisionSheet(this, this.#options) : null
     }
   }

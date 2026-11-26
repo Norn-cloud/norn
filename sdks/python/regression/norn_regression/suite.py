@@ -62,7 +62,43 @@ def number(value: float) -> str:
 
 
 def by_p(p: float, fail: float, warn: float) -> str:
+    if not math.isfinite(p):
+        return "not_applicable"
     return "fail" if p < fail else "warn" if p < warn else "pass"
+
+
+def _p_check(
+    assumption: str,
+    test: str,
+    subject: str,
+    statistic: float,
+    p_value: float,
+    *,
+    fail: float,
+    warn: float,
+    threshold: str,
+    threshold_source: str,
+    remediation: str,
+) -> Check:
+    status = by_p(p_value, fail, warn)
+    hint = (
+        remediation
+        if status in ("fail", "warn")
+        else "Test could not be evaluated on this sample (degenerate or collinear residuals)."
+        if status == "not_applicable"
+        else "None needed."
+    )
+    return Check(
+        assumption,
+        test,
+        subject,
+        status,
+        number(statistic),
+        None if status == "not_applicable" else number(p_value),
+        threshold,
+        threshold_source,
+        hint,
+    )
 
 
 def environment() -> str:
@@ -73,10 +109,10 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(frame[column], errors="coerce")
 
 
-def missingness(frame: pd.DataFrame, fields: list[str]) -> list[Check]:
+def _missingness(numeric: pd.DataFrame, fields: list[str]) -> list[Check]:
     checks = []
     for field in fields:
-        share = float(_numeric(frame, field).isna().mean()) if len(frame) else 1.0
+        share = float(numeric[field].isna().mean()) if len(numeric) else 1.0
         status = "fail" if share > 0.20 else "warn" if share > 0.05 else "pass"
         checks.append(Check(
             "missingness", "share of missing values", field, status, number(share), None,
@@ -87,13 +123,18 @@ def missingness(frame: pd.DataFrame, fields: list[str]) -> list[Check]:
     return checks
 
 
+def missingness(frame: pd.DataFrame, fields: list[str]) -> list[Check]:
+    return _missingness(pd.DataFrame({field: _numeric(frame, field) for field in fields}), fields)
+
+
 def sanity(frame: pd.DataFrame, target: str, features: list[str]) -> list[Check]:
     checks = []
     y = frame[target]
     for feature in features:
         x = frame[feature]
         values = x.value_counts(normalize=True)
-        if x.nunique() <= 1:
+        n_distinct = len(values)
+        if n_distinct <= 1:
             checks.append(Check("sanity", "constant feature", feature, "fail", "1 distinct value", None,
                                 "fail when the feature has one value", "a constant column is collinear with the intercept",
                                 "Drop the feature: it carries no information and makes the design singular."))
@@ -102,7 +143,7 @@ def sanity(frame: pd.DataFrame, target: str, features: list[str]) -> list[Check]
                                 "warn when one value covers > 99% of rows", "rule of thumb (near-zero variance; Kuhn & Johnson 2013)",
                                 "Consider dropping the feature or pooling rare values."))
         else:
-            checks.append(Check("sanity", "constant feature", feature, "pass", f"{x.nunique()} distinct values", None,
+            checks.append(Check("sanity", "constant feature", feature, "pass", f"{n_distinct} distinct values", None,
                                 "fail when the feature has one value", "a constant column is collinear with the intercept", "None needed."))
         same = bool(np.allclose(x.to_numpy(), y.to_numpy(), rtol=0, atol=0))
         corr = float(np.corrcoef(x, y)[0, 1]) if x.std() > 0 and y.std() > 0 else 0.0
@@ -129,10 +170,10 @@ def _vif(design: pd.DataFrame, features: list[str]) -> list[Check]:
     return checks
 
 
-def _condition(frame: pd.DataFrame, features: list[str]) -> Check:
+def _condition(design: pd.DataFrame) -> Check:
     # Belsley-Kuh-Welsch: columns scaled to unit length, intercept included.
-    design = sm.add_constant(frame[features].to_numpy(dtype=float), has_constant="add")
-    scaled = design / np.linalg.norm(design, axis=0)
+    matrix = design.to_numpy(dtype=float)
+    scaled = matrix / np.linalg.norm(matrix, axis=0)
     singular = np.linalg.svd(scaled, compute_uv=False)
     kappa = float(singular[0] / singular[-1]) if singular[-1] > 0 else math.inf
     status = "fail" if kappa > 30 else "warn" if kappa > 10 else "pass"
@@ -141,29 +182,43 @@ def _condition(frame: pd.DataFrame, features: list[str]) -> Check:
                  "Near-dependencies among features: drop or combine features, or centre them." if status != "pass" else "None needed.")
 
 
+def _influence_summary(values: np.ndarray, *, fail_gt: float, warn_gt: float, warn_share: float, n: int, prefix: str, label: str, fail_hint: str) -> tuple[str, str, str]:
+    has_inf = bool(np.isinf(values).any())
+    finite = values[np.isfinite(values)]
+    nonfinite = int(values.size - finite.size)
+    if finite.size == 0 and not has_inf:
+        return "not_applicable", "n/a", "Test could not be evaluated on this sample (zero residuals)."
+    max_val = math.inf if has_inf else float(finite.max())
+    over = int((finite > warn_gt).sum()) + nonfinite
+    status = "fail" if (nonfinite > 0 or max_val > fail_gt) else "warn" if over > warn_share * n else "pass"
+    suffix = f" ({nonfinite} non-finite)" if nonfinite > 0 else ""
+    stat = f"{prefix} {number(max_val)}; {over} rows {label}{suffix}"
+    return status, stat, fail_hint if status != "pass" else "None needed."
+
+
 def _influence(fit, n: int, p: int) -> list[Check]:
     influence = OLSInfluence(fit)
-    cooks = np.asarray(influence.cooks_distance[0])
-    leverage = np.asarray(influence.hat_matrix_diag)
-    student = np.asarray(influence.resid_studentized_external)
-    over_cook = int((cooks > 4 / n).sum())
-    max_cook = float(cooks.max())
-    cook_status = "fail" if max_cook > 1 else "warn" if over_cook > 0.05 * n else "pass"
+    cooks = np.asarray(influence.cooks_distance[0], dtype=float)
+    leverage = np.asarray(influence.hat_matrix_diag, dtype=float)
+    abs_student = np.abs(np.asarray(influence.resid_studentized_external, dtype=float))
+    cook_status, cook_stat, cook_hint = _influence_summary(
+        cooks, fail_gt=1.0, warn_gt=4 / n, warn_share=0.05, n=n, prefix="max", label="> 4/n",
+        fail_hint="Inspect the influential rows: data errors, or a subgroup the model misses; refit without them to see how much they move the coefficients.",
+    )
     high_leverage = int((leverage > 2 * p / n).sum())
     leverage_status = "warn" if high_leverage > 0.05 * n else "pass"
-    outliers = int((np.abs(student) > 3).sum())
-    outlier_status = "fail" if np.abs(student).max() > 5 else "warn" if outliers > 0.01 * n else "pass"
+    outlier_status, outlier_stat, outlier_hint = _influence_summary(
+        abs_student, fail_gt=5.0, warn_gt=3.0, warn_share=0.01, n=n, prefix="max |r|", label="|r| > 3",
+        fail_hint="Outliers in the target: check the rows, or use a robust regression (Huber, M-estimation).",
+    )
     return [
-        Check("influence", "Cook's distance", "model", cook_status, f"max {number(max_cook)}; {over_cook} rows > 4/n", None,
-              "fail if any > 1; warn if more than 5% of rows > 4/n", "Cook & Weisberg (1982); 4/n cut-off, Bollen & Jackman (1985)",
-              "Inspect the influential rows: data errors, or a subgroup the model misses; refit without them to see how much they move the coefficients." if cook_status != "pass" else "None needed."),
+        Check("influence", "Cook's distance", "model", cook_status, cook_stat, None,
+              "fail if any > 1; warn if more than 5% of rows > 4/n", "Cook & Weisberg (1982); 4/n cut-off, Bollen & Jackman (1985)", cook_hint),
         Check("influence", "leverage (hat values)", "model", leverage_status, f"{high_leverage} rows > 2p/n", None,
               "warn if more than 5% of rows have leverage > 2p/n", "Hoaglin & Welsch (1978)",
               "High-leverage rows sit far from the bulk of the features: check them, or transform skewed features." if leverage_status != "pass" else "None needed."),
-        Check("influence", "externally studentized residuals", "model", outlier_status,
-              f"max |r| {number(np.abs(student).max())}; {outliers} rows |r| > 3", None,
-              "fail if any |r| > 5; warn if more than 1% of rows |r| > 3", "about 0.3% of normal residuals exceed 3 in magnitude",
-              "Outliers in the target: check the rows, or use a robust regression (Huber, M-estimation)." if outlier_status != "pass" else "None needed."),
+        Check("influence", "externally studentized residuals", "model", outlier_status, outlier_stat, None,
+              "fail if any |r| > 5; warn if more than 1% of rows |r| > 3", "about 0.3% of normal residuals exceed 3 in magnitude", outlier_hint),
     ]
 
 
@@ -180,76 +235,97 @@ def assumption_suite(frame: pd.DataFrame, target: str, features: list[str], orde
 def _suite(frame: pd.DataFrame, target: str, features: list[str], order: str | None) -> tuple[list[Check], dict]:
     if not features:
         raise ValueError("at least one feature is needed")
+    if len(set(features)) != len(features):
+        raise ValueError("features must not contain duplicates")
     if target in features:
         raise ValueError(f"{target} is both the target and a feature")
     frame = frame.sort_values("id", kind="mergesort").reset_index(drop=True) if "id" in frame else frame
     fields = [target, *features]
-    checks = missingness(frame, fields)
     data = pd.DataFrame({field: _numeric(frame, field) for field in fields})
-    if order is not None:
-        # Numeric when it parses (a CSV upload stores text), otherwise its own order (timestamps sort as text).
-        numeric = _numeric(frame, order)
-        data[order] = numeric if numeric.notna().all() else frame[order]
+    checks = _missingness(data, fields)
+    if order is not None and order not in fields:
+        data[order] = frame[order]
     data = data.dropna(subset=fields).reset_index(drop=True)
     n, p = len(data), len(features) + 1
     if n <= p + 1:
         raise ValueError(f"{n} complete rows cannot fit {len(features)} features")
-    checks += sanity(data, target, features)
-    usable = [f for f in features if data[f].nunique() > 1]
+    sanity_checks = sanity(data, target, features)
+    checks += sanity_checks
+    constant_features = {c.subject for c in sanity_checks if c.test == "constant feature" and c.status == "fail"}
+    usable = [f for f in features if f not in constant_features]
+    if not usable:
+        raise ValueError("all features are constant; at least one non-constant feature is needed")
     design = sm.add_constant(data[usable].astype(float), has_constant="add")
     fit = sm.OLS(data[target].astype(float), design).fit()
     residuals = np.asarray(fit.resid)
 
     # Linearity: Ramsey's RESET (powers 2 and 3 of the fitted values).
     reset = linear_reset(fit, power=3, use_f=True)
-    checks.append(Check("linearity", "Ramsey RESET (powers 2-3 of fitted, F)", "model", by_p(float(reset.pvalue), 0.01, 0.05),
-                        number(float(reset.fvalue)), number(float(reset.pvalue)), "fail p < 0.01, warn p < 0.05", "Ramsey (1969)",
-                        "The mean is not linear in the features: add a transform (log, polynomial or spline term) or an interaction." if reset.pvalue < 0.05 else "None needed."))
+    checks.append(_p_check(
+        "linearity", "Ramsey RESET (powers 2-3 of fitted, F)", "model", float(reset.fvalue), float(reset.pvalue),
+        fail=0.01, warn=0.05, threshold="fail p < 0.01, warn p < 0.05", threshold_source="Ramsey (1969)",
+        remediation="The mean is not linear in the features: add a transform (log, polynomial or spline term) or an interaction.",
+    ))
 
-    # Normality of residuals.
     jb, jb_p, skew, kurtosis = jarque_bera(residuals)
-    checks.append(Check("normality", "Jarque-Bera", "residuals", by_p(float(jb_p), 0.001, 0.05), number(jb), number(jb_p),
-                        "fail p < 0.001, warn p < 0.05", "Jarque & Bera (1987)",
-                        f"Residuals are not normal (skew {number(skew)}, kurtosis {number(kurtosis)}): inference on coefficients relies on large-sample approximations; transform the target (log, Box-Cox) or bootstrap the intervals." if jb_p < 0.05 else "None needed."))
+    checks.append(_p_check(
+        "normality", "Jarque-Bera", "residuals", float(jb), float(jb_p),
+        fail=0.001, warn=0.05, threshold="fail p < 0.001, warn p < 0.05", threshold_source="Jarque & Bera (1987)",
+        remediation=f"Residuals are not normal (skew {number(skew)}, kurtosis {number(kurtosis)}): inference on coefficients relies on large-sample approximations; transform the target (log, Box-Cox) or bootstrap the intervals.",
+    ))
     if n <= SHAPIRO_MAX_N:
         sw, sw_p = sstats.shapiro(residuals)
-        checks.append(Check("normality", "Shapiro-Wilk", "residuals", by_p(float(sw_p), 0.001, 0.05), number(sw), number(sw_p),
-                            "fail p < 0.001, warn p < 0.05", "Shapiro & Wilk (1965)",
-                            "As for Jarque-Bera: transform the target or bootstrap." if sw_p < 0.05 else "None needed."))
+        checks.append(_p_check(
+            "normality", "Shapiro-Wilk", "residuals", float(sw), float(sw_p),
+            fail=0.001, warn=0.05, threshold="fail p < 0.001, warn p < 0.05", threshold_source="Shapiro & Wilk (1965)",
+            remediation="As for Jarque-Bera: transform the target or bootstrap.",
+        ))
     else:
         checks.append(Check("normality", "Shapiro-Wilk", "residuals", "not_applicable", "n/a", None,
                             f"runs for n <= {SHAPIRO_MAX_N}", "scipy.stats.shapiro: p-values are approximate above n = 5000",
                             "Jarque-Bera covers large samples."))
 
-    # Homoscedasticity.
     bp, bp_p, _, _ = het_breuschpagan(residuals, design)
-    checks.append(Check("homoscedasticity", "Breusch-Pagan (LM)", "model", by_p(float(bp_p), 0.01, 0.05), number(bp), number(bp_p),
-                        "fail p < 0.01, warn p < 0.05", "Breusch & Pagan (1979)",
-                        "The error variance depends on the features: use heteroscedasticity-robust standard errors (HC3), weighted least squares, or a log target." if bp_p < 0.05 else "None needed."))
+    checks.append(_p_check(
+        "homoscedasticity", "Breusch-Pagan (LM)", "model", float(bp), float(bp_p),
+        fail=0.01, warn=0.05, threshold="fail p < 0.01, warn p < 0.05", threshold_source="Breusch & Pagan (1979)",
+        remediation="The error variance depends on the features: use heteroscedasticity-robust standard errors (HC3), weighted least squares, or a log target.",
+    ))
     if len(usable) <= 10:
         white, white_p, _, _ = het_white(residuals, design)
-        checks.append(Check("homoscedasticity", "White (LM)", "model", by_p(float(white_p), 0.01, 0.05), number(white), number(white_p),
-                            "fail p < 0.01, warn p < 0.05", "White (1980)",
-                            "As for Breusch-Pagan: robust (HC3) standard errors or WLS." if white_p < 0.05 else "None needed."))
+        checks.append(_p_check(
+            "homoscedasticity", "White (LM)", "model", float(white), float(white_p),
+            fail=0.01, warn=0.05, threshold="fail p < 0.01, warn p < 0.05", threshold_source="White (1980)",
+            remediation="As for Breusch-Pagan: robust (HC3) standard errors or WLS.",
+        ))
 
     # Independence: Durbin-Watson needs the order the errors could be correlated in.
     if order is None:
         checks.append(Check("independence", "Durbin-Watson", "residuals", "not_applicable", "n/a", None,
                             "needs a time or order field", "Durbin & Watson (1950): defined for ordered observations",
                             "Name the time or order field (order=...) to test serial correlation."))
+    elif data[order].isna().any():
+        checks.append(Check("independence", f"Durbin-Watson (ordered by {order})", "residuals", "not_applicable", "n/a", None,
+                            "needs complete order values", "Durbin & Watson (1950): defined for ordered observations",
+                            f"Fill or filter missing {order} values before testing serial correlation."))
     else:
-        ordered = residuals[np.argsort(data[order].to_numpy(), kind="mergesort")]
+        # Numeric when it parses (a CSV upload stores text), otherwise its own order (timestamps sort as text).
+        numeric_order = _numeric(data, order)
+        sort_keys = numeric_order.to_numpy() if numeric_order.notna().all() else data[order].astype(str).to_numpy()
+        ordered = residuals[np.argsort(sort_keys, kind="mergesort")]
         dw = float(durbin_watson(ordered))
-        status = "fail" if dw < 1.0 or dw > 3.0 else "warn" if dw < 1.5 or dw > 2.5 else "pass"
+        if not math.isfinite(dw):
+            status = "not_applicable"
+            hint = "Test could not be evaluated on this sample (zero residuals)."
+        else:
+            status = "fail" if dw < 1.0 or dw > 3.0 else "warn" if dw < 1.5 or dw > 2.5 else "pass"
+            hint = "Residuals are serially correlated: use Newey-West (HAC) standard errors, add lagged terms, or model the time structure." if status != "pass" else "None needed."
         checks.append(Check("independence", f"Durbin-Watson (ordered by {order})", "residuals", status, number(dw), None,
-                            "pass 1.5-2.5, fail < 1 or > 3", "Durbin & Watson (1950); common rule of thumb",
-                            "Residuals are serially correlated: use Newey-West (HAC) standard errors, add lagged terms, or model the time structure." if status != "pass" else "None needed."))
+                            "pass 1.5-2.5, fail < 1 or > 3", "Durbin & Watson (1950); common rule of thumb", hint))
 
-    # Multicollinearity.
     checks += _vif(design, usable)
-    checks.append(_condition(data, usable))
+    checks.append(_condition(design))
 
-    # Influence and outliers.
     checks += _influence(fit, n, len(usable) + 1)
 
     fitted = np.asarray(fit.fittedvalues)

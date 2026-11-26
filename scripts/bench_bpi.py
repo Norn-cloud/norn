@@ -5,7 +5,9 @@ import collections
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -14,6 +16,13 @@ URL = "https://data.4tu.nl/file/35ed7122-966a-484e-a0e1-749b64e3366d/864493d1-3a
 LICENSE = "https://creativecommons.org/licenses/by/4.0/"
 SHA256 = "af63bc687fc4152f2123b05c3af7772b37ef3fce2d3f67f812666c9e356baae7"
 CITATION = "van Dongen, Boudewijn (2019): BPI Challenge 2019. Version 1. 4TU.ResearchData. doi:10.4121/uuid:d06aff4b-79f0-45e6-8ec8-e19730c248f1"
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"{req.full_url}: refused non-HTTPS redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def digest(path):
@@ -25,26 +34,37 @@ def digest(path):
 
 
 def fetch(path):
+    opener = urllib.request.build_opener(_HttpsOnlyRedirects())
     # Check the publisher's machine-readable licence before retrieving bytes.
-    with urllib.request.urlopen(PAGE, timeout=60) as response:
+    with opener.open(PAGE, timeout=60) as response:
         page = response.read(1024 * 1024).decode()
     if '"license": "' + LICENSE + '"' not in page:
         raise ValueError("publisher licence changed or cannot be verified")
     if not path.exists():
-        partial = path.with_suffix(".partial")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".partial", delete=False) as out:
+            partial = Path(out.name)
+            try:
+                hasher = hashlib.sha256()
+                with opener.open(URL, timeout=60) as response:
+                    size = 0
+                    while chunk := response.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > 800_000_000:
+                            raise ValueError("download exceeds pinned size budget")
+                        hasher.update(chunk)
+                        out.write(chunk)
+                out.flush()
+            except BaseException:
+                partial.unlink(missing_ok=True)
+                raise
         try:
-            with urllib.request.urlopen(URL, timeout=60) as response, partial.open("xb") as out:
-                size = 0
-                while chunk := response.read(1024 * 1024):
-                    size += len(chunk)
-                    if size > 800_000_000:
-                        raise ValueError("download exceeds pinned size budget")
-                    out.write(chunk)
-            if digest(partial) != SHA256:
+            if hasher.hexdigest() != SHA256:
                 raise ValueError("download checksum mismatch")
-            partial.replace(path)
-        finally:
+            os.replace(partial, path)
+        except BaseException:
             partial.unlink(missing_ok=True)
+            raise
     if digest(path) != SHA256:
         raise ValueError("cached data checksum mismatch")
     print(json.dumps(dict(citation=CITATION, licence=LICENSE, sha256=SHA256, bytes=path.stat().st_size)))

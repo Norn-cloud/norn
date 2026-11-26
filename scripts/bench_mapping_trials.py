@@ -27,10 +27,12 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 MAX_ROUNDS = 5
 MAX_COMPLETION = 6000
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 ITEM_CONTRACT = {"entity": "canon.Item.entity", "interface": "canon.Catalog.interface",
                  "properties": {"id": "text", "code": "text", "label": "text"}}
 PARTY_CONTRACT = {"entity": "canon.Party.entity", "interface": "core.Agent.interface",
@@ -118,7 +120,7 @@ REFERENCE = {
 
 
 def positive(value):
-    return isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 class Budget:
@@ -168,7 +170,8 @@ class Budget:
             self.spent += reservation
             self.calls += 1
             self.tokens["unknown_usage_calls"] += 1
-        return reservation
+            spent = self.spent
+        return reservation, spent
 
     def settle(self, reservation, model, prompt, completion):
         cin, cout = self.prices[model]
@@ -182,10 +185,29 @@ class Budget:
             if cost > reservation:
                 self.overshoots.append({"model": model, "cost": cost, "reservation": reservation,
                                         "prompt_tokens": prompt, "completion_tokens": completion})
-        return cost
+            spent = self.spent
+        return cost, spent
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"refused non-HTTPS redirect from gateway")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _validate_gateway_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme == "https" and parsed.netloc:
+        return
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1"):
+        return
+    raise ValueError(f"gateway URL must be https:// or loopback http://, got {parsed.scheme!r}")
 
 
 def ask(url, token, model, messages, budget, log):
+    _validate_gateway_url(url)
+    opener = urllib.request.build_opener(_HttpsOnlyRedirects()) if url.startswith("https://") else None
     limit = "max_completion_tokens" if model.startswith("openai/") else "max_tokens"
     body = json.dumps({"model": model, "messages": messages, limit: MAX_COMPLETION}).encode()
     request = urllib.request.Request(url + "/chat/completions", data=body, method="POST", headers={
@@ -195,19 +217,28 @@ def ask(url, token, model, messages, budget, log):
         if reservation is None:
             return None, "budget"
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                data = json.load(response)
+            response_ctx = opener.open(request, timeout=180) if opener else urllib.request.urlopen(request, timeout=180)
+            with response_ctx as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ValueError("gateway response exceeds size budget")
+                data = json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as error:
             budget.release(reservation)
-            detail = error.read()[:200].decode("utf-8", "replace")
+            detail = error.read(200).decode("utf-8", "replace")
             if error.code < 500 and error.code != 429 or attempt == 2:
-                return None, f"http {error.code}: {detail}".replace(token, "***").replace(url, "<gateway>")
+                message = f"http {error.code}: {detail}"
+                if token:
+                    message = message.replace(token, "***")
+                if url:
+                    message = message.replace(url, "<gateway>")
+                return None, message
             time.sleep(5 * (attempt + 1))
             continue
         except (OSError, ValueError, http.client.HTTPException) as error:
             # The gateway may have billed a call whose reply was lost, so the worst case stays charged.
-            cost = budget.forfeit(reservation)
-            log({"model": model, "failure": type(error).__name__, "cost": cost, "spent": budget.spent})
+            cost, spent = budget.forfeit(reservation)
+            log({"model": model, "failure": type(error).__name__, "cost": cost, "spent": spent})
             if attempt == 2:
                 return None, type(error).__name__
             time.sleep(5 * (attempt + 1))
@@ -215,12 +246,12 @@ def ask(url, token, model, messages, budget, log):
         usage = data.get("usage") if isinstance(data, dict) else None
         usage = usage if isinstance(usage, dict) else {}
         prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
-        if isinstance(prompt, int) and isinstance(completion, int):
-            cost = budget.settle(reservation, model, prompt, completion)
+        if type(prompt) is int and prompt >= 0 and type(completion) is int and completion >= 0:
+            cost, spent = budget.settle(reservation, model, prompt, completion)
         else:
             prompt = completion = None
-            cost = budget.forfeit(reservation)
-        log({"model": model, "prompt_tokens": prompt, "completion_tokens": completion, "cost": cost, "spent": budget.spent})
+            cost, spent = budget.forfeit(reservation)
+        log({"model": model, "prompt_tokens": prompt, "completion_tokens": completion, "cost": cost, "spent": spent})
         try:
             return (data["choices"][0]["message"].get("content") or ""), None
         except (KeyError, IndexError, TypeError, AttributeError):
@@ -270,8 +301,10 @@ def reference(name, row):
 
 
 def score(name, rows, result):
+    if len(result["rows"]) != len(rows):
+        raise ValueError(f"{name}: expected {len(rows)} checker outcomes, got {len(result['rows'])}")
     correct = 0
-    for source, outcome in zip(rows, result["rows"]):
+    for source, outcome in zip(rows, result["rows"], strict=True):
         expected = reference(name, source)
         records = outcome.get("records") or []
         if expected is None:
@@ -413,18 +446,21 @@ def main():
     parser.add_argument("--workers", type=int, default=5)
     parser.add_argument("--tasks", help="comma-separated task names; default all")
     args = parser.parse_args()
+    scratch = Path(args.scratch)
+    if scratch.resolve().is_relative_to(Path(__file__).resolve().parents[1]):
+        parser.error("scratch directory must remain outside the source checkout")
     url, token = os.environ["NORN_BENCH_GATEWAY_URL"].rstrip("/"), os.environ["NORN_BENCH_GATEWAY_TOKEN"]
     data = json.loads(Path(args.rows).read_text())
-    check = cargo_transport(args.binary, Path(args.scratch) / "candidates")
-    transcript, lock = (Path(args.scratch) / "calls.jsonl").open("a"), threading.Lock()
-
-    def log(entry):
-        with lock:
-            transcript.write(json.dumps(entry) + "\n")
-            transcript.flush()
-    print(json.dumps({"references": references(data, check), "traps": traps(data, check)}))
-    outcomes, budget = run(url, token, args.models.split(","), args.repeats, data, check, load_prices(args.prices),
-                           args.cap, log, workers=args.workers, tasks=args.tasks.split(",") if args.tasks else None)
+    check = cargo_transport(args.binary, scratch / "candidates")
+    lock = threading.Lock()
+    with (scratch / "calls.jsonl").open("a", encoding="utf-8") as transcript:
+        def log(entry):
+            with lock:
+                transcript.write(json.dumps(entry) + "\n")
+                transcript.flush()
+        print(json.dumps({"references": references(data, check), "traps": traps(data, check)}))
+        outcomes, budget = run(url, token, args.models.split(","), args.repeats, data, check, load_prices(args.prices),
+                               args.cap, log, workers=args.workers, tasks=args.tasks.split(",") if args.tasks else None)
     print(json.dumps({"outcomes": outcomes, "calls": budget.calls, "tokens": budget.tokens, "spent": budget.spent,
                       "overshoots": budget.overshoots}))
 

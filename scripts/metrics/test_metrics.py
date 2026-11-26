@@ -9,7 +9,6 @@ import io
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -271,6 +270,12 @@ class Ratchet(unittest.TestCase):
         self.assertEqual(ratchet.judge([10, 10, 10, 10.6, 11.2, 11.8], "lower", 10)["status"], "regressed")
         # One lucky outlier does not set the bar.
         self.assertEqual(ratchet.judge([10, 2, 10, 10, 10.5], "lower", 10)["status"], "within")
+        # Zero baseline preserves the sign of current so regressions/improvements are never inverted.
+        self.assertEqual(ratchet.judge([0, 0, 0, -1], "higher", 10)["status"], "regressed")
+        self.assertEqual(ratchet.judge([0, 0, 0, 1], "higher", 10)["status"], "improved")
+        self.assertEqual(ratchet.judge([0, 0, 0, -1], "lower", 10)["status"], "improved")
+        self.assertEqual(ratchet.judge([0, 0, 0, 1], "lower", 10)["status"], "regressed")
+        self.assertEqual(ratchet.judge([0, 0, 0, 0], "lower", 10)["status"], "within")
 
     def test_only_boat_non_estimates_count(self):
         rows = [sample(id=f"s/{i}", value=v, measured_at=f"2026-11-0{i}T00:00:00Z",
@@ -291,6 +296,52 @@ class Ratchet(unittest.TestCase):
             self.assertIn(rule["better"], ("lower", "higher"))
             self.assertGreater(rule["noise_pct"], 0)
             self.assertTrue(rule["why"])
+
+    def test_main_fails_closed_when_all_metrics_lack_data_or_config_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            remote = root / "remote.git"
+            repo = root / "repo"
+            subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+            subprocess.run(["git", "clone", "--quiet", str(remote), str(repo)], check=True, capture_output=True)
+            env_backup = {k: os.environ.get(k) for k in GIT_ENV}
+            os.environ.update(GIT_ENV)
+            try:
+                record.append(repo, [sample(metric="sim.cell.serial_s", env={"runner": "boat", "vm_type": "default", "vcpu": 4})])
+                empty_cfg = root / "empty.json"
+                empty_cfg.write_text(json.dumps({"runner": "boat", "metrics": {}}), encoding="utf-8")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(empty_cfg)]), 1)
+                self.assertIn("tracks no metrics", out.getvalue())
+
+                missing_cfg = root / "missing.json"
+                missing_cfg.write_text(json.dumps({"runner": "boat", "metrics": {"other.metric.s": {"better": "lower", "noise_pct": 10}}}), encoding="utf-8")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(missing_cfg)]), 1)
+                self.assertIn("none of the 1 tracked metrics have any boat points", out.getvalue())
+
+                partial_cfg = root / "partial.json"
+                partial_cfg.write_text(json.dumps({"runner": "boat", "metrics": {
+                    "sim.cell.serial_s": {"better": "lower", "noise_pct": 10},
+                    "other.metric.s": {"better": "lower", "noise_pct": 10},
+                }}), encoding="utf-8")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(partial_cfg)]), 0)
+                self.assertIn("::warning title=metric has no data::other.metric.s", out.getvalue())
+
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(ratchet.main(["--repo", str(repo), "--rev", "origin/metrics", "--config", str(partial_cfg), "--require-data"]), 1)
+                self.assertIn("::error title=metric has no data::", out.getvalue())
+            finally:
+                for key, value in env_backup.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
 
 
 class Views(unittest.TestCase):
@@ -372,6 +423,53 @@ class Probes(unittest.TestCase):
                                        "caveats": "c"}, HERE)
         self.assertFalse(ok)
         self.assertIn("FAIL slow prepare exceeded 1 s", out.getvalue())
+
+    def test_malformed_metric_line_emits_no_partial_metrics(self):
+        run_probes = _sibling("run_probes")
+        out = io.StringIO()
+        probe = {
+            "name": "bad_json",
+            "requires": [],
+            "run": 'echo \'METRIC {"metric": "a.b", "value": 1, "unit": "s", "statistic": "single"}\'; echo "METRIC {not-json"',
+            "timed": {"metric": "proof.gate.bad.s", "unit": "s", "statistic": "single"},
+            "caveats": "c",
+        }
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            ok = run_probes.run_probe(probe, HERE)
+        self.assertFalse(ok)
+        self.assertFalse(any(line.startswith("METRIC ") for line in out.getvalue().splitlines()))
+        self.assertIn("FAIL bad_json printed a malformed METRIC line", out.getvalue())
+
+    def test_auth_env_never_leaks_token_and_non_finite_rejected(self):
+        schema = record.load_schema()
+        self.assertTrue(record.record_errors(sample(value=float("inf")), schema))
+        self.assertTrue(record.record_errors(sample(metric="sim.cell.serial_s\n"), schema))
+        with self.assertRaises(ValueError):
+            ratchet.judge([10, 10, 10, float("nan")], "lower", 10)
+        with self.assertRaises(ValueError):
+            ratchet.judge([10, 10, 10, 10], "lower", 10, confirm=0)
+        self.assertEqual(
+            report._source_md("https://example.test/a(b)|c"),
+            "[link](https://example.test/a%28b%29%7Cc)",
+        )
+        old = os.environ.get("METRICS_PUSH_TOKEN")
+        old_count = os.environ.get("GIT_CONFIG_COUNT")
+        os.environ["METRICS_PUSH_TOKEN"] = "ghp_super_secret_test_token"
+        os.environ["GIT_CONFIG_COUNT"] = "2"
+        try:
+            env = record._auth_env()
+            self.assertEqual(env["GIT_CONFIG_COUNT"], "3")
+            self.assertEqual(env["GIT_CONFIG_KEY_2"], "http.https://github.com/.extraheader")
+            self.assertIn("AUTHORIZATION: basic ", env["GIT_CONFIG_VALUE_2"])
+        finally:
+            if old is None:
+                os.environ.pop("METRICS_PUSH_TOKEN", None)
+            else:
+                os.environ["METRICS_PUSH_TOKEN"] = old
+            if old_count is None:
+                os.environ.pop("GIT_CONFIG_COUNT", None)
+            else:
+                os.environ["GIT_CONFIG_COUNT"] = old_count
 
     def test_shipped_probes_are_well_formed(self):
         probes = json.loads((HERE / "probes.json").read_text())

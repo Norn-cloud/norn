@@ -1,12 +1,11 @@
 import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { createHash, randomBytes } from "node:crypto"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
 import { assistantCallback, cimdAllowed, CONSENT_APPROVAL_HEADER, createAuth, encodeGrantRef, fetchClientMetadata, MEMBER_CLAIM, ORG_CLAIM } from "../auth.ts"
-import worker, { type Env } from "../index.ts"
+import type { Env } from "../index.ts"
 import { EXPECTED_ORG_HEADER, hostToken } from "../actor.ts"
 import { grantActor, retried } from "../mcp.ts"
+import { BASE_MIGRATIONS, cookieOf, createWorkerClient, createWorkerEnv, readMigration as migration } from "./harness.ts"
 
 /**
  * An assistant connecting to Norn end to end, as Claude and ChatGPT do it: discovery, client
@@ -17,14 +16,10 @@ import { grantActor, retried } from "../mcp.ts"
 const ORIGIN = "https://studio-alpha.norn.test"
 const RESOURCE = `${ORIGIN}/mcp`
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback"
-const migration = (name: string) => readFileSync(join(import.meta.dir, "../migrations", name), "utf8")
 
 interface Forwarded { readonly url: string; readonly authorization: string | null; readonly body: string }
 
 function stage(mcp = true): Env & { forwarded: Forwarded[] } {
-  const db = new Database(":memory:")
-  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql", "0017_oauth_unscoped_grants.sql"]) db.exec(migration(name))
-  const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
   const forwarded: Forwarded[] = []
   const host = {
     fetch: async (request: Request) => {
@@ -35,24 +30,20 @@ function stage(mcp = true): Env & { forwarded: Forwarded[] } {
       return Response.json({ jsonrpc: "2.0", id: message.id, result: { served: true } })
     },
   } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {}, forwarded }
+  const { env } = createWorkerEnv({
+    migrations: [...BASE_MIGRATIONS, "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql", "0017_oauth_unscoped_grants.sql"],
+    origin: ORIGIN,
+    overrides: { NORN_HOST: host, ...mcp ? { STUDIO_MCP: "on" } : {} },
+  })
+  return { ...env, forwarded }
 }
 
-let address = 0
-const call = (env: Env, path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers)
-  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", `203.0.113.${++address % 250}`)
-  return worker.fetch(new Request(path.startsWith("http") ? path : `${ORIGIN}${path}`, { redirect: "manual", ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
-}
-const postJson = (env: Env, path: string, body: unknown, headers: HeadersInit = {}) =>
-  call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", accept: "application/json", ...headers } })
-const cookieOf = (response: Response) => response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
+const { call, postJson, enroll } = createWorkerClient(ORIGIN, { ipPrefix: "203.0.113", redirect: "manual" })
 const db = (env: Env) => env.AUTH_DB as unknown as Database
 
 /** A person with a workspace whose data environment is `analytics`; returns their session cookie and ids. */
 async function person(env: Env, email: string) {
-  await postJson(env, "/api/auth/sign-up/email", { email, password: "correct horse battery", name: email }, { origin: ORIGIN })
-  const signIn = await postJson(env, "/api/auth/sign-in/email", { email, password: "correct horse battery" }, { origin: ORIGIN })
+  const signIn = await enroll(env, email, email)
   expect(signIn.status).toBe(200)
   const user = (db(env).query("select id from user where email = ?").get(email) as { id: string }).id
   const org = (db(env).query("select organizationId from member where userId = ?").get(user) as { organizationId: string }).organizationId
@@ -227,7 +218,11 @@ test("a code is never sent to a callback outside the known assistants", async ()
   if (response.status < 300) {
     const clientId = ((await response.json()) as { client_id: string }).client_id
     const authorize = await call(env, authorizeUrl(clientId, pkce().challenge, evil), { headers: { cookie } })
-    expect(authorize.headers.get("location") ?? "").not.toStartWith(evil)
+    const location = authorize.headers.get("location") ?? ""
+    expect(location).not.toStartWith(evil)
+    expect(authorize.status >= 400 || location.includes("error=invalid_redirect")).toBe(true)
+  } else {
+    expect(response.status).toBe(400)
   }
 })
 
@@ -524,14 +519,13 @@ test("consent approval requires single-use approval token, guards persistence at
   expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, expectedRefGen1)).toEqual({ n: 0 })
   sqlite.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_rejoined_gen2', ?, ?, 'owner', ?)`, [org, user, new Date().toISOString()])
   expect((await mcp(env, tokenPayload.access_token, INIT)).status).toBe(401)
-  if (tokenPayload.refresh_token) {
-    const refreshed = await call(env, "/api/auth/oauth2/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokenPayload.refresh_token, client_id: clientId, resource: RESOURCE }),
-    })
-    expect(refreshed.status).toBeGreaterThanOrEqual(400)
-  }
+  expect(tokenPayload.refresh_token).toBeTruthy()
+  const refreshed = await call(env, "/api/auth/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokenPayload.refresh_token!, client_id: clientId, resource: RESOURCE }),
+  })
+  expect(refreshed.status).toBeGreaterThanOrEqual(400)
 
   // 5. Commit-time SQLite trigger aborts oauthConsent insert on concurrent membership deletion (0 consent rows, 0 codes).
   const clientId2 = await register(env)
