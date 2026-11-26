@@ -67,9 +67,7 @@ pub(super) fn actor_binding_findings(
     let program = root.effect_program.as_ref();
     let kind = program.map(|program| program.target().object_kind);
     let view = kind.and_then(|kind| model.effective_object_type_named(kind));
-    let target_views = kind
-        .map(|kind| descendant_views(model, kind))
-        .unwrap_or_default();
+    let target_views = kind.map_or_default(|kind| descendant_views(model, kind));
     if let (Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }), Some(kind)) =
         (program, kind)
     {

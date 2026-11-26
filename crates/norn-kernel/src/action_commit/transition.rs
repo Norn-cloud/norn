@@ -170,7 +170,7 @@ where
     // TRANSITION-PATCH-1: atomically apply declared companion property patches
     // from derived/validated action input alongside the lifecycle transition.
     for (property, source_field) in set_fields {
-        if accept_receipt.as_ref().is_some_and(|declaration| {
+        if accept_receipt.is_some_and(|declaration| {
             property == &declaration.digest_property
                 || declaration.result_bindings.contains_key(property)
         }) {
