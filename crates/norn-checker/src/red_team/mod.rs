@@ -283,7 +283,6 @@ fn extract_set(artifacts: &[ArtifactEnvelope]) -> ExtractedSet {
                     Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
                 }
             }
-            ArtifactPayload::Entity(_) => {}
             ArtifactPayload::Action(action) => {
                 match action.to_json_value().decode::<ActionRoot>() {
                     Ok(root) => actions.push(root),
@@ -305,7 +304,8 @@ fn extract_set(artifacts: &[ArtifactEnvelope]) -> ExtractedSet {
                     Err(err) => decode_errors.push(format!("{}: {err}", artifact.artifact_id)),
                 }
             }
-            ArtifactPayload::Relation(_)
+            ArtifactPayload::Entity(_)
+            | ArtifactPayload::Relation(_)
             | ArtifactPayload::Rule(_)
             | ArtifactPayload::Connector(_)
             | ArtifactPayload::Widget(_)
