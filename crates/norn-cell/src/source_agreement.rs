@@ -65,7 +65,7 @@ type Reports = BTreeMap<PropertyId, Option<String>>;
 struct ClaimContext<'a> {
     world: &'a str,
     key: &'a str,
-    records: &'a [ObjectRecord],
+    records: &'a [Option<ObjectRecord>],
     values: &'a [Reports],
 }
 
@@ -117,7 +117,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         for property in partition {
             let path = format!("$.values.{}", property.as_str());
             let rows = self.conn.query(
-                &format!("SELECT \"id\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"commit_seq\" <= ?3 GROUP BY \"id\" HAVING count(DISTINCT json_quote(json_extract(\"snapshot\", ?4))) > 1 ORDER BY \"id\" LIMIT ?5"),
+                &format!("SELECT \"id\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"commit_seq\" <= ?3 AND json_extract(\"snapshot\", '$.values') IS NOT NULL GROUP BY \"id\" HAVING count(DISTINCT json_quote(json_extract(\"snapshot\", ?4))) > 1 ORDER BY \"id\" LIMIT ?5"),
                 params![world, object_type, to_i64(frontier, "frontier")?, path, bound],
             )?;
             for row in rows {
@@ -152,7 +152,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// A subject's verified versions up to `frontier`, oldest first, with their
-    /// partition values.
+    /// partition values. Deleted tombstones are preserved as `None` (empty
+    /// reports) so neither change detection nor gap walkback crosses a deletion
+    /// boundary.
     fn partition_history(
         &self,
         world: &str,
@@ -160,7 +162,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         frontier: Option<u64>,
         partition: &[PropertyId],
-    ) -> Result<(Vec<ObjectRecord>, Vec<Reports>), CellError> {
+    ) -> Result<(Vec<Option<ObjectRecord>>, Vec<Reports>), CellError> {
         // S7/S8 (#1551 round 5): scanning `_norn_fact_values` requires verified history.
         self.check_history("source disagreement history")?;
         let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
@@ -174,17 +176,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let mut records = Vec::with_capacity(rows.len());
         for row in rows {
             let version = to_u64(SqlRow(row).get(0)?, "fact version")?;
-            if let Some(record) = self.object_at_version(world, object_type, key, version)? {
-                records.push(record);
-            }
+            records.push(self.object_at_version(world, object_type, key, version)?);
         }
         let values = records
             .iter()
-            .map(|record| {
-                partition
+            .map(|record| match record {
+                Some(record) => partition
                     .iter()
                     .map(|p| (p.clone(), code(record.values.get(p.as_str()))))
-                    .collect()
+                    .collect(),
+                None => BTreeMap::new(),
             })
             .collect();
         Ok((records, values))
@@ -196,7 +197,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         memo: &'a mut ProvenanceMemo,
         index: usize,
     ) -> Result<Option<&'a InstanceSourceProvenance>, CellError> {
-        let Some(record) = ctx.records.get(index) else {
+        let Some(record) = ctx.records.get(index).and_then(Option::as_ref) else {
             return Ok(None);
         };
         let entry = match memo.entries.entry(index) {
@@ -219,6 +220,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// row inherited its prior value rather than reporting a new one; when
     /// `walk_back` is true, walk back across consecutive gap versions carrying
     /// that same value to find the actual reporting source (SOURCE-AGREE-1).
+    /// Tombstones (`None` records) terminate the walkback.
     fn reported_claim(
         &self,
         ctx: &ClaimContext<'_>,
@@ -233,7 +235,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if ctx.values.get(cursor).and_then(|v| v.get(property)) != target.as_ref() {
                 return Ok(None);
             }
-            let Some(record) = ctx.records.get(cursor) else {
+            let Some(record) = ctx.records.get(cursor).and_then(Option::as_ref) else {
                 return Ok(None);
             };
             let Some(source) = self.load_provenance(ctx, memo, cursor)? else {
@@ -329,8 +331,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 finding.status = DataQualityFindingStatus::Acknowledged;
             }
             let (Some(earlier), Some(later)) = (
-                records.get(earlier.index).cloned(),
-                records.get(later.index).cloned(),
+                records.get(earlier.index).and_then(Option::as_ref).cloned(),
+                records.get(later.index).and_then(Option::as_ref).cloned(),
             ) else {
                 continue;
             };

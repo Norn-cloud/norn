@@ -235,6 +235,20 @@ fn source_alias(record: &Value) -> String {
     )
 }
 
+fn ingest_envelope(
+    cell: &mut ObsCell,
+    raw: &Observed<RuntimeValue>,
+    input: &MappingInput,
+) -> (String, bool, MappingOutcome) {
+    let commits = cell.store().export_commit_count().expect("commits");
+    cell.advance_to(LogicalTime::from_millis(
+        CLOCK.saturating_add(commits.saturating_mul(1_000).saturating_add(1_000)),
+    ));
+    let (id, fresh) = cell.inject_mapping_bundle(raw, input).expect("inject");
+    let outcome = cell.process_mapping_outcome(&id).expect("process outcome");
+    (id, fresh, outcome)
+}
+
 fn ingest_row(
     cell: &mut ObsCell,
     system: &str,
@@ -244,15 +258,10 @@ fn ingest_row(
     source_version: &str,
 ) -> (String, bool, MappingOutcome) {
     let commits = cell.store().export_commit_count().expect("commits");
-    cell.advance_to(LogicalTime::from_millis(
-        CLOCK.saturating_add(commits.saturating_mul(1_000).saturating_add(1_000)),
-    ));
     let alias = source_alias(record);
     let raw = raw_envelope(system, &alias, event_id, source_version, record, commits);
     let input = mapping_input(system, dataset, "snapshot");
-    let (id, fresh) = cell.inject_mapping_bundle(&raw, &input).expect("inject");
-    let outcome = cell.process_mapping_outcome(&id).expect("process outcome");
-    (id, fresh, outcome)
+    ingest_envelope(cell, &raw, &input)
 }
 
 fn load_snapshot(cell: &mut ObsCell, system: &str) {
@@ -490,6 +499,76 @@ fn wedge1_dirty_nulls_partial_updates_and_gap_provenance() {
     assert_eq!(later.value.as_deref(), Some("GBP"));
 }
 
+/// Wedge 1b: Deleting a record introduces an incarnation boundary so neither
+/// `SOURCE-AGREE-1` change detection nor mapping-gap walkback crosses a
+/// tombstone to cite pre-deletion reports.
+#[test]
+fn wedge1b_deletion_tombstone_stops_disagreement_walkback() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = open_three_systems(&dir.path().join("wedge1b.sqlite"));
+    load_snapshot(&mut cell, "erpnext");
+
+    // Delete NORTH (version 1 -> tombstone version 2).
+    norn_kernel::CellHost::commit(
+        &mut cell,
+        norn_kernel::CellCommit {
+            writes: vec![norn_kernel::FactWrite {
+                key: norn_kernel::FactKey::new("canon.Holding", NORTH),
+                expected: norn_kernel::FactVersion(1),
+                mutation: norn_kernel::FactMutation::Delete,
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("delete holding");
+
+    // Shopify recreates NORTH after deletion with `basis = available` and a
+    // gap on `cost_currency`. Must NOT disagree with pre-deletion ERPNext.
+    let shopify_row = find_snapshot_row("shopify", "InventoryLevel", "norn_ref", NORTH);
+    assert_eq!(
+        ingest_row(
+            &mut cell,
+            "shopify",
+            "InventoryLevel",
+            &shopify_row,
+            "recreate-shopify",
+            "10",
+        )
+        .2,
+        MappingOutcome::Landed
+    );
+    assert!(
+        cell.store()
+            .read()
+            .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+            .expect("disagreements")
+            .is_empty(),
+        "recreation after deletion must not cross tombstone to disagree with pre-deletion source"
+    );
+
+    // Odoo later reports `cost_currency = EUR` and `basis = on_hand`.
+    // Only post-recreation Shopify vs Odoo on `basis` disagrees; `cost_currency`
+    // walkback must stop at the tombstone rather than citing pre-deletion ERPNext.
+    let mut odoo_row = find_snapshot_row("odoo", "stock.quant", "x_norn_ref", NORTH);
+    odoo_row["cost_currency"] = json!("EUR");
+    assert_eq!(
+        ingest_row(&mut cell, "odoo", "stock.quant", &odoo_row, "odoo-1", "11").2,
+        MappingOutcome::Landed
+    );
+    assert!(
+        property_disagreements(&cell, "cost_currency").is_empty(),
+        "walkback across tombstone must not cite pre-deletion ERPNext cost_currency"
+    );
+    let basis = property_disagreements(&cell, "basis");
+    assert_eq!(basis.len(), 1, "{basis:#?}");
+    let DataQualityOutcome::SourceDisagreement { earlier, later, .. } = &basis[0].finding.outcome
+    else {
+        panic!("expected SourceDisagreement");
+    };
+    assert_eq!(earlier.system, "synthetic-shopify");
+    assert_eq!(later.system, "synthetic-odoo");
+}
+
 /// Wedge 2: Multi-source `IncrementalQuestion` vs exact recompute parity across
 /// source basis flips, steward `accept`/`reopen` reviews, and SQLite restart.
 #[test]
@@ -573,28 +652,22 @@ fn wedge3a_duplicates_and_feed_conflicts_invalidate_ivm() {
 
     let mut view = IncrementalQuestion::rebuild(cell.store(), &plan, ctx.clone(), |_| Ok(true))
         .expect("rebuild");
-    let row = find_snapshot_row("erpnext", "Warehouse Lot Balance", "custom_norn_ref", NORTH);
-    let (_, fresh, outcome) = ingest_row(
-        &mut cell,
-        "erpnext",
-        "Warehouse Lot Balance",
-        &row,
-        "snapshot",
-        "0",
-    );
+    let mut row = find_snapshot_row("erpnext", "Warehouse Lot Balance", "custom_norn_ref", NORTH);
+    row["modified"] = json!("2026-11-04T09:00:00Z");
+    let alias = source_alias(&row);
+    let input = mapping_input("erpnext", "Warehouse Lot Balance", "snapshot");
+    let exact_raw = raw_envelope("erpnext", &alias, "ev-redeliver", "1", &row, 50_000);
+    let (_, first_fresh, first_outcome) = ingest_envelope(&mut cell, &exact_raw, &input);
+    assert!(first_fresh && first_outcome == MappingOutcome::Landed);
+    // Exact redelivery of the identical raw envelope is idempotent.
+    let (_, fresh, outcome) = ingest_envelope(&mut cell, &exact_raw, &input);
     assert!(!fresh && outcome == MappingOutcome::AlreadyLanded);
 
-    // FEED-CONFLICT: same event_id ("snapshot"), tampered quantity.
+    // FEED-CONFLICT: same event_id ("ev-redeliver"), tampered quantity.
     let mut tampered = row;
     tampered["quantity"] = json!("999");
-    let (conflict_id, fresh, outcome) = ingest_row(
-        &mut cell,
-        "erpnext",
-        "Warehouse Lot Balance",
-        &tampered,
-        "snapshot",
-        "0",
-    );
+    let tampered_raw = raw_envelope("erpnext", &alias, "ev-redeliver", "1", &tampered, 51_000);
+    let (conflict_id, fresh, outcome) = ingest_envelope(&mut cell, &tampered_raw, &input);
     assert!(fresh && conflict_id.starts_with("mapping-conflict:"));
     assert!(matches!(outcome, MappingOutcome::Quarantined(_)));
     assert!(
@@ -608,21 +681,14 @@ fn wedge3a_duplicates_and_feed_conflicts_invalidate_ivm() {
         assert_ivm_matches_recompute(&cell, &plan, &mut view, &ctx, "inbox feed conflict");
     assert!(after_conflict.exclusions.contains_key(NORTH) && !after_conflict.complete);
 
-    // Replay of conflict adds no duplicate finding.
+    // Replay of the exact tampered envelope adds no duplicate finding.
     let before_count = cell
         .store()
         .read()
         .observation_findings(MAIN_WORLD, "canon.Holding", NORTH)
         .expect("findings")
         .len();
-    let (_, fresh_again, _) = ingest_row(
-        &mut cell,
-        "erpnext",
-        "Warehouse Lot Balance",
-        &tampered,
-        "snapshot",
-        "0",
-    );
+    let (_, fresh_again, _) = ingest_envelope(&mut cell, &tampered_raw, &input);
     assert!(!fresh_again);
     assert_eq!(
         cell.store()
@@ -1344,4 +1410,227 @@ fn wedge7b_governed_write_refuses_atomically() {
     let err = commit_action(&mut act_cell, &catalog, &call, &AllowAll).expect_err("must refuse");
     assert_eq!(err.code(), "core.laws.violated", "{err}");
     assert_eq!(act_cell.store().read().dump().expect("dump after"), before);
+}
+
+fn crm_base_feed_and_law() -> Vec<ArtifactEnvelope> {
+    let base_law = envelope(
+        "crm.account_named.law",
+        "law",
+        "crm",
+        json!({
+            "lawVersion": "0.1",
+            "id": "crm.account_named",
+            "owner": "crm",
+            "subject": "crm.Account",
+            "scope": {"root": {"kind": "entity", "id": "crm.Account"}, "objectTypes": ["crm.Account"]},
+            "severity": "error",
+            "modality": {"kind": "always"},
+            "response": {"kind": "predicate", "expression": "self.display_name != \"INVALID\""},
+            "rationale": "Account display names must be valid.",
+            "provenance": {"source": "authoring_sdk"}
+        }),
+        json!([{"artifactId": "crm.Account.entity", "kind": "entity", "required": true, "version": "0.1.0"}]),
+    );
+    let source = envelope(
+        "crm.feed.source",
+        "source_schema",
+        "crm",
+        json!({
+            "format": "norn.source-schema/1",
+            "source": {"system": "synthetic-crm", "instance": "demo", "version": "crm/1"},
+            "observedAt": "2026-11-02T00:00:00Z",
+            "adapter": {"name": "synthetic-record-replay", "version": "0.1.0"},
+            "rawMetadata": {"uri": "synthetic://crm", "sha256": "bb".repeat(32)},
+            "datasets": [{"id": "Account", "nativeName": "Account", "kind": "document"}],
+            "fields": [
+                {"dataset": "Account", "name": "id", "ordinal": 0, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true},
+                {"dataset": "Account", "name": "name", "ordinal": 1, "nativeType": "Text", "typeCandidate": {"type": "string", "origin": "declared"}, "required": true}
+            ],
+            "codeSets": [],
+            "constraints": [{"id": "pk", "kind": "primary_key", "dataset": "Account", "fields": ["id"], "origin": "declared"}]
+        }),
+        json!([]),
+    );
+    let pin = norn_checker::ArtifactRef::of(&source).expect("crm source pin");
+    let mapping = envelope(
+        "crm.feed.mapping",
+        "mapping",
+        "crm",
+        json!({
+            "format": "norn.mapping/1",
+            "extensions": {"norn.mapping.generic/1.0.0": {"parity": "unqualified"}},
+            "source": {"schemaId": pin.artifact_id, "version": pin.version, "sha256": pin.sha256},
+            "interfaces": ["crm.Accountable.interface"],
+            "maps": [{
+                "id": "account",
+                "source": {"dataset": "Account"},
+                "target": {"entity": "crm.Account.entity", "interface": "crm.Accountable.interface"},
+                "subject": "input.id",
+                "sourceRecord": "'crm/demo/Account/' + input.id",
+                "properties": [
+                    {"property": "id", "value": "input.id"},
+                    {"property": "display_name", "value": "input.name"}
+                ]
+            }]
+        }),
+        json!([
+            {"artifactId": "crm.feed.source", "kind": "source_schema", "required": true, "version": "0.1.0"},
+            {"artifactId": "crm.Accountable.interface", "kind": "entity", "required": true, "version": "0.1.0"},
+            {"artifactId": "crm.Account.entity", "kind": "entity", "required": true, "version": "0.1.0"}
+        ]),
+    );
+    vec![base_law, source, mapping]
+}
+
+fn crm_v1_artifacts() -> Vec<ArtifactEnvelope> {
+    let mut artifacts: Vec<ArtifactEnvelope> = crm_billing_artifacts()
+        .into_iter()
+        .filter(|a| !a.artifact_id.starts_with("billing."))
+        .collect();
+    artifacts.extend(crm_base_feed_and_law());
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    artifacts
+}
+
+fn crm_v2_artifacts() -> Vec<ArtifactEnvelope> {
+    let mut artifacts = crm_billing_artifacts();
+    artifacts.extend(crm_base_feed_and_law());
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    artifacts
+}
+
+fn upgrade_and_delete_base_account(cell: &mut ObsCell, v2: &[ArtifactEnvelope], id: &str) {
+    cell.install_definitions(
+        build_model(v2),
+        InstalledDefinitionInput {
+            canonical_set: String::from_utf8(
+                norn_ir::canonical::canonical_json_of(&v2).expect("v2 canonical"),
+            )
+            .expect("utf8"),
+            registry: vec![],
+            receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                b"norn.test.receipt\0",
+                &"wedge7c-v2",
+            )
+            .expect("v2 receipt"),
+            admission_receipt: None,
+            readmission: None,
+            diff: json!({}),
+            installed_at: CLOCK + 10_000,
+            layout: None,
+        },
+        Some(1),
+    )
+    .expect("install v2");
+    norn_kernel::CellHost::commit(
+        cell,
+        norn_kernel::CellCommit {
+            writes: vec![norn_kernel::FactWrite {
+                key: norn_kernel::FactKey::new("crm.Account", id),
+                expected: norn_kernel::FactVersion(1),
+                mutation: norn_kernel::FactMutation::Delete,
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("delete base account");
+}
+
+/// Wedge 7c: An ancestor finding pinned under an older definitions version
+/// (before a subtype was installed) recovers cleanly when the record is deleted
+/// and recreated as the new subtype.
+#[test]
+fn wedge7c_ancestor_finding_before_subtype_install_recovers_cleanly() {
+    let v1 = crm_v1_artifacts();
+    let v2 = crm_v2_artifacts();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut cell = install_set(
+        &dir.path().join("wedge7c.sqlite"),
+        &v1,
+        build_model(&v1),
+        "wedge7c-v1",
+    );
+
+    // Record an open ancestor finding pinned at definitions_version = 1.
+    let crm_input = MappingInput {
+        mapping: "crm.feed.mapping".into(),
+        dataset: "Account".into(),
+        connector_instance: "demo".into(),
+        partition: "default".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
+    };
+    let bad_base = json!({"id": "ACCT-MIG", "name": "INVALID"});
+    let raw_base = raw_envelope("crm", "ACCT-MIG", "ev-base-bad", "1", &bad_base, 1_000);
+    assert_eq!(
+        ingest_envelope(&mut cell, &raw_base, &crm_input).2,
+        MappingOutcome::Landed
+    );
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_object(MAIN_WORLD, "crm.Account", "ACCT-MIG")
+            .expect("v1 auth")
+            .is_none()
+    );
+
+    // Upgrade to definitions v2 introducing subtype `billing.EnterpriseAccount`,
+    // delete base incarnation (v1 -> tombstone v2), and recreate as the subtype.
+    upgrade_and_delete_base_account(&mut cell, &v2, "ACCT-MIG");
+    let billing_input = MappingInput {
+        mapping: "billing.feed.mapping".into(),
+        dataset: "EnterpriseAccount".into(),
+        connector_instance: "demo".into(),
+        partition: "default".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-04T00:00:00Z".into()),
+    };
+    let still_bad = json!({"id": "ACCT-MIG", "name": "INVALID", "credit_limit": "500.00"});
+    let raw_sub_bad = raw_envelope("billing", "ACCT-MIG", "ev-sub-bad", "1", &still_bad, 11_000);
+    assert_eq!(
+        ingest_envelope(&mut cell, &raw_sub_bad, &billing_input).2,
+        MappingOutcome::Landed
+    );
+    let open = cell
+        .store()
+        .read()
+        .observation_findings(MAIN_WORLD, "billing.EnterpriseAccount", "ACCT-MIG")
+        .expect("subtype findings while invalid");
+    assert!(
+        open.iter()
+            .any(|f| f.status == DataQualityFindingStatus::Open),
+        "{open:#?}"
+    );
+    assert!(
+        cell.store()
+            .read()
+            .authoritative_object(MAIN_WORLD, "billing.EnterpriseAccount", "ACCT-MIG")
+            .expect("auth while invalid")
+            .is_none()
+    );
+
+    // Fix the ancestor property on the subtype -> v1 ancestor finding resolves.
+    let fixed = json!({"id": "ACCT-MIG", "name": "Acme Valid", "credit_limit": "500.00"});
+    let raw_sub_good = raw_envelope("billing", "ACCT-MIG", "ev-sub-good", "2", &fixed, 12_000);
+    assert_eq!(
+        ingest_envelope(&mut cell, &raw_sub_good, &billing_input).2,
+        MappingOutcome::Landed
+    );
+    let resolved = cell
+        .store()
+        .read()
+        .observation_findings(MAIN_WORLD, "billing.EnterpriseAccount", "ACCT-MIG")
+        .expect("subtype findings after fix");
+    assert!(
+        !resolved.is_empty()
+            && resolved
+                .iter()
+                .all(|f| f.status == DataQualityFindingStatus::Resolved),
+        "{resolved:#?}"
+    );
+    let auth = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "billing.EnterpriseAccount", "ACCT-MIG")
+        .expect("auth after fix")
+        .expect("must recover");
+    assert_eq!(auth.object_type, "billing.EnterpriseAccount");
 }

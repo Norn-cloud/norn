@@ -260,7 +260,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Vec<String> {
         if let Some(record) = current {
             if let Ok(chain) = self.model().chain(record.object_type.as_str()) {
-                return chain;
+                return chain.to_vec();
             }
             return vec![record.object_type.clone()];
         }
@@ -274,6 +274,33 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             matching.push(object_type.to_owned());
         }
         matching
+    }
+
+    /// Resolve the object type used to re-evaluate `finding` against its
+    /// retained `definitions_version` catalog. When `record` has a subtype
+    /// installed after that version, evaluate at the most specific ancestor
+    /// known to the retained model so older ancestor findings recover cleanly.
+    fn finding_eval_type(
+        &self,
+        retained: &crate::Model,
+        record: &ObjectRecord,
+        finding: &DataQualityFinding,
+    ) -> String {
+        if retained.has_type(record.object_type.as_str()) {
+            return record.object_type.clone();
+        }
+        if let Ok(chain) = self.model().chain(record.object_type.as_str())
+            && let Some(ancestor) = chain
+                .iter()
+                .rev()
+                .find(|name| retained.has_type(name.as_str()))
+        {
+            return ancestor.clone();
+        }
+        finding.subjects.first().map_or_else(
+            || record.object_type.clone(),
+            |subject| subject.object_type.as_str().to_owned(),
+        )
     }
 
     fn review_findings(
@@ -349,10 +376,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             == norn_kernel::DataQualityRuleClassification::Integrity
                             || (class == norn_kernel::DataQualityRuleClassification::Builtin
                                 && finding.severity == norn_ir::DataQualitySeverity::Error);
-                        if let Some(record) = current
-                            && !norn_kernel::snapshot_observe::finding_rule_is_violated(
+                        if let Some(record) = current {
+                            let eval_type = self.finding_eval_type(&model, record, &finding);
+                            if !norn_kernel::snapshot_observe::finding_rule_is_violated(
                                 &catalog,
-                                &FactKey::new(record.object_type.as_str(), key),
+                                &FactKey::new(eval_type.as_str(), key),
                                 &record.values,
                                 &finding,
                                 &mut crate::link_laws::CurrentLinks {
@@ -362,14 +390,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                                 },
                             )
                             .map_err(|error| CellError::QualityEvaluation(Box::new(error)))?
-                        {
-                            finding.status = if class
-                                == norn_kernel::DataQualityRuleClassification::Unverified
                             {
-                                DataQualityFindingStatus::Superseded
-                            } else {
-                                DataQualityFindingStatus::Resolved
-                            };
+                                finding.status = if class
+                                    == norn_kernel::DataQualityRuleClassification::Unverified
+                                {
+                                    DataQualityFindingStatus::Superseded
+                                } else {
+                                    DataQualityFindingStatus::Resolved
+                                };
+                            }
                         }
                         findings.push((finding, quarantines));
                     }
