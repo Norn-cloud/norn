@@ -1,7 +1,10 @@
 //! The principal a cell's policy decides for: the one the current request
 //! verified, or a recorded principal acting in its place.
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
+
+use norn_kernel::authz::AttrValue;
 
 /// The principal a resolver verified for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +20,9 @@ pub struct Caller {
     /// AUTH-INDEPENDENT-PERSON (#618): the accountable person the verified
     /// token names, if it names one.
     pub accountable_person: Option<String>,
+    /// Verified principal attributes supplied by the trusted resolver
+    /// (never populated from client request inputs).
+    pub attributes: BTreeMap<String, AttrValue>,
 }
 
 /// One thread's caller, and whether it is a recorded principal acting.
@@ -107,6 +113,7 @@ mod tests {
             actor_kind: "user",
             role_table: "studio-roles/1",
             accountable_person: Some(subject.to_owned()),
+            attributes: BTreeMap::new(),
         }
     }
 

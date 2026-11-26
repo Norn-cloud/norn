@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, VerifyingKey};
 use http::StatusCode;
-use norn_kernel::authz::ActorKind;
+use norn_kernel::authz::{ActorKind, AttrValue};
 use serde::Deserialize;
 
 use crate::{
@@ -65,6 +65,9 @@ pub struct Principal {
     /// AUTH-INDEPENDENT-PERSON (#618): the accountable person the issuer
     /// names for a user (`norn.accountablePerson`); `None` when it names none.
     pub accountable_person: Option<String>,
+    /// Verified scoped principal attributes signed by the issuer
+    /// (`norn.attributes`), never read from request inputs.
+    pub attributes: BTreeMap<String, AttrValue>,
 }
 
 /// Where tokens come from and which keys may sign them.
@@ -108,6 +111,67 @@ struct NornClaims {
     amr: String,
     #[serde(default, rename = "accountablePerson")]
     accountable_person: Option<String>,
+    #[serde(default)]
+    attributes: BTreeMap<String, serde_json::Value>,
+}
+
+const MAX_PRINCIPAL_ATTRIBUTES: usize = 64;
+const MAX_PRINCIPAL_SET_ITEMS: usize = 256;
+
+fn valid_attribute_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    name != "id"
+        && (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn decode_principal_attributes(
+    raw: BTreeMap<String, serde_json::Value>,
+) -> Option<BTreeMap<String, AttrValue>> {
+    if raw.len() > MAX_PRINCIPAL_ATTRIBUTES {
+        return None;
+    }
+    let mut decoded = BTreeMap::new();
+    for (name, value) in raw {
+        if !valid_attribute_name(&name) {
+            return None;
+        }
+        let attr = match value {
+            serde_json::Value::Bool(flag) => AttrValue::Bool(flag),
+            serde_json::Value::Number(num) => AttrValue::Long(num.as_i64()?),
+            serde_json::Value::String(text) => AttrValue::String(text),
+            serde_json::Value::Array(items) => {
+                if items.len() > MAX_PRINCIPAL_SET_ITEMS {
+                    return None;
+                }
+                let mut set = Vec::with_capacity(items.len());
+                let mut elem_kind: Option<u8> = None;
+                for item in items {
+                    let (kind, elem) = match item {
+                        serde_json::Value::Bool(flag) => (0u8, AttrValue::Bool(flag)),
+                        serde_json::Value::Number(num) => (1u8, AttrValue::Long(num.as_i64()?)),
+                        serde_json::Value::String(text) => (2u8, AttrValue::String(text)),
+                        _ => return None,
+                    };
+                    if let Some(expected) = elem_kind {
+                        if expected != kind {
+                            return None;
+                        }
+                    } else {
+                        elem_kind = Some(kind);
+                    }
+                    set.push(elem);
+                }
+                AttrValue::Set(set)
+            }
+            _ => return None,
+        };
+        decoded.insert(name, attr);
+    }
+    Some(decoded)
 }
 
 #[derive(Deserialize)]
@@ -237,6 +301,7 @@ impl TokenVerifier {
             }
             None => None,
         };
+        let attributes = decode_principal_attributes(norn.attributes)?;
         Some(Principal {
             subject_id,
             actor_kind,
@@ -245,6 +310,7 @@ impl TokenVerifier {
             auth_method: norn.amr,
             role_table: self.roles.version,
             accountable_person,
+            attributes,
         })
     }
 }

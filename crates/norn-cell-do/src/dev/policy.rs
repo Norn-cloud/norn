@@ -177,10 +177,29 @@ fn local_caller(actor: &str) -> Caller {
         actor_kind: "user",
         role_table: DEMO_GRANTS.version,
         accountable_person: Some(actor.to_owned()),
+        attributes: std::collections::BTreeMap::new(),
     }
 }
 
 impl Authorizer for LocalDeveloper {
+    fn action_policy_read_footprint(
+        &self,
+        action: &norn_ir::ActionRoot,
+    ) -> norn_kernel::ActionPolicyReadFootprint {
+        if action.access.is_none() {
+            return norn_kernel::ActionPolicyReadFootprint::Exact {
+                target_attributes: std::collections::BTreeSet::new(),
+            };
+        }
+        self.actions
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
+            .map_or(
+                norn_kernel::ActionPolicyReadFootprint::Conservative,
+                |policy| policy.read_footprint(&action.action_id),
+            )
+    }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
         if self.is(&request.access.principal().subject_id) {
             Ok(())

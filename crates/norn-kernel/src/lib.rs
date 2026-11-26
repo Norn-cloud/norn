@@ -149,8 +149,8 @@ pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedO
 pub use action_commit::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
-    ActionOutcome, ActionParameterPin, ActionPreconditionOutcome, ActionReadAuthzRequest,
-    ActionReadTypeAuthzRequest, ActionRefusal, AutomationInputViolation,
+    ActionOutcome, ActionParameterPin, ActionPolicyReadFootprint, ActionPreconditionOutcome,
+    ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, AutomationInputViolation,
     NamingSeriesInspectionRequest, OWNED_ROWS_TYPE, Prepared, PreparedIntent, actor_derived_fields,
     commit_action, commit_action_with_limits, commit_action_with_meter,
     commit_action_with_preparation, independent_accountable_people, owned_rows_manifest_key,

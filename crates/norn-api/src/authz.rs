@@ -228,6 +228,24 @@ pub trait Authorizer: Send + Sync {
         Err(read_denied())
     }
 
+    /// Explicit stored-state read footprint for `action` and its slice reads.
+    /// Defaults to conservative whole-object lineage.
+    fn action_policy_read_footprint(
+        &self,
+        _action: &norn_ir::ActionRoot,
+    ) -> norn_kernel::ActionPolicyReadFootprint {
+        norn_kernel::ActionPolicyReadFootprint::Conservative
+    }
+
+    /// Whether this policy grants diagnostic inspection of naming-series
+    /// refusal state. Defaults to concealment.
+    fn can_inspect_naming_series(
+        &self,
+        _request: &norn_kernel::NamingSeriesInspectionRequest<'_>,
+    ) -> bool {
+        false
+    }
+
     /// Decide before any target is loaded.
     ///
     /// # Errors
@@ -254,6 +272,18 @@ pub struct KernelAuthorizer<'a>(
 );
 
 impl norn_kernel::ActionAuthorizer for KernelAuthorizer<'_> {
+    fn action_policy_read_footprint(
+        &self,
+        action: &norn_ir::ActionRoot,
+    ) -> norn_kernel::ActionPolicyReadFootprint {
+        self.0.action_policy_read_footprint(action)
+    }
+    fn can_inspect_naming_series(
+        &self,
+        request: &norn_kernel::NamingSeriesInspectionRequest<'_>,
+    ) -> bool {
+        self.0.can_inspect_naming_series(request)
+    }
     fn authorize(
         &self,
         request: &norn_kernel::ActionAuthzRequest<'_>,

@@ -580,7 +580,11 @@ where
     // Precision granted after full snapshots were loaded cannot erase their
     // value-dependent admission. Revocation refuses before any write rather
     // than using empty values under newly dependent authorization.
-    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
+    if reference_only
+        && !authorizer
+            .action_policy_read_footprint(call.action)
+            .is_exact()
+    {
         return Err(ActionRefusal::TargetNotFound);
     }
     approval::bind_approved_intent::<H::Error>(

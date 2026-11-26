@@ -17,9 +17,9 @@ use super::host_failure;
 use super::input::action_expression_context;
 use super::receipt::SliceReadMode;
 use super::types::{
-    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPreconditionOutcome,
-    ActionPreconditionOutcomeRef, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-    ActionReferenceReads, ActionRefusal,
+    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPolicyReadFootprint,
+    ActionPreconditionOutcome, ActionPreconditionOutcomeRef, ActionReadAuthzRequest,
+    ActionReadTypeAuthzRequest, ActionReferenceReads, ActionRefusal,
 };
 
 fn reference_action(
@@ -30,9 +30,9 @@ fn reference_action(
 ) -> bool {
     // Closed creates use reference lineage plus exact proved property reads for
     // preconditions and `LAW-LINK-1` governing laws. Patches preserve their
-    // complete target while attributing exact expression operands. Unknown
-    // selectors, optional references, commands, aggregates and policy
-    // dependencies stay conservative.
+    // complete target while attributing exact expression and policy operands.
+    // Unknown selectors, optional references, commands, aggregates and opaque
+    // policy dependencies stay conservative.
     let Some(ActionEffectProgram::UpsertInputObject {
         object_kind,
         object_id_field,
@@ -42,9 +42,13 @@ fn reference_action(
     else {
         return false;
     };
+    let ActionPolicyReadFootprint::Exact { target_attributes } =
+        authorizer.action_policy_read_footprint(action)
+    else {
+        return false;
+    };
     let patch = matches!(write_mode, UpsertWriteMode::Upsert);
-    if !authorizer.supports_action_reference_lineage(action)
-        || !matches!(write_mode, UpsertWriteMode::CreateOnly | UpsertWriteMode::Upsert)
+    if !matches!(write_mode, UpsertWriteMode::CreateOnly | UpsertWriteMode::Upsert)
         || !action.commands.is_empty()
         // CREATE-WRITER-1: a writer reads complete slice values.
         || action.synchronous_rule.is_some()
@@ -58,7 +62,7 @@ fn reference_action(
                 || action.quantity_effect.is_some()
                 || !catalog.lifecycles(&target.object_type).is_empty()
                 || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
-                || patch_read_properties(catalog, action, target).is_none()))
+                || patch_read_properties(catalog, action, target, &target_attributes).is_none()))
         || (!patch
             && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
         || action.slice.iter().any(|entry| {
@@ -78,9 +82,17 @@ fn patch_read_properties(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     target: &FactKey,
+    policy_target_attributes: &BTreeSet<String>,
 ) -> Option<Vec<String>> {
     let effective = catalog.effective_type(&target.object_type)?;
     let mut properties = BTreeSet::new();
+    for attr in policy_target_attributes {
+        let prop = effective.property(attr)?;
+        if prop.computed {
+            return None;
+        }
+        properties.insert(attr.clone());
+    }
     // Derivations run before the slice is loaded and consume only caller
     // input and earlier derived values. No stored values enter that phase.
     for expression in &action.preconditions {
@@ -169,7 +181,14 @@ pub(super) fn reference_read_proof<E, C, I>(
         })
     ) {
         let reference = references.iter().find(|read| read.key == *target)?.clone();
-        vec![(reference, patch_read_properties(catalog, action, target)?)]
+        let policy_attrs = authorizer
+            .action_policy_read_footprint(action)
+            .target_attributes()
+            .cloned()?;
+        vec![(
+            reference,
+            patch_read_properties(catalog, action, target, &policy_attrs)?,
+        )]
     } else {
         super::receipt::create_reference_property_reads(
             catalog,
@@ -845,7 +864,11 @@ fn load_action_fact<H: CellHost + ?Sized>(
     read_types: &mut BTreeSet<ObjectTypeName>,
     read_mode: SliceReadMode<'_>,
 ) -> Result<FactState, ActionRefusal<H::Error>> {
-    if !read_mode.is_full() && !authorizer.supports_action_reference_lineage(call.action) {
+    if !read_mode.is_full()
+        && !authorizer
+            .action_policy_read_footprint(call.action)
+            .is_exact()
+    {
         return Err(ActionRefusal::TargetNotFound);
     }
     if relation_depth > limits.max_relation_depth {

@@ -436,6 +436,7 @@ fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Calle
         actor_kind,
         role_table,
         accountable_person: starter.accountable_person.clone(),
+        attributes: std::collections::BTreeMap::new(),
     })
 }
 

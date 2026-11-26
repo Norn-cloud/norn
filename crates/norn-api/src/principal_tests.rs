@@ -69,10 +69,55 @@ fn a_signed_session_token_maps_through_the_declared_role_table() {
             auth_method: "password".into(),
             role_table: "studio-roles/1",
             accountable_person: None,
+            attributes: std::collections::BTreeMap::new(),
         }
     );
     let link = resolve(&token(&claims("user", "admin", "magic_link"))).unwrap();
     assert_eq!(link.roles, ["admin"]);
+}
+
+#[test]
+fn signed_principal_attributes_decode_typed_scalars_and_sets_and_reject_spoofing() {
+    use norn_kernel::authz::AttrValue;
+    let mut valid = claims("user", "member", "password");
+    valid["norn"]["attributes"] = json!({
+        "employee_id": "E-42",
+        "managed_branches": ["cairo", "alex"],
+        "clearance": 3,
+        "verified": true
+    });
+    let principal = resolve(&token(&valid)).unwrap();
+    assert_eq!(
+        principal.attributes.get("employee_id"),
+        Some(&AttrValue::String("E-42".into()))
+    );
+    assert_eq!(
+        principal.attributes.get("managed_branches"),
+        Some(&AttrValue::Set(vec![
+            AttrValue::String("cairo".into()),
+            AttrValue::String("alex".into()),
+        ]))
+    );
+    assert_eq!(
+        principal.attributes.get("clearance"),
+        Some(&AttrValue::Long(3))
+    );
+    assert_eq!(
+        principal.attributes.get("verified"),
+        Some(&AttrValue::Bool(true))
+    );
+
+    for bad in [
+        json!({ "id": "user:spoofed" }),
+        json!({ "ratio": 1.5 }),
+        json!({ "nested": { "a": 1 } }),
+        json!({ "mixed": ["a", 1] }),
+        json!({ "bad-name": "x" }),
+    ] {
+        let mut malformed = claims("user", "member", "password");
+        malformed["norn"]["attributes"] = bad;
+        assert!(resolve(&token(&malformed)).is_err());
+    }
 }
 
 #[test]

@@ -172,6 +172,36 @@ pub enum ActionDenial {
     },
 }
 
+/// Stored resource state an [`ActionAuthorizer`] inspects when deciding an
+/// action call and its slice reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionPolicyReadFootprint {
+    /// Retain whole-object information lineage.
+    Conservative,
+    /// Action policy reads only `target_attributes` on the target; slice-read
+    /// authorization inspects no stored values.
+    Exact {
+        /// Target resource property names read by access rules.
+        target_attributes: BTreeSet<String>,
+    },
+}
+
+impl ActionPolicyReadFootprint {
+    /// Whether this policy certifies exact resource-attribute read bounds.
+    #[must_use]
+    pub const fn is_exact(&self) -> bool {
+        matches!(self, Self::Exact { .. })
+    }
+    /// Exact target resource attributes read by policy, or `None` when conservative.
+    #[must_use]
+    pub const fn target_attributes(&self) -> Option<&BTreeSet<String>> {
+        match self {
+            Self::Conservative => None,
+            Self::Exact { target_attributes } => Some(target_attributes),
+        }
+    }
+}
+
 /// The authorization stage of an action call. The kernel never evaluates
 /// policy itself; the shell adapts its policy decision point (the
 /// `norn-authz` Cedar PDP, #2578) to this trait.
@@ -188,6 +218,20 @@ pub trait ActionAuthorizer {
     /// Unknown authorizers retain the conservative global proof.
     fn supports_action_reference_lineage(&self, _action: &ActionRoot) -> bool {
         self.supports_reference_lineage()
+    }
+
+    /// Explicit stored-state read footprint for `action` and its slice reads.
+    /// Defaults to [`ActionPolicyReadFootprint::Exact`] with empty target
+    /// attributes when [`Self::supports_action_reference_lineage`] is true, and
+    /// [`ActionPolicyReadFootprint::Conservative`] otherwise.
+    fn action_policy_read_footprint(&self, action: &ActionRoot) -> ActionPolicyReadFootprint {
+        if self.supports_action_reference_lineage(action) {
+            ActionPolicyReadFootprint::Exact {
+                target_attributes: BTreeSet::new(),
+            }
+        } else {
+            ActionPolicyReadFootprint::Conservative
+        }
     }
 
     /// Decides one call against the trusted current or proposed target values
