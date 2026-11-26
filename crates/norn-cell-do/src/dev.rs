@@ -437,7 +437,9 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         ),
     );
     let principals = DevPrincipals::new(sessions).with_named(Arc::clone(&named));
-    let questions = DevMetrics::new(token.handle_key, scope.clone());
+    // One derived-metrics runtime serves the HTTP questions and the sources'
+    // question and dashboard sync, so a revision is derived once.
+    let questions = Arc::new(DevMetrics::new(token.handle_key, scope.clone()));
     // D102: a build with `duckdb` answers questions and profiles on the
     // project's own analytics engine, under `.norn/analytics`.
     #[cfg(feature = "duckdb")]
@@ -458,6 +460,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .map_err(|message| Failure::setup("norn.dev.connections_config", message))?;
     {
         let serving = Arc::clone(&serving);
+        let questions = Arc::clone(&questions);
         std::thread::spawn(move || {
             #[cfg(feature = "duckdb")]
             let engine: Option<&dyn norn_api::analytics_routes::Transport> = Some(&engine);
@@ -484,7 +487,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         root: &root,
         manifest: &manifest,
         named: Arc::clone(&named),
-        metrics: DevMetrics::new(token.handle_key, scope.clone()),
+        metrics: questions,
         scope: &scope,
         url: &url,
         started_at: now_ms(),
@@ -637,8 +640,9 @@ struct Session<'a> {
     /// The named principals and their roles (DEV-PRINCIPALS-1).
     named: policy::NamedPrincipals,
     /// The serving revision's metrics, which the sources' questions and
-    /// dashboards are admitted against (DEV-READ-DEFINITIONS-1).
-    metrics: DevMetrics,
+    /// dashboards are admitted against (DEV-READ-DEFINITIONS-1): the HTTP
+    /// server's own.
+    metrics: Arc<DevMetrics>,
     scope: &'a CellScope,
     url: &'a str,
     started_at: u64,
@@ -866,11 +870,10 @@ impl Session<'_> {
                 Self::definitions(out, &events);
                 // The revision reported is the one serving after the reads
                 // synced over it, so `.norn/dev.json` and the events name the
-                // version a client pins.
-                Ok(Some(
-                    self.served(out, serving, &definitions)?
-                        .unwrap_or(*installed),
-                ))
+                // version a client pins. The install committed: a failed
+                // readback after it is a warning, never the session's end.
+                let (moved, readback) = self.served(out, serving, &definitions);
+                Ok(reported(out, *installed, moved, readback))
             }
             Err(definitions::Rejected { phase, diagnostics }) => {
                 Self::rejected(out, serving, event, phase, &diagnostics);
@@ -904,7 +907,8 @@ impl Session<'_> {
         definitions: &[Value],
         before: Option<u64>,
     ) -> Result<Option<InstalledDefinitionSet>, Failure> {
-        let after = self.served(out, serving, definitions)?;
+        let (_moved, after) = self.served(out, serving, definitions);
+        let after = after.map_err(|message| Failure::setup("norn.cell.unreadable", message))?;
         if after.as_ref().map(|set| set.version) == before {
             out.emit(
                 &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
@@ -935,28 +939,30 @@ impl Session<'_> {
     /// A revision serves: report its access, then sync the sources'
     /// questions and dashboards over it. Returns the active revision after
     /// the sync, which each install or retirement moved to its next
-    /// definitions version.
+    /// definitions version, or why it could not be read; and whether the
+    /// sync moved it.
     fn served(
         &self,
         out: &mut Events,
         serving: &http::Serving,
         definitions: &[Value],
-    ) -> Result<Option<InstalledDefinitionSet>, Failure> {
+    ) -> (bool, Result<Option<InstalledDefinitionSet>, String>) {
         self.access(out, serving);
-        self.sync_reads(out, serving, definitions);
-        active(serving).map_err(|message| Failure::setup("norn.cell.unreadable", message))
+        let moved = self.sync_reads(out, serving, definitions);
+        (moved, active(serving))
     }
 
     /// DEV-READ-DEFINITIONS-1: install the sources' changed questions and
     /// dashboards over the serving revision, retire the dropped ones, and
-    /// report both; a refused one is reported and changes nothing.
-    fn sync_reads(&self, out: &mut Events, serving: &http::Serving, definitions: &[Value]) {
+    /// report both; a refused one is reported and changes nothing. Returns
+    /// whether any was installed or retired.
+    fn sync_reads(&self, out: &mut Events, serving: &http::Serving, definitions: &[Value]) -> bool {
         let synced = {
             let Ok(guard) = serving.read() else {
-                return;
+                return false;
             };
             let Some(host) = guard.as_ref() else {
-                return;
+                return false;
             };
             let runtime = self.metrics.questions(host);
             let questions: Option<&dyn norn_api::question_routes::AdHocQuestions<NativeEngine>> =
@@ -983,6 +989,7 @@ impl Session<'_> {
                 ),
             );
         }
+        !synced.events.is_empty()
     }
 
     /// Recompile the active revision's action policy and report what it
@@ -1005,7 +1012,7 @@ impl Session<'_> {
             Ok(ungoverned) => out.emit(
                 &json!({ "event": "access", "ungoverned": ungoverned }),
                 &format!(
-                    "· no access policy governs {}: only the local principals may call them, and a hosted cell would serve none of them",
+                    "· no access policy governs {}: only the developer and the reviewer may call them, and a hosted cell would serve none of them",
                     ungoverned.join(", ")
                 ),
             ),
@@ -1111,6 +1118,34 @@ impl Session<'_> {
             prepared.events,
         ))
     }
+}
+
+/// The revision to report after `installed` committed: the one serving once
+/// the reads synced (`readback`). A readback that fails is a warning, not the
+/// session's end: `installed` is still reported when no read moved the
+/// version past it; otherwise no version is reported, never a stale one, and
+/// the next save reports the serving revision.
+fn reported(
+    out: &mut Events,
+    installed: InstalledDefinitionSet,
+    moved: bool,
+    readback: Result<Option<InstalledDefinitionSet>, String>,
+) -> Option<InstalledDefinitionSet> {
+    let message = match readback {
+        Ok(after) => return Some(after.unwrap_or(installed)),
+        Err(message) => message,
+    };
+    let known = (!moved).then_some(installed);
+    let version = known.as_ref().map(|set| set.version);
+    out.emit(
+        &json!({ "event": "warning", "code": "norn.cell.unreadable", "message": message,
+                 "version": version }),
+        &version.map_or_else(
+            || format!("! the serving revision could not be read back ({message}); the next save reports it"),
+            |version| format!("! r{version} installed; reading it back failed ({message})"),
+        ),
+    );
+    known
 }
 
 fn active(serving: &http::Serving) -> Result<Option<InstalledDefinitionSet>, String> {
@@ -1407,11 +1442,9 @@ mod tests {
         assert_eq!(principal_token_file(1), ".norn/dev.principal.1.token");
     }
 
-    /// DEV-PRINCIPALS-1: a named principal never takes the developer's or the
-    /// reviewer's name, holds at least one role, and is named once.
     /// A manifest that names fewer principals than the last session leaves
-    /// no token file of the dropped ones; the kept ones and every other
-    /// session file stay.
+    /// no token file of the dropped ones; the kept ones, every other session
+    /// file, and whatever a dropped link names stay.
     #[test]
     fn dropped_principals_keep_no_token_file() {
         let (_dir, root) = project();
@@ -1425,8 +1458,13 @@ mod tests {
         ] {
             write_private(&state.join(file), "secret\n").unwrap();
         }
-        symlink(root.join("outside"), state.join("dev.principal.4.token")).unwrap();
+        // A dropped token file that is a link: the link goes, never what it names.
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("kept");
+        std::fs::write(&target, "not a token\n").unwrap();
+        symlink(&target, state.join("dev.principal.4.token")).unwrap();
         remove_stale_principal_tokens(&state, 1).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "not a token\n");
         let mut left: Vec<String> = std::fs::read_dir(&state)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -1442,6 +1480,8 @@ mod tests {
         );
     }
 
+    /// DEV-PRINCIPALS-1: a named principal never takes the developer's or the
+    /// reviewer's name, holds at least one role, and is named once.
     #[test]
     fn invalid_named_principals_refuse() {
         for principals in [

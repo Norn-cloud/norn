@@ -3,11 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ProjectError, parseProject } from "../src/project.ts"
-import { seed, seedSession } from "../src/seed.ts"
+import { readSeed, seed, seedSession } from "../src/seed.ts"
 
 // `norn seed` reads its session from `.norn/dev.json` and sends each call as its actor. A token
-// file is read only from inside the project, symlinks resolved; a malformed descriptor is a
-// ProjectError, never a TypeError; and a refusal whose body is not JSON is still a refusal.
+// file is read only from inside the project, symlinks resolved; a malformed descriptor or seed
+// document is a ProjectError, never a TypeError; a refusal whose body is not JSON is still a
+// refusal; and a call parked for a decision is reported, not refused.
 
 const DESCRIPTOR = {
   format: "norn-dev/1", url: "http://127.0.0.1:4174", tokenFile: ".norn/dev.token",
@@ -110,4 +111,77 @@ test("manifest_reserves_the_built_in_principal_names", () => {
   for (const actor of ["developer", "reviewer", "local:developer", "local:developer+reviewer"]) {
     expect(() => parseProject({ ...manifest, dev: { ...manifest.dev, principals: [{ actor, roles: ["warehouse_clerk"] }] } })).toThrow(ProjectError)
   }
+})
+
+test("seed_session_reads_through_a_symlinked_project_root", () => {
+  const lab = project()
+  try {
+    const linked = join(lab.outside, "linked-project")
+    symlinkSync(lab.root, linked)
+    expect(seedSession(linked).tokens.get("clerk:hana")).toBe("dev.principal.1.token-bearer")
+  } finally { lab.done() }
+})
+
+test("seed_session_refuses_a_missing_or_directory_token_file_as_a_project_error", () => {
+  const lab = project()
+  try {
+    rmSync(join(lab.root, ".norn/dev.principal.1.token"))
+    const missing = refusal(() => seedSession(lab.root))
+    expect({ code: missing.code, missing: missing.message.includes("is missing") }).toEqual({ code: "cli.project.io", missing: true })
+    mkdirSync(join(lab.root, ".norn/dev.principal.1.token"))
+    const directory = refusal(() => seedSession(lab.root))
+    expect({ code: directory.code, message: directory.message.includes("is not a file") }).toEqual({ code: "cli.project.io", message: true })
+  } finally { lab.done() }
+})
+
+test("read_seed_refuses_a_corrupt_or_malformed_document_as_a_project_error", () => {
+  const call = { actor: "clerk:hana", action: "supply.movement.record", idempotencyKey: "k1", input: {} }
+  const malformed: string[] = [
+    "not json",
+    "null",
+    "[]",
+    "7",
+    JSON.stringify({ format: "norn-calls/2", calls: [] }),
+    JSON.stringify({ format: "norn-calls/1", calls: {} }),
+    JSON.stringify({ format: "norn-calls/1", calls: [null] }),
+    JSON.stringify({ format: "norn-calls/1", calls: [{ ...call, actor: 7 }] }),
+    JSON.stringify({ format: "norn-calls/1", calls: [{ ...call, idempotencyKey: "" }] }),
+    JSON.stringify({ format: "norn-calls/1", calls: [{ ...call, input: [] }] }),
+  ]
+  for (const document of malformed) {
+    const lab = project()
+    try {
+      mkdirSync(join(lab.root, "seed"))
+      writeFileSync(join(lab.root, "seed/calls.json"), document)
+      expect({ document, code: refusal(() => readSeed(lab.root)).code }).toEqual({ document, code: "cli.project.io" })
+    } finally { lab.done() }
+  }
+  const lab = project()
+  try {
+    mkdirSync(join(lab.root, "seed"))
+    writeFileSync(join(lab.root, "seed/calls.json"), JSON.stringify({ format: "norn-calls/1", calls: [call] }))
+    expect(readSeed(lab.root)).toEqual([call])
+  } finally { lab.done() }
+})
+
+test("seed_reports_a_call_parked_for_a_decision_and_goes_on", async () => {
+  const lab = project()
+  try {
+    const session = seedSession(lab.root)
+    const calls = [
+      { actor: "clerk:hana", action: "supply.po.create", idempotencyKey: "gated", input: {} },
+      { actor: "clerk:hana", action: "supply.movement.record", idempotencyKey: "after", input: {} },
+    ]
+    const sent: string[] = []
+    const gated: typeof fetch = Object.assign(async (url: string | URL | Request) => {
+      sent.push(String(url))
+      return String(url).includes("supply.po.create")
+        ? Response.json({ outcome: "pending", decision: { id: "dec-1", state: "pending" } }, { status: 202 })
+        : Response.json({ outcome: "committed" }, { status: 200 })
+    }, { preconnect: () => {} })
+    expect(await seed(session, calls, gated)).toEqual({
+      ok: true, calls: 2, parked: [{ step: "supply.po.create as clerk:hana (gated)", decision: { id: "dec-1", state: "pending" } }],
+    })
+    expect(sent).toHaveLength(2)
+  } finally { lab.done() }
 })

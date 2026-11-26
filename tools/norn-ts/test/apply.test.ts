@@ -133,11 +133,75 @@ test("credentials go only over HTTPS or to loopback", () => {
 test("apply reads a project root through the shared project loader", async () => {
   const { loadPack } = await import("../src/apply.ts")
   const root = resolve(import.meta.dir, "../../../fixtures/examples/purchase-requests")
-  const pack = loadPack(root, { orgId: "org_hosted", environmentId: "prod" })
+  const { pack } = loadPack(root, { orgId: "org_hosted", environmentId: "prod" })
   if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
   const ids = pack.artifacts.map((artifact) => (artifact as { artifactId: string }).artifactId)
   expect(ids.some((id) => id.startsWith("purchasing."))).toBe(true)
   expect(pack.retained.map((definition) => definition.id)).toEqual(["purchasing.large_requests"])
   const scopes = new Set(pack.artifacts.map((artifact) => JSON.stringify((artifact as { scope?: unknown }).scope)))
   expect(scopes.has(JSON.stringify({ orgId: "org_purchasing", environmentId: "dev" }))).toBe(false)
+})
+
+// DEV-READ-DEFINITIONS-1: a project's source questions and dashboards are installed by `norn dev`
+// alone; a hosted cell takes them only through the definitions API. `norn plan`, `apply` and
+// `check` leave them out, and say so: a note line for each, and `omittedDefinitions` in the JSON.
+test("plan, apply and check name each source question and dashboard they leave out", async () => {
+  const { loadPack } = await import("../src/apply.ts")
+  const { HOSTED_READS_REASON } = await import("../src/worker.ts")
+  const { TOOL_ROOT } = await import("../src/profile.ts")
+  const { mkdtempSync, readFileSync, rmSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const CLI = join(TOOL_ROOT, "src/cli.ts")
+  const base = mkdtempSync(join(tmpdir(), "norn-omitted-"))
+  const dir = join(base, "lab")
+  try {
+    const init = Bun.spawnSync([process.execPath, CLI, "init", dir, "--template", "supply-lab", "--no-install", "--json"])
+    expect(init.exitCode).toBe(0)
+    const pack = join(TOOL_ROOT, "../../registry/packs/supply-lab/questions")
+    const bundled = [
+      ...JSON.parse(readFileSync(join(pack, "supply.questions.json"), "utf8")).map((q: { name: string }) => ({ kind: "question", id: q.name })),
+      { kind: "dashboard", id: "supply.dashboard.supply_lab" },
+    ]
+    const key = (d: { kind: string; id: string }) => `${d.kind} ${d.id}`
+    const { pack: loaded, omitted } = loadPack(dir, { orgId: "org_hosted", environmentId: "prod" })
+    if (!loaded.ok) throw new Error(JSON.stringify(loaded.failures))
+    expect(omitted.map(key).sort()).toEqual(bundled.map(key).sort())
+    expect(new Set(omitted.map((d) => d.reason))).toEqual(new Set([HOSTED_READS_REASON]))
+    expect(loaded.retained.filter((d) => d.kind !== "approval")).toEqual([])
+
+    const bodies: any[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        bodies.push(await request.json())
+        return Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [] })
+      },
+    })
+    try {
+      const target = { url: `http://127.0.0.1:${server.port}/api/host`, org: "o", env: "e", headers: {} }
+      const json = await change(target, "plan", [{ artifactId: "lab.Batch.entity" }], true, undefined, [], omitted)
+      expect(JSON.parse(json.out[0]!).omittedDefinitions).toEqual(omitted)
+      const applied = await change(target, "apply", [{ artifactId: "lab.Batch.entity" }], true, undefined, [], omitted)
+      expect(applied.out.length).toBeGreaterThan(0)
+      for (const line of applied.out) expect(JSON.parse(line).omittedDefinitions).toEqual(omitted)
+      const text = await change(target, "plan", [{ artifactId: "lab.Batch.entity" }], false, undefined, [], omitted)
+      for (const definition of bundled) expect(text.out).toContain(`note: ${definition.kind} ${definition.id} is not sent: ${HOSTED_READS_REASON}`)
+      // Nothing of theirs was sent.
+      expect(JSON.stringify(bodies)).not.toContain("supply.dashboard.supply_lab")
+    } finally {
+      server.stop(true)
+    }
+
+    if (!process.env.NORN_CHECKER_WASM_PKG) {
+      if (process.env.CI) throw new Error("the check row requires NORN_CHECKER_WASM_PKG")
+      return
+    }
+    const check = Bun.spawnSync([process.execPath, CLI, "check", dir])
+    const report = JSON.parse(check.stdout.toString())
+    expect(report.omittedDefinitions.map(key).sort()).toEqual(bundled.map(key).sort())
+    expect(check.stderr.toString()).toContain(`note: dashboard supply.dashboard.supply_lab is not sent: ${HOSTED_READS_REASON}`)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
 })

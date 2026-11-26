@@ -128,6 +128,12 @@ test("supply_lab_workspace: init, dev and seed admit the pack, seed the referenc
     // The developer holds the hosted roles, none of the pack's: the policy refuses it too.
     expect((await http(ready.actor, "POST", "/v1/actions/supply.po.create", { input: order, idempotencyKey: "live-3" })).status).toBe(403)
     expect((await http("planner:amal", "POST", "/v1/actions/supply.po.create", { input: order, idempotencyKey: "live-4" })).status).toBe(200)
+    // The tracking pack's actions name no access policy, so a hosted cell would serve none of them:
+    // no named principal calls one; the developer still does (the `access` event lists them).
+    const experiment = { experiment_id: "EXP-LIVE", name: "live", artifact_location: "mem://live", creation_time: 1, tags: "" }
+    const ungoverned = await http("clerk:hana", "POST", "/v1/actions/tracking.experiment.create", { input: experiment, idempotencyKey: "live-exp-1" })
+    expect({ status: ungoverned.status, code: ungoverned.body.code }).toEqual({ status: 403, code: "authz.denied" })
+    expect((await http(ready.actor, "POST", "/v1/actions/tracking.experiment.create", { input: experiment, idempotencyKey: "live-exp-2" })).status).toBe(200)
 
     // An installed question answers over the seeded data, as Studio asks it (`POST /v1/questions:evaluate`).
     const saved = await http("clerk:hana", "GET", "/v1/definitions/supply.movement_volume_weekly")

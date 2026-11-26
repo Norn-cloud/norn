@@ -227,15 +227,23 @@ impl<E: SqlEngine> Reads<'_, E> {
             environment_id: self.scope.environment_id.clone(),
             version: None,
         };
-        let current = get_definition(
+        // Only "not installed" means there is no current revision; any other
+        // read failure is reported, never taken for a first install.
+        let current = match get_definition(
             self.host,
             &read,
             Some(self.actor),
             self.kinds,
             self.questions,
             id,
-        )
-        .ok();
+        ) {
+            Ok(current) => Some(current),
+            Err(refusal) if refusal.code == norn_api::definition_routes::codes::NOT_FOUND => None,
+            Err(refusal) => {
+                synced.refused.extend(from_refusal(id, &refusal));
+                return;
+            }
+        };
         if let Some(current) = &current {
             if current.kind != kind {
                 synced.refused.push(finding(
@@ -912,6 +920,72 @@ mod read_tests {
         assert_eq!(version(&host), base, "nothing was written");
     }
 
+    /// The local developer's grants, except that no definition is readable.
+    struct Unreadable(crate::dev::policy::LocalDeveloper);
+
+    impl norn_api::authz::Authorizer for Unreadable {
+        fn read(&self, request: &norn_api::authz::ReadRequest<'_>) -> Result<(), Refusal> {
+            self.0.read(request)
+        }
+        fn authorize(&self, request: &norn_api::authz::AccessRequest<'_>) -> Result<(), Refusal> {
+            if matches!(
+                request.operation,
+                norn_api::authz::Operation::ReadDefinitions
+            ) {
+                return Err(norn_api::authz::read_denied());
+            }
+            self.0.authorize(request)
+        }
+    }
+
+    /// Only "not installed" is a first install: a current revision that
+    /// cannot be read is reported, and nothing is installed over it.
+    #[test]
+    fn an_unreadable_definition_is_refused_not_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let readable = host(dir.path());
+        let metrics = DevMetrics::new([7_u8; 32], scope());
+        let amount = metric(&metrics, &readable, "amount", false);
+        let host = readable.with_authorizer(Unreadable(
+            crate::dev::policy::LocalDeveloper::for_actor(ACTOR, dev_actions()),
+        ));
+        let base = version(&host);
+        let synced = sync(
+            &host,
+            &[question_def(&amount, "2026-11-08T00:00:00Z")],
+            10_000,
+        );
+        assert!(synced.events.is_empty(), "{synced:?}");
+        let codes: Vec<&Value> = synced.refused.iter().map(|f| &f["code"]).collect();
+        assert_eq!(codes, [&json!(norn_api::refusal::codes::AUTHZ_DENIED)]);
+        assert_eq!(synced.refused[0]["definitionId"], json!(QUESTION));
+        assert!(host.retained_definition(QUESTION).unwrap().is_none());
+        assert_eq!(version(&host), base, "nothing was written");
+    }
+
+    /// A readback that fails after an install committed is a warning, not
+    /// the session's end; the version reported is never a stale one.
+    #[test]
+    fn a_failed_readback_after_an_install_is_a_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = host(dir.path());
+        let installed = host.active_definitions().unwrap().unwrap();
+        let after = InstalledDefinitionSet {
+            version: installed.version + 1,
+            ..installed.clone()
+        };
+        let mut out = Events { json: true };
+        let mut reported = |moved, readback: Result<Option<InstalledDefinitionSet>, String>| {
+            crate::dev::reported(&mut out, installed.clone(), moved, readback)
+        };
+        // No read moved the version: the install is what serves.
+        assert_eq!(reported(false, Err("gone".into())), Some(installed.clone()));
+        // A read moved it and the readback failed: no version is claimed.
+        assert_eq!(reported(true, Err("gone".into())), None);
+        assert_eq!(reported(true, Ok(Some(after.clone()))), Some(after));
+        assert_eq!(reported(false, Ok(None)), Some(installed.clone()));
+    }
+
     #[test]
     fn an_id_of_another_kind_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -958,7 +1032,7 @@ mod read_tests {
             root: directory.path(),
             manifest: &manifest,
             named: std::sync::Arc::default(),
-            metrics: DevMetrics::new([7_u8; 32], cell_scope.clone()),
+            metrics: std::sync::Arc::new(DevMetrics::new([7_u8; 32], cell_scope.clone())),
             scope: &cell_scope,
             url: "http://127.0.0.1:0",
             started_at: 0,

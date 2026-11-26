@@ -222,6 +222,32 @@ export function compileProjectPack(root: string, manifest: Project, options: { r
   return projectPack(root, manifest, options).pack
 }
 
+/** Why a hosted command (`norn plan`, `apply`, `check`) leaves a source question or dashboard out. */
+export const HOSTED_READS_REASON = "hosted cells install questions and dashboards only through the definitions API (POST /v1/definitions:install), not from sources"
+
+/** A source question or dashboard a hosted command leaves out, and why. */
+export interface OmittedDefinition {
+  readonly kind: string
+  readonly id: string
+  readonly reason: string
+}
+
+/**
+ * `compileProjectPack` for a hosted command, with the source questions and
+ * dashboards it leaves out (DEV-READ-DEFINITIONS-1): only `norn dev` installs
+ * them from sources, so a hosted plan, apply or check names each one it does
+ * not send, never dropping it silently.
+ */
+export function loadProjectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean } = {}): { readonly pack: PackResult; readonly omitted: OmittedDefinition[] } {
+  const { pack, reads } = projectPack(root, manifest, options)
+  return { pack, omitted: reads.map((definition) => ({ kind: definition.kind, id: definition.id, reason: HOSTED_READS_REASON })) }
+}
+
+/** One line per omitted definition, for a hosted command's text output. */
+export function omittedLines(omitted: ReadonlyArray<OmittedDefinition>): string[] {
+  return omitted.map((definition) => `note: ${definition.kind} ${definition.id} is not sent: ${definition.reason}`)
+}
+
 /**
  * `compileProjectPack`, with the sources' questions and dashboards
  * (DEV-READ-DEFINITIONS-1) from the same one read of the JSON sources: the

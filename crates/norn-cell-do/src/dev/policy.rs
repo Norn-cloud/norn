@@ -18,9 +18,9 @@
 //! verified `id` included), so a rule such as "the requester never approves
 //! their own request" refuses on `norn dev` exactly as it does hosted. A
 //! governed action whose policy does not compile is refused, never allowed.
-//! An action that names no policy stays callable by the local principals
-//! only (a hosted cell would not serve it at all); the `ready` event lists
-//! them.
+//! An action that names no policy stays callable by the developer and the
+//! reviewer only (a hosted cell would not serve it at all); the `ready`
+//! event lists them.
 //!
 //! DEV-PRINCIPALS-1: a project may name more local principals
 //! (`dev.principals` in `norn.json`), each holding exactly the roles it
@@ -29,8 +29,11 @@
 //! as on a cell that grants those roles. Each has its own session token
 //! (`.norn/dev.principal.<n>.token`, listed in `.norn/dev.json`). Like the
 //! developer and the reviewer it reads everything on this loopback cell;
-//! only what it may *do* is narrowed: each call by the active policy, each
-//! decision by its declared decider roles, and every hosted-admin operation
+//! only what it may *do* is narrowed: each call by the active policy (an
+//! action no policy governs is refused to it, as a hosted cell serves none),
+//! each decision by its declared decider roles held alongside some grant of
+//! the hosted table (as a hosted cell decides it), and every hosted-admin
+//! operation
 //! (writing definitions, syncing sources, managing connections, provisioning,
 //! starting runs) by the hosted grant table over its declared roles, so a
 //! pack role that table does not name holds none of them.
@@ -114,7 +117,7 @@ fn compile_set(
 
 /// Compile the action policy of `host`'s active revision into `slot`, as a
 /// hosted cell does after each install. Returns the actions no policy
-/// governs (which the local principals alone may call), or why the
+/// governs (which the developer and the reviewer alone may call), or why the
 /// revision's policies did not compile (then no governed action is served).
 pub(crate) fn refresh_actions<E: norn_cell::engine::SqlEngine>(
     slot: &DevActions,
@@ -188,6 +191,21 @@ impl LocalDeveloper {
     fn caller(&self, actor: &str) -> Caller {
         local_caller(actor, &self.named)
     }
+
+    /// The active revision's governed policy, if it compiled.
+    fn policy(&self) -> Option<Arc<ActionPolicy>> {
+        self.actions
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
+    }
+
+    /// Whether the active policy governs `action_id`, as a hosted cell's
+    /// [`ActionPolicy::callable`] gates a call.
+    fn callable(&self, action_id: &str) -> bool {
+        self.policy()
+            .is_some_and(|policy| policy.callable(action_id))
+    }
 }
 
 /// The roles a local principal holds: a named principal's declared roles
@@ -229,15 +247,17 @@ impl Authorizer for LocalDeveloper {
             return Err(denied());
         }
         if request.action.access.is_none() {
-            return Ok(());
+            // DEV-PRINCIPALS-1: a named principal holds only what a hosted
+            // cell grants its roles, and a hosted cell serves no ungoverned
+            // action.
+            return if self.named.contains_key(request.actor) {
+                Err(denied())
+            } else {
+                Ok(())
+            };
         }
         // DEV-ACCESS-1: a governed action is the policy's to decide.
-        let policy = self
-            .actions
-            .read()
-            .ok()
-            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
-            .ok_or_else(denied)?;
+        let policy = self.policy().ok_or_else(denied)?;
         policy.decide(&self.caller(request.actor), request)
     }
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
@@ -279,15 +299,17 @@ impl Authorizer for LocalDeveloper {
             return Err(norn_api::authz::read_denied());
         }
         if request.action.access.is_none() {
+            // DEV-PRINCIPALS-1: the local-developer grant is the developer's
+            // and the reviewer's, never a named principal's.
+            if self.named.contains_key(request.actor) {
+                return Err(norn_api::authz::read_denied());
+            }
             return Ok(norn_api::authz::VerifiedAutomationGrant {
                 parent_grant_ids: vec!["norn.dev.local_developer".to_owned()],
             });
         }
         let parent_grant_ids = self
-            .actions
-            .read()
-            .ok()
-            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
+            .policy()
             .and_then(|policy| {
                 policy.authorize_automation_grant(
                     &self.caller(request.actor),
@@ -315,10 +337,12 @@ impl LocalDeveloper {
     /// the reviewer hold every grant of the loopback cell (DEV-LOOPBACK-1).
     /// A named principal (DEV-PRINCIPALS-1) holds only what its declared
     /// roles hold, decided as a hosted cell's [`crate::policy::ReadPolicy`]
-    /// decides them: it reads and calls (the active policy still decides each
-    /// governed call), decides only a decision one of its roles may decide,
-    /// and writes definitions, syncs sources, manages connections, provisions
-    /// or starts runs only when the hosted grant table gives its roles that.
+    /// decides them: it reads; it calls only an action the active policy
+    /// governs (which still decides each call); it decides only a decision
+    /// one of its roles may decide, and only while its roles hold some grant
+    /// of the hosted table; and it writes definitions, syncs sources, manages
+    /// connections, provisions or starts runs only when the hosted grant
+    /// table gives its roles that.
     fn grants(&self, actor: &str, operation: &Operation) -> bool {
         if !self.is(actor) {
             return false;
@@ -327,10 +351,14 @@ impl LocalDeveloper {
             return true;
         };
         match operation {
-            Operation::ReadDefinitions | Operation::CallAction(_) => true,
+            Operation::ReadDefinitions => true,
+            Operation::CallAction(action_id) => self.callable(action_id),
             Operation::Decide {
                 roles: deciders, ..
-            } => roles.iter().any(|held| deciders.contains(held)),
+            } => {
+                !DEMO_GRANTS.capabilities(roles).is_empty()
+                    && roles.iter().any(|held| deciders.contains(held))
+            }
             Operation::WriteDefinitions
             | Operation::SyncSource(_)
             | Operation::ManageConnection(_)

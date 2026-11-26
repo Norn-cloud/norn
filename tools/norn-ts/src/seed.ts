@@ -5,13 +5,14 @@
  * of the session (the developer, the reviewer or a named one,
  * DEV-PRINCIPALS-1), with its own idempotency key. The cell decides every call
  * by the pack's access policy, laws and lifecycles; a call it refuses stops the
- * seed with the cell's refusal. Sending the seed again replays: the same keys
- * commit nothing new. Questions and dashboards are sources, which `norn dev`
+ * seed with the cell's refusal, and a call it parks for a decision (202) is
+ * reported as parked and the seed goes on. Sending the seed again replays: the
+ * same keys commit nothing new. Questions and dashboards are sources, which `norn dev`
  * installs itself (DEV-READ-DEFINITIONS-1).
  *
  * It decides nothing and holds no policy: the dev host is the only authority.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { ProjectError, readProject } from "./project.ts"
 
@@ -61,6 +62,7 @@ export function seedSession(root: string): SeedSession {
     if (inside.startsWith("..") || isAbsolute(inside)) throw new ProjectError("cli.project.io", `The token file ${file} is outside the project.`, 3)
     if (!existsSync(at)) throw new ProjectError("cli.project.io", `The token file ${file} is missing: restart norn dev in ${root}.`, 3)
     if (!insideProject(realRoot, at)) throw new ProjectError("cli.project.io", `The token file ${file} is outside the project.`, 3)
+    if (!statSync(at).isFile()) throw new ProjectError("cli.project.io", `The token file ${file} is not a file: restart norn dev in ${root}.`, 3)
     return readFileSync(at, "utf8").trim()
   }
   const sessionOf = (value: unknown): { actor: string; tokenFile: unknown } => {
@@ -85,23 +87,42 @@ export interface SeedCall {
   readonly input: Record<string, unknown>
 }
 
-/** The project's seed calls. */
+/** The project's seed calls; a document that is not `norn-calls/1` is a ProjectError. */
 export function readSeed(root: string): SeedCall[] {
   const path = join(root, "seed/calls.json")
   if (!existsSync(path)) return []
-  const calls = JSON.parse(readFileSync(path, "utf8")) as { format?: unknown; calls?: SeedCall[] }
-  if (calls.format !== "norn-calls/1" || !Array.isArray(calls.calls)) throw new ProjectError("cli.project.io", `${path} is not a norn-calls/1 document.`, 3)
-  return calls.calls
+  const invalid = (why: string) => new ProjectError("cli.project.io", `${path} is not a norn-calls/1 document: ${why}.`, 3)
+  let document: unknown
+  try { document = JSON.parse(readFileSync(path, "utf8")) }
+  catch { throw invalid("it is not JSON") }
+  if (!isRecord(document) || document["format"] !== "norn-calls/1" || !Array.isArray(document["calls"])) throw invalid("it is not an object with format norn-calls/1 and a calls list")
+  return document["calls"].map((call: unknown, index: number): SeedCall => {
+    const text = (key: string) => isRecord(call) && typeof call[key] === "string" && call[key] !== ""
+    if (!isRecord(call) || !text("actor") || !text("action") || !text("idempotencyKey") || !isRecord(call["input"])) {
+      throw invalid(`call ${index} is not { actor, action, idempotencyKey, input } with non-empty text and an object input`)
+    }
+    return { actor: call["actor"] as string, action: call["action"] as string, idempotencyKey: call["idempotencyKey"] as string, input: call["input"] }
+  })
 }
 
-/** What the seed did, or the cell's refusal that stopped it. */
+/** A call the cell parked for a decision, and the decision it waits on. */
+export interface ParkedCall {
+  readonly step: string
+  readonly decision: unknown
+}
+
+/** What the seed did (with the calls parked for a decision), or the cell's refusal that stopped it. */
 export type SeedResult =
-  | { readonly ok: true; readonly calls: number }
+  | { readonly ok: true; readonly calls: number; readonly parked: readonly ParkedCall[] }
   | { readonly ok: false; readonly step: string; readonly status: number; readonly refusal: unknown }
 
-/** Send each call as its actor; stop at the first refusal. */
+/**
+ * Send each call as its actor; stop at the first refusal. A call parked for a
+ * decision (202, APPROVAL-1) is not a refusal: it is reported and the seed goes on.
+ */
 export async function seed(session: SeedSession, calls: readonly SeedCall[], fetcher: typeof fetch = fetch): Promise<SeedResult> {
   const query = new URLSearchParams({ orgId: session.scope.orgId, environmentId: session.scope.environmentId }).toString()
+  const parked: ParkedCall[] = []
   for (const call of calls) {
     const token = session.tokens.get(call.actor)
     if (token === undefined) throw new ProjectError("cli.project.invalid_manifest", `The seed sends a call as ${call.actor}, who is not a local principal of this norn dev: name it in norn.json dev.principals.`)
@@ -111,13 +132,17 @@ export async function seed(session: SeedSession, calls: readonly SeedCall[], fet
       body: JSON.stringify({ input: call.input, idempotencyKey: call.idempotencyKey }),
     })
     const text = await response.text()
-    if (response.status !== 200) {
-      let refusal: unknown = text === "" ? null : text
-      try { if (text !== "") refusal = JSON.parse(text) } catch { /* not JSON: the body as the server sent it */ }
-      return { ok: false, step: `${call.action} as ${call.actor} (${call.idempotencyKey})`, status: response.status, refusal }
+    if (response.status === 200) continue
+    let body: unknown = text === "" ? null : text
+    try { if (text !== "") body = JSON.parse(text) } catch { /* not JSON: the body as the server sent it */ }
+    const step = `${call.action} as ${call.actor} (${call.idempotencyKey})`
+    if (response.status === 202) {
+      parked.push({ step, decision: isRecord(body) ? body["decision"] ?? null : null })
+      continue
     }
+    return { ok: false, step, status: response.status, refusal: body }
   }
-  return { ok: true, calls: calls.length }
+  return { ok: true, calls: calls.length, parked }
 }
 
 /** `norn seed [--json]`, run in the project while its `norn dev` serves. */
@@ -127,7 +152,10 @@ export async function seedCli(args: readonly string[]): Promise<number> {
   const { root } = readProject()
   const result = await seed(seedSession(root), readSeed(root))
   if (args.includes("--json")) process.stdout.write(`${JSON.stringify(result)}\n`)
-  else if (result.ok) process.stdout.write(`seeded ${result.calls} call(s)\n`)
+  else if (result.ok) {
+    process.stdout.write(`seeded ${result.calls} call(s)${result.parked.length > 0 ? `, ${result.parked.length} parked for a decision` : ""}\n`)
+    for (const call of result.parked) process.stdout.write(`  parked: ${call.step}, waiting on decision ${JSON.stringify(isRecord(call.decision) ? call.decision["id"] ?? null : null)}\n`)
+  }
   else process.stdout.write(`refused at ${result.step} (${result.status}): ${JSON.stringify(result.refusal)}\n`)
   return result.ok ? 0 : 1
 }

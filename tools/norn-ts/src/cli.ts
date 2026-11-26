@@ -121,12 +121,17 @@ if (command === "check") {
   warnAuthoringVersion(resolve(input))
 }
 const forbidUnsafeZen = hasFlag("--forbid-unsafe-zen") ? true : undefined
+// A project's source questions and dashboards are `norn dev`'s to install; a
+// check names each one it leaves out (DEV-READ-DEFINITIONS-1).
+let omitted: ReadonlyArray<import("./worker.ts").OmittedDefinition> = []
 const pack = project
   ? await (async () => {
       const { readProject } = await import("./project.ts")
-      const { compileProjectPack } = await import("./worker.ts")
+      const { loadProjectPack } = await import("./worker.ts")
       const { root, manifest } = readProject(resolve(input))
-      return compileProjectPack(root, manifest, { ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}) })
+      const loaded = loadProjectPack(root, manifest, { ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}) })
+      omitted = loaded.omitted
+      return loaded.pack
     })()
   : compilePack(resolve(input), {
       scope: { orgId: orgId!, environmentId: environmentId! },
@@ -171,6 +176,8 @@ if (command === "compile") {
   const failedExamples = report.admitted ? runExamples(checker, pack.artifacts, pack.examples) : []
   const diagnostics = [...pack.warnings, ...sourceMappedDiagnostics(report.diagnostics.diagnostics, pack.sourceMap), ...failedExamples]
   const admitted = report.admitted && failedExamples.length === 0
-  process.stdout.write(`${JSON.stringify({ ...report, admitted, diagnostics })}\n`)
+  const { omittedLines } = await import("./worker.ts")
+  for (const line of omittedLines(omitted)) process.stderr.write(`${line}\n`)
+  process.stdout.write(`${JSON.stringify({ ...report, admitted, diagnostics, ...(omitted.length > 0 ? { omittedDefinitions: omitted } : {}) })}\n`)
   process.exit(admitted ? 0 : 1)
 }

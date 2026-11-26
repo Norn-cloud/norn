@@ -174,7 +174,10 @@ fn a_dev_cell_keeps_principal_inputs_through_a_rollback_and_a_restart() {
         root: directory.path(),
         manifest: &manifest,
         named: Arc::default(),
-        metrics: crate::dev::policy::DevMetrics::new([0; 32], cell_scope.clone()),
+        metrics: std::sync::Arc::new(crate::dev::policy::DevMetrics::new(
+            [0; 32],
+            cell_scope.clone(),
+        )),
         scope: &cell_scope,
         url: "http://127.0.0.1:0",
         started_at: 0,
