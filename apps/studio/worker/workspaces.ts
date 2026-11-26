@@ -17,6 +17,7 @@ import {
   type ProvisionDb,
 } from "./auth.ts"
 import { admitCell, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
+import { environmentOf } from "./scope.ts"
 
 /**
  * Studio's workspace routes: listing the signed-in user's workspaces for the honest switcher,
@@ -67,17 +68,6 @@ const failure = (status: number, code: string, message: string, sessionHeaders?:
 function planLimit(admission: Admission | undefined, fallback: string, sessionHeaders?: Headers): Response {
   const refusal = admission?.kind === "plan-limit" ? admission : undefined
   return json({ code: "PLAN_LIMIT", message: refusal === undefined ? fallback : refusalMessage(refusal), ...refusal === undefined ? {} : { refusal } }, 403, sessionHeaders)
-}
-
-const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
-
-function environmentOf(metadata: unknown): string | null {
-  let value = metadata
-  if (typeof value === "string") {
-    try { value = JSON.parse(value) } catch { return null }
-  }
-  const envId = (value as { environmentId?: unknown } | null)?.environmentId
-  return typeof envId === "string" && ENVIRONMENT.test(envId) ? envId : null
 }
 
 function formatPlanLabel(plan: string): string {

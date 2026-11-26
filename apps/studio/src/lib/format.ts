@@ -81,6 +81,18 @@ export function readableTime(text: string): string {
 /** An instant to the minute, in UTC, saying so: `13 Nov 2026, 01:03 UTC`. */
 export const stamp = (instant: string | number): string => `${clock.format(new Date(instant))} UTC`
 
+/** Local medium date and short time. */
+export const formatTimestamp = (ms: number): string =>
+  new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+
+/** "just now", "4 min ago", or the local medium date and short time. */
+export function formatRelativeOrTimestamp(ms: number, now = Date.now()): string {
+  const seconds = Math.round((now - ms) / 1000)
+  if (seconds >= 0 && seconds < 60) return "just now"
+  if (seconds >= 60 && seconds < 3600) return `${Math.round(seconds / 60)} min ago`
+  return formatTimestamp(ms)
+}
+
 /** The question's window, with its excluded end shown as the last included day. */
 export const period = ({ start, end }: Question["window"]): string =>
   `${day(start)} – ${day(Date.parse(end) - 86_400_000)}`

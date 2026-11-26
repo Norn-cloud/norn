@@ -2,8 +2,8 @@ import type { RecordsQuery } from "../records-query.ts"
 import type { ObjectRecord } from "../transport.ts"
 import { AGREEMENTS, type Agreement } from "./episode.ts"
 import {
-  DecodeError, bool, defaultFetch, int, list, listLearningObjects, obj, oneOf, readLearningObject, receipt, str, text,
-  type DecodedRecord, type Fetch, type ObjectItemRead, type ObjectListRead, type ReceiptRef, type ScopedReadOptions,
+  DecodeError, bool, defaultFetch, int, list, listLearningObjects, obj, oneOf, receipt, str, text,
+  type DecodedRecord, type Fetch, type ObjectListRead, type ReceiptRef, type ScopedReadOptions,
 } from "./objects.ts"
 
 /**
@@ -148,11 +148,5 @@ export function decodeEvalSet(record: ObjectRecord): DecodedRecord<EvalSet> {
 export const listCuratedCases = (query: RecordsQuery, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<ObjectListRead<CuratedCase>> =>
   listLearningObjects(CURATED_CASE_TYPE, query, decodeCuratedCase, fetcher, options)
 
-export const readCuratedCase = (id: string, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<ObjectItemRead<CuratedCase>> =>
-  readLearningObject(CURATED_CASE_TYPE, id, decodeCuratedCase, fetcher, options)
-
 export const listEvalSets = (query: RecordsQuery, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<ObjectListRead<EvalSet>> =>
   listLearningObjects(EVAL_SET_TYPE, query, decodeEvalSet, fetcher, options)
-
-export const readEvalSet = (id: string, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<ObjectItemRead<EvalSet>> =>
-  readLearningObject(EVAL_SET_TYPE, id, decodeEvalSet, fetcher, options)

@@ -1,5 +1,5 @@
 import type { Fetch } from "./cell-read.ts"
-import { CellUnavailable, defaultFetch, NO_DATA_CELL, readAtScope, readStudioScope, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, findingsOf, NO_DATA_CELL, readAtScope, readStudioScope, sameStudioScope, scopedHostFetch, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
 import type { Predicate, RecordsQuery, SortKey } from "./records-query.ts"
 import { readRecordsAtScope } from "./raw/records.ts"
 import type { RecordsRead } from "./records-source.ts"
@@ -126,16 +126,6 @@ export function cleanView(view: SavedView): SavedView {
     ...(columns ? { columns } : {}),
   }
 }
-
-const findingsOf = (body: Record<string, unknown> | null): readonly Finding[] =>
-  Array.isArray(body?.diagnostics)
-    ? (body.diagnostics as { code?: unknown; message?: unknown; law?: unknown; span?: { pointer?: unknown } | null }[]).map((d) => ({
-      code: String(d.code ?? ""),
-      message: String(d.message ?? ""),
-      law: typeof d.law === "string" ? d.law : null,
-      pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null,
-    }))
-    : []
 
 const isSavedView = (value: unknown): value is SavedView =>
   value !== null && typeof value === "object" && typeof (value as SavedView).title === "string" && typeof (value as SavedView).objectType === "string"
