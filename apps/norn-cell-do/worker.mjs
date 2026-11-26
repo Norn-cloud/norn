@@ -80,7 +80,10 @@ export class Cell {
     }
     // Never follow a redirect: anything but 200 from the pinned URL fails.
     const response = await fetch(this.env.NORN_HOST_JWKS_URL, { redirect: "manual", signal: AbortSignal.timeout(JWKS_TIMEOUT_MS) });
-    if (!response.ok) throw new Error(`JWKS fetch failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`JWKS fetch failed: HTTP ${response.status}`);
+    }
     lastJwks = { url: this.env.NORN_HOST_JWKS_URL, text: await response.text(), at: Date.now() };
     return lastJwks;
   }
@@ -213,19 +216,22 @@ export class Cell {
     const url = new URL(request.url);
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
+  postEngine(call) {
+    return fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
+      body: call.body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+    });
+  }
   /**
    * D102: perform one engine call the cell asked for, with the credential the
    * cell minted for it; the cell decided the call and checks the answer.
    */
   async engine(call) {
     try {
-      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
-        body: call.body,
-        redirect: "manual",
-        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
-      });
+      const response = await this.postEngine(call);
       const text = await response.text();
       // The cell may answer its caller opaquely; the operator sees why.
       if (response.status !== 200) console.error(`analytics engine ${call.op} answered ${response.status}: ${text.slice(0, 500)}`);
@@ -238,13 +244,7 @@ export class Cell {
   /** The engine's file for a streamed call, or its refusal for the cell to map. */
   async stream(call) {
     try {
-      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
-        body: call.body,
-        redirect: "manual",
-        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
-      });
+      const response = await this.postEngine(call);
       if (response.status !== 200) return { status: response.status, body: await response.text() };
       const headers = { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", ...call.stream };
       return new Response(response.body, { status: 200, headers });
@@ -340,9 +340,10 @@ export class Cell {
   async publish() {
     try {
       const members = [];
-      for (const ws of live.members(this.ctx)) {
-        const { scope, authorization } = ws.deserializeAttachment();
-        if (await this.member(scope, authorization)) members.push(ws);
+      for (const ws of this.ctx.getWebSockets(live.MEMBER)) {
+        const attachment = ws.deserializeAttachment();
+        if (live.roleOf(attachment) !== live.MEMBER) continue;
+        if (await this.member(attachment.scope, attachment.authorization)) members.push(ws);
       }
       if (members.length === 0) return 0;
       return await live.publish({ getWebSockets: () => members }, (path, query, authorization) => this.ask(path, query, authorization));
@@ -390,11 +391,12 @@ export class Cell {
     if (request.method === "GET") return this.respond(request, body);
     await this.wake.beforeWrite(this.cell, Date.now());
     try {
-      return await this.respond(request, body);
+      const response = await this.respond(request, body);
+      // A provisioning request makes the cell serving: persist its scope before arming the alarm.
+      await this.keepScope(scope);
+      return response;
     } finally {
       await this.wake.afterWrite(this.cell, Date.now());
-      // A provisioning request makes the cell serving: keep its scope from then on.
-      await this.keepScope(scope);
     }
   }
   /** Serve one request on the opened cell. */
@@ -420,7 +422,7 @@ export class Cell {
     reply = await this.settle(request, body, reply);
     if (reply instanceof Response) return reply;
     // After a commit, every live subscription on this object is answered again.
-    if (request.method !== "GET" && reply.status < 400) this.publish();
+    if (request.method !== "GET" && reply.status < 400) this.keep(this.publish());
     // A refusal's text is noted for its code's count (telemetry.mjs), so telemetry never reads the reply.
     return noteRefusal(this.env, new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } }), reply.body);
   }
@@ -492,7 +494,7 @@ export class Cell {
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
     syncFinished(this.env, { ...done, wallMs }, this.ctx);
     // A sync commits as it goes; live subscriptions are answered again once it ends.
-    if ((done.rowsLanded ?? 0) > 0) this.publish();
+    if ((done.rowsLanded ?? 0) > 0) await this.publish();
   }
   /**
    * TIMER-ALARM-1: the cell's clock. The wake (wake.mjs) sets a recovery
@@ -515,7 +517,7 @@ export class Cell {
     const { committed, failed, sync } = await this.wake.alarm(this.cell, Date.now());
     // The operator sees what stayed due and why; it is retried after its backoff.
     if (failed !== null) console.error(`due work not handled: ${failed}`);
-    if (committed) this.publish();
+    if (committed) await this.publish();
     if (sync) await this.runSync(sync);
   }
   /** Keep background work alive past the reply where the runtime offers it. */
@@ -554,9 +556,11 @@ async function perform(request) {
   }
 }
 
-/** A response body as bytes, counted as they arrive; null once it passes `limit` (the stream is cancelled). */
-async function readBoundedBytes(response, limit) {
-  const reader = response.body?.getReader();
+const DECODER = new TextDecoder();
+
+/** A request or response body as bytes, counted as they arrive; null once it passes `limit` (the stream is cancelled). */
+async function readBoundedBytes(message, limit) {
+  const reader = message.body?.getReader();
   if (reader === undefined) return new Uint8Array();
   const chunks = [];
   let size = 0;
@@ -570,26 +574,19 @@ async function readBoundedBytes(response, limit) {
     }
     chunks.push(value);
   }
-  return new Uint8Array(await new Blob(chunks).arrayBuffer());
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 /** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
 async function readBounded(request, limit) {
-  const reader = request.body?.getReader();
-  if (reader === undefined) return "";
-  const chunks = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return new Blob(chunks).text();
+  const bytes = await readBoundedBytes(request, limit);
+  return bytes === null ? null : DECODER.decode(bytes);
 }
 
 function cors(request, env) {

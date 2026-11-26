@@ -533,3 +533,66 @@ describe("the engine step bound (MANIFEST-LAWS-1 S1)", () => {
     expect(JSON.parse(reply.body).code).toBe("analytics.unsettled");
   });
 });
+
+describe("live subscription and telemetry hardening", () => {
+  test("subscribable rejects dot-segment, backslash, and origin-change traversal", async () => {
+    const live = await import(join(dir, "subscribe.mjs"));
+    for (const bad of [
+      "/v1/x/../subscribe",
+      "/v1/./subscribe",
+      "/v1/x\\..\\subscribe",
+      "/v1/../__conformance/head",
+      "//evil.example/v1/definitions:list",
+      "/v1/subscribe?foo=1",
+    ]) {
+      expect(live.subscribable(bad), bad).toBeNull();
+    }
+    expect(live.subscribable("/v1/definitions:list?kind=dashboard")).toEqual({
+      pathname: "/v1/definitions:list",
+      query: "kind=dashboard",
+    });
+  });
+
+  test("subscribe rejects prototype-polluting ids and enforces MAX_SUBSCRIPTIONS on Object.prototype names", async () => {
+    const live = await import(join(dir, "subscribe.mjs"));
+    const sent = [];
+    let attachment = { scope: ["org_b", "prod"], authorization: "Bearer member-of-org_b", subs: {}, role: live.MEMBER };
+    const ws = {
+      deserializeAttachment: () => attachment,
+      serializeAttachment: (next) => { attachment = next; },
+      send: (raw) => sent.push(JSON.parse(raw)),
+      close: () => {},
+    };
+    const ask = () => ({ status: 200, body: "{}" });
+    for (const bad of ["__proto__", "constructor", "prototype"]) {
+      await live.message(ws, JSON.stringify({ type: "subscribe", id: bad, path: "/v1/definitions:list" }), ask);
+      expect(sent.at(-1)).toMatchObject({ type: "refused", code: "live.invalid_id" });
+    }
+    for (let i = 0; i < live.MAX_SUBSCRIPTIONS; i += 1) {
+      await live.message(ws, JSON.stringify({ type: "subscribe", id: `sub-${i}`, path: "/v1/definitions:list" }), ask);
+    }
+    await live.message(ws, JSON.stringify({ type: "subscribe", id: "toString", path: "/v1/definitions:list" }), ask);
+    expect(sent.at(-1)).toMatchObject({ type: "refused", id: "toString", code: "live.too_many_subscriptions" });
+  });
+
+  test("accept refuses an oversized authorization header before registering a socket", async () => {
+    const live = await import(join(dir, "subscribe.mjs"));
+    const accepted = [];
+    const ctx = {
+      getWebSockets: () => accepted,
+      acceptWebSocket: (ws) => accepted.push(ws),
+    };
+    const reply = live.accept(ctx, ["org_b", "prod"], `Bearer ${"x".repeat(2500)}`);
+    expect(reply.status).toBe(413);
+    expect(accepted.length).toBe(0);
+  });
+
+  test("isLoopback rejects out-of-range IPv4 octets", async () => {
+    const { isLoopback } = await import(join(dir, "otlp.mjs"));
+    expect(isLoopback("127.0.0.1")).toBe(true);
+    expect(isLoopback("localhost")).toBe(true);
+    expect(isLoopback("[::1]")).toBe(true);
+    expect(isLoopback("127.999.0.1")).toBe(false);
+    expect(isLoopback("127.0.256.1")).toBe(false);
+  });
+});

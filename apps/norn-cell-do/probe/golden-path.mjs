@@ -50,7 +50,8 @@
 // The cell must hold the probe definitions (probe/probe.ts; probe/dev.sh installs them).
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { isLoopback, telemetry } from "../otlp.mjs";
 
 const READING = "probe.Reading";
@@ -129,7 +130,7 @@ export function target(argv, env) {
     if (typeof descriptor.tokenFile !== "string") fail("probe.dev_descriptor_invalid");
     const tokenPath = resolve(project, descriptor.tokenFile);
     const inside = relative(project, tokenPath);
-    if (inside.startsWith("..") || isAbsolute(inside)) fail("probe.dev_token_outside_project");
+    if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) fail("probe.dev_token_outside_project");
     let text;
     try {
       text = readFileSync(tokenPath, "utf8").trim();
@@ -411,7 +412,7 @@ export async function run(argv = process.argv.slice(2), env = process.env) {
   return summary;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   run().then(
     (summary) => process.exit(summary.outcome === "pass" ? 0 : 1),
     (error) => {
