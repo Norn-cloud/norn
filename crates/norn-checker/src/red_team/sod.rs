@@ -1,4 +1,4 @@
-//! Recursive lifecycle separation-of-duties (SoD) Datalog check for `RED-TEAM-1`.
+//! Recursive lifecycle separation-of-duties (`SoD`) Datalog check for `RED-TEAM-1`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,7 +12,7 @@ use super::{
     push_fact, s,
 };
 
-/// Only credit a policy `ne principal.<identity>` check as SoD when the
+/// Only credit a policy `ne principal.<identity>` check as `SoD` when the
 /// compared resource field is a declared `protected` property on the rule's
 /// resource type (so callers cannot forge it to self-approve).
 fn rule_has_sod(set: &ExtractedSet, rule: &AccessRule) -> bool {

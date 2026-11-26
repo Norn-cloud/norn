@@ -78,7 +78,7 @@ pub struct LawReceiptEntry {
 }
 
 impl LawReceiptEntry {
-    /// Canonical camelCase JSON representation for CLI/WASM projections.
+    /// Canonical `camelCase` JSON representation for CLI/WASM projections.
     #[must_use]
     pub fn to_json_value(&self) -> Value {
         let mut map = Map::new();

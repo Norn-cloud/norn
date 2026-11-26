@@ -163,7 +163,7 @@ impl RedTeamReport {
         self.evaluation_errors.is_empty() && self.decode_errors.is_empty()
     }
 
-    /// Canonical camelCase JSON representation for CLI/WASM projections.
+    /// Canonical `camelCase` JSON representation for CLI/WASM projections.
     #[must_use]
     pub fn to_json_value(&self) -> JsonValue {
         let mut map = Map::new();

@@ -89,8 +89,8 @@ fn transition_action(
     envelope("action", &format!("{action_id}.action"), action_id, &payload)
 }
 
-fn payout_fixture() -> Vec<ArtifactEnvelope> {
-    let payout = envelope(
+fn payout_entity() -> ArtifactEnvelope {
+    envelope(
         "entity",
         "hr.Payout.entity",
         "Payout",
@@ -120,8 +120,11 @@ fn payout_fixture() -> Vec<ArtifactEnvelope> {
                 }]
             }
         }),
-    );
-    let create_payout = envelope(
+    )
+}
+
+fn payout_create_action() -> ArtifactEnvelope {
+    envelope(
         "action",
         "hr.payout.create.action",
         "Create payout",
@@ -154,16 +157,11 @@ fn payout_fixture() -> Vec<ArtifactEnvelope> {
                 "writeMode": { "kind": "create_only" }
             }
         }),
-    );
-    let dispatch = transition_action("hr.payout.dispatch", "hr.Payout", "state", "dispatch", &[]);
-    let confirm = transition_action(
-        "hr.payout.confirm_succeeded",
-        "hr.Payout",
-        "state",
-        "confirm_succeeded",
-        &[],
-    );
-    let policy = envelope(
+    )
+}
+
+fn payout_policy() -> ArtifactEnvelope {
+    envelope(
         "policy",
         "hr.access.policy",
         "HR access",
@@ -204,8 +202,25 @@ fn payout_fixture() -> Vec<ArtifactEnvelope> {
                 }
             ]
         }),
+    )
+}
+
+fn payout_fixture() -> Vec<ArtifactEnvelope> {
+    let dispatch = transition_action("hr.payout.dispatch", "hr.Payout", "state", "dispatch", &[]);
+    let confirm = transition_action(
+        "hr.payout.confirm_succeeded",
+        "hr.Payout",
+        "state",
+        "confirm_succeeded",
+        &[],
     );
-    vec![payout, create_payout, dispatch, confirm, policy]
+    vec![
+        payout_entity(),
+        payout_create_action(),
+        dispatch,
+        confirm,
+        payout_policy(),
+    ]
 }
 
 fn multi_lifecycle_order_entity() -> ArtifactEnvelope {
@@ -350,6 +365,7 @@ fn red_team_handles_multi_lifecycle_fact_trigger_and_non_identity_sod_fail_close
         "hr.order.policy",
         "Order policy",
         &json!({
+            "accessVersion": "0.1",
             "policyId": "hr.order.policy",
             "rules": [{
                 "ruleId": "creator_submit_bogus_sod",
@@ -381,6 +397,7 @@ fn red_team_rejects_unprotected_field_as_sod() {
         "hr.order.unprotected_sod.policy",
         "Unprotected SoD policy",
         &json!({
+            "accessVersion": "0.1",
             "policyId": "hr.order.unprotected_sod",
             "rules": [{
                 "ruleId": "clerk_unprotected_requester_sod",
@@ -417,6 +434,7 @@ fn red_team_accepts_protected_creator_sod_predicate() {
         "hr.order.protected_sod.policy",
         "Protected SoD policy",
         &json!({
+            "accessVersion": "0.1",
             "policyId": "hr.order.protected_sod",
             "rules": [
                 {
