@@ -120,12 +120,33 @@ fn native_for(
                 );
             }
             assert_eq!(
-                after_dump.get("_norn_ledger").map_or(0, Vec::len),
-                prior
-                    .get("_norn_ledger")
-                    .map_or(0, Vec::len)
-                    .saturating_add(1),
+                after_dump.len(),
+                prior.len(),
+                "invariant refusal must not add or drop tables"
+            );
+            let before_ledger = prior.get("_norn_ledger").map_or(&[][..], Vec::as_slice);
+            let after_ledger = after_dump
+                .get("_norn_ledger")
+                .map_or(&[][..], Vec::as_slice);
+            assert_eq!(
+                after_ledger.len(),
+                before_ledger.len().saturating_add(1),
                 "invariant refusal appends exactly one attempt-journal ledger event"
+            );
+            assert_eq!(
+                &after_ledger[..before_ledger.len()],
+                before_ledger,
+                "invariant refusal must preserve all prior ledger rows"
+            );
+            let appended: Value =
+                serde_json::from_str(after_ledger.last().expect("appended ledger row"))
+                    .expect("ledger row json");
+            let event_json = appended[3].as_str().expect("ledger event json string");
+            let event: Value = serde_json::from_str(event_json).expect("ledger event json");
+            assert_eq!(
+                event["op"],
+                json!("invariant_refused"),
+                "appended ledger event must be invariant_refused"
             );
         } else {
             assert_eq!(prior, after_dump);

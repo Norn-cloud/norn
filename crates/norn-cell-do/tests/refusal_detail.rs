@@ -333,12 +333,23 @@ fn retained_value(name: &str, value: &Value) {
             .zip(text.lines())
             .enumerate()
             .find(|(_, (a, b))| a != b)
-            .map_or_else(String::new, |(index, (expected, actual))| {
-                format!(
-                    " (line {}: kept={expected:?}, actual={actual:?})",
-                    index + 1
-                )
-            })
+            .map_or_else(
+                || {
+                    format!(
+                        " (kept={} bytes/{} lines, actual={} bytes/{} lines)",
+                        kept.len(),
+                        kept.lines().count(),
+                        text.len(),
+                        text.lines().count()
+                    )
+                },
+                |(index, (expected, actual))| {
+                    format!(
+                        " (line {}: kept={expected:?}, actual={actual:?})",
+                        index + 1
+                    )
+                },
+            )
     };
     assert!(
         kept == text,
