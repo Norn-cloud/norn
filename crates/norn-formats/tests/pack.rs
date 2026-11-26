@@ -243,7 +243,8 @@ fn a_section_that_is_not_an_array_is_refused() {
 fn duplicate_dataset_selection_is_refused() {
     let schema = schema();
     let mut s = spec(vec![]);
-    s.select.push(s.select[0].clone());
+    let first = s.select.first().expect("fixture has a selection").clone();
+    s.select.push(first);
     let err = project(&schema, &s, &repeating_fields(&schema)).unwrap_err();
     assert!(err.contains("more than once"), "{err}");
 }
