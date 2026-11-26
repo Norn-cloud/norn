@@ -36,7 +36,6 @@ use std::collections::BTreeMap;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use norn_cell::analytics::TenantId;
-use sha2::{Digest as _, Sha256};
 
 /// The credential format's prefix.
 const PREFIX: &str = "nolap2";
@@ -126,13 +125,7 @@ fn key_spec(spec: &str) -> Result<(String, [u8; 32]), String> {
 /// of the exact bytes sent.
 #[must_use]
 pub fn body_digest(body: &[u8]) -> String {
-    Sha256::digest(body)
-        .iter()
-        .fold(String::new(), |mut out, byte| {
-            use std::fmt::Write as _;
-            let _infallible = write!(out, "{byte:02x}");
-            out
-        })
+    crate::uploads::sha256_hex(body)
 }
 
 /// What a credential's signature covers. Every part is length-prefixed, so
