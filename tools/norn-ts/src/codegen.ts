@@ -22,16 +22,11 @@ import { createHash } from "node:crypto"
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { canonicalJson, type Json } from "./canonical.ts"
-import { islandsBlock, islandWidgets } from "./codegen-islands.ts"
+import { CodegenError, islandsBlock, islandWidgets } from "./codegen-islands.ts"
 import { isArtifact, readArtifacts } from "./pack.ts"
 import { mayReadActor } from "./zen-reads.ts"
 
-export class CodegenError extends Error {
-  constructor(readonly at: string, message: string) {
-    super(`${at}: ${message}`)
-    this.name = "CodegenError"
-  }
-}
+export { CodegenError }
 
 type Node = { readonly [key: string]: unknown }
 const record = (value: unknown): value is Node => typeof value === "object" && value !== null && !Array.isArray(value)
