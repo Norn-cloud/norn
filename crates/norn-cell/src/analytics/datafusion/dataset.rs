@@ -8,8 +8,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use datafusion::common::Column as DfColumn;
-use datafusion::logical_expr::{Expr, lit};
+use datafusion::logical_expr::lit;
 
 use super::super::{
     LineageRequest, LineageResponse, LoadRequest, LoadResponse, RowFinding, TableSchema,
@@ -88,7 +87,6 @@ pub(super) struct Dataset {
     pub rows: Vec<TypedRow>,
     /// Rows a rule holds back.
     pub held: BTreeSet<u64>,
-    files: Files,
 }
 
 /// MANIFEST-CACHE-1: rebuild the current dataset `table` at the cache
@@ -131,13 +129,8 @@ fn hydrate(tenant: &mut Tenant, table: &str, load: &str) -> Outcome<()> {
     })
 }
 
-/// The dataset `table` at `load`, hydrated first on a cache miss.
-pub(super) fn dataset(
-    engine: &Engine,
-    tenant: &mut Tenant,
-    table: &str,
-    load: &str,
-) -> Outcome<Dataset> {
+/// Hydrate (on cache miss) and verify the current schema and files for `table` at `load`.
+fn open_files(tenant: &mut Tenant, table: &str, load: &str) -> Outcome<(TableSchema, Files)> {
     if tenant.catalog.meta(&format!("load:{table}"))?.as_deref() != Some(load) {
         hydrate(tenant, table, load)?;
     }
@@ -162,10 +155,21 @@ pub(super) fn dataset(
     // N8: each file is the bytes its record names before it is read.
     tenant.verify(&files.data, &files.data_sha256)?;
     tenant.verify(&files.held, &files.held_sha256)?;
-    let rows = read_rows(engine, tenant, &schema, &files.data, None)?;
+    Ok((schema, files))
+}
+
+/// The dataset `table` at `load`, hydrated first on a cache miss.
+pub(super) fn dataset(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    table: &str,
+    load: &str,
+) -> Outcome<Dataset> {
+    let (schema, files) = open_files(tenant, table, load)?;
+    let rows = read_rows(engine, tenant, &schema, &files.data)?;
     let mut held = BTreeSet::new();
     let plan = super::scan::Plan::Scan {
-        files: vec![files.held.clone()],
+        files: vec![files.held],
         filter: Some(
             super::scan::col(":holds")
                 .eq(lit(true))
@@ -185,20 +189,18 @@ pub(super) fn dataset(
         table: schema,
         rows,
         held,
-        files,
     })
 }
 
-/// The typed rows of a data file, optionally only those a typed filter keeps.
+/// The typed rows of a data file.
 fn read_rows(
     engine: &Engine,
     tenant: &Tenant,
     table: &TableSchema,
     data: &Path,
-    filter: Option<Expr>,
 ) -> Outcome<Vec<TypedRow>> {
     let mut rows = Vec::new();
-    for batch in engine.scan(tenant, &[data.to_path_buf()], filter)? {
+    for batch in engine.scan(tenant, &[data.to_path_buf()], None)? {
         let numbers = columnar::system(&batch, ":row", columnar::u64_at)?;
         let columns = table
             .columns
@@ -225,24 +227,32 @@ pub(super) fn lineage(
     tenant: &mut Tenant,
     request: &LineageRequest,
 ) -> Outcome<LineageResponse> {
-    let dataset = dataset(engine, tenant, &request.table, &request.load)?;
-    let row_filter =
-        |name: &str| Expr::Column(DfColumn::new_unqualified(name)).eq(lit(request.row));
-    let admitted = read_rows(
-        engine,
-        tenant,
-        &dataset.table,
-        &dataset.files.data,
-        Some(row_filter(":row")),
-    )?
-    .len()
-        == 1;
+    let (_schema, files) = open_files(tenant, &request.table, &request.load)?;
+    let row_filter = || super::scan::col(":row").eq(lit(request.row));
+    let data_plan = super::scan::Plan::Scan {
+        files: vec![files.data],
+        filter: Some(row_filter()),
+        columns: Some(vec![":row".to_owned()]),
+        order: Vec::new(),
+    };
+    let matched_rows: usize = engine
+        .collect(tenant, data_plan)?
+        .iter()
+        .map(datafusion::arrow::array::RecordBatch::num_rows)
+        .fold(0_usize, usize::saturating_add);
+    let admitted = matched_rows == 1;
+    let held_plan = super::scan::Plan::Scan {
+        files: vec![files.held],
+        filter: Some(row_filter()),
+        columns: Some(vec![
+            ":reason".to_owned(),
+            ":rule".to_owned(),
+            ":holds".to_owned(),
+        ]),
+        order: Vec::new(),
+    };
     let mut held: Vec<(Option<String>, String, bool)> = Vec::new();
-    for batch in engine.scan(
-        tenant,
-        std::slice::from_ref(&dataset.files.held),
-        Some(row_filter(":row")),
-    )? {
+    for batch in engine.collect(tenant, held_plan)? {
         let reason = columnar::system(&batch, ":reason", columnar::text_at)?;
         let rule = columnar::system(&batch, ":rule", columnar::text_at)?;
         let holds = columnar::system(&batch, ":holds", columnar::bool_at)?;
