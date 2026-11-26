@@ -902,13 +902,16 @@ pub fn repeating_fields(schema: &SourceSchemaIr) -> BTreeSet<(String, String)> {
 /// block passes on 0.41 and 0.42.
 #[cfg(test)]
 mod decoding_tests {
-    use super::{XsdFile, XsdNode, parse};
+    use super::{BundleBudget, XsdFile, XsdNode, parse};
 
     fn nodes(xml: &str) -> Vec<XsdNode> {
-        parse(XsdFile {
-            path: "https://example.test/decoding.xsd",
-            bytes: xml.as_bytes(),
-        })
+        parse(
+            XsdFile {
+                path: "https://example.test/decoding.xsd",
+                bytes: xml.as_bytes(),
+            },
+            &mut BundleBudget::default(),
+        )
         .expect("parses")
     }
 
@@ -968,16 +971,22 @@ mod decoding_tests {
     fn only_xml_1_0_declarations_are_admitted() {
         let body = "<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\"/>";
         assert!(
-            parse(XsdFile {
-                path: "a.xsd",
-                bytes: format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{body}").as_bytes(),
-            })
+            parse(
+                XsdFile {
+                    path: "a.xsd",
+                    bytes: format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{body}").as_bytes(),
+                },
+                &mut BundleBudget::default(),
+            )
             .is_ok()
         );
-        let refused = parse(XsdFile {
-            path: "a.xsd",
-            bytes: format!("<?xml version=\"1.1\"?>{body}").as_bytes(),
-        })
+        let refused = parse(
+            XsdFile {
+                path: "a.xsd",
+                bytes: format!("<?xml version=\"1.1\"?>{body}").as_bytes(),
+            },
+            &mut BundleBudget::default(),
+        )
         .expect_err("XML 1.1 is refused");
         assert_eq!(refused, "only XML 1.0 is supported");
     }
