@@ -9,6 +9,9 @@ import {
   SHOW_FIRST, appletHome, appletMenu, appletOf, appletsOf, currentIn, decoded, diffExpanded, initials, matches, placeOf, sectionOf, target, visibleItems,
   type Applet, type MenuEntry, type Section,
 } from "../src/lib/nav-model.ts"
+import {
+  MAX_RECENT, clearRecent, readMenuState, readRecent, recentForPath, recordRecent, writeMenuState, writeRecent,
+} from "../src/lib/nav-storage.ts"
 import type { Account } from "../src/lib/session.ts"
 import { Shell } from "../src/shell.tsx"
 import { appletBadge } from "../src/shell-nav.tsx"
@@ -316,4 +319,102 @@ test("#1414: isEmptyWorkspace identifies cells holding only trusted base artifac
   expect(isEmptyWorkspace([])).toBe(true)
   expect(isEmptyWorkspace([{ artifactId: "core.units" }, { artifactId: "std.value_types" }])).toBe(true)
   expect(isEmptyWorkspace([{ artifactId: "core.units" }, { artifactId: "canon.Holding.entity" }])).toBe(false)
+})
+
+function memoryStorage() {
+  const map = new Map<string, string>()
+  return {
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => { map.set(key, value) },
+    removeItem: (key: string) => { map.delete(key) },
+  }
+}
+
+test("submenu branch choices and Show all persist cleanly in storage and degrade gracefully when blocked or malformed", () => {
+  const storage = memoryStorage()
+  expect(readMenuState(storage)).toEqual({ chosen: {}, whole: new Set() })
+
+  writeMenuState({ builder: { "space:Logic": false }, data: { "dest:/objects": true } }, new Set(["data:/objects:"]), storage)
+  const restored = readMenuState(storage)
+  expect(restored.chosen).toEqual({ builder: { "space:Logic": false }, data: { "dest:/objects": true } })
+  expect([...restored.whole]).toEqual(["data:/objects:"])
+
+  // Corrupted or hostile JSON degrades safely.
+  storage.setItem("norn.studio.menu", "{not-json")
+  expect(readMenuState(storage)).toEqual({ chosen: {}, whole: new Set() })
+  storage.setItem("norn.studio.menu", JSON.stringify({ chosen: { builder: { ok: false, bad: "nope" } }, whole: [42, "valid:key", ""] }))
+  expect(readMenuState(storage)).toEqual({ chosen: { builder: { ok: false } }, whole: new Set(["valid:key"]) })
+
+  const blocked = {
+    getItem: () => { throw new DOMException("blocked", "SecurityError") },
+    setItem: () => { throw new DOMException("blocked", "SecurityError") },
+    removeItem: () => { throw new DOMException("blocked", "SecurityError") },
+  }
+  expect(readMenuState(blocked)).toEqual({ chosen: {}, whole: new Set() })
+  expect(() => writeMenuState({ builder: { "space:Logic": false } }, new Set(["x"]), blocked)).not.toThrow()
+})
+
+test("recent items track opened records, runs and views, deduplicate, cap, scope per workspace, and clear cleanly", () => {
+  const menus = new Map<string, readonly MenuEntry[]>([
+    ["/sources", [{ href: "/sources/canon.Holding", label: "Holding" }]],
+    ["/views", [{ href: "/views/open-items", label: "Open items" }]],
+  ])
+  expect(recentForPath("/", menus, 1)).toBeNull()
+  expect(recentForPath("/decisions", menus, 1)).toBeNull()
+  expect(recentForPath("/sources", menus, 1)).toBeNull()
+  expect(recentForPath("/sources/canon.Holding", menus, 1)).toBeNull()
+  expect(recentForPath("/views/new", menus, 1)).toBeNull()
+
+  const rec = recentForPath("/sources/canon.Holding/demo%2Fitem%2F1", menus, 10)
+  expect(rec).toEqual({ href: "/sources/canon.Holding/demo%2Fitem%2F1", label: "demo/item/1", kind: "record", detail: "Holding", visitedAt: 10 })
+  const run = recentForPath("/runs/run_42", menus, 20)
+  expect(run).toEqual({ href: "/runs/run_42", label: "run_42", kind: "run", visitedAt: 20 })
+  const view = recentForPath("/views/open-items/edit", menus, 30)
+  expect(view).toEqual({ href: "/views/open-items", label: "Open items", kind: "view", visitedAt: 30 })
+
+  let list = recordRecent([], rec!)
+  list = recordRecent(list, run!)
+  list = recordRecent(list, view!)
+  list = recordRecent(list, { ...rec!, visitedAt: 40 })
+  expect(list.map((item) => item.href)).toEqual([rec!.href, view!.href, run!.href])
+
+  // Capped at MAX_RECENT.
+  for (let i = 0; i < MAX_RECENT + 5; i += 1) {
+    list = recordRecent(list, { href: `/runs/r${i}`, label: `r${i}`, kind: "run", visitedAt: 100 + i })
+  }
+  expect(list).toHaveLength(MAX_RECENT)
+
+  const storage = memoryStorage()
+  writeRecent("u1:o1:", list, storage)
+  expect(readRecent("u1:o1:", storage)).toEqual(list)
+  expect(readRecent("u1:o2:", storage)).toEqual([])
+  clearRecent("u1:o1:", storage)
+  expect(readRecent("u1:o1:", storage)).toEqual([])
+})
+
+test("Home and Inbox submenu islands show the local Recent list with Clear when items exist, and Builder does not", async () => {
+  const storage = memoryStorage()
+  writeRecent("u1:o1:", [
+    { href: "/sources/canon.Holding/rec_1", label: "rec_1", kind: "record", detail: "Holding", visitedAt: 1 },
+    { href: "/runs/run_7", label: "run_7", kind: "run", visitedAt: 2 },
+  ], storage)
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage })
+  try {
+    const homeHtml = await at("/", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    const homeMenu = landmark(homeHtml, "Home menu")
+    expect(homeMenu).toContain('data-slot="recent-section"')
+    expect(homeMenu).toContain(">Recent<")
+    expect(homeMenu).toContain(">Clear<")
+    expect(homeMenu).toContain('href="/sources/canon.Holding/rec_1"')
+    expect(homeMenu).toContain('href="/runs/run_7"')
+
+    const inboxHtml = await at("/decisions", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    expect(landmark(inboxHtml, "Inbox menu")).toContain('data-slot="recent-section"')
+
+    const builderHtml = await at("/sources", () => <Shell sections={[home, inbox, sources]} account={account} onSignOut={() => {}} />)
+    expect(landmark(builderHtml, "Builder menu")).not.toContain('data-slot="recent-section"')
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "localStorage", saved); else delete (globalThis as { localStorage?: unknown }).localStorage
+  }
 })

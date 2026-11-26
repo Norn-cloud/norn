@@ -1026,7 +1026,8 @@ test.each([
   const offAnswered = observe("answered-read").subscribe(() => {})
   try {
     expect(client.getQueryState(["refused-read"])?.status).toBe("success")
-    await retryWorkspace(client)
+    const recovered = await retryWorkspace(client)
+    expect(recovered).toBe(true)
     expect(reads).toEqual(["refused-read"])
     expect(client.getQueryData<unknown>(["refused-read"])).toEqual({ kind: "document" })
   } finally {
@@ -1066,8 +1067,9 @@ test("when the workspace Retry's mode read settles in error, nothing else is rea
     definitionReads.length = 0
     pageReads.length = 0
 
-    await retryWorkspace(client)
+    const recovered = await retryWorkspace(client)
 
+    expect(recovered).toBe(false)
     expect(mode.getCurrentResult().isError).toBe(true)
     expect(definitionReads.length).toBeGreaterThan(0)
     expect(pageReads).toEqual([])

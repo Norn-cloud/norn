@@ -684,8 +684,8 @@ function holdsRefusal(data: unknown): boolean {
  * that did not answer again (each with its own automatic retries, keeping Retry disabled meanwhile).
  * Resolves when both are done, so a Retry button can stay disabled until then.
  */
-export async function retryWorkspace(client: QueryClient): Promise<void> {
-  if (!await retryMode(client)) return
+export async function retryWorkspace(client: QueryClient): Promise<boolean> {
+  if (!await retryMode(client)) return false
   await client.invalidateQueries({
     predicate: (query) => {
       const head = query.queryKey[0]
@@ -693,6 +693,7 @@ export async function retryWorkspace(client: QueryClient): Promise<void> {
       return query.state.status === "error" || holdsRefusal(query.state.data)
     },
   }, { cancelRefetch: false })
+  return true
 }
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type or scope changes). */

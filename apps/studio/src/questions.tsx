@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { CalendarRange, ChartLine, Clock, Database, ListTree, Plus, Rows3, Sigma, X } from "lucide-react"
@@ -27,7 +27,7 @@ import { RestatementCard } from "./restatement.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
-import { useMode } from "./lib/live-transport.ts"
+import { retryWorkspace, useMode } from "./lib/live-transport.ts"
 import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type CellMetric, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
@@ -370,6 +370,7 @@ export function QuestionPage() {
 }
 
 export function QuestionsPage() {
+  const queries = useQueryClient()
   const mode = useMode()
   const live = mode.data?.kind === "live"
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
@@ -378,7 +379,7 @@ export function QuestionsPage() {
       <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the cell. Every number opens to the records behind it."
         primary={<Button asChild><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>}
         secondary={[{ label: "Build step by step", icon: ListTree, to: "/metrics/build" }]} />
-      {mode.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>}
+      {mode.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void retryWorkspace(queries)}>{() => null}</LoadState>}
       {mode.isError && <WorkspaceUnavailable error={mode.error} />}
       {live ? <LiveQuestionsBoard /> : mode.data && (
         <LoadState

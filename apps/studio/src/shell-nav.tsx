@@ -1,7 +1,7 @@
-import { createLink } from "@tanstack/react-router"
+import { createLink, useRouterState } from "@tanstack/react-router"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
-import { ChevronDown, ChevronRight, Search, X } from "lucide-react"
+import { Bookmark, ChevronDown, ChevronRight, Play, Rows3, Search, X } from "lucide-react"
 import { useId, useRef, type ComponentProps, type ReactNode } from "react"
 import { useAssistant } from "@/assistant-slot"
 import { Hint } from "@/components/system/kit"
@@ -12,6 +12,7 @@ import {
   currentIn, diffExpanded, matches, named, shown, target, visibleItems,
   type Applet, type AppletMenu, type MenuDestination, type MenuEntry, type PinnedEntry,
 } from "@/lib/nav-model"
+import type { RecentItem, RecentKind } from "@/lib/nav-storage"
 
 /**
  * The three-island shell's navigation (DESIGN.md 9.1): the applet rail, the submenu island's panel,
@@ -27,6 +28,36 @@ function NavAnchor({ "aria-current": _active, current, ref, ...props }: Componen
   return <a ref={ref} aria-current={current ? "page" : undefined} {...props} />
 }
 export const NavLink = createLink(NavAnchor)
+
+interface CurrentLocation {
+  readonly pathname: string
+  readonly searchStr: string
+  readonly hash: string
+  readonly applet: string | undefined
+}
+
+function useCurrentLocation(): CurrentLocation {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr })
+  const hash = useRouterState({ select: (state) => state.location.hash })
+  const applet = useRouterState({ select: (state) => state.location.state.applet })
+  return { pathname, searchStr, hash, applet }
+}
+
+/** Whether following a nav link lands on the exact page, query, hash and applet already open. */
+function isSameNavTarget(
+  loc: CurrentLocation,
+  to: string,
+  hash: string | undefined,
+  targetApplet: string | undefined,
+  currentApplet: string | undefined,
+): boolean {
+  const effectiveApplet = loc.applet ?? currentApplet
+  return loc.pathname === to
+    && loc.searchStr === ""
+    && loc.hash === (hash ?? "")
+    && (targetApplet === undefined || effectiveApplet === targetApplet)
+}
 
 declare module "@tanstack/history" {
   interface HistoryState {
@@ -56,15 +87,21 @@ export interface RailApplet {
 }
 
 /** One applet on the rail: its icon, its name and state as one label and an end-side tooltip, and an attention dot. */
-function AppletLink({ item, current }: { readonly item: RailApplet; readonly current: boolean }) {
+function AppletLink({ item, current, currentApplet, location }: {
+  readonly item: RailApplet
+  readonly current: boolean
+  readonly currentApplet: string | undefined
+  readonly location: CurrentLocation
+}) {
   const Icon = item.applet.icon
   const label = named(item.applet.label, item.badge)
   const dot = item.badge && <span data-count aria-hidden className={attentionDot} />
+  const replace = item.home !== undefined && isSameNavTarget(location, item.home, undefined, item.applet.id, currentApplet)
   return (
     <Hint side="end" label={label}>
       {item.home === undefined
         ? <ToolbarButton aria-label={`${label}, nothing to open yet`} aria-disabled aria-current={current ? "page" : undefined} className={cn(railButton, "opacity-60")}><Icon aria-hidden strokeWidth={1.6} />{dot}</ToolbarButton>
-        : <ToolbarLink render={<NavLink to={item.home} state={{ applet: item.applet.id }} current={current} />} aria-label={label} data-applet={item.applet.id} className={railButton}><Icon aria-hidden strokeWidth={1.6} />{dot}</ToolbarLink>}
+        : <ToolbarLink render={<NavLink to={item.home} state={{ applet: item.applet.id }} replace={replace} current={current} />} aria-label={label} data-applet={item.applet.id} className={railButton}><Icon aria-hidden strokeWidth={1.6} />{dot}</ToolbarLink>}
     </Hint>
   )
 }
@@ -78,12 +115,13 @@ export function AppletRail({ applets, current, top, bottom }: {
   readonly applets: readonly RailApplet[]; readonly current: string | undefined
   readonly top: ReactNode; readonly bottom: ReactNode
 }) {
+  const location = useCurrentLocation()
   return (
     <>
       <div className="flex h-[52px] w-full shrink-0 items-center justify-center">{top}</div>
       <nav aria-label="Applets" className="flex min-h-0 w-full flex-1 flex-col items-center overflow-y-auto overflow-x-hidden py-[4px]">
         <Toolbar orientation="vertical" aria-label="Applets" className="flex flex-col items-center gap-[4px]">
-          {applets.map((item) => <AppletLink key={item.applet.id} item={item} current={item.applet.id === current} />)}
+          {applets.map((item) => <AppletLink key={item.applet.id} item={item} current={item.applet.id === current} currentApplet={current} location={location} />)}
         </Toolbar>
       </nav>
       <div className="flex w-full shrink-0 flex-col items-center gap-[4px] pt-[4px] pb-[10px]">{bottom}</div>
@@ -173,25 +211,71 @@ function narrowed(menu: AppletMenu, query: string): AppletMenu {
   }
 }
 
+export interface RecentSection {
+  readonly items: readonly RecentItem[]
+  readonly onClear: () => void
+}
+
+const RECENT_ICON = { record: Rows3, run: Play, view: Bookmark } as const
+const RECENT_KIND_LABEL: Readonly<Record<RecentKind, string>> = { record: "Record", run: "Run", view: "View" }
+
+/** Local list of recently opened records, runs and views for single-page global applets (DESIGN.md 18). */
+function RecentList({ recent, onFollow }: { readonly recent: RecentSection; readonly onFollow: () => void }) {
+  if (recent.items.length === 0) return null
+  return (
+    <section aria-label="Recent" data-slot="recent-section" className="mt-[12px]">
+      <div className="flex h-[32px] items-center justify-between gap-[4px] px-[8px] max-sm:min-h-[44px]">
+        <span className="truncate text-meta text-muted-foreground">Recent</span>
+        <button
+          type="button"
+          onClick={recent.onClear}
+          className="shrink-0 rounded-(--radius-row) px-[6px] py-[2px] text-meta text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring motion-reduce:transition-none max-sm:min-h-[44px] max-sm:px-[10px]"
+        >
+          Clear
+        </button>
+      </div>
+      <ul data-slot="recent-list" className="flex flex-col">
+        {recent.items.map((item) => {
+          const Icon = RECENT_ICON[item.kind]
+          return (
+            <li key={item.href}>
+              <NavLink to={item.href} onClick={onFollow} className={row}>
+                <Icon aria-hidden strokeWidth={1.6} />
+                <span className="min-w-0 flex-1 truncate"><bdi>{item.label}</bdi></span>
+                <span className="ms-auto max-w-20 shrink-0 truncate text-meta">{item.detail ?? RECENT_KIND_LABEL[item.kind]}</span>
+              </NavLink>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
 /**
  * The submenu island's panel: the applet's name, a filter field when it lists items, and the
  * "<applet> menu" landmark around a UI SDK `Tree` (the APG navigation treeview: arrows, Right/Left,
  * Home/End, type-ahead; `current` marks the one current row). Long lists show their first rows and
  * a "Show all" row; a filter that matches nothing says so.
  */
-export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close, context }: {
+export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close, context, recent, currentApplet }: {
   readonly menu: AppletMenu; readonly pathname: string
   /** Destinations whose items are not read yet (pending or failed): they claim neither items nor "none yet". */
   readonly unread: ReadonlySet<string>
   readonly state: MenuState; readonly onFollow: () => void; readonly close?: ReactNode
   /** A quiet line under the applet's name (the open workspace and its state). */
   readonly context?: ReactNode
+  /** Local recently opened records, runs and views, shown under global applets (Home & Inbox). */
+  readonly recent?: RecentSection
+  /** The currently active applet id, used to avoid pushing a duplicate history entry on the open row. */
+  readonly currentApplet?: string
 }) {
   const { applet } = menu
   const navRef = useRef<HTMLElement>(null)
   const headingId = useId()
   const filtering = state.query.trim() !== ""
   const shownMenu = narrowed(menu, state.query)
+  const location = useCurrentLocation()
   return (
     <>
       <div className="flex min-h-[52px] shrink-0 items-center gap-[4px] ps-[16px] pe-[8px] pt-[6px] pb-[4px] max-sm:min-h-[56px]">
@@ -219,16 +303,18 @@ export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close, c
       <nav ref={navRef} aria-label={`${applet.label} menu`} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-[8px] pb-[8px]">
         {filtering && shownMenu.headings.length === 0
           ? <p role="status" className="px-[8px] py-[6px] text-body text-muted-foreground">Nothing matches “{state.query.trim()}”.</p>
-          : <MenuTree key={applet.id} menu={shownMenu} full={menu} pathname={pathname} unread={unread} state={state} filtering={filtering} onFollow={onFollow} labelledBy={headingId} />}
+          : <MenuTree key={applet.id} menu={shownMenu} full={menu} pathname={pathname} unread={unread} state={state} filtering={filtering} onFollow={onFollow} labelledBy={headingId} location={location} currentApplet={currentApplet} />}
+        {!filtering && recent && <RecentList recent={recent} onFollow={onFollow} />}
       </nav>
     </>
   )
 }
 
 /** The menu's tree: headings (collapsible), their destinations and pinned items, each list capped by "Show all". */
-function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, labelledBy }: {
+function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, labelledBy, location, currentApplet }: {
   readonly menu: AppletMenu; readonly full: AppletMenu; readonly pathname: string; readonly unread: ReadonlySet<string>
   readonly state: MenuState; readonly filtering: boolean; readonly onFollow: () => void; readonly labelledBy: string
+  readonly location: CurrentLocation; readonly currentApplet: string | undefined
 }) {
   const current = currentIn(full, pathname)
   // Headings and every list start open; the reader's own choices win, except that the current row is never hidden.
@@ -273,9 +359,11 @@ function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, la
       ...rows.map((entry) => {
         const owner = pinned.find((item) => item.entry === entry)!.section
         const Icon = entry.icon ?? owner.icon
+        const dest = target(owner, entry.href)
+        const replace = isSameNavTarget(location, dest.to, dest.hash, menu.applet.id, currentApplet)
         return (
           <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-            <TreeItemLabel render={<NavLink {...target(owner, entry.href)} state={{ applet: menu.applet.id }} onClick={onFollow} />} className={row}>
+            <TreeItemLabel render={<NavLink {...dest} state={{ applet: menu.applet.id }} replace={replace} onClick={onFollow} />} className={row}>
               <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{entry.label}</span>
             </TreeItemLabel>
           </TreeItem>
@@ -290,7 +378,7 @@ function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, la
       onAction={(value) => { if (value.startsWith("more:")) state.onWhole(value.slice("more:".length)) }}>
       {menu.headings.map(({ heading, destinations, pinned }) => {
         const items = [
-          ...destinations.map((destination) => <Destination key={destination.section.path} destination={destination} applet={menu.applet} unread={unread} list={list} more={more} onFollow={onFollow} />),
+          ...destinations.map((destination) => <Destination key={destination.section.path} destination={destination} applet={menu.applet} unread={unread} list={list} more={more} onFollow={onFollow} location={location} currentApplet={currentApplet} />),
           ...pinnedRows(heading, pinned),
         ]
         if (heading === "") return items
@@ -309,11 +397,11 @@ function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, la
 }
 
 /** One destination in the menu: its row (a link, or a plain heading when it has no page), then its items. */
-function Destination({ destination, applet, unread, list, more, onFollow }: {
+function Destination({ destination, applet, unread, list, more, onFollow, location, currentApplet }: {
   readonly destination: MenuDestination; readonly applet: Applet; readonly unread: ReadonlySet<string>
   readonly list: (key: string, items: readonly MenuEntry[]) => { readonly shown: readonly MenuEntry[]; readonly hidden: number }
   readonly more: (key: string, hidden: number, total: number, indent: boolean) => ReactNode
-  readonly onFollow: () => void
+  readonly onFollow: () => void; readonly location: CurrentLocation; readonly currentApplet: string | undefined
 }) {
   const { section, entries, badge } = destination
   const headings = [...new Set(entries.map(({ group }) => group ?? ""))]
@@ -324,9 +412,11 @@ function Destination({ destination, applet, unread, list, more, onFollow }: {
     return [
       ...visible.map((entry) => {
         const count = shown(entry.count)
+        const dest = target(section, entry.href)
+        const replace = isSameNavTarget(location, dest.to, dest.hash, applet.id, currentApplet)
         return (
           <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-            <TreeItemLabel render={<NavLink {...target(section, entry.href)} state={{ applet: applet.id }} onClick={onFollow} />} className={cn(row, "ps-[32px]")}>
+            <TreeItemLabel render={<NavLink {...dest} state={{ applet: applet.id }} replace={replace} onClick={onFollow} />} className={cn(row, "ps-[32px]")}>
               <span className="truncate">{entry.label}</span>
               {count && <span className="ms-auto text-meta tabular-nums">{count}</span>}
             </TreeItemLabel>
@@ -358,11 +448,12 @@ function Destination({ destination, applet, unread, list, more, onFollow }: {
     {badge && <span data-count className="ms-auto text-meta tabular-nums">{badge}</span>}
     {none && <span data-empty className="ms-auto text-meta">None yet</span>}
   </>
+  const headReplace = isSameNavTarget(location, section.path, undefined, applet.id, currentApplet)
   return (
     <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
       {section.index === false
         ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
-        : <TreeItemLabel render={<NavLink to={section.path} state={{ applet: applet.id }} onClick={onFollow} />} className={row}>{head}</TreeItemLabel>}
+        : <TreeItemLabel render={<NavLink to={section.path} state={{ applet: applet.id }} replace={headReplace} onClick={onFollow} />} className={row}>{head}</TreeItemLabel>}
       {entries.length > 0 && <TreeGroup>{children}</TreeGroup>}
     </TreeItem>
   )
