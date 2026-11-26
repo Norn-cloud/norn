@@ -21,7 +21,9 @@ pub(crate) fn property(
         let ancestor = nodes.get(id).ok_or("particle parent is missing")?;
         if ancestor.is("choice")
             || ancestor.is("any")
-            || (!ancestor.attr("maxOccurs").is_empty() && ancestor.attr("maxOccurs") != "1")
+            || crate::xsd_profile::occurrences(ancestor)?
+                .1
+                .is_none_or(|max| max > 1)
         {
             scalar = false;
         }
@@ -60,7 +62,8 @@ pub(crate) fn resolve_fields(
         .iter()
         .map(|n| (n.id.as_str(), n))
         .collect::<BTreeMap<_, _>>();
-    let mut globals = BTreeMap::new();
+    let mut global_elements = BTreeMap::new();
+    let mut global_attributes = BTreeMap::new();
     let mut types: BTreeMap<String, &XsdNode> = BTreeMap::new();
     for node in crate::xsd::semantic_nodes(nodes) {
         if node.attr("name").is_empty() {
@@ -74,8 +77,13 @@ pub(crate) fn resolve_fields(
         }
         if node.is("element") {
             let key = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
-            if globals.insert(key, node).is_some() {
+            if global_elements.insert(key, node).is_some() {
                 return Err("duplicate global element".into());
+            }
+        } else if node.is("attribute") {
+            let key = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
+            if global_attributes.insert(key, node).is_some() {
+                return Err("duplicate global attribute".into());
             }
         } else if node.is("simpleType") || node.is("complexType") {
             let name = format!("{{{}}}{}", root.attr("targetNamespace"), node.attr("name"));
@@ -98,10 +106,18 @@ pub(crate) fn resolve_fields(
                 .ok_or("field source identity is missing")?;
             if !node.attr("ref").is_empty() {
                 let name = node.qname(node.attr("ref"))?;
-                if let Some(def) = globals.get(&name)
-                    && !def.attr("type").is_empty()
-                {
-                    field.native_type = def.qname(def.attr("type"))?;
+                let target_globals = if node.is("attribute") {
+                    &global_attributes
+                } else {
+                    &global_elements
+                };
+                if let Some(def) = target_globals.get(&name) {
+                    if !def.attr("type").is_empty() {
+                        field.native_type = def.qname(def.attr("type"))?;
+                    }
+                    if node.is("element") && matches!(def.attr("nillable").trim(), "true" | "1") {
+                        field.required = Some(false);
+                    }
                 }
             }
             // A field that can occur more than once is a list, never a scalar.
