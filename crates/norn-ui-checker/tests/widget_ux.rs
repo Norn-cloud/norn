@@ -4811,6 +4811,203 @@ fn a_broken_record_page_is_refused() {
     );
 }
 
+/// Each error of `page` as `(pointer, message)`.
+fn record_page_errors(page: Value) -> Vec<(String, String)> {
+    findings_with_support(page, Vec::new(), &[])
+        .into_iter()
+        .filter(Diagnostic::is_error)
+        .map(|finding| {
+            (
+                finding.span.map_or_default(|span| span.pointer),
+                finding.message,
+            )
+        })
+        .collect()
+}
+
+fn assert_refused_at(found: &[(String, String)], pointer: &str, part: &str) {
+    assert!(
+        found
+            .iter()
+            .any(|(at, message)| at == pointer && message.contains(part)),
+        "expected a finding at {pointer} saying {part:?}; got {found:#?}"
+    );
+}
+
+fn record_page_with(change: impl FnOnce(&mut Value)) -> Value {
+    let mut page: Value = serde_json::from_str(RECORD_PAGE).req("record page should be JSON");
+    change(page.at_mut("payload").at_mut("ux"));
+    page
+}
+
+/// The index of transition `id` of the record page's machine.
+fn record_transition(id: &str) -> usize {
+    let page: Value = serde_json::from_str(RECORD_PAGE).req("record page should be JSON");
+    page.at("payload")
+        .at("ux")
+        .at("pages")
+        .at(0)
+        .at("machine")
+        .at("transitions")
+        .as_array()
+        .req("transitions")
+        .iter()
+        .position(|transition| transition["transitionId"] == id)
+        .req("transition")
+}
+
+/// A person raises a node's event only where the renderer draws the node: a transition that leaves
+/// a state holding its source out is refused, and it is no Retry or Close of that state (L4).
+#[test]
+fn an_event_whose_source_is_held_out_of_its_state_is_no_way_out() {
+    let retry = record_transition("retry");
+    let trapped = record_page_with(|ux| {
+        ux["pages"][0]["root"]["children"][1]["component"]["heldIn"] = json!(["showing"]);
+    });
+    let found = record_page_errors(trapped);
+    assert_refused_at(
+        &found,
+        &format!("/payload/ux/pages/0/machine/transitions/{retry}/from"),
+        "not drawn in `failed`",
+    );
+    // Without that transition `failed` is an error state with no exit a person can take.
+    assert!(
+        found
+            .iter()
+            .any(|(at, _)| at.starts_with("/payload/ux/pages/0/machine/states/5")),
+        "{found:#?}"
+    );
+    // A node above the source counts too: a control inside a layer held in other states.
+    let mut layered = machine_widget(approve_machine());
+    let page = layered
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0);
+    page.at_mut("root").at_mut("children").as_array_mut().req("children").push(json!({
+        "nodeId": "held-layer",
+        "component": { "kind": "catalog", "entry": { "entryId": "ui-sdk:dialog" }, "heldIn": ["browsing"] },
+        "children": [{
+            "nodeId": "held-control",
+            "component": { "kind": "control", "label": { "en": "Again", "ar": "مجددًا" }, "input": "trigger" },
+            "children": []
+        }]
+    }));
+    let machine = page.at_mut("machine");
+    machine.at_mut("events").as_array_mut().req("events").push(
+        json!({ "eventId": "held-again", "source": { "kind": "user", "nodeId": "held-control" } }),
+    );
+    machine.at_mut("transitions").as_array_mut().req("transitions").push(json!({
+        "transitionId": "held-again", "from": "awaiting-approval", "on": "held-again", "target": "browsing"
+    }));
+    assert_ui_code(
+        layered,
+        "widget.machine.invalid_event",
+        "`held-again` comes from node `held-control`, which is not drawn in `awaiting-approval`",
+    );
+}
+
+/// A UI SDK primitive no person dismisses (a button) is held only in states its page declares;
+/// a layer's states answer to its own law.
+#[test]
+fn a_primitive_held_in_an_undeclared_state_is_refused() {
+    let page = record_page_with(|ux| {
+        ux["pages"][0]["root"]["children"].as_array_mut().req("children").push(json!({
+            "nodeId": "held-button",
+            "component": { "kind": "catalog", "entry": { "entryId": "ui-sdk:button" }, "heldIn": ["nowhere"] },
+            "children": []
+        }));
+    });
+    assert_refused_at(
+        &record_page_errors(page),
+        "/payload/ux/pages/0/root/children/5/component/heldIn/0",
+        "does not declare",
+    );
+}
+
+/// UI-CONTEXT-READ-1: a catalog entry's machine, which any page may place, never reads a page's
+/// context read.
+#[test]
+fn a_catalog_machine_never_reads_a_context_read() {
+    let page = record_page_with(|ux| {
+        ux["catalog"][0]["machine"] = json!({
+            "machineVersion": "0.1", "initialStateId": "idle", "fields": [],
+            "events": [{ "eventId": "go", "source": { "kind": "user", "nodeId": "self" } }],
+            "states": [
+                { "stateId": "idle", "role": "idle" },
+                { "stateId": "reading", "role": "pending", "awaits": { "kind": "read", "bindingId": "record" }, "deadlineMs": 1000 }
+            ],
+            "transitions": [{ "transitionId": "go", "from": "idle", "on": "go", "target": "reading",
+                "effects": [{ "kind": "start", "call": { "kind": "read", "bindingId": "record" } }] }]
+        });
+    });
+    let found = record_page_errors(page);
+    assert_refused_at(
+        &found,
+        "/payload/ux/catalog/0/machine/states/1/awaits",
+        "read only by the machine of the page",
+    );
+    assert_refused_at(
+        &found,
+        "/payload/ux/catalog/0/machine/transitions/0/effects/0/call",
+        "read only by the machine of the page",
+    );
+}
+
+/// UI-TEXT-1 reads the typed text members only: a JSON value shaped like a message (a machine
+/// field's `initial`) is data, not a message.
+#[test]
+fn a_json_value_shaped_like_a_message_is_no_message() {
+    let page = record_page_with(|ux| {
+        ux["pages"][0]["machine"]["fields"] = json!([{
+            "fieldId": "note", "type": "json", "required": false,
+            "initial": { "msg": { "id": "not-a-hash", "source": "data" } }
+        }]);
+    });
+    let found = record_page_errors(page);
+    assert!(
+        !found.iter().any(|(at, _)| at.contains("/fields/0/initial")),
+        "{found:#?}"
+    );
+}
+
+/// The id hashes the context, U+0000 and the text, so neither may hold U+0000 (else `"b\0c"` in
+/// `"a"` and `"c"` in `"a\0b"` share an id), and one id never names two texts in one widget.
+#[test]
+fn a_message_id_names_exactly_one_text() {
+    let fnv = |bytes: &[u8]| {
+        let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+        format!("m{hash:016x}")
+    };
+    let shared = fnv(b"a\0b\0c");
+    let page = record_page_with(|ux| {
+        ux["catalog"][0]["label"] =
+            json!({ "msg": { "id": shared, "source": "b\u{0}c", "context": "a" } });
+        ux["catalog"][1]["label"] =
+            json!({ "msg": { "id": shared, "source": "c", "context": "a\u{0}b" } });
+    });
+    let found = record_page_errors(page);
+    assert_refused_at(&found, "/payload/ux/catalog/0/label/msg/source", "U+0000");
+    assert_refused_at(&found, "/payload/ux/catalog/1/label/msg/context", "U+0000");
+    assert_refused_at(
+        &found,
+        "/payload/ux/catalog/1/label/msg/id",
+        "names two texts",
+    );
+    // A hand-copied id on another text is refused as a second text under one id.
+    let page = record_page_with(|ux| {
+        let first = ux["catalog"][0]["label"].clone();
+        ux["catalog"][1]["label"]["msg"]["id"] = first["msg"]["id"].clone();
+    });
+    assert_refused_at(
+        &record_page_errors(page),
+        "/payload/ux/catalog/1/label/msg/id",
+        "names two texts",
+    );
+}
+
 fn machine(sheet: &mut Value) -> &mut Value {
     sheet
         .at_mut("payload")
@@ -5060,3 +5257,6 @@ fn only_a_catalog_component_may_leave_a_guard_to_its_own_code() {
 
 #[path = "widget_ux/ui_sdk_laws.rs"]
 mod ui_sdk_laws;
+
+#[path = "widget_ux/verified_receipt.rs"]
+mod verified_receipt;

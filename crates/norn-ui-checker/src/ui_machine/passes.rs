@@ -367,12 +367,18 @@ impl<'m> MachineChecker<'m> {
             return;
         }
         let outcome = outcome_of(event);
+        let check = TransitionCheck {
+            index,
+            transition,
+            from_state,
+            target_state,
+            event,
+            outcome,
+            pointer: &pointer,
+        };
         match &event.source {
-            // Retry or Close is a person's: a timer alone recovers nothing (L4).
-            WidgetMachineEventSource::User { .. } => {
-                if transition.guard.is_none() && transition.component_guard.is_none() {
-                    facts.recovers.insert(from);
-                }
+            WidgetMachineEventSource::User { node_id, .. } => {
+                self.check_user_transition(&check, node_id, facts);
             }
             WidgetMachineEventSource::PageOpened if from != self.machine.initial_state_id => {
                 self.push(
@@ -386,17 +392,46 @@ impl<'m> MachineChecker<'m> {
             | WidgetMachineEventSource::Outcome { .. }
             | WidgetMachineEventSource::Subscription { .. } => {}
         }
-        let check = TransitionCheck {
+        self.check_transition_outcome(&check, facts);
+        self.check_transition_pending_effects(&check, facts);
+    }
+
+    /// A person raises a node's event only where the node is drawn: a transition from a state that
+    /// holds its source out is none they can take, so it is refused and is no Retry or Close of
+    /// that state (L4), nor an edge of its net. Otherwise an unguarded one is a person's way on.
+    fn check_user_transition(
+        &mut self,
+        check: &TransitionCheck<'m, '_>,
+        node_id: &str,
+        facts: &mut Facts<'m>,
+    ) {
+        let &TransitionCheck {
             index,
             transition,
             from_state,
-            target_state,
             event,
-            outcome,
-            pointer: &pointer,
-        };
-        self.check_transition_outcome(&check, facts);
-        self.check_transition_pending_effects(&check, facts);
+            pointer,
+            ..
+        } = check;
+        let from = from_state.state_id.as_str();
+        let held_out = self.held.get(node_id).is_some_and(|lists| {
+            lists
+                .iter()
+                .any(|states| !states.iter().any(|state| state == from))
+        });
+        if held_out {
+            facts.held_out.insert(index);
+            self.push(
+                INVALID_EVENT,
+                format!("{pointer}/from"),
+                format!(
+                    "`{}` comes from node `{node_id}`, which is not drawn in `{from}` (it or a node above it is held in other states): no person can raise it there",
+                    event.event_id
+                ),
+            );
+        } else if transition.guard.is_none() && transition.component_guard.is_none() {
+            facts.recovers.insert(from);
+        }
     }
 
     fn check_transition_outcome(&mut self, check: &TransitionCheck<'m, '_>, facts: &mut Facts<'m>) {
@@ -674,7 +709,9 @@ impl<'m> MachineChecker<'m> {
     fn check_graph(&mut self, facts: &Facts<'m>) {
         let machine = self.machine;
         let base = self.base;
-        let net = page_net(machine);
+        let mut net = page_net(machine);
+        net.edges
+            .retain(|edge| !facts.held_out.contains(&edge.label));
         let verdict = soundness::analyse(&net);
         let seeded = !net.initial.is_empty();
         let cycles = soundness::input_free_cycles(&net);

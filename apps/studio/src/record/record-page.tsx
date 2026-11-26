@@ -26,7 +26,7 @@ import type { WidgetUx } from "../../../../packages/norn-react/src/ux.ts"
 import { sharedEngine } from "../lib/canvas/checker.ts"
 import { retryWorkspace } from "../lib/live-transport.ts"
 import { directionOf, useLocale } from "../lib/locale.tsx"
-import { translate } from "../lib/translations.ts"
+import { translate, useMessage } from "../lib/translations.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
 import { widgetCalls } from "../lib/widget-calls.ts"
 import { useWorkspace } from "../lib/workspace.tsx"
@@ -55,17 +55,18 @@ export function RecordPage() {
   const { read } = useCatalog()
   const queries = useQueryClient()
   const { locale } = useLocale()
+  const say = useMessage()
   const ux = useMemo(() => recordPageOf(read.data?.document as readonly Envelope[] | undefined), [read.data])
   const context = useMemo(() => ({ objectType: name, id }), [name, id])
   const calls = useMemo(() => (workspace.kind === "live" || workspace.kind === "recorded" ? widgetCalls(workspace) : null), [workspace])
   const route = useMemo(() => ({ name, id }), [name, id])
   if (workspace.kind === "deciding" || workspace.kind === "unavailable") {
-    return <WorkspaceUndecided workspace={workspace} skeleton="detail" loadingLabel="Reading the record" />
+    return <WorkspaceUndecided workspace={workspace} skeleton="detail" loadingLabel={say("Reading the record")} />
   }
   if (read.isPending || read.isError || calls === null) {
     return (
       <LoadState status={read.isError ? "error" : "pending"} error={read.error} isFetching={read.isFetching}
-        onRetry={() => void read.refetch()} skeleton="detail" loadingLabel="Reading the record">
+        onRetry={() => void read.refetch()} skeleton="detail" loadingLabel={say("Reading the record")}>
         {() => null}
       </LoadState>
     )

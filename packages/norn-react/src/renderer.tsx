@@ -93,7 +93,7 @@ function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "w
   return (
     // A workspace that did not answer carries the shell's marker (`data-workspace-unavailable`): a shell
     // that shows its own one-line status steps aside while a page says it, so the two never both show.
-    <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable", "data-workspace-unavailable": "" } : {})} className="grid gap-2">
+    <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable", ...(onRetry !== undefined ? { "data-workspace-unavailable": "" } : {}) } : {})} className="grid gap-2">
       <p className="text-body font-medium">{title}</p>
       <p className="text-meta text-muted-foreground">{message}</p>
       {onRetry !== undefined && <button type="button" className="justify-self-start text-meta underline" onClick={onRetry}>Retry</button>}

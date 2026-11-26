@@ -10,13 +10,13 @@
 //! - A catalog island held in machine states (`heldIn`) is drawn only in them, so each one is a
 //!   state its page's machine declares.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
-    WidgetComponent, WidgetMachineCall, WidgetMachineEffect, WidgetNode, WidgetValueType,
-    widget_message_id,
+    WidgetActionConfirmation, WidgetComponent, WidgetEffectHandler, WidgetMachine,
+    WidgetMachineCall, WidgetMachineEffect, WidgetMessage, WidgetNode, WidgetOverrideValue,
+    WidgetText, WidgetUx, WidgetValueType, widget_message_id,
 };
-use serde_json::Value;
 
 use super::UxChecker;
 
@@ -70,41 +70,38 @@ impl UxChecker<'_, '_, '_> {
                 }
             }
         }
-        // Only the page whose context names the object reads it.
-        for (page_index, page) in self.ux.pages.iter().enumerate() {
-            let Some(machine) = &page.machine else {
-                continue;
-            };
-            let base = format!("/payload/ux/pages/{page_index}/machine");
-            let mut calls: Vec<(String, &WidgetMachineCall)> = Vec::new();
-            for (index, state) in machine.states.iter().enumerate() {
-                if let Some(call) = &state.awaits {
-                    calls.push((format!("{base}/states/{index}/awaits"), call));
-                }
+        // Only the page whose context names the object reads it: no other page's machine, and no
+        // catalog entry's, which any page may place.
+        let mut machines: Vec<(String, Option<&str>, &WidgetMachine)> = Vec::new();
+        for (index, page) in self.ux.pages.iter().enumerate() {
+            if let Some(machine) = &page.machine {
+                machines.push((
+                    format!("/payload/ux/pages/{index}/machine"),
+                    Some(page.page_id.as_str()),
+                    machine,
+                ));
             }
-            for (index, transition) in machine.transitions.iter().enumerate() {
-                for (at, effect) in transition.effects.iter().enumerate() {
-                    if let WidgetMachineEffect::Start { call, .. } = effect {
-                        calls.push((
-                            format!("{base}/transitions/{index}/effects/{at}/call"),
-                            call,
-                        ));
-                    }
-                }
+        }
+        for (index, entry) in self.ux.catalog.iter().enumerate() {
+            if let Some(machine) = &entry.machine {
+                machines.push((
+                    format!("/payload/ux/catalog/{index}/machine"),
+                    None,
+                    machine,
+                ));
             }
-            for (pointer, call) in calls {
+        }
+        for (base, page_id, machine) in machines {
+            for (pointer, call) in machine_calls(machine, &base) {
                 let WidgetMachineCall::Read { binding_id } = call else {
                     continue;
                 };
-                if self
-                    .ux
-                    .context_reads
-                    .iter()
-                    .any(|read| &read.binding_id == binding_id && read.page_id != page.page_id)
-                {
+                if self.ux.context_reads.iter().any(|read| {
+                    &read.binding_id == binding_id && Some(read.page_id.as_str()) != page_id
+                }) {
                     self.error(
                         &pointer,
-                        "a context read is read only by the page whose context names its object",
+                        "a context read is read only by the machine of the page whose context names its object",
                     );
                 }
             }
@@ -112,28 +109,51 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn check_messages(&self) {
-        let Ok(value) = serde_json::to_value(self.ux) else {
-            return;
-        };
-        let mut found = Vec::new();
-        messages(&value, "/payload/ux", &mut found);
-        for (pointer, id, source, context) in found {
+        let mut found = Texts::default();
+        found.ux(self.ux);
+        // One id names one text in one context, so a translation keyed by it is never another's.
+        let mut named: BTreeMap<&str, (&str, Option<&str>)> = BTreeMap::new();
+        for (pointer, message) in found.0 {
+            let (id, source, context) = (
+                message.id.as_str(),
+                message.source.as_str(),
+                message.context.as_deref(),
+            );
+            if let Some(&(other, other_context)) = named.get(id)
+                && (other, other_context) != (source, context)
+            {
+                self.error(
+                    &format!("{pointer}/msg/id"),
+                    format!(
+                        "message `{id}` names two texts: `{source}` here and `{other}` elsewhere; give one of them a context"
+                    ),
+                );
+            }
+            named.entry(id).or_insert((source, context));
             if source.trim().is_empty() {
                 self.error(
                     &format!("{pointer}/msg/source"),
                     "a message's source text must not be blank",
                 );
             }
-            if context
-                .as_ref()
-                .is_some_and(|context| context.trim().is_empty())
-            {
+            if context.is_some_and(|context| context.trim().is_empty()) {
                 self.error(
                     &format!("{pointer}/msg/context"),
                     "a message's context, when present, must not be blank",
                 );
             }
-            let expected = widget_message_id(&source, context.as_deref());
+            let Some(expected) = widget_message_id(source, context) else {
+                let member = if source.contains('\0') {
+                    "source"
+                } else {
+                    "context"
+                };
+                self.error(
+                    &format!("{pointer}/msg/{member}"),
+                    "a message's source text and context must not hold U+0000, which separates them in its id",
+                );
+                continue;
+            };
             if id != expected {
                 self.error(
                     &format!("{pointer}/msg/id"),
@@ -165,7 +185,7 @@ impl UxChecker<'_, '_, '_> {
                 if !states.contains(state_id) {
                     self.error(
                         &pointer,
-                        format!("an island is held in `{state_id}`, which its page's machine does not declare"),
+                        format!("a catalog node is held in `{state_id}`, which its page's machine does not declare"),
                     );
                 }
             }
@@ -173,40 +193,130 @@ impl UxChecker<'_, '_, '_> {
     }
 }
 
-/// Every `{ "msg": { "id", "source", "context"? } }` in `value`, with its pointer.
-fn messages(value: &Value, pointer: &str, out: &mut Vec<(String, String, String, Option<String>)>) {
-    match value {
-        Value::Object(members) => {
-            if members.len() == 1
-                && let Some(Value::Object(msg)) = members.get("msg")
-                && let (Some(Value::String(id)), Some(Value::String(source))) =
-                    (msg.get("id"), msg.get("source"))
-            {
-                let context = msg
-                    .get("context")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                out.push((pointer.to_owned(), id.clone(), source.clone(), context));
-                return;
-            }
-            for (key, member) in members {
-                let escaped = key.replace('~', "~0").replace('/', "~1");
-                messages(member, &format!("{pointer}/{escaped}"), out);
+/// Every call `machine` starts or awaits, with its pointer.
+fn machine_calls<'m>(
+    machine: &'m WidgetMachine,
+    base: &str,
+) -> Vec<(String, &'m WidgetMachineCall)> {
+    let mut calls = Vec::new();
+    for (index, state) in machine.states.iter().enumerate() {
+        if let Some(call) = &state.awaits {
+            calls.push((format!("{base}/states/{index}/awaits"), call));
+        }
+    }
+    for (index, transition) in machine.transitions.iter().enumerate() {
+        for (at, effect) in transition.effects.iter().enumerate() {
+            if let WidgetMachineEffect::Start { call, .. } = effect {
+                calls.push((
+                    format!("{base}/transitions/{index}/effects/{at}/call"),
+                    call,
+                ));
             }
         }
-        Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                messages(item, &format!("{pointer}/{index}"), out);
+    }
+    calls
+}
+
+/// Every source message of a contract, with its pointer: a walk of the typed [`WidgetText`]
+/// members, so a JSON value (a machine field's `initial`, a filter literal) is never read as one.
+#[derive(Default)]
+struct Texts<'u>(Vec<(String, &'u WidgetMessage)>);
+
+impl<'u> Texts<'u> {
+    fn text(&mut self, pointer: String, text: &'u WidgetText) {
+        if let WidgetText::Message(message) = text {
+            self.0.push((pointer, &message.msg));
+        }
+    }
+
+    fn confirmation(&mut self, pointer: &str, confirmation: &'u WidgetActionConfirmation) {
+        if let Some(message) = &confirmation.message {
+            self.text(format!("{pointer}/message"), message);
+        }
+        if let Some(phrase) = &confirmation.phrase {
+            self.text(format!("{pointer}/phrase"), phrase);
+        }
+    }
+
+    fn handlers(&mut self, pointer: &str, handlers: &'u [WidgetEffectHandler]) {
+        for (index, handler) in handlers.iter().enumerate() {
+            if let WidgetEffectHandler::ConfirmGuard { confirmation } = handler {
+                self.confirmation(&format!("{pointer}/{index}/confirmation"), confirmation);
             }
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+
+    fn node(&mut self, pointer: &str, node: &'u WidgetNode) {
+        match &node.component {
+            WidgetComponent::Section { section } => {
+                self.text(format!("{pointer}/component/section/label"), &section.label);
+            }
+            WidgetComponent::ChildGrid { label, .. } | WidgetComponent::Control { label, .. } => {
+                self.text(format!("{pointer}/component/label"), label);
+            }
+            WidgetComponent::List { .. }
+            | WidgetComponent::Detail { .. }
+            | WidgetComponent::Dialog { .. }
+            | WidgetComponent::Form { .. }
+            | WidgetComponent::Field { .. }
+            | WidgetComponent::Action { .. }
+            | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Catalog { .. }
+            | WidgetComponent::Composition { .. } => {}
+        }
+        self.handlers(&format!("{pointer}/handlers"), &node.handlers);
+        for (index, child) in node.children.iter().enumerate() {
+            self.node(&format!("{pointer}/children/{index}"), child);
+        }
+    }
+
+    fn ux(&mut self, ux: &'u WidgetUx) {
+        let base = "/payload/ux";
+        for (index, page) in ux.pages.iter().enumerate() {
+            self.node(&format!("{base}/pages/{index}/root"), &page.root);
+        }
+        for (index, field) in ux.fields.iter().enumerate() {
+            self.text(format!("{base}/fields/{index}/label"), &field.label);
+            if let Some(help) = &field.help {
+                self.text(format!("{base}/fields/{index}/help"), help);
+            }
+        }
+        for (index, form) in ux.forms.iter().enumerate() {
+            let at = format!("{base}/forms/{index}/submit");
+            self.text(format!("{at}/label"), &form.submit.label);
+            self.confirmation(&format!("{at}/confirmation"), &form.submit.confirmation);
+            self.handlers(&format!("{at}/handlers"), &form.submit.handlers);
+        }
+        for (index, placement) in ux.action_placements.iter().enumerate() {
+            let at = format!("{base}/actionPlacements/{index}");
+            self.text(format!("{at}/label"), &placement.label);
+            self.confirmation(&format!("{at}/confirmation"), &placement.confirmation);
+            self.handlers(&format!("{at}/handlers"), &placement.handlers);
+        }
+        if let Some(shell) = &ux.shell_handlers {
+            self.handlers(&format!("{base}/shellHandlers/handlers"), &shell.handlers);
+        }
+        for (index, item) in ux.navigation_items.iter().enumerate() {
+            self.text(format!("{base}/navigationItems/{index}/label"), &item.label);
+        }
+        for (index, change) in ux.overrides.iter().enumerate() {
+            if let WidgetOverrideValue::Label { value } = &change.value {
+                self.text(format!("{base}/overrides/{index}/value/value"), value);
+            }
+        }
+        for (index, entry) in ux.catalog.iter().enumerate() {
+            self.text(format!("{base}/catalog/{index}/label"), &entry.label);
+        }
     }
 }
 
-/// Each state a catalog island (a catalog node that is no UI SDK layer) is held in, with its pointer.
+/// Each state a catalog node that is no UI SDK layer (an island, or a primitive no person dismisses)
+/// is held in, with its pointer. A layer's states answer to its own law (`ui_layer`).
 fn islands_held<'n>(node: &'n WidgetNode, pointer: &str, out: &mut Vec<(String, &'n str)>) {
+    let layer = crate::ui_sdk::primitive_of(node)
+        .is_some_and(|(_, primitive)| !primitive.dismiss_attempts.is_empty());
     if let WidgetComponent::Catalog { held_in, .. } = &node.component
-        && crate::ui_sdk::primitive_of(node).is_none()
+        && !layer
     {
         for (index, state_id) in held_in.iter().enumerate() {
             out.push((

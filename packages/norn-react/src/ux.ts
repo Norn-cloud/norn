@@ -126,7 +126,13 @@ export interface WidgetUx {
 /** The entry prefix that names a UI SDK primitive at the catalog's pinned version. */
 export const UI_SDK_PREFIX = "ui-sdk:"
 
-const isMessage = (label: Text): label is Message => typeof (label as { readonly msg?: unknown }).msg === "object"
+/** Whether `label` is a source message: a `msg` object holding a string `id` and `source`. */
+function isMessage(label: Text): label is Message {
+  const message = (label as { readonly msg?: unknown }).msg
+  if (typeof message !== "object" || message === null || Array.isArray(message)) return false
+  const { id, source } = message as { readonly id?: unknown; readonly source?: unknown }
+  return typeof id === "string" && typeof source === "string"
+}
 
 /**
  * The text of `label` in `locale`: a message through the host's translations (`translate`), else its

@@ -14,8 +14,8 @@ import type { IslandStates } from "../../../../packages/norn-react/src/islands.t
 import { matchReadState } from "../../../../packages/norn-react/src/state.ts"
 import type { BindingReadState } from "../../../../packages/norn-react/src/reads.ts"
 import type { ObjectReads } from "../lib/transport.ts"
-import { unavailableWorkspaceOf } from "../lib/definitions.ts"
-import { useMode } from "../lib/live-transport.ts"
+import { parseUnavailableDetail, unavailableWorkspaceOf } from "../lib/definitions.ts"
+import { CellRefusal, useMode } from "../lib/live-transport.ts"
 import { useMessage } from "../lib/translations.ts"
 import type { RequiredCatalogRegistry, WidgetIslands } from "./record-islands.d.ts"
 import { RecordAbsent, RecordBody, RecordHeader, useReadAgain, type RecordRoute } from "./record-view.tsx"
@@ -55,9 +55,12 @@ function Failed({ read, retry }: { readonly read: BindingReadState | undefined; 
   const error = read === undefined ? new Error("The record was not read.") : matchReadState(read, {
     pending: (): Error => new Error("The record is being read."),
     ok: () => new Error("The record was read."),
+    // The cell's refusal as Studio reads one everywhere: its code, explanation and incident survive.
+    // The page's read carries no HTTP status (0: none known), only the refusal document.
     refused: ({ refusal }) => {
       const said = (refusal.document as { readonly message?: unknown } | null)?.message
-      return new Error(typeof said === "string" && said !== "" ? said : `The cell refused this read (${refusal.code}).`)
+      const message = typeof said === "string" && said !== "" ? said : `The cell refused this read (${refusal.code}).`
+      return new CellRefusal(0, refusal.code, message, parseUnavailableDetail(refusal.document))
     },
     not_served: ({ error }) => error,
     unavailable: ({ error }) => error,

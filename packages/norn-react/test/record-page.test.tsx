@@ -144,4 +144,17 @@ test("an unavailable workspace carries the shell's marker, with the host's Retry
   )
   expect(markup).toContain("data-workspace-unavailable=\"\"")
   expect(markup).toContain(">Retry</button>")
+  // With no Retry to offer, the page does not ask the shell to step aside: the shell's own status, and its Retry, stay.
+  const bare = renderToStaticMarkup(
+    <NornAppRenderer ux={ux} context={context} workspace={{ kind: "unavailable", error: new Error("The mode read failed.") }} calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
+      engine={() => Promise.reject(new Error("unused"))} islands={islands} objectTypeOf={() => undefined} actionIdOf={() => undefined} />,
+  )
+  expect(bare).toContain('data-workspace="unavailable"')
+  expect(bare).not.toContain("data-workspace-unavailable")
+})
+
+test("only a msg object with a string id and source is a message", () => {
+  expect(() => text({ msg: null } as never, "en")).not.toThrow()
+  expect(text({ msg: "Retry", ar: "إعادة" } as never, "ar")).toBe("إعادة")
+  expect(text({ msg: { id: "m1", source: "Retry" } }, "en")).toBe("Retry")
 })

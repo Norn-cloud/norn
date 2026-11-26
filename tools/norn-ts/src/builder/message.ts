@@ -21,9 +21,11 @@ const encoder = new TextEncoder()
 
 /**
  * A message's stable id: `m` and the 64-bit FNV-1a hash, in lowercase hex, of the UTF-8 bytes of its
- * context (empty when it has none), U+0000, and its source text (`norn_ir::message_id`).
+ * context (empty when it has none), U+0000, and its source text (`norn_ir::message_id`). A text or
+ * context holding U+0000 has no id: the separator would be ambiguous, so two messages could share one.
  */
 export function messageId(source: string, context?: string): string {
+  if (source.includes("\u0000") || (context ?? "").includes("\u0000")) throw new Error("a message's text and context must not hold U+0000")
   let hash = OFFSET
   const bytes = encoder.encode(`${context ?? ""}\u0000${source}`)
   for (const byte of bytes) hash = ((hash ^ BigInt(byte)) * PRIME) & MASK
@@ -37,5 +39,10 @@ export function msg(source: string, options: { readonly context?: string } = {})
 }
 
 /** Whether `text` is a source message rather than locale-keyed text. */
-export const isMessage = (text: unknown): text is Message =>
-  typeof text === "object" && text !== null && "msg" in text && typeof (text as { msg: unknown }).msg === "object"
+export function isMessage(text: unknown): text is Message {
+  if (typeof text !== "object" || text === null || Array.isArray(text)) return false
+  const message = (text as { readonly msg?: unknown }).msg
+  if (typeof message !== "object" || message === null || Array.isArray(message)) return false
+  const { id, source } = message as { readonly id?: unknown; readonly source?: unknown }
+  return typeof id === "string" && typeof source === "string"
+}

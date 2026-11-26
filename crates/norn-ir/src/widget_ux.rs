@@ -272,10 +272,16 @@ impl WidgetText {
 /// A message's stable id: `m` and the 64-bit FNV-1a hash, in lowercase hex, of the UTF-8 bytes of
 /// its context (empty when it has none), U+0000, and its source text. `tools/norn-ts`'s
 /// `messageId` computes the same id.
+///
+/// `None` when the text or context holds U+0000: the separator would then be ambiguous, and two
+/// different messages (`"a\0b"` in `"c"`, `"b"` in `"c\0a"`) would share one id.
 #[must_use]
-pub fn message_id(source: &str, context: Option<&str>) -> String {
+pub fn message_id(source: &str, context: Option<&str>) -> Option<String> {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0100_0000_01b3;
+    if source.contains('\0') || context.is_some_and(|context| context.contains('\0')) {
+        return None;
+    }
     let bytes = context
         .unwrap_or_default()
         .bytes()
@@ -284,7 +290,7 @@ pub fn message_id(source: &str, context: Option<&str>) -> String {
     let hash = bytes.fold(OFFSET, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(PRIME)
     });
-    format!("m{hash:016x}")
+    Some(format!("m{hash:016x}"))
 }
 
 /// The application shell for a set of pages.
@@ -1971,7 +1977,10 @@ mod tests {
     #[test]
     fn a_message_id_is_the_hash_of_its_text_and_context() {
         // `tools/norn-ts`'s `messageId` holds the same rows (test/studio-pages.test.ts).
-        assert_eq!(message_id("Reading the record", None), "mab651c50e3d7818b");
+        assert_eq!(
+            message_id("Reading the record", None).as_deref(),
+            Some("mab651c50e3d7818b")
+        );
         assert_eq!(
             message_id("Reading the record", Some("")),
             message_id("Reading the record", None)
@@ -1980,6 +1989,9 @@ mod tests {
             message_id("Close", Some("a dialog")),
             message_id("Close", None)
         );
+        // U+0000 separates the context from the text, so neither may hold it.
+        assert_eq!(message_id("b\0c", Some("a")), None);
+        assert_eq!(message_id("c", Some("a\0b")), None);
     }
 
     #[test]

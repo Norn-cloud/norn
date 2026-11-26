@@ -531,3 +531,9 @@ test("Studio's translations resolve the record page's messages by id, and fall b
   expect(message("Lifecycle", "ar")).toBe("دورة الحياة")
   expect(message("Not translated", "ar")).toBe("Not translated")
 })
+
+test("two translations of one message id are refused, not silently overwritten", async () => {
+  const { byId } = await import("../src/lib/translations.ts")
+  expect(byId([{ source: "Record", ar: "السجل" }, { source: "Record", context: "a heading", ar: "سجل" }]).size).toBe(2)
+  expect(() => byId([{ source: "Record", ar: "السجل" }, { source: "Record", ar: "سجل" }])).toThrow("share message id")
+})

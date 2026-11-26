@@ -11,7 +11,7 @@ import { messageId } from "../../../../tools/norn-ts/src/builder/message.ts"
 import { useLocale, type Locale } from "./locale.tsx"
 
 /** One source message and its translations, by locale. */
-interface Translated {
+export interface Translated {
   readonly source: string
   readonly context?: string
   readonly ar: string
@@ -30,7 +30,18 @@ const TRANSLATED: readonly Translated[] = [
   { source: "Type-wide view", ar: "العرض الشامل للنوع" },
 ]
 
-const BY_ID: ReadonlyMap<string, Translated> = new Map(TRANSLATED.map((entry) => [messageId(entry.source, entry.context), entry]))
+/** `entries` by message id; two entries for one id (one text listed twice, or a hash collision) are refused. */
+export function byId(entries: readonly Translated[]): ReadonlyMap<string, Translated> {
+  const out = new Map<string, Translated>()
+  for (const entry of entries) {
+    const id = messageId(entry.source, entry.context)
+    if (out.has(id)) throw new Error(`two translations share message id ${id}: ${JSON.stringify(out.get(id)?.source)} and ${JSON.stringify(entry.source)}`)
+    out.set(id, entry)
+  }
+  return out
+}
+
+const BY_ID = byId(TRANSLATED)
 
 /** The text of message `id` in `locale`, or `undefined` when Studio has none (its source text is drawn). */
 export function translate(id: string, locale: string): string | undefined {

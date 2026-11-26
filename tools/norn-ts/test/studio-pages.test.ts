@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { generateTypes } from "../src/codegen.ts"
-import { msg, messageId } from "../src/builder/widget.ts"
+import { isMessage, msg, messageId } from "../src/builder/widget.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
@@ -46,4 +46,14 @@ test("a message's id is the hash of its text and context, the same in TypeScript
   expect(messageId("Close", "a dialog")).not.toBe(messageId("Close"))
   expect(msg("Close", { context: "a dialog" })).toEqual({ msg: { id: messageId("Close", "a dialog"), source: "Close", context: "a dialog" } })
   expect(msg("Retry")).toEqual({ msg: { id: messageId("Retry"), source: "Retry" } })
+  // U+0000 separates the context from the text, so neither may hold it: "b\0c" in "a" and "c" in "a\0b" would share an id.
+  expect(() => messageId("b\u0000c", "a")).toThrow("U+0000")
+  expect(() => msg("c", { context: "a\u0000b" })).toThrow("U+0000")
+})
+
+test("only a msg object with a string id and source is a message", () => {
+  expect(isMessage(msg("Retry"))).toBe(true)
+  for (const text of [null, [], { msg: null }, { msg: [] }, { msg: "Retry" }, { msg: { id: 1, source: "Retry" } }, { msg: { id: "m1" } }]) {
+    expect(isMessage(text)).toBe(false)
+  }
 })

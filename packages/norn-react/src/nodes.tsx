@@ -186,7 +186,7 @@ function ListRows({ scope, document, refs }: { readonly scope: PageScope; readon
 /** A person's control: a UI SDK button (trigger) or a text input, raising the node's declared events. */
 function Control({ scope, node, label, placementId }: { readonly scope: PageScope; readonly node: WidgetNode; readonly label: string; readonly placementId: string | null }) {
   const { on, waiting } = canAct(scope, node)
-  const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, placementId, scope.actionEffects, scope.locale))
+  const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, placementId, scope.actionEffects, scope.locale, scope.translate))
   if (node.component.kind === "control" && node.component.input === "text") {
     const value = scope.runtime.snapshot.fields[node.nodeId]
     return (
@@ -278,7 +278,7 @@ function Island({ scope, node }: { readonly scope: PageScope; readonly node: Wid
   const island = scope.islands[entryId] as ((input: unknown) => ReactNode) | undefined
   const tier = entry === undefined ? null : tierOf(entry.trust)
   if (island === undefined || tier === null) return null
-  const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale))
+  const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale, scope.translate))
   const { props, waiting } = propsOf(scope, node)
   if (waiting.length > 0) {
     return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="waiting" aria-busy="true" className="h-9 animate-pulse rounded-[var(--radius)] bg-muted" />
