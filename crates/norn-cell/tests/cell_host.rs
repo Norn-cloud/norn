@@ -5868,3 +5868,328 @@ fn r7_empty_predicate_dynamic_marking_and_unclassified_negative_control() -> R7T
     );
     Ok(())
 }
+
+struct ReferenceLineageAllowAll;
+impl norn_kernel::ActionAuthorizer for ReferenceLineageAllowAll {
+    fn supports_reference_lineage(&self) -> bool {
+        true
+    }
+    fn authorize(
+        &self,
+        _: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read(
+        &self,
+        _: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read_type(
+        &self,
+        _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+}
+
+fn create_ifc_fixture(
+    laws: &[norn_ir::ArtifactEnvelope],
+) -> (
+    norn_cell::Model,
+    SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
+) {
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "hr.Employee",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "national_id", "type": {"kind": "text"}, "markings": ["pii"]},
+                {"id": "summary", "type": {"kind": "text"}, "computed": "self.national_id"}
+            ]
+        },
+        {
+            "name": "hr.LeaveRequest",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "kind", "type": {"kind": "text"}},
+                {"id": "days", "type": {"kind": "integer"}}
+            ],
+            "links": [{
+                "id": "employee",
+                "target": "hr.Employee",
+                "cardinality": {"to": "one", "from": "many"}
+            }]
+        }
+    ]))
+    .expect("hr defs");
+    let model = common::model_of(&defs)
+        .with_governing_laws(laws)
+        .expect("governing laws");
+    let store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut cell = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new("hr.Employee", "E1"),
+            expected: FactVersion(0),
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({
+                    "id": "E1",
+                    "status": "active",
+                    "national_id": "123-45-6789"
+                }))
+                .expect("employee values"),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .expect("seed employee");
+    (model, cell)
+}
+
+fn create_ifc_action(
+    action_id: &str,
+    preconditions: serde_json::Value,
+    with_link: bool,
+) -> norn_ir::ActionRoot {
+    let create_links = if with_link {
+        json!([{"link": "employee", "targetType": "hr.Employee", "targetIdField": "employee_id"}])
+    } else {
+        json!([])
+    };
+    serde_json::from_value(json!({
+        "actionId": action_id,
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "id": {"type": "string"},
+                "employee_id": {"type": "string"},
+                "days": {"type": "integer"},
+                "kind": {"type": "string"}
+            },
+            "required": ["id", "employee_id", "days"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "derive": [{"field": "kind", "expression": "input.kind ?? 'pto'", "inputRequired": false}],
+        "slice": [
+            {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
+        ],
+        "preconditions": preconditions,
+        "createLinks": create_links,
+        "writes": [{"entityKind": "hr.LeaveRequest", "change": "created"}],
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "id",
+            "objectKind": "hr.LeaveRequest",
+            "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0",
+            "writeMode": {"kind": "create_only"}
+        }
+    }))
+    .expect("action")
+}
+
+fn create_ifc_call<'a>(
+    action: &'a norn_ir::ActionRoot,
+    leave_id: &str,
+    idem: &str,
+) -> norn_kernel::ActionCall<'a> {
+    norn_kernel::ActionCall {
+        action,
+        action_artifact_id: "hr.submit_leave.action",
+        action_version: "1.0.0",
+        scope: std::collections::BTreeMap::from([
+            ("orgId".to_owned(), "org_demo".to_owned()),
+            ("environmentId".to_owned(), "dev".to_owned()),
+        ]),
+        actor: "employee-1".to_owned(),
+        approved_intent: None,
+        input: serde_json::from_value(json!({
+            "id": leave_id,
+            "employee_id": "E1",
+            "days": 2
+        }))
+        .expect("input"),
+        idempotency_key: idem.to_owned(),
+        object_type: None,
+        turn: r2_turn(idem),
+        trace: None,
+    }
+}
+
+fn assert_marking_refusal(
+    result: Result<norn_kernel::ActionOutcome, norn_kernel::ActionRefusal<CellError>>,
+) {
+    let err = result.expect_err("expected MarkingDeclassificationInvalid");
+    assert!(
+        matches!(
+            err,
+            norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
+                CellError::MarkingDeclassificationInvalid(_)
+            ))
+        ),
+        "expected MarkingDeclassificationInvalid, got {err:?}"
+    );
+}
+
+/// Field-level IFC `property_reads` for `CreateOnly` actions:
+/// unmarked precondition fields allow `createLinks` with zero PII taint;
+/// classified precondition fields refuse `createLinks` and taint non-link creates.
+#[test]
+fn create_only_field_level_ifc_allows_unmarked_precondition_and_refuses_classified_reads() {
+    let (model, mut cell) = create_ifc_fixture(&[]);
+    let catalog = model.type_catalog();
+
+    // 1. Unmarked precondition field + `createLinks` succeeds and stays unmarked.
+    let clean_action = create_ifc_action(
+        "hr.submit_leave",
+        json!(["slice.emp.status == 'active'"]),
+        true,
+    );
+    let clean_call = create_ifc_call(&clean_action, "L-CLEAN", "leave-clean");
+    norn_kernel::commit_action(&mut cell, &catalog, &clean_call, &ReferenceLineageAllowAll)
+        .expect("unmarked precondition + createLinks must succeed");
+    let edge = LinkKey::new(
+        FactKey::new("hr.LeaveRequest", "L-CLEAN"),
+        "employee",
+        FactKey::new("hr.Employee", "E1"),
+    );
+    assert!(cell.load_link(&edge).expect("edge").exists());
+    let clean_marks = cell
+        .store()
+        .read()
+        .effective_markings("main", "hr.LeaveRequest", "L-CLEAN", None)
+        .expect("read markings")
+        .expect("clean markings missing");
+    assert!(
+        clean_marks.values().all(Vec::is_empty),
+        "unmarked precondition must not inherit unrelated pii: {clean_marks:?}"
+    );
+
+    // 2. Classified precondition field refuses `createLinks` and taints non-link create.
+    let pii_link_action = create_ifc_action(
+        "hr.submit_leave_pii_link",
+        json!(["slice.emp.national_id == '123-45-6789'"]),
+        true,
+    );
+    let pii_link_call = create_ifc_call(&pii_link_action, "L-PII-LINK", "leave-pii-link");
+    assert_marking_refusal(norn_kernel::commit_action(
+        &mut cell,
+        &catalog,
+        &pii_link_call,
+        &ReferenceLineageAllowAll,
+    ));
+
+    let pii_nolink_action = create_ifc_action(
+        "hr.submit_leave_pii_nolink",
+        json!(["slice.emp.national_id == '123-45-6789'"]),
+        false,
+    );
+    let pii_nolink_call = create_ifc_call(&pii_nolink_action, "L-PII-FACT", "leave-pii-fact");
+    norn_kernel::commit_action(
+        &mut cell,
+        &catalog,
+        &pii_nolink_call,
+        &ReferenceLineageAllowAll,
+    )
+    .expect("non-link create succeeds and propagates pii");
+    let pii_marks = cell
+        .store()
+        .read()
+        .effective_markings("main", "hr.LeaveRequest", "L-PII-FACT", None)
+        .expect("read pii markings")
+        .expect("pii markings missing");
+    assert!(
+        pii_marks
+            .get("days")
+            .is_some_and(|labels| labels.iter().any(|l| l == "pii")),
+        "classified precondition must taint created object: {pii_marks:?}"
+    );
+}
+
+/// Fail-closed IFC guarantees for `CreateOnly` actions:
+/// conservative authorizers, computed properties, whole-object slice reads, and
+/// covert-channel `LAW-LINK-1` governing laws reading PII all refuse `createLinks`.
+#[test]
+fn create_only_field_level_ifc_closes_link_law_covert_channel_and_stays_fail_closed() {
+    let (model, mut cell) = create_ifc_fixture(&[]);
+    let catalog = model.type_catalog();
+
+    let clean_action = create_ifc_action(
+        "hr.submit_leave",
+        json!(["slice.emp.status == 'active'"]),
+        true,
+    );
+    let conservative_call = create_ifc_call(&clean_action, "L-CONSERV", "leave-conserv");
+    assert_marking_refusal(norn_kernel::commit_action(
+        &mut cell,
+        &catalog,
+        &conservative_call,
+        &R2AllowAll,
+    ));
+
+    for (id, precond) in [
+        ("L-COMP", json!(["slice.emp.summary != ''"])),
+        ("L-WHOLE", json!(["slice.emp != null"])),
+    ] {
+        let action = create_ifc_action(&format!("hr.{id}"), precond, true);
+        let call = create_ifc_call(&action, id, id);
+        assert_marking_refusal(norn_kernel::commit_action(
+            &mut cell,
+            &catalog,
+            &call,
+            &ReferenceLineageAllowAll,
+        ));
+    }
+
+    let link_law: norn_ir::ArtifactEnvelope = serde_json::from_value(json!({
+        "artifactId": "hr.leave_reads_nid.law",
+        "version": "1.0.0",
+        "kind": "law",
+        "name": "leave_reads_nid",
+        "namespace": "hr",
+        "irVersion": "0.1",
+        "lifecycle": "draft",
+        "dependencies": [],
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "provenance": {"source": "system", "sourcePath": "test"},
+        "payload": {
+            "id": "leave_reads_nid",
+            "lawVersion": "0.1",
+            "modality": {"kind": "always"},
+            "owner": "hr",
+            "provenance": {"source": "system", "sourcePath": "test"},
+            "rationale": "reads classified linked national_id",
+            "response": {"kind": "predicate", "expression": "self.employee.national_id != '000'"},
+            "scope": {"objectTypes": ["hr.LeaveRequest"], "root": {"kind": "entity", "id": "hr.LeaveRequest"}},
+            "severity": "error",
+            "subject": "hr.LeaveRequest"
+        }
+    }))
+    .expect("link law");
+    let (law_model, mut law_cell) = create_ifc_fixture(&[link_law]);
+    let law_catalog = law_model
+        .type_catalog()
+        .with_governing_laws(law_model.law_artifacts());
+    let empty_precond_action = create_ifc_action("hr.submit_leave_empty", json!([]), true);
+    let law_call = create_ifc_call(&empty_precond_action, "L-LAW", "leave-law");
+    assert_marking_refusal(norn_kernel::commit_action(
+        &mut law_cell,
+        &law_catalog,
+        &law_call,
+        &ReferenceLineageAllowAll,
+    ));
+}

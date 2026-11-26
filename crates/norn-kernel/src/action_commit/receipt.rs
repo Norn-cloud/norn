@@ -1,6 +1,6 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use norn_ir::{FactChange, RuntimeValue};
+use norn_ir::{ActionRoot, FactChange, ObjectTypeName, RuntimeValue, SliceDeclaration, SliceKey};
 
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactExpectation, FactKey, FactWrite, JsonObject,
@@ -361,4 +361,237 @@ impl ActionReferenceReads {
         self.reads.clone_from(&commit.reads);
         Some(self)
     }
+}
+
+/// Whether `property` is a declared non-computed stored property on `declared`
+/// and every concrete subtype that reaches it. Computed properties may depend
+/// on unrelated classified fields and fail closed to whole-object lineage.
+fn non_computed_property(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    declared: &ObjectTypeName,
+    property: &str,
+) -> bool {
+    let Some(base) = catalog.effective_type(declared) else {
+        return false;
+    };
+    if base
+        .property(property)
+        .is_none_or(|declared_prop| declared_prop.computed)
+    {
+        return false;
+    }
+    catalog.object_type_names().iter().all(|ty| {
+        !crate::governing_laws::reaches(catalog, ty, declared)
+            || catalog
+                .effective_type(ty)
+                .and_then(|effective| effective.property(property))
+                .is_some_and(|declared_prop| !declared_prop.computed)
+    })
+}
+
+/// Attribute any `LAW-LINK-1` forward-link properties that governing laws on
+/// `target` will read through `action.create_links`, failing closed on inverse
+/// link laws, whole-target reads, computed properties, or ambiguous bindings.
+fn collect_create_law_property_reads<'a>(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &'a ActionRoot,
+    target: &FactKey,
+    alias_properties: &mut BTreeMap<&'a str, BTreeSet<String>>,
+) -> Option<()> {
+    if action
+        .create_links
+        .iter()
+        .any(|binding| binding.source.is_some())
+    {
+        return None;
+    }
+    let index = crate::governing_laws::link_law_index(catalog).ok()?;
+    if index
+        .inverse
+        .iter()
+        .any(|(_, source, _)| crate::governing_laws::reaches(catalog, &target.object_type, source))
+    {
+        return None;
+    }
+    for artifact in catalog.governing_laws(&target.object_type).ok()? {
+        let law = catalog
+            .decoded_laws()
+            .get(&std::ptr::from_ref(artifact).addr())?
+            .as_ref()
+            .ok()?;
+        let link_reads =
+            crate::governing_laws::law_link_reads(catalog, &target.object_type, law).ok()?;
+        if link_reads.is_empty() {
+            continue;
+        }
+        let mut link_to_entry: BTreeMap<&str, &SliceDeclaration> = BTreeMap::new();
+        for read in &link_reads {
+            let crate::governing_laws::LinkRead::Forward(link_id) = read else {
+                return None;
+            };
+            let mut matching = action
+                .create_links
+                .iter()
+                .filter(|binding| binding.link == *link_id);
+            let Some(binding) = matching.next() else {
+                // `target` is newly created and creates no link for `link_id`,
+                // so `self.<link_id>` evaluates to `null` without reading facts.
+                continue;
+            };
+            if matching.next().is_some() {
+                return None;
+            }
+            let entry = action.slice.iter().find(|entry| {
+                entry.object_type.as_str() == binding.target_type.as_str()
+                    && matches!(
+                        &entry.key,
+                        SliceKey::Property { from, property }
+                            if from == "input" && property.as_str() == binding.target_id_field.as_str()
+                    )
+            })?;
+            link_to_entry.insert(link_id.as_str(), entry);
+        }
+        if link_to_entry.is_empty() {
+            continue;
+        }
+        for text in crate::governing_laws::law_expressions(law) {
+            if norn_expr::expression_reads(text, "self").ok()?.whole_root {
+                return None;
+            }
+            let elements = norn_expr::expression_element_paths(text, "self").ok()?;
+            if elements.keys().any(|collection| {
+                collection
+                    .first()
+                    .is_some_and(|head| link_to_entry.contains_key(head.as_str()))
+            }) {
+                return None;
+            }
+            for path in norn_expr::expression_read_paths(text, "self").ok()? {
+                let Some(head) = path.first() else {
+                    return None;
+                };
+                let Some(entry) = link_to_entry.get(head.as_str()) else {
+                    continue;
+                };
+                let [_, property] = path.as_slice() else {
+                    return None;
+                };
+                if !non_computed_property(catalog, &entry.object_type, property) {
+                    return None;
+                }
+                alias_properties
+                    .get_mut(entry.name.as_str())?
+                    .insert(property.clone());
+            }
+        }
+    }
+    Some(())
+}
+
+/// Exact non-computed slice property operands read by a closed `CreateOnly`
+/// action's preconditions and `LAW-LINK-1` governing laws, keyed by slice alias.
+/// Returns `None` (fail closed to whole-object lineage) for any unproved read.
+pub(super) fn create_slice_property_reads(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &ActionRoot,
+    target: &FactKey,
+) -> Option<BTreeMap<String, Vec<String>>> {
+    let mut entries: BTreeMap<&str, &SliceDeclaration> = BTreeMap::new();
+    let mut alias_properties: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for entry in &action.slice {
+        if entry.optional
+            || !matches!(&entry.key, SliceKey::Property { from, .. } if from == "input")
+            || entries.insert(entry.name.as_str(), entry).is_some()
+        {
+            return None;
+        }
+        alias_properties.insert(entry.name.as_str(), BTreeSet::new());
+    }
+    for expression in &action.preconditions {
+        if norn_expr::expression_reads(&expression.0, "slice")
+            .ok()?
+            .whole_root
+        {
+            return None;
+        }
+        if !norn_expr::expression_element_paths(&expression.0, "slice")
+            .ok()?
+            .is_empty()
+        {
+            return None;
+        }
+        for path in norn_expr::expression_read_paths(&expression.0, "slice").ok()? {
+            let [alias, property] = path.as_slice() else {
+                return None;
+            };
+            let entry = entries.get(alias.as_str())?;
+            if !non_computed_property(catalog, &entry.object_type, property) {
+                return None;
+            }
+            alias_properties
+                .get_mut(alias.as_str())?
+                .insert(property.clone());
+        }
+    }
+    collect_create_law_property_reads(catalog, action, target, &mut alias_properties)?;
+    Some(
+        alias_properties
+            .into_iter()
+            .map(|(alias, props)| (alias.to_owned(), props.into_iter().collect()))
+            .collect(),
+    )
+}
+
+/// Bind each proved `CreateOnly` slice alias's read properties onto its exact
+/// canonical `FactExpectation` in `references`, merging duplicate aliases and
+/// refusing if any reference is unaccounted for.
+pub(super) fn create_reference_property_reads(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &ActionRoot,
+    target: &FactKey,
+    effective_input: &JsonObject,
+    references: &[FactExpectation],
+) -> Option<Vec<(FactExpectation, Vec<String>)>> {
+    let by_alias = create_slice_property_reads(catalog, action, target)?;
+    let model = crate::CommitModel::new(catalog);
+    let mut matched = vec![false; references.len()];
+    let mut merged: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+    for entry in &action.slice {
+        let SliceKey::Property { from, property } = &entry.key else {
+            return None;
+        };
+        if from != "input" {
+            return None;
+        }
+        let key = effective_input
+            .get(property.as_str())
+            .and_then(RuntimeValue::as_str)
+            .filter(|value| !value.trim().is_empty())?;
+        let canonical = model.canonical(&FactKey::new(entry.object_type.clone(), key.to_owned()));
+        let mut candidates = references
+            .iter()
+            .enumerate()
+            .filter(|(_, reference)| model.canonical(&reference.key) == canonical);
+        let (index, reference) = candidates.next()?;
+        if candidates.next().is_some() || reference.expected.0 == 0 {
+            return None;
+        }
+        *matched.get_mut(index)? = true;
+        let properties = by_alias.get(&entry.name)?;
+        if !properties.is_empty() {
+            merged
+                .entry(index)
+                .or_default()
+                .extend(properties.iter().cloned());
+        }
+    }
+    if !matched.iter().all(|seen| *seen) {
+        return None;
+    }
+    let mut property_reads = Vec::with_capacity(merged.len());
+    for (index, properties) in merged {
+        let reference = references.get(index)?.clone();
+        property_reads.push((reference, properties.into_iter().collect()));
+    }
+    Some(property_reads)
 }

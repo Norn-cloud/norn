@@ -191,6 +191,14 @@ pub fn cell_with(
     invariants: &[(&str, &str)],
 ) -> (tempfile::TempDir, Cell) {
     let (artifacts, base) = artifacts_with(name, fields, laws, invariants);
+    cell_from_artifacts(artifacts, base)
+}
+
+/// Admit and install an explicit `(artifacts, base)` set into a test cell.
+pub fn cell_from_artifacts(
+    artifacts: Vec<ArtifactEnvelope>,
+    base: Vec<ArtifactEnvelope>,
+) -> (tempfile::TempDir, Cell) {
     let wire = |set: &[ArtifactEnvelope]| -> Vec<Value> {
         set.iter()
             .map(|a| Value::from_json(serde_json::to_value(a).expect("wire")).expect("value"))

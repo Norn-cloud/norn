@@ -28,7 +28,8 @@ use norn_ir::{
 use norn_kernel::{FactKey, TypeCatalog};
 
 use crate::analytics::{
-    ColumnKind, ResidueRow, RowFinding, RowPredicate, RuleCheck, TableSchema, Value, rule_fuel,
+    ColumnKind, RULE_FUEL, ResidueRow, RowFinding, RowPredicate, RuleCheck, TableSchema, Value,
+    rule_fuel,
 };
 use crate::engine::SqlEngine;
 use crate::model::Model;
@@ -209,7 +210,7 @@ impl<E: SqlEngine> CellStore<E> {
         for artifact in laws {
             let (law, rule_ref) = norn_kernel::governing_laws::law_rule(&catalog, &name, artifact)
                 .map_err(|error| refused(error.to_string()))?;
-            let (condition, predicate, nodes) = match &law.response {
+            let (condition, predicate, nodes, extra_fuel) = match &law.response {
                 LawResponse::Predicate { expression } => {
                     let (condition, cond_nodes) = match &law.condition {
                         Some(condition) => {
@@ -219,10 +220,22 @@ impl<E: SqlEngine> CellStore<E> {
                         None => (Some(None), 0),
                     };
                     let (expr_pred, expr_nodes) = lower_and_count(expression.as_str(), table);
-                    let nodes = expr_nodes.saturating_add(cond_nodes);
-                    match condition {
-                        Some(condition) => (condition, expr_pred, nodes),
-                        None => (None, None, nodes),
+                    let mut nodes = expr_nodes.saturating_add(cond_nodes);
+                    if law.exceptions.is_empty() {
+                        match condition {
+                            Some(condition) => (condition, expr_pred, nodes, 0),
+                            None => (None, None, nodes, 0),
+                        }
+                    } else {
+                        for exception in &law.exceptions {
+                            let (_, ex_nodes) =
+                                lower_and_count(exception.condition.as_str(), table);
+                            nodes = nodes.saturating_add(ex_nodes);
+                        }
+                        let extra = u64::try_from(law.exceptions.len())
+                            .unwrap_or(u64::MAX)
+                            .saturating_mul(RULE_FUEL);
+                        (None, None, nodes, extra)
                     }
                 }
                 LawResponse::Invariant { invariant_id, .. } => {
@@ -232,7 +245,7 @@ impl<E: SqlEngine> CellStore<E> {
                         .map(|(_, invariant)| invariant.expression.as_str());
                     let (predicate, nodes) =
                         source.map_or((None, 0), |source| lower_and_count(source, table));
-                    (None, predicate, nodes)
+                    (None, predicate, nodes, 0)
                 }
                 LawResponse::Action { .. }
                 | LawResponse::Transition { .. }
@@ -248,7 +261,7 @@ impl<E: SqlEngine> CellStore<E> {
                 condition,
                 predicate,
                 expect: matches!(law.modality, LawModality::Always {}),
-                fuel: rule_fuel(nodes),
+                fuel: rule_fuel(nodes).saturating_add(extra_fuel),
             });
         }
         // S2: the per-row evaluator charges a row one unit per typed

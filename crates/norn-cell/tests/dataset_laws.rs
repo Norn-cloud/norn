@@ -1443,3 +1443,110 @@ fn a_landing_refused_at_preflight_leaves_no_lineage() {
         vec!["lineage:land-1".to_owned()]
     );
 }
+
+/// MANIFEST-LAWS-1: a non-link predicate law with a nested `unless` exception
+/// tree runs through dataset landing and per-row residue settlement, agreeing
+/// exactly with the per-row observation path across inactive condition, base
+/// hold, base violation, first-level exception lift, and second-level override.
+#[test]
+fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
+    let (mut artifacts, base) = support::artifacts(
+        TYPE,
+        &fields(),
+        &[("price_capped", "error", "self.price <= 10")],
+    );
+    let law_artifact = artifacts
+        .iter_mut()
+        .find(|artifact| artifact.artifact_id.as_str() == "bench.price_capped.law")
+        .expect("law artifact");
+    let mut law_json = serde_json::to_value(&*law_artifact).expect("law json");
+    law_json["payload"]["condition"] = json!("self.country != 'XX'");
+    law_json["payload"]["exceptions"] = json!([
+        {
+            "id": "wholesale",
+            "overrides": "price_capped",
+            "condition": "self.quantity >= 10",
+            "rationale": "Bulk orders are exempt from the retail cap.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/0"}
+        },
+        {
+            "id": "audit_block",
+            "overrides": "wholesale",
+            "condition": "self.invoice == 'AUDIT'",
+            "rationale": "Audited bulk orders still enforce the retail cap.",
+            "source": {"artifactId": "bench.price_capped.law", "pointer": "/payload/exceptions/1"}
+        }
+    ]);
+    *law_artifact = serde_json::from_value(law_json).expect("updated law");
+    let (_dir, mut cell) = support::cell_from_artifacts(artifacts, base);
+
+    let table = cell.store().analytics_table(TYPE).expect("table");
+    let checks = cell
+        .store()
+        .dataset_checks(TYPE, &table)
+        .expect("dataset checks");
+    let law_check = checks
+        .iter()
+        .find(|check| check.label == "law:price_capped")
+        .expect("price_capped check");
+    assert!(law_check.condition.is_none());
+    assert!(law_check.predicate.is_none());
+    assert!(law_check.fuel > norn_cell::analytics::rule_fuel(0));
+
+    let lines = vec![
+        // 1: `when` false -> inactive (passes)
+        Line {
+            invoice: "IN1",
+            quantity: 1,
+            price: "50".into(),
+            customer: Some("ann"),
+            country: "XX",
+            occurred_at: INSTANTS[0],
+        },
+        // 2: `when` true, base holds -> passes
+        Line {
+            invoice: "IN2",
+            quantity: 1,
+            price: "5".into(),
+            customer: Some("bob"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        // 3: `when` true, base violated, no exception -> held
+        Line {
+            invoice: "IN3",
+            quantity: 1,
+            price: "50".into(),
+            customer: Some("cat"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        // 4: `when` true, base violated, `wholesale` lifts -> passes
+        Line {
+            invoice: "OK1",
+            quantity: 12,
+            price: "50".into(),
+            customer: Some("dan"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+        // 5: `when` true, base violated, `audit_block` overrides `wholesale` -> held
+        Line {
+            invoice: "AUDIT",
+            quantity: 12,
+            price: "50".into(),
+            customer: Some("eve"),
+            country: "FR",
+            occurred_at: INSTANTS[0],
+        },
+    ];
+
+    let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
+    let bulk = set_based(&cell, &lines);
+    assert_eq!(bulk.residue, u64::try_from(lines.len()).expect("len"));
+    assert_eq!(bulk.findings, row_findings);
+    assert_eq!(bulk.held, row_held);
+    assert_eq!(bulk.data, row_trusted);
+    assert_eq!(bulk.held, BTreeSet::from([3, 5]));
+    assert_eq!(bulk.data, BTreeSet::from([1, 2, 4]));
+}

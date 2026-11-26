@@ -21,15 +21,24 @@ use super::types::{
     ActionReferenceReads, ActionRefusal,
 };
 
+fn create_preconditions_read_no_slice(action: &ActionRoot) -> bool {
+    action.preconditions.iter().all(|expression| {
+        norn_expr::expression_reads(&expression.0, "slice")
+            .is_ok_and(|reads| !reads.whole_root && reads.fields.is_empty())
+    })
+}
+
 fn reference_action(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     authorizer: &dyn ActionAuthorizer,
     target: &FactKey,
 ) -> bool {
-    // Closed creates use identity-only links. Patches preserve their complete
-    // target while attributing exact expression operands. Unknown selectors,
-    // optional references, commands and policy dependencies stay conservative.
+    // Closed creates use reference lineage plus exact proved property reads for
+    // preconditions and `LAW-LINK-1` governing laws. Patches preserve their
+    // complete target while attributing exact expression operands. Unknown
+    // selectors, optional references, commands, aggregates and policy
+    // dependencies stay conservative.
     let Some(ActionEffectProgram::UpsertInputObject {
         object_kind,
         object_id_field,
@@ -45,7 +54,7 @@ fn reference_action(
         || !action.commands.is_empty()
         // CREATE-WRITER-1: a writer reads complete slice values.
         || action.synchronous_rule.is_some()
-        || (!patch && !action.derive.is_empty())
+        || !action.aggregates.is_empty()
         || action.slice.is_empty()
         // A patch reads the full target to preserve its other values. Only
         // caller-input assignments with a required direct target slice qualify.
@@ -56,18 +65,15 @@ fn reference_action(
                 || !catalog.lifecycles(&target.object_type).is_empty()
                 || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
                 || patch_read_properties(catalog, action, target).is_none()))
+        || (!patch
+            && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
         || action.slice.iter().any(|entry| {
             entry.optional
-                || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input" && if patch {
-                    entry.object_type.as_str() == object_kind.as_str() && property.as_str() == object_id_field.as_str()
-                } else {
-                    action.create_links.iter().any(|link| link.target_type == entry.object_type.as_str() && link.target_id_field == property.as_str())
-                })
+                || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input"
+                    && (!patch
+                        || (entry.object_type.as_str() == object_kind.as_str()
+                            && property.as_str() == object_id_field.as_str())))
         })
-        || (!patch && action.preconditions.iter().any(|expression| {
-            !norn_expr::expression_reads(&expression.0, "slice")
-                .is_ok_and(|reads| !reads.whole_root && reads.fields.is_empty())
-        }))
     {
         return false;
     }
@@ -131,6 +137,7 @@ pub(super) fn reference_read_proof<E, C, I>(
     authorizer: &dyn ActionAuthorizer,
     commit: &CellCommit<E, C, I>,
     target: &FactKey,
+    effective_input: &JsonObject,
 ) -> Option<ActionReferenceReads> {
     if !reference_action(catalog, action, authorizer, target)
         || !commit.effects.is_empty()
@@ -170,7 +177,13 @@ pub(super) fn reference_read_proof<E, C, I>(
         let reference = references.iter().find(|read| read.key == *target)?.clone();
         vec![(reference, patch_read_properties(catalog, action, target)?)]
     } else {
-        Vec::new()
+        super::receipt::create_reference_property_reads(
+            catalog,
+            action,
+            target,
+            effective_input,
+            &references,
+        )?
     };
     Some(ActionReferenceReads {
         reads: commit.reads.clone(),
@@ -684,7 +697,8 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
                     write_mode: UpsertWriteMode::CreateOnly,
                     ..
                 })
-            );
+            )
+            && create_preconditions_read_no_slice(call.action);
         load_action_slice_entry(context, &mut state, entry, identity_only)?;
     }
     let aggregates = load_action_aggregates(
