@@ -55,22 +55,39 @@ CHAR_ESCAPE_LITERAL = re.compile(
 RAW_STRING_OPEN = re.compile(r'r(#*)"')
 
 
-def _is_ident_start(ch: str) -> bool:
-    return ch.isalpha() or ch == "_" or 0x2100 <= ord(ch) <= 0x214F
+def _is_lean_letter_like(ch: str) -> bool:
+    code = ord(ch)
+    return (
+        (0x03B1 <= code <= 0x03C9 and code != 0x03BB)
+        or (0x0391 <= code <= 0x03A9 and code not in (0x03A0, 0x03A3))
+        or (0x03CA <= code <= 0x03FB)
+        or (0x1F00 <= code <= 0x1FFE)
+        or (0x2100 <= code <= 0x214F)
+        or (0x1D49C <= code <= 0x1D59F)
+    )
 
 
-def _is_ident_tail(ch: str) -> bool:
-    return _is_ident_start(ch) or ch.isdigit() or ch in ("'", "!", "?")
+def _is_lean_id_sub_or_super(ch: str) -> bool:
+    code = ord(ch)
+    return (
+        code in (0x00B2, 0x00B3, 0x00B9, 0x207F)
+        or (0x1D62 <= code <= 0x1D6A)
+        or (0x2070 <= code <= 0x2079)
+        or (0x2080 <= code <= 0x208E)
+        or (0x2090 <= code <= 0x209C)
+    )
 
 
-def _preceded_by_ident(source: str, index: int) -> bool:
-    """Return True when the character immediately before `index` ends an identifier."""
-    pos = index - 1
-    if pos < 0 or not _is_ident_tail(source[pos]):
-        return False
-    while pos > 0 and _is_ident_tail(source[pos - 1]):
-        pos -= 1
-    return _is_ident_start(source[pos])
+def _is_ident_start(ch: str, *, is_lean: bool) -> bool:
+    if "a" <= ch <= "z" or "A" <= ch <= "Z" or ch == "_":
+        return True
+    return is_lean and _is_lean_letter_like(ch)
+
+
+def _is_ident_rest(ch: str, *, is_lean: bool) -> bool:
+    if _is_ident_start(ch, is_lean=is_lean) or "0" <= ch <= "9" or ch == "'":
+        return True
+    return is_lean and (ch in ("!", "?") or _is_lean_id_sub_or_super(ch))
 
 
 def strip_comments_and_strings(
@@ -87,6 +104,7 @@ def strip_comments_and_strings(
     depth = 0
     in_string: str | None = None
     interp_braces: list[int] = []
+    after_dot = False
     is_lean = line_marker == "--"
     while index < len(source):
         if depth:
@@ -133,10 +151,12 @@ def strip_comments_and_strings(
                 break
             output.extend(" " * (newline - index))
             index = newline
+            after_dot = False
         elif source.startswith(block[0], index):
             output.extend(" " * len(block[0]))
             index += len(block[0])
             depth = 1
+            after_dot = False
         elif is_lean and source[index] == "«":
             close = source.find("»", index + 1)
             if close < 0:
@@ -152,26 +172,33 @@ def strip_comments_and_strings(
                 else "".join(" " if ch in ('«', '»', '"', "'", "{", "}") else ch for ch in span)
             )
             index = close + 1
-        elif (
-            is_lean
-            and source[index] == "r"
-            and not _preceded_by_ident(source, index)
-            and (index == 0 or source[index - 1] != ".")
-            and RAW_STRING_OPEN.match(source, index) is not None
-        ):
-            fail("raw string literal is forbidden in trusted Lean proof sources")
-        elif (
-            is_lean
-            and source.startswith('!"', index)
-            and index >= 1
-            and source[index - 1] in ("s", "m", "f")
-            and not _preceded_by_ident(source, index - 1)
-            and (index == 1 or source[index - 2] != ".")
-        ):
-            output.extend('!"' if preserve_strings else "  ")
-            index += 2
-            in_string = "interp"
-        elif source[index] == "'" and not _preceded_by_ident(source, index):
+            after_dot = False
+        elif _is_ident_start(source[index], is_lean=is_lean):
+            if (
+                is_lean
+                and not after_dot
+                and source[index] == "r"
+                and RAW_STRING_OPEN.match(source, index) is not None
+            ):
+                fail("raw string literal is forbidden in trusted Lean proof sources")
+            if (
+                is_lean
+                and not after_dot
+                and source[index] in ("s", "m", "f")
+                and source.startswith('!"', index + 1)
+            ):
+                output.extend(source[index : index + 3] if preserve_strings else "   ")
+                index += 3
+                in_string = "interp"
+                after_dot = False
+                continue
+            end = index + 1
+            while end < len(source) and _is_ident_rest(source[end], is_lean=is_lean):
+                end += 1
+            output.append(source[index:end])
+            index = end
+            after_dot = False
+        elif source[index] == "'":
             char_width = 0
             if (
                 index + 2 < len(source)
@@ -191,24 +218,36 @@ def strip_comments_and_strings(
             else:
                 output.append(source[index])
                 index += 1
+            after_dot = False
         elif source[index] == '"':
             output.append('"' if preserve_strings else " ")
             index += 1
             in_string = "plain"
+            after_dot = False
         elif interp_braces and source[index] == "{":
             interp_braces[-1] += 1
             output.append("{")
             index += 1
+            after_dot = False
         elif interp_braces and source[index] == "}":
             interp_braces[-1] -= 1
             output.append("}")
             index += 1
+            after_dot = False
             if interp_braces[-1] == 0:
                 interp_braces.pop()
                 in_string = "interp"
+        elif source[index] == ".":
+            is_single_dot = (index == 0 or source[index - 1] != ".") and (
+                index + 1 == len(source) or source[index + 1] != "."
+            )
+            output.append(".")
+            index += 1
+            after_dot = is_single_dot
         else:
             output.append(source[index])
             index += 1
+            after_dot = False
     if depth:
         fail("unterminated block comment in trusted proof source")
     if in_string is not None or interp_braces:
@@ -311,6 +350,9 @@ def run_lexer_canaries() -> None:
         'def «"» := 1\ndef theorem_bad : True := by sorry\ndef close := ""\n',
         'def Foo.r (s : String) : String := s\ndef a := Foo.r"\\""\naxiom bad : False\n-- "\n',
         "def x : Bool := !'\"' == 'a'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def x' (s : String) : Bool := true\ndef b : Bool := !x'\"'\"\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def z : Char := 'a'x'\"'\" x'\naxiom bad : False\ndef y : Char := '\"'\n",
+        "def c : Char := д'\"'\naxiom bad : False\ndef y : Char := '\"'\n",
         'def x : Bool := !s!"{(Lean.ofReduceBool : Nat)}" == ""\n',
         'def interp_hide := s!"{(Lean.ofReduceBool : Nat)}"\n',
         "def guillemet_hide := Lean.«ofReduceBool»\n",
@@ -346,6 +388,8 @@ def run_lexer_canaries() -> None:
     for lean_rejected in (
         'def raw_blind := r"\\"\naxiom impossible : False\ndef close := \'"\'\n',
         'def x : Bool := !r"\\" == ""\naxiom bad : False\ndef y : Char := \'"\'\n',
+        'def c := дr"\\"\naxiom bad : False\ndef y : Char := \'"\'\n',
+        'def xs! (s : String) : Bool := true\ndef b : Bool := !xs!"{"\naxiom bad : False\ndef q := "}"\n',
         'def raw_hashed := r#"sorry"#\n',
         'def a : Nat := panic!"{"\naxiom bad : False\ndef b := "}"\n',
         'def a := throwError "{(Lean.ofReduceBool : Nat)}"\n',
