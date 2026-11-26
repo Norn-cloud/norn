@@ -182,19 +182,32 @@ fn env_var(name: &str) -> Option<OsString> {
     std::env::var_os(name)
 }
 
-/// Read and parse the keyring file, bounded.
-fn read_keyring(path: &Path) -> Result<Keyring, String> {
-    let mut text = String::new();
+/// Read raw keyring file bytes, bounded.
+fn read_keyring_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
     std::fs::File::open(path)
         .and_then(|file| {
             file.take(MAX_KEYRING_BYTES.saturating_add(1))
-                .read_to_string(&mut text)
+                .read_to_end(&mut bytes)
         })
         .map_err(|e| format!("the keyring {} is unreadable: {e}", path.display()))?;
-    if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_KEYRING_BYTES {
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_KEYRING_BYTES {
         return Err(format!("the keyring {} is too long", path.display()));
     }
-    Keyring::parse(&text).map_err(|e| format!("the keyring {}: {e}", path.display()))
+    Ok(bytes)
+}
+
+/// Parse UTF-8 keyring bytes.
+fn parse_keyring_bytes(path: &Path, bytes: &[u8]) -> Result<Keyring, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|e| format!("the keyring {} is not UTF-8: {e}", path.display()))?;
+    Keyring::parse(text).map_err(|e| format!("the keyring {}: {e}", path.display()))
+}
+
+/// Read and parse the keyring file, bounded.
+fn read_keyring(path: &Path) -> Result<Keyring, String> {
+    let bytes = read_keyring_bytes(path)?;
+    parse_keyring_bytes(path, &bytes)
 }
 
 /// A fresh signing key `kid` for the cell host, and the keyring line that
@@ -206,12 +219,18 @@ pub fn new_key(kid: &str) -> Result<(String, String), String> {
     use base64::Engine as _;
     let mut seed = [0_u8; 32];
     getrandom::fill(&mut seed).map_err(|e| format!("no randomness: {e}"))?;
-    let secret = format!(
+    let mut secret = format!(
         "{kid}:{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(seed)
     );
     zeroize::Zeroize::zeroize(&mut seed);
-    let issuer = norn_api::olap_credential::Issuer::parse(&secret)?;
+    let issuer = match norn_api::olap_credential::Issuer::parse(&secret) {
+        Ok(issuer) => issuer,
+        Err(error) => {
+            zeroize::Zeroize::zeroize(&mut secret);
+            return Err(error);
+        }
+    };
     Ok((secret, issuer.public_spec()))
 }
 
@@ -238,12 +257,28 @@ impl Clock for SystemClock {
 /// `GET /healthz` with 200, within two seconds (the container health check).
 #[must_use]
 pub fn healthy() -> bool {
-    let addr = std::env::var("NORN_OLAP_ADDR").unwrap_or_else(|_| "0.0.0.0:8790".to_owned());
-    let port = addr.rsplit(':').next().unwrap_or("8790");
-    let Ok(mut stream) = TcpStream::connect(format!("127.0.0.1:{port}")) else {
+    use std::net::ToSocketAddrs as _;
+    let raw = std::env::var("NORN_OLAP_ADDR")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "0.0.0.0:8790".to_owned());
+    let Ok(addrs) = raw.to_socket_addrs() else {
         return false;
     };
-    let _bounded = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let timeout = Duration::from_secs(2);
+    let Some(mut stream) = addrs.into_iter().find_map(|mut target| {
+        if target.ip().is_unspecified() {
+            target.set_ip(match target.ip() {
+                std::net::IpAddr::V4(_) => std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                std::net::IpAddr::V6(_) => std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+            });
+        }
+        TcpStream::connect_timeout(&target, timeout).ok()
+    }) else {
+        return false;
+    };
+    let _bounded_read = stream.set_read_timeout(Some(timeout));
+    let _bounded_write = stream.set_write_timeout(Some(timeout));
     if stream
         .write_all(b"GET /healthz HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n")
         .is_err()
@@ -321,6 +356,8 @@ pub fn serve_with(
     let engine = open_engine(config.engine, config.settings)?;
     let gate = Arc::new(Gate {
         keys_file: config.keys_file,
+        keyring_cache: Mutex::new(None),
+        http: agent(),
         clock,
         seam,
     });
@@ -333,7 +370,15 @@ pub fn serve_with(
             .spawn(move || work(&queue, engine.as_ref(), &gate))?;
     }
     let admission = Arc::new(Admission::default());
-    for stream in listener.incoming().flatten() {
+    for incoming in listener.incoming() {
+        let stream = match incoming {
+            Ok(stream) => stream,
+            Err(error) => {
+                let _logged = writeln!(std::io::stderr(), "norn-olapd: accept failed: {error}");
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+        };
         // #1747: a slot in the bounded pre-admission stage, or 503 at once.
         let Some(pending) = stream
             .peer_addr()
@@ -382,8 +427,10 @@ fn work(queue: &Mutex<Receiver<Job>>, engine: &dyn AnalyticalEngine, gate: &Gate
     }
 }
 
+const BUSY_BODY: &[u8] = b"{\"code\":\"analytics.busy\"}";
+
 /// #1747: the one answer to a connection the daemon has no room for, sent
-/// without waiting: a peer that does not read it holds nothing.
+/// without waiting on the accept loop: a peer that does not read it holds nothing.
 fn busy(stream: &TcpStream) {
     let answer = b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: 25\r\nconnection: close\r\n\r\n{\"code\":\"analytics.busy\"}";
     if stream.set_nonblocking(true).is_ok() {
@@ -392,11 +439,15 @@ fn busy(stream: &TcpStream) {
     }
 }
 
-/// OLAP-CRED-1: who may call. The keyring is read on every call, so adding
-/// or removing a key takes effect without a restart; an unreadable keyring
-/// refuses every call.
+type CachedKeyring = (Vec<u8>, Arc<Keyring>);
+
+/// OLAP-CRED-1: who may call. The keyring file bytes are read on every call, so
+/// adding, rotating or removing a key takes effect without a restart and an
+/// unreadable keyring refuses every call; unchanged bytes reuse the parsed keys.
 struct Gate {
     keys_file: PathBuf,
+    keyring_cache: Mutex<Option<CachedKeyring>>,
+    http: ureq::Agent,
     clock: Arc<dyn Clock>,
     seam: Arc<dyn Seam>,
 }
@@ -435,19 +486,40 @@ impl Named {
 }
 
 impl Gate {
+    fn load_keyring(&self) -> Result<Arc<Keyring>, String> {
+        let bytes = read_keyring_bytes(&self.keys_file)?;
+        {
+            let guard = self
+                .keyring_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some((cached_bytes, cached_ring)) = guard.as_ref()
+                && *cached_bytes == bytes
+            {
+                return Ok(Arc::clone(cached_ring));
+            }
+        }
+        let parsed = Arc::new(parse_keyring_bytes(&self.keys_file, &bytes)?);
+        *self
+            .keyring_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((bytes, Arc::clone(&parsed)));
+        Ok(parsed)
+    }
+
     /// #1747: the credential verified from the request's head alone, for
     /// the operation the path names, before any body is read or allocated:
     /// its signature covers the body digest it declares.
     fn verify_head(&self, head: &Head) -> Result<Verified, Denied> {
+        let keyring = self.load_keyring().map_err(|error| {
+            let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
+            Denied::UnknownKey
+        })?;
         let credential = head
             .authorization
             .as_deref()
             .and_then(|h| h.strip_prefix("Bearer "))
             .ok_or(Denied::Malformed)?;
-        let keyring = read_keyring(&self.keys_file).map_err(|error| {
-            let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
-            Denied::UnknownKey
-        })?;
         let op = head.path.strip_prefix("/v1/").unwrap_or_default();
         keyring.verify_head(credential, op, self.clock.now().as_millis())
     }
@@ -592,8 +664,7 @@ fn preadmit(
                     &refusal("analytics.too_large", "the request body exceeds the bound"),
                 )
             } else {
-                busy(&stream);
-                Ok(())
+                respond(&stream, 503, "application/json", BUSY_BODY)
             };
             drain(&mut reader);
             return sent;
@@ -624,7 +695,7 @@ fn preadmit(
     }) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
-            busy(&job.stream);
+            let _sent = respond(&job.stream, 503, "application/json", BUSY_BODY);
             Ok(())
         }
     }
@@ -640,10 +711,10 @@ fn route(call: &Call<'_>, engine: &dyn AnalyticalEngine, gate: &Gate) -> std::io
         "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile_objects(&r)),
         "/v1/page" => call.answer(|r: PageRequest| engine.query_page(&r)),
         "/v1/lineage" => call.answer(|r: LineageRequest| engine.query_lineage(&r)),
-        "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
+        "/v1/land" => call.answer(|r: LandRequest| land(engine, &gate.http, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreBody| {
-            let stored = store(engine, &r);
+            let stored = store(engine, &gate.http, &r);
             gate.seam.stored(call.tenant, stored.is_ok());
             stored
         }),
@@ -837,7 +908,7 @@ fn upload(
     )
     .finalize()
     .iter()
-    .fold(String::new(), |mut out, b| {
+    .fold(String::with_capacity(64), |mut out, b| {
         use std::fmt::Write as _;
         let _infallible = write!(out, "{b:02x}");
         out
@@ -855,9 +926,13 @@ fn upload(
 /// MANIFEST-LAND-1: land the presigned source in a fresh attempt the engine
 /// mints, downloading it into the attempt's own source file. The engine
 /// holds the attempt throughout; a failed landing removes it.
-fn land(engine: &dyn AnalyticalEngine, request: &LandRequest) -> EngineOutcome<LandResponse> {
+fn land(
+    engine: &dyn AnalyticalEngine,
+    http: &ureq::Agent,
+    request: &LandRequest,
+) -> EngineOutcome<LandResponse> {
     engine.land_dataset(request, &mut |file| {
-        download(&agent(), &request.load.file.url, file)
+        download(http, &request.load.file.url, file)
     })
 }
 
@@ -874,6 +949,7 @@ fn settle(engine: &dyn AnalyticalEngine, request: &SettleRequest) -> EngineOutco
 /// attempt's cleanup; nothing here removes anything.
 fn store(
     engine: &dyn AnalyticalEngine,
+    http: &ureq::Agent,
     body: &StoreBody,
 ) -> EngineOutcome<Box<serde_json::value::RawValue>> {
     let request = body.request();
@@ -886,9 +962,8 @@ fn store(
         sha256(request.landed.held.as_ref()),
     );
     engine.store_dataset(body, &mut |data, held| {
-        let agent = agent();
-        upload(&agent, &request.data.url, data, &data_sha256)?;
-        upload(&agent, &request.held.url, held, &held_sha256)
+        upload(http, &request.data.url, data, &data_sha256)?;
+        upload(http, &request.held.url, held, &held_sha256)
     })
 }
 
@@ -919,12 +994,13 @@ fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()>
     let sent = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::open(&path)?;
         let length = file.metadata()?.len();
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncache-control: no-store\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
+        );
+        stream.set_nodelay(true)?;
         // #1710: the whole answer is sent within its own deadline.
         let mut out = Deadlined::new(stream, write_budget(length))?;
-        write!(
-            out,
-            "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncache-control: no-store\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
-        )?;
+        out.write_all(head.as_bytes())?;
         std::io::copy(&mut file, &mut out)?;
         out.flush()
     })();
