@@ -596,45 +596,16 @@ impl Engine {
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source, Some(&request.model_pin))?;
-            let (cell, bad) = match &request.source {
-                Source::Mirror { scope, .. } => (
-                    Frag::bind("\":scope\" <> ?", Sql::Text(scope.clone())),
-                    Frag::raw(ident(":bad")),
-                ),
-                Source::Dataset { .. } => (Frag::raw("FALSE"), Frag::raw("FALSE")),
-            };
-            let checks = Frag::fmt(
-                &format!(
-                    "SELECT count(*), count(*) FILTER (WHERE {{}}), count(*) FILTER (WHERE {{}}) FROM {} WHERE {{}}",
-                    scope.table
-                ),
-                &[&cell, &bad, &scope.all],
-            );
-            let mut statement = db(conn.prepare(&checks.text))?;
-            let (population, other, bad): (u64, u64, u64) = db(statement.query_row(
-                params_from_iter(checks.params),
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ))?;
-            if other > 0 {
-                return Err(refusal(STALE, "a row of another scope"));
-            }
-            if bad > 0 {
-                return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
-            }
-            // ASOF-KNOWLEDGE-1: a version committed under another model is not
-            // read as this one (the exact engine refuses it the same way).
-            if let Some(model) = &scope.model {
-                let other = Frag::fmt(
-                    &format!(
-                        "SELECT count(*) FROM {} WHERE {{}} AND \":model\" <> {{}}",
-                        scope.table
+            let population = match scope.verify_mirror_rows(conn, &request.source, true)? {
+                Some(population) => population,
+                None => query_u64(
+                    conn,
+                    &Frag::fmt(
+                        &format!("SELECT count(*) FROM {} WHERE {{}}", scope.table),
+                        &[&scope.all],
                     ),
-                    &[&scope.all, &Frag::bind("?", Sql::Text(model.clone()))],
-                );
-                if query_u64(conn, &other)? > 0 {
-                    return Err(refusal(UNSUPPORTED, "a version of another model"));
-                }
-            }
+                )?,
+            };
             let excluded = scope.excluded_present(conn)?;
             if let Some(link) = &request.query.time_link {
                 check_link(conn, &scope, link)?;
@@ -643,7 +614,10 @@ impl Engine {
             if let Some(untimed) = &projection.untimed
                 && query_u64(conn, untimed)? > 0
             {
-                return Err(refusal(UNSUPPORTED, "a snapshot version without its valid time"));
+                return Err(refusal(
+                    UNSUPPORTED,
+                    "a snapshot version without its valid time",
+                ));
             }
             let answered = projection.materialize(conn).and_then(|()| {
                 if query_u64(conn, &Frag::raw("SELECT count(*) FROM \":p\" WHERE refuse"))? > 0 {
@@ -675,7 +649,19 @@ impl Engine {
         self.with(&request.tenant, |conn| {
             let pin = pinned(&request.source, request.model_pin.as_deref())?;
             let scope = Scope::new(conn, &request.source, pin)?;
+            let _population = scope.verify_mirror_rows(conn, &request.source, true)?;
+            if let Some(link) = &request.query.time_link {
+                check_link(conn, &scope, link)?;
+            }
             let projection = Projection::build(&request.query, &scope)?;
+            if let Some(untimed) = &projection.untimed
+                && query_u64(conn, untimed)? > 0
+            {
+                return Err(refusal(
+                    UNSUPPORTED,
+                    "a snapshot version without its valid time",
+                ));
+            }
             let members = projection.page(
                 conn,
                 &request.group,
@@ -1194,6 +1180,7 @@ impl Engine {
         self.with(&request.tenant, |conn| {
             let pin = pinned(&request.source, request.model_pin.as_deref())?;
             let scope = Scope::new(conn, &request.source, pin)?;
+            let _population = scope.verify_mirror_rows(conn, &request.source, false)?;
             let mut conditions = vec![scope.population.clone()];
             if !request.ids.is_empty() {
                 conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
@@ -1290,7 +1277,7 @@ impl Engine {
     pub fn profile(&self, request: &ProfileRequest) -> Outcome<ProfileResponse> {
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source, Some(&request.model_pin))?;
-            scope.verify_mirror_rows(conn, &request.source)?;
+            let _population = scope.verify_mirror_rows(conn, &request.source, false)?;
             let rows = query_u64(
                 conn,
                 &Frag::fmt(
@@ -1320,23 +1307,23 @@ impl Engine {
     /// # Errors
     /// An unknown column or a stale source.
     pub fn export(&self, request: &ExportRequest) -> Outcome<PathBuf> {
-        let name = format!(
-            "export-{}.{}",
-            hex(&Sha256::digest(
-                format!("{:?}{:?}", request, Instant::now()).as_bytes()
-            )),
-            match request.format {
-                ExportFormat::Parquet => "parquet",
-                ExportFormat::Jsonl => "jsonl",
-            }
-        );
-        let path = self
+        let scratch = self
             .scratch(&request.tenant)
+            .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+        let suffix = match request.format {
+            ExportFormat::Parquet => ".parquet",
+            ExportFormat::Jsonl => ".jsonl",
+        };
+        let staged = tempfile::Builder::new()
+            .prefix("export-")
+            .suffix(suffix)
+            .tempfile_in(&scratch)
             .map_err(|error| refusal("analytics.engine", error.to_string()))?
-            .join(name);
+            .into_temp_path();
         self.with(&request.tenant, |conn| {
             let pin = pinned(&request.source, request.model_pin.as_deref())?;
             let scope = Scope::new(conn, &request.source, pin)?;
+            let _population = scope.verify_mirror_rows(conn, &request.source, false)?;
             let mut select = vec![
                 format!("{} AS id", ident(":id")),
                 format!("{} AS version", ident(":v")),
@@ -1361,7 +1348,7 @@ impl Engine {
                 ExportFormat::Parquet => "FORMAT parquet",
                 ExportFormat::Jsonl => "FORMAT json",
             };
-            let target = path.to_string_lossy().replace('\'', "''");
+            let target = staged.to_string_lossy().replace('\'', "''");
             let rows = Frag::fmt(
                 &format!(
                     "CREATE OR REPLACE TEMP TABLE \":export\" AS SELECT {} FROM {} WHERE {{}} ORDER BY {}",
@@ -1374,12 +1361,15 @@ impl Engine {
             db(conn.prepare(&rows.text)).and_then(|mut statement| {
                 db(statement.execute(params_from_iter(rows.params)))
             })?;
-            db(conn.execute_batch(&format!(
-                "COPY \":export\" TO '{target}' ({format}); DROP TABLE \":export\";"
-            )))?;
-            Ok(())
+            let copied = db(conn.execute_batch(&format!(
+                "COPY \":export\" TO '{target}' ({format});"
+            )));
+            let _dropped = conn.execute_batch("DROP TABLE IF EXISTS \":export\";");
+            copied
         })?;
-        Ok(path)
+        staged
+            .keep()
+            .map_err(|error| refusal("analytics.engine", error.to_string()))
     }
 }
 
@@ -1819,22 +1809,38 @@ impl Scope {
         }
     }
 
-    /// Enforce mirror row scope and model pin on non-question reads (`profile`),
-    /// matching [`Engine::evaluate`].
-    fn verify_mirror_rows(&self, conn: &Connection, source: &Source) -> Outcome<()> {
+    /// Enforce mirror row scope and model pin (and `:bad` when `check_bad` is
+    /// set), returning the mirror population count (`None` for dataset sources).
+    fn verify_mirror_rows(
+        &self,
+        conn: &Connection,
+        source: &Source,
+        check_bad: bool,
+    ) -> Outcome<Option<u64>> {
         let Source::Mirror { scope, .. } = source else {
-            return Ok(());
+            return Ok(None);
         };
-        let other_scope = Frag::fmt(
+        let checks = Frag::fmt(
             &format!(
-                "SELECT count(*) FROM {} WHERE {{}} AND \":scope\" <> {{}}",
+                "SELECT count(*), count(*) FILTER (WHERE \":scope\" <> {{}}), count(*) FILTER (WHERE {}) FROM {} WHERE {{}}",
+                ident(":bad"),
                 self.table
             ),
-            &[&self.all, &Frag::bind("?", Sql::Text(scope.clone()))],
+            &[&Frag::bind("?", Sql::Text(scope.clone())), &self.all],
         );
-        if query_u64(conn, &other_scope)? > 0 {
+        let mut statement = db(conn.prepare(&checks.text))?;
+        let (population, other_scope, bad): (u64, u64, u64) = db(statement
+            .query_row(params_from_iter(checks.params), |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            }))?;
+        if other_scope > 0 {
             return Err(refusal(STALE, "a row of another scope"));
         }
+        if check_bad && bad > 0 {
+            return Err(refusal(UNSUPPORTED, "a stored value failed its check"));
+        }
+        // ASOF-KNOWLEDGE-1: a version committed under another model is not
+        // read as this one (the exact engine refuses it the same way).
         if let Some(model) = &self.model {
             let other_model = Frag::fmt(
                 &format!(
@@ -1847,7 +1853,7 @@ impl Scope {
                 return Err(refusal(UNSUPPORTED, "a version of another model"));
             }
         }
-        Ok(())
+        Ok(Some(population))
     }
 
     fn provenance(&self, tenant: &TenantId) -> SnapshotProvenance {
@@ -2474,6 +2480,9 @@ impl Projection {
             Frag::fmt("({}) AS ul", &[&Frag::join(&counted, " OR ")])
         });
         let arity = query.operands.len();
+        if arity == 0 {
+            return Err(refusal(UNSUPPORTED, "a query has no operands"));
+        }
         let contributes = (0..arity)
             .map(|k| format!("a{k} IS NOT NULL OR n{k} = 1"))
             .collect::<Vec<_>>()
@@ -2867,14 +2876,20 @@ fn law_sql(column: &Column, i: usize) -> Outcome<String> {
     let mut checks = Vec::new();
     for law in &column.laws {
         checks.push(match law {
-            super::PointLaw::OneOf(values) => format!(
-                "CASE WHEN {v} IN ({}) THEN NULL ELSE 'bulk.not_in_enum' END",
-                values
-                    .iter()
-                    .map(|value| format!("'{}'", value.replace('\'', "''")))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            super::PointLaw::OneOf(values) => {
+                if values.is_empty() {
+                    "'bulk.not_in_enum'".to_owned()
+                } else {
+                    format!(
+                        "CASE WHEN {v} IN ({}) THEN NULL ELSE 'bulk.not_in_enum' END",
+                        values
+                            .iter()
+                            .map(|value| format!("'{}'", value.replace('\'', "''")))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
             super::PointLaw::Min(bound) | super::PointLaw::Max(bound) => {
                 let exact = norn_ir::Decimal::parse(bound)
                     .ok()
@@ -3486,28 +3501,37 @@ fn lower_equality(
 fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
     use PredicateKind as K;
     use RowPredicate as P;
-    let binary = |op: &str, a: &RowPredicate, b: &RowPredicate, kind: K| -> Outcome<LoweredRule> {
-        let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+    let combine = |op: &str, a: LoweredRule, b: LoweredRule, kind: K| -> LoweredRule {
         let mut guards = a.guards;
         guards.extend(b.guards);
-        Ok(LoweredRule {
+        LoweredRule {
             sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql]),
             kind,
             guards,
-        })
-    };
-    let number = |a: &RowPredicate, b: &RowPredicate| -> Outcome<(u32, u32)> {
-        match (a.kind(table), b.kind(table)) {
-            (Some(K::Number(x)), Some(K::Number(y))) => Ok((x, y)),
-            _ => Err(refusal(LAW, "arithmetic on a value that is not a number")),
         }
     };
-    let arithmetic =
-        |op: &str, a: &RowPredicate, b: &RowPredicate, scale: u32| -> Outcome<LoweredRule> {
-            let mut lowered = binary(op, a, b, K::Number(scale))?;
-            lowered.guards.push(in_range(&lowered.sql, scale)?);
-            Ok(lowered)
+    let binary = |op: &str, a: &RowPredicate, b: &RowPredicate, kind: K| -> Outcome<LoweredRule> {
+        Ok(combine(
+            op,
+            lower_node(a, table)?,
+            lower_node(b, table)?,
+            kind,
+        ))
+    };
+    let arithmetic = |op: &str,
+                      a: &RowPredicate,
+                      b: &RowPredicate,
+                      scale: fn(u32, u32) -> Outcome<u32>|
+     -> Outcome<LoweredRule> {
+        let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+        let (K::Number(x), K::Number(y)) = (a.kind, b.kind) else {
+            return Err(refusal(LAW, "arithmetic on a value that is not a number"));
         };
+        let scale = scale(x, y)?;
+        let mut lowered = combine(op, a, b, K::Number(scale));
+        lowered.guards.push(in_range(&lowered.sql, scale)?);
+        Ok(lowered)
+    };
     Ok(match node {
         P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => lower_leaf(node, table)?,
         P::Not(inner) => {
@@ -3526,25 +3550,13 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
                 guards: inner.guards,
             }
         }
-        P::Add(a, b) => {
-            let (x, y) = number(a, b)?;
-            arithmetic("+", a, b, x.max(y))?
-        }
-        P::Subtract(a, b) => {
-            let (x, y) = number(a, b)?;
-            arithmetic("-", a, b, x.max(y))?
-        }
-        P::Multiply(a, b) => {
-            let (x, y) = number(a, b)?;
-            arithmetic(
-                "*",
-                a,
-                b,
-                x.checked_add(y)
-                    .filter(|s| *s <= MAX_PREDICATE_SCALE)
-                    .ok_or_else(|| refusal(LAW, "a scale past the exact range"))?,
-            )?
-        }
+        P::Add(a, b) => arithmetic("+", a, b, |x, y| Ok(x.max(y)))?,
+        P::Subtract(a, b) => arithmetic("-", a, b, |x, y| Ok(x.max(y)))?,
+        P::Multiply(a, b) => arithmetic("*", a, b, |x, y| {
+            x.checked_add(y)
+                .filter(|s| *s <= MAX_PREDICATE_SCALE)
+                .ok_or_else(|| refusal(LAW, "a scale past the exact range"))
+        })?,
         P::Equal(a, b) | P::NotEqual(a, b) => {
             lower_equality(matches!(node, P::Equal(..)), a, b, table)?
         }
@@ -3555,14 +3567,21 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
         P::And(a, b) => binary("AND", a, b, K::Bool)?,
         P::Or(a, b) => binary("OR", a, b, K::Bool)?,
         P::Conditional(c, a, b) => {
-            let kind = node
-                .kind(table)
-                .ok_or_else(|| refusal(LAW, "a conditional the engine does not type"))?;
             let (c, a, b) = (
                 lower_node(c, table)?,
                 lower_node(a, table)?,
                 lower_node(b, table)?,
             );
+            let kind = if c.kind == K::Bool {
+                match (a.kind, b.kind) {
+                    (K::Number(left), K::Number(right)) => Some(K::Number(left.max(right))),
+                    (left, right) if left == right => Some(left),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+            .ok_or_else(|| refusal(LAW, "a conditional the engine does not type"))?;
             let mut guards = c.guards;
             guards.extend(a.guards);
             guards.extend(b.guards);
@@ -3638,12 +3657,15 @@ fn check_sql(check: &RuleCheck, table: &TableSchema) -> Outcome<(Frag, Frag)> {
 /// operator is charged so here). A value's size is a text's bytes and 1 for
 /// anything else. `None` for a rule outside the lowered subset.
 fn fuel_sql(check: &RuleCheck, table: &TableSchema) -> Option<String> {
-    let mut parts = vec![check.fuel.to_string()];
-    parts.push(data_fuel(check.predicate.as_ref()?, table));
+    let mut parts = vec![format!("CAST({} AS HUGEINT)", check.fuel)];
+    parts.push(format!(
+        "CAST({} AS HUGEINT)",
+        data_fuel(check.predicate.as_ref()?, table)
+    ));
     if let Some(condition) = &check.condition {
-        parts.push(data_fuel(condition, table));
+        parts.push(format!("CAST({} AS HUGEINT)", data_fuel(condition, table)));
     }
-    Some(format!("CAST({} AS HUGEINT)", parts.join(" + ")))
+    Some(format!("({})", parts.join(" + ")))
 }
 
 /// The data-proportional fuel of `node` and everything under it, in SQL.
