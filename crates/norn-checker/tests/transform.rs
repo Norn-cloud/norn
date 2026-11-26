@@ -1250,8 +1250,8 @@ fn evaluate_shares_one_fuel_budget_across_rows_and_columns() {
                 "op": "project",
                 "input": "s",
                 "columns": [
-                    {"name": "id", "column": "id"},
-                    {"name": "label", "expr": "input.email + ':' + input.region"}
+                    {"name": "id", "expression": "input.id"},
+                    {"name": "doubled", "expression": "input.credit + input.credit"}
                 ]
             }
         }),
@@ -1279,12 +1279,17 @@ fn evaluate_shares_one_fuel_budget_across_rows_and_columns() {
         "a single row fits within the fuel budget"
     );
     let many = TransformInput {
-        rows: BTreeMap::from([("customer".to_owned(), (0..25).map(make_row).collect())]),
+        rows: BTreeMap::from([("customer".to_owned(), (0..100).map(make_row).collect())]),
         links: BTreeMap::new(),
     };
     assert_eq!(
         evaluate(&plan, &many),
         Err(norn_checker::transform::eval::EvalError::BoundExceeded),
         "shared TurnFuel must refuse once cumulative row evaluations exceed plan.fuel_units"
+    );
+    plan.fuel_units = 50_000;
+    assert!(
+        evaluate(&plan, &many).is_ok(),
+        "the same 100 rows succeed once fuel_units is raised"
     );
 }
