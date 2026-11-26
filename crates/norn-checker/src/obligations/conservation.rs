@@ -14,8 +14,15 @@ use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, UnitRef, ZenExpression
 pub mod decision;
 /// Untrusted exact equality-feasibility discovery; candidates require checking.
 pub mod discovery;
+/// Exact-rational auto-lowering from compiled ledger packs and quantity actions.
+pub mod ledger;
 
 pub use crate::exact_rational::Rational;
+pub use ledger::{
+    LedgerPackCertification, LoweredLedgerSystem, QuantityActionsCertification,
+    certify_ledger_pack, certify_ledger_pack_ir, certify_ledger_pack_seal,
+    certify_quantity_actions, lower_ledger_pack, lower_quantity_action,
+};
 
 /// One coordinate of the declared conserved functional.
 #[derive(Debug, Clone, PartialEq, Eq)]
