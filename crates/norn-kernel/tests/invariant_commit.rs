@@ -4403,9 +4403,7 @@ fn law_exception_reading_links_rechecks_on_target_mutation_and_supports_observat
     );
     assert_eq!(
         failure.values.get("doc.limit"),
-        Some(&RuntimeValue::Number(
-            norn_ir::Decimal::parse("50").unwrap()
-        ))
+        Some(&RuntimeValue::Number(norn_ir::Decimal::parse("50")?))
     );
 
     // Observed snapshot path: lifted write records zero findings; unexcepted write records a finding.
