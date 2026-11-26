@@ -24,8 +24,6 @@ pub(crate) struct Jwks {
     pub(crate) text: String,
     /// When it was fetched (Unix ms).
     pub(crate) at: u64,
-    /// Monotonic fetch generation for singleflight coalescing.
-    seq: u64,
 }
 
 /// Outcome of the most recent completed fetch attempt, shared with concurrent
@@ -75,7 +73,7 @@ fn cached_attempt_after(url: &str, ticket: u64) -> Result<Option<Result<Jwks>>> 
         .map(|entry| entry.outcome.map_err(anyhow::Error::msg)))
 }
 
-async fn fetch_jwks_once(http: &reqwest::Client, url: &str, seq: u64) -> Result<Jwks> {
+async fn fetch_jwks_once(http: &reqwest::Client, url: &str) -> Result<Jwks> {
     let response = http
         .get(url)
         .timeout(JWKS_TIMEOUT)
@@ -93,7 +91,6 @@ async fn fetch_jwks_once(http: &reqwest::Client, url: &str, seq: u64) -> Result<
         url: url.to_owned(),
         text,
         at: now_ms(),
-        seq,
     })
 }
 
@@ -119,7 +116,7 @@ pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool)
     let seq = JWKS_FETCH_SEQ
         .fetch_add(1, Ordering::AcqRel)
         .saturating_add(1);
-    let outcome = fetch_jwks_once(http, &url, seq).await;
+    let outcome = fetch_jwks_once(http, &url).await;
     let recorded = match &outcome {
         Ok(fetched) => {
             *LAST_JWKS
@@ -142,10 +139,9 @@ pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool)
 
 #[cfg(test)]
 mod tests {
-    use std::future::Future as _;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
-    use std::task::{Context, Poll, Waker};
+    use std::task::{Context, Waker};
 
     use axum::response::IntoResponse as _;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -232,7 +228,6 @@ mod tests {
                 url: url.clone(),
                 text: document.clone(),
                 at: future_ms,
-                seq: future_seq,
             };
             *LAST_JWKS
                 .lock()
@@ -318,7 +313,7 @@ mod tests {
 
         let mut second = std::pin::pin!(fetch_jwks(&http, url, false));
         let mut cx = Context::from_waker(Waker::noop());
-        assert!(matches!(second.as_mut().poll(&mut cx), Poll::Pending));
+        assert!(second.as_mut().poll(&mut cx).is_pending());
         release_first.notify_one();
 
         let (first_joined, second_res) = tokio::join!(first, second);
@@ -358,10 +353,10 @@ mod tests {
         let mut f3 = std::pin::pin!(fetch_jwks(&http, url.clone(), false));
         let mut f4 = std::pin::pin!(fetch_jwks(&http, url.clone(), false));
         let mut cx = Context::from_waker(Waker::noop());
-        assert!(matches!(f1.as_mut().poll(&mut cx), Poll::Pending));
-        assert!(matches!(f2.as_mut().poll(&mut cx), Poll::Pending));
-        assert!(matches!(f3.as_mut().poll(&mut cx), Poll::Pending));
-        assert!(matches!(f4.as_mut().poll(&mut cx), Poll::Pending));
+        assert!(f1.as_mut().poll(&mut cx).is_pending());
+        assert!(f2.as_mut().poll(&mut cx).is_pending());
+        assert!(f3.as_mut().poll(&mut cx).is_pending());
+        assert!(f4.as_mut().poll(&mut cx).is_pending());
         drop(hold);
 
         let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
