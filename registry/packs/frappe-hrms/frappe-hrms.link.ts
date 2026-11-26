@@ -47,15 +47,15 @@ export const Pack = Norn.packLink({
     {
         "correspondenceId": "corr.frappe.hrms.attendance",
         "fromTermId": "norn.frappe.hrms.attendance",
-        "relation": "subsumed_by",
+        "relation": "subsumes",
         "toTermIds": [
             "norn.hr.attendance.event"
         ],
-        "justification": "Frappe HRMS Attendance maps cleanly onto Norn Workforce Canon `norn.hr.attendance.event`.",
+        "justification": "Frappe HRMS Attendance records Present/Half Day/WFH shift attendance alongside Absent and On Leave rows with optional shift; canonical `norn.hr.attendance.event` is the worked-shift subset.",
         "evidenceRefs": [
             "source.frappe-hrms"
         ],
-        "confidenceBasisPoints": 9000,
+        "confidenceBasisPoints": 8000,
         "reviewedBy": "hr-vertical (agent, proposed)",
         "reviewedAt": "2026-11-26T00:00:00Z"
     },

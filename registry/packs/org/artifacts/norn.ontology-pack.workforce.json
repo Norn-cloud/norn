@@ -79,42 +79,42 @@
         "termId": "norn.hr.marking.pii.compensation"
       },
       {
-        "confidenceBasisPoints": 9500,
+        "confidenceBasisPoints": 9000,
         "evidenceRefs": [
           "https://w3id.org/dpv/2.1/pd/"
         ],
         "externalIri": "https://w3id.org/dpv/pd#OfficialID",
-        "justification": "W3C DPV 2.1 dpv-pd:OfficialID covers national IDs, passports, and government-issued identifiers.",
+        "justification": "W3C DPV 2.1 dpv-pd:OfficialID covers national IDs, passports, and government-issued identifiers (proposed close_match pending human ratification).",
         "mappingId": "map.norn.hr.pii.gov.id.dpv",
-        "relation": "exact_match",
+        "relation": "close_match",
         "reviewedAt": "2026-11-26T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.w3c-dpv",
         "termId": "norn.hr.marking.pii.gov.id"
       },
       {
-        "confidenceBasisPoints": 9500,
+        "confidenceBasisPoints": 8000,
         "evidenceRefs": [
           "https://w3id.org/dpv/2.1/pd/"
         ],
         "externalIri": "https://w3id.org/dpv/pd#Demographic",
-        "justification": "W3C DPV 2.1 dpv-pd:Demographic covers demographic attributes such as gender, birth date, and contact metadata.",
+        "justification": "W3C DPV 2.1 dpv-pd:Demographic covers birth date and demographic attributes; employee contact fields (phone, address) overlap dpv-pd:Contact.",
         "mappingId": "map.norn.hr.pii.demographic.dpv",
-        "relation": "exact_match",
+        "relation": "related_match",
         "reviewedAt": "2026-11-26T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.w3c-dpv",
         "termId": "norn.hr.marking.pii.demographic"
       },
       {
-        "confidenceBasisPoints": 9500,
+        "confidenceBasisPoints": 9000,
         "evidenceRefs": [
           "https://w3id.org/dpv/2.1/pd/"
         ],
         "externalIri": "https://w3id.org/dpv/pd#Biometric",
-        "justification": "W3C DPV 2.1 dpv-pd:Biometric covers biometric templates and kiosk verification photos.",
+        "justification": "W3C DPV 2.1 dpv-pd:Biometric covers biometric templates and kiosk verification photos (proposed close_match pending human ratification).",
         "mappingId": "map.norn.hr.pii.biometric.dpv",
-        "relation": "exact_match",
+        "relation": "close_match",
         "reviewedAt": "2026-11-26T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.w3c-dpv",
@@ -1192,7 +1192,7 @@
           }
         ],
         "importMode": "map_only",
-        "license": "W3C-20150513",
+        "license": "W3C-20231102",
         "redistribution": "reference_only",
         "releaseId": "2.1@2025-03-16",
         "releasedAt": "2025-03-16",

@@ -84,6 +84,24 @@ fn erpnext_link_accounts_for_every_term() {
     );
 }
 
+#[test]
+fn frappe_hrms_link_accounts_for_every_term_in_workforce_canon() {
+    let coverage = coverage("norn.link.frappe-hrms.workforce");
+    assert_eq!(coverage.active_terms, 34);
+    assert_eq!(coverage.mapped.len(), 34);
+    assert!(coverage.residual.is_empty());
+    assert!(coverage.canon_gaps.is_empty());
+    assert!(coverage.non_conforming.is_empty());
+    let attendance = &coverage.mapped["norn.frappe.hrms.attendance"];
+    assert_eq!(
+        attendance.as_slice(),
+        &[(
+            "subsumes".to_owned(),
+            vec!["norn.hr.attendance.event".to_owned()]
+        )]
+    );
+}
+
 /// The projection report: per system, what maps (by relation), what is
 /// residual system detail, and what the canon lacks. Generated from link
 /// coverage; `NORN_PACKS_UPDATE=1` rewrites `registry/packs/PROJECTION.md`.

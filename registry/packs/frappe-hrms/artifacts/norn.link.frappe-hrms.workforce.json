@@ -39,14 +39,14 @@
         ]
       },
       {
-        "confidenceBasisPoints": 9000,
+        "confidenceBasisPoints": 8000,
         "correspondenceId": "corr.frappe.hrms.attendance",
         "evidenceRefs": [
           "source.frappe-hrms"
         ],
         "fromTermId": "norn.frappe.hrms.attendance",
-        "justification": "Frappe HRMS Attendance maps cleanly onto Norn Workforce Canon `norn.hr.attendance.event`.",
-        "relation": "subsumed_by",
+        "justification": "Frappe HRMS Attendance records Present/Half Day/WFH shift attendance alongside Absent and On Leave rows with optional shift; canonical `norn.hr.attendance.event` is the worked-shift subset.",
+        "relation": "subsumes",
         "reviewedAt": "2026-11-26T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "toTermIds": [
