@@ -5,7 +5,7 @@
 export type NornJson = null | boolean | number | string | ReadonlyArray<NornJson> | { readonly [key: string]: NornJson }
 
 /** sha256 over the canonical JSON of the definitions this file types and every base definition they resolve through. */
-export type DefinitionsDigest = "sha256:f0d86bba4e07dd633688f4ae74cf2b8f589e9ccac47c603e0e24f68122ebfee5"
+export type DefinitionsDigest = "sha256:56cb907547b1af41237dce20fa5ad0ee6d07a01c8e6ce3dce55c295715ea230c"
 
 /** Each action id → the input a caller sends (actor-derived fields excluded) and the output it declares. */
 export type ActionMap = {}
