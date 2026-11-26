@@ -12,6 +12,7 @@ mod actions;
 mod bindings;
 mod child_grid;
 mod composition;
+mod context;
 mod effects;
 mod forms;
 mod handling;
@@ -361,6 +362,9 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         self.check_overrides();
         self.check_effect_laws();
         self.check_value_handling();
+        self.check_context_reads();
+        self.check_messages();
+        self.check_island_states();
     }
 
     fn resolve_property(

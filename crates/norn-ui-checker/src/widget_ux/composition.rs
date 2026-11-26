@@ -54,7 +54,7 @@ impl UxChecker<'_, '_, '_> {
             };
             match &override_.value {
                 WidgetOverrideValue::Label { value } => {
-                    if value.0.is_empty() || value.0.values().any(|text| text.trim().is_empty()) {
+                    if value.is_blank() {
                         self.error(
                             &format!("{path}/value"),
                             "label override must contain nonblank localized text",

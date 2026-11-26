@@ -24,7 +24,7 @@ import { Node, type PageScope } from "./nodes.tsx"
 import type { WidgetCalls, WidgetLive, WidgetReader } from "./reads.ts"
 import { useWidgetMachine } from "./runtime.ts"
 import { matchWorkspaceState, type WorkspaceState } from "./state.ts"
-import type { WidgetPage, WidgetUx } from "./ux.ts"
+import type { Translate, WidgetPage, WidgetUx } from "./ux.ts"
 
 export interface NornAppRendererProps<Scope, Reader extends WidgetReader, Recorded extends WidgetReader> {
   /** The admitted contract (`WidgetRoot.ux`). */
@@ -53,6 +53,11 @@ export interface NornAppRendererProps<Scope, Reader extends WidgetReader, Record
    */
   readonly actionEffects?: (artifactId: string) => ActionEffects | undefined
   readonly locale?: string
+  /**
+   * The host's translations of the page's source messages (UI-TEXT-1), by message id; a message it
+   * has none for draws its source text.
+   */
+  readonly translate?: Translate
   readonly dir?: "ltr" | "rtl"
   readonly navigate?: (itemId: string) => void
   /** The mode read's Retry, for a workspace that is unavailable. */
@@ -86,7 +91,9 @@ export function refusalsOf(ux: WidgetUx, islands: IslandRegistry, live: boolean)
  */
 function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "workspace" | "engine"; readonly title: string; readonly message: string; readonly onRetry?: (() => void) | undefined; readonly dir: "ltr" | "rtl" }) {
   return (
-    <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable" } : {})} className="grid gap-2">
+    // A workspace that did not answer carries the shell's marker (`data-workspace-unavailable`): a shell
+    // that shows its own one-line status steps aside while a page says it, so the two never both show.
+    <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable", ...(onRetry !== undefined ? { "data-workspace-unavailable": "" } : {}) } : {})} className="grid gap-2">
       <p className="text-body font-medium">{title}</p>
       <p className="text-meta text-muted-foreground">{message}</p>
       {onRetry !== undefined && <button type="button" className="justify-self-start text-meta underline" onClick={onRetry}>Retry</button>}
@@ -128,6 +135,7 @@ function Page<Reader extends WidgetReader>(props: Omit<NornAppRendererProps<unkn
     runtime,
     islands: props.islands ?? NO_ISLANDS,
     locale: props.locale ?? "en",
+    translate: props.translate,
     actionEffects: props.actionEffects ?? NO_EFFECTS,
     navigate: props.navigate ?? NO_NAVIGATION,
   }

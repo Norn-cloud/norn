@@ -21,8 +21,8 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { createDriver, DEFAULT_CLOCK, type Clock, type Driver, type Transport } from "./machine/driver.ts"
 import { type EngineLoader, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
 import { init, type Machine, type Msg, type Snapshot } from "./machine/machine.ts"
-import { bindingRead, callStateOf, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
-import type { WidgetUx } from "./ux.ts"
+import { bindingRead, callStateOf, contextRead, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
+import { nodesOf, type WidgetUx } from "./ux.ts"
 
 export type EngineState = "idle" | "loading" | "ready" | "failed"
 
@@ -219,10 +219,11 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       const { context, objectTypeOf, actionIdOf } = options.host()
       if (call.kind === "read") {
         const binding = ux.dataBindings.find((candidate) => candidate.bindingId === call.bindingId)
-        const read = binding === undefined ? null : bindingRead(binding, context, objectTypeOf)
+        const named = ux.contextReads?.find((candidate) => candidate.bindingId === call.bindingId)
+        const read = binding !== undefined ? bindingRead(binding, context, objectTypeOf) : named !== undefined ? contextRead(named, context) : null
         if (read === null) return { outcome: "not_served", payload: {} }
         const answer = await reader.widget(read).queryFn({ signal: callOptions.signal })
-        if (live && answer.outcome === "accepted" && followed(machine.events, call.bindingId)) follow(call.bindingId, read)
+        if (live && !callOptions.signal.aborted && answer.outcome === "accepted" && followed(machine.events, call.bindingId)) follow(call.bindingId, read)
         return answer
       }
       const binding = call.kind === "action" ? ux.actionBindings.find((candidate) => candidate.bindingId === call.bindingId) : undefined
@@ -290,6 +291,26 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   }
 }
 
+/**
+ * Whether a page's machine evaluates any expression: a guard, an assignment or a call's input, an
+ * action binding's input mapping it starts, or a catalog prop on the page it runs. A page with none
+ * never loads the engine.
+ */
+export function needsEngine(ux: WidgetUx, machine: Machine): boolean {
+  const started = new Set<string>()
+  for (const transition of machine.transitions) {
+    if (transition.guard !== undefined || Object.keys(transition.assign ?? {}).length > 0) return true
+    for (const effect of transition.effects ?? []) {
+      if (effect.kind !== "start") continue
+      if (Object.keys(effect.input ?? {}).length > 0) return true
+      if (effect.call.kind === "action") started.add(effect.call.bindingId)
+    }
+  }
+  if (ux.actionBindings.some((binding) => started.has(binding.bindingId) && Object.keys(binding.inputMapping).length > 0)) return true
+  const page = ux.pages.find((candidate) => candidate.machine === machine)
+  return page === undefined || nodesOf(page.root).some((node) => node.component.kind === "catalog" && Object.keys(node.component.props ?? {}).length > 0)
+}
+
 /** Runs one page machine for as long as the component is mounted. */
 export function useWidgetMachine(options: MachineOptions): MachineRuntime {
   const { ux, machine, reader } = options
@@ -306,10 +327,11 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
     runtimeRef.current = runtime
     // A rebuilt runtime starts from nothing read and nothing called.
     setView(runtime.view())
-    // After the first paint: the engine compiles while the person reads, never before the page draws.
-    const idle = globalThis.setTimeout(runtime.preload, 0)
+    // After the first paint: the engine compiles while the person reads, never before the page draws;
+    // and only for a page that has an expression to evaluate. A message that needs it loads it anyway.
+    const idle = needsEngine(ux, machine) ? globalThis.setTimeout(runtime.preload, 0) : undefined
     return () => {
-      globalThis.clearTimeout(idle)
+      if (idle !== undefined) globalThis.clearTimeout(idle)
       runtime.dispose()
       runtimeRef.current = null
     }

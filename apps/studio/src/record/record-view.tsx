@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
-import { Link, useParams } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { sentence } from "@/components/lifecycle-view"
-import { useLocale } from "./lib/locale.tsx"
+import { useLocale } from "../lib/locale.tsx"
 import { Clock, GitCommitHorizontal, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/system/chip"
 import { FACT_STATUS_META, FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
@@ -21,178 +21,149 @@ import { useViewer } from "@/lib/viewer"
 import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
-import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
-import { useStudioScope } from "./lib/definitions.ts"
-import { retryWorkspace, useMode } from "./lib/live-transport.ts"
-import { untilDecided, useWorkspace } from "./lib/workspace.tsx"
-import { LinkedRecords } from "./linked-records.tsx"
-import { RecordActions } from "./actions/record-actions.tsx"
-import { QuarantinedRecord } from "./quarantined-record.tsx"
-import { EvidenceList } from "./evidence/evidence-crop.tsx"
-import { Findings } from "./evidence/findings.tsx"
-import { History } from "./evidence/history.tsx"
-import { historyQueryKey, historyQueryPrefix, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
-import { useEvidenceActions } from "./actions/evidence-actions.tsx"
-import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
-import { compared, isList, roleOf } from "./lib/law-values.ts"
-import { stamp } from "./lib/format.ts"
-import { formatLocale } from "./lib/timeline.ts"
-import type { ObjectReads, SourceLineage } from "./lib/transport.ts"
-import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
-import { maskedOf } from "./lib/privacy.ts"
-import { MaskedValue, RevealScope } from "@/components/masked-value"
-import { LoadState } from "@/components/load-state"
+import { conceptTitle, lawHeadline, systemName, type Concept } from "../lib/catalog.ts"
+import { useStudioScope } from "../lib/definitions.ts"
+import { untilDecided, useWorkspace } from "../lib/workspace.tsx"
+import { LinkedRecords } from "../linked-records.tsx"
+import { RecordActions } from "../actions/record-actions.tsx"
+import { QuarantinedRecord } from "../quarantined-record.tsx"
+import { EvidenceList } from "../evidence/evidence-crop.tsx"
+import { Findings } from "../evidence/findings.tsx"
+import { History } from "../evidence/history.tsx"
+import { historyQueryKey, historyQueryPrefix, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "../evidence/review.ts"
+import { useEvidenceActions } from "../actions/evidence-actions.tsx"
+import { atScale, exactPretty, factDisplay, recordName } from "../lib/objects.ts"
+import { compared, isList, roleOf } from "../lib/law-values.ts"
+import { stamp } from "../lib/format.ts"
+import { formatLocale } from "../lib/timeline.ts"
+import type { ObjectReads, SourceLineage } from "../lib/transport.ts"
+import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "../lib/record-page.ts"
+import { maskedOf } from "../lib/privacy.ts"
+import { MaskedValue } from "@/components/masked-value"
 import { SourceChip } from "@/components/source-chip"
-import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "./record-rail.tsx"
-import { RecordLineage } from "./record-lineage.tsx"
+import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "../record-rail.tsx"
+import { RecordLineage } from "../record-lineage.tsx"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { liveAccess } from "./lib/live.ts"
-import { RefusedNote } from "./questions.tsx"
-import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources.tsx"
+import { liveAccess } from "../lib/live.ts"
+import { RefusedNote } from "../questions.tsx"
+import { DenseTable, RECORDED_HINT, useCatalog } from "../sources.tsx"
+import { useMessage } from "../lib/translations.ts"
+
+/** The record a page is about: its type and id, from the route (`/sources/$concept/$`). */
+export interface RecordRoute { readonly name: string; readonly id: string }
 
 /**
- * `/sources/$concept/$`: a record, its id the rest of the path. The splat also
- * matches the object type's own URL with an empty id, which is the type's page.
+ * A record's findings, read at its source workspace and only while the mode is decided: no findings
+ * from another workspace, or from before the mode failed, show beside Workspace unavailable (#1745).
+ * The header and the body read them under one key, so they are read once.
  */
-export function SourcesItemPage() {
-  const { _splat: id = "" } = useParams({ strict: false })
-  return id === "" ? <ObjectTypePage /> : <ObjectPage />
+function useReviewed({ name, id }: RecordRoute) {
+  const workspace = useWorkspace()
+  const review = useQuery({ ...untilDecided(workspace.kind === "live" ? workspace.reader.findings(name, id) : undefined, ["findings", name, id]), retry: false })
+  const reviewed = workspace.kind === "live" ? review.data?.document : undefined
+  return {
+    evidence: reviewed?.evidence ?? [],
+    broken: reviewed?.findings.filter(({ status }) => status === "open") ?? [],
+    heldBack: reviewed?.quarantined === true,
+  }
 }
 
 /**
- * Everything known about one record. The overview reads like a record sheet: its key facts in the
- * header, its story on the left (summary, findings, every version) and its facts and links on the
- * right. Each value opens where it came from.
+ * Read again, as the record page always read again: the page machine reads the record (`readAgain`),
+ * and the header's commit and the Findings panel read again with it, under the reader's own keys: a
+ * correction can release a held record or settle a finding, and they would otherwise keep the earlier
+ * answer while it is fresh (FINDINGS_STALE_MS).
  */
-export function ObjectPage() {
-  // The id is the rest of the path: ids hold `/`, and Cloudflare redirects an encoded `%2F` to a decoded one, so it cannot be one segment.
-  const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
-  const { read: catalogRead, catalog } = useCatalog()
-  const concept = catalog?.byName.get(name)
-  // The record's source workspace, as the page's mode decided it (lib/workspace.tsx): a live record is
-  // read at that workspace (checked before and after the read), cached under it, and its reveals go to
-  // it; a recorded workspace reads only the recording. The same id in another workspace is another
-  // record, never this one's cached read. Nothing is read until the workspace is decided, and after a
-  // failed mode read (TanStack keeps the last answer, which is no longer current) nothing it read shows:
-  // the page waits for Retry (#1740, #1745).
-  const workspace = useWorkspace()
-  const mode = useMode()
-  const decided = workspace.kind === "live" || workspace.kind === "recorded" ? workspace : undefined
-  const sourceScope = workspace.kind === "live" ? workspace.scope : undefined
-  const reads = useQuery(untilDecided(decided?.reader.object(name, id), ["object", name, id]))
-  const modeError = workspace.kind === "unavailable" ? workspace.error : null
-  // The header names the version this read shows and, from the history, the commit that wrote it: a
-  // read again reads both, so neither is left from an earlier read. It reads the findings again too,
-  // under the reader's own key: a correction can release a held record or settle a finding, and the
-  // header and the Findings panel would otherwise keep the earlier answer while it is fresh (FINDINGS_STALE_MS).
+export function useReadAgain({ name, id }: RecordRoute, emit: () => void): () => void {
   const queries = useQueryClient()
-  const readAgain = () => {
-    void reads.refetch()
+  const workspace = useWorkspace()
+  return () => {
     void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) })
     if (workspace.kind === "live") void queries.invalidateQueries({ queryKey: workspace.reader.findings(name, id).queryKey, exact: true })
+    emit()
   }
-  // Retry is the workspace's (`retryWorkspace`): it decides the mode again and then reads again every
-  // errored read, the type's and the record's among them, at that mode's scope. A read still waiting
-  // for its answer (its skeleton timed out) did not error, so it is read again here, once the mode is
-  // decided, and only if it is still waiting then: no read is sent twice.
-  const retry = () => {
-    const waiting = [
-      ...catalogRead.isPending ? [["catalog"]] : [],
-      ...decided !== undefined && reads.isPending ? [decided.reader.object(name, id).queryKey] : [],
-    ]
-    void retryWorkspace(queries).then(() => {
-      for (const queryKey of waiting) {
-        if (queries.getQueryState(queryKey)?.status === "pending") void queries.refetchQueries({ queryKey, exact: true })
-      }
-    })
-  }
+}
+
+/**
+ * One header: the record's name with its state beside it, one quiet line of facts under it, the
+ * record's actions at the end. Drawn from the page's record read while it shows; on Read again the
+ * record it showed stays until the cell answers. A record the cell does not serve (`data` absent)
+ * keeps its header: its id, its type, and the state its findings give it.
+ */
+export function RecordHeader({ route, data, refreshing, readAgain }: { readonly route: RecordRoute; readonly data: ObjectReads | undefined; readonly refreshing: boolean; readonly readAgain: () => void }) {
+  const { name, id } = route
+  const { catalog } = useCatalog()
+  const concept = catalog?.byName.get(name)
+  const workspace = useWorkspace()
   const live = workspace.kind === "live"
-  // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
-  // Read and cached at the record's source workspace, and shown only while the mode is decided: no
-  // findings from another workspace, or from before the mode failed, show beside Workspace unavailable (#1745).
-  const review = useQuery({ ...untilDecided(workspace.kind === "live" ? workspace.reader.findings(name, id) : undefined, ["findings", name, id]), retry: false })
-  const reviewed = workspace.kind === "live" ? review.data?.document : undefined
-  const evidence = reviewed?.evidence ?? []
-  const broken = reviewed?.findings.filter(({ status }) => status === "open") ?? []
-  const heldBack = reviewed?.quarantined === true
+  const { broken, heldBack } = useReviewed(route)
+  const { locale } = useLocale()
+  const { icon: TypeIcon, text } = KINDS.objectType
+  const maskedRecord = data?.object.document.masked
+  const recordWithheld = maskedRecord !== undefined && Object.keys(maskedRecord).length > 0
+  // Derive header status strictly from real typed cell fields (quarantined/open findings and masked properties).
+  const recordStatus = live ? deriveFactStatus({ quarantined: heldBack, openFindings: broken.length, withheld: recordWithheld }) : null
+  return (
+    <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0 flex-1 basis-96 space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
+          {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
+          {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
+              the record: the title says exactly how many, and each value says how it was projected. */}
+          {recordStatus === "withheld" && maskedRecord !== undefined
+            ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord, formatLocale(locale))}</Chip>
+            : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
+          {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
+          <Link to="/objects/$type" params={{ type: name }} className="inline-flex items-center gap-1.5 text-foreground underline-offset-4 hover:underline"><TypeIcon aria-hidden className={cn("size-3.5", text)} />{concept?.title ?? conceptTitle(name)}</Link>
+          {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
+          {data && <>
+            <CopyId value={id} />
+            <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
+          </>}
+        </div>
+      </div>
+      {data?.object.origin === "live" && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button type="button" variant="ghost" size="sm" disabled={refreshing} onClick={readAgain} title="Read this record from the cell again">
+            <RefreshCw className={refreshing ? "animate-spin" : undefined} />Read again
+          </Button>
+          <RecordActions objectType={name} id={id} onDone={readAgain} />
+        </div>
+      )}
+    </header>
+  )
+}
+
+/**
+ * Everything known about one record. The overview reads like a record sheet: its story on the left
+ * (summary, findings, every version) and its facts and links on the right. Each value opens where it
+ * came from. The rule it breaks, when it breaks one, comes first.
+ */
+export function RecordBody({ route, data, readAgain }: { readonly route: RecordRoute; readonly data: ObjectReads; readonly readAgain: () => void }) {
+  const { name, id } = route
+  const { catalog } = useCatalog()
+  const concept = catalog?.byName.get(name)
+  const workspace = useWorkspace()
+  const live = workspace.kind === "live"
+  const { evidence, broken, heldBack } = useReviewed(route)
   const corrections = useEvidenceActions(name, id)
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
-  const { locale } = useLocale()
-  const data = reads.data
-  const lineage = data?.source?.document
-  // A failed mode read is the workspace's state, not this read's: it shows Workspace unavailable
-  // with the page's Retry (below) instead of a bare message.
-  const problem = workspace.kind === "unavailable" ? undefined : readProblem(catalogRead, reads)
-  const { icon: TypeIcon, text } = KINDS.objectType
+  const say = useMessage()
+  const lineage = data.source?.document
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
   const access = typeAccess.data?.kind === "read" ? typeAccess.data.read.document : undefined
   const sources = access?.capabilities.sources.decision
   const actionTitles = new Map(access?.roles.flatMap(({ actions }) => actions.map(({ actionId, title }) => [actionId, title] as const)) ?? [])
-  const maskedRecord = data?.object.document.masked
-  const recordWithheld = maskedRecord !== undefined && Object.keys(maskedRecord).length > 0
-  // Derive header status strictly from real typed cell fields (quarantined/open findings and masked properties).
-  const recordStatus = live
-    ? deriveFactStatus({
-      quarantined: heldBack,
-      openFindings: broken.length,
-      withheld: reads.isSuccess && data !== null && recordWithheld,
-    })
-    : null
   return (
-    <RevealScope.Provider value={sourceScope}>
-    <section className="space-y-6">
-      {/* One header: the record's name with its state beside it, one quiet line of facts under it, the record's actions at the end. */}
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0 flex-1 basis-96 space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
-            {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
-            {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
-                the record: the title says exactly how many, and each value says how it was projected. */}
-            {recordStatus === "withheld" && maskedRecord !== undefined
-              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord, formatLocale(locale))}</Chip>
-              : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
-            {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
-            <Link to="/objects/$type" params={{ type: name }} className="inline-flex items-center gap-1.5 text-foreground underline-offset-4 hover:underline"><TypeIcon aria-hidden className={cn("size-3.5", text)} />{concept?.title ?? conceptTitle(name)}</Link>
-            {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
-            {data && <>
-              <CopyId value={id} />
-              <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
-            </>}
-          </div>
-        </div>
-        {data?.object.origin === "live" && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
-              <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
-            </Button>
-            <RecordActions objectType={name} id={id} onDone={readAgain} />
-          </div>
-        )}
-      </header>
-      {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
-      {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
-      {problem === undefined && (reads.isPending || catalogRead.isPending || reads.isError || catalogRead.isError) && (
-        <LoadState
-          status={reads.isError || catalogRead.isError || modeError !== null ? "error" : "pending"}
-          error={modeError ?? reads.error ?? catalogRead.error}
-          isFetching={reads.isFetching || catalogRead.isFetching || mode.isFetching}
-          onRetry={retry}
-          skeleton="detail"
-          loadingLabel="Reading the record"
-        >
-          {() => null}
-        </LoadState>
-      )}
-      {reads.isSuccess && data === null && (live
-        ? workspace.kind === "live" && <QuarantinedRecord objectType={name} id={id} reader={workspace.reader} onDone={readAgain} />
-        : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
-      {data && concept && (
+    <div className="space-y-6">
+      {concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
+      {concept && (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
             {TABS.map(([value, label]) => <TabsTrigger key={value} value={value} className="flex-none">{label}</TabsTrigger>)}
@@ -205,8 +176,8 @@ export function ObjectPage() {
                 {concept.lifecycles.map((lifecycle) => {
                   const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
                   return (
-                    <Panel key={lifecycle.property} icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${field?.label ?? sentence(lifecycle.property)}`}
-                      action={<Link to="/objects/$type" params={{ type: name }} hash="lifecycle" className="underline-offset-4 hover:underline">{locale === "ar" ? "العرض الشامل للنوع" : "Type-wide view"}</Link>}>
+                    <Panel key={lifecycle.property} icon={GitBranch} label={`${say("Lifecycle")} · ${field?.label ?? sentence(lifecycle.property)}`}
+                      action={<Link to="/objects/$type" params={{ type: name }} hash="lifecycle" className="underline-offset-4 hover:underline">{say("Type-wide view")}</Link>}>
                       <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} concept={concept} /></Well>
                     </Panel>
                   )
@@ -230,45 +201,72 @@ export function ObjectPage() {
             <Lineage lineage={lineage} evidence={evidence} actionFor={corrections.actionFor} />
           </TabsContent>
           <TabsContent value="rules" className="pt-4">
-            <Panel icon={ShieldCheck} label="Rules over this object type"
-              action={<Link to="/rules" className="underline-offset-4 hover:underline">All rules</Link>}>
-              <Well className="divide-y">
-                {concept.laws.length === 0 && concept.rules.length === 0
-                  ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/rules">See every rule</Link></Button>}>No rule is declared over {concept.title.toLowerCase()} records.</Empty>
-                  : <>
-                    {concept.laws.map((law) => {
-                      const headline = lawHeadline(law)
-                      return (
-                        <div key={law.id} data-law={law.id} className="flex gap-3 px-4 py-3 text-body">
-                          <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <p lang={law.titleLang} className="text-pretty">{headline}</p>
-                            {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
-                            {view === "technical" && (
-                              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                                <Chip tone="violet" title="The pack or module that owns this rule">{law.owner}</Chip>
-                                <code className="font-mono text-meta text-muted-foreground">{law.id}</code>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                    {concept.rules.filter((rule) => !concept.laws.some(({ rationale }) => rationale === rule)).map((rule) => (
-                      <div key={rule} className="flex gap-3 px-4 py-3 text-body">
-                        <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
-                        <p className="min-w-0 flex-1 text-pretty">{rule}</p>
-                      </div>
-                    ))}
-                  </>}
-              </Well>
-            </Panel>
+            <RulesTab concept={concept} />
           </TabsContent>
         </Tabs>
       )}
       {corrections.sheet(readAgain)}
-    </section>
-    </RevealScope.Provider>
+    </div>
+  )
+}
+
+/** The rules over the record's type, each in its authored words; Technical adds its owner and id. */
+function RulesTab({ concept }: { readonly concept: Concept }) {
+  const { view } = useView()
+  return (
+    <Panel icon={ShieldCheck} label="Rules over this object type"
+      action={<Link to="/rules" className="underline-offset-4 hover:underline">All rules</Link>}>
+      <Well className="divide-y">
+        {concept.laws.length === 0 && concept.rules.length === 0
+          ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/rules">See every rule</Link></Button>}>No rule is declared over {concept.title.toLowerCase()} records.</Empty>
+          : <>
+            {concept.laws.map((law) => {
+              const headline = lawHeadline(law)
+              return (
+                <div key={law.id} data-law={law.id} className="flex gap-3 px-4 py-3 text-body">
+                  <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p lang={law.titleLang} className="text-pretty">{headline}</p>
+                    {headline !== law.rationale && <p className="text-meta text-pretty text-muted-foreground">{law.rationale}</p>}
+                    {view === "technical" && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <Chip tone="violet" title="The pack or module that owns this rule">{law.owner}</Chip>
+                        <code className="font-mono text-meta text-muted-foreground">{law.id}</code>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {concept.rules.filter((rule) => !concept.laws.some(({ rationale }) => rationale === rule)).map((rule) => (
+              <div key={rule} className="flex gap-3 px-4 py-3 text-body">
+                <ShieldCheck aria-hidden className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />
+                <p className="min-w-0 flex-1 text-pretty">{rule}</p>
+              </div>
+            ))}
+          </>}
+      </Well>
+    </Panel>
+  )
+}
+
+/**
+ * A record the cell does not serve to this reader. Live, it may be held back from reads (quarantined):
+ * the cell's own correction releases it, and the page reads it again. Recorded, the recording keeps
+ * no such record.
+ */
+export function RecordAbsent({ route, readAgain }: { readonly route: RecordRoute; readonly readAgain: () => void }) {
+  const { name, id } = route
+  const { catalog } = useCatalog()
+  const concept = catalog?.byName.get(name)
+  const workspace = useWorkspace()
+  return (
+    <div className="space-y-6">
+      <RecordHeader route={route} data={undefined} refreshing={false} readAgain={readAgain} />
+      {workspace.kind === "live"
+        ? <QuarantinedRecord objectType={name} id={id} reader={workspace.reader} onDone={readAgain} />
+        : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>}
+    </div>
   )
 }
 

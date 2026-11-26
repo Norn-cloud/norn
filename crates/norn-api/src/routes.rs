@@ -337,7 +337,8 @@ pub(crate) fn admit_retained(
         tenant: None,
     };
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let checked = norn_checker::check_artifact_set_with_verified_receipt(
+    // Both rings, as the set was admitted: a retained widget is judged by the UI laws.
+    let checked = norn_ui_checker::check_artifact_set_with_verified_receipt(
         &sources,
         &context,
         &limits,
@@ -466,8 +467,9 @@ mod tests {
         scope::CellScope,
     };
     use norn_cell::{CellStore, InstalledDefinitionInput, Model, engine::NativeEngine};
-    use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
+    use norn_checker::{EntityArtifactSetContext, ReceiptSources};
     use norn_ir::ResourceLimitProfile;
+    use norn_ui_checker::check_artifact_set_with_receipt;
     use std::collections::BTreeSet;
 
     const SOURCE: &str = include_str!("../../../fixtures/ir/retail-reorder-routing.rule.json");

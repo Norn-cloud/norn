@@ -3478,6 +3478,7 @@ dependencies = [
  "norn-kernel",
  "norn-projections",
  "norn-testkit",
+ "norn-ui-checker",
  "object_store 0.14.2",
  "parquet",
  "proptest",

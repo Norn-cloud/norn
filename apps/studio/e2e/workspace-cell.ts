@@ -1,6 +1,7 @@
 import type { Page, Route } from "@playwright/test"
 import type { ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import type { Clause, Predicate } from "../src/lib/records-query.ts"
+import { withRecordPage } from "./record-page-widget.ts"
 
 /**
  * Deterministic two-domain stand-in for CELL-DO's view, object, and per-record action routes so
@@ -391,7 +392,7 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     const body = route.request().postData() ? JSON.parse(route.request().postData()!) as Record<string, unknown> : null
     const tail = url.pathname.split("/v1/definitions")[1] ?? ""
 
-    if (tail === "") return route.fulfill({ json: { version: 1, artifacts: ARTIFACTS } })
+    if (tail === "") return route.fulfill({ json: { version: 1, artifacts: withRecordPage(ARTIFACTS) } })
 
     if (tail === ":list") {
       const kind = url.searchParams.get("kind")
