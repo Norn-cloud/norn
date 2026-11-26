@@ -7,6 +7,7 @@ import {
   credentialsAllowed,
   extractCookieHeader,
   normalizeTargetUrl,
+  parseCookieDate,
   post,
   readBoundedText,
 } from "../src/apply.ts"
@@ -204,17 +205,24 @@ test("extractCookieHeader deduplicates cookies last-write-wins and honors Max-Ag
     ),
   ).toBe("session=alive")
 
-  // Duplicate Expires attributes: the last valid Expires attribute wins (RFC 6265).
+  // Duplicate Expires attributes: the last valid RFC 6265 cookie-date wins;
+  // invalid values like "0" or "not-a-date" are ignored (RFC 6265 §5.1.1).
+  expect(parseCookieDate("0")).toBeUndefined()
+  expect(parseCookieDate("not-a-date")).toBeUndefined()
+  expect(parseCookieDate("Feb 30 2027 00:00:00 GMT")).toBeUndefined()
+  expect(parseCookieDate("Thu, 01 Jan 1970 00:00:00 GMT")).toBe(0)
   expect(
     extractCookieHeader(
       [
         "revived=ok; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Expires=Fri, 01 Jan 2027 00:00:00 GMT",
         "expired=no; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        "past_then_invalid=no; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Expires=not-a-date",
+        "future_then_zero=ok; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=0",
         "kept=yes; Expires=Fri, 01 Jan 2027 00:00:00 GMT; Expires=not-a-date",
       ],
       now,
     ),
-  ).toBe("revived=ok; kept=yes")
+  ).toBe("revived=ok; future_then_zero=ok; kept=yes")
 
   // Malformed or CRLF-containing cookies are skipped.
   expect(
@@ -360,22 +368,54 @@ test("post enforces response byte bounds, HTTP timeouts, redirects, and target U
       ),
     ).rejects.toThrow("exceeds size limit")
 
-    await expect(
-      post(
+    let slowError: unknown
+    try {
+      await post(
         { url: `http://127.0.0.1:${server.port}/slow`, org: "o", env: "e", headers: {}, timeoutMs: 50 },
         PLAN_PATH,
         {},
-      ),
-    ).rejects.toThrow(/timed out|aborted/i)
+      )
+    } catch (error) {
+      slowError = error
+    }
+    expect(slowError).toBeInstanceOf(Error)
+    expect((slowError as Error).name).toBe("TimeoutError")
 
+    // Observe the first chunk on the client side before the body read times out.
+    let clientObservedFirstChunk = ""
+    let sawAbortSignal = false
+    const tappedFetch = async (input: string, init?: RequestInit): Promise<Response> => {
+      sawAbortSignal = init?.signal instanceof AbortSignal
+      const { signal: _signal, ...rest } = init ?? {}
+      const upstream = await fetch(input, rest)
+      if (!upstream.body) return upstream
+      const tapped = upstream.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            clientObservedFirstChunk += new TextDecoder().decode(chunk)
+            controller.enqueue(chunk)
+          },
+        }),
+      )
+      return new Response(tapped, { status: upstream.status, headers: upstream.headers })
+    }
     await expect(
       post(
-        { url: `http://127.0.0.1:${server.port}/stream-slow`, org: "o", env: "e", headers: {}, timeoutMs: 80 },
+        {
+          url: `http://127.0.0.1:${server.port}/stream-slow`,
+          org: "o",
+          env: "e",
+          headers: {},
+          timeoutMs: 120,
+          fetchImpl: tappedFetch,
+        },
         PLAN_PATH,
         {},
       ),
-    ).rejects.toThrow(/timed out|aborted/i)
+    ).rejects.toThrow(`${PLAN_PATH} timed out reading response`)
+    expect(sawAbortSignal).toBe(true)
     expect(streamSlowChunkSent).toBe(true)
+    expect(clientObservedFirstChunk).toBe("{\"ok\":")
   } finally {
     server.stop(true)
   }

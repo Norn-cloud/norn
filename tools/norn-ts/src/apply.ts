@@ -22,7 +22,7 @@ import { existsSync } from "node:fs"
 import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
 import { loadChecker } from "./checker-abi.ts"
 import { bindSourceSchemas, checkPack, pendingSourceSchemas, type PackResult } from "./pack.ts"
-import { isFetchableUrl, sanitizeUrlForDiagnostic } from "./setup.ts"
+import { isFetchableUrl, sanitizeUrlForDiagnostic, type FetchLike } from "./setup.ts"
 import { compileInputPack } from "./worker.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
@@ -39,6 +39,7 @@ export interface Target {
   readonly headers: Readonly<Record<string, string>>
   readonly timeoutMs?: number
   readonly maxResponseBytes?: number
+  readonly fetchImpl?: FetchLike
 }
 
 function sanitizeTargetUrlForDiagnostic(rawUrl: string): string {
@@ -96,6 +97,97 @@ export function credentialsAllowed(url: string): boolean {
   }
 }
 
+const COOKIE_MONTHS: Readonly<Record<string, number>> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+}
+
+/**
+ * Parse an RFC 6265 §5.1.1 cookie-date (`Expires` attribute value).
+ *
+ * Returns UTC epoch milliseconds, or `undefined` when the input does not match
+ * the RFC 6265 grammar (for example `"0"` or `"not-a-date"`).
+ */
+export function parseCookieDate(input: string): number | undefined {
+  const tokens = input.split(/[\x09\x20-\x2f\x3b-\x40\x5b-\x60\x7b-\x7e]+/).filter(Boolean)
+  let hour: number | undefined
+  let minute: number | undefined
+  let second: number | undefined
+  let dayOfMonth: number | undefined
+  let month: number | undefined
+  let year: number | undefined
+
+  for (const token of tokens) {
+    if (hour === undefined) {
+      const m = /^(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[^\d].*)?$/.exec(token)
+      if (m) {
+        hour = Number(m[1])
+        minute = Number(m[2])
+        second = Number(m[3])
+        continue
+      }
+    }
+    if (dayOfMonth === undefined) {
+      const m = /^(\d{1,2})(?:[^\d].*)?$/.exec(token)
+      if (m) {
+        dayOfMonth = Number(m[1])
+        continue
+      }
+    }
+    if (month === undefined && token.length >= 3) {
+      const key = token.slice(0, 3).toLowerCase()
+      const parsedMonth = COOKIE_MONTHS[key]
+      if (parsedMonth !== undefined) {
+        month = parsedMonth
+        continue
+      }
+    }
+    if (year === undefined) {
+      const m = /^(\d{2,4})(?:[^\d].*)?$/.exec(token)
+      if (m) {
+        year = Number(m[1])
+        continue
+      }
+    }
+  }
+
+  if (
+    hour === undefined
+    || minute === undefined
+    || second === undefined
+    || dayOfMonth === undefined
+    || month === undefined
+    || year === undefined
+  ) {
+    return undefined
+  }
+  if (year >= 70 && year <= 99) year += 1900
+  else if (year >= 0 && year <= 69) year += 2000
+  if (year < 1601 || dayOfMonth < 1 || dayOfMonth > 31 || hour > 23 || minute > 59 || second > 59) {
+    return undefined
+  }
+  const utc = Date.UTC(year, month, dayOfMonth, hour, minute, second)
+  const check = new Date(utc)
+  if (
+    check.getUTCFullYear() !== year
+    || check.getUTCMonth() !== month
+    || check.getUTCDate() !== dayOfMonth
+  ) {
+    return undefined
+  }
+  return utc
+}
+
 /**
  * Deduplicate `Set-Cookie` headers into a single `Cookie` request header using
  * RFC 6265 last-write-wins semantics per cookie name and honoring `Max-Age`
@@ -123,8 +215,8 @@ export function extractCookieHeader(setCookies: ReadonlyArray<string>, nowMs = D
       if (attrName === "max-age" && /^-?\d+$/.test(attrValue)) {
         maxAgeExpired = Number(attrValue) <= 0
       } else if (attrName === "expires") {
-        const parsed = Date.parse(attrValue)
-        if (!Number.isNaN(parsed)) {
+        const parsed = parseCookieDate(attrValue)
+        if (parsed !== undefined) {
           expiresExpired = parsed <= nowMs
         }
       }
@@ -244,9 +336,10 @@ export async function post(target: Target, path: string, body?: unknown): Promis
   const baseUrl = normalizeTargetUrl(target.url)
   const timeout = resolveHttpTimeout(target.timeoutMs)
   const maxBytes = resolveMaxResponseBytes(target.maxResponseBytes)
+  const fetchImpl = target.fetchImpl ?? fetch
   const deadline = Date.now() + timeout
   const query = new URLSearchParams({ orgId: target.org, environmentId: target.env })
-  const response = await fetch(`${baseUrl}${path}?${query}`, {
+  const response = await fetchImpl(`${baseUrl}${path}?${query}`, {
     redirect: "manual",
     signal: AbortSignal.timeout(timeout),
     ...(body === undefined
