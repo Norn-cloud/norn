@@ -191,6 +191,38 @@ fn answered_at(
     }
 }
 
+fn admit_named_question<'h, 'a, 'r, E: SqlEngine>(
+    host: &'h DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&'a str>,
+    question: &str,
+    runtime: &'r dyn QuestionRuntime<E>,
+) -> Result<
+    (
+        std::sync::RwLockReadGuard<'h, ()>,
+        &'a str,
+        &'r [u8],
+        QuestionPlan,
+    ),
+    Refusal,
+> {
+    let actor = actor.ok_or_else(read_denied)?;
+    let access = mapped(host, runtime, actor, question, Population, None)?;
+    let key = handle_key(runtime)?;
+    let epoch = host.read_access(
+        scope,
+        &ReadRequest {
+            capability: Population,
+            access: &access,
+        },
+    )?;
+    let plan = runtime.plan(question)?;
+    if access.resource().object_type != plan.grain().as_str() {
+        return Err(read_denied());
+    }
+    Ok((epoch, actor, key, plan))
+}
+
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
 /// # Errors
 /// Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
@@ -202,20 +234,7 @@ pub fn get_answer<E: SqlEngine>(
     question: &str,
     runtime: &dyn QuestionRuntime<E>,
 ) -> Result<QuestionAnswer, Refusal> {
-    let actor = actor.ok_or_else(read_denied)?;
-    let access = mapped(host, runtime, actor, question, Population, None)?;
-    let key = handle_key(runtime)?;
-    let _epoch = host.read_access(
-        scope,
-        &ReadRequest {
-            capability: Population,
-            access: &access,
-        },
-    )?;
-    let plan = runtime.plan(question)?;
-    if access.resource().object_type != plan.grain().as_str() {
-        return Err(read_denied());
-    }
+    let (_epoch, actor, key, plan) = admit_named_question(host, scope, actor, question, runtime)?;
     answer_plan(host, runtime, actor, question, &plan, key)
 }
 
@@ -416,24 +435,11 @@ pub fn get_numeric_trace<E: SqlEngine>(
     question: &str,
     runtime: &dyn QuestionRuntime<E>,
 ) -> Result<NumericTrace, Refusal> {
-    let actor = actor.ok_or_else(read_denied)?;
-    let access = mapped(host, runtime, actor, question, Population, None)?;
-    let key = handle_key(runtime)?;
     let scope = ScopeQuery {
         org_id: query.org_id.clone(),
         environment_id: query.environment_id.clone(),
     };
-    let _epoch = host.read_access(
-        &scope,
-        &ReadRequest {
-            capability: Population,
-            access: &access,
-        },
-    )?;
-    let plan = runtime.plan(question)?;
-    if access.resource().object_type != plan.grain().as_str() {
-        return Err(read_denied());
-    }
+    let (_epoch, actor, key, plan) = admit_named_question(host, &scope, actor, question, runtime)?;
     let lineage = query
         .lineage_ref
         .as_deref()
