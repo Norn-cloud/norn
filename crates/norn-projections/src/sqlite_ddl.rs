@@ -453,13 +453,11 @@ fn project(
         .map(|def| (def.name.as_str(), def))
         .collect();
 
-    // Ancestors (nearest first) of every type; validates every chain.
     let mut ancestors: BTreeMap<&str, Vec<&ObjectTypeDef>> = BTreeMap::new();
     for def in by_name.values() {
         ancestors.insert(def.name.as_str(), ancestor_chain(def, &by_name)?);
     }
 
-    // Supertypes first: order by depth, then by name.
     let mut order: Vec<(usize, &str)> = ancestors
         .iter()
         .map(|(name, chain)| (chain.len(), *name))
@@ -654,7 +652,6 @@ fn create_table(table: &str, definitions: &[String]) -> String {
     let mut out = format!("CREATE TABLE IF NOT EXISTS {} (", quote_identifier(table));
     for (index, definition) in definitions.iter().enumerate() {
         let separator = if index == 0 { "\n  " } else { ",\n  " };
-        // Infallible: writing to a String.
         #[expect(
             clippy::let_underscore_must_use,
             reason = "fmt::Write for String is infallible; its trait signature still returns Result"
@@ -667,15 +664,11 @@ fn create_table(table: &str, definitions: &[String]) -> String {
 
 fn create_index(unique: bool, index: &str, table: &str, columns: &[&str]) -> String {
     let unique = if unique { "UNIQUE " } else { "" };
-    let columns: Vec<String> = columns
-        .iter()
-        .map(|column| quote_identifier(column))
-        .collect();
     format!(
         "CREATE {unique}INDEX IF NOT EXISTS {} ON {} ({})",
         quote_identifier(index),
         quote_identifier(table),
-        columns.join(", ")
+        key_list(columns)
     )
 }
 
