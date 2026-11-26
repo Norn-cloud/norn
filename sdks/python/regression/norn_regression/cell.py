@@ -21,6 +21,7 @@ import io
 import json
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
@@ -49,14 +50,11 @@ def _unknown_route(answer) -> bool:
     return refusal.get("code") == "request.invalid" and str(refusal.get("explanation") or "").startswith("unknown query parameter")
 
 
+_OBJECT_TYPE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
 def _safe_object_type(object_type: str) -> str:
-    if (
-        not object_type
-        or not object_type.strip()
-        or ".." in object_type
-        or any(ch in object_type for ch in ("/", "\\", "?", "#", "%"))
-        or any(ord(ch) < 32 for ch in object_type)
-    ):
+    if not _OBJECT_TYPE_RE.fullmatch(object_type) or object_type == "." or ".." in object_type:
         raise ValueError(f"invalid object_type: {object_type!r}")
     return quote(object_type, safe="")
 

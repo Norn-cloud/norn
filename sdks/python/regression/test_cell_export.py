@@ -99,9 +99,11 @@ class Export(unittest.TestCase):
         self.assertEqual(self.cell.export("lab.Sample", ["x"]).attrs["read_path"], "export")
 
     def test_invalid_object_type_is_refused_before_request(self):
-        for bad in ("", "   ", "../admin", "lab.Sample?x=1", "lab.Sample#frag", "lab/Sample"):
+        for bad in ("", "   ", ".", "..", "../admin", "lab.Sample?x=1", "lab.Sample#frag", "lab/Sample", "lab%2fSample", "lab.Sample:export", " lab.Sample ", "lab.Sample\n"):
             with self.assertRaises(ValueError):
                 self.cell.export(bad, ["x"])
+            with self.assertRaises(ValueError):
+                self.cell.rows(bad)
         self.assertEqual(self.server.seen, [])
 
 

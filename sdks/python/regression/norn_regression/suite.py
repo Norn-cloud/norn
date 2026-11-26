@@ -182,34 +182,43 @@ def _condition(design: pd.DataFrame) -> Check:
                  "Near-dependencies among features: drop or combine features, or centre them." if status != "pass" else "None needed.")
 
 
+def _influence_summary(values: np.ndarray, *, fail_gt: float, warn_gt: float, warn_share: float, n: int, prefix: str, label: str, fail_hint: str) -> tuple[str, str, str]:
+    has_inf = bool(np.isinf(values).any())
+    finite = values[np.isfinite(values)]
+    nonfinite = int(values.size - finite.size)
+    if finite.size == 0 and not has_inf:
+        return "not_applicable", "n/a", "Test could not be evaluated on this sample (zero residuals)."
+    max_val = math.inf if has_inf else float(finite.max())
+    over = int((finite > warn_gt).sum()) + nonfinite
+    status = "fail" if (nonfinite > 0 or max_val > fail_gt) else "warn" if over > warn_share * n else "pass"
+    suffix = f" ({nonfinite} non-finite)" if nonfinite > 0 else ""
+    stat = f"{prefix} {number(max_val)}; {over} rows {label}{suffix}"
+    return status, stat, fail_hint if status != "pass" else "None needed."
+
+
 def _influence(fit, n: int, p: int) -> list[Check]:
     influence = OLSInfluence(fit)
     cooks = np.asarray(influence.cooks_distance[0], dtype=float)
     leverage = np.asarray(influence.hat_matrix_diag, dtype=float)
     abs_student = np.abs(np.asarray(influence.resid_studentized_external, dtype=float))
-    finite_cooks = cooks[np.isfinite(cooks)]
-    nonfinite_cooks = int(cooks.size - finite_cooks.size)
-    max_cook = float(finite_cooks.max()) if finite_cooks.size else math.nan
-    over_cook = int((finite_cooks > 4 / n).sum()) + nonfinite_cooks
-    cook_status = "fail" if (nonfinite_cooks > 0 or max_cook > 1) else "warn" if over_cook > 0.05 * n else "pass"
+    cook_status, cook_stat, cook_hint = _influence_summary(
+        cooks, fail_gt=1.0, warn_gt=4 / n, warn_share=0.05, n=n, prefix="max", label="> 4/n",
+        fail_hint="Inspect the influential rows: data errors, or a subgroup the model misses; refit without them to see how much they move the coefficients.",
+    )
     high_leverage = int((leverage > 2 * p / n).sum())
     leverage_status = "warn" if high_leverage > 0.05 * n else "pass"
-    finite_student = abs_student[np.isfinite(abs_student)]
-    nonfinite_student = int(abs_student.size - finite_student.size)
-    max_student = float(finite_student.max()) if finite_student.size else math.nan
-    outliers = int((finite_student > 3).sum()) + nonfinite_student
-    outlier_status = "fail" if (nonfinite_student > 0 or max_student > 5) else "warn" if outliers > 0.01 * n else "pass"
+    outlier_status, outlier_stat, outlier_hint = _influence_summary(
+        abs_student, fail_gt=5.0, warn_gt=3.0, warn_share=0.01, n=n, prefix="max |r|", label="|r| > 3",
+        fail_hint="Outliers in the target: check the rows, or use a robust regression (Huber, M-estimation).",
+    )
     return [
-        Check("influence", "Cook's distance", "model", cook_status, f"max {number(max_cook)}; {over_cook} rows > 4/n", None,
-              "fail if any > 1; warn if more than 5% of rows > 4/n", "Cook & Weisberg (1982); 4/n cut-off, Bollen & Jackman (1985)",
-              "Inspect the influential rows: data errors, or a subgroup the model misses; refit without them to see how much they move the coefficients." if cook_status != "pass" else "None needed."),
+        Check("influence", "Cook's distance", "model", cook_status, cook_stat, None,
+              "fail if any > 1; warn if more than 5% of rows > 4/n", "Cook & Weisberg (1982); 4/n cut-off, Bollen & Jackman (1985)", cook_hint),
         Check("influence", "leverage (hat values)", "model", leverage_status, f"{high_leverage} rows > 2p/n", None,
               "warn if more than 5% of rows have leverage > 2p/n", "Hoaglin & Welsch (1978)",
               "High-leverage rows sit far from the bulk of the features: check them, or transform skewed features." if leverage_status != "pass" else "None needed."),
-        Check("influence", "externally studentized residuals", "model", outlier_status,
-              f"max |r| {number(max_student)}; {outliers} rows |r| > 3", None,
-              "fail if any |r| > 5; warn if more than 1% of rows |r| > 3", "about 0.3% of normal residuals exceed 3 in magnitude",
-              "Outliers in the target: check the rows, or use a robust regression (Huber, M-estimation)." if outlier_status != "pass" else "None needed."),
+        Check("influence", "externally studentized residuals", "model", outlier_status, outlier_stat, None,
+              "fail if any |r| > 5; warn if more than 1% of rows |r| > 3", "about 0.3% of normal residuals exceed 3 in magnitude", outlier_hint),
     ]
 
 
@@ -234,7 +243,7 @@ def _suite(frame: pd.DataFrame, target: str, features: list[str], order: str | N
     fields = [target, *features]
     data = pd.DataFrame({field: _numeric(frame, field) for field in fields})
     checks = _missingness(data, fields)
-    if order is not None:
+    if order is not None and order not in fields:
         data[order] = frame[order]
     data = data.dropna(subset=fields).reset_index(drop=True)
     n, p = len(data), len(features) + 1

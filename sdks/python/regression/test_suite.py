@@ -144,6 +144,13 @@ class Suite(unittest.TestCase):
         checks, _ = assumption_suite(frame, "y", ["x1", "x2"], order="t")
         self.assertEqual(by_test(checks, "Durbin-Watson").status, "not_applicable")
 
+    def test_order_field_can_also_be_a_text_feature(self):
+        frame = dataset(n=200)
+        text = frame.astype(dict.fromkeys(("x1", "x2", "y", "t"), str))
+        first, _ = assumption_suite(frame, "y", ["t", "x1"], order="t")
+        again, _ = assumption_suite(text, "y", ["t", "x1"], order="t")
+        self.assertEqual([c.as_dict() for c in first], [c.as_dict() for c in again])
+
 
 if __name__ == "__main__":
     unittest.main()
