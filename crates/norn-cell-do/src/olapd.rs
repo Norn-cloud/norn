@@ -62,13 +62,13 @@
 use std::ffi::OsString;
 use std::io::{BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use norn_api::clock::Clock;
-use norn_api::olap_credential::{Denied, Keyring, Verified};
+use norn_api::olap_credential::{Denied, Verified};
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal, EvaluateRequest,
@@ -83,7 +83,7 @@ use serde::de::DeserializeOwned;
 mod admission;
 mod transport;
 
-use admission::{Admission, Held, Pending};
+use admission::{Admission, Held, KeyringCache, Pending, read_keyring};
 pub use admission::{MAX_HELD_BODY_BYTES, MAX_PENDING, MAX_PENDING_PER_PEER};
 use transport::{
     Deadlined, HEAD_DEADLINE, Head, MAX_BODY_BYTES, Request, drain, read_body, read_head,
@@ -96,8 +96,6 @@ const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 pub const ENGINE_WORKERS: usize = 8;
 /// #1747: authenticated calls waiting for an engine worker; more are answered 503.
 pub const ENGINE_QUEUE: usize = 8;
-/// Longest accepted keyring file, in bytes.
-const MAX_KEYRING_BYTES: u64 = 64 * 1024;
 /// The variable of the retired shared token; its presence refuses startup.
 const RETIRED_TOKEN: &str = "NORN_SECRET_DUCKDB_TOKEN";
 
@@ -180,34 +178,6 @@ impl Config {
 /// included (OLAP-05).
 fn env_var(name: &str) -> Option<OsString> {
     std::env::var_os(name)
-}
-
-/// Read raw keyring file bytes, bounded.
-fn read_keyring_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .and_then(|file| {
-            file.take(MAX_KEYRING_BYTES.saturating_add(1))
-                .read_to_end(&mut bytes)
-        })
-        .map_err(|e| format!("the keyring {} is unreadable: {e}", path.display()))?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_KEYRING_BYTES {
-        return Err(format!("the keyring {} is too long", path.display()));
-    }
-    Ok(bytes)
-}
-
-/// Parse UTF-8 keyring bytes.
-fn parse_keyring_bytes(path: &Path, bytes: &[u8]) -> Result<Keyring, String> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|e| format!("the keyring {} is not UTF-8: {e}", path.display()))?;
-    Keyring::parse(text).map_err(|e| format!("the keyring {}: {e}", path.display()))
-}
-
-/// Read and parse the keyring file, bounded.
-fn read_keyring(path: &Path) -> Result<Keyring, String> {
-    let bytes = read_keyring_bytes(path)?;
-    parse_keyring_bytes(path, &bytes)
 }
 
 /// A fresh signing key `kid` for the cell host, and the keyring line that
@@ -355,7 +325,7 @@ pub fn serve_with(
     let engine = open_engine(config.engine, config.settings)?;
     let gate = Arc::new(Gate {
         keys_file: config.keys_file,
-        keyring_cache: Mutex::new(None),
+        keyring_cache: KeyringCache::default(),
         http: agent(),
         clock,
         seam,
@@ -445,14 +415,12 @@ fn busy(stream: &TcpStream) {
     }
 }
 
-type CachedKeyring = (Vec<u8>, Arc<Keyring>);
-
 /// OLAP-CRED-1: who may call. The keyring file bytes are read on every call, so
 /// adding, rotating or removing a key takes effect without a restart and an
 /// unreadable keyring refuses every call; unchanged bytes reuse the parsed keys.
 struct Gate {
     keys_file: PathBuf,
-    keyring_cache: Mutex<Option<CachedKeyring>>,
+    keyring_cache: KeyringCache,
     http: ureq::Agent,
     clock: Arc<dyn Clock>,
     seam: Arc<dyn Seam>,
@@ -492,32 +460,11 @@ impl Named {
 }
 
 impl Gate {
-    fn load_keyring(&self) -> Result<Arc<Keyring>, String> {
-        let bytes = read_keyring_bytes(&self.keys_file)?;
-        {
-            let guard = self
-                .keyring_cache
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some((cached_bytes, cached_ring)) = guard.as_ref()
-                && *cached_bytes == bytes
-            {
-                return Ok(Arc::clone(cached_ring));
-            }
-        }
-        let parsed = Arc::new(parse_keyring_bytes(&self.keys_file, &bytes)?);
-        *self
-            .keyring_cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some((bytes, Arc::clone(&parsed)));
-        Ok(parsed)
-    }
-
     /// #1747: the credential verified from the request's head alone, for
     /// the operation the path names, before any body is read or allocated:
     /// its signature covers the body digest it declares.
     fn verify_head(&self, head: &Head) -> Result<Verified, Denied> {
-        let keyring = self.load_keyring().map_err(|error| {
+        let keyring = self.keyring_cache.load(&self.keys_file).map_err(|error| {
             let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
             Denied::UnknownKey
         })?;

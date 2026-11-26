@@ -10,10 +10,73 @@
 //! broken peer) leaks a slot.
 
 use std::collections::BTreeMap;
+use std::io::Read as _;
 use std::net::IpAddr;
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use norn_api::olap_credential::Keyring;
+
 use super::transport::MAX_BODY_BYTES;
+
+/// Longest accepted keyring file, in bytes.
+const MAX_KEYRING_BYTES: u64 = 64 * 1024;
+
+/// Read raw keyring file bytes, bounded.
+fn read_keyring_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.take(MAX_KEYRING_BYTES.saturating_add(1))
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|e| format!("the keyring {} is unreadable: {e}", path.display()))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_KEYRING_BYTES {
+        return Err(format!("the keyring {} is too long", path.display()));
+    }
+    Ok(bytes)
+}
+
+/// Parse UTF-8 keyring bytes.
+fn parse_keyring_bytes(path: &Path, bytes: &[u8]) -> Result<Keyring, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|e| format!("the keyring {} is not UTF-8: {e}", path.display()))?;
+    Keyring::parse(text).map_err(|e| format!("the keyring {}: {e}", path.display()))
+}
+
+/// Read and parse the keyring file, bounded.
+pub(super) fn read_keyring(path: &Path) -> Result<Keyring, String> {
+    let bytes = read_keyring_bytes(path)?;
+    parse_keyring_bytes(path, &bytes)
+}
+
+type CachedKeyring = (Vec<u8>, Arc<Keyring>);
+
+/// Byte-verified keyring cache: reads file bytes on every call so rotation and
+/// unreadable files take effect immediately, reusing the parsed keyring when
+/// bytes are unchanged.
+#[derive(Default)]
+pub(super) struct KeyringCache {
+    cached: Mutex<Option<CachedKeyring>>,
+}
+
+impl KeyringCache {
+    pub(super) fn load(&self, path: &Path) -> Result<Arc<Keyring>, String> {
+        let bytes = read_keyring_bytes(path)?;
+        {
+            let guard = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some((cached_bytes, cached_ring)) = guard.as_ref()
+                && *cached_bytes == bytes
+            {
+                return Ok(Arc::clone(cached_ring));
+            }
+        }
+        let parsed = Arc::new(parse_keyring_bytes(path, &bytes)?);
+        *self.cached.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((bytes, Arc::clone(&parsed)));
+        Ok(parsed)
+    }
+}
 
 /// Connections in pre-admission at once, from every peer.
 pub const MAX_PENDING: usize = 64;
