@@ -1263,6 +1263,63 @@ fn axis3_native_invalid_proposals_refuse_atomically() -> Result<(), String> {
     let (_, message) = stress.refused("supply.movement.record", "clerk:hana", json!({"movement_id": "MV-NEG", "warehouse_id": "WH-A",
         "sku_id": "SKU-WATER", "qty": "-50", "unit": "each", "movement_kind": "issue", "occurred_at": "2026-10-20T12:00:00Z"}))?;
     assert!(message.contains("movement_positive"), "{message}");
+
+    // Wave 0/1 cross-object guards & LAW-LINK-1 / LAW-LINK-MANY-1:
+    // 1. Closing a warehouse that still holds live stock refuses.
+    stress.refused(
+        "supply.warehouse.close",
+        "ops:omar",
+        json!({"warehouse_id": "WH-A"}),
+    )?;
+    // Closing an empty warehouse succeeds.
+    stress.ok(
+        "supply.warehouse.register",
+        "eng:dina",
+        json!({"warehouse_id": "WH-EMPTY", "name": "Empty", "region": "red_sea", "latitude": "27.257900", "longitude": "33.811600"}),
+    )?;
+    stress.ok(
+        "supply.warehouse.close",
+        "ops:omar",
+        json!({"warehouse_id": "WH-EMPTY"}),
+    )?;
+    // 2. Recording a receipt against a closed warehouse or an unsubmitted PO refuses.
+    stress.refused(
+        "supply.receipt.record",
+        "clerk:hana",
+        json!({"receipt_id": "RC-CLOSED", "supplier_id": "SUP-NILE", "warehouse_id": "WH-EMPTY", "line_id": "PO-1/1",
+            "received_qty": "10", "damaged_qty": "0", "unit": "each", "received_at": "2026-07-17T08:00:00Z"}),
+    )?;
+    // 3. Over-receiving against an order line refuses via LAW-LINK-MANY-1 (OrderLine.receipts_consistent).
+    let (code, message) = stress.refused(
+        "supply.receipt.record",
+        "clerk:hana",
+        receipt(
+            "RC-OVER",
+            Some("PO-1/1"),
+            "each",
+            "200",
+            "0",
+            "2026-07-17T08:00:00Z",
+        ),
+    )?;
+    assert_eq!(code, "core.laws.violated", "{message}");
+    assert!(message.contains("receipts_consistent"), "{message}");
+    // 4. Inspecting more than a receipt received refuses via LAW-LINK-1 (Inspection.within_receipt)
+    // and cumulative over-inspection refuses via LAW-LINK-MANY-1 (ShipmentReceipt.inspections_within_received).
+    let (code, message) = stress.refused(
+        "supply.inspection.record",
+        "clerk:hana",
+        json!({"inspection_id": "IN-BIG", "receipt_id": "RC-2", "inspected_qty": "350", "rejected_qty": "0", "unit": "each"}),
+    )?;
+    assert_eq!(code, "core.laws.violated", "{message}");
+    assert!(message.contains("within_receipt"), "{message}");
+    let (code, message) = stress.refused(
+        "supply.inspection.record",
+        "clerk:hana",
+        json!({"inspection_id": "IN-CUMUL", "receipt_id": "RC-2", "inspected_qty": "270", "rejected_qty": "0", "unit": "each"}),
+    )?;
+    assert_eq!(code, "core.laws.violated", "{message}");
+    assert!(message.contains("inspections_within_received"), "{message}");
     Ok(())
 }
 
@@ -1339,6 +1396,20 @@ fn axis4_incremental_equals_recompute_through_redelivery_and_restart() -> Result
         "120 + the late 30"
     );
     // A ratio over an updated line: IVM retracts and replaces it.
+    // Record the matching 50-unit physical receipt first so reconciling received_qty to 950
+    // satisfies OrderLine.receipts_consistent and advances `ratio` by a single commit.
+    stress.ok(
+        "supply.receipt.record",
+        "clerk:hana",
+        receipt(
+            "RC-5",
+            Some("PO-1/1"),
+            "each",
+            "50",
+            "0",
+            "2026-07-17T08:00:00Z",
+        ),
+    )?;
     let fill = plan(&stress.lab, "supply.fill_rate_weekly")?;
     let mut ratio =
         IncrementalQuestion::rebuild(stress.cell.store(), &fill, ctx.clone(), |_| Ok(true))
@@ -2065,6 +2136,22 @@ fn axis3_messy_feeds_quarantine_replay_stably_and_recover() -> Result<(), String
         0,
         "the valid correction clears the active finding"
     );
+    // Bounded literal-table lookup maps all three units, including 'L' -> 'l' without hitting fuel limits.
+    scan(&mut cell, "e-11", "S-11", "15", "L", "2026-07-07T08:30:00Z")?;
+    let litre_scan = cell
+        .store()
+        .read()
+        .object("main", "supply.WmsCount", "S-11")
+        .map_err(|e| format!("{e}"))?;
+    assert_eq!(
+        litre_scan
+            .as_ref()
+            .and_then(|o| o.values.get("unit"))
+            .map(scalar)
+            .as_deref(),
+        Some("l"),
+        "WMS unit 'L' maps cleanly to 'l'"
+    );
     supplier_feed(&mut cell)?;
     cell.store()
         .read()
@@ -2177,6 +2264,23 @@ fn supplier_feed(cell: &mut MapCell) -> Result<(), String> {
             .iter()
             .any(|(rule, open)| *open && rule.contains("damaged_within_received")),
         "{found:?}"
+    );
+    // Bounded literal-table lookup maps 'Litre' -> 'l' (the third branch that previously overflowed decide fuel).
+    let litre_row = r#"{"name":"R-3","parent":"PR-2","supplier":"NILE-001","purchase_order_item":"PO-1/1","received_qty":25,"rejected_qty":0,"uom":"Litre","posting_datetime":"2026-07-15T08:00:00Z"}"#;
+    feed(cell, &raw("synthetic-erp", "p-3", "R-3", litre_row)?, &erp)?;
+    let mapped_litre = cell
+        .store()
+        .read()
+        .object("main", "supply.SupplierReceiptLine", "R-3")
+        .map_err(|e| format!("{e}"))?;
+    assert_eq!(
+        mapped_litre
+            .as_ref()
+            .and_then(|o| o.values.get("unit"))
+            .map(scalar)
+            .as_deref(),
+        Some("l"),
+        "ERP unit 'Litre' maps cleanly to 'l'"
     );
     Ok(())
 }

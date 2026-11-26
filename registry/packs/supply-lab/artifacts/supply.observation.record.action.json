@@ -12,6 +12,18 @@
       "version": "0.1.0"
     },
     "actionId": "supply.observation.record",
+    "createLinks": [
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      },
+      {
+        "link": "warehouse",
+        "targetIdField": "warehouse_id",
+        "targetType": "supply.Warehouse"
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "supply.DemandObservation.entity",
       "entityArtifactVersion": "0.1.0",
@@ -89,9 +101,34 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "input.unit == slice.sku.unit_of_measure"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "warehouse_id"
+          }
+        },
+        "name": "warehouse",
+        "objectType": "supply.Warehouse"
+      }
     ],
     "title": "Record a weekly demand observation",
     "writes": [
