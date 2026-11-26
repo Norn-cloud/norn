@@ -66,6 +66,60 @@ fn stored(
     })
 }
 
+fn delta_commit_seq(row: Option<&Vec<crate::engine::SqlValue>>) -> Result<u64, CellError> {
+    let row = row.ok_or(CellError::OutOfRange("delta row"))?;
+    let Some(crate::engine::SqlValue::Integer(value)) = row.get(4) else {
+        return Err(CellError::Engine(
+            "delta row commit_seq is not an integer".to_owned(),
+        ));
+    };
+    to_u64(*value, "commit")
+}
+
+fn mirror_values(
+    table: &TableSchema,
+    properties: &BTreeMap<&str, &EffectiveProperty>,
+    values: Option<&BTreeMap<String, RuntimeValue>>,
+) -> (Option<Vec<Value>>, bool) {
+    let mut bad = false;
+    let encoded = values.map(|values| {
+        table
+            .columns
+            .iter()
+            .map(|column| {
+                let value = properties
+                    .get(column.id.as_str())
+                    .and_then(|property| stored(column, property, values.get(&column.id)));
+                value.unwrap_or_else(|| {
+                    bad = true;
+                    Value::Null
+                })
+            })
+            .collect()
+    });
+    (encoded, bad)
+}
+
+fn root_properties<'c, 'm, 'k>(
+    model: &'m crate::model::Model,
+    cache: &'c mut BTreeMap<&'k str, BTreeMap<&'m str, &'m EffectiveProperty>>,
+    root: &'k str,
+) -> Result<&'c BTreeMap<&'m str, &'m EffectiveProperty>, CellError> {
+    match cache.entry(root) {
+        std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            let contract = model.query_contract(root)?;
+            Ok(entry.insert(
+                contract
+                    .properties
+                    .iter()
+                    .map(|property| (property.id.as_str(), property))
+                    .collect(),
+            ))
+        }
+    }
+}
+
 impl<E: SqlEngine> CellStore<E> {
     /// The analytical table of every root type in the active model, with its
     /// stored properties.
@@ -138,16 +192,8 @@ impl<E: SqlEngine> CellStore<E> {
             let mut complete = true;
             if rows.len() > limit {
                 // Cut at the last whole commit; a single larger commit goes whole.
-                let seq = |row: Option<&Vec<crate::engine::SqlValue>>| -> Result<u64, CellError> {
-                    let row = row.ok_or(CellError::OutOfRange("delta row"))?;
-                    let value = match row.get(4) {
-                        Some(crate::engine::SqlValue::Integer(value)) => *value,
-                        _ => return Err(CellError::Engine("delta row commit_seq is not an integer".to_owned())),
-                    };
-                    to_u64(value, "commit")
-                };
-                let last = seq(rows.get(limit))?;
-                let first = seq(rows.first())?;
+                let last = delta_commit_seq(rows.get(limit))?;
+                let first = delta_commit_seq(rows.first())?;
                 complete = false;
                 if last == first {
                     rows = self.conn.query(
@@ -188,35 +234,8 @@ impl<E: SqlEngine> CellStore<E> {
                     Some(record) if record.version == version => snapshot.values.map(|_| record.values),
                     Some(_) | None => snapshot.values,
                 };
-                let properties = match props_by_root.entry(table.name.as_str()) {
-                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        let contract = model.query_contract(table.name.as_str())?;
-                        entry.insert(
-                            contract
-                                .properties
-                                .iter()
-                                .map(|property| (property.id.as_str(), property))
-                                .collect(),
-                        )
-                    }
-                };
-                let mut bad = false;
-                let values = values.map(|values| {
-                    table
-                        .columns
-                        .iter()
-                        .map(|column| {
-                            let stored = properties
-                                .get(column.id.as_str())
-                                .and_then(|property| stored(column, property, values.get(&column.id)));
-                            stored.unwrap_or_else(|| {
-                                bad = true;
-                                Value::Null
-                            })
-                        })
-                        .collect()
-                });
+                let properties = root_properties(model, &mut props_by_root, table.name.as_str())?;
+                let (values, bad) = mirror_values(table, properties, values.as_ref());
                 out.push(MirrorRow {
                     table: root,
                     object_type,
