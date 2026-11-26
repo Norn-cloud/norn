@@ -89,7 +89,8 @@ impl AdmittedDefinitions {
                 | ArtifactPayload::Mapping(_)
                 | ArtifactPayload::DefinedConcept(_)
                 | ArtifactPayload::Labels(_)
-                | ArtifactPayload::Model(_) => {}
+                | ArtifactPayload::Model(_)
+                | ArtifactPayload::Theme(_) => {}
             }
         }
         types.extend(crate::kernel_record_types());
