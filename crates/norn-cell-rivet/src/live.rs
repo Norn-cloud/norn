@@ -158,12 +158,16 @@ pub fn accept(actor: Arc<CellActor>, ctx: Ctx<CellActor>, ws: &WebSocket) {
         return;
     }
     let (frames, mut queue) = mpsc::channel::<WsMessage>(MAX_QUEUED_FRAMES);
-    let ws_overflow = ws.clone();
+    let weak_socket = Arc::downgrade(&socket);
+    let overflowed = AtomicBool::new(false);
     ws.configure_message_event_callback(Some(Arc::new(move |message, _index| {
-        if let Err(mpsc::error::TrySendError::Full(_)) = frames.try_send(message) {
-            let ws = ws_overflow.clone();
+        if let Err(mpsc::error::TrySendError::Full(_)) = frames.try_send(message)
+            && !overflowed.swap(true, Ordering::AcqRel)
+            && let Some(live) = weak_socket.upgrade()
+        {
             tokio::spawn(async move {
-                ws.close(Some(1008), Some("live reader overwhelmed".to_owned()))
+                live.ws
+                    .close(Some(1008), Some("live reader overwhelmed".to_owned()))
                     .await;
             });
         }
@@ -376,22 +380,22 @@ pub async fn publish(actor: &Arc<CellActor>) {
     struct PublishGuard<'a>(&'a Sockets);
     impl Drop for PublishGuard<'_> {
         fn drop(&mut self) {
-            self.0.publishing.store(false, Ordering::Release);
+            self.0.publishing.store(false, Ordering::SeqCst);
         }
     }
 
     let sockets = actor.sockets();
-    sockets.dirty.store(true, Ordering::Release);
+    sockets.dirty.store(true, Ordering::SeqCst);
     loop {
         if sockets
             .publishing
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
             return;
         }
         let guard = PublishGuard(sockets);
-        while sockets.dirty.swap(false, Ordering::AcqRel) {
+        while sockets.dirty.swap(false, Ordering::SeqCst) {
             for socket in sockets.all() {
                 if !evaluate(actor, &socket, None).await {
                     sockets.remove(socket.id);
@@ -399,7 +403,7 @@ pub async fn publish(actor: &Arc<CellActor>) {
             }
         }
         drop(guard);
-        if !sockets.dirty.load(Ordering::Acquire) {
+        if !sockets.dirty.load(Ordering::SeqCst) {
             return;
         }
     }

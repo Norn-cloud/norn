@@ -42,17 +42,30 @@ fn cached_jwks(url: &str) -> Result<Option<Jwks>> {
     }))
 }
 
+fn cached_jwks_since(url: &str, min_at: u64) -> Result<Option<Jwks>> {
+    let last = LAST_JWKS
+        .lock()
+        .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))?
+        .clone();
+    Ok(last.filter(|entry| entry.url == url && entry.at >= min_at))
+}
+
 /// The pinned JWKS document at `url` and when it was fetched; `reuse` accepts
 /// this process's last one while it is younger than `OPEN_RETRY_MS`. The
 /// actors and the router's gate share it, so a runner fetches the issuer's
-/// keys at most once a minute for both.
+/// keys at most once a minute for both. Concurrent `reuse = false` refreshes
+/// coalesce on any fetch completed at or after the caller started waiting.
 pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool) -> Result<Jwks> {
     if reuse && let Some(last) = cached_jwks(&url)? {
         return Ok(last);
     }
+    let started = now_ms();
     let _singleflight = JWKS_FETCH_LOCK.lock().await;
     if reuse && let Some(last) = cached_jwks(&url)? {
         return Ok(last);
+    }
+    if let Some(fresh) = cached_jwks_since(&url, started)? {
+        return Ok(fresh);
     }
     let response = http
         .get(&url)

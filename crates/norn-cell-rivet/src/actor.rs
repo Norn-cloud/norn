@@ -618,6 +618,7 @@ impl CellActor {
             }
             state.failure = None;
         }
+        state.bootstrapped = false;
         match self.cold_open(scope).await {
             Ok(serving) => {
                 if serving {
@@ -985,16 +986,22 @@ impl CellActor {
                 EngineAnswer::Answer(status, body) => (status, body),
                 EngineAnswer::Stream(response) => return Ok(Settled::Stream(response)),
             };
-            let resumed = call.clone();
+            let mut resumed = call.clone();
+            let refresh_clock = !self.config.conformance;
             reply = self
                 .cell
-                .call(move |slot| match slot.core.as_mut() {
-                    Some(core) => core.resume_engine(&resumed, &engine, status, body),
-                    None => Reply {
-                        status: 503,
-                        body: "{}".to_owned(),
-                        ..Reply::default()
-                    },
+                .call(move |slot| {
+                    if refresh_clock {
+                        resumed.now_ms = now_ms();
+                    }
+                    match slot.core.as_mut() {
+                        Some(core) => core.resume_engine(&resumed, &engine, status, body),
+                        None => Reply {
+                            status: 503,
+                            body: "{}".to_owned(),
+                            ..Reply::default()
+                        },
+                    }
                 })
                 .await?;
         }

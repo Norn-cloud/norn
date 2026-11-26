@@ -181,6 +181,12 @@ fn malformed_params_keep_valid_ids_and_notifications_stay_silent() {
     );
     assert!(invalid["id"].is_null());
     assert_eq!(invalid["error"]["code"], -32600);
+    let null_id = send(
+        &mut session,
+        &json!({"jsonrpc":"2.0","id":null,"method":"ping"}),
+    );
+    assert!(null_id["id"].is_null());
+    assert_eq!(null_id["error"]["code"], -32600);
 }
 
 #[test]

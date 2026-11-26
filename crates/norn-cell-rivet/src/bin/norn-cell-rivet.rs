@@ -24,7 +24,7 @@ async fn shutdown_signal() {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
         tokio::select! {
             _ctrl_c = tokio::signal::ctrl_c() => {}
-            _sigterm = async {
+            () = async {
                 if let Some(signal) = terminate.as_mut() {
                     signal.recv().await;
                 } else {

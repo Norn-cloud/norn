@@ -23,7 +23,7 @@ pub fn internal_host(host: &url::Host<&str>) -> bool {
         url::Host::Domain(domain) => {
             const DOT_LOCALHOST: &[u8] = b".localhost";
             let domain = domain.trim_end_matches('.');
-            let is_localhost_sub = domain.len() > DOT_LOCALHOST.len()
+            let is_localhost_sub = domain.len() >= DOT_LOCALHOST.len()
                 && domain
                     .as_bytes()
                     .get(domain.len().saturating_sub(DOT_LOCALHOST.len())..)
@@ -76,11 +76,13 @@ pub fn internal_ipv6(ip: std::net::Ipv6Addr) -> bool {
         || (first == 0x2001 && second == 0);
     // Non-globally-reachable special-purpose IPv6 ranges: discard-only
     // (100::/64), benchmarking (2001:2::/48), ORCHID / ORCHIDv2
-    // (2001:10::/28, 2001:20::/28), and documentation (2001:db8::/32).
+    // (2001:10::/28, 2001:20::/28), and documentation (2001:db8::/32,
+    // 3fff::/20).
     let special_reserved = matches!(segments, [0x0100, 0, 0, 0, ..])
         || (first == 0x2001 && second == 0x0002 && third == 0)
         || (first == 0x2001 && matches!(second & 0xfff0, 0x0010 | 0x0020))
-        || (first == 0x2001 && second == 0x0db8);
+        || (first == 0x2001 && second == 0x0db8)
+        || (first == 0x3fff && (second & 0xf000) == 0);
     ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
@@ -99,7 +101,13 @@ mod tests {
 
     #[test]
     fn internal_host_and_ipv6_cover_case_and_reserved_ranges() {
-        for host in ["LOCALHOST", "Localhost.", "api.LOCALHOST", "sub.LocalHost."] {
+        for host in [
+            "LOCALHOST",
+            "Localhost.",
+            ".localhost",
+            "api.LOCALHOST",
+            "sub.LocalHost.",
+        ] {
             assert!(internal_host(&url::Host::Domain(host)), "{host}");
         }
         assert!(!internal_host(&url::Host::Domain("api.example.com")));
@@ -110,6 +118,7 @@ mod tests {
             "2001:10::1",
             "2001:20::1",
             "2001:db8::1",
+            "3fff::1",
         ] {
             let ip: std::net::Ipv6Addr = addr.parse().expect("valid IPv6 literal");
             assert!(internal_ipv6(ip), "{addr}");
