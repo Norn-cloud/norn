@@ -189,10 +189,16 @@ fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String>
     if std::fs::symlink_metadata(target).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(format!("{}: refuses a symbolic link", target.display()));
     }
-    let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
-    let parent = parent.unwrap_or_else(|| Path::new("."));
-    let resolved =
-        std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let mut probe = target;
+    let resolved = loop {
+        if let Ok(canonical) = std::fs::canonicalize(probe) {
+            break canonical;
+        }
+        let Some(parent) = probe.parent().filter(|p| !p.as_os_str().is_empty()) else {
+            break std::fs::canonicalize(".").map_err(|e| format!("{}: {e}", target.display()))?;
+        };
+        probe = parent;
+    };
     // The target's own location decides too: a manifest outside any
     // repository must not disable the restriction.
     if repository_of(&resolved).is_some()
@@ -260,10 +266,14 @@ fn run_owl(
     {
         return Err(format!("{}: {}", error.code, error.message));
     }
+    outside_repository(emit_dir, manifest_path)?;
     outside_repository(&emit_dir.join("summary.json"), manifest_path)?;
     std::fs::create_dir_all(emit_dir).map_err(|e| format!("{}: {e}", emit_dir.display()))?;
+    outside_repository(emit_dir, manifest_path)?;
     let write = |name: &str, text: String| {
-        std::fs::write(emit_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
+        let target = emit_dir.join(name);
+        outside_repository(&target, manifest_path)?;
+        std::fs::write(target, text).map_err(|e| format!("{name}: {e}"))
     };
     let artifacts: Vec<_> = import
         .layers
@@ -401,10 +411,22 @@ fn run(
         let module = render_review_module(&projection)?;
         return std::fs::write(target, module).map_err(|e| format!("{}: {e}", target.display()));
     }
+    let contract_rel = Path::new(&manifest.projection.contract);
+    if !contract_rel.components().all(|c| {
+        matches!(
+            c,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    }) {
+        return Err(format!(
+            "{}: contract path must be relative with no '..'",
+            manifest.projection.contract
+        ));
+    }
     let contract_path = manifest_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(&manifest.projection.contract);
+        .join(contract_rel);
     let contract: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&contract_path)
             .map_err(|e| format!("{}: {e}", contract_path.display()))?,

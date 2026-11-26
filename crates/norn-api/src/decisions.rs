@@ -555,17 +555,41 @@ fn parked_decision<E: SqlEngine>(
     }))
 }
 
+fn find_open_decision<E: SqlEngine>(
+    store: &CellStore<E>,
+    mut candidate: impl FnMut(&PendingCommand) -> Result<bool, Refusal>,
+    mut accept: impl FnMut(&OpenDecision) -> bool,
+) -> Result<Option<OpenDecision>, Refusal> {
+    let (read, mut after) = (store.read(), 0_u64);
+    loop {
+        let page = read
+            .parked_commands_page(after, DECISION_SCAN_PAGE)
+            .map_err(Refusal::host)?;
+        for pending in &page.commands {
+            if pending.result.is_none()
+                && candidate(pending)?
+                && let Some(decision) = open_decision(store, pending)?
+                && accept(&decision)
+            {
+                return Ok(Some(decision));
+            }
+        }
+        let Some(next) = page.next_after else {
+            return Ok(None);
+        };
+        after = next;
+    }
+}
+
 /// Every open decision, oldest command first.
 pub(crate) fn open_decisions<E: SqlEngine>(
     store: &CellStore<E>,
 ) -> Result<Vec<OpenDecision>, Refusal> {
-    let mut open = Vec::new();
-    for pending in store.read().parked_commands().map_err(Refusal::host)? {
-        if let Some(decision) = open_decision(store, &pending)? {
-            open.push(decision);
-        }
-    }
-    Ok(open)
+    let commands = store.read().parked_commands().map_err(Refusal::host)?;
+    commands
+        .iter()
+        .filter_map(|p| open_decision(store, p).transpose())
+        .collect()
 }
 
 /// DECISION-SCAN-1 (#1702): the open decisions among at most `budget`
@@ -1354,10 +1378,9 @@ fn decide_held<E: SqlEngine>(
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(not_found)?;
     let mut cell = host.cell()?;
-    let open = open_decisions(cell.store())?
-        .into_iter()
-        .find(|decision| decision.id == id);
-    let Some(decision) = open else {
+    let matches_id =
+        |p: &PendingCommand| Ok(decision_id(&p.command.command_id, p.command.generation)? == id);
+    let Some(decision) = find_open_decision(cell.store(), matches_id, |_| true)? else {
         return resolved_answer(&reader, &cell, id, body);
     };
     if !may_decide(host, actor, &decision) {
@@ -1886,11 +1909,18 @@ pub(crate) fn run_decision<E: SqlEngine>(
     actor: &str,
     run_id: &str,
 ) -> Result<Option<crate::run_routes::RunDecision>, Refusal> {
-    Ok(open_decisions(store)?
-        .into_iter()
-        .find(|decision| decision.run_id == run_id && may_decide(host, actor, decision))
-        .map(|decision| crate::run_routes::RunDecision {
-            id: decision.id,
-            expires_at_ms: decision.expires_at_ms,
+    let is_run = |p: &PendingCommand| {
+        let payload = p.command.command.get("payload");
+        Ok(payload.is_some_and(|p| {
+            text(p, "function") == Some(DECISION_FUNCTION) && text(p, "runId") == Some(run_id)
         }))
+    };
+    Ok(
+        find_open_decision(store, is_run, |d| may_decide(host, actor, d))?.map(|d| {
+            crate::run_routes::RunDecision {
+                id: d.id,
+                expires_at_ms: d.expires_at_ms,
+            }
+        }),
+    )
 }
