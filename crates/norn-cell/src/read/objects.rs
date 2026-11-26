@@ -930,19 +930,36 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         has_marking_catalog: bool,
     ) -> Result<Option<MarkedQuestionPath>, CellError> {
         self.check_live()?;
-        let question = plan.question();
-        if question.dimensions.is_empty()
-            && question.filters.is_empty()
-            && plan.sums().iter().all(|sum| sum.filters.is_empty())
-        {
-            return Ok(None);
-        }
         if !has_marking_catalog
             && !self.model_declares_markings()
             && !self.stores_markings()?
             && !self.has_retained_marking_catalog()?
         {
             return Ok(None);
+        }
+        let question = plan.question();
+        let grain = plan.grain().as_str();
+        for sum in plan.sums() {
+            let measure_ptr = format!("/metric/{}/measure", sum.name);
+            if let Some(hit) = self.check_property_marking(
+                world,
+                grain,
+                sum.property.id.as_str(),
+                &measure_ptr,
+                historical,
+            )? {
+                return Ok(Some(hit));
+            }
+            let (time_type, time_prop) = match &sum.time_link {
+                Some(link) => (link.target_type.as_str(), link.property.id.as_str()),
+                None => (grain, sum.time_property.as_str()),
+            };
+            let time_ptr = format!("/metric/{}/time", sum.name);
+            if let Some(hit) =
+                self.check_property_marking(world, time_type, time_prop, &time_ptr, historical)?
+            {
+                return Ok(Some(hit));
+            }
         }
         let paths = question
             .dimensions
@@ -967,7 +984,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         for (pointer, path) in paths {
             let property = path.property.as_str();
             let types: Vec<String> = if path.links.is_empty() {
-                vec![plan.grain().as_str().to_owned()]
+                vec![grain.to_owned()]
             } else {
                 self.model
                     .object_types()
@@ -980,17 +997,41 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     .collect()
             };
             for object_type in types {
-                if historical
-                    && (self.property_history_marked(world, &object_type, property)?
-                        || self.property_history_unclassified(world, &object_type, property)?)
-                {
-                    return Ok(Some(MarkedQuestionPath::History { pointer }));
-                }
-                let labels = self.property_marking_summary(world, &object_type, property)?;
-                if !labels.is_some_and(|labels| labels.is_empty()) {
-                    return Ok(Some(MarkedQuestionPath::Live { pointer }));
+                if let Some(hit) = self.check_property_marking(
+                    world,
+                    &object_type,
+                    property,
+                    &pointer,
+                    historical,
+                )? {
+                    return Ok(Some(hit));
                 }
             }
+        }
+        Ok(None)
+    }
+
+    fn check_property_marking(
+        &self,
+        world: &str,
+        object_type: &str,
+        property: &str,
+        pointer: &str,
+        historical: bool,
+    ) -> Result<Option<MarkedQuestionPath>, CellError> {
+        if historical
+            && (self.property_history_marked(world, object_type, property)?
+                || self.property_history_unclassified(world, object_type, property)?)
+        {
+            return Ok(Some(MarkedQuestionPath::History {
+                pointer: pointer.to_owned(),
+            }));
+        }
+        let labels = self.property_marking_summary(world, object_type, property)?;
+        if !labels.is_some_and(|labels| labels.is_empty()) {
+            return Ok(Some(MarkedQuestionPath::Live {
+                pointer: pointer.to_owned(),
+            }));
         }
         Ok(None)
     }

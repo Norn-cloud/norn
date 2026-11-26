@@ -755,6 +755,11 @@ pub(crate) fn subject_contributions<E: SqlEngine>(
     budget: &mut DecodeBudget,
 ) -> Result<(Vec<(u64, Contribution)>, bool), CellError> {
     if let Some(link) = plan.time_link() {
+        // METRIC-GRAIN-LINK-1 / ASOF-KNOWLEDGE-1: linked-time answers at a
+        // knowledge cutoff are refused here just as in IVM and DataFusion.
+        if cutoff.is_some() {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
         let targets = match reader.link_targets_with_budget(
             &context.world,
             plan.grain().as_str(),

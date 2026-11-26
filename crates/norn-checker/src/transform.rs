@@ -389,6 +389,72 @@ impl TransformPlan {
     pub const fn output_schema(&self) -> &NodeSchema {
         &self.schema
     }
+
+    /// Every `(pointer, object_type, property)` origin read by a `Filter`
+    /// predicate or `Window`/`Dedupe` `orderBy` key, used at runtime to refuse
+    /// dynamic `_norn_markings` on filter or order columns.
+    #[must_use]
+    pub fn filter_and_order_origins(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        let mut push_col = |pointer: String, schema: &NodeSchema, col_name: &str| {
+            let Some(column) = schema.column(col_name) else {
+                return;
+            };
+            for origin in &column.origins {
+                if let Some(scan) = self.inputs.get(&origin.alias) {
+                    out.push((
+                        pointer.clone(),
+                        scan.object_type.clone(),
+                        origin.property.clone(),
+                    ));
+                }
+            }
+        };
+        for (node_id, node) in &self.nodes {
+            match &node.step {
+                Step::Filter { input, predicate } => {
+                    if let Some(input_node) = self.nodes.get(input)
+                        && let Ok(paths) = norn_expr::expression_read_paths(
+                            predicate.expression.source(),
+                            ROW_ROOT,
+                        )
+                    {
+                        for path in paths {
+                            if let Some(col_name) = path.first() {
+                                push_col(
+                                    format!("/nodes/{node_id}/predicate"),
+                                    &input_node.schema,
+                                    col_name,
+                                );
+                            }
+                        }
+                    }
+                }
+                Step::Window {
+                    input, order_by, ..
+                }
+                | Step::Dedupe {
+                    input, order_by, ..
+                } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
+                            push_col(
+                                format!("/nodes/{node_id}/orderBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                    }
+                }
+                Step::Scan { .. }
+                | Step::Project { .. }
+                | Step::Join { .. }
+                | Step::Aggregate { .. }
+                | Step::Union { .. } => {}
+            }
+        }
+        out
+    }
 }
 
 fn finding(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> Diagnostic {
@@ -1134,12 +1200,21 @@ impl Builder<'_, '_> {
 
     fn filter(&mut self, input: &str, predicate: &str, at: &str) -> Option<AdmittedNode> {
         let schema = self.schema(input)?.clone();
-        let (predicate, _) =
-            self.typed(&schema, predicate, &Type::Bool, &format!("{at}/predicate"))?;
+        let predicate_at = format!("{at}/predicate");
+        let (predicate_expr, _) = self.typed(&schema, predicate, &Type::Bool, &predicate_at)?;
+        let read = self.read_columns(&schema, predicate, &predicate_at);
+        if read.iter().any(|column| !column.markings.is_empty()) {
+            self.fail(
+                metric_codes::MARKED_FIELD,
+                "a filter cannot read a marked column",
+                predicate_at,
+            );
+            return None;
+        }
         Some(AdmittedNode {
             step: Step::Filter {
                 input: input.to_owned(),
-                predicate,
+                predicate: predicate_expr,
             },
             schema,
         })
@@ -1795,6 +1870,14 @@ impl Builder<'_, '_> {
                 );
                 return None;
             };
+            if !column.markings.is_empty() {
+                self.fail(
+                    metric_codes::MARKED_FIELD,
+                    format!("cannot order by marked column {:?}", key.column),
+                    format!("{at}/orderBy/{index}"),
+                );
+                return None;
+            }
             if !orderable(&column.ty) {
                 self.fail(
                     codes::TYPE_MISMATCH,

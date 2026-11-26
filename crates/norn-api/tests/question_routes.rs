@@ -2512,3 +2512,140 @@ fn a_concurrent_labelled_commit_between_check_and_evaluate_is_discarded_and_refu
         "two worlds must refuse raced historical traces identically"
     );
 }
+
+/// PRIVACY-1: trace drill-through projects marked properties, withholds
+/// `factDigest`, and redacts `source` provenance on any marked version.
+#[test]
+fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
+    let (mut store, plan, mut context) = fixture();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    install_runtime_marking(&mut store, &context.scope);
+    let keys = fixture_keys();
+    store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            events: vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"loss": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("commit with marked loss");
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    let runtime = Runtime {
+        bad_row: false,
+        plan,
+        context,
+        cutoff: None,
+        cutoff_receipt: None,
+        resolved: Arc::new(AtomicUsize::new(0)),
+        min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+    };
+    let answer = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime)
+        .expect("question over unmarked fields answers cleanly");
+    let trace = get_numeric_trace(
+        &host,
+        &trace_query(&answer.lineage_ref),
+        Some("reader"),
+        QUESTION,
+        &runtime,
+    )
+    .expect("trace succeeds with projection");
+    assert!(!trace.contributions.is_empty());
+    for c in &trace.contributions {
+        assert_eq!(c.fact_digest, None, "marked row must withhold fact_digest");
+        assert!(
+            matches!(c.source, norn_cell::compute::ContributionSource::Restricted),
+            "marked row must redact source provenance: {:?}",
+            c.source
+        );
+        let loss = c
+            .values
+            .as_ref()
+            .expect("projected values")
+            .get("loss")
+            .expect("loss field");
+        assert_eq!(
+            loss,
+            &norn_ir::RuntimeValue::String(norn_api::privacy::REDACTED_TEXT.to_owned()),
+            "marked property must be projected before leaving trace_plan"
+        );
+    }
+}
+
+/// PRIVACY-4: `check_question_markings` refuses a question aggregating a
+/// dynamically marked measure property even when `groupBy` and `filter` are empty.
+#[test]
+fn check_question_markings_catches_marked_measure_with_empty_groupby_and_filter() {
+    let (mut store, base_plan, mut context) = fixture();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    install_runtime_marking(&mut store, &context.scope);
+    let keys = fixture_keys();
+    store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            events: vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"input": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("commit with marked input");
+    let mut bare_q = base_plan.question().clone();
+    bare_q.dimensions.clear();
+    bare_q.filters.clear();
+    let catalog = ScopedView::uniform(
+        &[serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1", "artifactId": "demo.Conversion.entity", "kind": "entity",
+            "namespace": "demo", "name": TYPE, "version": "0.1.0", "lifecycle": "draft",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {"entityVersion": "2.0", "objectType": object_type()}
+        }))
+        .expect("entity")],
+        &std::collections::BTreeSet::new(),
+    )
+    .into_catalog();
+    let bare_plan = norn_checker::metric::compute::admit(
+        base_plan.definitions(),
+        &bare_q,
+        &catalog,
+        base_plan.max_items(),
+    )
+    .expect("bare plan admits");
+    let hit = store
+        .read()
+        .check_question_markings(&bare_plan, norn_cell::MAIN_WORLD, false, true)
+        .expect("check_question_markings");
+    assert!(
+        matches!(
+            hit,
+            Some(norn_cell::MarkedQuestionPath::Live { ref pointer })
+                if pointer.ends_with("/measure")
+        ),
+        "must catch marked measure with empty groupBy/filter: {hit:?}"
+    );
+}

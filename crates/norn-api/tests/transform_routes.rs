@@ -493,3 +493,163 @@ fn refresh_needs_every_input_row_and_labels_the_rows() {
         .expect_err("not materialized");
     assert_eq!((not.status, not.code.as_str()), (400, "request.invalid"));
 }
+
+fn dynamic_marking_definitions(filtered_id: &str) -> Vec<Value> {
+    let mut defs = definitions();
+    defs.push(artifact(
+        "shop.markings",
+        "entity",
+        json!([]),
+        json!({
+            "entityVersion": "2.0",
+            "markings": [{
+                "id": "pii.region", "label": "Region", "severity": "high",
+                "category": "pii.contact", "mask": {"kind": "redacted"}
+            }]
+        }),
+    ));
+    defs.push(artifact(
+        filtered_id,
+        "derived",
+        json!([]),
+        json!({
+            "viewId": filtered_id, "title": "Filtered by region", "maintenance": "on_read",
+            "inputs": [{"alias": "customer", "kind": "entity", "ref": "shop.Customer"}],
+            "calc": {
+                "kind": "relational",
+                "nodes": {
+                    "c": {"op": "scan", "input": "customer"},
+                    "f": {"op": "filter", "input": "c", "predicate": "input.region == 'north'"}
+                },
+                "output": "f"
+            }
+        }),
+    ));
+    defs
+}
+
+fn host_with_dynamic_region_marking(
+    filtered_id: &str,
+    secret: &[u8],
+) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let objects: Vec<ObjectTypeDef> = types()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    let model = norn_cell::Model::from_definitions(&objects, &[]).unwrap();
+    let key = physical().key();
+    let defs = dynamic_marking_definitions(filtered_id);
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&defs).unwrap(),
+                    registry: vec![],
+                    receipt_sha256: "dynamic-transform-markings-v1".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: CLOCK,
+                    layout: None,
+                },
+                Some(0),
+                &key,
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key,
+                logical_time: CLOCK,
+                writes: vec![
+                    put("shop.Customer", "c-north", &[("region", V::from("north"))]),
+                    put(
+                        "shop.Order",
+                        "o1",
+                        &[("amount", V::from(Decimal::parse("10.00").unwrap()))],
+                    ),
+                ],
+                links: vec![link("o1", "c-north")],
+                events: vec![
+                    V::from_json(json!({
+                        "type": "observation.recorded",
+                        "mapped": [{
+                            "objectType": "shop.Customer",
+                            "key": "c-north",
+                            "propertyProvenance": {"region": {"markings": ["pii.region"]}}
+                        }]
+                    }))
+                    .unwrap(),
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical(), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(secret));
+    (host, directory)
+}
+
+#[test]
+fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
+    const FILTERED: &str = "shop.filtered_by_region";
+    let secret = [9_u8; 32];
+    let (host, _directory) = host_with_dynamic_region_marking(FILTERED, &secret);
+
+    let page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        TRANSFORM,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("projected rows");
+    assert_eq!(
+        page.rows[0].values["region"],
+        V::from(norn_api::privacy::REDACTED_TEXT)
+    );
+    assert!(
+        page.columns
+            .iter()
+            .any(|c| c.name == "region" && c.markings.contains(&"pii.region".to_owned()))
+    );
+    let lineage = get_transform_row_lineage(
+        &host,
+        &scope(),
+        Some("full"),
+        TRANSFORM,
+        &page.rows[0].row_id,
+        &Mapping,
+        NOW,
+    )
+    .expect("lineage");
+    assert_eq!(
+        lineage.values["region"],
+        V::from(norn_api::privacy::REDACTED_TEXT)
+    );
+
+    let refused = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        FILTERED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect_err("dynamic filter on marked column must refuse");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (422, "transform.marked_field")
+    );
+}

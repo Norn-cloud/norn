@@ -619,6 +619,7 @@ fn trace_plan<E: SqlEngine>(
         },
     )?;
     let mut trace = outcome.map_err(Refusal::from_compute)?;
+    redact_trace_contributions(host, actor, &cell.store().read(), &mut trace.contributions)?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
@@ -634,6 +635,45 @@ fn trace_plan<E: SqlEngine>(
     withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
     lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
+}
+
+/// PRIVACY-1: trace contributions never disclose raw marked property values,
+/// raw snapshot digests of marked versions, or source provenance for marked
+/// versions.
+fn redact_trace_contributions<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    reader: &norn_cell::StoreReader<'_, E>,
+    contributions: &mut [norn_cell::compute::NumericContribution],
+) -> Result<(), Refusal> {
+    let catalog = host.marking_catalog(reader)?;
+    if catalog.is_empty() {
+        return Ok(());
+    }
+    let scope = host.scope().key();
+    for contribution in contributions {
+        let mut record = ObjectRecord {
+            object_type: contribution.fact.object_type.0.clone(),
+            id: contribution.fact.key.clone(),
+            scope: scope.clone(),
+            version: contribution.fact.version,
+            values: contribution.values.clone().unwrap_or_default(),
+        };
+        let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
+        let marked = markings
+            .as_ref()
+            .is_none_or(|m| m.values().any(|ids| !ids.is_empty()));
+        if !marked {
+            continue;
+        }
+        contribution.fact_digest = None;
+        contribution.source = norn_cell::compute::ContributionSource::Restricted;
+        if contribution.values.is_some() {
+            let _ = crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
+            contribution.values = Some(record.values);
+        }
+    }
+    Ok(())
 }
 
 fn mapped<E: SqlEngine>(

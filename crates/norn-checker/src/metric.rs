@@ -1217,6 +1217,21 @@ impl<'a> Checker<'a> {
                         self.reject(codes::GRAIN_MISMATCH, &format!("{at}/objectSet"));
                     }
                     self.question_paths(question, symmetric, object_type.as_str(), at);
+                    if let Some(prop) = property {
+                        self.unmarked(
+                            object_type.as_str(),
+                            &DimensionPath {
+                                links: Vec::new(),
+                                property: prop.clone(),
+                            },
+                            &format!("{at}/aggregate"),
+                        );
+                    }
+                    self.unmarked(
+                        object_type.as_str(),
+                        &source.time_dimension,
+                        &format!("{at}/window"),
+                    );
                 }
             }
         }

@@ -1293,3 +1293,125 @@ fn evaluate_shares_one_fuel_budget_across_rows_and_columns() {
         "the same 100 rows succeed once fuel_units is raised"
     );
 }
+
+#[test]
+fn a_transform_cannot_filter_or_order_by_a_marked_column() {
+    let mut pool = ontology();
+    for item in &mut pool {
+        if item["artifactId"] == "shop.Customer" {
+            for prop in item["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties")
+            {
+                if prop["id"] == "email" {
+                    prop["markings"] = json!(["pii.email"]);
+                }
+            }
+        }
+    }
+    pool.push(artifact(
+        "shop.markings",
+        "entity",
+        json!([]),
+        json!({
+            "entityVersion": "2.0",
+            "markings": [{
+                "id": "pii.email",
+                "label": "Email",
+                "severity": "high",
+                "category": "pii.contact",
+                "mask": {"kind": "redacted"}
+            }]
+        }),
+    ));
+    let check_view = |nodes: Value, output: &str| {
+        let mut set = pool.clone();
+        set.push(artifact(
+            "shop.view",
+            "derived",
+            json!([]),
+            json!({
+                "viewId": "shop.view",
+                "title": "Marked check",
+                "maintenance": "on_read",
+                "inputs": [{"alias": "customer", "kind": "entity", "ref": "shop.Customer"}],
+                "calc": {"kind": "relational", "nodes": nodes, "output": output}
+            }),
+        ));
+        let envelopes: Vec<ArtifactEnvelope> = set
+            .into_iter()
+            .map(|v| serde_json::from_value(v).expect("envelope"))
+            .collect();
+        admit(
+            envelopes.last().expect("view"),
+            &envelopes,
+            &BTreeSet::new(),
+        )
+    };
+
+    // Filtering by a marked column is refused.
+    let filter_err = check_view(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "f": {"op": "filter", "input": "s", "predicate": "input.email == 'a@b.c'"}
+        }),
+        "f",
+    )
+    .expect_err("filter on marked column must refuse");
+    assert!(
+        filter_err
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
+        "{filter_err:?}"
+    );
+
+    // Ordering by a marked column is refused.
+    let order_err = check_view(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "w": {
+                "op": "window",
+                "input": "s",
+                "partitionBy": ["region"],
+                "orderBy": [
+                    {"column": "email", "direction": "asc"},
+                    {"column": "id", "direction": "asc"}
+                ],
+                "columns": [{"name": "rn", "fn": "row_number"}]
+            }
+        }),
+        "w",
+    )
+    .expect_err("order by marked column must refuse");
+    assert!(
+        order_err
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
+        "{order_err:?}"
+    );
+
+    // Projecting a marked column (masked at read time) still admits cleanly.
+    let projected = check_view(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "p": {
+                "op": "project",
+                "input": "s",
+                "columns": [
+                    {"name": "id", "expression": "input.id"},
+                    {"name": "email", "expression": "input.email"}
+                ]
+            }
+        }),
+        "p",
+    )
+    .expect("projection of marked column must still admit");
+    assert!(
+        projected
+            .output_schema()
+            .column("email")
+            .expect("email")
+            .markings
+            .contains("pii.email")
+    );
+}
