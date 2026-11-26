@@ -5916,6 +5916,7 @@ fn create_ifc_fixture(
             "identity": [{"name": "primary", "properties": ["id"]}],
             "properties": [
                 {"id": "id", "type": {"kind": "text"}},
+                {"id": "employee_id", "type": {"kind": "text"}},
                 {"id": "kind", "type": {"kind": "text"}},
                 {"id": "days", "type": {"kind": "integer"}}
             ],
