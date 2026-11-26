@@ -210,13 +210,14 @@ def format_exact_decimal(value: Decimal, span: SourceSpan | None = None) -> str:
 
 def render_zen_string(value: str, span: SourceSpan | None = None) -> str:
     """Render a ZEN string literal (matches `zenString` in `tools/norn-ts/src/builder/expr.ts`)."""
-    if _CONTROL_OR_ESCAPE_RE.search(value) or ("'" in value and '"' in value):
+    raw = str.__str__(value)
+    if _CONTROL_OR_ESCAPE_RE.search(raw) or ("'" in raw and '"' in raw):
         raise NornTracingError(
             "NORN-PY-EXPRESSION",
-            f"string literal {value!r} contains characters not admitted in norn-expr v1",
+            f"string literal {raw!r} contains characters not admitted in norn-expr v1",
             span,
         )
-    return f'"{value}"' if "'" in value else f"'{value}'"
+    return f'"{raw}"' if "'" in raw else f"'{raw}'"
 
 
 def _check_ident(name: str, span: SourceSpan | None = None) -> str:
@@ -233,7 +234,7 @@ def _literal_zen(value: str | int | bool | Decimal | None, span: SourceSpan | No
     if isinstance(value, float):
         raise NornFloatRefusalError(value, context="expression literal")
     if isinstance(value, int):
-        return str(value)
+        return int.__str__(value)
     if isinstance(value, Decimal):
         return format_exact_decimal(value, span)
     if isinstance(value, str):
@@ -1452,36 +1453,56 @@ def _resolve_callback_name(
     return False, None
 
 
-_SAFE_ENUM_BASES: frozenset[type[object]] = frozenset(
-    {enum.StrEnum, enum.IntEnum, enum.ReprEnum, enum.Enum, str, int, object}
+_SAFE_ENUM_BASES: tuple[type[object], ...] = (
+    enum.StrEnum,
+    enum.IntEnum,
+    enum.ReprEnum,
+    enum.Enum,
+    str,
+    int,
+    object,
 )
-_SAFE_ENUM_CLASS_DUNDERS: frozenset[str] = frozenset(
+_SAFE_ENUM_BASES_SET: frozenset[type[object]] = frozenset(_SAFE_ENUM_BASES)
+_SAFE_ENUM_META_DUNDERS: frozenset[str] = frozenset(
     {
         "__annotations__",
         "__doc__",
         "__firstlineno__",
-        "__format__",
         "__module__",
-        "__new__",
         "__qualname__",
         "__static_attributes__",
-        "__str__",
     }
 )
+_SAFE_ENUM_CALLABLE_DUNDERS: frozenset[str] = frozenset({"__format__", "__new__", "__str__"})
 
 
 def _is_plain_safe_enum_member(value: object, attr: str) -> bool:
-    """Admit only plain stdlib Enum classes with no custom metaclass, mixins, or operator overrides."""
+    """Admit only plain stdlib Enum classes with no custom metaclass, mixins, or dunder overrides."""
     if type(value) is not enum.EnumType or not isinstance(value, type):
         return False
-    if not set(value.__mro__[1:]).issubset(_SAFE_ENUM_BASES):
+    if not set(value.__mro__[1:]).issubset(_SAFE_ENUM_BASES_SET):
         return False
-    if any(k.startswith("__") and k not in _SAFE_ENUM_CLASS_DUNDERS for k in value.__dict__):
-        return False
+    for k, cls_val in value.__dict__.items():
+        if not k.startswith("__"):
+            continue
+        if k in _SAFE_ENUM_META_DUNDERS:
+            if callable(cls_val) or hasattr(cls_val, "__get__"):
+                return False
+        elif k in _SAFE_ENUM_CALLABLE_DUNDERS:
+            if cls_val is not None and not any(cls_val is getattr(base, k, None) for base in _SAFE_ENUM_BASES):
+                return False
+        else:
+            return False
+    for k in _SAFE_ENUM_CALLABLE_DUNDERS:
+        resolved = type.__getattribute__(value, k)
+        if not any(resolved is getattr(base, k, None) for base in _SAFE_ENUM_BASES):
+            return False
     member_map = type.__getattribute__(value, "_member_map_")
     if not isinstance(member_map, dict) or attr not in member_map:
         return False
     member = member_map[attr]
+    if type(member) is not value or value.__dict__.get(attr) is not member:
+        return False
     raw_val = object.__getattribute__(member, "_value_")
     return type(raw_val) in (str, int, bool)
 

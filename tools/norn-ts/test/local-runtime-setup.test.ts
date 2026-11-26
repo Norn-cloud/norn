@@ -1250,6 +1250,10 @@ test("inspectTarGzArchive refuses tar header precedence differentials and ambigu
         label: "newline-prefix-size.tar.gz",
         bytes: enc.encode("\n0000001000\0"),
       },
+      {
+        label: "all-spaces-size.tar.gz",
+        bytes: enc.encode("            "),
+      },
     ]
     for (const bad of badRawSizes) {
       const buf = new Uint8Array(smuggledTar)
@@ -1262,6 +1266,17 @@ test("inspectTarGzArchive refuses tar header precedence differentials and ambigu
       writeFileSync(p, Bun.gzipSync(buf))
       expect(() => inspectTarGzArchive(p, bad.label)).toThrow("invalid tar entry size")
     }
+
+    // All-space checksum field with signed byte sum == 0 must be refused ("Blanks in header" in GNU tar).
+    const blankChecksumTar = new Uint8Array(512 * 3)
+    blankChecksumTar.fill(0x20, 148, 156) // 8 * 32 = 256
+    blankChecksumTar[0] = 0x80 // -128 signed
+    blankChecksumTar[1] = 0x80 // -128 signed => total signed sum = 0
+    const blankChecksumArchive = join(root, "all-spaces-checksum.tar.gz")
+    writeFileSync(blankChecksumArchive, Bun.gzipSync(blankChecksumTar))
+    expect(() => inspectTarGzArchive(blankChecksumArchive, "all-spaces-checksum.tar.gz")).toThrow(
+      "invalid tar header checksum",
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

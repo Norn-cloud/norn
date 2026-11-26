@@ -33,7 +33,7 @@ import tempfile
 import types
 import unittest
 from decimal import Decimal
-from enum import Enum, StrEnum
+from enum import Enum, IntEnum, StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from unittest import mock
@@ -1891,8 +1891,51 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
         class _MixedEnum(_EvilMix, Enum):
             B = 2
 
+        class _EvilFmtStrEnum(StrEnum):
+            A = "a"
+
+            def __format__(self, _spec: str) -> str:
+                trap.called = True
+                return "a"
+
+        class _EvilStrStrEnum(StrEnum):
+            A = "a"
+
+            def __str__(self) -> str:
+                trap.called = True
+                return "a"
+
+        class _EvilStrIntEnum(IntEnum):
+            A = 1
+
+            def __str__(self) -> str:
+                trap.called = True
+                return "1"
+
+        class _PatchedStrEnum(StrEnum):
+            A = "a"
+
+        def _evil_patched_format(_self: object, _spec: str) -> str:
+            trap.called = True
+            return "a"
+
+        _PatchedStrEnum.__format__ = _evil_patched_format  # type: ignore[method-assign]
+
         class _CleanStatus(StrEnum):
             DRAFT = "draft"
+
+        class _TamperedEnum(StrEnum):
+            A = "a"
+
+        class _Desc:
+            def __get__(self, _inst: object, _owner: object = None) -> object:
+                trap.called = True
+                return _TamperedEnum.A
+
+        setattr(_TamperedEnum, "FAKE", trap)
+        _TamperedEnum._member_map_["FAKE"] = trap  # type: ignore[assignment]
+        setattr(_TamperedEnum, "DESC", _Desc())
+        _TamperedEnum._member_map_["DESC"] = _TamperedEnum.A
 
         bad_callbacks = [
             lambda s: trap.eq(s.hours),  # noqa: E731
@@ -1903,6 +1946,12 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
             lambda s: (_EvilEnum.A + s.hours).eq(1),  # noqa: E731
             lambda s: (_EvilEnum.A == s.hours).eq(True),  # noqa: E731
             lambda s: (_MixedEnum.B - s.hours).eq(1),  # noqa: E731
+            lambda s: (s.status == _EvilFmtStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (s.status == _EvilStrStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (_EvilStrIntEnum.A + s.hours).eq(2),  # noqa: E731
+            lambda s: (s.status == _PatchedStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (_TamperedEnum.FAKE + s.hours).eq("1"),  # type: ignore[attr-defined]  # noqa: E731
+            lambda s: (s.status == _TamperedEnum.DESC).eq(True),  # type: ignore[attr-defined]  # noqa: E731
         ]
         for cb in bad_callbacks:
             with self.assertRaises(NornTracingError) as c_attr:

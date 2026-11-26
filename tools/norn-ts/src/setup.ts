@@ -361,6 +361,8 @@ function parseTarOctal(buf: Uint8Array, start: number, length: number): number |
       break
     }
   }
+  // Reject digitless blank/space-padded fields ("Blanks in header" in GNU tar).
+  if (digits === 0) return undefined
   while (i < end) {
     const b = buf[i]!
     // Allow trailing ASCII spaces before NUL, and the POSIX checksum "\0 " terminator.
