@@ -472,8 +472,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   root.innerHTML = sheetMarkup(document, decision, locale)
   let lastBody: unknown
   let lastRefusalBody: unknown
+  let lastRefusalNote = ""
   let lastRefusedAt: Date = new Date()
-  let lastSentNote = ""
   // The server's refusal panel for the refused choice, kept from the refusal that refused it.
   let refusedPanel: { readonly html: string; readonly variant: "" | "disclosed" | "redacted" } = { html: "", variant: "" }
   let now = options.now
@@ -482,11 +482,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   let laws = options.laws
   const transport: Transport = {
     async call(call, input, callOptions) {
-      lastSentNote = typeof input.note === "string" ? input.note : ""
+      const sentNote = typeof input.note === "string" ? input.note : ""
       const classified = await options.transport.call(call, input, callOptions)
       lastBody = classified.body
       if (classified.outcome === "refused") {
         lastRefusalBody = classified.body
+        lastRefusalNote = sentNote
         lastRefusedAt = new Date()
       }
       return classified
@@ -650,7 +651,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
       refusedPanel = refusalPanelMarkup(lastRefusalBody, {
         decision,
         choiceLabel: optionLabel(refusedChoice),
-        note: lastSentNote,
+        note: lastRefusalNote,
         locale,
         technical,
         caller,

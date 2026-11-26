@@ -153,20 +153,21 @@ export function createDriver(options: DriverOptions): Driver {
     dispatch({ kind: "outcome", entry, outcome: classified.outcome, ...(classified.category ? { category: classified.category } : {}), ...(code === undefined ? {} : { code }), payload: classified.payload })
   }
 
+  const DEFAULT_DEADLINE_MS = 10_000
+
   const start = (cmd: Extract<Cmd, { kind: "start" }>) => {
     const keyOf = JSON.stringify([cmd.call, cmd.input])
     const key = keys.get(keyOf) ?? newKey()
     keys.set(keyOf, key)
     const controller = new AbortController()
+    const timeoutMs = cmd.deadlineMs > 0 ? cmd.deadlineMs : DEFAULT_DEADLINE_MS
     const flight: InFlight = {
       controller,
       ended: null,
-      deadline: cmd.deadlineMs > 0
-        ? clock.setTimeout(() => {
-          flight.ended ??= "timeout"
-          controller.abort()
-        }, cmd.deadlineMs)
-        : null,
+      deadline: clock.setTimeout(() => {
+        flight.ended ??= "timeout"
+        controller.abort()
+      }, timeoutMs),
     }
     let flights = inflight.get(cmd.entry)
     if (flights === undefined) {

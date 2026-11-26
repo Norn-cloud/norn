@@ -203,24 +203,45 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       existing.stop()
       feeds.delete(bindingId)
     }
-    const stop = feed.subscribe(read, {
-      snapshot: (document) => {
-        if (!live || feeds.get(bindingId)?.key !== key) return
-        setRead(bindingId, { kind: "ok", document, freshness: "live" })
-        driver.dispatch({ kind: "subscription", bindingId })
+    let active = true
+    const entry: { readonly key: string; stop: () => void } = {
+      key,
+      stop: () => {
+        active = false
       },
-      lapsed: () => {
-        if (!live || feeds.get(bindingId)?.key !== key) return
-        const before = view.reads.get(bindingId)
-        if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "stale" })
-      },
-      refused: () => {
-        if (!live || feeds.get(bindingId)?.key !== key) return
-        const before = view.reads.get(bindingId)
-        if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "snapshot" })
-      },
-    })
-    feeds.set(bindingId, { key, stop })
+    }
+    feeds.set(bindingId, entry)
+    try {
+      const unsubscribe = feed.subscribe(read, {
+        snapshot: (document) => {
+          if (!live || !active) return
+          setRead(bindingId, { kind: "ok", document, freshness: "live" })
+          driver.dispatch({ kind: "subscription", bindingId })
+        },
+        lapsed: () => {
+          if (!live || !active) return
+          const before = view.reads.get(bindingId)
+          if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "stale" })
+        },
+        refused: () => {
+          if (!live || !active) return
+          const before = view.reads.get(bindingId)
+          if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "snapshot" })
+        },
+      })
+      if (!live || !active) {
+        unsubscribe()
+        return
+      }
+      entry.stop = () => {
+        active = false
+        unsubscribe()
+      }
+    } catch (error) {
+      active = false
+      if (feeds.get(bindingId) === entry) feeds.delete(bindingId)
+      throw error
+    }
   }
 
   const transport: Transport = {

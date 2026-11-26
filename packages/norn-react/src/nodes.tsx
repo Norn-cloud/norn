@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogBackdrop, AlertDialogContent, AlertDialogDescri
 import { Button } from "@ui-sdk/react/button"
 import { Dialog, DialogBackdrop, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
 import { Input } from "@ui-sdk/react/input"
-import { useLayoutEffect, useRef, type ComponentType, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, type ComponentType, type ReactNode } from "react"
 import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
@@ -43,6 +43,7 @@ const MUTED = "text-meta text-muted-foreground"
 type Doc = Readonly<Record<string, unknown>>
 const asDoc = (value: unknown): Doc | null => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Doc) : null)
 const own = (doc: Doc | null, key: string): unknown => (doc !== null && Object.hasOwn(doc, key) ? doc[key] : undefined)
+const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect
 const escapeSelector = (value: string): string =>
   typeof CSS !== "undefined" && typeof CSS.escape === "function"
     ? CSS.escape(value)
@@ -196,7 +197,7 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
       <label className="grid gap-1" data-node={node.nodeId}>
         <span className={MUTED}>{label}</span>
         <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" disabled={!on} data-engine={waiting ? "waiting" : undefined}
-          value={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
+          defaultValue={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
       </label>
     )
   }
@@ -225,10 +226,12 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   // Where focus returns when the machine closes the layer: what had it when the layer opened.
   const wasOpen = useRef(false)
   const returnTo = useRef<HTMLElement | null>(null)
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (open && !wasOpen.current && typeof document !== "undefined") {
-      // What had focus, or (an agent presses without focusing) the control whose event opened it.
-      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+      // What had focus before the layer opened (ignoring focus already moved inside the layer by
+      // child layout effects), or the control whose event opened it.
+      const candidate = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+      const active = candidate !== null && candidate.closest("[data-layer]") === null ? candidate : null
       const raised = scope.raisedBy.current
       returnTo.current = active ?? (raised === null ? null : document.querySelector<HTMLElement>(`[data-node="${escapeSelector(raised)}"]`))
     }

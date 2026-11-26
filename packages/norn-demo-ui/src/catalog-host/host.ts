@@ -201,6 +201,7 @@ export function mountFrame(container: HTMLElement, moduleSource: string, host: H
       if (connected && !unmounted) channel.port1.postMessage(view)
     },
     unmount: () => {
+      if (unmounted) return
       unmounted = true
       listeners.abort()
       if (!connected) channel.port2.close()
