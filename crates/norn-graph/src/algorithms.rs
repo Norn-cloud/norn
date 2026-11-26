@@ -86,12 +86,12 @@ pub fn critical_path<N: Ord + Clone, Q: Quantity>(
             meter.step()?;
             let candidate = &timings.get(parent).ok_or(Error::Invariant)?.earliest_finish;
             if candidate > &start {
-                start = candidate.clone();
+                start.clone_from(candidate);
             }
         }
         let finish = start.add(value(durations, node)?)?;
         if finish > length {
-            length = finish.clone();
+            length.clone_from(&finish);
         }
         timings.insert(
             node.clone(),
@@ -111,7 +111,7 @@ pub fn critical_path<N: Ord + Clone, Q: Quantity>(
             meter.step()?;
             let candidate = &timings.get(child).ok_or(Error::Invariant)?.latest_start;
             if candidate < &finish {
-                finish = candidate.clone();
+                finish.clone_from(candidate);
             }
         }
         let start = finish.sub(value(durations, node)?)?;
@@ -220,7 +220,7 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
                 let child = unit_rollups.get(&line.child).ok_or(Error::Invariant)?;
                 Q::accumulate(&mut cost, &line.quantity.mul(&child.cost)?)?;
                 if child.lead_time > child_time {
-                    child_time = child.lead_time.clone();
+                    child_time.clone_from(&child.lead_time);
                 }
             }
         }
@@ -238,7 +238,7 @@ pub fn explode<N: Ord + Clone, Q: Quantity>(
         let rolled = unit_rollups.get(node).ok_or(Error::Invariant)?;
         Q::accumulate(&mut total_cost, &quantity.mul(&rolled.cost)?)?;
         if rolled.lead_time > lead_time {
-            lead_time = rolled.lead_time.clone();
+            lead_time.clone_from(&rolled.lead_time);
         }
     }
     let mut requirements = BTreeMap::new();

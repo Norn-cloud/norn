@@ -146,6 +146,9 @@ impl Quantity for Decimal {
             .checked_add(right.scale())
             .ok_or(ArithmeticError::Overflow)?;
         cancel_ten_pairs(&mut lm, &mut rm, &mut scale)?;
+        if scale > 28 {
+            return Err(ArithmeticError::Precision);
+        }
         let mantissa = lm.checked_mul(rm).ok_or(ArithmeticError::Overflow)?;
         decimal(mantissa, scale)
     }
