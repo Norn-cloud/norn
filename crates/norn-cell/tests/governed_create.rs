@@ -1205,6 +1205,21 @@ fn seed_composed_cell(
     (cell, fences)
 }
 
+fn composed_call<'a>(
+    request_action: &'a ActionRoot,
+    transfer_id: &str,
+    fences: &[norn_ir::quantity_ledger::QuantityBalanceVersion],
+    key: &str,
+) -> ActionCall<'a> {
+    call(
+        request_action,
+        "person:requester",
+        json!({"transfer_id": transfer_id, "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
+            "reservation_id": "r", "posting_id": "shipment", "balance_versions": fences}),
+        key,
+    )
+}
+
 /// Wave-1 A1 (`CommitEvidence`): creator stamp, field-level reference reads
 /// onto a PII-bearing slice target with `createLinks`, and a quantity posting
 /// compose in one atomic transaction, fail closed on conflicts or classified
@@ -1230,13 +1245,7 @@ fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically()
     // 1. Stale balance-version fence conflicts atomically (no writes, link, or posting).
     let mut stale_fences = fences.clone();
     stale_fences[0].version = stale_fences[0].version.saturating_add(99);
-    let stale_call = call(
-        &clean_action,
-        "person:requester",
-        json!({"transfer_id": "TR-COMP", "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
-            "reservation_id": "r", "posting_id": "shipment", "balance_versions": stale_fences}),
-        "q-stale",
-    );
+    let stale_call = composed_call(&clean_action, "TR-COMP", &stale_fences, "q-stale");
     assert!(matches!(
         commit_action(&mut cell, &catalog, &stale_call, &members),
         Err(norn_kernel::ActionRefusal::Decision(
@@ -1249,13 +1258,7 @@ fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically()
 
     // 2. Classified precondition read refuses `createLinks` and posts zero quantity.
     let pii_action = composed_evidence_action("slice.emp.national_id == '123-45-6789'");
-    let pii_call = call(
-        &pii_action,
-        "person:requester",
-        json!({"transfer_id": "TR-PII", "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
-            "reservation_id": "r", "posting_id": "shipment", "balance_versions": fences}),
-        "q-pii",
-    );
+    let pii_call = composed_call(&pii_action, "TR-PII", &fences, "q-pii");
     assert!(matches!(
         commit_action(&mut cell, &catalog, &pii_call, &members),
         Err(norn_kernel::ActionRefusal::Decision(
@@ -1265,13 +1268,7 @@ fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically()
     assert_eq!(cell.store().read().dump().unwrap(), baseline);
 
     // 3. Valid composed create commits stamp + unmarked link + quantity posting atomically.
-    let valid_call = call(
-        &clean_action,
-        "person:requester",
-        json!({"transfer_id": "TR-COMP", "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
-            "reservation_id": "r", "posting_id": "shipment", "balance_versions": fences}),
-        "q-comp",
-    );
+    let valid_call = composed_call(&clean_action, "TR-COMP", &fences, "q-comp");
     let ActionOutcome::Committed {
         receipt: first_receipt,
         record: first_record,
