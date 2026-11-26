@@ -409,3 +409,74 @@ test("the cell's live host sends the GET's own bytes, so a pushed decimal reache
   expect(seen[0]!.exact).toEqual({ version: "2", values: { amount: "1234567890123456.789012345678", rate: "100.000" } })
   stop()
 })
+
+test("repeated 4401 closes without a frame back off and cap at unavailable instead of spinning forever", async () => {
+  const { client, sockets, timers, flush } = harness()
+  const told: LiveRefusal[] = []
+  const stop = client.subscribe("/v1/objects/a:facets", () => {}, { onRefused: (refusal) => told.push(refusal) })
+  await flush()
+  // First 4401 retries immediately (routine token expiry).
+  sockets[0]!.emit("open")
+  sockets[0]!.emit("close", { code: 4401 })
+  await flush()
+  expect(sockets).toHaveLength(2)
+  expect(timers).toHaveLength(0)
+  // Subsequent consecutive 4401s without any server frame consume the failure budget with backoff.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    sockets.at(-1)!.emit("open")
+    sockets.at(-1)!.emit("close", { code: 4401 })
+    if (attempt < 2) {
+      expect(timers).toHaveLength(1)
+      timers.shift()?.()
+      await flush()
+    }
+  }
+  expect(client.state).toBe("unavailable")
+  expect(told).toEqual([LIVE_UNAVAILABLE])
+  stop()
+})
+
+test("close cancels pending reconnect timers and ignores in-flight async url resolutions", async () => {
+  const sockets: FakeSocket[] = []
+  const timers: (() => void)[] = []
+  let resolveUrl!: (url: string) => void
+  let urlCalls = 0
+  const client = new LiveClient({
+    url: () => {
+      urlCalls += 1
+      return new Promise<string>((resolve) => { resolveUrl = resolve })
+    },
+    connect: (url) => {
+      const socket = new FakeSocket(url)
+      sockets.push(socket)
+      return socket
+    },
+    schedule: (callback) => timers.push(callback),
+    maxFailures: 3,
+  })
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  // 1. close() while url() is in flight ignores the late resolution and opens no socket.
+  const unsub1 = client.subscribe("/v1/a", () => {})
+  expect(urlCalls).toBe(1)
+  client.close()
+  resolveUrl("wss://studio/api/host/v1/subscribe")
+  await flush()
+  expect(sockets).toHaveLength(0)
+  expect(client.state).toBe("idle")
+  unsub1()
+
+  // 2. close() while a reconnect timer is queued makes firing that stale timer a no-op.
+  const unsub2 = client.subscribe("/v1/b", () => {})
+  resolveUrl("wss://studio/api/host/v1/subscribe")
+  await flush()
+  expect(sockets).toHaveLength(1)
+  sockets[0]!.emit("close", { code: 1006 })
+  expect(timers).toHaveLength(1)
+  client.close()
+  timers.shift()?.()
+  await flush()
+  expect(sockets).toHaveLength(1)
+  expect(client.state).toBe("idle")
+  unsub2()
+})

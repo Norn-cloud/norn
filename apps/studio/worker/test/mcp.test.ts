@@ -218,7 +218,11 @@ test("a code is never sent to a callback outside the known assistants", async ()
   if (response.status < 300) {
     const clientId = ((await response.json()) as { client_id: string }).client_id
     const authorize = await call(env, authorizeUrl(clientId, pkce().challenge, evil), { headers: { cookie } })
-    expect(authorize.headers.get("location") ?? "").not.toStartWith(evil)
+    const location = authorize.headers.get("location") ?? ""
+    expect(location).not.toStartWith(evil)
+    expect(authorize.status >= 400 || location.includes("error=invalid_redirect")).toBe(true)
+  } else {
+    expect(response.status).toBe(400)
   }
 })
 
@@ -515,14 +519,13 @@ test("consent approval requires single-use approval token, guards persistence at
   expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, expectedRefGen1)).toEqual({ n: 0 })
   sqlite.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_rejoined_gen2', ?, ?, 'owner', ?)`, [org, user, new Date().toISOString()])
   expect((await mcp(env, tokenPayload.access_token, INIT)).status).toBe(401)
-  if (tokenPayload.refresh_token) {
-    const refreshed = await call(env, "/api/auth/oauth2/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokenPayload.refresh_token, client_id: clientId, resource: RESOURCE }),
-    })
-    expect(refreshed.status).toBeGreaterThanOrEqual(400)
-  }
+  expect(tokenPayload.refresh_token).toBeTruthy()
+  const refreshed = await call(env, "/api/auth/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokenPayload.refresh_token!, client_id: clientId, resource: RESOURCE }),
+  })
+  expect(refreshed.status).toBeGreaterThanOrEqual(400)
 
   // 5. Commit-time SQLite trigger aborts oauthConsent insert on concurrent membership deletion (0 consent rows, 0 codes).
   const clientId2 = await register(env)
