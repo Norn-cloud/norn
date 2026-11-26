@@ -854,3 +854,44 @@ macro_rules! runtime_object {
         ]))
     };
 }
+
+/// Whether `D` is `serde_json`'s text deserializer, whose input can be captured raw.
+pub(crate) fn is_serde_json_text_deserializer<D>() -> bool {
+    std::any::type_name::<D>().contains("serde_json::de::Deserializer<")
+}
+
+/// Whether `D` is a constructed `serde_json::Value`.
+pub(crate) fn is_serde_json_value_deserializer<D>() -> bool {
+    std::any::type_name::<D>().contains("serde_json::value::Value")
+}
+
+/// Reject JSON text whose numbers change exact value through the definition [`JsonValue`]
+/// representation; `subject` names the document in the error.
+pub(crate) fn guard_definition_numbers_text(subject: &str, raw: &str) -> Result<(), String> {
+    let exact = RuntimeValue::from_json_text(raw).map_err(|error| error.to_string())?;
+    let definition: JsonValue = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+    let converted = RuntimeValue::from_ir(&definition).map_err(|error| error.to_string())?;
+    if exact != converted {
+        return Err(format!(
+            "{subject} number changes value through the definition JSON representation"
+        ));
+    }
+    Ok(())
+}
+
+/// [`guard_definition_numbers_text`] for a constructed `serde_json::Value`.
+pub(crate) fn guard_definition_numbers_value(
+    subject: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let exact = RuntimeValue::from_json(value.clone()).map_err(|error| error.to_string())?;
+    let definition: JsonValue =
+        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+    let converted = RuntimeValue::from_ir(&definition).map_err(|error| error.to_string())?;
+    if exact != converted {
+        return Err(format!(
+            "{subject} number changes value through the definition JSON representation"
+        ));
+    }
+    Ok(())
+}
