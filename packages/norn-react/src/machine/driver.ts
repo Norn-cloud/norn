@@ -66,7 +66,7 @@ const DEFINITIVE = new Set(["accepted", "refused", "pending_approval", "answer_m
 
 interface InFlight {
   readonly controller: AbortController
-  readonly deadline: unknown
+  readonly deadline: unknown | null
   ended: "timeout" | "cancelled" | null
 }
 
@@ -94,7 +94,7 @@ export function createDriver(options: DriverOptions): Driver {
   const clock: Clock = options.clock ?? DEFAULT_CLOCK
   const newKey = options.newKey ?? (() => crypto.randomUUID())
   const keys = new Map<string, string>()
-  const inflight = new Map<number, InFlight>()
+  const inflight = new Map<number, Set<InFlight>>()
   const timers = new Set<unknown>()
   let disposed = false
   const opened = init(machine)
@@ -154,18 +154,25 @@ export function createDriver(options: DriverOptions): Driver {
     const flight: InFlight = {
       controller,
       ended: null,
-      deadline: clock.setTimeout(() => {
-        flight.ended ??= "timeout"
-        controller.abort()
-      }, cmd.deadlineMs),
+      deadline: cmd.deadlineMs > 0
+        ? clock.setTimeout(() => {
+            flight.ended ??= "timeout"
+            controller.abort()
+          }, cmd.deadlineMs)
+        : null,
     }
-    inflight.set(cmd.entry, flight)
+    let entryFlights = inflight.get(cmd.entry)
+    if (entryFlights === undefined) {
+      entryFlights = new Set()
+      inflight.set(cmd.entry, entryFlights)
+    }
+    entryFlights.add(flight)
     options.onStart?.(cmd, key)
     transport.call(cmd.call, cmd.input, { signal: controller.signal, idempotencyKey: key }).then(
       (classified) => {
         settle(cmd.entry, flight)
-        if (DEFINITIVE.has(classified.outcome)) keys.delete(keyOf)
         const answer: Classified = flight.ended === "timeout" ? { outcome: "timeout", payload: {} } : classified
+        if (DEFINITIVE.has(answer.outcome)) keys.delete(keyOf)
         if (!disposed) options.onAnswer?.(cmd, answer, key)
         deliver(cmd.entry, answer)
       },
@@ -179,8 +186,12 @@ export function createDriver(options: DriverOptions): Driver {
   }
 
   const settle = (entry: number, flight: InFlight) => {
-    clock.clearTimeout(flight.deadline)
-    if (inflight.get(entry) === flight) inflight.delete(entry)
+    if (flight.deadline !== null) clock.clearTimeout(flight.deadline)
+    const entryFlights = inflight.get(entry)
+    if (entryFlights !== undefined) {
+      entryFlights.delete(flight)
+      if (entryFlights.size === 0) inflight.delete(entry)
+    }
   }
 
   const run = (cmds: readonly Cmd[]) => {
@@ -190,10 +201,12 @@ export function createDriver(options: DriverOptions): Driver {
           start(cmd)
           break
         case "cancel": {
-          const flight = inflight.get(cmd.entry)
-          if (flight) {
-            flight.ended ??= "cancelled"
-            flight.controller.abort()
+          const entryFlights = inflight.get(cmd.entry)
+          if (entryFlights !== undefined) {
+            for (const flight of entryFlights) {
+              flight.ended ??= "cancelled"
+              flight.controller.abort()
+            }
           }
           break
         }
@@ -221,9 +234,11 @@ export function createDriver(options: DriverOptions): Driver {
     deferred: () => waiting.length,
     dispose: () => {
       disposed = true
-      for (const flight of inflight.values()) {
-        clock.clearTimeout(flight.deadline)
-        flight.controller.abort()
+      for (const entryFlights of inflight.values()) {
+        for (const flight of entryFlights) {
+          if (flight.deadline !== null) clock.clearTimeout(flight.deadline)
+          flight.controller.abort()
+        }
       }
       inflight.clear()
       for (const handle of timers) clock.clearTimeout(handle)

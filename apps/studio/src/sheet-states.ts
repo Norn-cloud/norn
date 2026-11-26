@@ -19,7 +19,7 @@ export const SHEET: readonly SheetState[] = [
   { component: "LifecycleView", id: "lifecycle-view/live", note: "A commit publishes a new answer on the socket and the counts change in place (12 → 11 drafts)." },
   { component: "LifecycleView", id: "lifecycle-view/stepper", note: "The checker's counterexample, stepped: each step names the page's and the object's transitions; taken lifecycle transitions and the object's current state are highlighted." },
   { component: "LifecycleView", id: "lifecycle-view/technical", note: "Technical view: under the reader's sentence, the finding's code and the checker's own words with the raw pair." },
-  { component: "LifecycleView", id: "lifecycle-view/rtl", note: "Arabic: the board runs right to left, arrows mirror, numbers in Egyptian Arabic digits, stepper in Arabic." },
+  { component: "LifecycleView", id: "lifecycle-view/rtl", note: "Arabic: the board runs right to left, arrows mirror, numbers in Western digits (DESIGN.md 14), stepper in Arabic." },
   { component: "StateBox", id: "state/default", note: "Baseline: a light card floating on the dot grid (contact plus ambient shadow, hairline border, top highlight); kind chip, kind line, name." },
   { component: "StateBox", id: "state/flags", note: "Flags replace the kind line (initial · terminal), muted; no badges, so geometry holds." },
   { component: "StateBox", id: "state/selected", note: "Selection is a crisp accent ring offset from the card, plus the hover depth; never a fill or border change." },

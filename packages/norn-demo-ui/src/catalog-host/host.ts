@@ -73,7 +73,10 @@ export function checkPayload(declared: readonly MachineField[], payload: unknown
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return "the payload is not a record"
   const record = payload as Record<string, unknown>
   for (const name of Object.keys(record)) if (!declared.some((field) => field.fieldId === name)) return `undeclared member ${name}`
-  for (const field of declared) if (!fits(field, record[field.fieldId])) return `${field.fieldId} is not ${field.required ? "" : "an optional "}${field.type}`
+  for (const field of declared) {
+    const value = Object.hasOwn(record, field.fieldId) ? record[field.fieldId] : undefined
+    if (!fits(field, value)) return `${field.fieldId} is not ${field.required ? "" : "an optional "}${field.type}`
+  }
   return null
 }
 
@@ -118,13 +121,26 @@ export function createHost(options: HostOptions): Host {
       const internal = entry.machine?.events.find((event) => event.eventId === eventId && event.source.kind === "user")
       if (!declared && !internal) return refuse({ kind: "undeclared_event", eventId })
       const payload = (msg.payload ?? {}) as Fields
-      const problem = checkPayload(declared?.payload ?? internal?.payload ?? [], payload)
+      const expected = declared?.payload && declared.payload.length > 0
+        ? declared.payload
+        : internal?.payload && internal.payload.length > 0
+          ? internal.payload
+          : (declared?.payload ?? internal?.payload ?? [])
+      const problem = checkPayload(expected, payload)
       if (problem !== null) return refuse({ kind: "ill_typed_payload", eventId, detail: problem })
       // The entry's machine decides whether the current state takes the event; it is the only state.
       if (entry.machine && snapshot && internal) {
         // A component that decides its own guards says which declared target it took.
         const to = typeof msg.to === "string" ? { to: msg.to } : {}
-        const step = update(entry.machine, evaluate, snapshot, { kind: "user", eventId, payload, ...to })
+        let step
+        try {
+          step = update(entry.machine, evaluate, snapshot, { kind: "user", eventId, payload, ...to })
+        } catch (error) {
+          return refuse({
+            kind: "malformed_message",
+            detail: error instanceof Error ? error.message : String(error),
+          })
+        }
         if (step.fired === null) return refuse({ kind: "not_offered", eventId, state: snapshot.stateId })
         snapshot = step.snapshot
         options.onView(view())

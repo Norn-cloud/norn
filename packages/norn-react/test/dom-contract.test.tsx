@@ -8,7 +8,7 @@ import { expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { ActionEffects } from "../src/agent.ts"
 import type { IslandRegistry } from "../src/islands.ts"
-import { lazyEngine } from "../src/machine/evaluate.ts"
+import { EvaluationError, lazyEngine } from "../src/machine/evaluate.ts"
 import type { Machine } from "../src/machine/machine.ts"
 import { Node, type PageScope } from "../src/nodes.tsx"
 import type { BindingCallState, BindingReadState } from "../src/reads.ts"
@@ -154,4 +154,95 @@ test("a control is enabled exactly when the current state can take its event", (
   // Disabled but focusable (`aria-disabled`), so focus never falls out of a waiting layer.
   expect(browsing).not.toMatch(/aria-disabled="true"/)
   expect(saving).toMatch(/aria-disabled="true"/)
+})
+
+test("prototype keys never leak from record values/masked or island registry", () => {
+  const fieldNode: WidgetNode = { nodeId: "proto-field", component: { kind: "field", fieldId: "f-toString" }, children: [] }
+  const customUx: WidgetUx = {
+    ...ux,
+    fields: [{ fieldId: "f-toString", label: { en: "ToString" }, target: { kind: "property", property: { bindingId: "rec", propertyId: "toString" } } }],
+  }
+  const reads = new Map<string, BindingReadState>([["rec", { kind: "ok", document: { values: {}, masked: {} }, freshness: "snapshot" }]])
+  const markup = renderToStaticMarkup(<Node scope={scope("browsing", reads, new Map(), false, { ux: customUx })} node={fieldNode} />)
+  expect(markup).toContain("—")
+  expect(markup).not.toContain("function")
+
+  const protoIsland: WidgetNode = { nodeId: "proto-island", component: { kind: "catalog", entry: { entryId: "toString" } }, children: [] }
+  const islandUx: WidgetUx = { ...ux, catalog: [{ entryId: "toString", label: { en: "ToString" }, trust: "opaque_island" }] }
+  const islandMarkup = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), false, { ux: islandUx, islands: {} })} node={protoIsland} />)
+  expect(islandMarkup).toBe("")
+})
+
+test("EvaluationError in guards or catalog props fails closed without crashing render", () => {
+  const base = scope("browsing", ok)
+  const failingScope: PageScope = {
+    ...base,
+    runtime: { ...base.runtime, evaluate: (expr) => { throw new EvaluationError(expr, "eval.err", "bad expr") } },
+    islands: { "fixture-meter": () => "should-not-draw" },
+  }
+  const meter = nodesOf(islandPage().pages[0]!.root).find((c) => c.nodeId === "meter-node")!
+  const islandMarkup = renderToStaticMarkup(<Node scope={{ ...failingScope, ux: islandPage() }} node={meter} />)
+  expect(islandMarkup).toContain('data-engine="failed"')
+  expect(islandMarkup).not.toContain("should-not-draw")
+
+  const guardedMachine: Machine = {
+    ...machine,
+    transitions: machine.transitions.map((t) => (t.on === "save" ? { ...t, guard: "broken()" } : t)),
+  }
+  const controlMarkup = renderToStaticMarkup(<Node scope={{ ...failingScope, machine: guardedMachine }} node={node("save-node")} />)
+  expect(controlMarkup).toMatch(/aria-disabled="true"/)
+})
+
+test("field node renders through ReadView and section groups fields by bindingId", () => {
+  const fieldNode: WidgetNode = { nodeId: "single-field", component: { kind: "field", fieldId: "f-label" }, children: [] }
+  const sectionNode: WidgetNode = {
+    nodeId: "multi-section",
+    component: {
+      kind: "section",
+      section: {
+        sectionId: "summary",
+        kind: "section",
+        order: 0,
+        label: { en: "Summary" },
+        fields: [
+          { bindingId: "b1", propertyId: "alpha" },
+          { bindingId: "b2", propertyId: "beta" },
+        ],
+      },
+    },
+    children: [],
+  }
+  const customUx: WidgetUx = {
+    ...ux,
+    fields: [
+      { fieldId: "f-label", label: { en: "Label" }, target: { kind: "property", property: { bindingId: "b1", propertyId: "alpha" } } },
+      { fieldId: "f-beta", label: { en: "Beta" }, target: { kind: "property", property: { bindingId: "b2", propertyId: "beta" } } },
+    ],
+  }
+  const reads = new Map<string, BindingReadState>([
+    ["b1", { kind: "refused", refusal: { code: "authz.denied", category: "permission", document: { message: "No access to b1." } } }],
+    ["b2", { kind: "ok", document: { values: { beta: "visible-b2" } }, freshness: "snapshot" }],
+  ])
+  const fieldMarkup = renderToStaticMarkup(<Node scope={scope("browsing", reads, new Map(), false, { ux: customUx })} node={fieldNode} />)
+  expect(fieldMarkup).toContain('data-read="refused"')
+  expect(fieldMarkup).toContain("No access to b1.")
+
+  const sectionMarkup = renderToStaticMarkup(<Node scope={scope("browsing", reads, new Map(), false, { ux: customUx })} node={sectionNode} />)
+  expect(sectionMarkup).toContain('data-read="refused"')
+  expect(sectionMarkup).toContain('data-read="ok"')
+  expect(sectionMarkup).toContain("visible-b2")
+})
+
+test("island waiting placeholder respects reduced motion", () => {
+  const islands: IslandRegistry = { "fixture-meter": () => "meter", "fixture-status": () => null }
+  const variant = { ux: islandPage(), islands }
+  const meter = nodesOf(variant.ux.pages[0]!.root).find((c) => c.nodeId === "meter-node")!
+  const waiting = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, variant)} node={meter} />)
+  expect(waiting).toContain("motion-reduce:animate-none")
+})
+
+test("text control stays uncontrolled with focus-visible and mobile touch target classes", () => {
+  const markup = renderToStaticMarkup(<Node scope={scope("browsing", ok)} node={node("note-input")} />)
+  expect(markup).toContain("focus-visible:outline-2")
+  expect(markup).toContain("max-sm:min-h-[44px]")
 })

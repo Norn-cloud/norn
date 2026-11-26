@@ -16,7 +16,7 @@ import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, typ
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
 import { enabled, eventsOf } from "./machine/controls.ts"
-import { EngineNotReady } from "./machine/evaluate.ts"
+import { EngineNotReady, EvaluationError } from "./machine/evaluate.ts"
 import type { Fields, Machine, MachineEvent } from "./machine/machine.ts"
 import { messageOf, type BindingCallState, type BindingReadState } from "./reads.ts"
 import type { MachineRuntime } from "./runtime.ts"
@@ -64,33 +64,43 @@ function raise(scope: PageScope, node: WidgetNode, payload: Fields = {}, emits?:
   scope.runtime.send({ kind: "user", eventId: event.eventId, payload: kept })
 }
 
-/** Whether `node` can act now; a guard the engine has not loaded for counts as not yet. */
+/** Whether `node` can act now; a guard the engine has not loaded for counts as not yet, and a failing guard fails closed. */
 function canAct(scope: PageScope, node: WidgetNode): { readonly on: boolean; readonly waiting: boolean } {
   try {
     return { on: enabled(scope.machine, scope.runtime.evaluate, scope.runtime.snapshot, node.nodeId), waiting: false }
   } catch (error) {
     if (error instanceof EngineNotReady) return { on: false, waiting: true }
+    if (error instanceof EvaluationError) return { on: false, waiting: false }
     throw error
   }
 }
 
 /**
  * A catalog node's props, each its ZEN expression over the page's fields. `waiting` names the props
- * whose expressions wait for the engine: they are left out, and an island is not drawn until none is.
+ * whose expressions wait for the engine and `failed` names any whose evaluation threw `EvaluationError`:
+ * an island is not drawn until neither is non-empty.
  */
-function propsOf(scope: PageScope, node: WidgetNode): { readonly props: Record<string, unknown>; readonly waiting: readonly string[] } {
-  if (node.component.kind !== "catalog") return { props: {}, waiting: [] }
+function propsOf(scope: PageScope, node: WidgetNode): { readonly props: Record<string, unknown>; readonly waiting: readonly string[]; readonly failed: readonly string[] } {
+  if (node.component.kind !== "catalog") return { props: {}, waiting: [], failed: [] }
   const props: Record<string, unknown> = {}
   const waiting: string[] = []
+  const failed: string[] = []
   for (const [name, expression] of Object.entries(node.component.props ?? {})) {
     try {
       props[name] = scope.runtime.evaluate(expression, { fields: scope.runtime.snapshot.fields, event: {} })
     } catch (error) {
-      if (!(error instanceof EngineNotReady)) throw error
-      waiting.push(name)
+      if (error instanceof EngineNotReady) {
+        waiting.push(name)
+        continue
+      }
+      if (error instanceof EvaluationError) {
+        failed.push(name)
+        continue
+      }
+      throw error
     }
   }
-  return { props, waiting }
+  return { props, waiting, failed }
 }
 
 /** One read, drawn through its closed state. */
@@ -134,12 +144,14 @@ function CallLine({ state }: { readonly state: BindingCallState | undefined }) {
 
 /** One value with the mark the server's projection implies. */
 function Value({ record, propertyId }: { readonly record: Doc; readonly propertyId: string }) {
-  const masked = asDoc(record.masked)?.[propertyId] as MaskedProperty | undefined
+  const maskedDoc = asDoc(record.masked)
+  const masked = maskedDoc !== null && Object.hasOwn(maskedDoc, propertyId) ? (maskedDoc[propertyId] as MaskedProperty | undefined) : undefined
   const withheld = record.withheld === true || (Array.isArray(record.withheldProperties) && record.withheldProperties.includes(propertyId))
   const mark = valueMark(masked, withheld)
   if ("data-agent-hidden" in mark) return <span {...mark} className={MUTED} data-value="withheld">Withheld</span>
   const values = asDoc(record.values) ?? {}
-  return <span {...mark} data-value={masked === undefined ? "plain" : "masked"} data-mask={masked?.mode}>{shown(values[propertyId])}</span>
+  const raw = Object.hasOwn(values, propertyId) ? values[propertyId] : undefined
+  return <span {...mark} data-value={masked === undefined ? "plain" : "masked"} data-mask={masked?.mode}>{shown(raw)}</span>
 }
 
 const fieldLabel = (scope: PageScope, ref: PropertyRef): string =>
@@ -186,11 +198,11 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
   const { on, waiting } = canAct(scope, node)
   const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, placementId, scope.actionEffects, scope.locale))
   if (node.component.kind === "control" && node.component.input === "text") {
-    const value = scope.runtime.snapshot.fields[node.nodeId]
+    const value = Object.hasOwn(scope.runtime.snapshot.fields, node.nodeId) ? scope.runtime.snapshot.fields[node.nodeId] : undefined
     return (
       <label className="grid gap-1" data-node={node.nodeId}>
         <span className={MUTED}>{label}</span>
-        <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground" disabled={!on} data-engine={waiting ? "waiting" : undefined}
+        <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" disabled={!on} data-engine={waiting ? "waiting" : undefined}
           defaultValue={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
       </label>
     )
@@ -276,13 +288,16 @@ function Island({ scope, node }: { readonly scope: PageScope; readonly node: Wid
   if (node.component.kind !== "catalog") return null
   const entryId = node.component.entry.entryId
   const entry = scope.ux.catalog?.find((candidate) => candidate.entryId === entryId)
-  const island = scope.islands[entryId] as ((input: unknown) => ReactNode) | undefined
+  const island = Object.hasOwn(scope.islands, entryId) ? (scope.islands[entryId] as ((input: unknown) => ReactNode) | undefined) : undefined
   const tier = entry === undefined ? null : tierOf(entry.trust)
   if (island === undefined || tier === null) return null
   const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale))
-  const { props, waiting } = propsOf(scope, node)
+  const { props, waiting, failed } = propsOf(scope, node)
   if (waiting.length > 0) {
-    return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="waiting" aria-busy="true" className="h-9 animate-pulse rounded-[var(--radius)] bg-muted" />
+    return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="waiting" aria-busy="true" className="h-9 animate-pulse motion-reduce:animate-none rounded-[var(--radius)] bg-muted" />
+  }
+  if (failed.length > 0) {
+    return <p {...mark} role="status" data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="failed" className="text-meta text-destructive-text">Unable to evaluate island props.</p>
   }
   const states: IslandStates = { reads: Object.fromEntries(scope.runtime.reads), calls: Object.fromEntries(scope.runtime.calls) }
   const input = {
@@ -300,12 +315,20 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
   switch (component.kind) {
     case "section": {
       const label = text(component.section.label, scope.locale)
-      const binding = component.section.fields[0]?.bindingId
-      const read = binding === undefined ? undefined : scope.runtime.reads.get(binding)
+      const byBinding = new Map<string, PropertyRef[]>()
+      for (const ref of component.section.fields) {
+        const group = byBinding.get(ref.bindingId)
+        if (group) group.push(ref)
+        else byBinding.set(ref.bindingId, [ref])
+      }
       return (
         <section aria-label={label} data-node={node.nodeId} className="grid gap-3">
           <h2 className="text-heading font-medium">{label}</h2>
-          {binding !== undefined && <ReadView state={read}>{(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={component.section.fields} />}</ReadView>}
+          {[...byBinding.entries()].map(([bindingId, refs]) => (
+            <ReadView key={bindingId} state={scope.runtime.reads.get(bindingId)}>
+              {(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={refs} />}
+            </ReadView>
+          ))}
           {children}
         </section>
       )
@@ -333,7 +356,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       return (
         <div data-node={node.nodeId} className="grid gap-1">
           <span className={MUTED}>{text(field?.label ?? { en: component.fieldId }, scope.locale)}</span>
-          {ref !== undefined && read?.kind === "ok" && <Value record={asDoc(read.document) ?? {}} propertyId={ref.propertyId} />}
+          {ref !== undefined && <ReadView state={read}>{(document) => <Value record={asDoc(document) ?? {}} propertyId={ref.propertyId} />}</ReadView>}
         </div>
       )
     }

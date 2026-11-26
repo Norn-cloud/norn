@@ -288,7 +288,8 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
 
 const record = (value: unknown): Readonly<Record<string, unknown>> => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {})
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null)
-const time = (ms: number, locale: Locale) => new Date(ms).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+const dateLocale = (locale: Locale) => (locale === "ar" ? "ar-EG-u-nu-latn" : locale)
+const time = (ms: number, locale: Locale) => new Date(ms).toLocaleTimeString(dateLocale(locale), { hour: "2-digit", minute: "2-digit" })
 
 interface Problem {
   readonly code: string
@@ -358,7 +359,7 @@ export function refusalPanelMarkup(
   const shownTime = cellTime ?? context.receivedAt
   const timeIso = cellTime !== null ? decidedAt! : shownTime.toISOString()
   const timeLabel = cellTime !== null ? w.resDecidedAt : w.resReceivedAt
-  const formattedTime = shownTime.toLocaleString(context.locale, { dateStyle: "medium", timeStyle: "short" })
+  const formattedTime = shownTime.toLocaleString(dateLocale(context.locale), { dateStyle: "medium", timeStyle: "short" })
 
   const reqRows: [string, string][] = [
     [w.reqDecision, context.decision.question],
@@ -375,7 +376,7 @@ export function refusalPanelMarkup(
         const extraNote = explanation !== "" && explanation !== lead && explanation !== message && explanation !== UNPROVEN_DETAIL
           ? `<p class="norn-meta">${escape(explanation)}</p>` : ""
         const tech = context.technical
-          ? `<div class="norn-refusal-tech"><span>${escape([code, subject].filter(Boolean).join(" · "))}</span>${pinArtifact ? `<span>${escape(`${pinArtifact}@${pinVersion ?? "?"}`)}</span>` : ""}${explanation ? `<span>${escape(explanation)}</span>` : ""}</div>`
+          ? `<div class="norn-refusal-tech"><span><bdi dir="ltr">${escape([code, subject].filter(Boolean).join(" · "))}</bdi></span>${pinArtifact ? `<span><bdi dir="ltr">${escape(`${pinArtifact}@${pinVersion ?? "?"}`)}</bdi></span>` : ""}${explanation ? `<span>${escape(explanation)}</span>` : ""}</div>`
           : ""
         const verdictTone = unevaluated ? "risk-medium" : "risk-high"
         const verdictAttr = unevaluated ? "not-evaluated" : "fails"
@@ -391,7 +392,7 @@ export function refusalPanelMarkup(
         if (explanation === "" || explanation === UNPROVEN_DETAIL) {
           parts.push(`<p class="norn-meta">${escape(w.refusedRedactedCheck)}</p>`)
         }
-        const tech = context.technical && code !== "" ? `<div class="norn-refusal-tech"><span>${escape(code)}</span></div>` : ""
+        const tech = context.technical && code !== "" ? `<div class="norn-refusal-tech"><span><bdi dir="ltr">${escape(code)}</bdi></span></div>` : ""
         return `${parts.join("")}${tech}`
       })()
 
@@ -470,18 +471,24 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   let lastBody: unknown
   let lastRefusedAt: Date = new Date()
   let lastSentNote = ""
+  let callSeq = 0
   // The server's refusal panel for the refused choice, kept from the refusal that refused it.
   let refusedPanel: { readonly html: string; readonly variant: "" | "disclosed" | "redacted" } = { html: "", variant: "" }
+  const renderedRefusalHtml = new WeakMap<HTMLElement, string>()
   let now = options.now
   let technical = options.technical === true
   let caller = options.caller
   let laws = options.laws
   const transport: Transport = {
     async call(call, input, callOptions) {
+      const seq = ++callSeq
+      lastBody = undefined
       lastSentNote = typeof input.note === "string" ? input.note : ""
       const classified = await options.transport.call(call, input, callOptions)
-      lastBody = classified.body
-      if (classified.outcome === "refused") lastRefusedAt = new Date()
+      if (seq === callSeq && !callOptions.signal.aborted) {
+        lastBody = classified.body
+        if (classified.outcome === "refused") lastRefusedAt = new Date()
+      }
       return classified
     },
   }
@@ -542,15 +549,17 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
       const rows: [string, string][] = [
         [w.receipt, text(receipt.receiptHash) ?? ""],
         [w.commit, String(receipt.commitSeq ?? "")],
-        [w.recorded, typeof receipt.recordedAtMs === "number" ? new Date(receipt.recordedAtMs).toLocaleString(locale, { dateStyle: "medium", timeStyle: "medium" }) : ""],
+        [w.recorded, typeof receipt.recordedAtMs === "number" ? new Date(receipt.recordedAtMs).toLocaleString(dateLocale(locale), { dateStyle: "medium", timeStyle: "medium" }) : ""],
         [w.decision, decision.id],
       ]
       const dl = details.querySelector("dl")
       // Dates, numbers and ids read whole; only the receipt hash shortens, with a copy button for all of it.
       const cell = (term: string, value: string) =>
         term === w.receipt && value.length > 20
-          ? `<dd class="norn-hash"><code title="${escape(value)}">${escape(value.slice(0, 16))}…</code><button type="button" class="norn-button" data-variant="ghost" data-copy="${escape(value)}">${escape(w.copy)}</button></dd>`
-          : `<dd><span class="norn-value">${escape(value)}</span></dd>`
+          ? `<dd class="norn-hash"><code title="${escape(value)}"><bdi dir="ltr">${escape(value.slice(0, 16))}…</bdi></code><button type="button" class="norn-button" data-variant="ghost" data-copy="${escape(value)}">${escape(w.copy)}</button></dd>`
+          : term === w.receipt || term === w.commit || term === w.decision
+            ? `<dd><span class="norn-value"><bdi dir="ltr">${escape(value)}</bdi></span></dd>`
+            : `<dd><span class="norn-value">${escape(value)}</span></dd>`
       if (dl) dl.innerHTML = rows.map(([term, value]) => `<dt>${escape(term)}</dt>${cell(term, value)}`).join("")
       details.hidden = false
     } else if (state === "resolved") {
@@ -659,11 +668,17 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
       if (why) {
         if (refused) {
           why.setAttribute("data-refusal", refusedPanel.variant)
-          why.innerHTML = refusedPanel.html
+          if (renderedRefusalHtml.get(why) !== refusedPanel.html) {
+            why.innerHTML = refusedPanel.html
+            renderedRefusalHtml.set(why, refusedPanel.html)
+          }
           why.hidden = refusedPanel.html === ""
         } else {
           why.setAttribute("data-refusal", "")
-          why.innerHTML = ""
+          if (renderedRefusalHtml.get(why) !== "") {
+            why.innerHTML = ""
+            renderedRefusalHtml.set(why, "")
+          }
           why.hidden = true
         }
       }
@@ -714,7 +729,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     const copy = target?.closest<HTMLElement>("[data-copy]")
     if (copy) {
-      void navigator.clipboard?.writeText(copy.dataset.copy ?? "")
+      void navigator.clipboard?.writeText(copy.dataset.copy ?? "").catch(() => undefined)
       return
     }
     if (target?.closest("[data-host=back]")) {
@@ -748,7 +763,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   }
   const setNow = (ms: number) => {
     now = ms
-    paint(driver.snapshot())
+    const state = driver.snapshot().stateId
+    const settled = machine.states.find((candidate) => candidate.stateId === state)?.role === "terminal"
+    paintCountdown(settled)
   }
   const setContext = (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => {
     technical = next.technical === true

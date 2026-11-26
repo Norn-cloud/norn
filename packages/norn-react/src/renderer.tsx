@@ -74,7 +74,7 @@ function pageOf(ux: WidgetUx, pageId: string | undefined): WidgetPage | undefine
 export function refusalsOf(ux: WidgetUx, islands: IslandRegistry, live: boolean): string[] {
   const missing = missingCapabilities(ux)
   for (const { entry } of islandsOf(ux.catalog)) {
-    if (!(entry.entryId in islands)) missing.push(`island:${entry.entryId}`)
+    if (!Object.hasOwn(islands, entry.entryId)) missing.push(`island:${entry.entryId}`)
   }
   if (!live && ux.pages.some((page) => page.machine?.events.some((event) => event.source.kind === "subscription"))) missing.push("live:feed")
   return missing
@@ -87,9 +87,17 @@ export function refusalsOf(ux: WidgetUx, islands: IslandRegistry, live: boolean)
 function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "workspace" | "engine"; readonly title: string; readonly message: string; readonly onRetry?: (() => void) | undefined; readonly dir: "ltr" | "rtl" }) {
   return (
     <div role="alert" dir={dir} data-unavailable={what} {...(what === "workspace" ? { "data-workspace": "unavailable" } : {})} className="grid gap-2">
-      <p className="text-body font-medium">{title}</p>
+      <p className="text-body">{title}</p>
       <p className="text-meta text-muted-foreground">{message}</p>
-      {onRetry !== undefined && <button type="button" className="justify-self-start text-meta underline" onClick={onRetry}>Retry</button>}
+      {onRetry !== undefined && (
+        <button
+          type="button"
+          className="inline-flex items-center justify-self-start rounded-full text-meta underline outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]"
+          onClick={onRetry}
+        >
+          Retry
+        </button>
+      )}
     </div>
   )
 }
@@ -97,7 +105,7 @@ function Unavailable({ what, title, message, onRetry, dir }: { readonly what: "w
 function Refused({ missing, dir }: { readonly missing: readonly string[]; readonly dir: "ltr" | "rtl" }) {
   return (
     <div role="alert" dir={dir} data-norn-refused="" className="grid gap-2 rounded-[var(--radius-panel)] border border-border bg-card p-4">
-      <p className="text-body font-medium">This page needs what this renderer does not draw.</p>
+      <p className="text-body">This page needs what this renderer does not draw.</p>
       <ul className="text-meta text-muted-foreground">{missing.map((capability) => <li key={capability} data-missing={capability}><code>{capability}</code></li>)}</ul>
     </div>
   )
@@ -172,9 +180,9 @@ export function NornAppRenderer<Scope, Reader extends WidgetReader, Recorded ext
   return matchWorkspaceState(workspace, {
     deciding: () => <p role="status" aria-busy="true" dir={dir} data-workspace="deciding" className="text-meta text-muted-foreground">Deciding the workspace…</p>,
     unavailable: ({ error }) => <Unavailable what="workspace" dir={dir} title="Workspace unavailable" message={error.message} onRetry={props.onRetryWorkspace} />,
-    // Keyed by the decided workspace: a page never carries one workspace's machine, reads or calls into another.
-    recorded: ({ reader }) => <Page key="recorded" {...props} page={page} reader={reader as WidgetReader} />,
-    live: ({ scope, reader }) => <Page key={pageKey({ kind: "live", scope })} {...props} page={page} reader={reader as WidgetReader} />,
+    // Keyed by decided workspace and pageId: a page never carries one workspace's or page's machine, reads or calls into another.
+    recorded: ({ reader }) => <Page key={`recorded:${page.pageId}`} {...props} page={page} reader={reader as WidgetReader} />,
+    live: ({ scope, reader }) => <Page key={`${pageKey({ kind: "live", scope })}:${page.pageId}`} {...props} page={page} reader={reader as WidgetReader} />,
   })
 }
 

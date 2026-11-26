@@ -88,3 +88,23 @@ test("the frame allows no network and no same-origin access; the module cannot c
   expect(html.match(/<\/script>/gi)?.length).toBe(2)
   expect(html).not.toContain("{ once: true }")
 })
+
+test("checkPayload ignores prototype properties and host catches evaluator errors without throwing", () => {
+  const protoFields = [{ fieldId: "toString", type: "text", required: true }] as const
+  expect(checkPayload(protoFields, {})).toContain("toString")
+
+  const guardedEntry: CatalogEntry = {
+    ...tile,
+    machine: {
+      ...tile.machine!,
+      transitions: [
+        { transitionId: "expand", from: "collapsed", on: "expand", target: "expanded", guard: "broken()" },
+      ],
+    },
+  }
+  const { host, emitted, refused } = harness(guardedEntry)
+  expect(() => host.receive({ type: "emit", eventId: "expand" })).not.toThrow()
+  expect(emitted).toEqual([])
+  expect(refused).toHaveLength(1)
+  expect(refused[0]?.kind).toBe("malformed_message")
+})
