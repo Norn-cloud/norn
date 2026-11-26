@@ -2576,7 +2576,7 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
         &runtime,
     )
     .expect("trace succeeds with projection");
-    assert!(!trace.contributions.is_empty());
+    assert_eq!(trace.contributions.len(), 4);
     assert_eq!(
         trace.result.revision.hash,
         keyed_revision_handle(&HANDLE_KEY, &raw_head),
@@ -2640,9 +2640,9 @@ fn check_question_markings_catches_marked_measure_with_empty_groupby_and_filter(
             ..CommitBatch::default()
         })
         .expect("commit with marked input");
-    let mut bare_q = base_plan.question().clone();
-    bare_q.dimensions.clear();
-    bare_q.filters.clear();
+    let mut ungrouped_query = base_plan.question().clone();
+    ungrouped_query.dimensions.clear();
+    ungrouped_query.filters.clear();
     let catalog = ScopedView::uniform(
         &[serde_json::from_value(serde_json::json!({
             "irVersion": "0.1", "artifactId": "demo.Conversion.entity", "kind": "entity",
@@ -2654,16 +2654,16 @@ fn check_question_markings_catches_marked_measure_with_empty_groupby_and_filter(
         &std::collections::BTreeSet::new(),
     )
     .into_catalog();
-    let bare_plan = norn_checker::metric::compute::admit(
+    let ungrouped_plan = norn_checker::metric::compute::admit(
         base_plan.definitions(),
-        &bare_q,
+        &ungrouped_query,
         &catalog,
         base_plan.max_items(),
     )
-    .expect("bare plan admits");
+    .expect("ungrouped plan admits");
     let hit = store
         .read()
-        .check_question_markings(&bare_plan, norn_cell::MAIN_WORLD, false, true)
+        .check_question_markings(&ungrouped_plan, norn_cell::MAIN_WORLD, false, true)
         .expect("check_question_markings");
     assert!(
         matches!(

@@ -662,6 +662,38 @@ fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
     );
 }
 
+fn remove_north_customer(writer: &mut CellStore<NativeEngine>, base_time: u64) {
+    // Unlink first in a writes-free commit so live link IFC does not see the
+    // marked customer's write lineage, then delete the unreferenced customer.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: base_time,
+            links: vec![LinkChange::Remove {
+                object_type: "shop.Order".into(),
+                link: "customer".into(),
+                source: "o1".into(),
+                target: "c-north".into(),
+                target_type: Some("shop.Customer".into()),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: base_time + 100,
+            writes: vec![FactWriteRow::Delete {
+                object_type: "shop.Customer".into(),
+                key: "c-north".into(),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+}
+
 fn stale_materialization_fixture() -> (
     DevHost<NativeEngine>,
     CellStore<NativeEngine>,
@@ -705,25 +737,7 @@ fn stale_materialization_fixture() -> (
     assert!(!state.stale);
     // Delete c-north so live `property_marking_summary` is empty while the
     // cached `STORED` materialization is stale and still holds the old value.
-    writer
-        .commit(&CommitBatch {
-            world: MAIN_WORLD.into(),
-            scope: physical().key(),
-            logical_time: CLOCK + 1_000,
-            writes: vec![FactWriteRow::Delete {
-                object_type: "shop.Customer".into(),
-                key: "c-north".into(),
-            }],
-            links: vec![LinkChange::Remove {
-                object_type: "shop.Order".into(),
-                link: "customer".into(),
-                source: "o1".into(),
-                target: "c-north".into(),
-                target_type: Some("shop.Customer".into()),
-            }],
-            ..CommitBatch::default()
-        })
-        .unwrap();
+    remove_north_customer(&mut writer, CLOCK + 900);
     (host, writer, directory)
 }
 
@@ -748,14 +762,14 @@ fn stale_materialization_withholds_deleted_marked_column() {
     );
     let stale_cursor = stale_page
         .next_after
-        .clone()
+        .as_deref()
         .expect("route-issued stale cursor");
     let stale_second = get_transform_rows(
         &host,
         &scope(),
         Some("full"),
         STORED,
-        &params(Some("1"), Some(&stale_cursor)),
+        &params(Some("1"), Some(stale_cursor)),
         &Mapping,
         NOW,
     )
@@ -770,7 +784,7 @@ fn stale_materialization_withholds_deleted_marked_column() {
         &scope(),
         Some("full"),
         STORED,
-        &params(Some("1"), Some(&stale_cursor)),
+        &params(Some("1"), Some(stale_cursor)),
         &Mapping,
         NOW,
     )
@@ -851,6 +865,7 @@ fn stale_materialization_reauthorizes_deleted_row_after_multi_event_commit() {
                 V::from_json(json!({"type": "note.one"})).unwrap(),
                 V::from_json(json!({"type": "note.two"})).unwrap(),
                 V::from_json(json!({"type": "note.three"})).unwrap(),
+                V::from_json(json!({"type": "note.four"})).unwrap(),
             ],
             ..CommitBatch::default()
         })
@@ -858,28 +873,11 @@ fn stale_materialization_reauthorizes_deleted_row_after_multi_event_commit() {
     let refreshed =
         refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
     assert!(!refreshed.stale);
-    // Delete `c-north` at commit 3 (which is `<= revision.seq` of commit 2).
-    // `pop` is denied Values on `c-north`, so `pop` must not reuse the stale
-    // cache containing `c-north` and must fall back to live evaluation instead.
-    writer
-        .commit(&CommitBatch {
-            world: MAIN_WORLD.into(),
-            scope: physical().key(),
-            logical_time: CLOCK + 1_000,
-            writes: vec![FactWriteRow::Delete {
-                object_type: "shop.Customer".into(),
-                key: "c-north".into(),
-            }],
-            links: vec![LinkChange::Remove {
-                object_type: "shop.Order".into(),
-                link: "customer".into(),
-                source: "o1".into(),
-                target: "c-north".into(),
-                target_type: Some("shop.Customer".into()),
-            }],
-            ..CommitBatch::default()
-        })
-        .unwrap();
+    // Unlink and delete `c-north` at commits 4 and 5 (both `<= revision.seq`
+    // of commit 3). `pop` is denied Values on `c-north`, so `pop` must not
+    // reuse the stale cache containing `c-north` and must fall back to live
+    // evaluation instead.
+    remove_north_customer(&mut writer, CLOCK + 900);
     let pop_page = get_transform_rows(
         &host,
         &scope(),
