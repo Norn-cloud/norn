@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_ir::{ActionRoot, FactChange, ObjectTypeName, RuntimeValue, SliceDeclaration, SliceKey};
+use norn_ir::{
+    ActionEffectProgram, ActionRoot, FactChange, ObjectTypeName, RuntimeValue, SliceDeclaration,
+    SliceKey, UpsertWriteMode,
+};
 
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactExpectation, FactKey, FactWrite, JsonObject,
@@ -571,10 +574,83 @@ pub(super) fn create_slice_property_reads(
     )
 }
 
+/// Host read strategy for one action slice fact.
+#[derive(Clone, Copy)]
+pub(super) enum SliceReadMode<'a> {
+    Full,
+    Reference,
+    Projected(&'a [String]),
+}
+
+impl SliceReadMode<'_> {
+    pub(super) const fn is_full(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    pub(super) fn load<H: CellHost + ?Sized>(
+        self,
+        host: &H,
+        requested: &FactKey,
+        remaining_bytes: u64,
+    ) -> Result<Option<crate::cell_host::BoundedFact>, H::Error> {
+        match self {
+            Self::Full => host.load_bounded(requested, remaining_bytes),
+            Self::Reference => host.load_reference(requested, remaining_bytes),
+            Self::Projected(properties) => {
+                let prop_refs: Vec<&str> = properties.iter().map(String::as_str).collect();
+                host.load_projected(requested, &prop_refs, remaining_bytes)
+            }
+        }
+    }
+}
+
+/// Precomputed per-entry slice read plan for a closed `CreateOnly` action.
+pub(super) struct CreateSlicePlan(Option<Vec<Vec<String>>>);
+
+impl CreateSlicePlan {
+    pub(super) fn mode_for(&self, index: usize) -> SliceReadMode<'_> {
+        let Some(plan) = &self.0 else {
+            return SliceReadMode::Full;
+        };
+        match plan.get(index) {
+            Some(props) if props.is_empty() => SliceReadMode::Reference,
+            Some(props) => SliceReadMode::Projected(props.as_slice()),
+            None => SliceReadMode::Full,
+        }
+    }
+}
+
+/// Plan per-entry `CreateOnly` slice reads before loading any slice facts,
+/// downgrading `reference_only` to `false` whenever any entry cannot be
+/// projected safely without metering unread classified fields.
+pub(super) fn prepare_create_slice_plan<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    action: &ActionRoot,
+    effective_input: &JsonObject,
+    reference_only: &mut bool,
+) -> CreateSlicePlan {
+    let create_only = matches!(
+        action.effect_program,
+        Some(ActionEffectProgram::UpsertInputObject {
+            write_mode: UpsertWriteMode::CreateOnly,
+            ..
+        })
+    );
+    if !(*reference_only && create_only) {
+        return CreateSlicePlan(None);
+    }
+    let planned = plan_create_projected_slice(host, catalog, action, effective_input);
+    if planned.is_none() {
+        *reference_only = false;
+    }
+    CreateSlicePlan(planned)
+}
+
 /// Plan the projected precondition properties per slice entry (merged by
 /// canonical key across duplicate aliases) and confirm `host` can project every
 /// non-empty property set without metering unread classified columns.
-pub(super) fn plan_create_projected_slice<H: CellHost + ?Sized>(
+fn plan_create_projected_slice<H: CellHost + ?Sized>(
     host: &H,
     catalog: &crate::decision_commit::TypeCatalog<'_>,
     action: &ActionRoot,

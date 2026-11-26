@@ -1191,7 +1191,9 @@ pub trait CellHost {
 
     /// Resolve and authenticate an unconsumed receipt within this cell's scope,
     /// world and pinned Function manifest (RECEIPT-EFFECT-1). `Ok(None)` means
-    /// unsupported and the action refuses; the accepting commit consumes it.
+    /// unsupported and the action refuses; a binding alone neither commits nor
+    /// consumes the receipt—the accepting commit consumes `Acceptance::consumed`
+    /// in the same transaction, and the host's pending check refuses reuse.
     ///
     /// # Errors
     /// A typed binding refusal or [`crate::receipt_binding::ReceiptBindingError::Store`].
@@ -1205,13 +1207,15 @@ pub trait CellHost {
     > {
         Ok(None)
     }
-    /// Reads the committed state of one link (not an effect verb).
+    /// Reads the committed state of one link (not an effect verb); temporal
+    /// properties follow the same read contract as [`Self::load`].
     ///
     /// # Errors
     /// The host's read failure.
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Self::Error>;
     /// Reads the complete, bounded live target set for one declared outgoing
-    /// link in key order; `None` means unsupported or over bound.
+    /// link in key order; refuses lists exceeding `max_targets` or aggregate
+    /// target-key bytes exceeding `max_key_bytes` (`None` = unsupported/over bound).
     ///
     /// # Errors
     /// Returns the host read failure.

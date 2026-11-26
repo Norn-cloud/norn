@@ -6185,6 +6185,19 @@ fn create_only_projected_slice_read_does_not_meter_unread_classified_field_size(
     .expect("big input");
     norn_kernel::commit_action(&mut cell, &catalog, &big_call, &ReferenceLineageAllowAll)
         .expect("projected read must not meter unread classified national_id");
+    // Contrast: a conservative authorizer falls back to full `load_bounded`,
+    // where the 300 KB secret exceeds the 256 KiB slice limit (`TargetNotFound`).
+    let mut big_full_call = create_ifc_call(&clean_action, "L-BIG-FULL", "leave-big-full");
+    big_full_call.input = serde_json::from_value(json!({
+        "id": "L-BIG-FULL",
+        "employee_id": "E-BIG",
+        "days": 1
+    }))
+    .expect("big full input");
+    assert!(matches!(
+        norn_kernel::commit_action(&mut cell, &catalog, &big_full_call, &R2AllowAll),
+        Err(norn_kernel::ActionRefusal::TargetNotFound)
+    ));
 }
 
 /// Fail-closed IFC guarantees for `CreateOnly` actions:

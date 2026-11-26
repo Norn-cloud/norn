@@ -1594,11 +1594,8 @@ fn excepted_predicate_laws_match_per_row_evaluation_across_nested_overrides() {
     assert_eq!(bulk.findings, row_findings);
     assert_eq!(bulk.held, row_held);
     assert_eq!(bulk.data, row_trusted);
-    assert!(bulk.data.contains(&1) && bulk.data.contains(&2) && bulk.data.contains(&4));
-    assert!(bulk.held.contains(&3) && bulk.held.contains(&5) && bulk.held.contains(&7));
-    assert!(
-        bulk.findings.iter().any(|(row, _, _)| *row == 6),
-        "never/warning law must record a finding on row 6: {:?}",
-        bulk.findings
-    );
+    // Governing laws classify as Integrity regardless of display severity, so
+    // row 6 (unexcepted `never`/`warning`) is held while row 2 (`allow_uk`) passes.
+    assert_eq!(bulk.held, BTreeSet::from([3, 5, 6, 7]));
+    assert_eq!(bulk.data, BTreeSet::from([1, 2, 4]));
 }

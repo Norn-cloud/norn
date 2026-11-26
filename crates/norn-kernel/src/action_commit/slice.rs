@@ -15,18 +15,12 @@ use crate::limits::SliceMeter;
 
 use super::host_failure;
 use super::input::action_expression_context;
+use super::receipt::SliceReadMode;
 use super::types::{
     ActionAuthorizer, ActionCall, ActionParameterPin, ActionPreconditionOutcome,
     ActionPreconditionOutcomeRef, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
     ActionReferenceReads, ActionRefusal,
 };
-
-#[derive(Clone, Copy)]
-enum SliceReadMode<'a> {
-    Full,
-    Reference,
-    Projected(&'a [&'a str]),
-}
 
 fn reference_action(
     catalog: &TypeCatalog<'_>,
@@ -552,7 +546,7 @@ fn load_action_slice_links<H: CellHost + ?Sized>(
             observed_records,
             limits,
             read_types,
-            false,
+            SliceReadMode::Full,
         )?;
         let concrete_key = known_fact_key(facts, catalog, &target.key.target);
         precondition_keys.insert(concrete_key.clone());
@@ -660,27 +654,13 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let reserved_bytes = meter.bytes();
     let mut reference_only = context.host.supports_reference_reads()
         && reference_action(catalog, call.action, context.authorizer, action_target);
-    let create_only = matches!(
-        call.action.effect_program,
-        Some(ActionEffectProgram::UpsertInputObject {
-            write_mode: UpsertWriteMode::CreateOnly,
-            ..
-        })
+    let read_plan = super::receipt::prepare_create_slice_plan(
+        context.host,
+        catalog,
+        call.action,
+        context.effective_input,
+        &mut reference_only,
     );
-    let create_projection = if reference_only && create_only {
-        let planned = super::receipt::plan_create_projected_slice(
-            context.host,
-            catalog,
-            call.action,
-            context.effective_input,
-        );
-        if planned.is_none() {
-            reference_only = false;
-        }
-        planned
-    } else {
-        None
-    };
     // Keep the separately authorized target snapshot out of the slice cache
     // until declared entries have passed their read-type gates. If an entry
     // aliases the target, it must be loaded through the same bounded read and
@@ -711,21 +691,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         limits,
     };
     for (index, entry) in call.action.slice.iter().enumerate() {
-        // A precise patch loads the complete target to preserve unmodified
-        // fields; a closed create loads identity-only or projected properties.
-        let prop_refs: Vec<&str> = create_projection
-            .as_ref()
-            .and_then(|plan| plan.get(index))
-            .map(|props| props.iter().map(String::as_str).collect())
-            .unwrap_or_default();
-        let read_mode = if !reference_only || !create_only {
-            SliceReadMode::Full
-        } else if prop_refs.is_empty() {
-            SliceReadMode::Reference
-        } else {
-            SliceReadMode::Projected(&prop_refs)
-        };
-        load_action_slice_entry(context, &mut state, entry, read_mode)?;
+        load_action_slice_entry(context, &mut state, entry, read_plan.mode_for(index))?;
     }
     let aggregates = load_action_aggregates(
         context,
@@ -879,9 +845,7 @@ fn load_action_fact<H: CellHost + ?Sized>(
     read_types: &mut BTreeSet<ObjectTypeName>,
     read_mode: SliceReadMode<'_>,
 ) -> Result<FactState, ActionRefusal<H::Error>> {
-    if !matches!(read_mode, SliceReadMode::Full)
-        && !authorizer.supports_action_reference_lineage(call.action)
-    {
+    if !read_mode.is_full() && !authorizer.supports_action_reference_lineage(call.action) {
         return Err(ActionRefusal::TargetNotFound);
     }
     if relation_depth > limits.max_relation_depth {
@@ -942,18 +906,13 @@ fn load_action_fact<H: CellHost + ?Sized>(
         });
     }
     let remaining_bytes = limits.max_canonical_bytes.saturating_sub(meter.bytes());
-    let bounded = match read_mode {
-        SliceReadMode::Full => host.load_bounded(requested, remaining_bytes),
-        SliceReadMode::Reference => host.load_reference(requested, remaining_bytes),
-        SliceReadMode::Projected(properties) => {
-            host.load_projected(requested, properties, remaining_bytes)
-        }
-    }
-    .map_err(host_failure)?
-    // Unsupported and over-bound snapshots are indistinguishable from an
-    // unreadable object. Do not expose row existence or size before
-    // object-level authorization can run.
-    .ok_or(ActionRefusal::TargetNotFound)?;
+    let bounded = read_mode
+        .load(host, requested, remaining_bytes)
+        .map_err(host_failure)?
+        // Unsupported and over-bound snapshots are indistinguishable from an
+        // unreadable object. Do not expose row existence or size before
+        // object-level authorization can run.
+        .ok_or(ActionRefusal::TargetNotFound)?;
     let fact_key = bounded.concrete_type.as_ref().map_or_else(
         || requested.clone(),
         |kind| FactKey::new(kind.as_str(), requested.key.clone()),
