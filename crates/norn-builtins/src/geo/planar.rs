@@ -261,10 +261,7 @@ impl BBox {
     }
 
     fn contains(self, coord: Coord<f64>) -> bool {
-        coord.x >= self.min_x
-            && coord.x <= self.max_x
-            && coord.y >= self.min_y
-            && coord.y <= self.max_y
+        (self.min_x..=self.max_x).contains(&coord.x) && (self.min_y..=self.max_y).contains(&coord.y)
     }
 }
 
@@ -286,12 +283,18 @@ fn ring_position(
 
 /// Every hole is inside the exterior ring and no hole is inside another.
 fn check_holes(polygon: &Polygon<f64>) -> Result<(), GeoRefusal> {
-    let exterior_box = BBox::of_ring(polygon.exterior());
     let holes = polygon.interiors();
+    if holes.is_empty() {
+        return Ok(());
+    }
+    let exterior_box = BBox::of_ring(polygon.exterior());
     for hole in holes {
         if ring_position(hole, polygon.exterior(), exterior_box) != CoordPos::Inside {
             return Err(GeoRefusal::HoleOutsideExterior);
         }
+    }
+    if holes.len() < 2 {
+        return Ok(());
     }
     let hole_boxes: Vec<Option<BBox>> = holes.iter().map(BBox::of_ring).collect();
     let mut rest_holes = holes;
@@ -313,9 +316,12 @@ fn check_holes(polygon: &Polygon<f64>) -> Result<(), GeoRefusal> {
 /// No member polygon lies in another's area. One lying in another's hole is
 /// outside that polygon.
 fn check_members(polygons: &[Polygon<f64>]) -> Result<(), GeoRefusal> {
+    if polygons.len() < 2 {
+        return Ok(());
+    }
     let outside = |member: &Polygon<f64>, around: &Polygon<f64>, around_box: Option<BBox>| {
         member.exterior().0.first().is_none_or(|vertex| {
-            !around_box.is_some_and(|bbox| bbox.contains(*vertex))
+            around_box.is_none_or(|bbox| !bbox.contains(*vertex))
                 || around.coordinate_position(vertex) == CoordPos::Outside
         })
     };

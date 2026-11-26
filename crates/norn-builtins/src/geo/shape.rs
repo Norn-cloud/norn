@@ -252,9 +252,18 @@ fn position(value: &RuntimeValue, budget: &mut Budget) -> Result<Position, GeoRe
         };
         nearest_binary64(decimal)
     };
-    let (lon, lat, altitude) = match list(value)? {
-        [lon, lat] => (number(lon)?, number(lat)?, None),
-        [lon, lat, altitude] => (number(lon)?, number(lat)?, Some(number(altitude)?)),
+    let items = list(value)?;
+    let mut coords = [0.0_f64; 3];
+    for (index, item) in items.iter().enumerate() {
+        let parsed = number(item)?;
+        if let Some(slot) = coords.get_mut(index) {
+            *slot = parsed;
+        }
+    }
+    let [lon, lat, alt] = coords;
+    let altitude = match items.len() {
+        2 => None,
+        3 => Some(alt),
         _ => return Err(GeoRefusal::PositionArity),
     };
     let point = Wgs84Point::new(lat, lon)?;
@@ -288,7 +297,7 @@ fn ring(value: &RuntimeValue, budget: &mut Budget) -> Result<LineString<f64>, Ge
     if items.len() < 4 {
         return Err(GeoRefusal::RingTooShort);
     }
-    let mut coords = Vec::with_capacity(items.len());
+    let mut coords = Vec::with_capacity(items.len().min(MAX_SHAPE_POSITIONS));
     let mut first = None;
     let mut last = None;
     for item in items {
