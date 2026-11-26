@@ -70,7 +70,7 @@ DIRECT = (
      '[binary, "candidate_mapping_admission_and_rows",', '[binary, "bench_mapping::candidate_mapping_admission_and_rows",'),
 )
 # Historical snapshots, not live references.
-FROZEN = ("scripts/fixtures/", ".github/ci/provenance/", "verification/coverage-v1/manifest/")
+FROZEN = (".github/ci/provenance/", "verification/coverage-v1/manifest/")
 
 
 class Refused(Exception):
@@ -470,7 +470,7 @@ def rewrite_filter(text: str, folded) -> str:
             end = start + test.end()
         operand = text[start:end]
 
-        def prefix(test):
+        def prefix(test, module=module):
             body = test[1]
             if body.startswith("="):
                 return f"test(={module}::{body[1:]})"
