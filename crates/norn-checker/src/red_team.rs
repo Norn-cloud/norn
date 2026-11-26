@@ -38,7 +38,7 @@ use norn_ir::access::{AccessCondition, AccessRule, ResourceCompareOp, ResourceOp
 use norn_ir::{
     AccessIr, ActionEffectProgram, ActionRoot, ArtifactEnvelope, ArtifactKind, ArtifactPayload,
     EntityRoot, InterfaceDef, LawIR, LawResponse, Lifecycle, LifecycleOutcome, ObjectTypeDef,
-    PolicyRoot, Property, TransitionMode, UpsertWriteMode,
+    PolicyRoot, Property, UpsertWriteMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -349,6 +349,78 @@ fn is_actor_resource_field(name: &str) -> bool {
     .any(|kw| lower.contains(kw))
 }
 
+fn effective_object_key_props<'a>(
+    set: &'a ExtractedSet,
+    ty: &'a ObjectTypeDef,
+) -> BTreeSet<&'a str> {
+    let mut keys = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut current = Some(ty);
+    while let Some(def) = current {
+        if !visited.insert(def.name.as_str()) {
+            break;
+        }
+        for id in &def.identity {
+            for prop in &id.properties {
+                keys.insert(prop.as_str());
+            }
+        }
+        current = def
+            .extends
+            .as_ref()
+            .and_then(|parent| set.object_types.get(parent.as_str()));
+    }
+    keys
+}
+
+fn effective_protected_props<'a>(
+    set: &'a ExtractedSet,
+    ty: &'a ObjectTypeDef,
+) -> BTreeSet<&'a str> {
+    let mut protected = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut current = Some(ty);
+    while let Some(def) = current {
+        if !visited.insert(def.name.as_str()) {
+            break;
+        }
+        for prop in &def.properties {
+            if prop.protected {
+                protected.insert(prop.id.as_str());
+            }
+        }
+        current = def
+            .extends
+            .as_ref()
+            .and_then(|parent| set.object_types.get(parent.as_str()));
+    }
+    protected
+}
+
+fn is_principal_identity_attr(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "id" | "subject_id"
+            | "subjectid"
+            | "actor_id"
+            | "actorid"
+            | "user_id"
+            | "userid"
+            | "principal_id"
+            | "principalid"
+    )
+}
+
+fn is_self_scope_principal_attr(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    is_principal_identity_attr(name)
+        || matches!(
+            lower.as_str(),
+            "employee_id" | "employeeid" | "person_id" | "personid" | "member_id" | "memberid"
+        )
+}
+
 fn rule_has_sod(rule: &AccessRule) -> bool {
     rule.all_of.iter().any(|cond| {
         matches!(
@@ -356,7 +428,11 @@ fn rule_has_sod(rule: &AccessRule) -> bool {
             AccessCondition::Resource(res)
                 if matches!(res.op, ResourceCompareOp::Ne)
                     && is_actor_resource_field(&res.name)
-                    && matches!(res.value, ResourceOperand::PrincipalAttribute(_))
+                    && matches!(
+                        &res.value,
+                        ResourceOperand::PrincipalAttribute(pa)
+                            if is_principal_identity_attr(&pa.principal_attribute)
+                    )
         )
     })
 }
@@ -367,7 +443,11 @@ fn rule_has_self_scope(rule: &AccessRule) -> bool {
             cond,
             AccessCondition::Resource(res)
                 if matches!(res.op, ResourceCompareOp::Eq)
-                    && matches!(res.value, ResourceOperand::PrincipalAttribute(_))
+                    && matches!(
+                        &res.value,
+                        ResourceOperand::PrincipalAttribute(pa)
+                            if is_self_scope_principal_attr(&pa.principal_attribute)
+                    )
         )
     })
 }
@@ -375,6 +455,7 @@ fn rule_has_self_scope(rule: &AccessRule) -> bool {
 fn collect_scope_facts(set: &ExtractedSet) -> Facts {
     let mut facts = Facts::new();
     let mut scoped_props = BTreeSet::<String>::new();
+    let mut seen_role_scoped = BTreeSet::<(String, String, String)>::new();
     for policy in &set.policies {
         for (rule_idx, rule) in policy.rules.iter().enumerate() {
             if rule.resource_type.as_str() == "norn.Marking" {
@@ -387,9 +468,23 @@ fn collect_scope_facts(set: &ExtractedSet) -> Facts {
             for (_, prop) in &scope_pairs {
                 scoped_props.insert(prop.clone());
             }
+            if !roles.is_empty() && !rule.actions.is_empty() {
+                if self_scoped {
+                    push_fact(&mut facts, "self_scoped_grant", vec![s(&rule_key)]);
+                }
+                for (attr, prop) in &scope_pairs {
+                    push_fact(
+                        &mut facts,
+                        "grant_checks_attr",
+                        vec![s(&rule_key), s(attr), s(prop)],
+                    );
+                }
+            }
             for role in &roles {
                 for (attr, prop) in &scope_pairs {
-                    push_fact(&mut facts, "role_scoped", vec![s(role), s(attr), s(prop)]);
+                    if seen_role_scoped.insert((role.clone(), attr.clone(), prop.clone())) {
+                        push_fact(&mut facts, "role_scoped", vec![s(role), s(attr), s(prop)]);
+                    }
                 }
                 for action_id in &rule.actions {
                     push_fact(
@@ -403,24 +498,15 @@ fn collect_scope_facts(set: &ExtractedSet) -> Facts {
                             s(rule.resource_type.as_str()),
                         ],
                     );
-                    if self_scoped {
-                        push_fact(&mut facts, "self_scoped_grant", vec![s(&rule_key)]);
-                    }
-                    for (attr, prop) in &scope_pairs {
-                        push_fact(
-                            &mut facts,
-                            "grant_checks_attr",
-                            vec![s(&rule_key), s(attr), s(prop)],
-                        );
-                    }
                 }
             }
         }
     }
+    let mut seen_types = BTreeSet::<&str>::new();
     for policy in &set.policies {
         for rule in &policy.rules {
             let ty_name = rule.resource_type.as_str();
-            if ty_name == "norn.Marking" {
+            if ty_name == "norn.Marking" || !seen_types.insert(ty_name) {
                 continue;
             }
             if let Some(ty) = set.object_types.get(ty_name) {
@@ -536,15 +622,34 @@ fn run_external_settlement_check(
         }],
     };
     let mut facts = Facts::new();
+    let mut seen_external = BTreeSet::<String>::new();
     for (type_name, ty) in &set.object_types {
         if effective_object_lifecycles(set, ty)
             .iter()
             .any(|lc| !lc.events.is_empty())
+            && seen_external.insert(type_name.clone())
         {
             push_fact(&mut facts, "has_external_event", vec![s(type_name)]);
         }
     }
     for action in &set.actions {
+        if !action.commands.is_empty() {
+            if let Some(program) = &action.effect_program {
+                let kind = program.target().object_kind.to_owned();
+                if seen_external.insert(kind.clone()) {
+                    push_fact(&mut facts, "has_external_event", vec![s(&kind)]);
+                }
+            }
+            for write in &action.writes {
+                if seen_external.insert(write.entity_kind.clone()) {
+                    push_fact(
+                        &mut facts,
+                        "has_external_event",
+                        vec![s(&write.entity_kind)],
+                    );
+                }
+            }
+        }
         if let Some(ActionEffectProgram::FireTransition {
             object_kind,
             lifecycle,
@@ -553,9 +658,6 @@ fn run_external_settlement_check(
             ..
         }) = &action.effect_program
         {
-            if !action.commands.is_empty() {
-                push_fact(&mut facts, "has_external_event", vec![s(object_kind)]);
-            }
             if accept_receipt.is_some() {
                 push_fact(&mut facts, "uses_receipt", vec![s(&action.action_id)]);
             }
@@ -568,7 +670,7 @@ fn run_external_settlement_check(
                         .find(|lc| lc.property == *lifecycle)
                 })
                 .and_then(|lc| lc.transitions.iter().find(|tr| tr.id == *transition))
-                .is_some_and(|tr| matches!(tr.mode, Some(TransitionMode::Fact)));
+                .is_some_and(norn_ir::Transition::is_fact);
             if is_fact {
                 push_fact(
                     &mut facts,
@@ -604,49 +706,85 @@ fn run_external_settlement_check(
     out
 }
 
-fn collect_sod_facts(set: &ExtractedSet) -> Facts {
-    let mut facts = Facts::new();
+fn collect_sod_entity_facts(set: &ExtractedSet, facts: &mut Facts) {
     for (type_name, ty) in &set.object_types {
-        if effective_object_properties(set, ty)
-            .iter()
-            .any(|p| p.protected)
-        {
-            push_fact(&mut facts, "protected_creator", vec![s(type_name)]);
+        if !effective_protected_props(set, ty).is_empty() {
+            push_fact(facts, "protected_creator", vec![s(type_name)]);
         }
         for lc in effective_object_lifecycles(set, ty) {
+            let lc_prop = lc.property.as_str();
             for state in &lc.immutable {
-                push_fact(&mut facts, "sensitive_state", vec![s(type_name), s(state)]);
+                push_fact(
+                    facts,
+                    "sensitive_state",
+                    vec![s(type_name), s(lc_prop), s(state)],
+                );
             }
             for ending in &lc.endings {
                 if matches!(ending.outcome, LifecycleOutcome::Completed) {
                     push_fact(
-                        &mut facts,
+                        facts,
                         "sensitive_state",
-                        vec![s(type_name), s(&ending.state)],
+                        vec![s(type_name), s(lc_prop), s(&ending.state)],
                     );
                 }
             }
             for tr in &lc.transitions {
                 push_fact(
-                    &mut facts,
+                    facts,
                     "transition_target",
-                    vec![s(type_name), s(tr.id.as_str()), s(&tr.to)],
+                    vec![s(type_name), s(lc_prop), s(tr.id.as_str()), s(&tr.to)],
                 );
                 for from in &tr.from {
                     push_fact(
-                        &mut facts,
+                        facts,
                         "transition_edge",
-                        vec![s(type_name), s(tr.id.as_str()), s(from), s(&tr.to)],
+                        vec![
+                            s(type_name),
+                            s(lc_prop),
+                            s(tr.id.as_str()),
+                            s(from),
+                            s(&tr.to),
+                        ],
                     );
                 }
             }
         }
     }
+}
+
+fn collect_sod_facts(set: &ExtractedSet) -> Facts {
+    let mut facts = Facts::new();
+    collect_sod_entity_facts(set, &mut facts);
+    // Track per-action AccessIR SoD coverage: an action has universal policy SoD
+    // when at least one rule grants it and EVERY rule granting it enforces SoD.
+    let mut action_policy_grants = BTreeMap::<&str, (usize, usize)>::new();
+    let mut all_policy_roles = BTreeSet::<String>::new();
+    all_policy_roles.insert("*".to_owned());
+    for policy in &set.policies {
+        for rule in &policy.rules {
+            all_policy_roles.extend(collect_rule_roles(rule));
+            let sod = rule_has_sod(rule);
+            for action_id in &rule.actions {
+                let entry = action_policy_grants.entry(action_id.as_str()).or_default();
+                entry.0 = entry.0.saturating_add(1);
+                if sod {
+                    entry.1 = entry.1.saturating_add(1);
+                }
+            }
+        }
+    }
     let mut create_actions = BTreeMap::<String, String>::new();
-    let mut transition_actions = BTreeMap::<String, (String, String)>::new();
+    let mut transition_actions = BTreeMap::<String, (String, String, String)>::new();
     for action in &set.actions {
+        let universal_policy_sod = action_policy_grants
+            .get(action.action_id.as_str())
+            .is_some_and(|&(total, with_sod)| total > 0 && total == with_sod);
         if !action.independent_of.is_empty() {
             push_fact(&mut facts, "action_independent", vec![s(&action.action_id)]);
+        }
+        if !action.independent_of.is_empty() || universal_policy_sod {
+            push_fact(&mut facts, "action_has_sod", vec![s(&action.action_id)]);
         }
         match &action.effect_program {
             Some(ActionEffectProgram::UpsertInputObject {
@@ -658,6 +796,7 @@ fn collect_sod_facts(set: &ExtractedSet) -> Facts {
             }
             Some(ActionEffectProgram::FireTransition {
                 object_kind,
+                lifecycle,
                 transition,
                 accept_receipt,
                 ..
@@ -668,43 +807,78 @@ fn collect_sod_facts(set: &ExtractedSet) -> Facts {
                 push_fact(
                     &mut facts,
                     "transition_action",
-                    vec![s(&action.action_id), s(object_kind), s(transition.as_str())],
+                    vec![
+                        s(&action.action_id),
+                        s(object_kind),
+                        s(lifecycle.as_str()),
+                        s(transition.as_str()),
+                    ],
                 );
                 transition_actions.insert(
                     action.action_id.clone(),
-                    (object_kind.clone(), transition.as_str().to_owned()),
+                    (
+                        object_kind.clone(),
+                        lifecycle.as_str().to_owned(),
+                        transition.as_str().to_owned(),
+                    ),
                 );
             }
             _ => {}
         }
     }
+    collect_sod_policy_facts(
+        set,
+        &all_policy_roles,
+        &create_actions,
+        &transition_actions,
+        &mut facts,
+    );
+    facts
+}
+
+fn collect_sod_policy_facts(
+    set: &ExtractedSet,
+    all_policy_roles: &BTreeSet<String>,
+    create_actions: &BTreeMap<String, String>,
+    transition_actions: &BTreeMap<String, (String, String, String)>,
+    facts: &mut Facts,
+) {
+    let mut seen_create_grant = BTreeSet::<(String, String)>::new();
     for policy in &set.policies {
         for (idx, rule) in policy.rules.iter().enumerate() {
             let rule_key = format!("{}#{}#{}", policy.policy_id, rule.rule_id, idx);
-            let roles = collect_rule_roles(rule);
+            let explicit_roles = collect_rule_roles(rule);
+            let effective_roles: Vec<&str> = if explicit_roles.is_empty() {
+                all_policy_roles.iter().map(String::as_str).collect()
+            } else {
+                explicit_roles.iter().map(String::as_str).collect()
+            };
             let sod = rule_has_sod(rule);
+            let mut rule_has_transition = false;
             for action_id in &rule.actions {
-                if sod {
-                    push_fact(&mut facts, "rule_has_sod", vec![s(&rule_key)]);
-                }
                 if let Some(ty) = create_actions.get(action_id) {
-                    for role in &roles {
-                        push_fact(&mut facts, "create_grant", vec![s(role), s(ty)]);
+                    for role in &effective_roles {
+                        if seen_create_grant.insert(((*role).to_owned(), ty.clone())) {
+                            push_fact(facts, "create_grant", vec![s(role), s(ty)]);
+                        }
                     }
                 }
-                if let Some((ty, tr)) = transition_actions.get(action_id) {
-                    for role in &roles {
+                if let Some((ty, lc, tr)) = transition_actions.get(action_id) {
+                    rule_has_transition = true;
+                    for role in &effective_roles {
                         push_fact(
-                            &mut facts,
+                            facts,
                             "transition_grant",
-                            vec![s(&rule_key), s(role), s(action_id), s(ty), s(tr)],
+                            vec![s(&rule_key), s(role), s(action_id), s(ty), s(lc), s(tr)],
                         );
                     }
                 }
             }
+            if sod && rule_has_transition {
+                push_fact(facts, "rule_has_sod", vec![s(&rule_key)]);
+            }
         }
     }
-    facts
 }
 
 fn sod_reachability_program() -> Program {
@@ -712,64 +886,66 @@ fn sod_reachability_program() -> Program {
         version: norn_datalog::Version::V1,
         predicates: vec![
             pred("protected_creator", 1, RelationKind::Input),
-            pred("sensitive_state", 2, RelationKind::Input),
-            pred("transition_edge", 4, RelationKind::Input),
-            pred("transition_action", 3, RelationKind::Input),
+            pred("sensitive_state", 3, RelationKind::Input),
+            pred("transition_edge", 5, RelationKind::Input),
+            pred("transition_action", 4, RelationKind::Input),
             pred("action_independent", 1, RelationKind::Input),
+            pred("action_has_sod", 1, RelationKind::Input),
             pred("rule_has_sod", 1, RelationKind::Input),
             pred("create_grant", 2, RelationKind::Input),
-            pred("transition_grant", 5, RelationKind::Input),
-            pred("transition_target", 3, RelationKind::Input),
+            pred("transition_grant", 6, RelationKind::Input),
+            pred("transition_target", 4, RelationKind::Input),
             pred("uses_receipt", 1, RelationKind::Input),
-            pred("transition_has_action", 2, RelationKind::Derived),
-            pred("edge_without_sod", 3, RelationKind::Derived),
-            pred("reaches_sensitive_without_sod", 2, RelationKind::Derived),
+            pred("transition_has_action", 3, RelationKind::Derived),
+            pred("edge_without_sod", 4, RelationKind::Derived),
+            pred("reaches_sensitive_without_sod", 3, RelationKind::Derived),
             pred("self_ratifiable", 4, RelationKind::Derived),
         ],
         rules: vec![
             Rule {
                 id: "transition_has_action_rule".to_owned(),
                 mode: Mode::Entailment,
-                head: atom("transition_has_action", &["T", "Tr"]),
+                head: atom("transition_has_action", &["T", "L", "Tr"]),
                 body: vec![Literal::Positive(atom(
                     "transition_action",
-                    &["A", "T", "Tr"],
+                    &["A", "T", "L", "Tr"],
                 ))],
             },
-            // An edge is open if ANY action firing that transition lacks `independentOf`,
-            // or if it is a timer/automatic transition with no action at all.
+            // An edge is open if ANY action firing that transition lacks SoD
+            // (`independentOf` or universal AccessIR SoD), or if it is a
+            // timer/automatic transition with no action at all.
             Rule {
                 id: "edge_without_sod_by_action".to_owned(),
                 mode: Mode::Entailment,
-                head: atom("edge_without_sod", &["T", "S1", "S2"]),
+                head: atom("edge_without_sod", &["T", "L", "S1", "S2"]),
                 body: vec![
-                    Literal::Positive(atom("transition_edge", &["T", "Tr", "S1", "S2"])),
-                    Literal::Positive(atom("transition_action", &["A", "T", "Tr"])),
-                    Literal::Negative(atom("action_independent", &["A"])),
+                    Literal::Positive(atom("transition_edge", &["T", "L", "Tr", "S1", "S2"])),
+                    Literal::Positive(atom("transition_action", &["A", "T", "L", "Tr"])),
+                    Literal::Negative(atom("action_has_sod", &["A"])),
                 ],
             },
             Rule {
                 id: "edge_without_sod_auto".to_owned(),
                 mode: Mode::Entailment,
-                head: atom("edge_without_sod", &["T", "S1", "S2"]),
+                head: atom("edge_without_sod", &["T", "L", "S1", "S2"]),
                 body: vec![
-                    Literal::Positive(atom("transition_edge", &["T", "Tr", "S1", "S2"])),
-                    Literal::Negative(atom("transition_has_action", &["T", "Tr"])),
+                    Literal::Positive(atom("transition_edge", &["T", "L", "Tr", "S1", "S2"])),
+                    Literal::Negative(atom("transition_has_action", &["T", "L", "Tr"])),
                 ],
             },
             Rule {
                 id: "reach_base".to_owned(),
                 mode: Mode::Entailment,
-                head: atom("reaches_sensitive_without_sod", &["T", "S"]),
-                body: vec![Literal::Positive(atom("sensitive_state", &["T", "S"]))],
+                head: atom("reaches_sensitive_without_sod", &["T", "L", "S"]),
+                body: vec![Literal::Positive(atom("sensitive_state", &["T", "L", "S"]))],
             },
             Rule {
                 id: "reach_step".to_owned(),
                 mode: Mode::Entailment,
-                head: atom("reaches_sensitive_without_sod", &["T", "S1"]),
+                head: atom("reaches_sensitive_without_sod", &["T", "L", "S1"]),
                 body: vec![
-                    Literal::Positive(atom("edge_without_sod", &["T", "S1", "S2"])),
-                    Literal::Positive(atom("reaches_sensitive_without_sod", &["T", "S2"])),
+                    Literal::Positive(atom("edge_without_sod", &["T", "L", "S1", "S2"])),
+                    Literal::Positive(atom("reaches_sensitive_without_sod", &["T", "L", "S2"])),
                 ],
             },
             Rule {
@@ -779,9 +955,12 @@ fn sod_reachability_program() -> Program {
                 body: vec![
                     Literal::Positive(atom("protected_creator", &["T"])),
                     Literal::Positive(atom("create_grant", &["R", "T"])),
-                    Literal::Positive(atom("transition_grant", &["RuleKey", "R", "A", "T", "Tr"])),
-                    Literal::Positive(atom("transition_target", &["T", "Tr", "S"])),
-                    Literal::Positive(atom("reaches_sensitive_without_sod", &["T", "S"])),
+                    Literal::Positive(atom(
+                        "transition_grant",
+                        &["RuleKey", "R", "A", "T", "L", "Tr"],
+                    )),
+                    Literal::Positive(atom("transition_target", &["T", "L", "Tr", "S"])),
+                    Literal::Positive(atom("reaches_sensitive_without_sod", &["T", "L", "S"])),
                     Literal::Negative(atom("action_independent", &["A"])),
                     Literal::Negative(atom("rule_has_sod", &["RuleKey"])),
                     Literal::Negative(atom("uses_receipt", &["A"])),
@@ -900,11 +1079,8 @@ fn collect_unconstrained_writes(set: &ExtractedSet) -> Vec<UnconstrainedWriteFin
             }
         }
         let effective_props = effective_object_properties(set, ty);
-        let key_props: BTreeSet<&str> = ty
-            .identity
-            .iter()
-            .flat_map(|id| id.properties.iter().map(norn_ir::PropertyId::as_str))
-            .collect();
+        let key_props = effective_object_key_props(set, ty);
+        let protected_props = effective_protected_props(set, ty);
         let lc_props: BTreeSet<&str> = effective_object_lifecycles(set, ty)
             .into_iter()
             .map(|lc| lc.property.as_str())
@@ -921,6 +1097,7 @@ fn collect_unconstrained_writes(set: &ExtractedSet) -> Vec<UnconstrainedWriteFin
                 continue;
             };
             if prop.protected
+                || protected_props.contains(field.as_str())
                 || prop.computed.is_some()
                 || key_props.contains(field.as_str())
                 || lc_props.contains(field.as_str())

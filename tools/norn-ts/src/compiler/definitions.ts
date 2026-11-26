@@ -1720,9 +1720,18 @@ class DefinitionCompiler {
               entry.roles.add(sr.role)
               groups.set(key, entry)
             }
+            const SELF_SCOPE_ATTRS = new Set([
+              "id", "subject_id", "subjectid", "actor_id", "actorid", "user_id", "userid",
+              "principal_id", "principalid", "employee_id", "employeeid", "person_id", "personid",
+              "member_id", "memberid",
+            ])
             const hasExplicitSelfScope = allOf.some((cond) => {
               const res = (cond as { resource?: { op?: string; value?: { principalAttribute?: string } } }).resource
-              return res?.op === "eq" && typeof res?.value?.principalAttribute === "string"
+              return (
+                res?.op === "eq" &&
+                typeof res?.value?.principalAttribute === "string" &&
+                SELF_SCOPE_ATTRS.has(res.value.principalAttribute.toLowerCase())
+              )
             })
             for (const group of groups.values()) {
               const matched = [...ruleRoles].filter((role) => group.roles.has(role))
@@ -1731,9 +1740,8 @@ class DefinitionCompiler {
                 const res = (cond as { resource?: { name?: string; op?: string; value?: { principalAttribute?: string } } }).resource
                 return res?.name === group.property && res?.op === "in" && res?.value?.principalAttribute === group.attribute
               })
-              if (alreadyScoped) continue
+              if (alreadyScoped || hasExplicitSelfScope) continue
               if (matched.length < ruleRoles.size) {
-                if (hasExplicitSelfScope) continue
                 throw new CompileError(
                   "NORN-FLOW-VALUE",
                   `rule mixes scoped role(s) [${matched.join(", ")}] with unscoped roles; split the rule or declare an explicit resource scope predicate`,

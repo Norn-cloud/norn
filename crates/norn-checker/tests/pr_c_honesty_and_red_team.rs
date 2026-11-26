@@ -399,3 +399,207 @@ fn datalog_red_team_catches_branch_hop_unauth_settlement_self_ratify_and_unconst
     );
     assert_eq!(report.unconstrained_writes[0].property, "late_minutes");
 }
+
+#[test]
+fn red_team_handles_multi_lifecycle_fact_trigger_and_non_identity_sod_fail_closed() {
+    let order = envelope(
+        "entity",
+        "hr.Order.entity",
+        "Order",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "hr.Order",
+                "properties": [
+                    { "id": "id", "type": { "kind": "text" } },
+                    { "id": "created_by", "type": { "kind": "text" }, "protected": true },
+                    { "id": "approval_state", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "submitted" }, { "value": "approved" }] }, "default": "draft" },
+                    { "id": "fulfillment_state", "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "done" }] }, "default": "open" }
+                ],
+                "identity": [{ "name": "primary", "properties": ["id"] }],
+                "lifecycles": [
+                    {
+                        "property": "approval_state",
+                        "initial": ["draft"],
+                        "immutable": ["approved"],
+                        "endings": [{ "state": "approved", "outcome": "completed" }],
+                        "transitions": [
+                            { "id": "submit", "from": ["draft"], "to": "submitted" },
+                            { "id": "auto_close", "from": ["submitted"], "to": "approved", "trigger": { "kind": "event", "event": "auto_approved" } }
+                        ],
+                        "events": [{ "id": "auto_approved", "payload": [] }]
+                    },
+                    {
+                        "property": "fulfillment_state",
+                        "initial": ["open"],
+                        "transitions": [
+                            { "id": "auto_close", "from": ["open"], "to": "done" }
+                        ]
+                    }
+                ]
+            }
+        }),
+    );
+
+    let create = envelope(
+        "action",
+        "hr.order.create.action",
+        "Create order",
+        &json!({
+            "actionId": "hr.order.create",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "hr.Order", "change": "created" }],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectKind": "hr.Order",
+                "objectIdField": "id",
+                "entityArtifactId": "hr.Order.entity",
+                "entityArtifactVersion": "1.0.0",
+                "writeMode": { "kind": "create_only" }
+            }
+        }),
+    );
+    let submit = envelope(
+        "action",
+        "hr.order.submit.action",
+        "Submit order",
+        &json!({
+            "actionId": "hr.order.submit",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "hr.Order", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectKind": "hr.Order",
+                "objectIdField": "id",
+                "entityArtifactId": "hr.Order.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "approval_state",
+                "transition": "submit"
+            }
+        }),
+    );
+    // Independent action on DIFFERENT lifecycle (`fulfillment_state`) with same transition ID `auto_close`
+    // MUST NOT mask `approval_state`'s unguarded automatic `auto_close` transition!
+    let fulfill_close = envelope(
+        "action",
+        "hr.order.fulfill_close.action",
+        "Close fulfillment",
+        &json!({
+            "actionId": "hr.order.fulfill_close",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "independentOf": ["created_by"],
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "hr.Order", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectKind": "hr.Order",
+                "objectIdField": "id",
+                "entityArtifactId": "hr.Order.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "fulfillment_state",
+                "transition": "auto_close"
+            }
+        }),
+    );
+    // Action firing event-triggered transition (without explicit `mode: "fact"`) without acceptReceipt
+    // MUST still be caught as an unauthenticated settlement.
+    let unauth_auto = envelope(
+        "action",
+        "hr.order.force_auto_approve.action",
+        "Force auto approve",
+        &json!({
+            "actionId": "hr.order.force_auto_approve",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "hr.Order", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectKind": "hr.Order",
+                "objectIdField": "id",
+                "entityArtifactId": "hr.Order.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "approval_state",
+                "transition": "auto_close"
+            }
+        }),
+    );
+    // Policy with bogus non-identity SoD (`created_by != principal.department`) must NOT suppress SoD finding!
+    let policy = envelope(
+        "policy",
+        "hr.order.policy",
+        "Order policy",
+        &json!({
+            "policyId": "hr.order.policy",
+            "rules": [
+                {
+                    "ruleId": "creator_submit_bogus_sod",
+                    "actions": ["hr.order.create", "hr.order.submit"],
+                    "resourceType": "hr.Order",
+                    "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["clerk"] } },
+                        { "resource": { "name": "created_by", "op": "ne", "value": { "principalAttribute": "department" } } }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let report = analyze_red_team(&[order, create, submit, fulfill_close, unauth_auto, policy]);
+    assert!(
+        report.is_complete(),
+        "{:?} {:?}",
+        report.evaluation_errors,
+        report.decode_errors
+    );
+    assert!(
+        report
+            .unauthenticated_settlements
+            .iter()
+            .any(|f| f.action_id == "hr.order.force_auto_approve"),
+        "expected event-triggered fact transition to be flagged: {:?}",
+        report.unauthenticated_settlements
+    );
+    assert!(
+        report
+            .self_ratifiable_transitions
+            .iter()
+            .any(|f| f.action_id == "hr.order.submit" && f.role == "clerk"),
+        "expected cross-lifecycle isolation + non-identity SoD rejection to flag submit: {:?}",
+        report.self_ratifiable_transitions
+    );
+}
