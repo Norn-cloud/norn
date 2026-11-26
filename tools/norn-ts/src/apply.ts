@@ -25,7 +25,7 @@ import { loadChecker } from "./checker-abi.ts"
 import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas, type PackResult } from "./pack.ts"
 import { readProject } from "./project.ts"
 import { isFetchableUrl } from "./setup.ts"
-import { compileProjectPack } from "./worker.ts"
+import { loadProjectPack, omittedLines, type OmittedDefinition } from "./worker.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
@@ -110,12 +110,16 @@ function approvalLines(document: Doc, verb: "signs" | "signed"): string[] {
  * its approvals in one transaction. A refused approval, a stale revision or
  * a failure anywhere publishes nothing, so a new action is never live
  * without its gate.
+ *
+ * `omitted` names the source questions and dashboards not sent (a hosted cell
+ * installs them only through the definitions API): a note line each, and an
+ * `omittedDefinitions` list in every JSON document printed.
  */
-export async function change(target: Target, command: "plan" | "apply", artifacts: ReadonlyArray<unknown>, json: boolean, expectedVersion?: number, definitions: ReadonlyArray<RetainedDefinitionDoc> = []): Promise<{ out: string[]; ok: boolean }> {
-  const out: string[] = []
+export async function change(target: Target, command: "plan" | "apply", artifacts: ReadonlyArray<unknown>, json: boolean, expectedVersion?: number, definitions: ReadonlyArray<RetainedDefinitionDoc> = [], omitted: ReadonlyArray<OmittedDefinition> = []): Promise<{ out: string[]; ok: boolean }> {
+  const out: string[] = json ? [] : omittedLines(omitted)
   const show = (status: number, document: Doc, summary: (d: Doc) => string) => {
     const ok = status >= 200 && status < 300
-    out.push(json ? JSON.stringify(document) : ok ? summary(document) : refusalSummary(status, document))
+    out.push(json ? JSON.stringify(omitted.length > 0 ? { ...document, omittedDefinitions: omitted } : document) : ok ? summary(document) : refusalSummary(status, document))
     return ok
   }
   const approvals = definitions.map((definition) => ({ kind: definition.kind, id: definition.id, payload: definition.payload }))
@@ -141,14 +145,15 @@ export async function change(target: Target, command: "plan" | "apply", artifact
  * The pack `input` names, scoped to the target cell: a project directory (one
  * holding norn.json) is read by the shared project loader, exactly as `norn
  * dev` and `norn compile` read it (its manifest's sources, JSON artifacts and
- * definitions); any other directory or module compiles as a pack.
+ * definitions); any other directory or module compiles as a pack. `omitted`
+ * names the project's source questions and dashboards, which are not sent.
  */
-export function loadPack(input: string, scope: { readonly orgId: string; readonly environmentId: string }): PackResult {
+export function loadPack(input: string, scope: { readonly orgId: string; readonly environmentId: string }): { readonly pack: PackResult; readonly omitted: OmittedDefinition[] } {
   if (statSync(input).isDirectory() && existsSync(join(input, "norn.json"))) {
     const { root, manifest } = readProject(resolve(input))
-    return compileProjectPack(root, { ...manifest, scope })
+    return loadProjectPack(root, { ...manifest, scope })
   }
-  return compilePack(resolve(input), { scope, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
+  return { pack: compilePack(resolve(input), { scope, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) }), omitted: [] }
 }
 
 function option(args: ReadonlyArray<string>, name: string): string | undefined {
@@ -168,8 +173,10 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
   const passwordEnv = option(args, "--password-env")
   const tokenEnv = option(args, "--token-env")
   if ((email || tokenEnv) && !credentialsAllowed(url)) { process.stderr.write("credentials are sent only over HTTPS (or HTTP to loopback)\n"); return 2 }
-  const pack = loadPack(input, { orgId: org, environmentId: env })
+  const { pack, omitted } = loadPack(input, { orgId: org, environmentId: env })
   if (!pack.ok) { process.stdout.write(`${JSON.stringify(pack)}\n`); return 1 }
+  // Printed before anything is sent, so a stop below still says what was left out.
+  if (args.includes("--json")) for (const line of omittedLines(omitted)) process.stderr.write(`${line}\n`)
   // MAPPING-SOURCE-REF-1: a mapping bound to a source schema of the pack by
   // reference is pinned with the checker's hash before the pack is sent.
   let artifacts = pack.artifacts
@@ -192,7 +199,7 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
     headers.origin = origin
   }
   const expected = option(args, "--expected-version")
-  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected), pack.retained)
+  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected), pack.retained, omitted)
   process.stdout.write(`${out.join("\n")}\n`)
   return ok ? 0 : 1
 }

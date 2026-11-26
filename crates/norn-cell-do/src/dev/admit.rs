@@ -331,4 +331,4 @@ pub(crate) fn source_mapped(diagnostics: Vec<Value>, source_map: &[Value]) -> Ve
 
 #[cfg(test)]
 #[path = "principal_inputs_tests.rs"]
-mod principal_inputs_tests;
+pub(in crate::dev) mod principal_inputs_tests;

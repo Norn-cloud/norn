@@ -77,13 +77,30 @@ export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label"
   return word
 }
 
-/** The metrics this reader may ask about; a cell without the route says so. */
-export const readMetrics = (context?: { readonly signal?: AbortSignal; readonly scope?: StudioScope | null } | StudioScope | null) => {
+/**
+ * A metric as the cell lists it (`NornMetricSummary`): one that combines others (a ratio, a
+ * cumulative, a derived or a conversion metric) names no single object type.
+ */
+export type CellMetric = Omit<MetricSummary, "objectType"> & { readonly objectType: string | null }
+
+/**
+ * The metrics this reader may ask about; a cell without the route says so. `metrics` are the ones
+ * asked over one object type; `combined` are those the cell lists over no single type, kept apart
+ * so no page asks them as if they had one.
+ */
+export const readMetrics = async (context?: { readonly signal?: AbortSignal; readonly scope?: StudioScope | null } | StudioScope | null) => {
   const isScope = context === null || (context !== undefined && "orgId" in context && "environmentId" in context)
   const signal = isScope ? undefined : context?.signal
   const boundScope = isScope ? context : context?.scope
-  return cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are", signal ? { signal } : {}, undefined, boundScope)
+  const read = await cellRead<{ readonly metrics: readonly CellMetric[] }>("/v1/questions:metrics", "Questions are", signal ? { signal } : {}, undefined, boundScope)
+  return { ...read, document: splitMetrics(read.document.metrics) }
 }
+
+/** The cell's metrics, split into those over one object type and those that combine others. */
+export const splitMetrics = (list: readonly CellMetric[]): { readonly metrics: readonly MetricSummary[]; readonly combined: readonly CellMetric[] } => ({
+  metrics: list.filter((metric): metric is MetricSummary => typeof metric.objectType === "string"),
+  combined: list.filter((metric) => typeof metric.objectType !== "string"),
+})
 
 export interface Window { readonly start: string; readonly end: string; readonly grain: "day" | "week" }
 

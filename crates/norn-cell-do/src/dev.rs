@@ -37,6 +37,14 @@
 //! - DEV-ACCESS-1: an action whose `access` names a policy is decided by that
 //!   policy for every local principal, as on a hosted cell
 //!   (`dev/policy.rs`).
+//! - DEV-READ-DEFINITIONS-1: the sources' questions and dashboards are
+//!   installed once a revision serves, in process, as the manifest's actor,
+//!   through the hosted admit, sign-off and install path; those the sources
+//!   drop retire (`dev/definitions.rs`).
+//! - DEV-PRINCIPALS-1: the manifest's `dev.principals` are more local
+//!   principals, each holding exactly its declared roles, with its own
+//!   session token (`.norn/dev.principal.<n>.token`); the descriptor lists
+//!   them (`dev/policy.rs`).
 //! - DEV-CONFINED-1: the cell and the session files stay inside the project:
 //!   the manifest's cell is a relative path under the project root, and the
 //!   token and descriptor are owner-only files never written through a symlink.
@@ -128,6 +136,110 @@ struct ManifestScope {
 struct ManifestDev {
     port: u16,
     actor: String,
+    /// More local principals, each with only its declared roles
+    /// (DEV-PRINCIPALS-1).
+    #[serde(default)]
+    principals: Vec<ManifestPrincipal>,
+}
+
+/// One named local principal (DEV-PRINCIPALS-1).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestPrincipal {
+    actor: String,
+    roles: Vec<String>,
+}
+
+/// At most this many named principals: each is a token file and a session.
+const MAX_PRINCIPALS: usize = 16;
+
+/// The manifest's named principals and their roles, or why they are invalid:
+/// each actor is non-empty, distinct and neither the developer nor the
+/// reviewer, and holds at least one non-empty role, none twice.
+fn named_principals(dev: &ManifestDev) -> Result<policy::NamedPrincipals, Failure> {
+    let invalid = |message: String| Failure::setup("norn.project.invalid_manifest", message);
+    if dev.principals.len() > MAX_PRINCIPALS {
+        return Err(invalid(format!(
+            "norn.json names {} dev.principals; at most {MAX_PRINCIPALS}",
+            dev.principals.len()
+        )));
+    }
+    // `developer` and `reviewer` also name the built-in principals to the
+    // local Studio (`--as developer`, `--as reviewer`), so no named principal
+    // takes either name.
+    let reserved = [
+        dev.actor.clone(),
+        policy::reviewer(&dev.actor),
+        "developer".to_owned(),
+        "reviewer".to_owned(),
+    ];
+    let mut named = std::collections::BTreeMap::new();
+    for principal in &dev.principals {
+        let actor = principal.actor.trim();
+        if actor.is_empty() || actor != principal.actor || reserved.contains(&principal.actor) {
+            return Err(invalid(format!(
+                "dev.principals actor {:?} must be a non-empty name other than the developer and the reviewer",
+                principal.actor
+            )));
+        }
+        let mut roles = principal.roles.clone();
+        roles.sort();
+        roles.dedup();
+        if roles.is_empty()
+            || roles.len() != principal.roles.len()
+            || roles
+                .iter()
+                .any(|role| role.trim().is_empty() || role.trim() != role)
+        {
+            return Err(invalid(format!(
+                "dev.principals {:?} must hold at least one role, each a non-empty name, none twice",
+                principal.actor
+            )));
+        }
+        if named
+            .insert(principal.actor.clone(), principal.roles.clone())
+            .is_some()
+        {
+            return Err(invalid(format!(
+                "dev.principals names {:?} twice",
+                principal.actor
+            )));
+        }
+    }
+    Ok(Arc::new(named))
+}
+
+/// The session token file of the `index`th named principal (from 1).
+fn principal_token_file(index: usize) -> String {
+    format!(".norn/dev.principal.{index}.token")
+}
+
+/// Remove every named principal's token file in `state` past the first
+/// `keep`: a principal the manifest no longer names keeps no token on
+/// disk. A symlink is removed, never followed.
+fn remove_stale_principal_tokens(state: &Path, keep: usize) -> Result<(), Failure> {
+    let failed = |error: std::io::Error| {
+        Failure::setup("norn.dev.io", format!("{}: {error}", state.display()))
+    };
+    for entry in std::fs::read_dir(state).map_err(failed)? {
+        let entry = entry.map_err(failed)?;
+        let name = entry.file_name();
+        let dropped = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("dev.principal."))
+            .and_then(|rest| rest.strip_suffix(".token"))
+            .filter(|index| !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|index| index.parse::<usize>().ok())
+            .is_some_and(|index| index == 0 || index > keep);
+        if dropped {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(failed(error)),
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A setup or usage failure: a stable code, an actionable message and the
@@ -242,14 +354,22 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             ),
         ));
     }
+    let named = named_principals(&manifest.dev)?;
     let state = private_dir(&root)?;
     let _lock = lock(&state)?;
-    let token = token()?;
+    let token = token(manifest.dev.principals.len())?;
     write_private(&state.join("dev.token"), &format!("{}\n", token.bearer))?;
     write_private(
         &state.join("dev.reviewer.token"),
         &format!("{}\n", token.reviewer),
     )?;
+    for (index, bearer) in token.principals.iter().enumerate() {
+        write_private(
+            &root.join(principal_token_file(index.saturating_add(1))),
+            &format!("{bearer}\n"),
+        )?;
+    }
+    remove_stale_principal_tokens(&state, token.principals.len())?;
     let scope = CellScope {
         org_id: manifest.scope.org_id.clone(),
         environment_id: manifest.scope.environment_id.clone(),
@@ -268,7 +388,13 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     let actions = policy::dev_actions();
-    let (reopened, loaded) = reopen(&cell_path, &scope, &manifest.dev.actor, &loads, &actions)?;
+    let (reopened, loaded) = reopen(
+        &cell_path,
+        &scope,
+        (&manifest.dev.actor, &named),
+        &loads,
+        &actions,
+    )?;
     if let Some(loaded) = loaded {
         out.emit(
             &json!({ "event": "loaded", "files": loaded.files }),
@@ -294,14 +420,26 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .local_addr()
         .map_err(|error| Failure::setup("norn.dev.io", error.to_string()))?;
     let url = format!("http://{address}");
-    let principals = DevPrincipals::new(vec![
+    let mut sessions = vec![
         (token.bearer.clone(), manifest.dev.actor.clone()),
         (
             token.reviewer.clone(),
             policy::reviewer(&manifest.dev.actor),
         ),
-    ]);
-    let questions = DevMetrics::new(token.handle_key, scope.clone());
+    ];
+    sessions.extend(
+        token.principals.iter().cloned().zip(
+            manifest
+                .dev
+                .principals
+                .iter()
+                .map(|principal| principal.actor.clone()),
+        ),
+    );
+    let principals = DevPrincipals::new(sessions).with_named(Arc::clone(&named));
+    // One derived-metrics runtime serves the HTTP questions and the sources'
+    // question and dashboard sync, so a revision is derived once.
+    let questions = Arc::new(DevMetrics::new(token.handle_key, scope.clone()));
     // D102: a build with `duckdb` answers questions and profiles on the
     // project's own analytics engine, under `.norn/analytics`.
     #[cfg(feature = "duckdb")]
@@ -322,6 +460,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .map_err(|message| Failure::setup("norn.dev.connections_config", message))?;
     {
         let serving = Arc::clone(&serving);
+        let questions = Arc::clone(&questions);
         std::thread::spawn(move || {
             #[cfg(feature = "duckdb")]
             let engine: Option<&dyn norn_api::analytics_routes::Transport> = Some(&engine);
@@ -347,6 +486,8 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         loaded: std::cell::RefCell::new(None),
         root: &root,
         manifest: &manifest,
+        named: Arc::clone(&named),
+        metrics: questions,
         scope: &scope,
         url: &url,
         started_at: now_ms(),
@@ -496,6 +637,12 @@ struct Session<'a> {
     loaded: std::cell::RefCell<Option<load::Loaded>>,
     root: &'a Path,
     manifest: &'a Manifest,
+    /// The named principals and their roles (DEV-PRINCIPALS-1).
+    named: policy::NamedPrincipals,
+    /// The serving revision's metrics, which the sources' questions and
+    /// dashboards are admitted against (DEV-READ-DEFINITIONS-1): the HTTP
+    /// server's own.
+    metrics: Arc<DevMetrics>,
     scope: &'a CellScope,
     url: &'a str,
     started_at: u64,
@@ -533,6 +680,11 @@ impl Session<'_> {
             "scope": { "orgId": self.scope.org_id, "environmentId": self.scope.environment_id },
             "actor": self.manifest.dev.actor,
             "reviewer": { "actor": policy::reviewer(&self.manifest.dev.actor), "tokenFile": ".norn/dev.reviewer.token" },
+            "principals": self.manifest.dev.principals.iter().enumerate().map(|(index, principal)| json!({
+                "actor": principal.actor,
+                "roles": principal.roles,
+                "tokenFile": principal_token_file(index.saturating_add(1)),
+            })).collect::<Vec<_>>(),
             "active": { "version": active.version, "receiptSha256": active.receipt_sha256 },
             "startedAt": self.started_at,
         })
@@ -548,10 +700,20 @@ impl Session<'_> {
         if let Some(object) = event.as_object_mut() {
             object.insert("event".to_owned(), json!("ready"));
         }
+        let mut named = String::new();
+        for (index, principal) in self.manifest.dev.principals.iter().enumerate() {
+            let _written = write!(
+                named,
+                "\n  as {} ({}): {}",
+                principal.actor,
+                principal.roles.join(", "),
+                principal_token_file(index.saturating_add(1))
+            );
+        }
         out.emit(
             &event,
             &format!(
-                "✓ serving r{} · receipt {}…\n  API  {}/v1   token .norn/dev.token (reviewer: .norn/dev.reviewer.token)\nwatching sources",
+                "✓ serving r{} · receipt {}…\n  API  {}/v1   token .norn/dev.token (reviewer: .norn/dev.reviewer.token){named}\nwatching sources",
                 active.version,
                 short(&active.receipt_sha256),
                 self.url
@@ -672,6 +834,7 @@ impl Session<'_> {
             .unwrap_or_default();
         // DEV-DEFINITIONS-ATOMIC-1: the set, its approvals and the action
         // policy commit together under the serving write lock.
+        let before = current.as_ref().map(|set| set.version);
         let result = match current {
             Some(set) => {
                 let guard = serving.write().map_err(|_poisoned| {
@@ -695,12 +858,7 @@ impl Session<'_> {
         };
         match result {
             Ok(definitions::Committed::Unchanged) => {
-                out.emit(
-                    &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
-                    "· unchanged (same definitions)",
-                );
-                self.access(out, serving);
-                Ok(None)
+                self.unchanged(out, serving, event, &definitions, before)
             }
             Ok(definitions::Committed::Installed(installed, events)) => {
                 if let Some(loaded) = self.loaded.take() {
@@ -710,8 +868,12 @@ impl Session<'_> {
                     );
                 }
                 Self::definitions(out, &events);
-                self.access(out, serving);
-                Ok(Some(*installed))
+                // The revision reported is the one serving after the reads
+                // synced over it, so `.norn/dev.json` and the events name the
+                // version a client pins. The install committed: a failed
+                // readback after it is a warning, never the session's end.
+                let (moved, readback) = self.served(out, serving, &definitions);
+                Ok(reported(out, *installed, moved, readback))
             }
             Err(definitions::Rejected { phase, diagnostics }) => {
                 Self::rejected(out, serving, event, phase, &diagnostics);
@@ -733,6 +895,30 @@ impl Session<'_> {
         }
     }
 
+    /// The set is unchanged: sync the sources' reads over it. A question or
+    /// dashboard the save changed installs (or retires) as the next
+    /// definitions version, so that is a new revision to report, never
+    /// "unchanged".
+    fn unchanged(
+        &self,
+        out: &mut Events,
+        serving: &http::Serving,
+        event: &Value,
+        definitions: &[Value],
+        before: Option<u64>,
+    ) -> Result<Option<InstalledDefinitionSet>, Failure> {
+        let (_moved, after) = self.served(out, serving, definitions);
+        let after = after.map_err(|message| Failure::setup("norn.cell.unreadable", message))?;
+        if after.as_ref().map(|set| set.version) == before {
+            out.emit(
+                &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
+                "· unchanged (same definitions)",
+            );
+            return Ok(None);
+        }
+        Ok(after)
+    }
+
     /// Report each approval revision a commit appended.
     fn definitions(out: &mut Events, events: &[Value]) {
         for event in events {
@@ -748,6 +934,62 @@ impl Session<'_> {
                 ),
             );
         }
+    }
+
+    /// A revision serves: report its access, then sync the sources'
+    /// questions and dashboards over it. Returns the active revision after
+    /// the sync, which each install or retirement moved to its next
+    /// definitions version, or why it could not be read; and whether the
+    /// sync moved it.
+    fn served(
+        &self,
+        out: &mut Events,
+        serving: &http::Serving,
+        definitions: &[Value],
+    ) -> (bool, Result<Option<InstalledDefinitionSet>, String>) {
+        self.access(out, serving);
+        let moved = self.sync_reads(out, serving, definitions);
+        (moved, active(serving))
+    }
+
+    /// DEV-READ-DEFINITIONS-1: install the sources' changed questions and
+    /// dashboards over the serving revision, retire the dropped ones, and
+    /// report both; a refused one is reported and changes nothing. Returns
+    /// whether any was installed or retired.
+    fn sync_reads(&self, out: &mut Events, serving: &http::Serving, definitions: &[Value]) -> bool {
+        let synced = {
+            let Ok(guard) = serving.read() else {
+                return false;
+            };
+            let Some(host) = guard.as_ref() else {
+                return false;
+            };
+            let runtime = self.metrics.questions(host);
+            let questions: Option<&dyn norn_api::question_routes::AdHocQuestions<NativeEngine>> =
+                match &runtime {
+                    Ok(runtime) => Some(runtime),
+                    Err(_unavailable) => None,
+                };
+            definitions::sync_reads(
+                host,
+                &self.manifest.dev.actor,
+                &policy::dev_kinds(),
+                questions,
+                definitions,
+                now_ms(),
+            )
+        };
+        Self::definitions(out, &synced.events);
+        if !synced.refused.is_empty() {
+            let count = synced.refused.len();
+            out.emit(
+                &json!({ "event": "definitions_refused", "diagnostics": synced.refused }),
+                &format!(
+                    "✗ {count} question or dashboard finding(s); the installed ones keep serving"
+                ),
+            );
+        }
+        !synced.events.is_empty()
     }
 
     /// Recompile the active revision's action policy and report what it
@@ -770,7 +1012,7 @@ impl Session<'_> {
             Ok(ungoverned) => out.emit(
                 &json!({ "event": "access", "ungoverned": ungoverned }),
                 &format!(
-                    "· no access policy governs {}: only the local principals may call them, and a hosted cell would serve none of them",
+                    "· no access policy governs {}: only the developer and the reviewer may call them, and a hosted cell would serve none of them",
                     ungoverned.join(", ")
                 ),
             ),
@@ -856,10 +1098,13 @@ impl Session<'_> {
         let host =
             DevHost::from_store(store, self.scope.clone(), |command| command.payload.clone())
                 .map_err(host_refused)?
-                .with_authorizer(LocalDeveloper::for_actor(
-                    &self.manifest.dev.actor,
-                    std::sync::Arc::clone(&self.actions),
-                ));
+                .with_authorizer(
+                    LocalDeveloper::for_actor(
+                        &self.manifest.dev.actor,
+                        std::sync::Arc::clone(&self.actions),
+                    )
+                    .with_named(Arc::clone(&self.named)),
+                );
         let installed = host
             .active_definitions()
             .map_err(host_refused)?
@@ -873,6 +1118,34 @@ impl Session<'_> {
             prepared.events,
         ))
     }
+}
+
+/// The revision to report after `installed` committed: the one serving once
+/// the reads synced (`readback`). A readback that fails is a warning, not the
+/// session's end: `installed` is still reported when no read moved the
+/// version past it; otherwise no version is reported, never a stale one, and
+/// the next save reports the serving revision.
+fn reported(
+    out: &mut Events,
+    installed: InstalledDefinitionSet,
+    moved: bool,
+    readback: Result<Option<InstalledDefinitionSet>, String>,
+) -> Option<InstalledDefinitionSet> {
+    let message = match readback {
+        Ok(after) => return Some(after.unwrap_or(installed)),
+        Err(message) => message,
+    };
+    let known = (!moved).then_some(installed);
+    let version = known.as_ref().map(|set| set.version);
+    out.emit(
+        &json!({ "event": "warning", "code": "norn.cell.unreadable", "message": message,
+                 "version": version }),
+        &version.map_or_else(
+            || format!("! the serving revision could not be read back ({message}); the next save reports it"),
+            |version| format!("! r{version} installed; reading it back failed ({message})"),
+        ),
+    );
+    known
 }
 
 fn active(serving: &http::Serving) -> Result<Option<InstalledDefinitionSet>, String> {
@@ -894,7 +1167,7 @@ fn active(serving: &http::Serving) -> Result<Option<InstalledDefinitionSet>, Str
 fn reopen(
     path: &Path,
     scope: &CellScope,
-    actor: &str,
+    (actor, named): (&str, &policy::NamedPrincipals),
     loads: &[PathBuf],
     actions: &policy::DevActions,
 ) -> Result<(Option<DevHost<NativeEngine>>, Option<load::Loaded>), Failure> {
@@ -926,7 +1199,9 @@ fn reopen(
     };
     let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
         .map_err(|refusal| Failure::setup("norn.cell.scope_mismatch", refusal.message))?
-        .with_authorizer(LocalDeveloper::for_actor(actor, Arc::clone(actions)));
+        .with_authorizer(
+            LocalDeveloper::for_actor(actor, Arc::clone(actions)).with_named(Arc::clone(named)),
+        );
     Ok((Some(host), loaded))
 }
 
@@ -970,17 +1245,19 @@ struct Token {
     bearer: String,
     /// The local reviewer's session token (DEV-REVIEWER-1).
     reviewer: String,
+    /// Each named principal's session token, in manifest order
+    /// (DEV-PRINCIPALS-1).
+    principals: Vec<String>,
     handle_key: [u8; 32],
 }
 
-fn token() -> Result<Token, Failure> {
-    let mut bytes = [0_u8; 96];
-    getrandom::fill(&mut bytes)
-        .map_err(|error| Failure::setup("norn.dev.io", format!("no randomness: {error}")))?;
-    let (bearers, key) = bytes.split_at(64);
-    let (bearer, reviewer) = bearers.split_at(32);
-    let mut handle_key = [0_u8; 32];
-    handle_key.copy_from_slice(key);
+/// Fresh session tokens: the developer's, the reviewer's and one for each of
+/// `named` principals, plus the handle key.
+fn token(named: usize) -> Result<Token, Failure> {
+    let random = |bytes: &mut [u8]| {
+        getrandom::fill(bytes)
+            .map_err(|error| Failure::setup("norn.dev.io", format!("no randomness: {error}")))
+    };
     let hex = |bytes: &[u8]| {
         bytes
             .iter()
@@ -989,9 +1266,23 @@ fn token() -> Result<Token, Failure> {
                 hex
             })
     };
+    let mut bytes = [0_u8; 96];
+    random(&mut bytes)?;
+    let (bearers, key) = bytes.split_at(64);
+    let (bearer, reviewer) = bearers.split_at(32);
+    let mut handle_key = [0_u8; 32];
+    handle_key.copy_from_slice(key);
+    let principals = (0..named)
+        .map(|_| {
+            let mut bearer = [0_u8; 32];
+            random(&mut bearer)?;
+            Ok(hex(&bearer))
+        })
+        .collect::<Result<Vec<_>, Failure>>()?;
     Ok(Token {
         bearer: hex(bearer),
         reviewer: hex(reviewer),
+        principals,
         handle_key,
     })
 }
@@ -1122,6 +1413,104 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         (dir, root)
+    }
+
+    fn dev(principals: &Value) -> ManifestDev {
+        serde_json::from_value(
+            json!({ "port": 0, "actor": "local:developer", "principals": principals }),
+        )
+        .unwrap()
+    }
+
+    /// DEV-PRINCIPALS-1: a named principal holds exactly its declared roles;
+    /// a manifest that names none keeps the two local principals.
+    #[test]
+    fn named_principals_hold_their_declared_roles() {
+        let none: ManifestDev =
+            serde_json::from_value(json!({ "port": 0, "actor": "local:developer" })).unwrap();
+        assert!(named_principals(&none).unwrap().is_empty());
+        let named = named_principals(&dev(&json!([
+            { "actor": "clerk:hana", "roles": ["warehouse_clerk"] },
+            { "actor": "ops:omar", "roles": ["ops_manager", "planner"] },
+        ])))
+        .unwrap();
+        assert_eq!(
+            named.get("clerk:hana").map(Vec::as_slice),
+            Some(&["warehouse_clerk".to_owned()][..])
+        );
+        assert_eq!(named.len(), 2);
+        assert_eq!(principal_token_file(1), ".norn/dev.principal.1.token");
+    }
+
+    /// A manifest that names fewer principals than the last session leaves
+    /// no token file of the dropped ones; the kept ones, every other session
+    /// file, and whatever a dropped link names stay.
+    #[test]
+    fn dropped_principals_keep_no_token_file() {
+        let (_dir, root) = project();
+        let state = private_dir(&root).unwrap();
+        for file in [
+            "dev.principal.1.token",
+            "dev.principal.2.token",
+            "dev.principal.3.token",
+            "dev.token",
+            "dev.principal.x.token",
+        ] {
+            write_private(&state.join(file), "secret\n").unwrap();
+        }
+        // A dropped token file that is a link: the link goes, never what it names.
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("kept");
+        std::fs::write(&target, "not a token\n").unwrap();
+        symlink(&target, state.join("dev.principal.4.token")).unwrap();
+        remove_stale_principal_tokens(&state, 1).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "not a token\n");
+        let mut left: Vec<String> = std::fs::read_dir(&state)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "dev.principal.1.token",
+                "dev.principal.x.token",
+                "dev.token"
+            ]
+        );
+    }
+
+    /// DEV-PRINCIPALS-1: a named principal never takes the developer's or the
+    /// reviewer's name, holds at least one role, and is named once.
+    #[test]
+    fn invalid_named_principals_refuse() {
+        for principals in [
+            json!([{ "actor": "local:developer", "roles": ["planner"] }]),
+            json!([{ "actor": "local:developer+reviewer", "roles": ["planner"] }]),
+            json!([{ "actor": "developer", "roles": ["planner"] }]),
+            json!([{ "actor": "reviewer", "roles": ["planner"] }]),
+            json!([{ "actor": " ", "roles": ["planner"] }]),
+            json!([{ "actor": "a", "roles": [] }]),
+            json!([{ "actor": "a", "roles": ["planner", "planner"] }]),
+            json!([{ "actor": "a", "roles": [""] }]),
+            json!([{ "actor": "a", "roles": ["x"] }, { "actor": "a", "roles": ["y"] }]),
+        ] {
+            let refused = named_principals(&dev(&principals)).err();
+            assert_eq!(
+                refused.map(|failure| failure.code),
+                Some("norn.project.invalid_manifest"),
+                "{principals}"
+            );
+        }
+        let many: Vec<Value> = (0..=MAX_PRINCIPALS)
+            .map(|index| json!({ "actor": format!("p{index}"), "roles": ["r"] }))
+            .collect();
+        assert!(named_principals(&dev(&Value::Array(many))).is_err());
+        assert!(
+            serde_json::from_value::<ManifestDev>(json!({ "port": 0, "actor": "a", "principals": [{ "actor": "b", "roles": ["r"], "admin": true }] }))
+                .is_err(),
+            "unknown keys refuse"
+        );
     }
 
     /// CONN-SECRET-ENV-1: the compile worker never inherits a vault KEK or
