@@ -161,6 +161,9 @@ describe("sheetMarkup", () => {
 })
 
 const pkg = process.env.NORN_CHECKER_WASM_PKG
+if (!pkg && process.env.NORN_CHECKER_WASM_REQUIRED === "1") {
+  throw new Error("NORN_CHECKER_WASM_PKG is required when NORN_CHECKER_WASM_REQUIRED=1")
+}
 const withEngine = pkg ? describe : describe.skip
 const checker = pkg
   ? ((await import(pathToFileURL(join(pkg, "norn_checker_wasm.js")).href)) as {

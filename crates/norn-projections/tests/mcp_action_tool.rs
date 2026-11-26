@@ -217,26 +217,6 @@ fn action_projects_to_an_mcp_2026_07_28_tool() {
 }
 
 #[test]
-fn annotations_follow_the_declared_effects() {
-    let mut action = fixture_action();
-    action.ledgered = false;
-    action.writes.clear();
-    let tool = action_tool(&action).expect("fixture projects");
-    let annotations = tool.annotations.expect("annotations are always derived");
-    assert_eq!(annotations.read_only_hint, Some(true));
-    assert_eq!(annotations.destructive_hint, Some(false));
-    assert_eq!(annotations.idempotent_hint, Some(true));
-
-    let mut action = fixture_action();
-    action.writes[0].change = norn_ir::WriteChange::Modified;
-    let annotations = action_tool(&action)
-        .expect("fixture projects")
-        .annotations
-        .expect("derived");
-    assert_eq!(annotations.destructive_hint, Some(true));
-}
-
-#[test]
 fn commands_drive_open_world_and_conservative_mutation_hints() {
     let mut create_only = fixture_action();
     create_only.ledgered = false;
@@ -278,16 +258,6 @@ fn commands_drive_open_world_and_conservative_mutation_hints() {
 }
 
 #[test]
-fn ledgered_create_command_without_local_writes_keeps_legacy_destructive_risk() {
-    let mut action = fixture_action();
-    action.writes.clear();
-    action.commands = vec![command("create")];
-
-    let annotations = assert_risk_hints(&action, "ledgered create-only command", true, true, true);
-    assert_eq!(annotations.read_only_hint, Some(false));
-}
-
-#[test]
 fn action_fixture_risks_match_the_legacy_baseline_or_increase() {
     // These are all checked-in `*.action.json` fixtures under fixtures/ir.
     let fixtures = [
@@ -325,7 +295,8 @@ fn synthetic_write_command_and_declared_effect_risks_are_monotonic() {
     let mut create_only = fixture_action();
     create_only.writes.clear();
     create_only.commands = vec![command("create")];
-    assert_risk_hints(&create_only, "create-only command", true, true, true);
+    let annotations = assert_risk_hints(&create_only, "create-only command", true, true, true);
+    assert_eq!(annotations.read_only_hint, Some(false));
 
     let mut update_only = fixture_action();
     update_only.writes.clear();
@@ -366,6 +337,7 @@ fn synthetic_write_command_and_declared_effect_risks_are_monotonic() {
         read_only.idempotent = idempotent;
         let annotations = assert_risk_hints(&read_only, label, false, false, false);
         assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.idempotent_hint, Some(idempotent));
     }
 
     for (irreversible, destructive, label) in [
@@ -425,12 +397,9 @@ fn non_object_input_schema_does_not_project() {
 /// tool whose `_meta` names the declared transition it fires.
 #[test]
 fn a_transition_action_names_its_transition_in_meta() {
-    let envelope: Value = serde_json::from_str(include_str!(
+    let action = action_from_fixture(include_str!(
         "../../../fixtures/ir/commerce-sales-order-submit-invoice.action.json"
-    ))
-    .expect("fixture should parse");
-    let action: ActionRoot =
-        serde_json::from_value(envelope["payload"].clone()).expect("payload is an ActionRoot");
+    ));
     let tool = serde_json::to_value(action_tool(&action).expect("fixture projects"))
         .expect("tool should encode");
     assert_eq!(tool["name"], "commerce.sales_order.submit_invoice");

@@ -7,16 +7,16 @@
 //! an answer gets [`write_budget`] for its length. A body's buffer grows
 //! only as its bytes arrive and never past its declared length.
 
-use std::io::{BufRead as _, BufReader, Read as _};
+use std::io::{BufReader, Read as _};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use norn_cell::analytics::EngineRefusal;
 
 use super::refusal;
+#[cfg(any(test, doc))]
+use crate::http_head::MAX_HEAD_BYTES;
 
-/// Longest accepted request head, in bytes.
-const MAX_HEAD_BYTES: usize = 16 * 1024;
 /// Longest accepted body (a sync batch), in bytes.
 pub(super) const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 /// #1710: the whole request head must arrive within this of the accept,
@@ -158,69 +158,19 @@ pub(super) fn read_head(
     reader: &mut BufReader<Deadlined<'_>>,
 ) -> Result<Head, (u16, EngineRefusal)> {
     let invalid = |detail: String| (400, refusal("analytics.invalid", &detail));
-    let mut line = String::new();
-    let mut head = 0_usize;
-    let mut next = |reader: &mut BufReader<Deadlined<'_>>, line: &mut String| {
-        line.clear();
-        // One byte past the bound, so an over-long head is told apart.
-        let left = MAX_HEAD_BYTES.saturating_sub(head).saturating_add(1);
-        let read = reader
-            .by_ref()
-            .take(u64::try_from(left).unwrap_or(u64::MAX))
-            .read_line(line)
-            .map_err(|e| invalid(format!("unreadable request: {e}")))?;
-        head = head.saturating_add(read);
-        if read == 0 || head > MAX_HEAD_BYTES {
-            return Err(invalid(
-                "the request head is missing or too long".to_owned(),
-            ));
-        }
-        Ok(())
-    };
-    next(reader, &mut line)?;
-    let mut parts = line.split_whitespace();
-    let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
-        return Err(invalid("the request line is malformed".to_owned()));
-    };
-    let (method, path) = (
-        method.to_owned(),
-        target.split('?').next().unwrap_or_default().to_owned(),
-    );
-    let (mut length, mut authorization) = (None::<usize>, None);
-    loop {
-        next(reader, &mut line)?;
-        let header = line.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        if let Some((name, value)) = header.split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                // A repeated or signed length makes the body boundary
-                // ambiguous between this reader and any proxy before it.
-                let value = value.trim();
-                if length.is_some() {
-                    return Err(invalid("content-length is repeated".to_owned()));
-                }
-                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return Err(invalid("content-length is not a decimal length".to_owned()));
-                }
-                length = Some(
-                    value
-                        .parse()
-                        .map_err(|e| invalid(format!("content-length: {e}")))?,
-                );
-            } else if name.eq_ignore_ascii_case("transfer-encoding") {
-                return Err(invalid("transfer-encoding is not accepted".to_owned()));
-            } else if name.eq_ignore_ascii_case("authorization") {
-                authorization = Some(value.trim().to_owned());
-            }
-        }
-    }
+    let raw = crate::http_head::read_head(
+        reader,
+        |_| Ok(()),
+        invalid,
+        "the request head is missing or too long",
+        true,
+    )?;
+    let path = raw.target.split('?').next().unwrap_or_default().to_owned();
     Ok(Head {
-        method,
+        method: raw.method,
         path,
-        authorization,
-        length: length.unwrap_or(0),
+        authorization: raw.authorization,
+        length: raw.length,
     })
 }
 

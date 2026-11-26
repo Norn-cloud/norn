@@ -673,7 +673,7 @@ impl EffectiveProperty {
             PropertyType::Integer { .. } => {
                 let integer =
                     integer_literal(value).ok_or(InstanceError::TypeMismatch("integer"))?;
-                self.check_bounds(&integer.to_string())
+                self.check_runtime_bounds(&integer.to_string(), "integer")
             }
             PropertyType::Boolean {} => {
                 if value.is_boolean() {
@@ -1181,32 +1181,6 @@ impl EffectiveProperty {
                 return Err(InstanceError::ConstraintViolation(format!(
                     "does not match pattern {pattern:?}"
                 )));
-            }
-        }
-        Ok(())
-    }
-
-    fn check_bounds(&self, literal: &str) -> Result<(), InstanceError> {
-        let value = Decimal::parse_str(literal).ok_or(InstanceError::TypeMismatch("integer"))?;
-        for constraints in &self.constraints {
-            for (member, bound, violated) in [
-                ("min", &constraints.min, std::cmp::Ordering::Less),
-                ("max", &constraints.max, std::cmp::Ordering::Greater),
-            ] {
-                let Some(bound) = bound else { continue };
-                let limit = Decimal::parse_str(bound.as_str()).ok_or_else(|| {
-                    InstanceError::Unsupported(format!(
-                        "malformed {member} bound {:?} on '{}'",
-                        bound.as_str(),
-                        self.id.as_str()
-                    ))
-                })?;
-                if value.cmp(&limit) == violated {
-                    return Err(InstanceError::ConstraintViolation(format!(
-                        "{literal} is outside {member} {:?}",
-                        bound.as_str()
-                    )));
-                }
             }
         }
         Ok(())

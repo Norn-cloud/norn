@@ -39,6 +39,11 @@ pub mod connect;
 pub mod connections;
 #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub mod dev;
+#[cfg(all(
+    any(feature = "native", feature = "duckdb"),
+    not(target_arch = "wasm32")
+))]
+mod http_head;
 pub mod incident;
 pub mod mcp;
 pub mod olap;

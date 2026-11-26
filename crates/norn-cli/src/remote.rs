@@ -170,7 +170,7 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
     let failed = http_failed
         || value.get("error").is_some()
         || value.pointer("/result/isError").and_then(Value::as_bool) == Some(true);
-    Ok((text, failed))
+    Ok((text, !failed))
 }
 
 fn response_text(reader: impl std::io::Read, is_sse: bool) -> Result<String, String> {

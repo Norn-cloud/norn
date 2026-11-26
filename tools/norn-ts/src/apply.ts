@@ -24,6 +24,7 @@ import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
 import { loadChecker } from "./checker-abi.ts"
 import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas, type PackResult } from "./pack.ts"
 import { readProject } from "./project.ts"
+import { isFetchableUrl } from "./setup.ts"
 import { compileProjectPack } from "./worker.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
@@ -38,10 +39,8 @@ export interface Target {
   readonly headers: Readonly<Record<string, string>>
 }
 
-/** Whether `url` may carry credentials: HTTPS, or plain HTTP to loopback. */
 export function credentialsAllowed(url: string): boolean {
-  const parsed = new URL(url)
-  return parsed.protocol === "https:" || (parsed.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname))
+  return isFetchableUrl(url)
 }
 
 /** Sign in to Studio by email and password; the session cookie. */

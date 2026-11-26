@@ -198,16 +198,10 @@ fn withheld_input_schema() -> Object {
 }
 
 fn values_schema() -> Object {
-    ObjectBuilder::new()
-        .schema_type(SchemaType::from_iter([
-            utoipa::openapi::Type::Object,
-            utoipa::openapi::Type::Null,
-        ]))
-        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(
-            "Every stored property by property id, null for a tombstone; decimals are exact JSON number tokens.",
-        ))
-        .build()
+    crate::objects::free_form(
+        "Every stored property by property id, null for a tombstone; decimals are exact JSON number tokens.",
+        true,
+    )
 }
 
 /// The raw row, when the caller holds Population, Values and Sources on it.

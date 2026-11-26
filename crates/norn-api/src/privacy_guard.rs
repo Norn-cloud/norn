@@ -281,46 +281,16 @@ fn text_of(value: &RuntimeValue) -> Option<String> {
     }
 }
 
-/// The marked fields of `row` for `actor`'s context.
+/// The marked text fields of `row` for free-text scanning.
 fn marked_fields<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     catalog: &MarkingCatalog,
     row: &ObjectRecord,
 ) -> Result<Vec<Candidate>, Refusal> {
-    let Some(markings) = privacy::row_markings(reader, catalog, row)? else {
-        // An unavailable snapshot: every field is treated as marked.
-        return Ok(row
-            .values
-            .iter()
-            .filter_map(|(property, value)| {
-                text_of(value).map(|value| Candidate {
-                    value,
-                    text: true,
-                    kind: field_kind(catalog, &[], property),
-                    label: title_case(&field_kind(catalog, &[], property)),
-                    row: row.clone(),
-                    property: property.clone(),
-                    markings: Vec::new(),
-                })
-            })
-            .collect());
-    };
-    Ok(markings
-        .iter()
-        .filter(|(_, ids)| !ids.is_empty())
-        .filter_map(|(property, ids)| {
-            let value = row.values.get(property).and_then(text_of)?;
-            let kind = field_kind(catalog, ids, property);
-            Some(Candidate {
-                value,
-                text: true,
-                label: title_case(&kind),
-                kind,
-                row: row.clone(),
-                property: property.clone(),
-                markings: ids.clone(),
-            })
-        })
+    let markings = privacy::row_markings(reader, catalog, row)?;
+    Ok(context_candidates(catalog, row, markings.as_ref())
+        .into_iter()
+        .filter(|candidate| candidate.text)
         .collect())
 }
 
@@ -429,10 +399,6 @@ fn splice(text: &str, ranges: &[(usize, usize, String)]) -> String {
     }
     out.push_str(text.get(at..).unwrap_or(""));
     out
-}
-
-fn bad(message: impl Into<String>) -> Refusal {
-    Refusal::invalid(message)
 }
 
 /// A field reference: object type, id and property.
@@ -574,10 +540,10 @@ fn context_tokens(
     (field_tokens, withheld)
 }
 
-/// Whether `actor` may reveal `candidate`'s value: every one of its markings
-/// allows it, and it has at least one.
-fn revealable<E: SqlEngine>(host: &DevHost<E>, actor: &str, candidate: &Candidate) -> bool {
-    !candidate.markings.is_empty() && candidate.markings.iter().all(|id| host.reveals(actor, id))
+/// Whether `actor` may reveal a field carrying `markings`: every marking
+/// allows it, and there is at least one.
+fn revealable<E: SqlEngine>(host: &DevHost<E>, actor: &str, markings: &[String]) -> bool {
+    !markings.is_empty() && markings.iter().all(|id| host.reveals(actor, id))
 }
 
 /// Replace marked values (context fields first, then any marked value the
@@ -707,16 +673,18 @@ fn context_block(rows: &[ObjectRecord], field_tokens: &BTreeMap<FieldRef, String
 /// A guard request's bounds; its idempotency key when they hold.
 fn checked_key(request: &NornGuardRequest) -> Result<&str, Refusal> {
     if request.text.chars().count() > MAX_PROMPT_CHARS {
-        return Err(bad(format!(
+        return Err(Refusal::invalid(format!(
             "text is at most {MAX_PROMPT_CHARS} characters"
         )));
     }
     if request.context.len() > MAX_CONTEXT {
-        return Err(bad(format!("at most {MAX_CONTEXT} context records")));
+        return Err(Refusal::invalid(format!(
+            "at most {MAX_CONTEXT} context records"
+        )));
     }
     let key = request.idempotency_key.as_str();
     if key.is_empty() || key.len() > 128 {
-        return Err(bad("idempotencyKey must be 1..=128 bytes"));
+        return Err(Refusal::invalid("idempotencyKey must be 1..=128 bytes"));
     }
     Ok(key)
 }
@@ -747,7 +715,7 @@ pub fn guard<E: SqlEngine>(
     // may only see its pseudonym. Those fall to the detector pass. A context
     // field is no exception (GUARD-ORACLE-1): reading its row is not
     // revealing its value.
-    let revealed = |candidate: &Candidate| revealable(host, actor, candidate);
+    let revealed = |candidate: &Candidate| revealable(host, actor, &candidate.markings);
     let scanned: Vec<Candidate> = scanned
         .into_iter()
         .filter(|candidate| {
@@ -814,13 +782,7 @@ pub fn guard<E: SqlEngine>(
                 markings: entry.markings.clone(),
                 revealable: match entry.source {
                     NornGuardSource::Detected => true,
-                    NornGuardSource::Field => {
-                        !entry.markings.is_empty()
-                            && entry
-                                .markings
-                                .iter()
-                                .all(|marking| host.reveals(actor, marking))
-                    }
+                    NornGuardSource::Field => revealable(host, actor, &entry.markings),
                 },
             })
             .collect(),
@@ -924,11 +886,11 @@ pub fn restore<E: SqlEngine>(
     access: &dyn ObjectAccess,
 ) -> Result<NornRestored, Refusal> {
     if request.text.chars().count() > MAX_PROMPT_CHARS * 2 {
-        return Err(bad("text is too long"));
+        return Err(Refusal::invalid("text is too long"));
     }
     let key = request.idempotency_key.as_str();
     if key.is_empty() || key.len() > 96 {
-        return Err(bad("idempotencyKey must be 1..=96 bytes"));
+        return Err(Refusal::invalid("idempotencyKey must be 1..=96 bytes"));
     }
     let actor = actor.ok_or_else(crate::authz::read_denied)?;
     scope_gate(host, scope, actor)?;
@@ -1074,8 +1036,7 @@ fn restore_one<E: SqlEngine>(
                     markings.push(marking.clone());
                 }
             }
-            let allowed =
-                !markings.is_empty() && markings.iter().all(|marking| host.reveals(actor, marking));
+            let allowed = revealable(host, actor, &markings);
             if allowed && let Some(value) = row.values.get(property).and_then(text_of) {
                 let receipt = privacy::record_reveal(
                     host,
