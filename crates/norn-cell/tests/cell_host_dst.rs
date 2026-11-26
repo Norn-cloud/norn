@@ -1935,14 +1935,13 @@ impl CellHost for PreconditionRaceHost<'_> {
         self.maybe_race().map_err(CommitError::Host)?;
         self.cell.commit(c)
     }
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         c: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        qty: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.maybe_race().map_err(CommitError::Host)?;
-        self.cell.commit_action_references(c, proof, qty)
+        self.cell.commit_with_evidence(c, evidence)
     }
     fn commit_owned_rows(
         &mut self,

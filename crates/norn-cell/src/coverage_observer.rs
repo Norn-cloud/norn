@@ -917,27 +917,13 @@ where
         self.record_commit_outcome(&targets, false, &result);
         result
     }
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         commit: CellCommit<E, C, I>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let targets = Self::capture_commit_targets(&commit);
-        let result = self.inner.commit_action_references(commit, proof, quantity);
-        self.record_commit_outcome(&targets, false, &result);
-        result
-    }
-    fn commit_action_quantity(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let targets = Self::capture_commit_targets(&commit);
-        let result = self
-            .inner
-            .commit_action_quantity(commit, requests, idempotency_key);
+        let result = self.inner.commit_with_evidence(commit, evidence);
         self.record_commit_outcome(&targets, false, &result);
         result
     }
@@ -948,17 +934,6 @@ where
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let targets = Self::capture_commit_targets(&commit);
         let result = self.inner.commit_owned_rows(commit, proof);
-        self.record_commit_outcome(&targets, false, &result);
-        result
-    }
-    fn commit_stamped(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        proof: norn_kernel::CreatorStampProof,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let targets = Self::capture_commit_targets(&commit);
-        let result = self.inner.commit_stamped(commit, proof, quantity);
         self.record_commit_outcome(&targets, false, &result);
         result
     }

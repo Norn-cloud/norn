@@ -626,21 +626,17 @@ where
     // ACTOR-STAMP-1: the proof binds this exact transaction; only it admits the stamp.
     let stamp =
         creator_stamp.map(|stamp| crate::CreatorStampProof::new(stamp, &commit, limits.max_events));
-    let result = if let Some(proof) = stamp {
-        let quantity = quantity
+    let evidence = crate::CommitEvidence {
+        stamp,
+        reference_reads,
+        quantity: quantity
             .as_ref()
-            .map(|(request, key)| (request, key.as_str()));
-        host.commit_stamped(commit, proof, quantity)
-    } else if let Some((request, key)) = quantity {
-        if let Some(proof) = reference_reads {
-            host.commit_action_references(commit, proof, Some((&request, &key)))
-        } else {
-            host.commit_action_quantity(commit, std::slice::from_ref(&request), &key)
-        }
-    } else if let Some(proof) = reference_reads {
-        host.commit_action_references(commit, proof, None)
-    } else {
+            .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
+    };
+    let result = if evidence.is_empty() {
         host.commit(commit)
+    } else {
+        host.commit_with_evidence(commit, evidence)
     };
     match result {
         Ok(receipt) => {

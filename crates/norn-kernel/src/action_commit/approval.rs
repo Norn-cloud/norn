@@ -318,19 +318,10 @@ where
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         Err(CommitError::ObservationAuthorization)
     }
-    fn commit_action_quantity(
+    fn commit_with_evidence(
         &mut self,
         _commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        _idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
-        Err(CommitError::ObservationAuthorization)
-    }
-    fn commit_action_references(
-        &mut self,
-        _commit: CellCommit<Self::Event, Self::Command, Self::Input>,
-        _proof: ActionReferenceReads,
-        _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        _evidence: crate::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         Err(CommitError::ObservationAuthorization)
     }

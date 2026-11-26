@@ -2140,54 +2140,33 @@ where
         self.commit_admitted(commit, CommitOptions::default())
     }
 
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         commit: CellCommit<E, C, I>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        if !proof.validates(&commit) {
-            return Err(CommitError::ObservationAuthorization);
-        }
-        // Drop to whole-object lineage if the kernel's catalog omitted or
-        // differed from the governing-law set this store enforces.
-        let (references, property_reads) =
-            if proof.matches_governing_laws(self.store.model().law_artifacts()) {
-                (proof.reference_reads(), proof.property_reads())
-            } else {
-                (&[][..], &[][..])
-            };
+        let (references, property_reads) = match &evidence.reference_reads {
+            Some(proof) => {
+                if !proof.validates(&commit) {
+                    return Err(CommitError::ObservationAuthorization);
+                }
+                // Drop to whole-object lineage if the kernel's catalog omitted or
+                // differed from the governing-law set this store enforces.
+                if proof.matches_governing_laws(self.store.model().law_artifacts()) {
+                    (proof.reference_reads(), proof.property_reads())
+                } else {
+                    (&[][..], &[][..])
+                }
+            }
+            None => (&[][..], &[][..]),
+        };
         self.commit_admitted(
             commit,
             CommitOptions {
-                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
+                quantity: evidence.quantity,
                 references,
                 property_reads,
-                ..Default::default()
-            },
-        )
-    }
-
-    fn commit_action_quantity(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_partition_postings(commit, requests, idempotency_key)
-    }
-
-    fn commit_stamped(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        proof: norn_kernel::CreatorStampProof,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_admitted(
-            commit,
-            CommitOptions {
-                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-                stamp: Some(proof),
+                stamp: evidence.stamp,
                 ..Default::default()
             },
         )

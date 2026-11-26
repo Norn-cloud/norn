@@ -15,13 +15,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
-use norn_cell::{Model, SqliteCell, StoreOptions};
+use norn_cell::{CellError, Model, SqliteCell, StoreOptions};
 use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, ObjectTypeDef, RuntimeValue};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost, Command,
-    DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime,
+    DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LinkKey, LogicalTime,
     SynchronousRule, TransitionGuard, TypeCatalog, World, actor_derived_fields, commit_action,
     commit_action_with_limits, commit_action_with_preparation, prepare_action_input_for_call,
     transition_guards,
@@ -90,6 +90,26 @@ impl ActionAuthorizer for Members {
     }
     fn authorize_read_type(&self, _: &ActionReadTypeAuthzRequest<'_>) -> Result<(), ActionDenial> {
         Ok(())
+    }
+}
+
+struct ReferenceMembers(Members);
+
+impl ActionAuthorizer for ReferenceMembers {
+    fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        self.0.authorize(request)
+    }
+    fn authorize_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        self.0.authorize_read(request)
+    }
+    fn authorize_read_type(
+        &self,
+        request: &ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        self.0.authorize_read_type(request)
+    }
+    fn supports_action_reference_lineage(&self, _: &ActionRoot) -> bool {
+        true
     }
 }
 
@@ -1031,6 +1051,271 @@ fn stamped_create_with_a_quantity_effect_commits_atomically() {
     );
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
+fn composed_evidence_definitions() -> Vec<ObjectTypeDef> {
+    let mut definitions = types();
+    definitions.push(
+        serde_json::from_value(json!({
+            "name": "hr.Employee",
+            "identity": [{"name": "primary", "properties": ["id"]}],
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "national_id", "type": {"kind": "text"}, "markings": ["pii"]}
+            ]
+        }))
+        .unwrap(),
+    );
+    let transfer = definitions
+        .iter_mut()
+        .find(|definition| definition.name.as_str() == TRANSFER)
+        .unwrap();
+    transfer.properties.extend(
+        serde_json::from_value::<Vec<norn_ir::Property>>(json!([
+            {"id": "employee_id", "type": {"kind": "text"}},
+            {"id": "reservation_id", "type": {"kind": "text"}},
+            {"id": "posting_id", "type": {"kind": "text"}}
+        ]))
+        .unwrap(),
+    );
+    transfer.links.push(
+        serde_json::from_value(json!({
+            "id": "employee",
+            "target": "hr.Employee",
+            "cardinality": {"to": "one", "from": "many"}
+        }))
+        .unwrap(),
+    );
+    definitions
+}
+
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
+fn composed_evidence_action(precondition: &str) -> ActionRoot {
+    let mut request_action = action("supply.transfer.request");
+    request_action.quantity_effect = Some(norn_ir::ActionQuantityEffect {
+        ledger_id: "stock".into(),
+        balance_versions_field: "balance_versions".into(),
+        operation: norn_ir::ActionQuantityOperation::PostReservation {
+            reservation_id_field: "reservation_id".into(),
+            posting_id_field: "posting_id".into(),
+        },
+    });
+    request_action.slice = serde_json::from_value(json!([{
+        "name": "emp",
+        "objectType": "hr.Employee",
+        "key": {"property": {"from": "input", "property": "employee_id"}}
+    }]))
+    .unwrap();
+    request_action.preconditions = vec![precondition.into()];
+    request_action.create_links = serde_json::from_value(json!([{
+        "link": "employee",
+        "targetType": "hr.Employee",
+        "targetIdField": "employee_id"
+    }]))
+    .unwrap();
+    let mut schema = serde_json::to_value(&request_action.input_schema).unwrap();
+    for field in ["employee_id", "reservation_id", "posting_id"] {
+        schema["properties"][field] = json!({"type": "string"});
+    }
+    schema["properties"]["balance_versions"] = json!({"type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "properties": {"account": {"type": "string"}, "unit": {"type": "string"},
+            "layer": {"type": "string"}, "version": {"type": "integer"}},
+        "required": ["account", "unit", "layer", "version"]}});
+    for field in [
+        "employee_id",
+        "reservation_id",
+        "posting_id",
+        "balance_versions",
+    ] {
+        schema["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(field));
+    }
+    request_action.input_schema = serde_json::from_value(schema).unwrap();
+    request_action
+}
+
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
+fn seed_composed_cell(
+    path: &Path,
+    definitions: &[ObjectTypeDef],
+) -> (Cell, Vec<norn_ir::quantity_ledger::BalanceVersion>) {
+    use norn_ir::quantity_ledger::{QuantityOperation, QuantityResolution};
+    let mut cell = open(path, definitions, &[]);
+    cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new("hr.Employee", "E1"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(
+                    json!({"id": "E1", "status": "active", "national_id": "123-45-6789"}),
+                )
+                .unwrap(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    for (key, mut request) in [
+        ("define", quantity_support::define()),
+        ("fund", quantity_support::post(0, "fund", "fund", 20)),
+        ("reserve", quantity_support::reserve(0, "r", 10, 100)),
+    ] {
+        request.balance_versions = cell
+            .store()
+            .read()
+            .quantity_balance_versions("main", &request)
+            .unwrap();
+        cell.commit_with_partition_postings(CellCommit::empty(), &[request], key)
+            .unwrap();
+    }
+    let posting = quantity_support::request(
+        0,
+        QuantityOperation::PostReservation {
+            reservation_id: "r".into(),
+            posting_id: "shipment".into(),
+            resolution: QuantityResolution::All,
+        },
+    );
+    let fences = cell
+        .store()
+        .read()
+        .quantity_balance_versions("main", &posting)
+        .unwrap();
+    (cell, fences)
+}
+
+/// Wave-1 A1 (`CommitEvidence`): creator stamp, field-level reference reads
+/// onto a PII-bearing slice target with `createLinks`, and a quantity posting
+/// compose in one atomic transaction, fail closed on conflicts or classified
+/// reads, survive SQLite reopen, and replay cleanly.
+#[test]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
+fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("composed-evidence.sqlite");
+    let definitions = composed_evidence_definitions();
+    let catalog = TypeCatalog::new(&definitions);
+    let (mut cell, fences) = seed_composed_cell(&path, &definitions);
+    let members = ReferenceMembers(Members::of(&["person:requester"]));
+    let clean_action = composed_evidence_action("slice.emp.status == 'active'");
+    let baseline = cell.store().read().dump().unwrap();
+
+    // 1. Stale balance-version fence conflicts atomically (no writes, link, or posting).
+    let mut stale_fences = fences.clone();
+    stale_fences[0].version = stale_fences[0].version.saturating_add(99);
+    let stale_call = call(
+        &clean_action,
+        "person:requester",
+        json!({"transfer_id": "TR-COMP", "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
+            "reservation_id": "r", "posting_id": "shipment", "balance_versions": stale_fences}),
+        "q-stale",
+    );
+    assert!(commit_action(&mut cell, &catalog, &stale_call, &members).is_err());
+    assert_eq!(cell.store().read().dump().unwrap(), baseline);
+
+    // 2. Classified precondition read refuses `createLinks` and posts zero quantity.
+    let pii_action = composed_evidence_action("slice.emp.national_id == '123-45-6789'");
+    let pii_call = call(
+        &pii_action,
+        "person:requester",
+        json!({"transfer_id": "TR-PII", "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
+            "reservation_id": "r", "posting_id": "shipment", "balance_versions": fences}),
+        "q-pii",
+    );
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &pii_call, &members),
+        Err(norn_kernel::ActionRefusal::Decision(
+            norn_kernel::DecisionRefusal::Host(CellError::MarkingDeclassificationInvalid(_))
+        ))
+    ));
+    assert_eq!(cell.store().read().dump().unwrap(), baseline);
+
+    // 3. Valid composed create commits stamp + unmarked link + quantity posting atomically.
+    let valid_call = call(
+        &clean_action,
+        "person:requester",
+        json!({"transfer_id": "TR-COMP", "sku": "SKU-7", "quantity": 12, "employee_id": "E1",
+            "reservation_id": "r", "posting_id": "shipment", "balance_versions": fences}),
+        "q-comp",
+    );
+    let ActionOutcome::Committed {
+        receipt: first_receipt,
+        ..
+    } = commit_action(&mut cell, &catalog, &valid_call, &members).unwrap()
+    else {
+        panic!("expected committed composed action");
+    };
+    let committed_dump = cell.store().read().dump().unwrap();
+    drop(cell);
+
+    // 4. Reopen from disk and replay the exact idempotent call.
+    let mut reopened = open(&path, &definitions, &[]);
+    let transfer = values(&reopened, TRANSFER, "TR-COMP").expect("persisted transfer");
+    assert_eq!(text(&transfer, "requested_by"), Some("person:requester"));
+    let edge = LinkKey::new(
+        FactKey::new(TRANSFER, "TR-COMP"),
+        "employee",
+        FactKey::new("hr.Employee", "E1"),
+    );
+    assert!(reopened.load_link(&edge).unwrap().exists());
+    let marks = reopened
+        .store()
+        .read()
+        .effective_markings("main", TRANSFER, "TR-COMP", None)
+        .unwrap()
+        .unwrap();
+    assert!(
+        marks.values().all(Vec::is_empty),
+        "unexpected PII taint: {marks:?}"
+    );
+    assert!(
+        reopened
+            .store()
+            .read()
+            .quantity_posting("main", "stock", "shipment")
+            .unwrap()
+            .is_some()
+    );
+    assert!(matches!(
+        commit_action(&mut reopened, &catalog, &valid_call, &members).unwrap(),
+        ActionOutcome::Replayed { .. }
+    ));
+    assert_eq!(reopened.store().read().dump().unwrap(), committed_dump);
+    assert!(
+        first_receipt
+            .written
+            .iter()
+            .any(|w| w.key == FactKey::new(TRANSFER, "TR-COMP"))
+    );
+}
+
 /// ACTOR-STAMP-1 (Astra round 2): a protected default is compared as hosts
 /// store it, so an ordinary create of a type with a protected timestamp
 /// default given with an offset admits its canonical UTC value.
@@ -1162,16 +1447,15 @@ impl CellHost for Tamper<'_> {
     ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
         self.inner.commit(commit)
     }
-    fn commit_stamped(
+    fn commit_with_evidence(
         &mut self,
         mut commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::CreatorStampProof,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
-        if self.drop_links {
+        if self.drop_links && evidence.stamp.is_some() {
             commit.links.clear();
         }
-        self.inner.commit_stamped(commit, proof, quantity)
+        self.inner.commit_with_evidence(commit, evidence)
     }
     fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
         Ok(None)

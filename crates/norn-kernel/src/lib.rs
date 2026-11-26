@@ -159,12 +159,13 @@ pub use action_commit::{
 };
 pub use cell_host::{Authorized, Checked, CommitSeal, Committed, Proposed};
 pub use cell_host::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
-    CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
-    FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
-    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateActionRead,
-    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance,
-    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitEvidence, CommitModel, CommitReceipt,
+    CommitVersions, CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation,
+    FactState, FactVersion, FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation,
+    LinkReadTarget, LinkState, LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed,
+    PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadExpectation,
+    PredicateReadMember, Provenance, SerializationLane, WrittenLinkVersion, WrittenVersion,
+    check_commit,
 };
 pub use creator_stamp::{CreatorStampProof, check_commit_stamped};
 pub use decider::{

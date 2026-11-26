@@ -164,38 +164,14 @@ impl CellHost for SqlitePackHost {
         self.cell_mut().map_err(CommitError::Host)?.commit(commit)
     }
 
-    fn commit_action_references(
+    fn commit_with_evidence(
         &mut self,
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::action_commit::ActionReferenceReads,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+        evidence: norn_kernel::CommitEvidence<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.cell_mut()
             .map_err(CommitError::Host)?
-            .commit_action_references(commit, proof, quantity)
-    }
-
-    fn commit_action_quantity(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.cell_mut()
-            .map_err(CommitError::Host)?
-            .commit_action_quantity(commit, requests, idempotency_key)
-    }
-
-    // ACTOR-STAMP-1: a governed create's creator stamp reaches the cell's admission.
-    fn commit_stamped(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        proof: norn_kernel::CreatorStampProof,
-        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.cell_mut()
-            .map_err(CommitError::Host)?
-            .commit_stamped(commit, proof, quantity)
+            .commit_with_evidence(commit, evidence)
     }
 
     fn commit_owned_rows(
