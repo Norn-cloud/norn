@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -57,6 +58,12 @@ def judge(values: list[float], better: str, noise_pct: float, window: int = 3, c
     """Verdict for one series (values in measurement order)."""
     if better not in ("lower", "higher"):
         raise ValueError(f"better must be lower or higher, not {better!r}")
+    if window < 1 or confirm < 1:
+        raise ValueError(f"window ({window}) and confirm ({confirm}) must be >= 1")
+    if not math.isfinite(noise_pct) or noise_pct < 0:
+        raise ValueError(f"noise_pct must be finite and non-negative, not {noise_pct!r}")
+    if any(not math.isfinite(v) for v in values):
+        raise ValueError("series contains non-finite values")
     if len(values) < window + confirm:
         return {"status": "insufficient", "points": len(values), "needed": window + confirm}
     history, recent = values[:-confirm], values[-confirm:]
