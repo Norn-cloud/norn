@@ -28,7 +28,7 @@ const RECORDED = (() => {
 })()
 /** The workspace a live mode decided at `scope`, its reads sent through `fetcher`. */
 function liveAt(scope: StudioScope, fetcher?: Fetch) {
-  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>() } }, fetcher)
+  const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>(), builtins: [] } }, fetcher)
   if (workspace.kind !== "live") throw new Error("expected a live workspace")
   return workspace
 }
@@ -49,6 +49,7 @@ async function page(concept: string, id: string, view = "business", links?: unkn
   const client = new QueryClient()
   const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+  client.setQueryData(["catalog", "builtins"], [])
   if (access !== undefined) client.setQueryData(["live-access"], access)
   cached?.(client)
   const data = { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") } as ObjectReads
@@ -109,6 +110,7 @@ test("a record id with slashes is the rest of the path, so a reload finds it wit
 test("the object type's own URL still opens the type, not an empty record", async () => {
   const client = new QueryClient()
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+  client.setQueryData(["catalog", "builtins"], [])
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([
@@ -179,6 +181,7 @@ test("Business shows a type's plain summary only; Technical shows the registry's
     globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
     const client = new QueryClient()
     client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
+    client.setQueryData(["catalog", "builtins"], [])
     const root = createRootRoute()
     const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: ObjectTypePage })]), history: createMemoryHistory({ initialEntries: ["/sources/core.Resource"] }) })
     await router.load()
@@ -299,6 +302,7 @@ test("a refusal with no detail reads nothing but the refusal: a warm cache's fin
   const artifact = (file: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/packs/scans/artifacts", file), "utf8")) as unknown
   const client = new QueryClient()
   client.setQueryData(["catalog"], readDocument(JSON.stringify([artifact("docs.ScannedDocument.entity.json"), JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"), "utf8"))]), "live"))
+  client.setQueryData(["catalog", "builtins"], [])
   const id = "SCAN-INV-1042"
   // What this page read earlier, under a grant since revoked: the finding's law and the values it compared.
   client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
@@ -319,6 +323,7 @@ test("a held record's finding shows the values its law compared, a summed list a
   const read = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs", path), "utf8")) as unknown
   const client = new QueryClient()
   client.setQueryData(["catalog"], readDocument(JSON.stringify([read("../../fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
+  client.setQueryData(["catalog", "builtins"], [])
   const id = "SCAN-INV-1042"
   const scope = { orgId: "org_a", environmentId: "prod" }
   const { reader } = liveAt(scope)
@@ -436,7 +441,7 @@ test("the record page's Quarantined and rules-broken chips show only under a dec
   const answer = { object: live("object"), links: live("links"), source: live("source") }
   const held = readDocument<ObjectFindings>(JSON.stringify({ objectType: concept, id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "builtin", id: "core.required", version: "1" }, severity: "error", message: "A required value is missing.", status: "open", firstSeen: "", lastSeen: "" }] }), "live")
-  const mode = { kind: "live", scope, catalog: fixture("three-systems.definitions.json"), counts: {}, publishedQuestions: new Set<string>() }
+  const mode = { kind: "live", scope, catalog: fixture("three-systems.definitions.json"), counts: {}, publishedQuestions: new Set<string>(), builtins: [] }
   const modeKey = ["studio-mode", studioScopeKey(scope)]
   const decided = (client: QueryClient) => {
     client.setQueryData(["studio-scope"], scope)
@@ -506,9 +511,12 @@ test("the record page is the cell's: read from the definitions, or said to be no
   const others = definitions.filter((artifact) => artifact.artifactId !== widget.artifactId)
   expect(recordPageOf([...others, widget])?.pages[0]?.pageId).toBe("record")
   expect(recordPageOf(others)).toBeUndefined()
+  // A workspace that installed none is served the cell's built-in page beside its definitions.
+  expect(recordPageOf(others, [widget as never])?.pages[0]?.pageId).toBe("record")
   const render = async (artifacts: unknown[]) => {
     const client = new QueryClient()
     client.setQueryData(["catalog"], readDocument(JSON.stringify(artifacts), "recorded"))
+    client.setQueryData(["catalog", "builtins"], [])
     const root = createRootRoute()
     const router = createRouter({
       routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage })]),

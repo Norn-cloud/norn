@@ -380,6 +380,17 @@ test.each([
   }
 })
 
+test("the catalog's built-in pages are the cell's: each served artifact, none when it sends none", async () => {
+  const page = { artifactId: "norn.studio.record.widget", kind: "widget", payload: {} }
+  const served = JSON.stringify({ admitted: true, version: 3, artifacts: [], builtins: [{ artifact: page, sha256: "ab" }, { artifact: null }, { sha256: "cd" }, 7] })
+  const mode = await readMode(server({ "/v1/definitions": [200, served] }).fetcher)
+  if (mode.kind !== "live") throw new Error("expected live")
+  expect(mode.builtins).toEqual([page])
+  expect(await liveTransport(mode.catalog, mode.counts, mode.builtins).builtins()).toEqual([page])
+  const plain = await readMode(server({ "/v1/definitions": [200, DEFINITIONS] }).fetcher)
+  expect(plain.kind === "live" && plain.builtins).toEqual([])
+})
+
 test("the catalog's per-type counts are the cell's, kept only when well formed; none when it sends none", async () => {
   const counted = '{"admitted":true,"version":3,"artifacts":[],"objectCounts":{"shop.Product":{"count":12,"approximate":false},"shop.Order":{"count":500,"approximate":true},"shop.Bad":{"count":-1,"approximate":false},"shop.Odd":{"count":3}}}'
   const mode = await readMode(server({ "/v1/definitions": [200, counted] }).fetcher)

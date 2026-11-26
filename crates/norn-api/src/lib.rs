@@ -79,6 +79,8 @@ pub mod privacy_guard;
 pub mod pull;
 /// Authorized exact question answers and numeric traces.
 pub mod question_routes;
+/// Studio's built-in page documents, served beside the installed definitions.
+pub mod builtin_pages;
 /// Authorized read services shared by transports.
 pub mod routes;
 /// Start, read and list runs of installed flows (RUN-ROUTES-1).

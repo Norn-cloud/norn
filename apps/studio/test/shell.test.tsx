@@ -289,6 +289,7 @@ test("#1414: the workspace switcher shows the workspace name and role, never raw
     catalog: { document: [], numbers: new Map(), origin: "live" },
     counts: {},
     publishedQuestions: new Set(),
+    builtins: [],
   }
   client.setQueryData(modeQuery(scope).queryKey, liveMode)
   const doc: WorkspacesDocument = {

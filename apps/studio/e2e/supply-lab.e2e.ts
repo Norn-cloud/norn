@@ -90,6 +90,23 @@ test("records: a grid counts and lists the seeded records, as the cell counts th
   await shoot(page, "records")
 })
 
+test("record page: a seeded record opens from the grid on the record page the cell serves built in", async ({ page }) => {
+  const type = createdBy("supply.movement.record")
+  // The pack installs no record page of its own: the cell serves Studio's built-in one (norn-api builtin_pages).
+  expect([...lab.artifacts.values()].some((artifact) => artifact.kind === "widget")).toBe(false)
+  await open(page, CLERK, `/objects/${type}`)
+  const grid = page.getByRole("grid")
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  await grid.focus()
+  await page.keyboard.press("Enter")
+  await sheet(page).getByRole("link", { name: "Open full record" }).click()
+  await expect(page).toHaveURL(new RegExp(`/sources/${type.replaceAll(".", "\\.")}/.+$`))
+  await expect(page.locator("[data-fact]").first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-record-page="not-served"]')).toHaveCount(0)
+  await expect(page.getByText("No record page", { exact: true })).toHaveCount(0)
+  await shoot(page, "record")
+})
+
 test("actions: the clerk records a movement; the cell commits it and Studio shows its receipt", async ({ page }) => {
   const id = "supply.movement.record"
   const type = createdBy(id)
