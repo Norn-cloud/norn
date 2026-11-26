@@ -1345,11 +1345,13 @@ fn words(
 
 /// The input field a slice keys by, when it is `{"property": {"from": "input", "property": F}}`.
 fn slice_input(key: &norn_ir::SliceKey) -> Option<String> {
-    let key = serde_json::to_value(key).ok()?;
-    let property = key.get("property")?;
-    (property.get("from")?.as_str()? == "input")
-        .then(|| property.get("property")?.as_str().map(str::to_owned))
-        .flatten()
+    if let norn_ir::SliceKey::Property { from, property } = key
+        && from == "input"
+    {
+        Some(property.as_str().to_owned())
+    } else {
+        None
+    }
 }
 
 /// The fix: an action the caller may call that upserts this record and takes
