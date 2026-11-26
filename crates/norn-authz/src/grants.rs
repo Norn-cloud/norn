@@ -154,6 +154,7 @@ impl CompiledGrants {
                         .for_policy(error.policy_id().to_string()),
                 );
             }
+            crate::admit::sort_diagnostics(&mut diagnostics);
         }
         if diagnostics.is_empty() {
             Ok(Self { schema, policies })
@@ -169,7 +170,13 @@ impl CompiledGrants {
     }
 
     fn evaluate(&self, query: &CapabilityQuery<'_>) -> Option<bool> {
-        let subject = uid(SUBJECT_TYPE, query.subject_id)?;
+        static SUBJECT_NAME: std::sync::OnceLock<Option<EntityTypeName>> =
+            std::sync::OnceLock::new();
+        static REQUEST_NAME: std::sync::OnceLock<Option<EntityTypeName>> =
+            std::sync::OnceLock::new();
+        static ACTION_NAME: std::sync::OnceLock<Option<EntityTypeName>> =
+            std::sync::OnceLock::new();
+        let subject = cached_uid(&SUBJECT_NAME, SUBJECT_TYPE, query.subject_id)?;
         let mut attrs = HashMap::from([(
             "kind".to_owned(),
             RestrictedExpression::new_string(query.actor_kind.to_owned()),
@@ -181,7 +188,7 @@ impl CompiledGrants {
             );
         }
         let subject_entity = Entity::new(subject.clone(), attrs, HashSet::new()).ok()?;
-        let request_uid = uid(REQUEST_TYPE, REQUEST_ID)?;
+        let request_uid = cached_uid(&REQUEST_NAME, REQUEST_TYPE, REQUEST_ID)?;
         let entities = Entities::from_entities(
             [
                 subject_entity,
@@ -202,7 +209,7 @@ impl CompiledGrants {
             pairs.push(("binding".to_owned(), binding_record(binding)?));
         }
         let context = Context::from_pairs(pairs).ok()?;
-        let action = uid(ACTION_TYPE, ACTION_ID)?;
+        let action = cached_uid(&ACTION_NAME, ACTION_TYPE, ACTION_ID)?;
         let request =
             Request::new(subject, action, request_uid, context, Some(&self.schema)).ok()?;
         let response = Authorizer::new().is_authorized(&request, &self.policies, &entities);
@@ -211,6 +218,20 @@ impl CompiledGrants {
                 && response.diagnostics().errors().next().is_none(),
         )
     }
+}
+
+pub(crate) fn cached_uid(
+    cache: &std::sync::OnceLock<Option<EntityTypeName>>,
+    entity_type: &str,
+    id: &str,
+) -> Option<EntityUid> {
+    let type_name = cache
+        .get_or_init(|| EntityTypeName::from_str(entity_type).ok())
+        .clone()?;
+    Some(EntityUid::from_type_name_and_id(
+        type_name,
+        EntityId::new(id),
+    ))
 }
 
 pub(crate) fn uid(entity_type: &str, id: &str) -> Option<EntityUid> {
@@ -278,9 +299,21 @@ fn validate_grant(grant: &CapabilityGrant) -> Vec<AuthzDiagnostic> {
     if grant
         .capabilities
         .iter()
-        .any(|capability| capability.trim().is_empty())
+        .any(|capability| !is_exact_value(capability))
     {
-        invalid("a grant contains an empty capability");
+        invalid("a grant capability must be one exact, non-wildcard value");
+    }
+    if let Some(binding) = &grant.binding
+        && (!binding
+            .required()
+            .iter()
+            .all(|(_, value)| is_exact_value(value))
+            || binding
+                .artifact_version
+                .as_deref()
+                .is_some_and(|version| !is_exact_value(version)))
+    {
+        invalid("binding fields must be exact, non-wildcard values");
     }
     diagnostics
 }
