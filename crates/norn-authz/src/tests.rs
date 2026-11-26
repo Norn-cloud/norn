@@ -765,7 +765,7 @@ mod pdp {
 
         let mut blank_role: serde_json::Value =
             serde_json::from_str(ORDER_ACCESS).expect("fixture JSON parses");
-        blank_role["rules"][0]["allOf"][0]["role"]["anyOf"] = serde_json::json!(["   "]);
+        blank_role["rules"][1]["allOf"][0]["role"]["anyOf"] = serde_json::json!(["   "]);
         let blank_role: crate::access::AccessIr =
             serde_json::from_value(blank_role).expect("AccessIR decodes");
         let err = crate::compile(&super::schema(), &blank_role).expect_err("blank role refused");
@@ -777,12 +777,25 @@ mod pdp {
             "rules": [],
             "genericRules": [{
                 "ruleId": "entitlement.none",
+                "target": { "kind": "allAdmittedObjectTypes" },
+                "actions": { "kind": "allAdmittedActions" },
                 "scope": { "dimensions": ["tenant"] },
                 "allOf": [{ "entitlement": { "kind": "none" } }]
             }]
         }))
         .expect("generic AccessIR decodes");
-        let projection = norn_projections::project_cedar_schema(&[], &[], &[]);
+        let base_projection = norn_projections::project_cedar_schema(&[], &[], &[]);
+        let inferred = crate::infer_principal_attributes(
+            std::slice::from_ref(&generic_no_org),
+            &base_projection,
+        )
+        .expect("generic rule principal attributes infer");
+        let projection = norn_projections::project_cedar_schema_with_principal_attributes(
+            &[],
+            &[],
+            &[],
+            &inferred,
+        );
         let schema =
             crate::AuthzSchema::from_projected_cedarschema(&projection.schema).expect("schema");
         let err = crate::compile_all_projected(&schema, &[generic_no_org], &projection)

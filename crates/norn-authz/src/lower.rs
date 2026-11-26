@@ -436,12 +436,12 @@ fn lower_document(
     );
 }
 
-fn validate_generic_rule<'a>(
+fn validate_generic_rule<'a, 'c>(
     rule: &'a norn_ir::access::GenericAccessRule,
     projection: Option<&CedarSchemaProjection>,
-    catalog: Option<&'a EntitlementCatalog>,
+    catalog: Option<&'c EntitlementCatalog>,
     seen: &mut BTreeSet<&'a str>,
-) -> Result<&'a EntitlementCatalog, (AuthzCode, String)> {
+) -> Result<&'c EntitlementCatalog, (AuthzCode, String)> {
     if !seen.insert(rule.rule_id.as_str()) {
         return Err((
             AuthzCode::AccessRuleDuplicate,
