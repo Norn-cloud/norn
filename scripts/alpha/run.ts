@@ -2,8 +2,9 @@ import { deepStrictEqual, strictEqual } from "node:assert";
 import type { Definitions, Json, Query, Runtime, Surface, Surfaces } from "./contract.ts";
 
 export async function runAlpha(definitions: Definitions, surfaces: Surfaces, runtime: Runtime) {
+  const tenant = await runtime.open();
+  let primaryFailed = false;
   try {
-    const tenant = await runtime.open();
     const compiled = await definitions.compileDefinition(
       "tools/norn-ts/fixtures/engine-alpha/sales-order.source.ts",
     );
@@ -49,6 +50,7 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
       await refuse(surface, "alpha.order.record_invoice", { id: `${orderId}-early`, order_id: orderId, amount: "10", reference: "early" }, query);
       await invoke(surface, "alpha.order.approve", { id: orderId });
       const subscription = await surfaces.subscribe(query);
+      let subFailed = false;
       try {
         // next() consumes the initial subscription snapshot before the mutation.
         deepStrictEqual(await subscription.next(), (await snapshot(query)).state);
@@ -81,11 +83,25 @@ export async function runAlpha(definitions: Definitions, surfaces: Surfaces, run
           await surfaces.invoke(surface, "alpha.order.undeclared", { id: orderId }, "operator"),
           { kind: "refused", code: "action.unknown" },
         );
+      } catch (error) {
+        subFailed = true;
+        throw error;
       } finally {
-        await subscription.close();
+        try {
+          await subscription.close();
+        } catch (closeError) {
+          if (!subFailed) throw closeError;
+        }
       }
     }
+  } catch (error) {
+    primaryFailed = true;
+    throw error;
   } finally {
-    await runtime.close();
+    try {
+      await runtime.close();
+    } catch (closeError) {
+      if (!primaryFailed) throw closeError;
+    }
   }
 }

@@ -53,6 +53,22 @@ pub(super) fn type_text(column: &Column, text: Option<&str>) -> Result<Cell, Str
     }
 }
 
+fn is_decimal_shape(text: &str) -> bool {
+    let body = text
+        .strip_prefix('+')
+        .or_else(|| text.strip_prefix('-'))
+        .unwrap_or(text);
+    match body.split_once('.') {
+        Some((whole, fraction)) => {
+            !whole.is_empty()
+                && !fraction.is_empty()
+                && whole.bytes().all(|b| b.is_ascii_digit())
+                && fraction.bytes().all(|b| b.is_ascii_digit())
+        }
+        None => !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+
 fn parse(kind: ColumnKind, text: &str) -> Result<Cell, &'static str> {
     match kind {
         ColumnKind::Text | ColumnKind::Opaque => Ok(Cell::Text(text.to_owned())),
@@ -71,11 +87,7 @@ fn parse(kind: ColumnKind, text: &str) -> Result<Cell, &'static str> {
             Ok(Cell::Dec(value))
         }
         ColumnKind::Decimal { scale } => {
-            let others: String = text.chars().filter(|c| !c.is_ascii_digit()).collect();
-            let shaped = ["", ".", "-", "+", "-.", "+."].contains(&others.as_str())
-                && !text.trim_start_matches(['+', '-']).starts_with('.')
-                && !text.ends_with('.');
-            if !shaped {
+            if !is_decimal_shape(text) {
                 return Err("bulk.not_decimal");
             }
             let value = match Dec::parse_at(text, scale) {
@@ -89,11 +101,15 @@ fn parse(kind: ColumnKind, text: &str) -> Result<Cell, &'static str> {
                 Err(OUT_OF_RANGE)
             }
         }
-        ColumnKind::Boolean => match text.to_lowercase().as_str() {
-            "true" => Ok(Cell::Bool(true)),
-            "false" => Ok(Cell::Bool(false)),
-            _ => Err("bulk.not_boolean"),
-        },
+        ColumnKind::Boolean => {
+            if text.eq_ignore_ascii_case("true") {
+                Ok(Cell::Bool(true))
+            } else if text.eq_ignore_ascii_case("false") {
+                Ok(Cell::Bool(false))
+            } else {
+                Err("bulk.not_boolean")
+            }
+        }
         ColumnKind::Date => parse_date(text)
             .map(|t| Cell::Instant {
                 text: text.to_owned(),
@@ -113,6 +129,9 @@ fn parse(kind: ColumnKind, text: &str) -> Result<Cell, &'static str> {
 
 /// The first declared pointwise law a typed value breaks.
 fn first_law(column: &Column, cell: &Cell) -> Option<&'static str> {
+    if column.laws.is_empty() {
+        return None;
+    }
     let text = cell.text()?;
     column.laws.iter().find_map(|law| match law {
         PointLaw::OneOf(values) => {

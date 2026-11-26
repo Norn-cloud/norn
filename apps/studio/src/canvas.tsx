@@ -73,8 +73,8 @@ export function BundleEdge({ id, targetX, targetY, markerEnd, data }: EdgeProps<
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {routed.ticks.map((tick, index) => <circle key={index} cx={tick.x} cy={tick.y} r={3} className="canvas-bundle-tick" />)}
       <EdgeLabelRenderer>
-        <div data-edge-label={id} title={`${data.label}: ${data.sources.map(words).join(", ")}`} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
-          style={{ maxWidth: 220, transform: `translate(-50%, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
+        <button type="button" data-edge-label={id} title={`${data.label}: ${data.sources.map(words).join(", ")}`} className={cn(EDGE_PILL, "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
+          style={{ maxWidth: 220, transform: `translate(-50%, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</button>
       </EdgeLabelRenderer>
     </>
   )
@@ -92,8 +92,8 @@ export function StepEdge({ id, sourceX, sourceY, targetX, targetY, markerEnd, da
       <BaseEdge id={id} path={routed.path} markerEnd={markerEnd} />
       {data?.label && room >= 28 && (
         <EdgeLabelRenderer>
-          <div data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
-            style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</div>
+          <button type="button" data-edge-label={id} title={data.label} className={cn(EDGE_PILL, "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring", data.failing && "text-destructive-text")} onClick={() => store.getState().addSelectedEdges([id])}
+            style={{ maxWidth: room, transform: `translate(${shift}, -50%) translate(${routed.label.x}px, ${routed.label.y}px)` }}>{data.label}</button>
         </EdgeLabelRenderer>
       )}
     </>

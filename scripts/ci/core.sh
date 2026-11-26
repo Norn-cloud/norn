@@ -318,6 +318,8 @@ run_phase() {
       # With Cargo autodiscovery disabled, a new test file must be enrolled in suites.rs.
       python3 scripts/codemods/fold_integration_tests.py --check
       python3 scripts/ci/frontier.py self-test
+      # The duration table's generator, over synthetic bundle logs.
+      python3 crates/norn-skeleton-guard/scripts/test_bundle_durations.py
       python3 scripts/ci/python_isolation.py
       python3 scripts/ci/test_python_isolation.py
       python3 scripts/proof_enrollment.py
@@ -633,37 +635,29 @@ PY
 # The hosted plan job has no prebuilt xtask. Keep its packing model in sync
 # with the Rust runner until the planner can use a cached or prebuilt binary.
 hosted_bundle_plan() {
-  python3 - "$1" "$(list_shards)" "${phases[*]}" <<'PY'
+  # The duration table of this script's own tree (the one xtask embeds), whatever the cwd.
+  python3 - "$1" "$(list_shards)" "${phases[*]}" "$(dirname -- "${BASH_SOURCE[0]}")/../../crates/norn-skeleton-guard/src/ci/bundle-durations.json" <<'PY'
 import json, sys
-raw, shards, phases = sys.argv[1:]
+raw, shards, phases, durations = sys.argv[1:]
 plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
-# Task seconds on Boat, refitted from green run 45206607883 (2026-11-23, df92ecf)
-# and Boat benchmarks for batched runnable-docs pre-build, shared integration binaries,
-# and combined nextest duckdb execution.
-# A test task's seconds are net of the test build it carries (compile_seconds), and
-# a WASM-pkg task's seconds are net of the shared norn-checker-wasm build (wasm_compile_seconds).
-weights = {
-    "test/heavy-1": 33, "test/heavy-2": 146, "test/heavy-3": 90,
-    "test/heavy-4": 37, "test/heavy-5": 43, "test/heavy-6": 56,
-    "test/rest-1": 221, "test/rest-2": 391, "test/rest-3": 312,
-    "phase/doctest": 17, "phase/features": 347, "phase/duckdb": 510, "phase/wasm": 173,
-    "phase/clippy": 51, "phase/doc": 48, "phase/guards": 117,
-    "phase/rivet": 259,
-    "phase/integration-authoring": 543, "phase/integration-wasm": 293,
-    "phase/integration-clients": 15, "phase/provenance": 4, "phase/test-shards": 3,
-    "phase/browser": 239,
-}
+# Measured task seconds and shared build costs: the table bundle.rs embeds, generated from green
+# merge-group bundle logs by crates/norn-skeleton-guard/scripts/bundle_durations.py (never by hand).
+# A test task's seconds are net of the workspace test build (compile_seconds), and a WASM-pkg
+# task's seconds are net of the shared norn-checker-wasm package build (wasm_compile_seconds).
+with open(durations, encoding="utf-8") as table_file:
+    table = json.load(table_file)
+weights = table["task_seconds"]
 # Shared compile costs amortized once per bundle containing any task in the group:
 # - Test: workspace test binaries (test/* and phase/test-shards).
 # - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package (charged only for
 #   actual WASM consumers). integration-clients shares the WasmPkg coalescing/pruning group
 #   so it co-locates with integration-authoring and reuses target/debug/{norn,norn-dev-host},
 #   without charging wasm_compile_seconds when packed alone.
-compile_seconds = 216
-wasm_compile_seconds = 300
+compile_seconds = table["test_build_seconds"]
+wasm_compile_seconds = table["wasm_pkg_seconds"]
 wasm_compile_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
 wasm_group_tasks = wasm_compile_tasks | {"phase/integration-clients"}
 def compiles_tests(task):

@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatTimestamp as when } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
@@ -96,8 +97,6 @@ function TintChip({ tone, children, className }: { readonly tone: string; readon
     </span>
   )
 }
-
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 function Timeline({ episode: e, record }: { readonly episode: Episode; readonly record: ObjectRecord }) {
   const { view } = useView()

@@ -27,10 +27,12 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 MAX_ROUNDS = 5
 MAX_COMPLETION = 6000
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 ITEM_CONTRACT = {"entity": "canon.Item.entity", "interface": "canon.Catalog.interface",
                  "properties": {"id": "text", "code": "text", "label": "text"}}
 PARTY_CONTRACT = {"entity": "canon.Party.entity", "interface": "core.Agent.interface",
@@ -118,7 +120,7 @@ REFERENCE = {
 
 
 def positive(value):
-    return isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 class Budget:
@@ -187,7 +189,25 @@ class Budget:
         return cost, spent
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"refused non-HTTPS redirect from gateway")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _validate_gateway_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme == "https" and parsed.netloc:
+        return
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1"):
+        return
+    raise ValueError(f"gateway URL must be https:// or loopback http://, got {parsed.scheme!r}")
+
+
 def ask(url, token, model, messages, budget, log):
+    _validate_gateway_url(url)
+    opener = urllib.request.build_opener(_HttpsOnlyRedirects()) if url.startswith("https://") else None
     limit = "max_completion_tokens" if model.startswith("openai/") else "max_tokens"
     body = json.dumps({"model": model, "messages": messages, limit: MAX_COMPLETION}).encode()
     request = urllib.request.Request(url + "/chat/completions", data=body, method="POST", headers={
@@ -197,11 +217,15 @@ def ask(url, token, model, messages, budget, log):
         if reservation is None:
             return None, "budget"
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                data = json.load(response)
+            response_ctx = opener.open(request, timeout=180) if opener else urllib.request.urlopen(request, timeout=180)
+            with response_ctx as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ValueError("gateway response exceeds size budget")
+                data = json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as error:
             budget.release(reservation)
-            detail = error.read()[:200].decode("utf-8", "replace")
+            detail = error.read(200).decode("utf-8", "replace")
             if error.code < 500 and error.code != 429 or attempt == 2:
                 message = f"http {error.code}: {detail}"
                 if token:
@@ -222,7 +246,7 @@ def ask(url, token, model, messages, budget, log):
         usage = data.get("usage") if isinstance(data, dict) else None
         usage = usage if isinstance(usage, dict) else {}
         prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
-        if isinstance(prompt, int) and isinstance(completion, int):
+        if type(prompt) is int and prompt >= 0 and type(completion) is int and completion >= 0:
             cost, spent = budget.settle(reservation, model, prompt, completion)
         else:
             prompt = completion = None
@@ -277,8 +301,10 @@ def reference(name, row):
 
 
 def score(name, rows, result):
+    if len(result["rows"]) != len(rows):
+        raise ValueError(f"{name}: expected {len(rows)} checker outcomes, got {len(result['rows'])}")
     correct = 0
-    for source, outcome in zip(rows, result["rows"], strict=False):
+    for source, outcome in zip(rows, result["rows"], strict=True):
         expected = reference(name, source)
         records = outcome.get("records") or []
         if expected is None:

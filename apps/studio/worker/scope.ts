@@ -16,19 +16,24 @@ export interface CellScope {
 
 const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
+/** Extract and validate `environmentId` from organization metadata (object or JSON string). */
+export function environmentOf(metadata: unknown): string | null {
+  let value = metadata
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  const environmentId = (value as { environmentId?: unknown } | null)?.environmentId
+  return typeof environmentId === "string" && ENVIRONMENT.test(environmentId) ? environmentId : null
+}
+
 export async function cellScope(auth: Auth, orgId: string): Promise<CellScope> {
   const { adapter } = await auth.$context
   const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: orgId }] })
-  let metadata: unknown = org?.metadata
-  if (typeof metadata === "string") {
-    try {
-      metadata = JSON.parse(metadata)
-    } catch {
-      metadata = null
-    }
-  }
-  const environmentId = (metadata as { environmentId?: unknown } | null)?.environmentId
-  return { orgId, environmentId: typeof environmentId === "string" && ENVIRONMENT.test(environmentId) ? environmentId : null }
+  return { orgId, environmentId: environmentOf(org?.metadata) }
 }
 
 /** `orgId=…&environmentId=…` for a cell route; only for a scope that has an environment. */

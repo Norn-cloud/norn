@@ -68,8 +68,8 @@ export function ExitEdge({ id, source, sourceX, sourceY, targetX, targetY, sourc
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {data?.label && room >= LABEL_MIN && (
         <EdgeLabelRenderer>
-          <div data-exit-label={id} data-exit-source={source} title={data.full} className={cn(EDGE_PILL, "cursor-pointer")} onClick={() => store.getState().addSelectedEdges([id])}
-            style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</div>
+          <button type="button" data-exit-label={id} data-exit-source={source} title={data.full} className={cn(EDGE_PILL, "cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring")} onClick={() => store.getState().addSelectedEdges([id])}
+            style={{ maxWidth: room, transform: `translate(0, -50%) translate(${sourceX + LABEL_GAP}px, ${sourceY}px)` }}>{data.label}</button>
         </EdgeLabelRenderer>
       )}
     </>

@@ -33,17 +33,25 @@ export const OUTSIDE = "outside";
 export const MEMBER = "member";
 const MAX_ATTACHMENT = 2000;
 const MAX_MESSAGE = 4096;
+const ENCODER = new TextEncoder();
+const SUB_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
+const FORBIDDEN_SUB_IDS = new Set(["__proto__", "constructor", "prototype"]);
 
 async function digest(text) {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", ENCODER.encode(text)));
   return Array.from(bytes.slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** A path a subscription may name: one of this cell's GET routes, never the live route itself. */
 export function subscribable(path) {
-  if (typeof path !== "string" || path.length > 512 || !path.startsWith("/v1/") || path.startsWith("/v1/subscribe")) return null;
-  const url = new URL(path, "https://cell");
-  if (url.pathname.includes("..")) return null;
+  if (typeof path !== "string" || path.length > 512 || !path.startsWith("/") || path.includes("\\")) return null;
+  let url;
+  try {
+    url = new URL(path, "https://cell");
+  } catch {
+    return null;
+  }
+  if (url.origin !== "https://cell" || !url.pathname.startsWith("/v1/") || url.pathname.startsWith("/v1/subscribe")) return null;
   return { pathname: url.pathname, query: url.search.slice(1) };
 }
 
@@ -69,10 +77,14 @@ export function accept(ctx, scope, authorization, requested = "", { outside = fa
   if (open >= limit) {
     return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${limit} sockets per cell` }, { status: 429 });
   }
-  const [client, server] = Object.values(new WebSocketPair());
   const role = outside ? OUTSIDE : MEMBER;
+  const initial = { scope, authorization, subs: {}, role };
+  if (JSON.stringify(initial).length > MAX_ATTACHMENT) {
+    return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the authorization header is too large for a live socket", explanation: `live socket state must fit ${MAX_ATTACHMENT} bytes` }, { status: 413 });
+  }
+  const [client, server] = Object.values(new WebSocketPair());
   ctx.acceptWebSocket(server, [role]);
-  server.serializeAttachment({ scope, authorization, subs: {}, role });
+  server.serializeAttachment(initial);
   // Echo the protocol only when the client asked for it: a strict client refuses an unasked one.
   const asked = requested.split(",").map((name) => name.trim()).includes(PROTOCOL);
   return new Response(null, { status: 101, webSocket: client, ...(asked ? { headers: { "sec-websocket-protocol": PROTOCOL } } : {}) });
@@ -86,7 +98,7 @@ export function roleOf(attachment) {
 
 /** The object's members' sockets: only those classified MEMBER when accepted. */
 export function members(ctx) {
-  return ctx.getWebSockets().filter((ws) => roleOf(ws.deserializeAttachment()) === MEMBER);
+  return ctx.getWebSockets(MEMBER).filter((ws) => roleOf(ws.deserializeAttachment()) === MEMBER);
 }
 
 /** Close a socket no membership decision classified; the client reconnects through the gate. */
@@ -144,7 +156,8 @@ export async function message(ws, raw, ask) {
     return ws.close(1007, "not JSON");
   }
   const attachment = ws.deserializeAttachment();
-  const id = typeof msg?.id === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(msg.id) ? msg.id : null;
+  if (!attachment) return ws.close(1011, "no live state");
+  const id = typeof msg?.id === "string" && SUB_ID.test(msg.id) && !FORBIDDEN_SUB_IDS.has(msg.id) ? msg.id : null;
   if (id === null) return send(ws, { type: "refused", id: null, code: "live.invalid_id", message: "a subscription id is 1 to 64 letters, digits or _.:-" });
   if (msg.type === "unsubscribe") {
     delete attachment.subs[id];
@@ -154,7 +167,7 @@ export async function message(ws, raw, ask) {
   if (msg.type !== "subscribe") return send(ws, { type: "refused", id, code: "live.unknown_message", message: "messages are subscribe or unsubscribe" });
   const target = subscribable(msg.path);
   if (target === null) return send(ws, { type: "refused", id, code: "live.not_subscribable", message: "a subscription names one of this cell's GET routes" });
-  if (!(id in attachment.subs) && Object.keys(attachment.subs).length >= MAX_SUBSCRIPTIONS) {
+  if (!Object.hasOwn(attachment.subs, id) && Object.keys(attachment.subs).length >= MAX_SUBSCRIPTIONS) {
     return send(ws, { type: "refused", id, code: "live.too_many_subscriptions", message: `at most ${MAX_SUBSCRIPTIONS} subscriptions per socket` });
   }
   attachment.subs[id] = { ...target, digest: "" };

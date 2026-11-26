@@ -79,7 +79,7 @@ def main():
         raw = subprocess.check_output([
             "cargo", "nextest", "list", "--locked", "--workspace", "--all-targets",
             "--profile", profile, "--message-format", "json",
-        ], cwd=ROOT, text=True)
+        ], cwd=ROOT, text=True, timeout=300)
         check_profile(profile, required[profile], json.loads(raw, object_pairs_hook=unique_object))
         print(f"{profile}: exactly {len(required[profile])} required scenarios selected", flush=True)
 
@@ -87,6 +87,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(f"drop scenario coverage: {error}", file=sys.stderr)
         sys.exit(1)

@@ -46,6 +46,7 @@ pub struct RivetEngine {
     active: RefCell<Option<SqliteTransaction>>,
     revision: WriteRevision,
     hook: Option<std::rc::Rc<dyn StatementHook>>,
+    checkpoint_key: Option<norn_cell::CheckpointKey>,
 }
 
 impl std::fmt::Debug for RivetEngine {
@@ -67,7 +68,15 @@ impl RivetEngine {
             active: RefCell::new(None),
             revision: WriteRevision::new(),
             hook: None,
+            checkpoint_key: None,
         }
+    }
+
+    /// The same engine with a host open-checkpoint key (`NORN_CHECKPOINT_KEY`).
+    #[must_use]
+    pub const fn with_checkpoint_key(mut self, key: Option<norn_cell::CheckpointKey>) -> Self {
+        self.checkpoint_key = key;
+        self
     }
 
     /// The same engine with a statement hook (conformance seams).
@@ -248,6 +257,10 @@ impl Drop for Active<'_> {
 impl SqlEngine for RivetEngine {
     fn platform_table_globs(&self) -> &'static [&'static str] {
         PLATFORM_TABLE_GLOBS
+    }
+
+    fn checkpoint_key(&self) -> Option<norn_cell::CheckpointKey> {
+        self.checkpoint_key
     }
 
     /// Every request to the actor runs on its one cell thread, in order, and

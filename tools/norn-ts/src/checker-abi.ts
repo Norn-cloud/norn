@@ -166,10 +166,19 @@ export function sourceMappedDiagnostics<D extends { readonly span?: unknown; rea
   diagnostics: ReadonlyArray<D>,
   sourceMap: ReadonlyArray<import("./compiler/definitions.ts").DefinitionSource>,
 ): ReadonlyArray<D & { readonly source?: import("./builder/diagnostics.ts").SourceLocation }> {
+  const byArtifact = new Map<string, Array<import("./compiler/definitions.ts").DefinitionSource>>()
+  for (const entry of sourceMap) {
+    let bucket = byArtifact.get(entry.artifactId)
+    if (!bucket) { bucket = []; byArtifact.set(entry.artifactId, bucket) }
+    bucket.push(entry)
+  }
+  for (const bucket of byArtifact.values()) bucket.sort((a, b) => b.pointer.length - a.pointer.length)
   return diagnostics.map((d) => {
+    if (!d.artifactId) return d
+    const bucket = byArtifact.get(d.artifactId)
+    if (!bucket) return d
     const pointer = typeof d.span === "object" && d.span !== null && "pointer" in d.span ? String(d.span.pointer) : ""
-    const match = sourceMap.filter((s) => s.artifactId === d.artifactId && (pointer === s.pointer || pointer.startsWith(s.pointer + "/")))
-      .sort((a, b) => b.pointer.length - a.pointer.length)[0]
+    const match = bucket.find((s) => pointer === s.pointer || pointer.startsWith(`${s.pointer}/`))
     return match ? { ...d, source: match.at } : d
   })
 }

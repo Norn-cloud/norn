@@ -239,6 +239,15 @@ export async function abandonSave(
   return results.length > 0 ? "restored" : "unchanged"
 }
 
+function adoptedFields(payload: Record<string, unknown>) {
+  const label = typeof payload.label === "string" ? payload.label : null
+  const mapping = typeof payload.inputMapping === "object" && payload.inputMapping !== null ? JSON.stringify(payload.inputMapping) : null
+  const role = payload.runRole === "member" || payload.runRole === "admin" ? payload.runRole : null
+  const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
+  const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
+  return [label, mapping, role, digest, connector] as const
+}
+
 /**
  * Settle a pending binding from what the cell holds, guarded by `attemptId` and
  * `expectedPreviousVersion` so a newer completed save can never be overwritten by an earlier snapshot.
@@ -253,14 +262,9 @@ export async function adoptCell(
   attemptId: string | null,
   expectedPreviousVersion: number | null,
 ): Promise<boolean> {
-  const label = typeof payload.label === "string" ? payload.label : null
-  const mapping = typeof payload.inputMapping === "object" && payload.inputMapping !== null ? JSON.stringify(payload.inputMapping) : null
-  const role = payload.runRole === "member" || payload.runRole === "admin" ? payload.runRole : null
-  const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
-  const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
   const { results } = await db.prepare(
     "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND pending_attempt IS ? AND state IN ('creating', 'editing') AND definition_version IS ? RETURNING id",
-  ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id, attemptId, expectedPreviousVersion).all<{ id: string }>()
+  ).bind(...adoptedFields(payload), definitionId, version, orgId, id, attemptId, expectedPreviousVersion).all<{ id: string }>()
   return results.length > 0
 }
 
@@ -277,22 +281,26 @@ export async function adoptReadyCell(
   payload: Record<string, unknown>,
   expectedPreviousVersion: number,
 ): Promise<boolean> {
-  const label = typeof payload.label === "string" ? payload.label : null
-  const mapping = typeof payload.inputMapping === "object" && payload.inputMapping !== null ? JSON.stringify(payload.inputMapping) : null
-  const role = payload.runRole === "member" || payload.runRole === "admin" ? payload.runRole : null
-  const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
-  const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
   const { results } = await db.prepare(
     "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ? WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version = ? RETURNING id",
-  ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id, expectedPreviousVersion).all<{ id: string }>()
+  ).bind(...adoptedFields(payload), definitionId, version, orgId, id, expectedPreviousVersion).all<{ id: string }>()
   return results.length > 0
 }
 
-export async function removeBinding(db: D1Database, orgId: string, id: string): Promise<boolean> {
-  const before = await getBinding(db, orgId, id)
-  if (before === null) return false
-  await db.prepare("DELETE FROM connector_binding WHERE org_id = ? AND id = ?").bind(orgId, id).run()
-  return true
+export async function removeBinding(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  expected?: { readonly definitionId: string | null; readonly definitionVersion: number | null },
+): Promise<boolean> {
+  if (expected !== undefined) {
+    const { results } = await db.prepare(
+      "DELETE FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_id IS ? AND definition_version IS ? RETURNING id",
+    ).bind(orgId, id, expected.definitionId, expected.definitionVersion).all<{ id: string }>()
+    return results.length > 0
+  }
+  const { results } = await db.prepare("DELETE FROM connector_binding WHERE org_id = ? AND id = ? RETURNING id").bind(orgId, id).all<{ id: string }>()
+  return results.length > 0
 }
 
 /** Durable tombstone for an abandoned create whose cell install outcome was unknown. */

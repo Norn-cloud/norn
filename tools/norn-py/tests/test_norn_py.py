@@ -33,7 +33,7 @@ import tempfile
 import types
 import unittest
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, IntEnum, StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from unittest import mock
@@ -95,13 +95,16 @@ from norn_py import (
     validate_callback_ast,
     verify_deterministic_elaboration,
 )
-from norn_py.expr import _find_callback_node
+from norn_py.expr import _SOURCE_REGISTRY, _find_callback_node, lit
 from norn_py.sandbox import (
     MAX_SOURCE_BYTES,
     _apply_posix_resource_limits,
     _compute_clamped_rlimit,
+    _elaborate_in_current_process,
     _read_source_bounded,
+    _run_bounded_subprocess,
 )
+from norn_py.schema import collect_artifacts
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 NORN_PY_ROOT = Path(__file__).resolve().parents[1]
@@ -744,7 +747,7 @@ class TestCanonicalNorn1AndTsParity(unittest.TestCase):
 from enum import StrEnum
 from typing import Annotated
 
-from norn_py import Concept, Field, ref_type
+from norn_py import Concept, DependencyPin, Field, ref_type
 
 
 class AgentKind(StrEnum):
@@ -757,9 +760,16 @@ class Agent(
     Concept,
     name="core.Agent",
     title="Agent",
-    version="0.1.0",
+    version="0.2.0",
     interface=True,
     role="thing",
+    dependencies=(
+        DependencyPin(
+            artifact_id="core.value_types.entity",
+            version="0.2.0",
+            kind="entity",
+        ),
+    ),
     description=(
         "An actor that holds resources, takes part in economic events and "
         "makes commitments: a person, an organisation or a system (REA agent)."
@@ -773,7 +783,7 @@ class Agent(
             res_agent = verify_deterministic_elaboration(
                 agent_py,
                 scope={},
-                source_path="registry/core/src/physics.ts",
+                source_path="registry/core/src/rea.ts",
                 registry_package_path="registry/core",
             )
             expected_agent = CORE_AGENT_GOLDEN.read_text(encoding="utf-8")
@@ -1591,6 +1601,410 @@ class TestPackAndDeploymentPrototypes(unittest.TestCase):
 
         with self.assertRaises(NonJsonValueError):
             canonical_json({1: "a"})
+
+
+class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
+    def test_preflight_blocks_str_format_dunder_aliases_and_forbidden_defs(self) -> None:
+        snippets = [
+            ('x = "{0.__class__}".format(1)\n', "NORN-PY-FORBIDDEN-ATTR"),
+            ('x = "{a.__globals__}".format_map({"a": 1})\n', "NORN-PY-FORBIDDEN-ATTR"),
+            ("import typing as __evil\n", "NORN-PY-FORBIDDEN-NAME"),
+            ("from decimal import Decimal as eval\n", "NORN-PY-FORBIDDEN-NAME"),
+            ("def f(__x):\n    return __x\n", "NORN-PY-FORBIDDEN-NAME"),
+            ("def f(eval):\n    return eval\n", "NORN-PY-FORBIDDEN-NAME"),
+            ("class __Secret:\n    pass\n", "NORN-PY-FORBIDDEN-SYNTAX"),
+            ("def eval(x):\n    return x\n", "NORN-PY-FORBIDDEN-SYNTAX"),
+        ]
+        for snippet, expected_code in snippets:
+            with self.subTest(snippet=snippet):
+                with self.assertRaises(NornTracingError) as ctx:
+                    preflight_source(snippet, "escape.py")
+                self.assertEqual(ctx.exception.code, expected_code)
+
+    def test_audit_hook_blocks_compile_carveout_os_gc_signal_and_internal_imports(self) -> None:
+        probe = (
+            "import gc, importlib, json, os, sys\n"
+            "from norn_py.sandbox import _install_audit_hook\n"
+            "from norn_py.schema import resolve_annotation\n"
+            "code = compile('pass', '<probe>', 'exec')\n"
+            "sys.modules.pop('norn_py.sandbox', None)\n"
+            "_install_audit_hook(code)\n"
+            "results = {}\n"
+            "for label, fn in [\n"
+            "    ('compile_carveout', lambda: compile('1+1', '<norn-annotation>', 'eval')),\n"
+            "    ('os_listdir', lambda: os.listdir('.')),\n"
+            "    ('gc_objects', lambda: gc.get_objects()),\n"
+            "    ('os_kill', lambda: os.kill(os.getpid(), 0)),\n"
+            "    ('import_sandbox', lambda: importlib.import_module('norn_py.sandbox')),\n"
+            "    ('import_socket', lambda: importlib.import_module('socket')),\n"
+            "]:\n"
+            "    try:\n"
+            "        fn()\n"
+            "        results[label] = 'ALLOWED'\n"
+            "    except PermissionError:\n"
+            "        results[label] = 'BLOCKED'\n"
+            "resolved = resolve_annotation('Field[str]', {}, None)\n"
+            "results['legit_annotation'] = repr(resolved)\n"
+            "print(json.dumps(results))\n"
+        )
+        out = subprocess.check_output(
+            sandbox_subprocess_cmd(probe),
+            env=sandbox_subprocess_env(NORN_PY_ROOT),
+            text=True,
+        )
+        res = json.loads(out)
+        self.assertEqual(res["compile_carveout"], "BLOCKED")
+        self.assertEqual(res["os_listdir"], "BLOCKED")
+        self.assertEqual(res["gc_objects"], "BLOCKED")
+        self.assertEqual(res["os_kill"], "BLOCKED")
+        self.assertEqual(res["import_sandbox"], "BLOCKED")
+        self.assertEqual(res["import_socket"], "BLOCKED")
+        self.assertIn("Field", res["legit_annotation"])
+
+    def test_io_refuses_symlinks_and_fifos_and_bounds_subprocess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            real = tmp_dir / "real.py"
+            real.write_text("x = 1\n", encoding="utf-8")
+            link_path = tmp_dir / "link.py"
+            link_path.symlink_to(real)
+            with self.assertRaises(NornTracingError) as c_sym:
+                elaborate_file(link_path, scope={"orgId": "o", "environmentId": "dev"})
+            self.assertEqual(c_sym.exception.code, "NORN-PY-IO")
+
+            if hasattr(os, "mkfifo"):
+                fifo_path = tmp_dir / "pipe.py"
+                os.mkfifo(fifo_path)
+                with self.assertRaises(NornTracingError) as c_fifo:
+                    _read_source_bounded(fifo_path, "pipe.py")
+                self.assertEqual(c_fifo.exception.code, "NORN-PY-IO")
+
+            # Oversized subprocess stdout fails closed with NORN-PY-UNBOUNDED.
+            with self.assertRaises(NornTracingError) as c_out:
+                elaborate_file(
+                    HR_PILOT,
+                    scope={"orgId": "o", "environmentId": "dev"},
+                    max_output_bytes=64,
+                )
+            self.assertEqual(c_out.exception.code, "NORN-PY-UNBOUNDED")
+
+        # Subprocess timeout is wrapped into NornTracingError("NORN-PY-TIMEOUT").
+        with self.assertRaises(NornTracingError) as c_to:
+            _run_bounded_subprocess(
+                [sys.executable, "-c", "import time; time.sleep(5)"],
+                payload_bytes=b"",
+                env=sandbox_subprocess_env(NORN_PY_ROOT),
+                timeout_secs=0.05,
+                max_stdout_bytes=1024,
+                max_stderr_bytes=1024,
+                rel_source_path="slow.py",
+            )
+        self.assertEqual(c_to.exception.code, "NORN-PY-TIMEOUT")
+
+        # In-process elaboration cleans up _SOURCE_REGISTRY in finally.
+        fake_name = "<ephemeral-cleanup-test.py>"
+        opts = EnvelopeOptions(scope={"orgId": "o", "environmentId": "dev"}, source_path=fake_name)
+        _elaborate_in_current_process("X = 1\n", filename=fake_name, options=opts)
+        self.assertNotIn(fake_name, _SOURCE_REGISTRY)
+
+    def test_decimal_oom_expr_ops_del_char_and_shadowed_callback(self) -> None:
+        for bad_dec in (Decimal("1e1000000000"), Decimal("0e-1000000000"), Decimal("NaN"), Decimal("Infinity")):
+            with self.subTest(bad_dec=bad_dec):
+                with self.assertRaises(NornTracingError) as c_lit:
+                    lit(bad_dec)
+                self.assertEqual(c_lit.exception.code, "NORN-PY-EXPRESSION")
+                with self.assertRaises(NornTracingError) as c_meta:
+                    FieldMeta(default=bad_dec)
+                self.assertEqual(c_meta.exception.code, "NORN-PY-EXPRESSION")
+
+        s = DynamicSym("self", ("hours",), "test.Shift")
+        neg_hours = -s.hours
+        self.assertEqual(neg_hours.zen, "-self.hours")
+        self.assertEqual((-neg_hours).zen, "-(-self.hours)")
+        self.assertEqual((+s.hours).zen, "self.hours")
+        self.assertEqual((Decimal("24") - s.hours).zen, "24 - self.hours")
+        self.assertEqual((2 * s.hours).zen, "2 * self.hours")
+
+        with self.assertRaises(NornTracingError) as c_del:
+            lit("bad\x7fdel")
+        self.assertEqual(c_del.exception.code, "NORN-PY-EXPRESSION")
+
+        # Shadowed allowlisted operator name outside sandbox MUST fail closed.
+        def _shadow_test() -> None:
+            def all_of(*_args: object) -> object:
+                return None
+
+            bad_cb = lambda x: all_of(x.hours > 0)  # noqa: E731
+            validate_callback_ast(bad_cb)
+
+        with self.assertRaises(NornTracingError) as c_shadow:
+            _shadow_test()
+        self.assertEqual(c_shadow.exception.code, "NORN-PY-FORBIDDEN-CALL")
+
+    def test_canonical_rejects_surrogates_depth_and_primitive_subclasses(self) -> None:
+        with self.assertRaises(NonJsonValueError):
+            canonical_json({"a": "\ud800"})
+        with self.assertRaises(NonJsonValueError):
+            canonical_norn1_bytes({"\udfff": 1})
+
+        deep: Any = "leaf"
+        for _ in range(140):
+            deep = [deep]
+        with self.assertRaises(NonJsonValueError):
+            canonical_json(deep)
+
+        class _EvilStr(str):
+            pass
+
+        class _EvilInt(int):
+            pass
+
+        with self.assertRaises(NonJsonValueError):
+            canonical_json({"k": _EvilStr("v")})
+        with self.assertRaises(NonJsonValueError):
+            canonical_json({"k": _EvilInt(1)})
+
+    def test_schema_anonymous_subclass_dual_defaults_annotation_bounds_and_packs(self) -> None:
+        opts = EnvelopeOptions(scope={"orgId": "o", "environmentId": "dev"}, source_path="test.py")
+
+        class _Parent(Concept, name="test.AnonParent", title="Parent", version="0.1.0"):
+            id: Field[str]
+
+        class _AnonChild(_Parent):
+            pass
+
+        self.assertEqual(_AnonChild.__norn_name__, "")
+        collected = collect_artifacts({"_Parent": _Parent, "_AnonChild": _AnonChild}, opts)
+        self.assertEqual(len(collected), 1)
+
+        class _DualDefault(Concept, name="test.DualDefault", title="Dual", version="0.1.0"):
+            code: Annotated[Field[str], FieldMeta(default="a")] = field_default("b")
+
+        with self.assertRaises(NornTracingError) as c_dual:
+            _DualDefault.lower(opts)
+        self.assertEqual(c_dual.exception.code, "NORN-PY-SCHEMA")
+
+        # Deep annotation AST & bad Decimal() call in annotation wrap cleanly.
+        deep_ann = "Optional[" * 70 + "str" + "]" * 70
+        with self.assertRaises(NornTracingError) as c_depth:
+            resolve_annotation(deep_ann, {}, None)
+        self.assertEqual(c_depth.exception.code, "NORN-PY-UNSAFE-ANNOTATION")
+
+        with self.assertRaises(NornTracingError) as c_dec:
+            resolve_annotation('Annotated[Field[Decimal], FieldMeta(default=Decimal("not-a-num"))]', {}, None)
+        self.assertEqual(c_dec.exception.code, "NORN-PY-UNSAFE-ANNOTATION")
+
+        # Pack cycle & invalid conflict_policy fail closed.
+        p1 = PackManifest(id="pack.a", version="0.1.0", category="domain", title="A", requires=("pack.b",))
+        p2 = PackManifest(id="pack.b", version="0.1.0", category="domain", title="B", requires=("pack.a",))
+        with self.assertRaises(NornTracingError) as c_cyc:
+            compose_packs(p1, p2)
+        self.assertEqual(c_cyc.exception.code, "NORN-PY-PACK-CYCLE")
+
+        base = PackManifest(id="pack.base", version="0.1.0", category="domain", title="Base")
+        with self.assertRaises(NornTracingError) as c_pol:
+            compose_packs(base, conflict_policy="typo")  # type: ignore[arg-type]
+        self.assertEqual(c_pol.exception.code, "NORN-PY-PACK-CONFLICT")
+
+        # DeploymentSpec rejects whitespace scope, query/fragment/port-0/C1 URLs, and freezes dicts.
+        with self.assertRaises(NornTracingError) as c_scope:
+            DeploymentSpec(id="d", org_id="   ", environment_id="dev", packs=(base,))
+        self.assertEqual(c_scope.exception.code, "NORN-PY-DEPLOYMENT-SCOPE")
+
+        for bad_url in (
+            "https://example.com/solve?token=abc",
+            "https://example.com/solve#frag",
+            "https://example.com:0/solve",
+            "https://example.com/solve\x85x",
+        ):
+            with self.assertRaises(NornTracingError) as c_url:
+                DeploymentSpec(
+                    id="d",
+                    org_id="org",
+                    environment_id="dev",
+                    packs=(base,),
+                    worker_endpoints={"norn.solver.rostering@0.1.0": bad_url},
+                )
+            self.assertEqual(c_url.exception.code, "NORN-PY-DEPLOYMENT-ENDPOINT")
+
+        mutable_eps = {"norn.solver.rostering@0.1.0": "https://solver.example.internal/solve"}
+        mutable_settings: dict[str, Any] = {"limit": Decimal("10.00")}
+        dep = DeploymentSpec(
+            id="d_ok",
+            org_id="org",
+            environment_id="dev",
+            packs=(base,),
+            worker_endpoints=mutable_eps,
+            initial_settings=mutable_settings,
+        )
+        mutable_eps["norn.solver.rostering@0.1.0"] = "http://evil.example/pwn"
+        mutable_settings["api_secret"] = "leaked"
+        self.assertEqual(dep.worker_endpoints["norn.solver.rostering@0.1.0"], "https://solver.example.internal/solve")
+        self.assertNotIn("api_secret", dep.initial_settings)
+        with self.assertRaises(TypeError):
+            dep.worker_endpoints["x@1.0.0"] = "https://x.example"  # type: ignore[index]
+
+    def test_sandbox_rejects_dataclasses_and_callback_attribute_calls_on_non_symbolic_receivers(self) -> None:
+        # `dataclasses` is rejected at Layer 1 preflight instead of passing Layer 1 and failing inside Layer 2.
+        with self.assertRaises(NornTracingError) as c_dc:
+            preflight_source(
+                "from dataclasses import dataclass\n\n@dataclass\nclass Bad:\n    x: int\n",
+                "bad_dc.py",
+            )
+        self.assertEqual(c_dc.exception.code, "NORN-PY-FORBIDDEN-IMPORT")
+
+        # Attribute method calls (.eq/.ne/.is_null/.is_not_null) MUST only target symbolic expressions.
+        class _Trap:
+            called = False
+
+            def eq(self, _other: object) -> object:
+                self.called = True
+                return None
+
+            def is_null(self) -> object:
+                self.called = True
+                return None
+
+            def __add__(self, _other: object) -> str:
+                self.called = True
+                return "1"
+
+        trap = _Trap()
+        holder = types.SimpleNamespace(trap=trap)
+
+        class _EvilEnum(Enum):
+            A = 1
+
+            def __add__(self, _other: object) -> object:
+                trap.called = True
+                return lit(1)
+
+            def __eq__(self, _other: object) -> bool:
+                trap.called = True
+                return True
+
+        class _EvilMix:
+            def __sub__(self, _other: object) -> object:
+                trap.called = True
+                return lit(1)
+
+        class _MixedEnum(_EvilMix, Enum):
+            B = 2
+
+        class _EvilFmtStrEnum(StrEnum):
+            A = "a"
+
+            def __format__(self, _spec: str) -> str:
+                trap.called = True
+                return "a"
+
+        class _EvilStrStrEnum(StrEnum):
+            A = "a"
+
+            def __str__(self) -> str:
+                trap.called = True
+                return "a"
+
+        class _EvilStrIntEnum(IntEnum):
+            A = 1
+
+            def __str__(self) -> str:
+                trap.called = True
+                return "1"
+
+        class _PatchedStrEnum(StrEnum):
+            A = "a"
+
+        def _evil_patched_format(_self: object, _spec: str) -> str:
+            trap.called = True
+            return "a"
+
+        _PatchedStrEnum.__format__ = _evil_patched_format  # type: ignore[method-assign]
+
+        class _CleanStatus(StrEnum):
+            DRAFT = "draft"
+
+        class _TamperedEnum(StrEnum):
+            A = "a"
+
+        class _Desc:
+            def __get__(self, _inst: object, _owner: object = None) -> object:
+                trap.called = True
+                return _TamperedEnum.A
+
+        setattr(_TamperedEnum, "FAKE", trap)
+        _TamperedEnum._member_map_["FAKE"] = trap  # type: ignore[assignment]
+        setattr(_TamperedEnum, "DESC", _Desc())
+        _TamperedEnum._member_map_["DESC"] = _TamperedEnum.A
+
+        bad_callbacks = [
+            lambda s: trap.eq(s.hours),  # noqa: E731
+            lambda s: holder.trap.is_null(),  # noqa: E731
+            lambda s: (trap + s.hours).eq(Decimal("1")),  # noqa: E731
+            lambda s: (Decimal(trap + 1) + s.hours).eq(Decimal("1")),  # noqa: E731
+            lambda s: (trap == s.hours).eq(True),  # noqa: E731
+            lambda s: (_EvilEnum.A + s.hours).eq(1),  # noqa: E731
+            lambda s: (_EvilEnum.A == s.hours).eq(True),  # noqa: E731
+            lambda s: (_MixedEnum.B - s.hours).eq(1),  # noqa: E731
+            lambda s: (s.status == _EvilFmtStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (s.status == _EvilStrStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (_EvilStrIntEnum.A + s.hours).eq(2),  # noqa: E731
+            lambda s: (s.status == _PatchedStrEnum.A).eq(True),  # noqa: E731
+            lambda s: (_TamperedEnum.FAKE + s.hours).eq("1"),  # type: ignore[attr-defined]  # noqa: E731
+            lambda s: (s.status == _TamperedEnum.DESC).eq(True),  # type: ignore[attr-defined]  # noqa: E731
+        ]
+        for cb in bad_callbacks:
+            with self.assertRaises(NornTracingError) as c_attr:
+                validate_callback_ast(cb)
+            self.assertEqual(c_attr.exception.code, "NORN-PY-FORBIDDEN-CALL")
+        self.assertFalse(trap.called)
+
+        # Symbolic receivers (parameter attributes, comparisons, arithmetic, lit(), module Expr, clean StrEnum) still pass.
+        thresh = lit(5)
+        good_callbacks = [
+            lambda s: s.hours.eq(Decimal("8")),  # noqa: E731
+            lambda s: (s.hours + Decimal("1")).eq(Decimal("9")),  # noqa: E731
+            lambda s: (1 + 2 + s.hours).eq(10),  # noqa: E731
+            lambda s: (s.hours > Decimal("0")).eq(True),  # noqa: E731
+            lambda s: (s.hours > 0).is_not_null(),  # noqa: E731
+            lambda s: (s.status == _CleanStatus.DRAFT).eq(True),  # noqa: E731
+            lambda s: (s.hours + thresh).eq(10),  # noqa: E731
+            lambda s: thresh.eq(s.hours),  # noqa: E731
+            lambda s: lit("ok").eq(s.status),  # noqa: E731
+        ]
+        for cb in good_callbacks:
+            validate_callback_ast(cb)
+
+        # Clean IntEnum and int/str subclasses with overridden __str__/__repr__/__format__ render plain ZEN literals.
+        class _CleanPrio(IntEnum):
+            HIGH = 3
+
+        class _EvilInt(int):
+            def __str__(self) -> str:
+                trap.called = True
+                return "1 || true"
+
+            def __repr__(self) -> str:
+                trap.called = True
+                return "1 || true"
+
+        class _EvilStr(str):
+            def __str__(self) -> str:
+                trap.called = True
+                return "x' || true || '"
+
+            def __format__(self, _spec: str) -> str:
+                trap.called = True
+                return "x' || true || '"
+
+        sym = DynamicSym("self", ("hours", "status"), "test.Shift")
+        traced_int_enum = trace_bool_callback(lambda s: s.hours == _CleanPrio.HIGH, sym, context="test")  # noqa: E731
+        self.assertEqual(traced_int_enum.zen, "self.hours == 3")
+        traced_str_enum = trace_bool_callback(lambda s: s.status == _CleanStatus.DRAFT, sym, context="test")  # noqa: E731
+        self.assertEqual(traced_str_enum.zen, "self.status == 'draft'")
+        self.assertEqual(lit(_EvilInt(7)).zen, "7")
+        self.assertEqual(lit(_EvilStr("ok")).zen, "'ok'")
+        self.assertFalse(trap.called)
 
 
 if __name__ == "__main__":

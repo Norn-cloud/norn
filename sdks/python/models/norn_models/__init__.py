@@ -32,9 +32,10 @@ from __future__ import annotations
 
 import math
 import numbers
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 
@@ -100,35 +101,65 @@ def _missing(value: Any) -> bool:
 
 
 def _number(value: Any) -> bool:
-    return isinstance(value, numbers.Real) and not isinstance(value, bool)
+    return isinstance(value, (numbers.Real, Decimal)) and not isinstance(value, bool)
 
 
-def _written(output: dict, value: Any) -> tuple[Any, str | None]:
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, Decimal):
+        return value.is_finite()
+    if isinstance(value, numbers.Integral):
+        return True
+    return math.isfinite(float(value))
+
+
+def _written(
+    output: dict,
+    value: Any,
+    *,
+    enum_set: frozenset[str] | None = None,
+    enum_list: list[str] | None = None,
+) -> tuple[Any, str | None]:
     """The wire value for a non-missing `value` of `output`, or why it does not fit the type."""
     kind = output["type"]["kind"]
     if kind == "decimal":
         if not _number(value):
             return None, "not a number"
-        if not math.isfinite(float(value)):
+        if not _is_finite_number(value):
             return None, "not a finite number"
         scale = int(output["type"]["scale"])
         try:
-            exact = Decimal(value) if isinstance(value, numbers.Integral) else Decimal(repr(float(value)))
+            if isinstance(value, Decimal):
+                exact = value
+            elif isinstance(value, numbers.Integral):
+                exact = Decimal(int(value))
+            else:
+                exact = Decimal(repr(float(value)))
             return exact.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_EVEN), None
         except InvalidOperation:
             return None, f"does not fit scale {scale}"
     if kind == "integer":
-        if not _number(value) or not math.isfinite(float(value)) or float(value) != int(value):
+        if not _number(value):
             return None, "not an integer"
-        return int(value), None
+        if isinstance(value, numbers.Integral):
+            return int(value), None
+        if isinstance(value, Decimal):
+            if not value.is_finite() or value != value.to_integral_value():
+                return None, "not an integer"
+            return int(value), None
+        as_float = float(value)
+        if not math.isfinite(as_float) or not as_float.is_integer():
+            return None, "not an integer"
+        return int(as_float), None
     if kind == "boolean":
         if not isinstance(value, bool):
             return None, "not a boolean"
         return value, None
     if kind == "enum":
-        declared = [entry["value"] for entry in output["type"]["values"]]
-        if not isinstance(value, str) or value not in declared:
-            return None, f"not one of {declared}"
+        if enum_set is None or enum_list is None:
+            enum_list = [entry["value"] for entry in output["type"]["values"]]
+            enum_set = frozenset(enum_list)
+        if not isinstance(value, str) or value not in enum_set:
+            return None, f"not one of {enum_list}"
         return value, None
     if kind == "text":
         if not isinstance(value, str):
@@ -141,9 +172,30 @@ def check_outputs(model: dict, subjects: list[str], outputs: pd.DataFrame) -> tu
     """Every row's wire values and every violation, checking each output's type and nullability
     and each declared contract (range, notNull, finite, oneOf) on every row."""
     declared = {output["id"]: output for output in model["outputs"]}
-    contracts: dict[str, list[dict]] = {}
+    enum_meta: dict[str, tuple[frozenset[str], list[str]]] = {}
+    for output_id, output in declared.items():
+        if output["type"]["kind"] == "enum":
+            vals = [entry["value"] for entry in output["type"]["values"]]
+            enum_meta[output_id] = (frozenset(vals), vals)
+
+    contracts: dict[str, list[tuple[str, str, Any]]] = {}
     for contract in model.get("contracts", []):
-        contracts.setdefault(contract["output"], []).append(contract)
+        rule = contract["rule"]
+        kind = rule["kind"]
+        if kind == "range":
+            low, high = rule.get("min"), rule.get("max")
+            payload: Any = (
+                Decimal(low) if low is not None else None,
+                Decimal(high) if high is not None else None,
+                f"outside [{low if low is not None else ''}, {high if high is not None else ''}]",
+            )
+        elif kind == "oneOf":
+            vals = rule["values"]
+            payload = (frozenset(vals), f"not one of {vals}")
+        else:
+            payload = None
+        contracts.setdefault(contract["output"], []).append((contract["id"], kind, payload))
+
     # Column by column, as plain Python values: a row-wise read would coerce a row's mixed types.
     columns = {output_id: outputs[output_id].tolist() for output_id in declared}
     rows: list[dict] = []
@@ -155,32 +207,34 @@ def check_outputs(model: dict, subjects: list[str], outputs: pd.DataFrame) -> tu
             rules = contracts.get(output_id, [])
             if _missing(value):
                 values[output_id] = None
-                for contract in rules:
-                    if contract["rule"]["kind"] == "notNull":
-                        violations.append(Violation(contract["id"], output_id, subject, None, "every object gets a value"))
+                for contract_id, kind, _ in rules:
+                    if kind == "notNull":
+                        violations.append(Violation(contract_id, output_id, subject, None, "every object gets a value"))
                 if not output["nullable"]:
                     violations.append(Violation(None, output_id, subject, None, "the output is not nullable"))
                 continue
-            if _number(value) and not math.isfinite(float(value)):
-                finite = [contract for contract in rules if contract["rule"]["kind"] == "finite"]
-                for contract in finite:
-                    violations.append(Violation(contract["id"], output_id, subject, value, "not a finite number"))
+            if _number(value) and not _is_finite_number(value):
+                finite = [contract_id for contract_id, kind, _ in rules if kind == "finite"]
+                for contract_id in finite:
+                    violations.append(Violation(contract_id, output_id, subject, value, "not a finite number"))
                 if not finite:
                     violations.append(Violation(None, output_id, subject, value, "not a finite number"))
                 continue
-            written, mismatch = _written(output, value)
+            enum_set, enum_list = enum_meta.get(output_id, (None, None))
+            written, mismatch = _written(output, value, enum_set=enum_set, enum_list=enum_list)
             if mismatch:
                 violations.append(Violation(None, output_id, subject, value, mismatch))
                 continue
-            for contract in rules:
-                rule = contract["rule"]
-                if rule["kind"] == "range":
-                    low, high = rule.get("min"), rule.get("max")
-                    if (low is not None and Decimal(written) < Decimal(low)) or (high is not None and Decimal(written) > Decimal(high)):
-                        violations.append(Violation(contract["id"], output_id, subject, value,
-                                                    f"outside [{low if low is not None else ''}, {high if high is not None else ''}]"))
-                elif rule["kind"] == "oneOf" and str(written) not in rule["values"]:
-                    violations.append(Violation(contract["id"], output_id, subject, value, f"not one of {rule['values']}"))
+            for contract_id, kind, payload in rules:
+                if kind == "range":
+                    low_dec, high_dec, reason = payload
+                    as_dec = written if isinstance(written, Decimal) else Decimal(written)
+                    if (low_dec is not None and as_dec < low_dec) or (high_dec is not None and as_dec > high_dec):
+                        violations.append(Violation(contract_id, output_id, subject, value, reason))
+                elif kind == "oneOf":
+                    allowed, reason = payload
+                    if str(written) not in allowed:
+                        violations.append(Violation(contract_id, output_id, subject, value, reason))
             values[output_id] = str(written) if isinstance(written, Decimal) else written
         rows.append(values)
     return rows, violations
@@ -224,7 +278,7 @@ def apply_model(cell: Cell, model_id: str, version_id: str, predict: Callable[[p
     batch = {"batch_id": batch_id, "model_version": version_id, "input_type": input_type,
              "input_revision": applied.input_revision, "rows": applied.rows}
     applied.receipts.append(cell.call(BATCH_ACTION, batch, batch_id)["receipt"]["receiptHash"])
-    for subject, row in zip(subjects, values):
+    for subject, row in zip(subjects, values, strict=True):
         prediction_id = f"{subject}@{batch_id}"
         body = {"prediction_id": prediction_id, "subject": subject, "model_version": version_id, **row}
         applied.receipts.append(cell.call(action, body, prediction_id)["receipt"]["receiptHash"])

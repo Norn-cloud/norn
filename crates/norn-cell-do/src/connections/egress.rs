@@ -55,6 +55,7 @@ use http::{HeaderMap, Method, Request, Response};
 use ureq::config::Config;
 use ureq::unversioned::resolver::{ResolvedSocketAddrs, Resolver};
 use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
+use zeroize::Zeroizing;
 
 /// The server variable that would name an egress proxy; refused
 /// (EGRESS-PROXY-1).
@@ -287,12 +288,28 @@ impl Drop for LookupSlot {
 
 fn host_port(uri: &http::Uri) -> Option<(String, u16)> {
     let host = uri.host()?.trim_start_matches('[').trim_end_matches(']');
-    let port = uri.port_u16().or_else(|| match uri.scheme_str() {
-        Some("https") => Some(443),
-        Some("http") => Some(80),
-        _ => None,
+    let port = uri.port_u16().or_else(|| {
+        let scheme = uri.scheme_str()?;
+        if scheme.eq_ignore_ascii_case("https") {
+            Some(443)
+        } else if scheme.eq_ignore_ascii_case("http") {
+            Some(80)
+        } else {
+            None
+        }
     })?;
     Some((host.to_ascii_lowercase(), port))
+}
+
+fn canonical_host(host: &str) -> String {
+    let trimmed = host.trim();
+    let unbracketed = trimmed.trim_start_matches('[').trim_end_matches(']');
+    match unbracketed.parse::<IpAddr>() {
+        Ok(IpAddr::V6(v6)) => format!("[{v6}]"),
+        Ok(IpAddr::V4(v4)) => v4.to_string(),
+        Err(_) => url::Host::parse(trimmed)
+            .map_or_else(|_| trimmed.to_ascii_lowercase(), |h| h.to_string()),
+    }
 }
 
 fn refused(error: EgressError) -> ureq::Error {
@@ -331,16 +348,18 @@ impl PinnedResolver {
     }
 
     fn checked(&self, host: &str, port: u16, bound: Duration) -> Result<Vec<IpAddr>, EgressError> {
-        let addresses = match host.parse::<IpAddr>() {
-            Ok(ip) => vec![ip],
-            Err(_) => self.bounded_lookup(host, port, bound.min(self.resolve))?,
+        let (addresses, canonical) = match host.parse::<IpAddr>() {
+            Ok(IpAddr::V6(v6)) => (vec![IpAddr::V6(v6)], format!("[{v6}]")),
+            Ok(IpAddr::V4(v4)) => (vec![IpAddr::V4(v4)], v4.to_string()),
+            Err(_) => (
+                self.bounded_lookup(host, port, bound.min(self.resolve))?,
+                url::Host::parse(host).map_or_else(|_| host.to_owned(), |h| h.to_string()),
+            ),
         };
         if addresses.is_empty() {
             return Err(EgressError::Unresolved(host.to_owned()));
         }
-        let listed = self
-            .policy
-            .listed(&url::Host::parse(host).map_or_else(|_| host.to_owned(), |h| h.to_string()));
+        let listed = self.policy.listed(&canonical);
         if !listed
             && let Some(internal) = addresses.iter().find(|ip| norn_api::net::internal_ip(**ip))
         {
@@ -471,6 +490,10 @@ impl Egress {
         lookup: Arc<dyn Lookup>,
         timeouts: Timeouts,
     ) -> Self {
+        let allowed_hosts = allowed_hosts
+            .into_iter()
+            .map(|host| canonical_host(&host))
+            .collect();
         let policy = Arc::new(Policy { allowed_hosts });
         let config = Config::builder()
             // No proxy, ambient or configured (EGRESS-PROXY-1).
@@ -539,7 +562,11 @@ impl Egress {
             .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
             .and_then(|host| host.parse::<IpAddr>().ok())
             .is_some_and(|ip| ip.is_loopback());
-        if uri.scheme_str() != Some("https") && !loopback {
+        if !uri
+            .scheme_str()
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https"))
+            && !loopback
+        {
             return Err(EgressError::Forbidden(
                 "an OAuth call goes only to https".to_owned(),
             ));
@@ -557,12 +584,18 @@ impl Egress {
         let (parts, body) = request.into_parts();
         let mut method = parts.method;
         let mut headers = parts.headers;
-        let mut body = Some(body).filter(|body| !body.is_empty());
+        let mut body = Some(Zeroizing::new(body)).filter(|body| !body.is_empty());
         let mut url = url::Url::parse(&parts.uri.to_string())
             .map_err(|_error| EgressError::Forbidden("not an absolute URL".to_owned()))?;
         for hop in 0..=MAX_REDIRECTS {
             self.resolver.policy.check_url(&url)?;
-            let response = self.attempt(&method, &url, &headers, body.as_deref(), deadline)?;
+            let response = self.attempt(
+                &method,
+                &url,
+                &headers,
+                body.as_deref().map(Vec::as_slice),
+                deadline,
+            )?;
             let status = response.status().as_u16();
             if !response.status().is_redirection() {
                 return Ok(response);
@@ -627,10 +660,10 @@ impl Egress {
             let wait = if let Ok(response) = &outcome
                 && matches!(response.status().as_u16(), 429 | 502 | 503 | 504)
             {
-                backoff(attempt, response.headers())
+                backoff(attempt, Some(response.headers()))
             } else if matches!(outcome, Err(EgressError::Transport(kind)) if kind != RESOLVER_BUSY)
             {
-                backoff(attempt, &HeaderMap::new())
+                backoff(attempt, None)
             } else {
                 return outcome;
             };
@@ -657,7 +690,7 @@ impl Egress {
             request = request.header(name, value);
         }
         let request = request
-            .body(body.map_or_default(<[u8]>::to_vec))
+            .body(body.unwrap_or(&[]))
             .map_err(|_error| EgressError::Transport("malformed_request"))?;
         // This attempt may use what is left of the call's deadline.
         let request = self
@@ -676,10 +709,10 @@ impl Egress {
     }
 }
 
-fn backoff(attempt: u32, headers: &HeaderMap) -> Duration {
+fn backoff(attempt: u32, headers: Option<&HeaderMap>) -> Duration {
     let base = Duration::from_millis(200_u64.saturating_mul(1 << attempt.min(6)));
     headers
-        .get(RETRY_AFTER)
+        .and_then(|headers| headers.get(RETRY_AFTER))
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map_or(base, |seconds| Duration::from_secs(seconds.min(30)))
@@ -812,5 +845,25 @@ mod tests {
             matches!(&refused, Err(EgressError::Config(why)) if why.contains(PROXY_VAR) && why.contains("not supported")),
             "{refused:?}"
         );
+    }
+
+    #[test]
+    fn allowlisted_ipv6_loopback_resolves_and_passes_policy() {
+        let egress = Egress::new(vec!["[::1]".to_owned()], Arc::new(SystemLookup));
+        assert!(
+            egress
+                .resolver
+                .policy
+                .check_url(&url("http://[::1]:8080/token"))
+                .is_ok()
+        );
+        let checked = egress.resolver.checked("::1", 8080, Duration::from_secs(1));
+        assert_eq!(checked, Ok(vec![IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)]));
+        // Unlisted IPv6 loopback is still refused.
+        let strict = Egress::new(Vec::new(), Arc::new(SystemLookup));
+        assert!(matches!(
+            strict.resolver.checked("::1", 8080, Duration::from_secs(1)),
+            Err(EgressError::Forbidden(_))
+        ));
     }
 }
