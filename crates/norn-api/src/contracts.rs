@@ -912,14 +912,7 @@ fn parse_composite_schema(value: &Value, composition: &str) -> Schema {
     if siblings.is_empty() {
         return composite;
     }
-    let sibling_schema = match parse_ref_or_schema(Value::Object(siblings)) {
-        utoipa::openapi::RefOr::T(schema) => schema,
-        utoipa::openapi::RefOr::Ref(reference) => {
-            let mut schema = AllOf::new();
-            schema.items.push(utoipa::openapi::RefOr::Ref(reference));
-            Schema::AllOf(schema)
-        }
-    };
+    let sibling_schema = parse_component_schema(Value::Object(siblings));
     if let Schema::AllOf(mut schema) = composite {
         schema
             .items

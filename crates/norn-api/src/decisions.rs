@@ -742,23 +742,20 @@ fn call_run<E: SqlEngine>(
     })
 }
 
-/// An approval's document: the parked call in place of a flow's ask.
-fn call_document<E: SqlEngine>(
-    store: &CellStore<E>,
+fn build_document(
     decision: &OpenDecision,
-    call: &HeldCall,
-) -> Result<DecisionDocument, Refusal> {
-    Ok(DecisionDocument {
+    run: DecisionRun,
+    flow: DecisionFlow,
+    step_label: Option<String>,
+    call: Option<DecisionCall>,
+) -> DecisionDocument {
+    DecisionDocument {
         id: decision.id.clone(),
-        run: call_run(store, decision, call)?,
-        flow: DecisionFlow {
-            rule_id: call.definition.clone(),
-            version: call.revision.to_string(),
-            title: None,
-        },
+        run,
+        flow,
         step: DecisionStep {
             id: decision.step.clone(),
-            label: None,
+            label: step_label,
         },
         question: decision.request.question.clone(),
         risk: risk(&decision.request),
@@ -768,13 +765,32 @@ fn call_document<E: SqlEngine>(
         expires_at_ms: decision.expires_at_ms,
         context: DecisionContext::default(),
         input_schema: None,
-        call: Some(DecisionCall {
+        call,
+    }
+}
+
+/// An approval's document: the parked call in place of a flow's ask.
+fn call_document<E: SqlEngine>(
+    store: &CellStore<E>,
+    decision: &OpenDecision,
+    call: &HeldCall,
+) -> Result<DecisionDocument, Refusal> {
+    Ok(build_document(
+        decision,
+        call_run(store, decision, call)?,
+        DecisionFlow {
+            rule_id: call.definition.clone(),
+            version: call.revision.to_string(),
+            title: None,
+        },
+        None,
+        Some(DecisionCall {
             action: call.call.action.clone(),
             definition: call.definition.clone(),
             input: RuntimeValue::Object(call.call.input.clone()),
             trace: call.call.trace.clone().map(Into::into),
         }),
-    })
+    ))
 }
 
 fn document<E: SqlEngine>(
@@ -802,32 +818,21 @@ fn document<E: SqlEngine>(
     let Some(flow) = flow else {
         return Ok(None);
     };
-    Ok(Some(DecisionDocument {
-        id: decision.id.clone(),
-        run: DecisionRun {
+    Ok(Some(build_document(
+        decision,
+        DecisionRun {
             id: run.run_id,
             generation: run.generation,
             state: run.state,
         },
-        flow: DecisionFlow {
+        DecisionFlow {
             rule_id: flow.view.rule_id.clone(),
             version: run.flow.version,
             title: flow.view.title.clone(),
         },
-        step: DecisionStep {
-            id: decision.step.clone(),
-            label: step_label(&flow.view, &decision.step),
-        },
-        question: decision.request.question.clone(),
-        risk: risk(&decision.request),
-        options: options(&decision.request),
-        agent_pick: decision.request.agent_pick.clone(),
-        requested_at_ms: decision.requested_at_ms,
-        expires_at_ms: decision.expires_at_ms,
-        context: DecisionContext::default(),
-        input_schema: None,
-        call: None,
-    }))
+        step_label(&flow.view, &decision.step),
+        None,
+    )))
 }
 
 /// The cursor after `decision`: its sort key.
@@ -1503,6 +1508,19 @@ fn record<E: SqlEngine>(
         .map_err(Refusal::host)?
         .ok_or_else(not_found)?;
     let flow = installed_flow(cell.store(), &row.flow.id).map_err(|_retired| not_found())?;
+    let output = decision_output(body);
+    // The flow must accept the answer; the commit records and consumes it.
+    let commit = result_turn(
+        cell,
+        &flow,
+        decision_delivery(decision, StepOutcome::Output(output.clone())),
+        now,
+    )?;
+    let resolved = decided_resolution(decision, decision.run_id.clone(), body, actor)?;
+    settle(cell, commit, &resolved, Settlement::Record(output))
+}
+
+fn decision_output(body: &DecideRequest) -> RuntimeObject {
     let mut output: RuntimeObject = BTreeMap::from([(
         "choice".to_owned(),
         RuntimeValue::String(body.choice.clone()),
@@ -1510,26 +1528,31 @@ fn record<E: SqlEngine>(
     if let Some(note) = &body.note {
         output.insert("note".to_owned(), RuntimeValue::String(note.clone()));
     }
-    let delivery = |outcome| Delivery {
+    output
+}
+
+fn decision_delivery(decision: &OpenDecision, outcome: StepOutcome) -> Delivery<'_> {
+    Delivery {
         command: &decision.command,
         generation: decision.generation,
         run_id: &decision.run_id,
         step: &decision.step,
         attempt: decision.attempt.clone(),
         outcome,
-    };
-    // The flow must accept the answer; the commit records and consumes it.
-    let commit = result_turn(
-        cell,
-        &flow,
-        delivery(StepOutcome::Output(output.clone())),
-        now,
-    )?;
-    let resolved = DecisionResolved {
+    }
+}
+
+fn decided_resolution(
+    decision: &OpenDecision,
+    run_id: String,
+    body: &DecideRequest,
+    actor: &str,
+) -> Result<DecisionResolved, Refusal> {
+    Ok(DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
         generation: decision.generation.0,
-        run_id: decision.run_id.clone(),
+        run_id,
         step: decision.step.clone(),
         resolution: Resolution::Decided,
         choice: Some(body.choice.clone()),
@@ -1537,8 +1560,23 @@ fn record<E: SqlEngine>(
         decided_by: Some(actor.to_owned()),
         idempotency_key: Some(body.idempotency_key.clone()),
         request_hash: Some(request_hash(body)?),
-    };
-    settle(cell, commit, &resolved, Settlement::Record(output))
+    })
+}
+
+fn expired_resolution(decision: &OpenDecision, run_id: String) -> DecisionResolved {
+    DecisionResolved {
+        decision_id: decision.id.clone(),
+        command_id: decision.command.0.clone(),
+        generation: decision.generation.0,
+        run_id,
+        step: decision.step.clone(),
+        resolution: Resolution::Expired,
+        choice: None,
+        note: None,
+        decided_by: None,
+        idempotency_key: None,
+        request_hash: None,
+    }
 }
 
 /// P3: commit `resolved` with its settlement in one transaction. `false`
@@ -1602,26 +1640,9 @@ fn record_call<E: SqlEngine>(
     body: &DecideRequest,
     actor: &str,
 ) -> Result<bool, Refusal> {
-    let mut output: RuntimeObject = BTreeMap::from([(
-        "choice".to_owned(),
-        RuntimeValue::String(body.choice.clone()),
-    )]);
-    if let Some(note) = &body.note {
-        output.insert("note".to_owned(), RuntimeValue::String(note.clone()));
-    }
-    let resolved = DecisionResolved {
-        decision_id: decision.id.clone(),
-        command_id: decision.command.0.clone(),
-        generation: decision.generation.0,
-        run_id: call_run(cell.store(), decision, held)?.id,
-        step: decision.step.clone(),
-        resolution: Resolution::Decided,
-        choice: Some(body.choice.clone()),
-        note: body.note.clone(),
-        decided_by: Some(actor.to_owned()),
-        idempotency_key: Some(body.idempotency_key.clone()),
-        request_hash: Some(request_hash(body)?),
-    };
+    let output = decision_output(body);
+    let run_id = call_run(cell.store(), decision, held)?.id;
+    let resolved = decided_resolution(decision, run_id, body, actor)?;
     resolve_call(cell, decision, output, &resolved)
 }
 
@@ -1663,19 +1684,7 @@ pub(crate) fn expire<E: SqlEngine>(
 ) -> Result<(), Refusal> {
     if let Some(held) = &decision.call {
         let failure = expired_failure();
-        let resolved = DecisionResolved {
-            decision_id: decision.id.clone(),
-            command_id: decision.command.0.clone(),
-            generation: decision.generation.0,
-            run_id: call_run(cell.store(), decision, held)?.id,
-            step: decision.step.clone(),
-            resolution: Resolution::Expired,
-            choice: None,
-            note: None,
-            decided_by: None,
-            idempotency_key: None,
-            request_hash: None,
-        };
+        let resolved = expired_resolution(decision, call_run(cell.store(), decision, held)?.id);
         resolve_call(cell, decision, failure, &resolved)?;
         return Ok(());
     }
@@ -1691,19 +1700,11 @@ pub(crate) fn expire<E: SqlEngine>(
         return Ok(());
     };
     let failure = expired_failure();
-    let delivery = |outcome| Delivery {
-        command: &decision.command,
-        generation: decision.generation,
-        run_id: &decision.run_id,
-        step: &decision.step,
-        attempt: decision.attempt.clone(),
-        outcome,
-    };
     // The flow must accept the failure; the commit records and consumes it.
     let commit = result_turn(
         cell,
         &flow,
-        delivery(StepOutcome::Failure(failure.clone())),
+        decision_delivery(decision, StepOutcome::Failure(failure.clone())),
         now,
     )?;
     // An expiry an earlier engine recorded apart is resumed with exactly that
@@ -1713,19 +1714,7 @@ pub(crate) fn expire<E: SqlEngine>(
     } else {
         Settlement::Record(failure)
     };
-    let resolved = DecisionResolved {
-        decision_id: decision.id.clone(),
-        command_id: decision.command.0.clone(),
-        generation: decision.generation.0,
-        run_id: decision.run_id.clone(),
-        step: decision.step.clone(),
-        resolution: Resolution::Expired,
-        choice: None,
-        note: None,
-        decided_by: None,
-        idempotency_key: None,
-        request_hash: None,
-    };
+    let resolved = expired_resolution(decision, decision.run_id.clone());
     match cell.commit_decision_resolution(commit, &resolved, settlement) {
         Ok(_) => Ok(()),
         Err(error) if settled_elsewhere(&error) => Ok(()),
