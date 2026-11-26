@@ -1421,13 +1421,12 @@ fn a_transform_cannot_filter_or_order_by_a_marked_column() {
 }
 
 #[test]
-fn whole_row_filter_is_refused_and_runtime_origins_cover_partition_and_dedupe() {
-    let pool = marked_customer_pool();
-    let mut marked_set = pool;
+fn whole_row_closure_filter_over_marked_schema_is_refused() {
+    let mut marked_set = marked_customer_pool();
     marked_set.push(view(
         json!({
             "s": {"op": "scan", "input": "customer"},
-            "f": {"op": "filter", "input": "s", "predicate": "input != null"}
+            "f": {"op": "filter", "input": "s", "predicate": "some([input] as row, row.email == 'a@b.c')"}
         }),
         "f",
     ));
@@ -1437,19 +1436,23 @@ fn whole_row_filter_is_refused_and_runtime_origins_cover_partition_and_dedupe() 
         &marked_set,
         &BTreeSet::new(),
     )
-    .expect_err("whole-row predicate over marked schema must refuse");
+    .expect_err("whole-row closure predicate over marked schema must refuse");
     assert!(
         err.iter()
             .any(|d| d.code.as_str() == "question.validation.marked_field"),
         "{err:?}"
     );
+}
 
+#[test]
+fn runtime_origins_cover_whole_row_filter_partition_and_dedupe_keys() {
     let mut unmarked = ontology();
     unmarked.push(view(
         json!({
             "s": {"op": "scan", "input": "customer"},
+            "f": {"op": "filter", "input": "s", "predicate": "some([input] as row, row.region == 'north')"},
             "w": {
-                "op": "window", "input": "s", "partitionBy": ["region"],
+                "op": "window", "input": "f", "partitionBy": ["region"],
                 "orderBy": [{"column": "id", "direction": "asc"}],
                 "columns": [{"name": "rn", "fn": "row_number"}]
             },
@@ -1463,8 +1466,16 @@ fn whole_row_filter_is_refused_and_runtime_origins_cover_partition_and_dedupe() 
     ));
     let unmarked = envelopes(unmarked);
     let plan = admit(unmarked.last().expect("view"), &unmarked, &BTreeSet::new())
-        .expect("unmarked window + dedupe admits");
+        .expect("unmarked filter + window + dedupe admits");
     let origins = plan.filter_and_order_origins();
+    assert!(
+        origins.contains(&(
+            "/nodes/f/predicate".to_owned(),
+            "shop.Customer".to_owned(),
+            "email".to_owned(),
+        )),
+        "whole-row filter must conservatively include every schema column origin: {origins:?}"
+    );
     assert!(
         origins.contains(&(
             "/nodes/w/partitionBy/0".to_owned(),

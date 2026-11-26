@@ -371,7 +371,7 @@ impl<E: SqlEngine> CellStore<E> {
                     crate::reactive::BudgetedRead::Exhausted => return Ok(false),
                     crate::reactive::BudgetedRead::Missing => {}
                     crate::reactive::BudgetedRead::Found(record) => {
-                        if self.model.is_a(&record.object_type, &scan.object_type)
+                        if self.model().is_a(&record.object_type, &scan.object_type)
                             && record.scope == scope
                             && access(&record)? != RowAccess::Read
                         {
