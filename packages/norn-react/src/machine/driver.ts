@@ -94,9 +94,10 @@ export function createDriver(options: DriverOptions): Driver {
   const clock: Clock = options.clock ?? DEFAULT_CLOCK
   const newKey = options.newKey ?? (() => crypto.randomUUID())
   const keys = new Map<string, string>()
-  const inflight = new Map<number, InFlight>()
+  const inflight = new Map<number, Set<InFlight>>()
   const timers = new Set<unknown>()
   let disposed = false
+  let resuming = false
   const opened = init(machine)
   let current = opened.snapshot
 
@@ -133,10 +134,16 @@ export function createDriver(options: DriverOptions): Driver {
   }
 
   const resume = () => {
-    while (!disposed && waiting.length > 0) {
-      // Still at the head while it fires, so a message it dispatches lands behind it.
-      if (fire(waiting[0]!) === null) return
-      waiting.shift()
+    if (resuming) return
+    resuming = true
+    try {
+      while (!disposed && waiting.length > 0) {
+        // Still at the head while it fires, so a message it dispatches lands behind it.
+        if (fire(waiting[0]!) === null) return
+        waiting.shift()
+      }
+    } finally {
+      resuming = false
     }
   }
 
@@ -146,20 +153,28 @@ export function createDriver(options: DriverOptions): Driver {
     dispatch({ kind: "outcome", entry, outcome: classified.outcome, ...(classified.category ? { category: classified.category } : {}), ...(code === undefined ? {} : { code }), payload: classified.payload })
   }
 
+  const DEFAULT_DEADLINE_MS = 10_000
+
   const start = (cmd: Extract<Cmd, { kind: "start" }>) => {
     const keyOf = JSON.stringify([cmd.call, cmd.input])
     const key = keys.get(keyOf) ?? newKey()
     keys.set(keyOf, key)
     const controller = new AbortController()
+    const timeoutMs = cmd.deadlineMs > 0 ? cmd.deadlineMs : DEFAULT_DEADLINE_MS
     const flight: InFlight = {
       controller,
       ended: null,
       deadline: clock.setTimeout(() => {
         flight.ended ??= "timeout"
         controller.abort()
-      }, cmd.deadlineMs),
+      }, timeoutMs),
     }
-    inflight.set(cmd.entry, flight)
+    let flights = inflight.get(cmd.entry)
+    if (flights === undefined) {
+      flights = new Set()
+      inflight.set(cmd.entry, flights)
+    }
+    flights.add(flight)
     options.onStart?.(cmd, key)
     transport.call(cmd.call, cmd.input, { signal: controller.signal, idempotencyKey: key }).then(
       (classified) => {
@@ -179,8 +194,12 @@ export function createDriver(options: DriverOptions): Driver {
   }
 
   const settle = (entry: number, flight: InFlight) => {
-    clock.clearTimeout(flight.deadline)
-    if (inflight.get(entry) === flight) inflight.delete(entry)
+    if (flight.deadline !== null) clock.clearTimeout(flight.deadline)
+    const flights = inflight.get(entry)
+    if (flights !== undefined) {
+      flights.delete(flight)
+      if (flights.size === 0) inflight.delete(entry)
+    }
   }
 
   const run = (cmds: readonly Cmd[]) => {
@@ -190,10 +209,12 @@ export function createDriver(options: DriverOptions): Driver {
           start(cmd)
           break
         case "cancel": {
-          const flight = inflight.get(cmd.entry)
-          if (flight) {
-            flight.ended ??= "cancelled"
-            flight.controller.abort()
+          const flights = inflight.get(cmd.entry)
+          if (flights !== undefined) {
+            for (const flight of flights) {
+              flight.ended ??= "cancelled"
+              flight.controller.abort()
+            }
           }
           break
         }
@@ -221,9 +242,11 @@ export function createDriver(options: DriverOptions): Driver {
     deferred: () => waiting.length,
     dispose: () => {
       disposed = true
-      for (const flight of inflight.values()) {
-        clock.clearTimeout(flight.deadline)
-        flight.controller.abort()
+      for (const flights of inflight.values()) {
+        for (const flight of flights) {
+          if (flight.deadline !== null) clock.clearTimeout(flight.deadline)
+          flight.controller.abort()
+        }
       }
       inflight.clear()
       for (const handle of timers) clock.clearTimeout(handle)
