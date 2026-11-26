@@ -56,7 +56,7 @@ test("SCOPE-KEY-1: scopedRoles auto-injects resource in principalAttribute onto 
     const policy = compiled.artifacts.find((a) => (a as { artifactId: string }).artifactId === "hr.access.policy") as {
       payload: { rules: Array<{ ruleId: string; allOf: unknown[] }> }
     }
-    expect(policy.payload.rules[0].allOf).toEqual([
+    expect(policy.payload.rules[0]?.allOf).toEqual([
       { role: { anyOf: ["branch_manager"] } },
       { resource: { name: "branch_id", op: "in", value: { principalAttribute: "managed_branches" } } },
     ])
