@@ -437,3 +437,89 @@ test("a line too long for one guard call is too large, not private; a date insid
   expect(`"start": "2026-05-18T00:00:00Z"`.replace(ISO_DATE, "DATE")).toBe(`"start": "DATE"`)
   for (const phone of ["010-2012-05-22", "2012-05-22-77", "+20 2012-05-22"]) expect(phone.replace(ISO_DATE, "DATE")).toBe(phone.startsWith("+") ? "+20 DATE" : phone)
 })
+
+test("concurrent proposal accept/decline is fenced to one cell install, and a non-terminal error releases the claim", async () => {
+  const db = stage()
+  const base = cellDouble()
+  let releaseInstall!: () => void
+  let installStarted!: () => void
+  let installs = 0
+  let failNextInstall = false
+  const started = new Promise<void>((resolve) => { installStarted = resolve })
+  const gatedCell: Cell = {
+    ...base.cell,
+    post: async (path, body) => {
+      if (path === "/v1/definitions:install") {
+        installs += 1
+        if (failNextInstall) {
+          failNextInstall = false
+          return { kind: "answer", status: 502, body: { error: "cell busy" } }
+        }
+        installStarted()
+        await new Promise<void>((resolve) => { releaseInstall = resolve })
+      }
+      return base.cell.post(path, body)
+    },
+  }
+  const deps: AssistantDeps = { db, cell: gatedCell, scope, model: scripted(proposed([tile()])), capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "race1" }
+  const created = await assistant(post("", { request: "Weekly gold yield" }), "", deps)
+  expect(created.status).toBe(200)
+  const proposal = await created.json() as { id: string; decidedAtMs: number | null }
+  expect(proposal.decidedAtMs).toBeNull()
+
+  // A transient 502 releases the accept claim so a retry can proceed.
+  failNextInstall = true
+  expect((await assistant(post(`/${proposal.id}/accept`, {}), `/${proposal.id}/accept`, deps)).status).toBe(502)
+
+  // Start one accept and pause mid-install: a concurrent accept AND a concurrent decline both refuse 409.
+  const firstAccept = assistant(post(`/${proposal.id}/accept`, {}), `/${proposal.id}/accept`, deps)
+  await started
+  const secondAccept = await assistant(post(`/${proposal.id}/accept`, {}), `/${proposal.id}/accept`, deps)
+  const racedDecline = await assistant(post(`/${proposal.id}/decline`, {}), `/${proposal.id}/decline`, deps)
+  expect(secondAccept.status).toBe(409)
+  expect(racedDecline.status).toBe(409)
+  releaseInstall()
+  const settled = await firstAccept
+  expect(settled.status).toBe(200)
+  expect((await settled.json()) as { state: string }).toMatchObject({ state: "accepted" })
+  // Only the failed 502 attempt + the one winning install reached the cell.
+  expect(installs).toBe(2)
+})
+
+test("withFallback preserves primary billed or uncertain spend when the fallback throws a definite unbilled status", async () => {
+  const { cell } = cellDouble()
+  const httpError = (status: number) => Object.assign(new Error(`status ${status}`), { status })
+  const unbilledFallback: Model = { name: "fallback", answer: async () => { throw httpError(429) } }
+
+  // 1. Primary returns a billed json:null refusal, then fallback throws definite 429: primary spend is recorded.
+  {
+    const db = stage()
+    const billedPrimary: Model = {
+      name: "primary",
+      answer: async () => ({ json: null, model: "primary", inputTokens: 100, outputTokens: 20, costMicroUsd: 4000, failure: "The model declined this request." }),
+    }
+    const response = await assistant(
+      post("", { request: "Weekly yield" }),
+      "",
+      { db, cell, scope, model: withFallback(billedPrimary, unbilledFallback), capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "fb1" },
+    )
+    expect(response.status).toBe(502)
+    expect(await totals(db)).toEqual({ spent: 4000, open: 0 })
+  }
+
+  // 2. Primary throws an uncertain timeout, then fallback throws definite 429: full reservation is retained.
+  {
+    const db = stage()
+    const uncertainPrimary: Model = {
+      name: "primary",
+      answer: async () => { throw new DOMException("The operation timed out.", "TimeoutError") },
+    }
+    const response = await assistant(
+      post("", { request: "Weekly yield" }),
+      "",
+      { db, cell, scope, model: withFallback(uncertainPrimary, unbilledFallback), capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "fb2" },
+    )
+    expect(response.status).toBe(502)
+    expect(await totals(db)).toEqual({ spent: 4000 * CALLS_PER_REQUEST, open: 0 })
+  }
+})
