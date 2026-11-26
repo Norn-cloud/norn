@@ -10710,9 +10710,9 @@ export interface components {
         /** @description Action severity and confirmation strength. */
         NornIrWidgetActionConfirmation: {
             /** @description Optional localized explanation of the action's consequences. */
-            message?: components["schemas"]["NornIrLocaleText"];
+            message?: components["schemas"]["NornIrWidgetText"];
             /** @description Required localized phrase for typed confirmation; absent otherwise. */
-            phrase?: components["schemas"]["NornIrLocaleText"];
+            phrase?: components["schemas"]["NornIrWidgetText"];
             /**
              * @description Impact if the action is executed.
              * @enum {string}
@@ -10744,7 +10744,7 @@ export interface components {
             /** @description Effects handled specifically by this invocation. */
             handlers?: components["schemas"]["NornIrWidgetEffectHandler"][];
             /** @description Localized text shown on the action control. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
             /**
              * @description Page location that hosts the action.
              * @enum {string}
@@ -10822,7 +10822,7 @@ export interface components {
             /** @description Values it draws faithfully beyond plain ones (a masked value, an exact decimal). */
             handles?: components["schemas"]["NornIrWidgetValueHandling"][];
             /** @description Human-readable name. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
             /** @description The component's own interaction machine; an opaque island has none. */
             machine?: components["schemas"]["NornIrWidgetMachine"];
             /** @description Typed props: the only data the component receives. */
@@ -10886,7 +10886,7 @@ export interface components {
             input: components["schemas"]["NornIrWidgetControlInput"];
             /** @enum {string} */
             kind: "control";
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
         };
         /** @description An exact page of a pinned widget artifact composed as a baseline. */
         NornIrWidgetComponentOneOf11: {
@@ -10931,7 +10931,7 @@ export interface components {
             /** @enum {string} */
             kind: "child_grid";
             /** @description Localized label used as the grid's accessible region and heading. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
             /**
              * Format: uint64
              * @description Maximum row count, checked against the owned collection declaration.
@@ -11007,6 +11007,22 @@ export interface components {
              * @enum {string}
              */
             type: "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json";
+        };
+        /**
+         * @description One read of the object a page's context names (UI-CONTEXT-READ-1): its type and its key are
+         *     two required text parameters of one page, so the page serves every object type the cell
+         *     serves. The cell decides the read; the checker has no entity to check its values against, so
+         *     nothing but a catalog island draws it, and the island draws them as the cell projected them.
+         */
+        NornIrWidgetContextRead: {
+            /** @description Stable binding id, unique among data bindings and context reads. */
+            bindingId: string;
+            /** @description The required text parameter holding the object's key. */
+            keyParameterId: string;
+            /** @description The page whose context names the object, and whose machine reads it. */
+            pageId: string;
+            /** @description The required text parameter holding the object type. */
+            typeParameterId: string;
         };
         /**
          * @description What a person does with a [`WidgetComponent::Control`].
@@ -11160,9 +11176,9 @@ export interface components {
              */
             format?: "text" | "integer" | "decimal" | "currency" | "percent" | "date" | "date_time" | "boolean" | "metric_buckets";
             /** @description Optional localized help text. */
-            help?: components["schemas"]["NornIrLocaleText"];
+            help?: components["schemas"]["NornIrWidgetText"];
             /** @description Localized visible label. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
             /** @description Data binding that supplies options for a select or link control. */
             optionQueryBindingId?: string;
             /** @description Whether this field is read-only. */
@@ -11293,7 +11309,7 @@ export interface components {
             /** @description Effects handled specifically by the submit invocation. */
             handlers?: components["schemas"]["NornIrWidgetEffectHandler"][];
             /** @description Localized submit label. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
         };
         /** @description One member of the exact EntityIR identity key selecting an object detail. */
         NornIrWidgetKeyValue: {
@@ -11547,6 +11563,20 @@ export interface components {
         NornIrWidgetMachineTransitionPropertyAssign: {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
+        /** @description One source message. */
+        NornIrWidgetMessage: {
+            /** @description What tells this use of the text apart from another use of the same text. */
+            context?: string;
+            /** @description [`message_id`] of `source` and `context`. */
+            id: string;
+            /** @description The text as written, in the contract's source language. */
+            source: string;
+        };
+        /** @description The wire form of a message: one member, `msg`, so no locale map can be read as one. */
+        NornIrWidgetMessageText: {
+            /** @description The message. */
+            msg: components["schemas"]["NornIrWidgetMessage"];
+        };
         /**
          * @description Host-native projections available to Widget UX.
          * @enum {string}
@@ -11586,7 +11616,7 @@ export interface components {
             /** @description Stable navigation item id. */
             itemId: string;
             /** @description Localized item label. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
             /** @description Capability required to show or follow the item; never a grant. */
             requiredCapability: string;
             /** @description Boolean condition required to show the item. */
@@ -11625,7 +11655,7 @@ export interface components {
         NornIrWidgetOverrideValueOneOf0: {
             /** @enum {string} */
             kind: "label";
-            value: components["schemas"]["NornIrLocaleText"];
+            value: components["schemas"]["NornIrWidgetText"];
         };
         /** @description Change sibling order. */
         NornIrWidgetOverrideValueOneOf1: {
@@ -11787,7 +11817,7 @@ export interface components {
              */
             kind: "section" | "tab";
             /** @description Localized heading. */
-            label: components["schemas"]["NornIrLocaleText"];
+            label: components["schemas"]["NornIrWidgetText"];
             /**
              * Format: uint64
              * @description Order among sibling sections.
@@ -11837,6 +11867,15 @@ export interface components {
          */
         NornIrWidgetStateRole: "idle" | "pending" | "error" | "terminal";
         /**
+         * @description User-facing text in a Widget UX contract: a source message, or locale-keyed text.
+         *
+         *     A message is shaped as GT shapes one (#1762): its source text, an optional context that tells
+         *     two uses of one text apart, and a stable id, [`message_id`] of both. A host draws it through its
+         *     translations, keyed by the id, and falls back to the source text. The checker refuses an id
+         *     that is not the hash of its text and context, so no id is hand-written or left stale.
+         */
+        NornIrWidgetText: components["schemas"]["NornIrWidgetMessageText"] | components["schemas"]["NornIrLocaleText"];
+        /**
          * @description Where a catalog component stands on the trust ladder (UI-CATALOG-1).
          * @enum {string}
          */
@@ -11854,6 +11893,13 @@ export interface components {
              *     framework, each with a typed props contract, declared events and its machine.
              */
             catalog?: components["schemas"]["NornIrWidgetCatalogEntry"][];
+            /**
+             * @description Reads of one object whose type and key a page's context supplies (UI-CONTEXT-READ-1): a
+             *     page that presents any object type, such as Studio's record page. A page machine reads
+             *     one as it reads a data binding; no property, field, form, filter or list names one, since
+             *     no entity is bound to check them against, so only catalog islands draw it.
+             */
+            contextReads?: components["schemas"]["NornIrWidgetContextRead"][];
             /** @description Exact object reads used by pages, fields, and actions. */
             dataBindings: components["schemas"]["NornIrWidgetDataBinding"][];
             /** @description Field presentation keyed by stable field ids and property references. */
