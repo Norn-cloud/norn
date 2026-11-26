@@ -350,7 +350,8 @@ fn graph_content(rule_id: &str, graph: &JdmGraph) -> Result<GraphContent, Admiss
         nodes: graph
             .nodes
             .iter()
-            .map(|node| decision_node(rule_id, node).map(Arc::new))
+            .enumerate()
+            .map(|(index, node)| decision_node(rule_id, index, node).map(Arc::new))
             .collect::<Result<_, _>>()?,
         edges: graph
             .edges
@@ -550,7 +551,11 @@ fn decision_edge(edge: &JdmEdge) -> DecisionEdge {
     }
 }
 
-fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, AdmissionError> {
+fn decision_node(
+    rule_id: &str,
+    index: usize,
+    node: &JdmNode,
+) -> Result<DecisionNode, AdmissionError> {
     let kind = match node {
         JdmNode::InputNode { content, .. } => {
             no_node_schema(rule_id, node.id(), content.as_ref())?;
@@ -571,7 +576,7 @@ fn decision_node(rule_id: &str, node: &JdmNode) -> Result<DecisionNode, Admissio
             content: table_content(content),
         },
         JdmNode::SwitchNode { content, .. } => DecisionNodeKind::SwitchNode {
-            content: switch_content(rule_id, node.id(), content)?,
+            content: switch_content(rule_id, index, content)?,
         },
         JdmNode::DecisionNode { content, .. } => {
             if content.key.starts_with('\0')
@@ -726,7 +731,7 @@ fn table_content(content: &JdmDecisionTableContent) -> DecisionTableContent {
 
 fn switch_content(
     rule_id: &str,
-    node_id: &str,
+    index: usize,
     content: &JdmSwitchContent,
 ) -> Result<SwitchNodeContent, AdmissionError> {
     let hit_policy = match content.hit_policy {
@@ -735,7 +740,7 @@ fn switch_content(
         Some(JdmHitPolicy::Unique) => {
             return Err(invalid_schema(
                 rule_id,
-                &format!("graph.nodes[{node_id}].content.hitPolicy"),
+                &format!("graph.nodes[{index}].content.hitPolicy"),
                 "switch nodes do not admit unique hit policy",
             ));
         }
@@ -912,8 +917,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use norn_ir::jdm::{
-        JdmDecisionTableContent, JdmDecisionTableInput, JdmDecisionTableOutput,
-        JdmDecisionTableRow, JdmGraph, JdmHitPolicy, JdmNode, JdmSwitchContent,
+        JdmDecisionTableContent, JdmGraph, JdmHitPolicy, JdmNode, JdmSwitchContent, JdmTableInput,
+        JdmTableOutput, JdmTableRow,
     };
     use norn_ir::{Decimal, JsonValue, ResourceLimitProfile, RuntimeValue, ZenExpression};
 
@@ -938,13 +943,14 @@ mod tests {
         let limits = ResourceLimitProfile::norn_limits_v1();
         let reserved_input = JdmDecisionTableContent {
             hit_policy: JdmHitPolicy::First,
-            inputs: vec![JdmDecisionTableInput {
+            inputs: vec![JdmTableInput {
                 id: "_description".to_owned(),
                 name: None,
                 field: None,
+                column_type: None,
             }],
             outputs: Vec::new(),
-            rules: vec![JdmDecisionTableRow {
+            rules: vec![JdmTableRow {
                 id: "r1".to_owned(),
                 description: Some("rand(1)".to_owned()),
                 cells: BTreeMap::new(),
@@ -966,12 +972,13 @@ mod tests {
 
         let duplicate_cols = JdmDecisionTableContent {
             hit_policy: JdmHitPolicy::First,
-            inputs: vec![JdmDecisionTableInput {
+            inputs: vec![JdmTableInput {
                 id: "col".to_owned(),
                 name: None,
                 field: Some("slice.x".to_owned()),
+                column_type: None,
             }],
-            outputs: vec![JdmDecisionTableOutput {
+            outputs: vec![JdmTableOutput {
                 id: "col".to_owned(),
                 name: None,
                 field: "out".to_owned(),
@@ -997,7 +1004,7 @@ mod tests {
             hit_policy: JdmHitPolicy::First,
             inputs: Vec::new(),
             outputs: Vec::new(),
-            rules: vec![JdmDecisionTableRow {
+            rules: vec![JdmTableRow {
                 id: "r1".to_owned(),
                 description: None,
                 cells: BTreeMap::from([("_id".to_owned(), ZenExpression("1".to_owned()))]),
@@ -1015,15 +1022,18 @@ mod tests {
         let duplicate_nodes = JdmGraph {
             content_type: None,
             imports: Vec::new(),
+            settings: None,
             nodes: vec![
                 JdmNode::InputNode {
                     id: "dup".to_owned(),
                     name: "in".to_owned(),
+                    position: None,
                     content: None,
                 },
                 JdmNode::OutputNode {
                     id: "dup".to_owned(),
                     name: "out".to_owned(),
+                    position: None,
                     content: None,
                 },
             ],
@@ -1042,7 +1052,7 @@ mod tests {
             statements: Vec::new(),
         };
         assert!(matches!(
-            super::switch_content("t.rule", "sw", &switch),
+            super::switch_content("t.rule", 0, &switch),
             Err(AdmissionError::InvalidSchema { .. })
         ));
         assert!(crate::contract::same_up_to_f64(

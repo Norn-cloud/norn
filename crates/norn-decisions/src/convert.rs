@@ -231,40 +231,35 @@ pub fn value_to_canonical(value: &Value) -> CanonicalJson {
             }
         };
         loop {
-            let Some(frame) = frames.last_mut() else {
+            let Some(frame) = frames.pop() else {
                 return built;
             };
             match frame {
-                CanonicalFrame::Array { iter, out } => {
+                CanonicalFrame::Array { mut iter, mut out } => {
                     out.push(built);
                     if let Some(next) = iter.next() {
+                        frames.push(CanonicalFrame::Array { iter, out });
                         current = next;
                         break;
                     }
-                    if let Some(CanonicalFrame::Array { out, .. }) = frames.pop() {
-                        built = CanonicalJson::Array(out);
-                    }
+                    built = CanonicalJson::Array(out);
                 }
                 CanonicalFrame::Object {
-                    iter,
+                    mut iter,
                     current_key,
-                    out,
+                    mut out,
                 } => {
+                    out.insert(current_key, built);
                     if let Some((next_key, next_val)) = iter.next() {
-                        let key = std::mem::replace(current_key, next_key.clone());
-                        out.insert(key, built);
+                        frames.push(CanonicalFrame::Object {
+                            iter,
+                            current_key: next_key.clone(),
+                            out,
+                        });
                         current = next_val;
                         break;
                     }
-                    if let Some(CanonicalFrame::Object {
-                        current_key,
-                        mut out,
-                        ..
-                    }) = frames.pop()
-                    {
-                        out.insert(current_key, built);
-                        built = CanonicalJson::Object(out);
-                    }
+                    built = CanonicalJson::Object(out);
                 }
             }
         }
@@ -446,13 +441,51 @@ mod tests {
     fn deeply_nested_values_enforce_depth_bound_without_overflow() {
         let mut deep_value = Value::Null;
         let mut deep_canonical = CanonicalJson::Null;
-        for _ in 0..=super::MAX_VALUE_DEPTH {
-            deep_value = Value::Array(vec![deep_value]);
-            deep_canonical = CanonicalJson::Array(vec![deep_canonical]);
+        let mut deep_runtime = norn_ir::RuntimeValue::Null;
+        let mut deep_ir = norn_ir::JsonValue::Null;
+        for i in 0..=super::MAX_VALUE_DEPTH {
+            if i & 1 == 0 {
+                deep_value = Value::Array(vec![deep_value]);
+                deep_canonical = CanonicalJson::Array(vec![deep_canonical]);
+                deep_runtime = norn_ir::RuntimeValue::Array(vec![deep_runtime]);
+                deep_ir = norn_ir::JsonValue::Array(vec![deep_ir]);
+            } else {
+                deep_value = Value::object([("k", deep_value)]);
+                deep_canonical = CanonicalJson::Object(std::collections::BTreeMap::from([(
+                    "k".to_owned(),
+                    deep_canonical,
+                )]));
+                deep_runtime = norn_ir::RuntimeValue::Object(std::collections::BTreeMap::from([(
+                    "k".to_owned(),
+                    deep_runtime,
+                )]));
+                deep_ir = norn_ir::JsonValue::Object(std::collections::BTreeMap::from([(
+                    "k".to_owned(),
+                    deep_ir,
+                )]));
+            }
         }
         assert!(to_variable(&deep_value).is_err());
         assert!(super::value_to_runtime(&deep_value).is_err());
+        assert!(super::value_from_runtime(&deep_runtime).is_err());
+        assert!(super::value_from_ir(&deep_ir).is_err());
         assert!(value_from_canonical(&deep_canonical).is_err());
         assert_eq!(value_to_canonical(&deep_value), deep_canonical);
+        // Empty and mixed object/array round-trip through iterative value_to_canonical.
+        let mixed = Value::object([
+            ("empty_arr", Value::Array(Vec::new())),
+            ("empty_obj", Value::object::<&str>([])),
+            (
+                "nested",
+                Value::Array(vec![Value::object([
+                    ("a", num("1")),
+                    ("b", Value::Bool(false)),
+                ])]),
+            ),
+        ]);
+        assert_eq!(
+            value_from_canonical(&value_to_canonical(&mixed)).unwrap(),
+            mixed
+        );
     }
 }

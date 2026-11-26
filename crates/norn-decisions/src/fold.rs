@@ -115,9 +115,9 @@ enum OrderKey {
 }
 
 fn inspect(value: &Variable, meter: &Meter, profile: ScaledArithmetic) -> Result<(), Failure> {
+    meter.charge(1)?;
     let mut stack = vec![value.clone()];
     while let Some(current) = stack.pop() {
-        meter.charge(1)?;
         match &current {
             Variable::Number(n) => {
                 profile.coefficient(*n)?;
@@ -125,12 +125,13 @@ fn inspect(value: &Variable, meter: &Meter, profile: ScaledArithmetic) -> Result
             Variable::String(s) => meter.charge(u64::try_from(s.len())?)?,
             Variable::Array(a) => {
                 for v in a.borrow().iter() {
+                    meter.charge(1)?;
                     stack.push(v.clone());
                 }
             }
             Variable::Object(o) => {
                 for (key, v) in o.borrow().iter() {
-                    meter.charge(u64::try_from(key.len())?)?;
+                    meter.charge(u64::try_from(key.len())?.saturating_add(1))?;
                     stack.push(v.clone());
                 }
             }
