@@ -22,7 +22,9 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -66,6 +68,38 @@ def segment(text: str) -> str:
     return cleaned or "unnamed"
 
 
+def _run_bash(script: str, root: Path, timeout: int, *, capture: bool) -> subprocess.CompletedProcess:
+    command = ["bash", "-o", "pipefail", "-ec", script]
+    stdout_target = subprocess.PIPE if capture else sys.stderr
+    stderr_target = subprocess.PIPE if capture else sys.stderr
+    proc = subprocess.Popen(
+        command,
+        cwd=root,
+        stdout=stdout_target,
+        stderr=stderr_target,
+        text=capture,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+    except BaseException:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
+
+
 def run_probe(probe: dict, root: Path) -> bool:
     name = probe["name"]
     missing = [path for path in probe.get("requires", []) if not (root / path).exists()]
@@ -73,11 +107,9 @@ def run_probe(probe: dict, root: Path) -> bool:
         emit("SKIP", f"{name} missing {', '.join(missing)}")
         return True
     timeout = probe.get("timeout_s", 1800)
-    shell = ["bash", "-o", "pipefail", "-ec"]
     if probe.get("prepare"):
         try:
-            prepared = subprocess.run([*shell, probe["prepare"]], cwd=root, timeout=timeout, stdout=sys.stderr,
-                                      stderr=sys.stderr)
+            prepared = _run_bash(probe["prepare"], root, timeout, capture=False)
         except subprocess.TimeoutExpired:
             emit("FAIL", f"{name} prepare exceeded {timeout} s")
             return False
@@ -86,7 +118,7 @@ def run_probe(probe: dict, root: Path) -> bool:
             return False
     started = time.monotonic()
     try:
-        ran = subprocess.run([*shell, probe["run"]], cwd=root, timeout=timeout, capture_output=True, text=True)
+        ran = _run_bash(probe["run"], root, timeout, capture=True)
     except subprocess.TimeoutExpired:
         emit("FAIL", f"{name} run exceeded {timeout} s")
         return False
@@ -101,8 +133,9 @@ def run_probe(probe: dict, root: Path) -> bool:
         return False
     now = record.now_utc()
     base = {"probe": name, "measured_at": now, "workload": probe.get("workload", {}), "caveats": probe["caveats"]}
+    emitted: list[dict] = []
     if probe.get("timed"):
-        emit("METRIC", {**base, **probe["timed"], "value": round(seconds, 2)})
+        emitted.append({**base, **probe["timed"], "value": round(seconds, 2)})
     parse = probe.get("parse")
     pattern = re.compile(parse["regex"]) if parse else None
     for line in output.splitlines():
@@ -112,16 +145,26 @@ def run_probe(probe: dict, root: Path) -> bool:
             except json.JSONDecodeError:
                 emit("FAIL", f"{name} printed a malformed METRIC line")
                 return False
+            if not isinstance(measured, dict):
+                emit("FAIL", f"{name} printed a non-object METRIC line")
+                return False
             workload = {**base["workload"], **measured.pop("workload", {})}
-            emit("METRIC", {**base, **measured, "workload": workload})
+            emitted.append({**base, **measured, "workload": workload})
         elif pattern and (match := pattern.search(line.strip())):
             found = match.groupdict()
+            try:
+                parsed_value = float(found["value"])
+            except (KeyError, TypeError, ValueError):
+                emit("FAIL", f"{name} printed a non-numeric parsed value")
+                return False
             workload = dict(base["workload"])
             if found.get("name"):
                 workload["gate_id"] = found["name"]
-            emit("METRIC", {**base, "metric": parse["metric"].format(name=segment(found.get("name") or "")),
-                            "value": float(found["value"]), "unit": parse["unit"],
+            emitted.append({**base, "metric": parse["metric"].format(name=segment(found.get("name") or "")),
+                            "value": parsed_value, "unit": parse["unit"],
                             "statistic": parse["statistic"], "workload": workload})
+    for metric_payload in emitted:
+        emit("METRIC", metric_payload)
     return True
 
 

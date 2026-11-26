@@ -179,6 +179,21 @@ class AtlasTests(unittest.TestCase):
     def test_machine_readable_needs_an_artifact(self):
         self.refuses("artifactUrl", entry(artifactUrl=None))
 
+    def test_mapping_evidence_refuses_absolute_paths_and_symlinks(self):
+        abs_errors = atlas.entry_rules(
+            entry(norn={"mapping": "done", "mappingEvidence": ["/etc/hosts"]}),
+            "test",
+            {"core.Agent"},
+            self.tmp,
+        )
+        self.assertTrue(any("does not exist" in err for err in abs_errors), abs_errors)
+        link = self.tmp / "link.txt"
+        link.symlink_to(self.tmp / "evidence.txt")
+        self.refuses(
+            "does not exist",
+            entry(norn={"mapping": "done", "mappingEvidence": ["link.txt"]}),
+        )
+
     def test_next_mappings_rank_priority_then_planned_and_skip_reference_only(self):
         rows = [
             entry("c-later", priority={"sapParity": "P2"}),
