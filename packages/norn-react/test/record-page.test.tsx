@@ -110,6 +110,25 @@ test("an action that finishes while the record is read again is never dropped: t
   }
 })
 
+test("a read that answered just before it was cancelled delivers nothing: the record is read again and the later answer wins", async () => {
+  for (const eventId of ["read-again", "corrected"]) {
+    const before = { object: { version: 1 } }
+    const stale = { object: { version: 1, stale: true } }
+    const after = { object: { version: 2 } }
+    const page = run([{ outcome: "accepted", payload: {}, body: before }, { outcome: "accepted", payload: {}, body: stale }, { outcome: "accepted", payload: {}, body: after }])
+    await flush()
+    page.runtime.send({ kind: "user", eventId: "read-again", payload: {} })
+    expect(page.read.asked).toHaveLength(2)
+    // Read #2 has its answer, but its fulfilment has not run when the event cancels it.
+    page.runtime.send({ kind: "user", eventId, payload: {} })
+    await flush()
+    expect(page.read.asked).toHaveLength(3)
+    expect(page.view().snapshot.stateId).toBe("showing")
+    expect(page.view().reads.get("record")).toEqual({ kind: "ok", document: after, freshness: "snapshot" })
+    page.runtime.dispose()
+  }
+})
+
 test("a host that does not name the record is not served it: nothing is read", async () => {
   const page = run([], { objectType: "canon.Party" })
   await flush()

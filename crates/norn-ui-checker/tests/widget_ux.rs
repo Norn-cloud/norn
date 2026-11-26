@@ -4942,6 +4942,56 @@ fn a_retry_inside_a_layer_held_in_no_state_is_no_way_out() {
     );
 }
 
+/// Only a layer (a primitive a person dismisses) is drawn in no state when it names none: a
+/// scroll area, a checkbox or any other primitive with no `heldIn` is drawn in every state, so an
+/// event on it or inside it may leave any of them.
+#[test]
+fn an_event_on_or_inside_a_primitive_that_is_no_layer_is_raised_in_every_state() {
+    let mut widget = machine_widget(approve_machine());
+    let page = widget
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0);
+    let children = page
+        .at_mut("root")
+        .at_mut("children")
+        .as_array_mut()
+        .req("children");
+    children.push(json!({
+        "nodeId": "scrolled",
+        "component": { "kind": "catalog", "entry": { "entryId": "ui-sdk:scroll-area" } },
+        "children": [{
+            "nodeId": "scrolled-control",
+            "component": { "kind": "control", "label": { "en": "Again", "ar": "مجددًا" }, "input": "trigger" },
+            "children": []
+        }]
+    }));
+    children.push(json!({
+        "nodeId": "checked",
+        "component": { "kind": "catalog", "entry": { "entryId": "ui-sdk:checkbox" } },
+        "children": []
+    }));
+    let machine = page.at_mut("machine");
+    let events = machine.at_mut("events").as_array_mut().req("events");
+    events.push(json!({ "eventId": "scrolled-again", "source": { "kind": "user", "nodeId": "scrolled-control" } }));
+    events.push(json!({ "eventId": "checked-change", "source": { "kind": "user", "nodeId": "checked", "emits": "onCheckedChange" } }));
+    let transitions = machine
+        .at_mut("transitions")
+        .as_array_mut()
+        .req("transitions");
+    for on in ["scrolled-again", "checked-change"] {
+        transitions.push(json!({ "transitionId": on, "from": "awaiting-approval", "on": on, "target": "browsing" }));
+    }
+    let found = ui_codes(widget);
+    assert!(
+        !found
+            .iter()
+            .any(|(_, message)| message.contains("not drawn in")),
+        "{found:#?}"
+    );
+}
+
 /// A UI SDK primitive no person dismisses (a button) is held only in states its page declares;
 /// a layer's states answer to its own law.
 #[test]
