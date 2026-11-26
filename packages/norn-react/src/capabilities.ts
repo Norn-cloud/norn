@@ -40,11 +40,10 @@ export const RENDERED_BEHAVIORS = [
 ] as const
 
 /**
- * Component kinds this renderer draws. `form`, `child_grid` and `composition` are refused, and so is
- * `dialog` (a dialog scope with `blocking` and `dismissalMethods`) until it draws through a UI SDK
- * dialog layer; a page's layers are UI SDK primitives held open in its states (`heldIn`).
+ * Component kinds this renderer draws. `child_grid` and `composition` remain refused until their
+ * contracts have dedicated renderers.
  */
-export const RENDERED_COMPONENTS: readonly ComponentKind[] = ["action", "catalog", "control", "detail", "field", "list", "navigation", "section"]
+export const RENDERED_COMPONENTS: readonly ComponentKind[] = ["action", "catalog", "control", "detail", "dialog", "field", "form", "list", "navigation", "section"]
 
 const OUTCOMES = ["accepted", "refused", "pending_approval", "answer_moved", "network_failure", "not_served", "stale", "subscription_refused", "timeout", "cancelled"] as const
 
@@ -54,7 +53,7 @@ export const RENDERER_CAPABILITIES: ReadonlySet<string> = new Set([
   ...RENDERED_COMPONENTS.map((kind) => `component:${kind}`),
   ...RENDERED_PRIMITIVES.map((name) => `ui-sdk:${name}`),
   ...RENDERED_BEHAVIORS.map((name) => `behavior:${name}`),
-  "view:collection", "view:record",
+  "view:collection", "view:record", "view:form",
   "event:page_opened", "event:user", "event:outcome", "event:subscription", "event:timer",
   ...OUTCOMES.map((outcome) => `outcome:${outcome}`),
   "effect:start:action", "effect:start:read", "effect:cancel", "effect:navigate",

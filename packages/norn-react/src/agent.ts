@@ -19,7 +19,7 @@
  * depth only.
  */
 import type { Machine } from "./machine/machine.ts"
-import { text, type Translate, type WidgetUx } from "./ux.ts"
+import { text, type Translate, type WidgetForm, type WidgetUx } from "./ux.ts"
 
 /** How the server projected one marked property for this caller (`NornMaskedProperty`). */
 export interface MaskedProperty {
@@ -108,5 +108,21 @@ export function confirmReason(ux: WidgetUx, machine: Machine | undefined, nodeId
       if (reason !== null) reasons.push(`${binding?.action.id ?? bindingId}: ${reason}`)
     }
   }
+  return reasons.length === 0 ? null : [...new Set(reasons)].join(". ")
+}
+
+/**
+ * Why submitting `form` needs a person (L6): its own submit confirmation is not `safe`, or its
+ * `submitBindingId` starts a consequential action or one whose effects the server has not said.
+ */
+export function formConfirmReason(ux: WidgetUx, form: WidgetForm, effectsOf: (actionId: string) => ActionEffects | undefined, locale: string, translate?: Translate): string | null {
+  const reasons: string[] = []
+  if (form.submit.confirmation.severity !== "safe") {
+    reasons.push(`${text(form.submit.label, locale, translate)}: ${form.submit.confirmation.severity}`)
+  }
+  reasons.push(...severities(ux, form.submitBindingId, locale, translate))
+  const binding = ux.actionBindings.find((candidate) => candidate.bindingId === form.submitBindingId)
+  const reason = effectsReason(binding === undefined ? undefined : effectsOf(binding.action.id))
+  if (reason !== null) reasons.push(`${binding?.action.id ?? form.submitBindingId}: ${reason}`)
   return reasons.length === 0 ? null : [...new Set(reasons)].join(". ")
 }

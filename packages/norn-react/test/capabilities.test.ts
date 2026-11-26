@@ -48,13 +48,25 @@ test("the fixture is drawn whole; every capability it needs is declared", () => 
   expect(refusalsOf(fixture, { "fixture-meter": () => null, "fixture-status": () => null }, false)).toEqual([])
 })
 
-test("a page that needs what the renderer does not draw is refused, saying what", () => {
+test("dialog and form components are declared capabilities; child_grid and composition remain refused", () => {
   const page = fixture.pages[0]!
   const form = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-form", component: { kind: "form" as const, formId: "f" }, children: [] }] } }] }
-  expect(missingCapabilities(form)).toEqual(["component:form"])
-  // A dialog scope (`blocking`, `dismissalMethods`) is refused until it draws through a UI SDK dialog layer.
-  const dialog = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-dialog", component: { kind: "dialog" as const, bindingId: "save", blocking: true, dismissalMethods: ["escape"] }, children: [] }] } }] }
-  expect(missingCapabilities(dialog)).toEqual(["component:dialog"])
+  expect(requiredCapabilities(form)).toContain("component:form")
+  expect(missingCapabilities(form)).toEqual([])
+  const dialog = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-dialog", component: { kind: "dialog" as const, bindingId: "save", blocking: true, dismissalMethods: ["escape" as const] }, children: [] }] } }] }
+  expect(requiredCapabilities(dialog)).toContain("component:dialog")
+  expect(missingCapabilities(dialog)).toEqual([])
+  const formView = { ...fixture, pages: [{ ...page, view: { kind: "form" as const, subject: { kind: "action", action: { id: "a", version: "0.1.0" } } } }] }
+  expect(requiredCapabilities(formView)).toContain("view:form")
+  expect(missingCapabilities(formView)).toEqual([])
+  const childGrid = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-grid", component: { kind: "child_grid" as const, formId: "f" }, children: [] }] } }] }
+  expect(missingCapabilities(childGrid)).toEqual(["component:child_grid"])
+  const composition = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "a-comp", component: { kind: "composition" as const, widget: { id: "w", version: "0.1.0" }, pageId: "p" }, children: [] }] } }] }
+  expect(missingCapabilities(composition)).toEqual(["component:composition"])
+})
+
+test("a page that needs what the renderer does not draw is refused, saying what", () => {
+  const page = fixture.pages[0]!
   const operation = { ...fixture, pages: [{ ...page, machine: { ...page.machine!, transitions: [...page.machine!.transitions, { transitionId: "op", from: "browsing", on: "save", target: "saving", effects: [{ kind: "start" as const, call: { kind: "operation" as const, operationId: "x" } }] }] } }] }
   expect(missingCapabilities(operation)).toEqual(["effect:start:operation"])
   const filtered = { ...fixture, dataBindings: fixture.dataBindings.map((binding) => ({ ...binding, query: { kind: "object_list" as const, filters: [{}], sort: [], page: { size: 1, maxSize: 1 } } })) }

@@ -1,0 +1,820 @@
+// Vocab v2 coverage: Tabs (`WidgetSectionKind::Tab`), Selectable Lists (`single` | `multiple`),
+// `component:dialog` (L1 blocking + dismissalMethods + @ui-sdk/react/dialog), and `component:form`
+// (all WidgetFieldControl kinds, exact decimal strings, dirty tracking, duplicate-submit guard,
+// server refusal categories, zero client permission logic, zero Radix).
+import { describe, expect, test } from "bun:test"
+import { dialog as dialogPrimitive } from "@ui-sdk/core/dialog"
+import { tabs as tabsPrimitive } from "@ui-sdk/core/tabs"
+import { readdirSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { renderToStaticMarkup } from "react-dom/server"
+import type { ActionEffects } from "../src/agent.ts"
+import { missingCapabilities, RENDERED_COMPONENTS, RENDERER_CAPABILITIES, requiredCapabilities } from "../src/capabilities.ts"
+import { lazyEngine, type CheckerEvaluator } from "../src/machine/evaluate.ts"
+import type { Classified } from "../src/machine/index.ts"
+import type { Fields, Machine, MachineEvent } from "../src/machine/machine.ts"
+import {
+  buildFormDraftPayload,
+  canDismissDialog,
+  computeFormDirty,
+  formatRefusalCategory,
+  isDialogBlocked,
+  nextListRowIndex,
+  nextSelection,
+  nextTabIndex,
+  Node,
+  partitionTabRuns,
+  selectionEventPayload,
+  validateExactNumber,
+  type PageScope,
+} from "../src/nodes.tsx"
+import type { BindingCallState, BindingReadState, WidgetCalls, WidgetReader } from "../src/reads.ts"
+import { createPageRuntime, needsEngine, type MachineRuntime } from "../src/runtime.ts"
+import type { DismissalMethod, FieldPresentation, WidgetForm, WidgetNode, WidgetUx } from "../src/ux.ts"
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+const pathEngine: CheckerEvaluator = {
+  evaluateExpression(expression, inputJson) {
+    const source = expression.trim()
+    if (/^input(\.[A-Za-z_][A-Za-z0-9_]*)+$/.test(source)) {
+      let value: unknown = JSON.parse(inputJson)
+      for (const part of source.split(".").slice(1)) {
+        value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[part] : undefined
+      }
+      return JSON.stringify(value === undefined ? { ok: false, error: { code: "unknown_field", message: `${source} names nothing.` } } : { ok: true, value })
+    }
+    try {
+      return JSON.stringify({ ok: true, value: JSON.parse(source) as unknown })
+    } catch {
+      return JSON.stringify({ ok: false, error: { code: "parse", message: `${source} is not supported.` } })
+    }
+  },
+}
+
+const baseMachine: Machine = {
+  machineVersion: "0.1",
+  initialStateId: "idle",
+  fields: [],
+  events: [
+    { eventId: "opened", source: { kind: "page_opened" } },
+    { eventId: "row-picked", source: { kind: "user", nodeId: "selectable-list" }, payload: [{ fieldId: "id", type: "text", required: false }] },
+    { eventId: "rows-picked", source: { kind: "user", nodeId: "multi-list" }, payload: [{ fieldId: "ids", type: "json", required: true }, { fieldId: "count", type: "integer", required: true }] },
+    { eventId: "save-form", source: { kind: "user", nodeId: "order-form" } },
+    { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+    { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+    { eventId: "network_failure", source: { kind: "outcome", outcome: "network_failure" } },
+    { eventId: "not_served", source: { kind: "outcome", outcome: "not_served" } },
+    { eventId: "timeout", source: { kind: "outcome", outcome: "timeout" } },
+  ],
+  states: [
+    { stateId: "idle", role: "idle" },
+    { stateId: "saving", role: "pending", awaits: { kind: "action", bindingId: "submit-order" }, deadlineMs: 10_000 },
+    { stateId: "saved", role: "idle" },
+    { stateId: "failed", role: "error" },
+  ],
+  transitions: [
+    { transitionId: "t-save", from: "idle", on: "save-form", target: "saving", effects: [{ kind: "start", call: { kind: "action", bindingId: "submit-order" } }] },
+    { transitionId: "t-ok", from: "saving", on: "accepted", target: "saved" },
+    { transitionId: "t-refused", from: "saving", on: "refused", target: "failed" },
+    { transitionId: "t-net", from: "saving", on: "network_failure", target: "failed" },
+    { transitionId: "t-ns", from: "saving", on: "not_served", target: "failed" },
+    { transitionId: "t-to", from: "saving", on: "timeout", target: "failed" },
+  ],
+}
+
+function makeUx(root: WidgetNode, extra: Partial<WidgetUx> = {}, machine: Machine = baseMachine): WidgetUx {
+  return {
+    uxVersion: "0.1",
+    pages: [{ pageId: "main", name: "Main", contextParams: [], root, machine }],
+    dataBindings: extra.dataBindings ?? [],
+    actionBindings: extra.actionBindings ?? [],
+    fields: extra.fields ?? [],
+    forms: extra.forms ?? [],
+    actionPlacements: extra.actionPlacements ?? [],
+    navigationItems: extra.navigationItems ?? [],
+    overrides: [],
+    catalog: extra.catalog ?? [],
+  }
+}
+
+function makeScope(
+  ux: WidgetUx,
+  options: {
+    readonly stateId?: string
+    readonly reads?: ReadonlyMap<string, BindingReadState>
+    readonly calls?: ReadonlyMap<string, BindingCallState>
+    readonly dir?: "ltr" | "rtl"
+    readonly context?: Readonly<Record<string, unknown>>
+    readonly effects?: (actionId: string) => ActionEffects | undefined
+    readonly evaluate?: MachineRuntime["evaluate"]
+  } = {},
+): PageScope {
+  const page = ux.pages[0]!
+  const machine = page.machine!
+  const engine = lazyEngine(() => Promise.reject(new Error("markup only")))
+  const runtime: MachineRuntime = {
+    snapshot: { stateId: options.stateId ?? machine.initialStateId, fields: {}, entry: 1 },
+    engine: "idle",
+    evaluate: options.evaluate ?? engine.evaluate,
+    send: () => {},
+    retryEngine: () => {},
+    reads: options.reads ?? new Map(),
+    calls: options.calls ?? new Map(),
+    waiting: 0,
+    fault: null,
+  }
+  return {
+    ux,
+    page,
+    machine,
+    runtime,
+    islands: {},
+    locale: "en",
+    dir: options.dir ?? "ltr",
+    context: options.context ?? {},
+    actionEffects: options.effects ?? (() => ({ irreversible: false, destructive: false, money: [], ledgered: false })),
+    navigate: () => {},
+    raisedBy: { current: null },
+  }
+}
+
+describe("Tabs (WidgetSectionKind::Tab)", () => {
+  const tabA: WidgetNode = {
+    nodeId: "tab-summary",
+    component: { kind: "section", section: { sectionId: "summary", kind: "tab", label: { en: "Summary" }, fields: [{ bindingId: "rec", propertyId: "title" }], order: 1 } },
+    children: [],
+  }
+  const tabB: WidgetNode = {
+    nodeId: "tab-history",
+    component: { kind: "section", section: { sectionId: "history", kind: "tab", label: { en: "History" }, fields: [], order: 2 } },
+    children: [{ nodeId: "hist-btn", component: { kind: "control", label: { en: "Refresh" }, input: "trigger" }, children: [] }],
+  }
+  const normalSection: WidgetNode = {
+    nodeId: "plain-sec",
+    component: { kind: "section", section: { sectionId: "plain", kind: "section", label: { en: "Overview" }, fields: [], order: 0 } },
+    children: [],
+  }
+
+  test("sibling tab sections render as WAI-ARIA tablist + tabs + tabpanel sorted by section.order while non-tab sections stay unchanged", () => {
+    const root: WidgetNode = {
+      nodeId: "root",
+      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Page" }, fields: [], order: 0 } },
+      // Deliberately reverse tab order to confirm `section.order` sorting.
+      children: [normalSection, tabB, tabA],
+    }
+    const segments = partitionTabRuns(root.children)
+    expect(segments).toHaveLength(2)
+    expect(segments[0]!.kind).toBe("node")
+    expect(segments[1]!.kind).toBe("tabs")
+    if (segments[1]!.kind === "tabs") {
+      expect(segments[1]!.nodes.map((node) => node.nodeId)).toEqual(["tab-summary", "tab-history"])
+    }
+
+    const ux = makeUx(root, {
+      fields: [{ fieldId: "f-title", target: { kind: "property", property: { bindingId: "rec", propertyId: "title" } }, label: { en: "Title" }, control: "display" }],
+    })
+    const reads = new Map<string, BindingReadState>([["rec", { kind: "ok", document: { id: "r1", values: { title: "Invoice #42" } }, freshness: "snapshot" }]])
+    const markup = renderToStaticMarkup(<Node scope={makeScope(ux, { reads })} node={root} />)
+
+    // Non-tab section renders identically with <section> + <h2>.
+    expect(markup).toContain('<section aria-label="Overview" data-node="plain-sec"')
+    expect(markup).toContain(">Overview</h2>")
+
+    // Tab group has role="tablist", role="tab", role="tabpanel", aria-selected, aria-controls, aria-labelledby.
+    expect(markup).toContain('role="tablist"')
+    expect(markup).toContain('role="tab"')
+    expect(markup).toContain('role="tabpanel"')
+    expect(markup).toContain('aria-selected="true"')
+    expect(markup).toContain('aria-selected="false"')
+    expect(markup).toContain('tabindex="0"')
+    expect(markup).toContain('tabindex="-1"')
+    expect(markup).toContain("Invoice #42")
+
+    // Verify exact id <-> aria-controls and id <-> aria-labelledby linkage.
+    const tabMatch = /id="([^"]+tab-tab-summary)"[^>]*aria-controls="([^"]+)"/.exec(markup)
+    expect(tabMatch).not.toBeNull()
+    const [, tabDomId, panelDomId] = tabMatch!
+    expect(markup).toContain(`id="${panelDomId}"`)
+    expect(markup).toContain(`aria-labelledby="${tabDomId}"`)
+  })
+
+  test("roving keyboard navigation honors ArrowLeft/ArrowRight/Home/End in LTR and flips logical direction in RTL", () => {
+    // LTR: ArrowRight forward, ArrowLeft backward, wrap-around, Home/End.
+    expect(nextTabIndex(0, "ArrowRight", 3, "ltr")).toBe(1)
+    expect(nextTabIndex(2, "ArrowRight", 3, "ltr")).toBe(0)
+    expect(nextTabIndex(0, "ArrowLeft", 3, "ltr")).toBe(2)
+    expect(nextTabIndex(1, "ArrowLeft", 3, "ltr")).toBe(0)
+    expect(nextTabIndex(2, "Home", 3, "ltr")).toBe(0)
+    expect(nextTabIndex(0, "End", 3, "ltr")).toBe(2)
+    expect(nextTabIndex(0, "Tab", 3, "ltr")).toBeNull()
+
+    // RTL: ArrowLeft moves logically forward, ArrowRight moves logically backward.
+    expect(nextTabIndex(0, "ArrowLeft", 3, "rtl")).toBe(1)
+    expect(nextTabIndex(2, "ArrowLeft", 3, "rtl")).toBe(0)
+    expect(nextTabIndex(0, "ArrowRight", 3, "rtl")).toBe(2)
+    expect(nextTabIndex(1, "ArrowRight", 3, "rtl")).toBe(0)
+    expect(nextTabIndex(2, "Home", 3, "rtl")).toBe(0)
+    expect(nextTabIndex(0, "End", 3, "rtl")).toBe(2)
+
+    // Markup carries dir="rtl" and inline direction:rtl for @ui-sdk/core/tabs isRTL().
+    const root: WidgetNode = {
+      nodeId: "root",
+      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Page" }, fields: [], order: 0 } },
+      children: [tabA, tabB],
+    }
+    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(root), { dir: "rtl" })} node={root} />)
+    expect(markup).toContain('dir="rtl"')
+    expect(markup).toContain("direction:rtl")
+  })
+
+  test("@ui-sdk/core tabs primitive switches active tab and fires onValueChange", () => {
+    const seen: Array<string | null> = []
+    const instance = tabsPrimitive({
+      id: "test-tabs",
+      defaultValue: "tab-summary",
+      onValueChange: (value) => seen.push(value),
+    })
+    try {
+      expect(instance.api.getValue()).toBe("tab-summary")
+      instance.api.select("tab-history")
+      expect(instance.api.getValue()).toBe("tab-history")
+      expect(seen).toEqual(["tab-history"])
+    } finally {
+      instance.destroy()
+    }
+  })
+})
+
+describe("Selectable Lists (WidgetComponent::List)", () => {
+  const sampleRecords = {
+    records: [
+      { id: "row-1", values: { name: "Alpha", status: "open" } },
+      { id: "row-2", values: { name: "Beta", status: "closed" } },
+      { id: "row-3", values: null, withheld: true, withheldProperties: [] },
+    ],
+  }
+  const reads = new Map<string, BindingReadState>([["items", { kind: "ok", document: sampleRecords, freshness: "snapshot" }]])
+  const fields: FieldPresentation[] = [
+    { fieldId: "f-name", target: { kind: "property", property: { bindingId: "items", propertyId: "name" } }, label: { en: "Name" }, control: "display" },
+    { fieldId: "f-status", target: { kind: "property", property: { bindingId: "items", propertyId: "status" } }, label: { en: "Status" }, control: "display" },
+  ]
+  const refs = [
+    { bindingId: "items", propertyId: "name" },
+    { bindingId: "items", propertyId: "status" },
+  ]
+
+  test("selection: none stays read-only with zero selection chrome", () => {
+    const listNode: WidgetNode = { nodeId: "ro-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "none" }, children: [] }
+    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(listNode, { fields }), { reads })} node={listNode} />)
+    expect(markup).not.toContain("data-selection")
+    expect(markup).not.toContain("aria-selected")
+    expect(markup).not.toContain("data-indicator")
+    expect(markup).not.toContain("tabindex")
+  })
+
+  test("selection: single renders radio indicators, aria-selected, roving tabindex, monochrome focus ring, and keeps withheld rows disabled", () => {
+    const listNode: WidgetNode = { nodeId: "selectable-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "single" }, children: [] }
+    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(listNode, { fields }), { reads })} node={listNode} />)
+    expect(markup).toContain('data-selection="single"')
+    expect(markup).not.toContain("aria-multiselectable")
+    expect(markup).toContain('data-indicator="radio"')
+    expect(markup).toContain('aria-selected="false"')
+    expect(markup).toContain('tabindex="0"')
+    expect(markup).toContain('tabindex="-1"')
+    expect(markup).toContain("focus-visible:outline-ring")
+    expect(markup).toMatch(/data-agent-hidden=""[^>]*data-row-id="row-3"[^>]*aria-disabled="true"/)
+  })
+
+  test("selection: multiple renders checkbox indicators and aria-multiselectable=true", () => {
+    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
+    const markup = renderToStaticMarkup(<Node scope={makeScope(makeUx(listNode, { fields }), { reads })} node={listNode} />)
+    expect(markup).toContain('data-selection="multiple"')
+    expect(markup).toContain('aria-multiselectable="true"')
+    expect(markup).toContain('data-indicator="checkbox"')
+  })
+
+  test("single and multiple selection transitions, keyboard row navigation, and declared payload filtering", () => {
+    // Single mode: replaces active row, toggles off on repeat click.
+    expect(nextSelection("single", [], "row-1")).toEqual(["row-1"])
+    expect(nextSelection("single", ["row-1"], "row-2")).toEqual(["row-2"])
+    expect(nextSelection("single", ["row-2"], "row-2")).toEqual([])
+
+    // Multiple mode: independent toggles.
+    expect(nextSelection("multiple", [], "row-1")).toEqual(["row-1"])
+    expect(nextSelection("multiple", ["row-1"], "row-2")).toEqual(["row-1", "row-2"])
+    expect(nextSelection("multiple", ["row-1", "row-2"], "row-1")).toEqual(["row-2"])
+
+    // Keyboard vertical row navigation.
+    expect(nextListRowIndex(0, "ArrowDown", 3)).toBe(1)
+    expect(nextListRowIndex(2, "ArrowDown", 3)).toBe(2)
+    expect(nextListRowIndex(1, "ArrowUp", 3)).toBe(0)
+    expect(nextListRowIndex(0, "ArrowUp", 3)).toBe(0)
+    expect(nextListRowIndex(2, "Home", 3)).toBe(0)
+    expect(nextListRowIndex(0, "End", 3)).toBe(2)
+
+    // Payload filtering matches raise(): ONLY declared payload fields are emitted.
+    const singleEvent: MachineEvent = { eventId: "pick", source: { kind: "user", nodeId: "l" }, payload: [{ fieldId: "id", type: "text", required: false }] }
+    expect(selectionEventPayload(singleEvent, "single", "row-1", ["row-1"], [{ id: "row-1" }])).toEqual({ id: "row-1" })
+    expect(selectionEventPayload(singleEvent, "single", "row-1", [], [])).toEqual({ id: null })
+
+    const multiEvent: MachineEvent = {
+      eventId: "pick-many",
+      source: { kind: "user", nodeId: "l" },
+      payload: [
+        { fieldId: "ids", type: "json", required: true },
+        { fieldId: "count", type: "integer", required: true },
+      ],
+    }
+    expect(selectionEventPayload(multiEvent, "multiple", "row-2", ["row-1", "row-2"], [{ id: "row-1" }, { id: "row-2" }])).toEqual({
+      ids: ["row-1", "row-2"],
+      count: 2,
+    })
+
+    const noPayloadEvent: MachineEvent = { eventId: "pick-bare", source: { kind: "user", nodeId: "l" } }
+    expect(selectionEventPayload(noPayloadEvent, "single", "row-1", ["row-1"], [{ id: "row-1" }])).toEqual({})
+  })
+
+  test("runtime.setSelection wires input.selection into ActionBinding.inputMapping", async () => {
+    const sent: Array<{ actionId: string; input: Fields }> = []
+    const selectionMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "idle",
+      fields: [],
+      events: [
+        { eventId: "run", source: { kind: "user", nodeId: "bulk-btn" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+      ],
+      states: [
+        { stateId: "idle", role: "idle" },
+        { stateId: "running", role: "pending", awaits: { kind: "action", bindingId: "bulk-act" }, deadlineMs: 5000 },
+        { stateId: "done", role: "idle" },
+      ],
+      transitions: [
+        { transitionId: "t1", from: "idle", on: "run", target: "running", effects: [{ kind: "start", call: { kind: "action", bindingId: "bulk-act" } }] },
+        { transitionId: "t2", from: "running", on: "accepted", target: "done" },
+        { transitionId: "t3", from: "running", on: "refused", target: "idle" },
+      ],
+    }
+    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
+    const selUx = makeUx(
+      listNode,
+      {
+        actionBindings: [{
+          bindingId: "bulk-act",
+          action: { id: "canon.item.bulk.action", version: "0.1.0" },
+          inputMapping: { selected: "input.selection" },
+          inputs: { selectionBindingId: "items" },
+          requiredCapability: "canon.item.bulk",
+        }],
+      },
+      selectionMachine,
+    )
+    const runtime = createPageRuntime(
+      {
+        ux: selUx,
+        machine: selectionMachine,
+        reader: { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) },
+        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.item.bulk.action" ? "canon.item.bulk" : undefined) }),
+      },
+      () => {},
+    )
+    runtime.setSelection("items", [{ id: "row-1", values: { name: "Alpha" } }, { id: "row-2", values: { name: "Beta" } }])
+    runtime.send({ kind: "user", eventId: "run", payload: {} })
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("done")
+    expect(sent).toEqual([{
+      actionId: "canon.item.bulk",
+      input: { selected: [{ id: "row-1", values: { name: "Alpha" } }, { id: "row-2", values: { name: "Beta" } }] },
+    }])
+    runtime.dispose()
+  })
+})
+
+describe("component:dialog (WidgetComponent::Dialog)", () => {
+  const makeDialogNode = (options: { readonly blocking: boolean; readonly bindingId?: string; readonly dismissalMethods: readonly DismissalMethod[] }): WidgetNode => ({
+    nodeId: "confirm-dialog",
+    component: {
+      kind: "dialog",
+      blocking: options.blocking,
+      ...(options.bindingId === undefined ? {} : { bindingId: options.bindingId }),
+      dismissalMethods: options.dismissalMethods,
+    },
+    children: [
+      {
+        nodeId: "dlg-title",
+        component: { kind: "section", section: { sectionId: "dlg-title", kind: "section", label: { en: "Post Journal Entry" }, fields: [], order: 1 } },
+        children: [{ nodeId: "dlg-trigger", component: { kind: "control", label: { en: "Post" }, input: "trigger" }, children: [] }],
+      },
+    ],
+  })
+
+  test("L1 blocking refuses Escape, scrim, swipe, and close while bound bindingId call is pending, and allows declared methods once idle or errored", () => {
+    const dialogNode = makeDialogNode({ blocking: true, bindingId: "submit-order", dismissalMethods: ["escape", "scrim", "visible_close"] })
+    const ux = makeUx(dialogNode)
+
+    // Idle: not blocked.
+    const idleScope = makeScope(ux, { stateId: "idle" })
+    expect(isDialogBlocked(idleScope, dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>)).toBe(false)
+    const idleMarkup = renderToStaticMarkup(<Node scope={idleScope} node={dialogNode} />)
+    expect(idleMarkup).toContain('data-slot="dialog-content"')
+    expect(idleMarkup).toContain('role="dialog"')
+    expect(idleMarkup).toContain('aria-modal="true"')
+    expect(idleMarkup).toContain('data-blocking="true"')
+    expect(idleMarkup).toContain('data-pending="false"')
+    expect(idleMarkup).toContain('data-slot="dialog-close"')
+    expect(idleMarkup).toContain("Post Journal Entry")
+
+    // Pending (call state = sending): blocked!
+    const sendingCalls = new Map<string, BindingCallState>([["submit-order", { kind: "sending", sent: { input: "{}", key: "k1" } }]])
+    const pendingScope = makeScope(ux, { stateId: "saving", calls: sendingCalls })
+    expect(isDialogBlocked(pendingScope, dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>)).toBe(true)
+    const pendingMarkup = renderToStaticMarkup(<Node scope={pendingScope} node={dialogNode} />)
+    expect(pendingMarkup).toContain('data-pending="true"')
+    expect(pendingMarkup).toContain('aria-busy="true"')
+    expect(pendingMarkup).toContain('data-dialog-close=""')
+    expect(pendingMarkup).toContain('aria-disabled="true"')
+    expect(pendingMarkup).not.toContain('data-slot="dialog-close"')
+
+    // Refused (terminal/error): no longer blocked!
+    const refusedCalls = new Map<string, BindingCallState>([
+      ["submit-order", { kind: "refused", refusal: { code: "ledger.unbalanced", category: "precondition", document: { message: "Debits must equal credits." } } }],
+    ])
+    const errorScope = makeScope(ux, { stateId: "failed", calls: refusedCalls })
+    expect(isDialogBlocked(errorScope, dialogNode.component as Extract<WidgetNode["component"], { kind: "dialog" }>)).toBe(false)
+    const errorMarkup = renderToStaticMarkup(<Node scope={errorScope} node={dialogNode} />)
+    expect(errorMarkup).toContain('data-pending="false"')
+    expect(errorMarkup).toContain('data-slot="dialog-close"')
+    expect(errorMarkup).toContain("Debits must equal credits.")
+
+    // Pure L1 dismissal gate:
+    for (const reason of ["escape-key", "outside-press", "swipe", "close-press", "back"]) {
+      expect(canDismissDialog(true, ["escape", "scrim", "swipe", "visible_close"], reason)).toBe(false)
+    }
+    expect(canDismissDialog(false, ["escape", "visible_close"], "escape-key")).toBe(true)
+    expect(canDismissDialog(false, ["escape", "visible_close"], "close-press")).toBe(true)
+    expect(canDismissDialog(false, ["escape", "visible_close"], "outside-press")).toBe(false)
+    expect(canDismissDialog(false, ["escape", "visible_close"], "swipe")).toBe(false)
+    expect(canDismissDialog(false, ["scrim"], "outside-press")).toBe(true)
+    expect(canDismissDialog(false, ["scrim"], "escape-key")).toBe(false)
+  })
+
+  test("@ui-sdk/core dialog primitive refuses Escape & outside-press when dismissible=false and fires onDismissAttempt", () => {
+    const attempts: string[] = []
+    const changes: boolean[] = []
+    const instance = dialogPrimitive({
+      id: "l1-dialog",
+      defaultOpen: true,
+      dismissible: false,
+      closeOnOutsidePress: false,
+      onOpenChange: (open) => changes.push(open),
+      onDismissAttempt: (details) => attempts.push(details.reason),
+    })
+    try {
+      expect(instance.api.isOpen()).toBe(true)
+      instance.api.close({ reason: "escape-key" })
+      instance.api.close({ reason: "outside-press" })
+      expect(instance.api.isOpen()).toBe(true)
+      expect(changes).toEqual([])
+      expect(attempts).toEqual(["escape-key", "outside-press"])
+    } finally {
+      instance.destroy()
+    }
+  })
+})
+
+describe("component:form (WidgetComponent::Form)", () => {
+  const formDef: WidgetForm = {
+    formId: "create-order",
+    mode: "create",
+    inputNames: ["memo", "notes", "quantity", "amount", "expedite", "currency", "due_date", "posted_at", "internal_tag"],
+    submitBindingId: "submit-order",
+    submit: {
+      label: { en: "Create Order" },
+      confirmation: { severity: "safe", strength: "none" },
+    },
+  }
+
+  const formFields: FieldPresentation[] = [
+    {
+      fieldId: "f-memo",
+      target: { kind: "form_input", formId: "create-order", inputName: "memo" },
+      label: { en: "Memo" },
+      help: { en: "Short summary shown in ledger." },
+      control: "text",
+      requiredWhen: { expression: "true", inputs: {} },
+    },
+    {
+      fieldId: "f-notes",
+      target: { kind: "form_input", formId: "create-order", inputName: "notes" },
+      label: { en: "Notes" },
+      control: "text_area",
+    },
+    {
+      fieldId: "f-qty",
+      target: { kind: "form_input", formId: "create-order", inputName: "quantity" },
+      label: { en: "Quantity" },
+      control: "number",
+      format: "integer",
+    },
+    {
+      fieldId: "f-amount",
+      target: { kind: "form_input", formId: "create-order", inputName: "amount", initial: { bindingId: "prefill", propertyId: "amount" } },
+      label: { en: "Amount" },
+      control: "number",
+      format: "decimal",
+    },
+    {
+      fieldId: "f-expedite",
+      target: { kind: "form_input", formId: "create-order", inputName: "expedite" },
+      label: { en: "Expedite" },
+      control: "checkbox",
+    },
+    {
+      fieldId: "f-currency",
+      target: { kind: "form_input", formId: "create-order", inputName: "currency" },
+      label: { en: "Currency" },
+      control: "select",
+      optionQueryBindingId: "currencies",
+    },
+    {
+      fieldId: "f-due",
+      target: { kind: "form_input", formId: "create-order", inputName: "due_date" },
+      label: { en: "Due Date" },
+      control: "date",
+    },
+    {
+      fieldId: "f-posted",
+      target: { kind: "form_input", formId: "create-order", inputName: "posted_at", initial: { bindingId: "prefill", propertyId: "posted_at" } },
+      label: { en: "Posted At" },
+      control: "date_time",
+    },
+    {
+      fieldId: "f-hidden",
+      target: { kind: "form_input", formId: "create-order", inputName: "internal_tag", initial: { bindingId: "prefill", propertyId: "internal_tag" } },
+      label: { en: "Internal Tag" },
+      control: "text",
+      visibleWhen: { expression: "false", inputs: {} },
+    },
+    {
+      fieldId: "f-secret-display",
+      target: { kind: "property", property: { bindingId: "prefill", propertyId: "tax_id" } },
+      label: { en: "Tax ID" },
+      control: "display",
+    },
+  ]
+
+  const formNode: WidgetNode = {
+    nodeId: "order-form",
+    component: { kind: "form", formId: "create-order" },
+    children: formFields.map((field) => ({ nodeId: `node-${field.fieldId}`, component: { kind: "field", fieldId: field.fieldId }, children: [] })),
+  }
+
+  const formUx = makeUx(formNode, {
+    fields: formFields,
+    forms: [formDef],
+    actionBindings: [{
+      bindingId: "submit-order",
+      action: { id: "canon.order.create.action", version: "0.1.0" },
+      inputMapping: {
+        memo: "input.draft.memo",
+        amount: "input.draft.amount",
+        quantity: "input.draft.quantity",
+      },
+      inputs: { draftFormId: "create-order" },
+      // Client must NEVER check this capability; server decides!
+      requiredCapability: "canon.order.create.restricted",
+    }],
+  })
+
+  test("renders all WidgetFieldControl kinds with exact decimal string prefill, hidden field, select options, and L6 masking", () => {
+    const exactDecimal = "9007199254740993.12345678901234567890"
+    const zonedTimestamp = "2026-11-26T14:30:00+02:00"
+    const reads = new Map<string, BindingReadState>([
+      ["prefill", {
+        kind: "ok",
+        document: {
+          id: "ord-1",
+          values: { amount: exactDecimal, posted_at: zonedTimestamp, internal_tag: "batch-7", tax_id: "•••-99" },
+          masked: { tax_id: { mode: "last_n", markings: ["pii"], revealable: false } },
+        },
+        freshness: "snapshot",
+      }],
+      ["currencies", {
+        kind: "ok",
+        document: { records: [{ id: "USD", values: { label: "US Dollar" } }, { id: "EUR", values: { label: "Euro" } }] },
+        freshness: "snapshot",
+      }],
+    ])
+    const markup = renderToStaticMarkup(<Node scope={makeScope(formUx, { reads })} node={formNode} />)
+
+    expect(markup).toContain('data-form="create-order"')
+    expect(markup).toContain('data-dirty="false"')
+    expect(markup).toContain('data-control="text"')
+    expect(markup).toContain('aria-required="true"')
+    expect(markup).toContain("Short summary shown in ledger.")
+    expect(markup).toContain('data-control="text_area"')
+    expect(markup).toContain("<textarea")
+    expect(markup).toContain('data-control="number" data-format="integer"')
+    expect(markup).toContain('inputMode="numeric"')
+    expect(markup).toContain('data-control="number" data-format="decimal"')
+    expect(markup).toContain('inputMode="decimal"')
+    // Exact decimal string preserved verbatim — never converted through JS float or type="number".
+    expect(markup).toContain(`value="${exactDecimal}"`)
+    expect(markup).not.toContain('type="number"')
+    expect(markup).toContain('data-control="checkbox"')
+    expect(markup).toContain('role="checkbox"')
+    expect(markup).toContain('data-control="select"')
+    expect(markup).toContain('role="combobox"')
+    expect(markup).toContain('data-control="date"')
+    expect(markup).toContain('type="date"')
+    expect(markup).toContain('data-control="date_time"')
+    expect(markup).toContain(`value="${zonedTimestamp}"`)
+    expect(markup).toContain('type="hidden"')
+    expect(markup).toContain('data-control="hidden"')
+    expect(markup).toContain('value="batch-7"')
+    // Display field preserves server redaction mark (L6).
+    expect(markup).toContain('data-agent-secret=""')
+    expect(markup).toContain("Create Order")
+  })
+
+  test("exact-string integer/decimal validation and draft/dirty helpers preserve precision without float loss", () => {
+    const exact = "123456789012345678901234567890.000000000000000001"
+    expect(validateExactNumber(exact, "decimal")).toBeNull()
+    expect(validateExactNumber("-42.50", "currency")).toBeNull()
+    expect(validateExactNumber("100", "integer")).toBeNull()
+    expect(validateExactNumber("-7", "integer")).toBeNull()
+    expect(validateExactNumber("12.5", "integer")).toBe("Enter a whole number.")
+    expect(validateExactNumber("12.5.1", "decimal")).toBe("Enter a valid decimal number.")
+    expect(validateExactNumber("abc", "decimal")).toBe("Enter a valid decimal number.")
+    expect(validateExactNumber("", "decimal")).toBeNull()
+
+    const initial = { memo: "", amount: exact, expedite: false }
+    expect(computeFormDirty(initial, { ...initial })).toBe(false)
+    expect(computeFormDirty(initial, { ...initial, memo: "Edited" })).toBe(true)
+
+    const payload = buildFormDraftPayload(formFields, { memo: "Payroll", amount: exact, quantity: "10", expedite: true })
+    expect(payload.amount).toBe(exact)
+    expect(typeof payload.amount).toBe("string")
+    expect(payload.quantity).toBe("10")
+    expect(payload.expedite).toBe(true)
+  })
+
+  test("pending state disables submit button; server refusals render RefusalCategory + server message across all closed states", () => {
+    // Pending disables submit button and marks aria-busy.
+    const sendingCalls = new Map<string, BindingCallState>([["submit-order", { kind: "sending", sent: { input: "{}", key: "k1" } }]])
+    const pendingMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { stateId: "saving", calls: sendingCalls })} node={formNode} />)
+    expect(pendingMarkup).toContain('data-pending="true"')
+    expect(pendingMarkup).toContain('aria-disabled="true"')
+    expect(pendingMarkup).toContain('data-call="sending"')
+    expect(pendingMarkup).toContain("Submitting…")
+
+    // Refused surfaces RefusalCategory + exact server message.
+    const categories = [
+      ["permission", "Permission refused"],
+      ["invalid", "Invalid input"],
+      ["conflict", "Conflict"],
+      ["precondition", "Precondition failed"],
+      ["visibility", "Not visible"],
+      ["limit", "Limit reached"],
+      ["internal", "Server error"],
+    ] as const
+    for (const [category, expectedLabel] of categories) {
+      expect(formatRefusalCategory(category)).toBe(expectedLabel)
+      const calls = new Map<string, BindingCallState>([
+        ["submit-order", { kind: "refused", refusal: { code: `err.${category}`, category, document: { message: `Server said ${category}.` } } }],
+      ])
+      const refusedMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { stateId: "failed", calls })} node={formNode} />)
+      expect(refusedMarkup).toContain('role="alert"')
+      expect(refusedMarkup).toContain('data-call="refused"')
+      expect(refusedMarkup).toContain(`data-category="${category}"`)
+      expect(refusedMarkup).toContain(`data-code="err.${category}"`)
+      expect(refusedMarkup).toContain(expectedLabel)
+      expect(refusedMarkup).toContain(`Server said ${category}.`)
+    }
+
+    // Closed call states: pending_approval, committed, not_served, unavailable, timed_out.
+    const otherStates: BindingCallState[] = [
+      { kind: "pending_approval", decision: { id: "d1" } },
+      { kind: "committed", receipt: {}, undo: null },
+      { kind: "not_served" },
+      { kind: "unavailable", sent: { input: "{}", key: "k1" } },
+      { kind: "timed_out", sent: { input: "{}", key: "k1" }, message: "Timed out." },
+    ]
+    for (const state of otherStates) {
+      const markup = renderToStaticMarkup(<Node scope={makeScope(formUx, { calls: new Map([["submit-order", state]]) })} node={formNode} />)
+      expect(markup).toContain(`data-call="${state.kind}"`)
+    }
+
+    // Select option read failure surfaces honest closed read states.
+    const refusedRead = new Map<string, BindingReadState>([
+      ["currencies", { kind: "refused", refusal: { code: "authz.denied", category: "permission", document: { message: "Cannot list currencies." } } }],
+    ])
+    const selectRefusedMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { reads: refusedRead })} node={formNode} />)
+    expect(selectRefusedMarkup).toContain('data-read="refused"')
+    expect(selectRefusedMarkup).toContain("Cannot list currencies.")
+  })
+
+  test("L6 agent:confirm marks form submit button when effects are unknown or consequential", () => {
+    const unknownMarkup = renderToStaticMarkup(<Node scope={makeScope(formUx, { effects: () => undefined })} node={formNode} />)
+    expect(unknownMarkup).toContain('data-agent-confirm="canon.order.create.action: its effects are not known"')
+  })
+
+  test("runtime submits form draft via machine event and direct submitForm, blocks duplicate submits, and never checks permissions client-side", async () => {
+    const exactAmount = "999999999999999999.99"
+    const sent: Array<{ actionId: string; input: Fields; key: string }> = []
+    let release!: (answer: Classified) => void
+    const calls: WidgetCalls = {
+      call: (actionId, input, options) => {
+        sent.push({ actionId, input, key: options.idempotencyKey })
+        return new Promise<Classified>((resolve) => { release = resolve })
+      },
+    }
+    const reader: WidgetReader = { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) }
+    const runtime = createPageRuntime(
+      {
+        ux: formUx,
+        machine: baseMachine,
+        reader,
+        calls,
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.order.create.action" ? "canon.order.create" : undefined) }),
+      },
+      () => {},
+    )
+    expect(needsEngine(formUx, baseMachine)).toBe(true)
+
+    // 1. Direct submitForm: maps input.draft, preserves exact decimal string, deduplicates while pending.
+    runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: "3" })
+    expect(runtime.view().calls.get("submit-order")?.kind).toBe("sending")
+    // Duplicate submit while sending is ignored.
+    runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: "3" })
+    await flush()
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.actionId).toBe("canon.order.create")
+    expect(sent[0]!.input).toEqual({ memo: "Q4", amount: exactAmount, quantity: "3" })
+
+    // Server refuses with permission category -> surfaced cleanly on runtime.
+    release({ outcome: "refused", category: "permission", payload: { code: "authz.denied" }, body: { code: "authz.denied", message: "Actor lacks canon.order.create." } })
+    await flush()
+    expect(runtime.view().calls.get("submit-order")).toMatchObject({
+      kind: "refused",
+      refusal: { code: "authz.denied", category: "permission" },
+    })
+
+    // 2. Machine-driven form submit using runtime.setDraft:
+    runtime.setDraft("create-order", { memo: "Retry", amount: exactAmount, quantity: "4" })
+    runtime.send({ kind: "user", eventId: "save-form", payload: {} })
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("saving")
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.input).toEqual({ memo: "Retry", amount: exactAmount, quantity: "4" })
+    release({ outcome: "accepted", payload: {}, body: { ok: true } })
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("saved")
+    expect(runtime.view().calls.get("submit-order")?.kind).toBe("committed")
+    runtime.dispose()
+  })
+})
+
+describe("Capabilities parity and zero-Radix invariant", () => {
+  test("RENDERED_COMPONENTS includes dialog and form, and combined vocab v2 page has zero missing capabilities", () => {
+    expect(RENDERED_COMPONENTS).toContain("dialog")
+    expect(RENDERED_COMPONENTS).toContain("form")
+    expect(RENDERER_CAPABILITIES.has("component:dialog")).toBe(true)
+    expect(RENDERER_CAPABILITIES.has("component:form")).toBe(true)
+    expect(RENDERER_CAPABILITIES.has("view:form")).toBe(true)
+
+    const combined: WidgetUx = makeUx({
+      nodeId: "root",
+      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } },
+      children: [
+        { nodeId: "t1", component: { kind: "section", section: { sectionId: "t1", kind: "tab", label: { en: "Tab 1" }, fields: [], order: 1 } }, children: [] },
+        { nodeId: "l1", component: { kind: "list", dataBindingId: "items", fields: [], selection: "multiple" }, children: [] },
+        { nodeId: "d1", component: { kind: "dialog", bindingId: "submit-order", blocking: true, dismissalMethods: ["escape"] }, children: [] },
+        { nodeId: "f1", component: { kind: "form", formId: "create-order" }, children: [] },
+      ],
+    })
+    expect(requiredCapabilities(combined)).toContain("component:dialog")
+    expect(requiredCapabilities(combined)).toContain("component:form")
+    expect(requiredCapabilities(combined)).toContain("component:list")
+    expect(requiredCapabilities(combined)).toContain("component:section")
+    expect(missingCapabilities(combined)).toEqual([])
+  })
+
+  test("packages/norn-react/src never imports Radix", () => {
+    const srcDir = join(import.meta.dir, "../src")
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = join(dir, entry.name)
+        return entry.isDirectory() ? walk(full) : [full]
+      })
+    for (const file of walk(srcDir)) {
+      const content = readFileSync(file, "utf8")
+      expect(content).not.toMatch(/@radix-ui\//)
+    }
+  })
+})

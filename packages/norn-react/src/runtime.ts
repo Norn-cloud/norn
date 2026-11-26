@@ -46,6 +46,12 @@ export interface MachineRuntime extends RuntimeView {
   readonly send: (msg: Msg) => void
   /** A person's Retry: load the engine again; the waiting messages replay once it is here. */
   readonly retryEngine: () => void
+  /** Record a form's current local draft so `ActionBinding` (`input.draft`) maps from it. */
+  readonly setDraft?: (formId: string, draft: Readonly<Record<string, unknown>>) => void
+  /** Record a selectable list's selected records so `ActionBinding` (`input.selection`) maps from it. */
+  readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => void
+  /** Submit a form's declared action binding directly when no machine event owns the form node. */
+  readonly submitForm?: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => void
 }
 
 export interface MachineOptions {
@@ -77,6 +83,9 @@ export interface PageRuntime {
   readonly view: () => RuntimeView
   readonly send: (msg: Msg) => void
   readonly retryEngine: () => void
+  readonly setDraft: (formId: string, draft: Readonly<Record<string, unknown>>) => void
+  readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => void
+  readonly submitForm: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => void
   /** Start the engine loading, as the page does after its first paint. */
   readonly preload: () => void
   readonly dispose: () => void
@@ -117,7 +126,32 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   let live = true
   let view = initialView(machine, engine)
   const feeds = new Map<string, { readonly key: string; readonly stop: () => void }>()
+  const drafts = new Map<string, Readonly<Record<string, unknown>>>()
+  const selections = new Map<string, readonly Readonly<Record<string, unknown>>[]>()
+  const formKeys = new Map<string, string>()
+  const formInflight = new Set<AbortController>()
   let wait: unknown = null
+
+  const DEFINITIVE_OUTCOMES = new Set(["accepted", "refused", "pending_approval", "answer_moved"])
+
+  const actionSources = (binding: WidgetUx["actionBindings"][number], context: Readonly<Record<string, unknown>>): Record<string, unknown> => {
+    const record = binding.inputs.recordBindingId === undefined ? undefined : view.reads.get(binding.inputs.recordBindingId)
+    const recordDoc = record?.kind === "ok" && typeof record.document === "object" && record.document !== null && !Array.isArray(record.document)
+      ? (record.document as Readonly<Record<string, unknown>>)
+      : undefined
+    // Only the slots that hold a record: the engine refuses a present slot that is not one.
+    const recordValues = record?.kind === "ok" ? valuesOf(record.document) : undefined
+    const draft = binding.inputs.draftFormId === undefined ? undefined : drafts.get(binding.inputs.draftFormId)
+    const selection = binding.inputs.selectionBindingId === undefined ? undefined : selections.get(binding.inputs.selectionBindingId)
+    return {
+      context,
+      ...(typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues) ? { record: recordValues } : {}),
+      ...(typeof recordDoc?.id === "string" ? { recordKey: recordDoc.id } : {}),
+      ...(recordDoc?.version !== undefined ? { recordVersion: recordDoc.version } : {}),
+      ...(draft !== undefined ? { draft } : {}),
+      ...(selection !== undefined ? { selection } : {}),
+    }
+  }
 
   const change = (next: Partial<RuntimeView>) => {
     if (!live) return
@@ -261,10 +295,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (binding === undefined || actionId === undefined) return { outcome: "not_served", payload: {} }
       // The binding maps its own inputs (`inputMapping`), each a ZEN expression over its declared sources.
       // The record is this runtime's own read, in this workspace: never one another workspace answered.
-      const record = binding.inputs.recordBindingId === undefined ? undefined : view.reads.get(binding.inputs.recordBindingId)
-      // Only the slots that hold a record: the engine refuses a present slot that is not one.
-      const recordValues = record?.kind === "ok" ? valuesOf(record.document) : undefined
-      const sources = { context, ...(typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues) ? { record: recordValues } : {}) }
+      const sources = actionSources(binding, context)
       const mapped: Record<string, unknown> = {}
       for (const [member, expression] of Object.entries(binding.inputMapping)) mapped[member] = await abortable(engine.evaluateWith(expression, sources), callOptions.signal)
       // A deadline or Cancel that passed while the engine mapped the inputs sends nothing.
@@ -298,6 +329,58 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   change({ snapshot: driver.snapshot() })
   driver.dispatch({ kind: "page_opened" })
 
+  const submitForm = (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => {
+    drafts.set(formId, draft)
+    if (!live || view.calls.get(bindingId)?.kind === "sending") return
+    const { context, actionIdOf } = options.host()
+    const binding = ux.actionBindings.find((candidate) => candidate.bindingId === bindingId)
+    const actionId = binding === undefined ? undefined : actionIdOf(binding.action.id)
+    if (binding === undefined || actionId === undefined) {
+      setCall(bindingId, { kind: "not_served" })
+      return
+    }
+    const keyOf = JSON.stringify([bindingId, draft])
+    const key = formKeys.get(keyOf) ?? crypto.randomUUID()
+    formKeys.set(keyOf, key)
+    const sent = { input: JSON.stringify(draft), key }
+    setCall(bindingId, { kind: "sending", sent })
+    const controller = new AbortController()
+    formInflight.add(controller)
+    void (async () => {
+      let payload: Record<string, unknown>
+      try {
+        const entries = Object.entries(binding.inputMapping)
+        if (entries.length === 0) {
+          payload = { ...draft }
+        } else {
+          const sources = actionSources(binding, context)
+          payload = {}
+          for (const [member, expression] of entries) {
+            payload[member] = await abortable(engine.evaluateWith(expression, sources), controller.signal)
+          }
+        }
+        controller.signal.throwIfAborted()
+      } catch (error) {
+        formInflight.delete(controller)
+        if (!live) return
+        change({ fault: errorOf(error) })
+        setCall(bindingId, { kind: "unavailable", sent })
+        return
+      }
+      try {
+        const answer = await calls.call(actionId, payload, { signal: controller.signal, idempotencyKey: key })
+        formInflight.delete(controller)
+        if (!live) return
+        if (DEFINITIVE_OUTCOMES.has(answer.outcome)) formKeys.delete(keyOf)
+        setCall(bindingId, callStateOf(answer, { input: JSON.stringify(payload), key }))
+      } catch {
+        formInflight.delete(controller)
+        if (!live) return
+        setCall(bindingId, callStateOf({ outcome: "network_failure", payload: {} }, { input: JSON.stringify(payload), key }))
+      }
+    })()
+  }
+
   return {
     view: () => view,
     // A person's next step clears the last refusal; a step the engine refuses sets it again.
@@ -307,6 +390,13 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (driver.deferred() !== view.waiting) change({ waiting: driver.deferred() })
     },
     retryEngine: () => loadEngine(true),
+    setDraft: (formId, draft) => {
+      drafts.set(formId, draft)
+    },
+    setSelection: (bindingId, records) => {
+      selections.set(bindingId, records)
+    },
+    submitForm,
     preload: () => {
       const state = engine.state()
       if (state === "idle") loadEngine(false)
@@ -317,6 +407,8 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       stopWaiting()
       for (const feed of feeds.values()) feed.stop()
       feeds.clear()
+      for (const controller of formInflight) controller.abort()
+      formInflight.clear()
       driver.dispose()
     },
   }
@@ -337,8 +429,17 @@ export function needsEngine(ux: WidgetUx, machine: Machine): boolean {
       if (effect.call.kind === "action") started.add(effect.call.bindingId)
     }
   }
-  if (ux.actionBindings.some((binding) => started.has(binding.bindingId) && Object.keys(binding.inputMapping).length > 0)) return true
   const page = ux.pages.find((candidate) => candidate.machine === machine)
+  if (page !== undefined) {
+    for (const node of nodesOf(page.root)) {
+      const component = node.component
+      if (component.kind === "form") {
+        const form = ux.forms.find((candidate) => candidate.formId === component.formId)
+        if (form !== undefined) started.add(form.submitBindingId)
+      }
+    }
+  }
+  if (ux.actionBindings.some((binding) => started.has(binding.bindingId) && Object.keys(binding.inputMapping).length > 0)) return true
   return page === undefined || nodesOf(page.root).some((node) => node.component.kind === "catalog" && Object.keys(node.component.props ?? {}).length > 0)
 }
 
@@ -370,11 +471,17 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
 
   const send = useCallback((msg: Msg) => runtimeRef.current?.send(msg), [])
   const retryEngine = useCallback(() => runtimeRef.current?.retryEngine(), [])
+  const setDraft = useCallback((formId: string, draft: Readonly<Record<string, unknown>>) => runtimeRef.current?.setDraft(formId, draft), [])
+  const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => runtimeRef.current?.setSelection(bindingId, records), [])
+  const submitForm = useCallback((formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => runtimeRef.current?.submitForm(formId, bindingId, draft), [])
 
   return {
     ...view,
     evaluate: engine.evaluate,
     send,
     retryEngine,
+    setDraft,
+    setSelection,
+    submitForm,
   }
 }

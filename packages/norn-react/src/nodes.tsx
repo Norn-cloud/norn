@@ -9,10 +9,15 @@
  */
 import { AlertDialog, AlertDialogBackdrop, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@ui-sdk/react/alert-dialog"
 import { Button } from "@ui-sdk/react/button"
-import { Dialog, DialogBackdrop, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
+import { Checkbox, CheckboxIndicator } from "@ui-sdk/react/checkbox"
+import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
+import { Field, FieldDescription, FieldError, FieldLabel } from "@ui-sdk/react/field"
 import { Input } from "@ui-sdk/react/input"
-import { useEffect, useLayoutEffect, useRef, type ComponentType, type ReactNode } from "react"
-import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
+import { Select, SelectContent, SelectEmpty, SelectItem, SelectItemText, SelectLabel, SelectTrigger, SelectValue } from "@ui-sdk/react/select"
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs"
+import { Textarea } from "@ui-sdk/react/textarea"
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type FormEvent, type KeyboardEvent, type ReactNode } from "react"
+import { confirmMark, confirmReason, formConfirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
 import { enabled, eventsOf } from "./machine/controls.ts"
@@ -21,7 +26,21 @@ import type { Fields, Machine, MachineEvent } from "./machine/machine.ts"
 import { messageOf, type BindingCallState, type BindingReadState } from "./reads.ts"
 import type { MachineRuntime } from "./runtime.ts"
 import { matchActionState, matchReadState } from "./state.ts"
-import { nodesOf, text, type PropertyRef, type Translate, type WidgetNode, type WidgetPage, type WidgetUx } from "./ux.ts"
+import {
+  nodesOf,
+  text,
+  type Component,
+  type DismissalMethod,
+  type FieldFormat,
+  type FieldPresentation,
+  type PropertyRef,
+  type Translate,
+  type WidgetForm,
+  type WidgetNode,
+  type WidgetPage,
+  type WidgetUx,
+  type ZenCondition,
+} from "./ux.ts"
 
 /** Everything a node needs from its page. */
 export interface PageScope {
@@ -31,6 +50,10 @@ export interface PageScope {
   readonly runtime: MachineRuntime
   readonly islands: IslandRegistry
   readonly locale: string
+  /** Text direction for RTL-safe logical navigation. */
+  readonly dir?: "ltr" | "rtl"
+  /** Page context parameters supplied by the host route. */
+  readonly context?: Readonly<Record<string, unknown>>
   /** The host's translations of the page's messages; a message without one draws its source text. */
   readonly translate?: Translate | undefined
   readonly actionEffects: (actionId: string) => ActionEffects | undefined
@@ -40,7 +63,13 @@ export interface PageScope {
 }
 
 const BUTTON = "inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-border bg-background px-4 text-body text-foreground outline-none transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-45 aria-disabled:opacity-45 max-sm:min-h-[44px]"
+const INPUT = "h-9 w-full rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 max-sm:min-h-[44px]"
+const TEXTAREA = "min-h-20 w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-body text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
 const MUTED = "text-meta text-muted-foreground"
+const DIALOG_PANEL = "fixed start-1/2 top-1/2 z-50 grid w-[min(28rem,calc(100vw-2rem))] -translate-y-1/2 gap-3 rounded-[var(--radius-popup)] border border-border bg-popover p-5 text-popover-foreground shadow-lg ltr:-translate-x-1/2 rtl:translate-x-1/2"
+// No exit animation runs, so the backdrop never outlives the layer to swallow a press.
+const DIALOG_BACKDROP = "fixed inset-0 z-40 bg-black/40"
+const ROW_FOCUS = "outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
 
 type Doc = Readonly<Record<string, unknown>>
 const asDoc = (value: unknown): Doc | null => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Doc) : null)
@@ -50,6 +79,7 @@ const escapeSelector = (value: string): string =>
   typeof CSS !== "undefined" && typeof CSS.escape === "function"
     ? CSS.escape(value)
     : value.replace(/["\\\]\[]/g, "\\$&")
+const safeDomId = (value: string): string => value.replace(/[^A-Za-z0-9_-]/g, "_")
 
 /** A value as the cell sent it: text (an exact number's text included) as is, anything else as JSON. */
 const shown = (value: unknown): string => (value === null || value === undefined ? "—" : typeof value === "string" ? value : JSON.stringify(value))
@@ -63,13 +93,14 @@ function eventFor(scope: PageScope, node: WidgetNode, emits?: string): MachineEv
 }
 
 /** Raise `node`'s event, with the payload members the event declares. */
-function raise(scope: PageScope, node: WidgetNode, payload: Fields = {}, emits?: string): void {
+function raise(scope: PageScope, node: WidgetNode, payload: Fields = {}, emits?: string): boolean {
   const event = eventFor(scope, node, emits)
-  if (event === undefined) return
+  if (event === undefined) return false
   const declared = new Set((event.payload ?? []).map((member) => member.fieldId))
   const kept = Object.fromEntries(Object.entries(payload).filter(([member]) => declared.has(member)))
   scope.raisedBy.current = node.nodeId
   scope.runtime.send({ kind: "user", eventId: event.eventId, payload: kept })
+  return true
 }
 
 /** Whether `node` can act now; a guard the engine has not loaded for counts as not yet. */
@@ -120,6 +151,20 @@ function ReadView({ state, children }: { readonly state: BindingReadState | unde
   })
 }
 
+/** Human-readable label for a server `RefusalCategory` (`norn/refusal@2`). */
+export function formatRefusalCategory(category: string | null): string {
+  switch (category) {
+    case "visibility": return "Not visible"
+    case "permission": return "Permission refused"
+    case "precondition": return "Precondition failed"
+    case "conflict": return "Conflict"
+    case "invalid": return "Invalid input"
+    case "limit": return "Limit reached"
+    case "internal": return "Server error"
+    default: return "Refused"
+  }
+}
+
 /** One governed call's state, as a status line. */
 function CallLine({ state }: { readonly state: BindingCallState | undefined }) {
   if (state === undefined) return null
@@ -127,14 +172,24 @@ function CallLine({ state }: { readonly state: BindingCallState | undefined }) {
   return matchActionState(state, {
     editing: () => null,
     confirming: () => line("confirming", "Waiting for you to confirm."),
-    sending: () => line("sending", "Sending…"),
+    sending: () => <p role="status" aria-busy="true" className={MUTED} data-call="sending">Sending…</p>,
     pending_approval: () => line("pending_approval", "Sent for approval: nothing is committed until it is decided."),
     committed: () => line("committed", "Saved."),
-    refused: ({ refusal }) => line("refused", messageOf(refusal.document, `The cell refused this call (${refusal.code}).`)),
+    refused: ({ refusal }) => (
+      <p
+        role="status"
+        className="text-meta text-destructive-text"
+        data-call="refused"
+        data-category={refusal.category ?? undefined}
+        data-code={refusal.code || undefined}
+      >
+        {`${formatRefusalCategory(refusal.category)}: ${messageOf(refusal.document, `The cell refused this call (${refusal.code}).`)}`}
+      </p>
+    ),
     not_served: () => line("not_served", "This workspace serves no cell to call: nothing was sent."),
     unavailable: () => line("unavailable", "The cell answered without applying the call: nothing committed."),
     timed_out: ({ message }) => line("timed_out", message ?? "The answer was lost; the call may have applied."),
-    undoing: () => line("undoing", "Undoing…"),
+    undoing: () => <p role="status" aria-busy="true" className={MUTED} data-call="undoing">Undoing…</p>,
     undo_failed: ({ message }) => line("undo_failed", message ?? "The undo did not come back."),
     undone: () => line("undone", "Undone."),
   })
@@ -150,8 +205,14 @@ function Value({ record, propertyId }: { readonly record: Doc; readonly property
   return <span {...mark} data-value={masked === undefined ? "plain" : "masked"} data-mask={masked?.mode}>{shown(own(values, propertyId))}</span>
 }
 
+const propertyOf = (field: FieldPresentation | undefined): PropertyRef | undefined =>
+  field !== undefined && "property" in field.target ? field.target.property : undefined
+
 const fieldLabel = (scope: PageScope, ref: PropertyRef): string =>
-  text(scope.ux.fields.find((field) => field.target.property?.bindingId === ref.bindingId && field.target.property.propertyId === ref.propertyId)?.label ?? { en: ref.propertyId }, scope.locale, scope.translate)
+  text(scope.ux.fields.find((field) => {
+    const prop = propertyOf(field)
+    return prop?.bindingId === ref.bindingId && prop.propertyId === ref.propertyId
+  })?.label ?? { en: ref.propertyId }, scope.locale, scope.translate)
 
 function ObjectFields({ scope, record, refs }: { readonly scope: PageScope; readonly record: Doc; readonly refs: readonly PropertyRef[] }) {
   return (
@@ -166,23 +227,368 @@ function ObjectFields({ scope, record, refs }: { readonly scope: PageScope; read
   )
 }
 
-function ListRows({ scope, document, refs }: { readonly scope: PageScope; readonly document: unknown; readonly refs: readonly PropertyRef[] }) {
+// ---- Tabs (WidgetSectionKind::Tab) --------------------------------------------------------------
+
+type TabNode = WidgetNode & { readonly component: Extract<Component, { readonly kind: "section" }> }
+
+const isTabSection = (node: WidgetNode): node is TabNode =>
+  node.component.kind === "section" && node.component.section.kind === "tab"
+
+export type ChildSegment =
+  | { readonly kind: "node"; readonly node: WidgetNode }
+  | { readonly kind: "tabs"; readonly nodes: readonly TabNode[] }
+
+/** Partition sibling children into contiguous tab runs (sorted by `section.order`) and single nodes. */
+export function partitionTabRuns(children: readonly WidgetNode[]): ChildSegment[] {
+  const segments: ChildSegment[] = []
+  let currentTabs: TabNode[] = []
+  const flushTabs = () => {
+    if (currentTabs.length === 0) return
+    const ordered = [...currentTabs].sort((left, right) => left.component.section.order - right.component.section.order)
+    segments.push({ kind: "tabs", nodes: ordered })
+    currentTabs = []
+  }
+  for (const child of children) {
+    if (isTabSection(child)) currentTabs.push(child)
+    else {
+      flushTabs()
+      segments.push({ kind: "node", node: child })
+    }
+  }
+  flushTabs()
+  return segments
+}
+
+/** Logical RTL-safe roving target index for horizontal WAI-ARIA tabs (`ArrowLeft`/`ArrowRight`/`Home`/`End`). */
+export function nextTabIndex(current: number, key: string, count: number, dir: "ltr" | "rtl" = "ltr"): number | null {
+  if (count <= 0) return null
+  const forward = dir === "rtl" ? "ArrowLeft" : "ArrowRight"
+  const backward = dir === "rtl" ? "ArrowRight" : "ArrowLeft"
+  if (key === forward) return (current + 1) % count
+  if (key === backward) return (current - 1 + count) % count
+  if (key === "Home") return 0
+  if (key === "End") return count - 1
+  return null
+}
+
+function TabSectionGroup({ scope, tabs }: { readonly scope: PageScope; readonly tabs: readonly TabNode[] }) {
+  const groupId = useId()
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(() => tabs[0]?.nodeId ?? "")
+  const activeNodeId = tabs.some((tab) => tab.nodeId === selectedNodeId) ? selectedNodeId : (tabs[0]?.nodeId ?? "")
+  const dir = scope.dir ?? "ltr"
+  const tabRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map())
+
+  const activate = (nodeId: string) => {
+    setSelectedNodeId(nodeId)
+    const tab = tabs.find((candidate) => candidate.nodeId === nodeId)
+    if (tab !== undefined) {
+      raise(scope, tab, { sectionId: tab.component.section.sectionId, value: tab.component.section.sectionId })
+    }
+  }
+
+  const onTabListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+    const focusedId = (event.target instanceof Element ? event.target.getAttribute("data-tab-node") : null) ?? activeNodeId
+    const currentIndex = tabs.findIndex((tab) => tab.nodeId === focusedId)
+    if (currentIndex === -1) return
+    const targetIndex = nextTabIndex(currentIndex, event.key, tabs.length, dir)
+    if (targetIndex === null) return
+    event.preventDefault()
+    const target = tabs[targetIndex]!
+    activate(target.nodeId)
+    tabRefs.current.get(target.nodeId)?.focus()
+  }
+
+  return (
+    <Tabs
+      value={activeNodeId}
+      onValueChange={(next) => {
+        if (typeof next === "string" && next !== activeNodeId) activate(next)
+      }}
+      orientation="horizontal"
+      loop
+      dir={dir}
+      style={dir === "rtl" ? { direction: "rtl" } : undefined}
+      className="grid gap-3"
+      data-tab-group=""
+    >
+      <TabsList
+        className="inline-flex w-fit flex-wrap items-center gap-1 border-b border-border"
+        aria-orientation="horizontal"
+        onKeyDown={onTabListKeyDown}
+      >
+        {tabs.map((tab) => {
+          const safe = safeDomId(tab.nodeId)
+          const tabDomId = `${groupId}-tab-${safe}`
+          const panelDomId = `${groupId}-panel-${safe}`
+          const label = text(tab.component.section.label, scope.locale, scope.translate)
+          return (
+            <TabsTab
+              key={tab.nodeId}
+              value={tab.nodeId}
+              id={tabDomId}
+              aria-controls={panelDomId}
+              data-tab-node={tab.nodeId}
+              ref={(el: HTMLButtonElement | null) => {
+                tabRefs.current.set(tab.nodeId, el)
+              }}
+              className="relative inline-flex h-9 items-center justify-center rounded-t-[var(--radius)] border-b-2 border-transparent px-3 text-body text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-[selected]:border-foreground data-[selected]:font-medium data-[selected]:text-foreground max-sm:min-h-[44px]"
+            >
+              {label}
+            </TabsTab>
+          )
+        })}
+      </TabsList>
+      {tabs.map((tab) => {
+        const safe = safeDomId(tab.nodeId)
+        const tabDomId = `${groupId}-tab-${safe}`
+        const panelDomId = `${groupId}-panel-${safe}`
+        const binding = tab.component.section.fields[0]?.bindingId
+        const read = binding === undefined ? undefined : scope.runtime.reads.get(binding)
+        return (
+          <TabsPanel
+            key={tab.nodeId}
+            value={tab.nodeId}
+            id={panelDomId}
+            aria-labelledby={tabDomId}
+            data-node={tab.nodeId}
+            className="grid gap-3 outline-none"
+          >
+            {binding !== undefined && (
+              <ReadView state={read}>
+                {(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={tab.component.section.fields} />}
+              </ReadView>
+            )}
+            {renderChildren(scope, tab.children)}
+          </TabsPanel>
+        )
+      })}
+    </Tabs>
+  )
+}
+
+function renderChildren(scope: PageScope, children: readonly WidgetNode[]): ReactNode {
+  return partitionTabRuns(children).map((segment) =>
+    segment.kind === "tabs"
+      ? <TabSectionGroup key={`tabs:${segment.nodes.map((node) => node.nodeId).join(",")}`} scope={scope} tabs={segment.nodes} />
+      : <Node key={segment.node.nodeId} scope={scope} node={segment.node} />,
+  )
+}
+
+// ---- Selectable Lists (WidgetComponent::List) ---------------------------------------------------
+
+/** Extract a stable row key from a projected record. */
+export function rowIdOf(row: Doc, index: number): string {
+  if (typeof row.id === "string" && row.id !== "") return row.id
+  if (typeof row.key === "string" && row.key !== "") return row.key
+  const values = asDoc(row.values)
+  if (typeof values?.id === "string" && values.id !== "") return values.id
+  return String(index)
+}
+
+/** Next selected row id set for `"single"` or `"multiple"` list selection. */
+export function nextSelection(mode: "single" | "multiple", current: readonly string[], rowId: string): string[] {
+  if (mode === "single") return current.length === 1 && current[0] === rowId ? [] : [rowId]
+  return current.includes(rowId) ? current.filter((candidate) => candidate !== rowId) : [...current, rowId]
+}
+
+/** Vertical keyboard navigation index for selectable list rows (`ArrowDown`/`ArrowUp`/`Home`/`End`). */
+export function nextListRowIndex(current: number, key: string, count: number): number | null {
+  if (count <= 0) return null
+  if (key === "ArrowDown") return Math.min(count - 1, current + 1)
+  if (key === "ArrowUp") return Math.max(0, current - 1)
+  if (key === "Home") return 0
+  if (key === "End") return count - 1
+  return null
+}
+
+/** Build the payload for a list selection `user` event, filtered strictly to the event's declared payload fields. */
+export function selectionEventPayload(
+  event: MachineEvent | undefined,
+  mode: "single" | "multiple",
+  rowId: string,
+  nextIds: readonly string[],
+  selectedRows: readonly Doc[],
+): Fields {
+  if (event === undefined) return {}
+  const selectedNow = nextIds.includes(rowId)
+  const firstId = nextIds[0] ?? null
+  const out: Record<string, unknown> = {}
+  for (const field of event.payload ?? []) {
+    switch (field.fieldId) {
+      case "id":
+      case "key":
+      case "recordId":
+        out[field.fieldId] = firstId ?? (field.required && field.type === "text" ? "" : null)
+        break
+      case "rowId":
+        out[field.fieldId] = rowId
+        break
+      case "ids":
+      case "selectedIds":
+        out[field.fieldId] = field.type === "text" ? nextIds.join(",") : [...nextIds]
+        break
+      case "selected":
+      case "selection":
+        if (field.type === "boolean") out[field.fieldId] = selectedNow
+        else if (field.type === "text") out[field.fieldId] = mode === "single" ? (firstId ?? "") : nextIds.join(",")
+        else out[field.fieldId] = [...nextIds]
+        break
+      case "value":
+        out[field.fieldId] = mode === "single"
+          ? (firstId ?? (field.required && field.type === "text" ? "" : null))
+          : (field.type === "text" ? nextIds.join(",") : [...nextIds])
+        break
+      case "record":
+        out[field.fieldId] = mode === "single" ? (selectedRows[0] ?? null) : [...selectedRows]
+        break
+      case "count":
+        out[field.fieldId] = nextIds.length
+        break
+      default:
+        break
+    }
+  }
+  return out
+}
+
+function ListRows({
+  scope,
+  node,
+  document,
+  refs,
+  dataBindingId,
+  selection,
+}: {
+  readonly scope: PageScope
+  readonly node: WidgetNode
+  readonly document: unknown
+  readonly refs: readonly PropertyRef[]
+  readonly dataBindingId: string
+  readonly selection: "none" | "single" | "multiple"
+}) {
   const page = asDoc(document)
   const rows = (Array.isArray(page?.records) ? page.records : Array.isArray(page?.items) ? page.items : []).flatMap((row) => {
     const doc = asDoc(row)
     return doc === null ? [] : [doc]
   })
+  const [selectedIds, setSelectedIds] = useState<readonly string[]>([])
+  const [focusIndex, setFocusIndex] = useState<number>(0)
+  const rowRefs = useRef<Array<HTMLTableRowElement | null>>([])
+
   if (rows.length === 0) return <p className={MUTED} data-rows="0">No records.</p>
+
+  if (selection === "none") {
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-start text-body" data-rows={rows.length}>
+          <thead><tr>{refs.map((ref) => <th key={ref.propertyId} scope="col" className={`${MUTED} px-2 py-1.5 text-start font-normal`}>{fieldLabel(scope, ref)}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={typeof row.id === "string" ? row.id : index} {...rowMark(row.withheld === true)} className="border-t border-border">
+                {refs.map((ref) => <td key={ref.propertyId} className="px-2 py-1.5"><Value record={row} propertyId={ref.propertyId} /></td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  const rowIds = rows.map((row, index) => rowIdOf(row, index))
+  const validSet = new Set(rowIds)
+  const activeSelected = selectedIds.filter((id) => validSet.has(id))
+  const clampedFocus = Math.min(Math.max(0, focusIndex), rows.length - 1)
+
+  const toggleRow = (index: number) => {
+    const row = rows[index]
+    if (row === undefined || row.withheld === true) return
+    const rowId = rowIds[index]!
+    const next = nextSelection(selection, activeSelected, rowId)
+    setSelectedIds(next)
+    setFocusIndex(index)
+    const selectedSet = new Set(next)
+    const selectedRows = rows.filter((candidate, idx) => candidate.withheld !== true && selectedSet.has(rowIds[idx]!))
+    scope.runtime.setSelection?.(dataBindingId, selectedRows)
+    const event = eventFor(scope, node)
+    if (event !== undefined) {
+      const payload = selectionEventPayload(event, selection, rowId, next, selectedRows)
+      raise(scope, node, payload)
+    }
+  }
+
+  const onRowKeyDown = (index: number, event: KeyboardEvent<HTMLTableRowElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      toggleRow(index)
+      return
+    }
+    const target = nextListRowIndex(index, event.key, rows.length)
+    if (target === null || target === index) return
+    event.preventDefault()
+    setFocusIndex(target)
+    rowRefs.current[target]?.focus()
+  }
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-start text-body" data-rows={rows.length}>
-        <thead><tr>{refs.map((ref) => <th key={ref.propertyId} scope="col" className={`${MUTED} px-2 py-1.5 text-start font-normal`}>{fieldLabel(scope, ref)}</th>)}</tr></thead>
+      <table
+        className="w-full text-start text-body"
+        data-rows={rows.length}
+        data-selection={selection}
+        aria-multiselectable={selection === "multiple" ? "true" : undefined}
+      >
+        <thead>
+          <tr>
+            <th scope="col" className="w-9 px-2 py-1.5 text-start font-normal">
+              <span className="sr-only">Select</span>
+            </th>
+            {refs.map((ref) => (
+              <th key={ref.propertyId} scope="col" className={`${MUTED} px-2 py-1.5 text-start font-normal`}>{fieldLabel(scope, ref)}</th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={typeof row.id === "string" ? row.id : index} {...rowMark(row.withheld === true)} className="border-t border-border">
-              {refs.map((ref) => <td key={ref.propertyId} className="px-2 py-1.5"><Value record={row} propertyId={ref.propertyId} /></td>)}
-            </tr>
-          ))}
+          {rows.map((row, index) => {
+            const rowId = rowIds[index]!
+            const withheld = row.withheld === true
+            const isSelected = !withheld && activeSelected.includes(rowId)
+            const indicator = selection === "single" ? "radio" : "checkbox"
+            return (
+              <tr
+                key={rowId}
+                ref={(el) => {
+                  rowRefs.current[index] = el
+                }}
+                {...rowMark(withheld)}
+                data-row-id={rowId}
+                data-selected={isSelected ? "" : undefined}
+                aria-selected={isSelected ? "true" : "false"}
+                aria-disabled={withheld ? "true" : undefined}
+                tabIndex={clampedFocus === index ? 0 : -1}
+                onClick={() => toggleRow(index)}
+                onKeyDown={(event) => onRowKeyDown(index, event)}
+                className={`border-t border-border transition-colors ${withheld ? "cursor-not-allowed opacity-55" : "cursor-pointer hover:bg-accent/50 data-[selected]:bg-accent"} ${ROW_FOCUS}`}
+              >
+                <td className="w-9 px-2 py-1.5">
+                  <span
+                    aria-hidden="true"
+                    data-indicator={indicator}
+                    data-checked={isSelected ? "" : undefined}
+                    className={
+                      selection === "single"
+                        ? "inline-flex size-4 items-center justify-center rounded-full border border-input bg-background align-middle data-[checked]:border-foreground"
+                        : "inline-flex size-4 items-center justify-center rounded-[3px] border border-input bg-background text-[11px] leading-none text-background align-middle data-[checked]:border-foreground data-[checked]:bg-foreground"
+                    }
+                  >
+                    {isSelected && (selection === "single" ? <span className="size-2 rounded-full bg-foreground" /> : "✓")}
+                  </span>
+                </td>
+                {refs.map((ref) => <td key={ref.propertyId} className="px-2 py-1.5"><Value record={row} propertyId={ref.propertyId} /></td>)}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -198,7 +604,7 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
     return (
       <label className="grid gap-1" data-node={node.nodeId}>
         <span className={MUTED}>{label}</span>
-        <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" disabled={!on} data-engine={waiting ? "waiting" : undefined}
+        <Input {...mark} className={INPUT} disabled={!on} data-engine={waiting ? "waiting" : undefined}
           defaultValue={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
       </label>
     )
@@ -208,6 +614,687 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
     <Button {...mark} className={BUTTON} data-node={node.nodeId} disabled={!on} focusableWhenDisabled data-engine={waiting ? "waiting" : undefined} onClick={() => raise(scope, node)}>
       {label}
     </Button>
+  )
+}
+
+// ---- Dialog (WidgetComponent::Dialog) -----------------------------------------------------------
+
+type DialogComponent = Extract<Component, { readonly kind: "dialog" }>
+
+/** Whether a `component:dialog` is currently L1-blocked because its bound call is pending. */
+export function isDialogBlocked(scope: PageScope, component: DialogComponent): boolean {
+  if (!component.blocking || component.bindingId === undefined) return false
+  const call = scope.runtime.calls.get(component.bindingId)
+  if (call?.kind === "sending" || call?.kind === "undoing") return true
+  const current = scope.machine.states.find((state) => state.stateId === scope.runtime.snapshot.stateId)
+  return current?.role === "pending" && current.awaits?.kind === "action" && current.awaits.bindingId === component.bindingId
+}
+
+/**
+ * Whether a dismissal `reason` is allowed for a `component:dialog` given its L1 `blocked` state
+ * and declared `dismissalMethods`. Fails closed: while `blocked`, every dismissal is refused.
+ */
+export function canDismissDialog(blocked: boolean, dismissalMethods: readonly DismissalMethod[], reason: string): boolean {
+  if (blocked) return false
+  switch (reason) {
+    case "escape-key": return dismissalMethods.includes("escape")
+    case "outside-press": return dismissalMethods.includes("scrim")
+    case "swipe": return dismissalMethods.includes("swipe")
+    case "close-press": return dismissalMethods.includes("visible_close")
+    case "back": return dismissalMethods.includes("escape") || dismissalMethods.includes("swipe")
+    default: return false
+  }
+}
+
+function DialogNode({ scope, node, component }: { readonly scope: PageScope; readonly node: WidgetNode; readonly component: DialogComponent }) {
+  const blocked = isDialogBlocked(scope, component)
+  const methods: readonly DismissalMethod[] = component.dismissalMethods ?? []
+  const [dismissed, setDismissed] = useState(false)
+  useEffect(() => {
+    if (blocked) setDismissed(false)
+  }, [blocked])
+  const open = blocked || !dismissed
+  const titleSection = node.children.find((child) => child.component.kind === "section" && child.component.section.kind === "section")
+  const titled = titleSection?.component.kind === "section"
+    ? text(titleSection.component.section.label, scope.locale, scope.translate)
+    : scope.page.name
+  const asked = nodesOf(node).flatMap((child) => (child.component.kind === "action" ? [child.component.placementId] : []))
+  const message =
+    scope.ux.actionPlacements.find((placement) =>
+      asked.includes(placement.placementId) || (component.bindingId !== undefined && placement.bindingId === component.bindingId),
+    )?.confirmation.message
+
+  // Focus restore: remember what had focus when the dialog opened.
+  const wasOpen = useRef(false)
+  const returnTo = useRef<HTMLElement | null>(null)
+  useIsomorphicLayoutEffect(() => {
+    if (open && !wasOpen.current && typeof document !== "undefined") {
+      const candidate = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+      const active = candidate !== null && candidate.closest("[data-layer],[data-dialog]") === null ? candidate : null
+      const raised = scope.raisedBy.current
+      returnTo.current = active ?? (raised === null ? null : document.querySelector<HTMLElement>(`[data-node="${escapeSelector(raised)}"]`))
+    }
+    wasOpen.current = open
+  }, [open, scope.raisedBy])
+
+  const allowsBackdrop = !blocked && methods.includes("scrim")
+  const allowsDismiss = !blocked && (methods.includes("escape") || methods.includes("scrim") || methods.includes("swipe"))
+  const allowsVisibleClose = methods.includes("visible_close")
+  const bodyChildren = node.children.flatMap((child) => (child === titleSection ? child.children : [child]))
+  const callState = component.bindingId === undefined ? undefined : scope.runtime.calls.get(component.bindingId)
+
+  return (
+    <Dialog
+      open={open}
+      modal={true}
+      dismissible={allowsDismiss}
+      closeOnOutsidePress={allowsBackdrop}
+      onOpenChange={(next, details) => {
+        if (!next) {
+          const reason = details.reason ?? ""
+          if (!canDismissDialog(blocked, methods, reason)) {
+            details.cancel()
+            raise(scope, node, { reason }, "onDismissAttempt")
+            return
+          }
+          if (!raise(scope, node, { value: false, reason }, "onOpenChange")) {
+            raise(scope, node, { value: false, reason })
+          }
+          setDismissed(true)
+        }
+      }}
+      onDismissAttempt={(details) => {
+        raise(scope, node, { reason: details.reason ?? "" }, "onDismissAttempt")
+      }}
+    >
+      <DialogBackdrop className={DIALOG_BACKDROP} />
+      <DialogContent
+        className={DIALOG_PANEL}
+        data-node={node.nodeId}
+        data-dialog="true"
+        data-blocking={component.blocking ? "true" : "false"}
+        data-pending={blocked ? "true" : "false"}
+        data-dismissal-methods={methods.join(",")}
+        aria-busy={blocked ? "true" : undefined}
+        finalFocus={() => returnTo.current}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <DialogTitle className="text-heading font-medium">{titled}</DialogTitle>
+          {allowsVisibleClose && (
+            blocked ? (
+              <Button
+                type="button"
+                className={BUTTON}
+                data-dialog-close=""
+                disabled
+                focusableWhenDisabled
+                aria-label="Close"
+              >
+                Close
+              </Button>
+            ) : (
+              <DialogClose className={BUTTON} data-dialog-close="" aria-label="Close">
+                Close
+              </DialogClose>
+            )
+          )}
+        </div>
+        {message !== undefined && <DialogDescription className={MUTED}>{text(message, scope.locale, scope.translate)}</DialogDescription>}
+        {callState !== undefined && <CallLine state={callState} />}
+        {renderChildren(scope, bodyChildren)}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---- Form (WidgetComponent::Form) ---------------------------------------------------------------
+
+/** Validate exact numeric text without converting to binary IEEE-754 float. */
+export function validateExactNumber(value: string, format?: FieldFormat): string | null {
+  const trimmed = value.trim()
+  if (trimmed === "") return null
+  if (format === "integer") return /^-?\d+$/.test(trimmed) ? null : "Enter a whole number."
+  return /^-?\d+(\.\d+)?$/.test(trimmed) ? null : "Enter a valid decimal number."
+}
+
+/** Stable draft key for a `FieldPresentation`. */
+export function extractFieldKey(field: FieldPresentation): string {
+  const target = field.target
+  if (target.kind === "form_input" && "inputName" in target && typeof target.inputName === "string") return target.inputName
+  if (target.kind === "parent_property" && "inputName" in target && "propertyId" in target && typeof target.inputName === "string" && typeof target.propertyId === "string") {
+    return `${target.inputName}.${target.propertyId}`
+  }
+  if (target.kind === "property" && target.property !== undefined) return target.property.propertyId
+  return field.fieldId
+}
+
+/** Build the structured action draft payload from flat field draft state, preserving exact strings. */
+export function buildFormDraftPayload(fields: readonly FieldPresentation[], draft: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const field of fields) {
+    if (field.control === "display") continue
+    const key = extractFieldKey(field)
+    if (!Object.hasOwn(draft, key)) continue
+    const value = draft[key]
+    const target = field.target
+    if (target.kind === "form_input" && "inputName" in target && typeof target.inputName === "string") {
+      out[target.inputName] = value
+    } else if (
+      target.kind === "parent_property" &&
+      "inputName" in target &&
+      "propertyId" in target &&
+      typeof target.inputName === "string" &&
+      typeof target.propertyId === "string"
+    ) {
+      const group = asDoc(out[target.inputName])
+      out[target.inputName] = { ...(group ?? {}), [target.propertyId]: value }
+    } else if (target.kind === "property" && target.property !== undefined) {
+      out[target.property.propertyId] = value
+    } else {
+      out[field.fieldId] = value
+    }
+  }
+  return out
+}
+
+/** Whether `draft` diverges from `initial` on any field key. */
+export function computeFormDirty(initial: Readonly<Record<string, unknown>>, draft: Readonly<Record<string, unknown>>): boolean {
+  const keys = new Set([...Object.keys(initial), ...Object.keys(draft)])
+  for (const key of keys) {
+    if (!Object.is(initial[key], draft[key])) return true
+  }
+  return false
+}
+
+function readPrefillValue(scope: PageScope, form: WidgetForm, field: FieldPresentation): unknown {
+  const target = field.target
+  if (target.kind === "form_input" && "initial" in target && target.initial !== undefined) {
+    const state = scope.runtime.reads.get(target.initial.bindingId)
+    if (state?.kind === "ok") {
+      const doc = asDoc(state.document)
+      const values = asDoc(doc?.values) ?? doc
+      return own(values, target.initial.propertyId)
+    }
+  }
+  if (target.kind === "property" && target.property !== undefined) {
+    const state = scope.runtime.reads.get(target.property.bindingId)
+    if (state?.kind === "ok") {
+      const doc = asDoc(state.document)
+      const values = asDoc(doc?.values) ?? doc
+      return own(values, target.property.propertyId)
+    }
+  }
+  if (form.dataBindingId !== undefined) {
+    const state = scope.runtime.reads.get(form.dataBindingId)
+    if (state?.kind === "ok") {
+      const doc = asDoc(state.document)
+      const values = asDoc(doc?.values) ?? doc
+      if (target.kind === "parent_property" && "propertyId" in target && typeof target.propertyId === "string") {
+        return own(values, target.propertyId)
+      }
+      if (target.kind === "form_input" && "inputName" in target && typeof target.inputName === "string") {
+        return own(values, target.inputName)
+      }
+    }
+  }
+  return undefined
+}
+
+function defaultFieldValue(field: FieldPresentation, prefill: unknown): unknown {
+  if (field.control === "checkbox") return typeof prefill === "boolean" ? prefill : false
+  if (prefill === undefined || prefill === null) return ""
+  return typeof prefill === "string" ? prefill : String(prefill)
+}
+
+function buildInitialDraft(scope: PageScope, form: WidgetForm, fields: readonly FieldPresentation[]): Record<string, unknown> {
+  const initial: Record<string, unknown> = {}
+  for (const field of fields) {
+    const key = extractFieldKey(field)
+    initial[key] = defaultFieldValue(field, readPrefillValue(scope, form, field))
+  }
+  return initial
+}
+
+function evaluateCondition(
+  scope: PageScope,
+  condition: ZenCondition | undefined,
+  draftPayload: Readonly<Record<string, unknown>>,
+  fallback: boolean,
+): boolean {
+  if (condition === undefined) return fallback
+  const recordBindingId = condition.inputs.recordBindingId
+  const recordState = recordBindingId === undefined ? undefined : scope.runtime.reads.get(recordBindingId)
+  const recordDoc = recordState?.kind === "ok" ? asDoc(recordState.document) : null
+  const recordValues = recordDoc !== null ? (asDoc(recordDoc.values) ?? recordDoc) : undefined
+  const sources = {
+    context: scope.context ?? {},
+    ...(recordValues !== undefined ? { record: recordValues } : {}),
+    ...(condition.inputs.draftFormId !== undefined ? { draft: draftPayload } : {}),
+  }
+  try {
+    const result = scope.runtime.evaluate(condition.expression, sources as never)
+    return typeof result === "boolean" ? result : fallback
+  } catch (error) {
+    if (error instanceof EngineNotReady) return fallback
+    return fallback
+  }
+}
+
+function extractSelectOptions(document: unknown): Array<{ readonly value: string; readonly label: string }> {
+  const doc = asDoc(document)
+  const raw = Array.isArray(doc?.records)
+    ? doc.records
+    : Array.isArray(doc?.items)
+      ? doc.items
+      : Array.isArray(doc?.options)
+        ? doc.options
+        : []
+  const options: Array<{ readonly value: string; readonly label: string }> = []
+  for (let index = 0; index < raw.length; index += 1) {
+    const item = raw[index]
+    if (typeof item === "string") {
+      options.push({ value: item, label: item })
+      continue
+    }
+    const row = asDoc(item)
+    if (row === null || row.withheld === true) continue
+    const value = rowIdOf(row, index)
+    const values = asDoc(row.values) ?? row
+    const candidate = [values.label, values.name, values.title, values.code].find((entry): entry is string => typeof entry === "string" && entry !== "")
+    options.push({ value, label: candidate ?? value })
+  }
+  return options
+}
+
+function FormCallStatus({ state }: { readonly state: BindingCallState | undefined }) {
+  if (state === undefined) return null
+  return matchActionState(state, {
+    editing: () => null,
+    confirming: () => <p role="status" className={MUTED} data-call="confirming">Waiting for you to confirm.</p>,
+    sending: () => <p role="status" aria-busy="true" className={MUTED} data-call="sending">Submitting…</p>,
+    pending_approval: () => <p role="status" className={MUTED} data-call="pending_approval">Sent for approval: nothing is committed until it is decided.</p>,
+    committed: () => <p role="status" className="text-meta text-foreground" data-call="committed">Saved.</p>,
+    refused: ({ refusal }) => (
+      <div
+        role="alert"
+        data-call="refused"
+        data-category={refusal.category ?? undefined}
+        data-code={refusal.code || undefined}
+        className="grid gap-1 rounded-[var(--radius)] border border-border bg-card p-3 text-meta text-destructive-text"
+      >
+        <span className="font-medium" data-refusal-category={refusal.category ?? "unknown"}>{formatRefusalCategory(refusal.category)}</span>
+        <span>{messageOf(refusal.document, `The cell refused this call (${refusal.code}).`)}</span>
+      </div>
+    ),
+    not_served: () => <p role="status" className={MUTED} data-call="not_served">This workspace serves no cell to call: nothing was sent.</p>,
+    unavailable: () => <p role="status" className={MUTED} data-call="unavailable">The cell answered without applying the call: nothing committed.</p>,
+    timed_out: ({ message }) => <p role="status" className={MUTED} data-call="timed_out">{message ?? "The answer was lost; the call may have applied."}</p>,
+    undoing: () => <p role="status" aria-busy="true" className={MUTED} data-call="undoing">Undoing…</p>,
+    undo_failed: ({ message }) => <p role="status" className={MUTED} data-call="undo_failed">{message ?? "The undo did not come back."}</p>,
+    undone: () => <p role="status" className={MUTED} data-call="undone">Undone.</p>,
+  })
+}
+
+function FormFieldControlView({
+  scope,
+  field,
+  fieldKey,
+  value,
+  disabled,
+  readOnly,
+  required,
+  invalid,
+  errorText,
+  onChange,
+}: {
+  readonly scope: PageScope
+  readonly field: FieldPresentation
+  readonly fieldKey: string
+  readonly value: unknown
+  readonly disabled: boolean
+  readonly readOnly: boolean
+  readonly required: boolean
+  readonly invalid: boolean
+  readonly errorText: string | null
+  readonly onChange: (next: unknown) => void
+}) {
+  const label = text(field.label, scope.locale, scope.translate)
+  const help = field.help === undefined ? undefined : text(field.help, scope.locale, scope.translate)
+  const control = field.control ?? "text"
+  const stringValue = typeof value === "string" ? value : value === null || value === undefined ? "" : String(value)
+
+  if (control === "display") {
+    const prop = propertyOf(field)
+    const propRead = prop === undefined ? undefined : scope.runtime.reads.get(prop.bindingId)
+    const propRecord = propRead?.kind === "ok" ? asDoc(propRead.document) : null
+    return (
+      <div className="grid gap-1" data-field={field.fieldId} data-control="display">
+        <span className={MUTED}>{label}</span>
+        {prop !== undefined && propRecord !== null
+          ? <span className="text-body text-foreground"><Value record={propRecord} propertyId={prop.propertyId} /></span>
+          : <span className="text-body text-foreground" data-value="plain">{shown(value)}</span>}
+        {help !== undefined && <p className={MUTED}>{help}</p>}
+      </div>
+    )
+  }
+
+  if (control === "checkbox") {
+    const checked = value === true
+    return (
+      <Field name={fieldKey} disabled={disabled || readOnly} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control="checkbox">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            checked={checked}
+            disabled={disabled}
+            readOnly={readOnly}
+            required={required}
+            aria-required={required ? "true" : undefined}
+            aria-invalid={invalid ? "true" : undefined}
+            onCheckedChange={(next) => {
+              if (!readOnly) onChange(next === true)
+            }}
+            className="inline-flex size-4 items-center justify-center rounded-[3px] border border-input bg-background text-[11px] leading-none text-background outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-[checked]:border-foreground data-[checked]:bg-foreground disabled:opacity-50"
+          >
+            <CheckboxIndicator>✓</CheckboxIndicator>
+          </Checkbox>
+          <FieldLabel className="text-body text-foreground">
+            {label}
+            {required && <span aria-hidden="true" className="ms-0.5 text-destructive-text">*</span>}
+          </FieldLabel>
+        </div>
+        {help !== undefined && <FieldDescription className={MUTED}>{help}</FieldDescription>}
+        {errorText !== null && <FieldError match={true} className="text-meta text-destructive-text">{errorText}</FieldError>}
+      </Field>
+    )
+  }
+
+  if (control === "select" || control === "link") {
+    const renderSelect = (options: readonly { readonly value: string; readonly label: string }[]) => (
+      <Select
+        value={stringValue === "" ? null : stringValue}
+        disabled={disabled || readOnly}
+        required={required}
+        onValueChange={(next) => {
+          if (!readOnly) onChange(typeof next === "string" ? next : "")
+        }}
+      >
+        <SelectLabel className={MUTED}>
+          {label}
+          {required && <span aria-hidden="true" className="ms-0.5 text-destructive-text">*</span>}
+        </SelectLabel>
+        <SelectTrigger
+          aria-required={required ? "true" : undefined}
+          aria-invalid={invalid ? "true" : undefined}
+          className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 max-sm:min-h-[44px]"
+        >
+          <SelectValue placeholder={`Select ${label}`} />
+        </SelectTrigger>
+        <SelectContent className="z-50 rounded-[var(--radius-popup)] border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          {options.length === 0 ? (
+            <SelectEmpty className={`${MUTED} px-2 py-1.5`}>No options available.</SelectEmpty>
+          ) : (
+            options.map((option) => (
+              <SelectItem
+                key={option.value}
+                value={option.value}
+                className="flex cursor-pointer items-center justify-between rounded-[var(--radius)] px-2 py-1.5 text-body outline-none data-[highlighted]:bg-accent"
+              >
+                <SelectItemText>{option.label}</SelectItemText>
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    )
+    const optionState = field.optionQueryBindingId === undefined ? undefined : scope.runtime.reads.get(field.optionQueryBindingId)
+    return (
+      <Field name={fieldKey} disabled={disabled || readOnly} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control={control}>
+        {field.optionQueryBindingId !== undefined ? (
+          <ReadView state={optionState}>
+            {(document) => renderSelect(extractSelectOptions(document))}
+          </ReadView>
+        ) : (
+          renderSelect([])
+        )}
+        {help !== undefined && <FieldDescription className={MUTED}>{help}</FieldDescription>}
+        {errorText !== null && <FieldError match={true} className="text-meta text-destructive-text">{errorText}</FieldError>}
+      </Field>
+    )
+  }
+
+  return (
+    <Field name={fieldKey} disabled={disabled} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control={control} data-format={field.format}>
+      <FieldLabel className={MUTED}>
+        {label}
+        {required && <span aria-hidden="true" className="ms-0.5 text-destructive-text">*</span>}
+      </FieldLabel>
+      {control === "text_area" ? (
+        <Textarea
+          className={TEXTAREA}
+          value={stringValue}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          aria-required={required ? "true" : undefined}
+          aria-invalid={invalid ? "true" : undefined}
+          onValueChange={(next) => onChange(next)}
+        />
+      ) : control === "number" ? (
+        // Exact-string numeric input: never passes through binary float (`type="number"` / `Number()`).
+        <Input
+          type="text"
+          inputMode={field.format === "integer" ? "numeric" : "decimal"}
+          className={`${INPUT} tabular-nums`}
+          value={stringValue}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          aria-required={required ? "true" : undefined}
+          aria-invalid={invalid ? "true" : undefined}
+          onValueChange={(next) => onChange(next)}
+        />
+      ) : control === "date" ? (
+        <Input
+          type="date"
+          className={`${INPUT} tabular-nums`}
+          value={stringValue}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          aria-required={required ? "true" : undefined}
+          aria-invalid={invalid ? "true" : undefined}
+          onValueChange={(next) => onChange(next)}
+        />
+      ) : control === "date_time" ? (
+        // Zoned ISO-8601 timestamp text: preserves explicit timezone offset without browser stripping.
+        <Input
+          type="text"
+          placeholder="YYYY-MM-DDTHH:MM:SSZ"
+          className={`${INPUT} tabular-nums`}
+          value={stringValue}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          aria-required={required ? "true" : undefined}
+          aria-invalid={invalid ? "true" : undefined}
+          onValueChange={(next) => onChange(next)}
+        />
+      ) : (
+        <Input
+          type="text"
+          className={INPUT}
+          value={stringValue}
+          disabled={disabled}
+          readOnly={readOnly}
+          required={required}
+          aria-required={required ? "true" : undefined}
+          aria-invalid={invalid ? "true" : undefined}
+          onValueChange={(next) => onChange(next)}
+        />
+      )}
+      {help !== undefined && <FieldDescription className={MUTED}>{help}</FieldDescription>}
+      {errorText !== null && <FieldError match={true} className="text-meta text-destructive-text">{errorText}</FieldError>}
+    </Field>
+  )
+}
+
+function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly node: WidgetNode; readonly formId: string }) {
+  const form = scope.ux.forms.find((candidate) => candidate.formId === formId)
+  if (form === undefined) {
+    return <p role="status" className={MUTED} data-node={node.nodeId} data-form-missing={formId}>{`Form "${formId}" is not declared.`}</p>
+  }
+
+  const fieldChildren = node.children.filter((child): child is WidgetNode & { readonly component: Extract<Component, { readonly kind: "field" }> } => child.component.kind === "field")
+  const footerActions = node.children.filter((child) => child.component.kind === "action")
+  const formFields: FieldPresentation[] = fieldChildren.length > 0
+    ? fieldChildren.flatMap((child) => {
+        const found = scope.ux.fields.find((candidate) => candidate.fieldId === child.component.fieldId)
+        return found === undefined ? [] : [found]
+      })
+    : scope.ux.fields.filter((candidate) => "formId" in candidate.target && candidate.target.formId === form.formId)
+
+  const prefillSnapshot = buildInitialDraft(scope, form, formFields)
+  const prefillKey = JSON.stringify(prefillSnapshot)
+  const [initialDraft, setInitialDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
+  const [submitted, setSubmitted] = useState(false)
+  const dirty = computeFormDirty(initialDraft, draft)
+
+  // Hydrate from server prefill when it arrives, without clobbering a dirty user draft.
+  useEffect(() => {
+    if (!dirty) {
+      setInitialDraft(prefillSnapshot)
+      setDraft(prefillSnapshot)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillKey])
+
+  const draftPayload = buildFormDraftPayload(formFields, draft)
+  const callState = scope.runtime.calls.get(form.submitBindingId)
+  const currentState = scope.machine.states.find((state) => state.stateId === scope.runtime.snapshot.stateId)
+  const isPending =
+    callState?.kind === "sending" ||
+    callState?.kind === "undoing" ||
+    (currentState?.role === "pending" && currentState.awaits?.kind === "action" && currentState.awaits.bindingId === form.submitBindingId)
+
+  const hasMachineEvent = eventsOf(scope.machine, node.nodeId).length > 0
+  const { on: machineAllows, waiting: engineWaiting } = hasMachineEvent ? canAct(scope, node) : { on: true, waiting: false }
+  const submitDisabled = isPending || !machineAllows
+  const submitLabel = text(form.submit.label, scope.locale, scope.translate)
+  const submitMark = confirmMark(formConfirmReason(scope.ux, form, scope.actionEffects, scope.locale, scope.translate))
+
+  const fieldStates = formFields.map((field) => {
+    const key = extractFieldKey(field)
+    const value = Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined)
+    const visible = evaluateCondition(scope, field.visibleWhen, draftPayload, true)
+    const required = evaluateCondition(scope, field.requiredWhen, draftPayload, false)
+    const readOnly = evaluateCondition(scope, field.readOnlyWhen, draftPayload, false)
+    let hint: string | null = null
+    if (visible && field.control !== "display") {
+      if (field.control === "number" && typeof value === "string") {
+        hint = validateExactNumber(value, field.format)
+      }
+      if (hint === null && required && submitted) {
+        const empty = field.control === "checkbox" ? value !== true : (typeof value === "string" ? value.trim() === "" : value === null || value === undefined)
+        if (empty) hint = "This field is required."
+      }
+    }
+    return { field, key, value, visible, required, readOnly, hint }
+  })
+
+  const updateField = (key: string, nextValue: unknown) => {
+    const nextDraft = { ...draft, [key]: nextValue }
+    setDraft(nextDraft)
+    scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, nextDraft))
+  }
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (isPending || submitDisabled) return
+    setSubmitted(true)
+    // Check inline syntax/required hints; never enforce permissions on the client.
+    const hasClientHint = fieldStates.some(({ field, value, visible, required }) => {
+      if (!visible || field.control === "display") return false
+      if (field.control === "number" && typeof value === "string" && validateExactNumber(value, field.format) !== null) return true
+      if (required) {
+        return field.control === "checkbox" ? value !== true : (typeof value === "string" ? value.trim() === "" : value === null || value === undefined)
+      }
+      return false
+    })
+    if (hasClientHint) return
+    scope.runtime.setDraft?.(form.formId, draftPayload)
+    if (hasMachineEvent) {
+      raise(scope, node, { draft: draftPayload, ...draftPayload })
+    } else {
+      scope.runtime.submitForm?.(form.formId, form.submitBindingId, draftPayload)
+    }
+  }
+
+  const prefillState = form.dataBindingId === undefined ? undefined : scope.runtime.reads.get(form.dataBindingId)
+
+  return (
+    <form
+      noValidate
+      onSubmit={handleSubmit}
+      data-node={node.nodeId}
+      data-form={form.formId}
+      data-form-mode={form.mode}
+      data-dirty={dirty ? "true" : "false"}
+      data-pending={isPending ? "true" : "false"}
+      aria-busy={isPending ? "true" : undefined}
+      className="grid gap-4"
+    >
+      {form.mode === "edit" && prefillState !== undefined && prefillState.kind !== "ok" && (
+        <ReadView state={prefillState}>{() => null}</ReadView>
+      )}
+      <div className="grid gap-3">
+        {fieldStates.map(({ field, key, value, visible, required, readOnly, hint }) => {
+          if (!visible) {
+            return (
+              <input
+                key={field.fieldId}
+                type="hidden"
+                name={key}
+                data-field={field.fieldId}
+                data-control="hidden"
+                value={typeof value === "string" ? value : value === null || value === undefined ? "" : String(value)}
+              />
+            )
+          }
+          return (
+            <FormFieldControlView
+              key={field.fieldId}
+              scope={scope}
+              field={field}
+              fieldKey={key}
+              value={value}
+              disabled={isPending}
+              readOnly={readOnly}
+              required={required}
+              invalid={hint !== null}
+              errorText={hint}
+              onChange={(next) => updateField(key, next)}
+            />
+          )
+        })}
+      </div>
+      <FormCallStatus state={callState} />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          {...submitMark}
+          type="submit"
+          className={BUTTON}
+          data-form-submit={form.formId}
+          disabled={submitDisabled}
+          focusableWhenDisabled
+          aria-busy={isPending ? "true" : undefined}
+          data-engine={engineWaiting ? "waiting" : undefined}
+        >
+          {isPending ? "Submitting…" : submitLabel}
+        </Button>
+        {footerActions.map((child) => <Node key={child.nodeId} scope={scope} node={child} />)}
+      </div>
+    </form>
   )
 }
 
@@ -249,14 +1336,12 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
     onDismissAttempt: (details: { readonly reason?: string }) => raise(scope, node, { reason: details.reason ?? "" }, "onDismissAttempt"),
   }
   // The section that names the layer is its title: its own children draw in the body, its label once.
-  const children = node.children.flatMap((child) => (child === title ? child.children : [child])).map((child) => <Node key={child.nodeId} scope={scope} node={child} />)
-  const panel = "fixed start-1/2 top-1/2 z-50 grid w-[min(28rem,calc(100vw-2rem))] -translate-y-1/2 gap-3 rounded-[var(--radius-popup)] border border-border bg-popover p-5 text-popover-foreground shadow-lg ltr:-translate-x-1/2 rtl:translate-x-1/2"
-  // No exit animation runs, so the backdrop never outlives the layer to swallow a press.
-  const backdrop = "fixed inset-0 z-40 bg-black/40"
+  const bodyChildren = node.children.flatMap((child) => (child === title ? child.children : [child]))
+  const children = renderChildren(scope, bodyChildren)
   return primitive === "alert-dialog" ? (
     <AlertDialog {...options}>
-      <AlertDialogBackdrop className={backdrop} />
-      <AlertDialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
+      <AlertDialogBackdrop className={DIALOG_BACKDROP} />
+      <AlertDialogContent className={DIALOG_PANEL} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <AlertDialogTitle className="text-heading font-medium">{titled}</AlertDialogTitle>
         {message !== undefined && <AlertDialogDescription className={MUTED}>{text(message, scope.locale, scope.translate)}</AlertDialogDescription>}
         {children}
@@ -264,8 +1349,8 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
     </AlertDialog>
   ) : (
     <Dialog {...options}>
-      <DialogBackdrop className={backdrop} />
-      <DialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
+      <DialogBackdrop className={DIALOG_BACKDROP} />
+      <DialogContent className={DIALOG_PANEL} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <DialogTitle className="text-heading font-medium">{titled}</DialogTitle>
         {message !== undefined && <DialogDescription className={MUTED}>{text(message, scope.locale, scope.translate)}</DialogDescription>}
         {children}
@@ -306,7 +1391,6 @@ function Island({ scope, node }: { readonly scope: PageScope; readonly node: Wid
 
 /** One node of the tree. */
 export function Node({ scope, node }: { readonly scope: PageScope; readonly node: WidgetNode }): ReactNode {
-  const renderChildren = () => node.children.map((child) => <Node key={child.nodeId} scope={scope} node={child} />)
   const component = node.component
   switch (component.kind) {
     case "section": {
@@ -320,29 +1404,43 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
         <section aria-label={label} data-node={node.nodeId} className={root ? "grid gap-6" : "grid gap-3"}>
           {!root && <h2 className="text-heading font-medium">{label}</h2>}
           {binding !== undefined && <ReadView state={read}>{(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={component.section.fields} />}</ReadView>}
-          {renderChildren()}
+          {renderChildren(scope, node.children)}
         </section>
       )
     }
     case "detail": {
-      const refs = scope.ux.fields.flatMap((field) => (field.target.property?.bindingId === component.dataBindingId ? [field.target.property] : []))
+      const refs = scope.ux.fields.flatMap((field) => {
+        const prop = propertyOf(field)
+        return prop?.bindingId === component.dataBindingId ? [prop] : []
+      })
       return (
         <div data-node={node.nodeId} className="grid gap-3">
           <ReadView state={scope.runtime.reads.get(component.dataBindingId)}>{(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={refs} />}</ReadView>
-          {renderChildren()}
+          {renderChildren(scope, node.children)}
         </div>
       )
     }
     case "list":
       return (
         <div data-node={node.nodeId} className="grid gap-3">
-          <ReadView state={scope.runtime.reads.get(component.dataBindingId)}>{(document) => <ListRows scope={scope} document={document} refs={component.fields} />}</ReadView>
-          {renderChildren()}
+          <ReadView state={scope.runtime.reads.get(component.dataBindingId)}>
+            {(document) => (
+              <ListRows
+                scope={scope}
+                node={node}
+                document={document}
+                refs={component.fields}
+                dataBindingId={component.dataBindingId}
+                selection={component.selection}
+              />
+            )}
+          </ReadView>
+          {renderChildren(scope, node.children)}
         </div>
       )
     case "field": {
       const field = scope.ux.fields.find((candidate) => candidate.fieldId === component.fieldId)
-      const ref = field?.target.property
+      const ref = propertyOf(field)
       const read = ref === undefined ? undefined : scope.runtime.reads.get(ref.bindingId)
       return (
         <div data-node={node.nodeId} className="grid gap-1">
@@ -374,7 +1472,9 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       return primitive === null ? <Island scope={scope} node={node} /> : <Layer scope={scope} node={node} primitive={primitive} />
     }
     case "dialog":
+      return <DialogNode scope={scope} node={node} component={component} />
     case "form":
+      return <FormNode scope={scope} node={node} formId={component.formId} />
     case "child_grid":
     case "composition":
       // Refused before the page draws (`missingCapabilities`): never drawn in part.
