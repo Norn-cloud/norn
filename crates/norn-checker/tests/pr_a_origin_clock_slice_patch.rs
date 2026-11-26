@@ -621,3 +621,23 @@ fn refuses_base_action_writing_subtype_protected_property() {
         "base action writing subtype-tightened protected property must fail closed: {errs:?}"
     );
 }
+
+#[test]
+fn refuses_approval_policy_gating_clock_deriving_action() {
+    let approval = envelope(
+        "policy",
+        "test.payout.approval.policy",
+        "Payout approval",
+        &json!({
+            "policyId": "test.payout.approval",
+            "appliesTo": "test.payout.create",
+            "reviewRequiredWhen": "always",
+            "approvalRoles": ["finance_approver"]
+        }),
+    );
+    let errs = check(&[payout_entity(), create_payout_action(), approval]);
+    assert!(
+        errs.iter().any(|e| e.contains("derives from `clock`")),
+        "approval policy gating a clock-deriving action must be refused at admission: {errs:?}"
+    );
+}

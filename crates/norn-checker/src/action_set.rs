@@ -216,6 +216,9 @@ pub fn check_action_set(
         .filter_map(|artifact| decode_action(artifact).map(|root| (artifact, root)))
         .collect();
     let mut findings = Model::inventory(artifacts, base).duplicate_findings();
+    findings.extend(set_fields::approval_clock_conflict_findings(
+        artifacts, base,
+    ));
     if actions.is_empty() {
         return findings;
     }

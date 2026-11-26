@@ -209,6 +209,11 @@ pub(super) fn bind_approved_intent<X>(
     if capture.is_none() && call.approved_intent.is_none() {
         return Ok(());
     }
+    if super::post_slice::action_reads_clock(call.action) {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: call.action.action_id.clone(),
+        });
+    }
     let digest = prepared_intent_digest(call, commit)?;
     if let Some(slot) = capture {
         *slot = Some(PreparedIntent {

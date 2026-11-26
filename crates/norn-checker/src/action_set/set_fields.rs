@@ -14,6 +14,85 @@ use crate::entity_instance::{EffectiveObjectType, EffectiveProperty};
 
 use super::{Model, codes, finding, input_schema_field_required};
 
+/// ACTION-CLOCK-1 / APPROVAL-1: an approval-gated action binds its prepared
+/// intent digest to exact derived inputs and writes. Advancing the clock
+/// between approval and release would make any `clock`-deriving action fail
+/// closed with `ApprovedIntentChanged`, so refuse the combination at admission.
+pub(super) fn approval_clock_conflict_findings(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
+    let mut clock_actions = BTreeMap::<String, (&ArtifactEnvelope, bool)>::new();
+    for (artifact, is_candidate) in artifacts
+        .iter()
+        .map(|artifact| (artifact, true))
+        .chain(base.iter().map(|artifact| (artifact, false)))
+    {
+        let Some(root) = super::decode_action(artifact) else {
+            continue;
+        };
+        let reads_clock = root.derive.iter().any(|step| {
+            match norn_expr::expression_reads(step.expression.as_str(), norn_expr::CLOCK_VARIABLE) {
+                Ok(reads) => reads.whole_root || !reads.fields.is_empty(),
+                Err(_) => true,
+            }
+        });
+        if reads_clock {
+            clock_actions.insert(root.action_id, (artifact, is_candidate));
+        }
+    }
+    if clock_actions.is_empty() {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    for (artifact, is_candidate) in artifacts
+        .iter()
+        .map(|artifact| (artifact, true))
+        .chain(base.iter().map(|artifact| (artifact, false)))
+    {
+        let norn_ir::ArtifactPayload::Policy(policy) = &artifact.payload else {
+            continue;
+        };
+        let Ok(policy_root) = serde_json::to_value(policy.to_json_value())
+            .and_then(serde_json::from_value::<norn_ir::PolicyRoot>)
+        else {
+            continue;
+        };
+        let (policy_id, applies_to) = match policy_root {
+            norn_ir::PolicyRoot::Approval(approval) => (approval.policy_id, approval.applies_to),
+            norn_ir::PolicyRoot::Obligations(obligations)
+                if obligations.approval_roles.is_some() =>
+            {
+                let Some(target) = obligations.applies_to else {
+                    continue;
+                };
+                (obligations.policy_id, target)
+            }
+            norn_ir::PolicyRoot::Obligations(_) | norn_ir::PolicyRoot::Access(_) => continue,
+        };
+        let Some(&(action_artifact, action_is_candidate)) = clock_actions.get(&applies_to) else {
+            continue;
+        };
+        if !is_candidate && !action_is_candidate {
+            continue;
+        }
+        let (target_artifact, path) = if is_candidate {
+            (artifact, "/payload/appliesTo")
+        } else {
+            (action_artifact, "/payload/derive")
+        };
+        findings.push(finding(
+            codes::TARGET_NOT_WRITABLE,
+            format!(
+                "approval policy {policy_id:?} cannot gate action {applies_to:?}, which derives from `clock` (advancing the clock between approval and release invalidates the prepared intent digest)"
+            ),
+            target_artifact,
+            path,
+        ));
+    }
+    findings
+}
+
 pub(super) fn post_slice_effect_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
