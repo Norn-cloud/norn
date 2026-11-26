@@ -11,6 +11,8 @@
 //! every class is aligned, a gap or a conflict; the checker admits both
 //! packs and proves the link total.
 
+mod support;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -19,63 +21,17 @@ use norn_checker::{
     validate_ontology_registry,
 };
 use norn_formats::SchemaImporter;
-use norn_formats::contract::sha256_hex;
-use norn_formats::owl::{
-    OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader, WitnessPolicy,
-};
+use norn_formats::owl::OwlReader;
 use norn_formats::owl_align::{AlignmentFinding, OwlAlignment, OwlAnchor, OwlHeld, align, term_of};
-use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, OntologySource, OntologySourceFile};
+use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, OntologySource};
 
-const GRAPH: &[u8] = include_bytes!("fixtures/synthetic/ledger.nt");
-const ORIGINAL: &[u8] = include_bytes!("fixtures/synthetic/ledger.ttl");
 const PTY: &str = "https://example.org/onto/Parties/";
 const AGR: &str = "https://example.org/onto/Agreements/";
 const LN: &str = "https://example.org/onto/Loans/";
 
-fn config() -> OwlConfig {
-    let mut admission =
-        serde_json::from_str::<OntologySource>(include_str!("fixtures/synthetic/source.json"))
-            .unwrap();
-    admission.source_id = "source.test.synthetic-ledger".into();
-    admission.license = "MIT".into();
-    admission.importer = Some(norn_ir::SourceImporter {
-        name: "norn.formats.owl".into(),
-        version: "0.1.0".into(),
-    });
-    admission.files = Some(vec![OntologySourceFile {
-        path: "https://example.test/synthetic-ledger/1.0/ledger.ttl".into(),
-        sha256: sha256_hex(ORIGINAL),
-    }]);
-    let namespace = |iri: &str, prefix: &str| OwlNamespace {
-        iri: iri.into(),
-        prefix: prefix.into(),
-    };
-    OwlConfig {
-        admission,
-        observed_at: "2026-11-20T00:00:00Z".into(),
-        graph_sha256: sha256_hex(GRAPH),
-        normaliser: OwlNormaliser {
-            name: "rdflib".into(),
-            version: "7.6.0".into(),
-        },
-        namespaces: vec![
-            namespace(PTY, "ex-pty"),
-            namespace(AGR, "ex-agr"),
-            namespace(LN, "ex-ln"),
-        ],
-        witnesses: WitnessPolicy::Open,
-    }
-}
-
 fn vocabulary() -> (Vec<ArtifactEnvelope>, OntologySource) {
-    let config = config();
-    let import = OwlReader.import(
-        OwlGraph {
-            path: "ledger.nt",
-            bytes: GRAPH,
-        },
-        &config,
-    );
+    let config = support::synthetic_ledger_config();
+    let import = OwlReader.import(support::synthetic_ledger_graph(), &config);
     (import.layers[0].artifacts.clone(), config.admission)
 }
 
