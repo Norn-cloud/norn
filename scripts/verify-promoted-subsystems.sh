@@ -270,6 +270,60 @@ run_gate() {
   case "$evidence_kind" in
     command)
       observed_test_count=0
+      case "$gate_id" in
+        quantity-kani)
+          local clean_kani_log
+          clean_kani_log="$(sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g' "$log_path")"
+          if ! diff -u - <(sed -n 's/^Checking harness \(.*\)\.\.\.$/\1/p' <<<"$clean_kani_log" | LC_ALL=C sort) <<'HARNESSES'
+proofs::a_balanced_pair_is_accepted
+proofs::equal_values_in_different_units_are_not_balanced
+proofs::overflow_is_rejected_not_wrapped
+HARNESSES
+          then
+            printf '[fail] %s did not verify the exact pinned Kani harnesses\n' "$gate_id" >&2
+            return 1
+          fi
+          grep -Fx 'Complete - 3 successfully verified harnesses, 0 failures, 3 total.' <<<"$clean_kani_log" > /dev/null || {
+            printf '[fail] %s missing expected 3-harness Kani completion summary\n' "$gate_id" >&2
+            return 1
+          }
+          ;;
+        owl-time-allen-kani)
+          local clean_kani_log
+          clean_kani_log="$(sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g' "$log_path")"
+          if ! diff -u - <(sed -n 's/^Checking harness \(.*\)\.\.\.$/\1/p' <<<"$clean_kani_log" | LC_ALL=C sort) <<'HARNESSES'
+before_during_and_meets_compose
+exactly_one_relation_holds_and_the_classifier_returns_it
+improper_intervals_have_no_relation
+sharing_an_instant_is_the_half_open_overlap_test
+the_converse_holds_for_the_swapped_intervals
+HARNESSES
+          then
+            printf '[fail] %s did not verify the exact pinned Kani harnesses\n' "$gate_id" >&2
+            return 1
+          fi
+          grep -Fx 'Complete - 5 successfully verified harnesses, 0 failures, 5 total.' <<<"$clean_kani_log" > /dev/null || {
+            printf '[fail] %s missing expected 5-harness Kani completion summary\n' "$gate_id" >&2
+            return 1
+          }
+          ;;
+        kernel-v2-quantity-ledger)
+          local clean_quint_log expected_test
+          clean_quint_log="$(sed -E $'s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g' "$log_path")"
+          for expected_test in \
+            conservationPostPostTest \
+            conservationPostVoidTest \
+            conservationVoidPostTest \
+            conservationVoidVoidTest \
+            conservationLazyExpiryTest \
+            conservationScheduledExpiryTest; do
+            grep -Eq "(^|[[:space:]])ok[[:space:]]+${expected_test}[[:space:]]+passed\b" <<<"$clean_quint_log" || {
+              printf '[fail] %s did not execute and pass pinned Quint test %s\n' "$gate_id" "$expected_test" >&2
+              return 1
+            }
+          done
+          ;;
+      esac
       ;;
     rust-tests)
       observed_test_count="$({
