@@ -2,237 +2,30 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{Expression, TurnFuel, Value as ExprValue};
 use norn_ir::{
-    ActionEffectProgram, ActionRoot, ObjectTypeName, ResourceLimitProfile, RuntimeValue,
-    SliceDeclaration, SliceKey, UpsertWriteMode,
+    ActionRoot, ObjectTypeName, ResourceLimitProfile, RuntimeValue, SliceDeclaration, SliceKey,
 };
 
 use crate::cell_host::{
-    CellCommit, CellHost, FactExpectation, FactKey, FactState, JsonObject, LinkReadExpectation,
-    PredicateObject, PredicateQuery, PredicateReadExpectation,
+    CellHost, FactKey, FactState, JsonObject, LinkReadExpectation, PredicateObject, PredicateQuery,
+    PredicateReadExpectation,
 };
 use crate::decision_commit::{FactSlice, TypeCatalog};
 use crate::limits::SliceMeter;
 
 use super::host_failure;
 use super::input::action_expression_context;
+use super::read_plan::TrackedReadSet;
 use super::receipt::SliceReadMode;
 use super::types::{
-    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPolicyReadFootprint,
-    ActionPreconditionOutcome, ActionPreconditionOutcomeRef, ActionReadAuthzRequest,
-    ActionReadTypeAuthzRequest, ActionReferenceReads, ActionRefusal,
+    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPreconditionOutcome,
+    ActionPreconditionOutcomeRef, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
+    ActionRefusal,
 };
-
-fn reference_action(
-    catalog: &TypeCatalog<'_>,
-    action: &ActionRoot,
-    policy_footprint: &ActionPolicyReadFootprint,
-    target: &FactKey,
-) -> bool {
-    // Closed creates use reference lineage plus exact proved property reads for
-    // preconditions and `LAW-LINK-1` governing laws. Patches preserve their
-    // complete target while attributing exact expression and policy operands.
-    // Unknown selectors, optional references, commands, aggregates and opaque
-    // policy dependencies stay conservative.
-    let Some(ActionEffectProgram::UpsertInputObject {
-        object_kind,
-        object_id_field,
-        write_mode,
-        ..
-    }) = &action.effect_program
-    else {
-        return false;
-    };
-    let ActionPolicyReadFootprint::Exact { target_attributes } = policy_footprint else {
-        return false;
-    };
-    let patch = matches!(write_mode, UpsertWriteMode::Upsert);
-    if !matches!(write_mode, UpsertWriteMode::CreateOnly | UpsertWriteMode::Upsert)
-        || !action.commands.is_empty()
-        // CREATE-WRITER-1: a writer reads complete slice values.
-        || action.synchronous_rule.is_some()
-        || !action.aggregates.is_empty()
-        || action.slice.is_empty()
-        // A patch reads the full target to preserve its other values. Only
-        // caller-input assignments with a required direct target slice qualify.
-        // Invariants and lifecycles may make admission depend on stored values.
-        || (patch
-            && (!action.create_links.is_empty()
-                || action.quantity_effect.is_some()
-                || !catalog.lifecycles(&target.object_type).is_empty()
-                || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
-                || patch_read_properties(catalog, action, target, target_attributes).is_none()))
-        || (!patch
-            && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
-        || action.slice.iter().any(|entry| {
-            entry.optional
-                || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input"
-                    && (!patch
-                        || (entry.object_type.as_str() == object_kind.as_str()
-                            && property.as_str() == object_id_field.as_str())))
-        })
-    {
-        return false;
-    }
-    true
-}
-
-fn patch_read_properties(
-    catalog: &TypeCatalog<'_>,
-    action: &ActionRoot,
-    target: &FactKey,
-    policy_target_attributes: &BTreeSet<String>,
-) -> Option<Vec<String>> {
-    let effective = catalog.effective_type(&target.object_type)?;
-    let mut properties = BTreeSet::new();
-    for attr in policy_target_attributes {
-        let prop = effective.property(attr)?;
-        if prop.computed {
-            return None;
-        }
-        properties.insert(attr.clone());
-    }
-    // Derivations run before the slice is loaded and consume only caller
-    // input and earlier derived values. No stored values enter that phase.
-    for expression in &action.preconditions {
-        if norn_expr::expression_reads(&expression.0, "slice")
-            .ok()?
-            .whole_root
-            || !norn_expr::expression_element_paths(&expression.0, "slice")
-                .ok()?
-                .is_empty()
-        {
-            return None;
-        }
-        for path in norn_expr::expression_read_paths(&expression.0, "slice").ok()? {
-            let [alias, property] = path.as_slice() else {
-                return None;
-            };
-            if !action.slice.iter().any(|entry| entry.name == *alias) {
-                return None;
-            }
-            let prop = effective.property(property)?;
-            if prop.computed {
-                return None;
-            }
-            properties.insert(property.clone());
-        }
-    }
-    // Admission evaluates effective invariants and retained governing laws
-    // against the post-state; their operands remain classified even when
-    // unrelated to explicit preconditions or caller inputs.
-    for invariant in catalog.invariants(&target.object_type).ok()? {
-        let text = invariant.invariant.expression.as_str();
-        if norn_expr::expression_reads(text, "self").ok()?.whole_root
-            || !norn_expr::expression_element_paths(text, "self")
-                .ok()?
-                .is_empty()
-        {
-            return None;
-        }
-        for path in norn_expr::expression_read_paths(text, "self").ok()? {
-            let [property] = path.as_slice() else {
-                return None;
-            };
-            let prop = effective.property(property)?;
-            if prop.computed {
-                return None;
-            }
-            properties.insert(property.clone());
-        }
-    }
-    super::receipt::collect_patch_law_property_reads(catalog, target, &mut properties)?;
-    for property in &effective.properties {
-        if !property.computed
-            && matches!(
-                &property.kind,
-                norn_checker::EffectiveKind::Base(
-                    norn_ir::PropertyType::Date {} | norn_ir::PropertyType::Timestamp { .. }
-                )
-            )
-        {
-            properties.insert(property.id.as_str().to_owned());
-        }
-    }
-    Some(properties.into_iter().collect())
-}
-
-pub(super) fn reference_read_proof<E, C, I>(
-    catalog: &TypeCatalog<'_>,
-    action: &ActionRoot,
-    policy_footprint: &ActionPolicyReadFootprint,
-    commit: &CellCommit<E, C, I>,
-    target: &FactKey,
-    effective_input: &JsonObject,
-) -> Option<ActionReferenceReads> {
-    if !reference_action(catalog, action, policy_footprint, target)
-        || !commit.effects.is_empty()
-        || commit.consumes.is_some()
-        || !commit.link_reads.is_empty()
-        || !commit.predicate_reads.is_empty()
-        || commit
-            .writes
-            .iter()
-            .any(|write| write.expected.0 != 0 && write.key != *target)
-    {
-        return None;
-    }
-    // The decider folds a written slice target's read into its write CAS.
-    // Retain that exact reference as well as ordinary non-written reads.
-    let mut references = commit.reads.clone();
-    references.extend(
-        commit
-            .writes
-            .iter()
-            .filter(|write| write.expected.0 != 0)
-            .map(|write| FactExpectation {
-                key: write.key.clone(),
-                expected: write.expected,
-            }),
-    );
-    if references.is_empty() {
-        return None;
-    }
-    let property_reads = if matches!(
-        action.effect_program,
-        Some(ActionEffectProgram::UpsertInputObject {
-            write_mode: UpsertWriteMode::Upsert,
-            ..
-        })
-    ) {
-        let reference = references.iter().find(|read| read.key == *target)?.clone();
-        let policy_attrs = policy_footprint.target_attributes()?;
-        vec![(
-            reference,
-            patch_read_properties(catalog, action, target, policy_attrs)?,
-        )]
-    } else {
-        super::receipt::create_reference_property_reads(
-            catalog,
-            action,
-            target,
-            effective_input,
-            &references,
-        )?
-    };
-    let laws_digest =
-        ActionReferenceReads::governing_laws_digest(catalog.law_artifacts.iter().copied())?;
-    Some(ActionReferenceReads {
-        reads: commit.reads.clone(),
-        references,
-        property_reads,
-        writes: commit.writes.clone(),
-        links: commit.links.clone(),
-        link_reads: commit.link_reads.clone(),
-        event_count: commit.events.len(),
-        laws_digest,
-    })
-}
 
 /// The facts, link sets, and expression values read by one action call.
 pub(super) struct LoadedActionSlice {
     pub(super) facts: FactSlice,
-    pub(super) reference_only: bool,
-    pub(super) policy_footprint: ActionPolicyReadFootprint,
+    pub(super) tracked_reads: TrackedReadSet,
     pub(super) values: JsonObject,
     pub(super) link_reads: Vec<LinkReadExpectation>,
     pub(super) precondition_keys: BTreeSet<FactKey>,
@@ -689,14 +482,14 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let reserved_bytes = meter.bytes();
     let policy_footprint = context.authorizer.action_policy_read_footprint(call.action);
-    let mut reference_only = context.host.supports_reference_reads()
-        && reference_action(catalog, call.action, &policy_footprint, action_target);
-    let read_plan = super::receipt::prepare_create_slice_plan(
+    let tracked_reads = TrackedReadSet::prepare(
         context.host,
         catalog,
         call.action,
+        policy_footprint,
+        action_target,
+        target_state.exists(),
         context.effective_input,
-        &mut reference_only,
     );
     // Keep the separately authorized target snapshot out of the slice cache
     // until declared entries have passed their read-type gates. If an entry
@@ -728,7 +521,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
         limits,
     };
     for (index, entry) in call.action.slice.iter().enumerate() {
-        load_action_slice_entry(context, &mut state, entry, read_plan.mode_for(index))?;
+        load_action_slice_entry(context, &mut state, entry, tracked_reads.slice_mode(index))?;
     }
     let aggregates = load_action_aggregates(
         context,
@@ -773,8 +566,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     }
     Ok(LoadedActionSlice {
         facts,
-        reference_only,
-        policy_footprint,
+        tracked_reads,
         values,
         link_reads,
         precondition_keys,

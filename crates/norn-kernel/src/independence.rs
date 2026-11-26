@@ -89,6 +89,28 @@ pub(crate) fn writer_transition_refused(
             .is_some()
 }
 
+/// Exact set of protected actor properties read by `independentOf` and every
+/// bound transition guard for `(object_type, lifecycle, transition)`.
+/// Returns `None` (fail closed) when transition guards are unbound on a type
+/// with related protected properties.
+pub(crate) fn independent_actor_properties(
+    catalog: &TypeCatalog<'_>,
+    action: &ActionRoot,
+    object_type: &ObjectTypeName,
+    lifecycle: &PropertyId,
+    transition: &TransitionId,
+) -> Option<BTreeSet<PropertyId>> {
+    if catalog.transition_guards.is_none() && catalog.related_protected(object_type) {
+        return None;
+    }
+    let mut properties: BTreeSet<PropertyId> = action.independent_of.iter().cloned().collect();
+    properties.extend(
+        guards_on(catalog, object_type, lifecycle, transition)
+            .flat_map(|guard| guard.independent_of.iter().cloned()),
+    );
+    Some(properties)
+}
+
 /// ACTOR-INDEPENDENT-1: the verified principal differs from every recorded
 /// actor the action or any guard of this transition names on its committed
 /// target. A property that could hold anything but a stamped principal, or
@@ -103,22 +125,20 @@ pub(crate) fn check_independent_actor<X>(
     transition: &TransitionId,
     state: &FactState,
 ) -> Result<(), ActionRefusal<X>> {
-    let mut properties: BTreeSet<&PropertyId> = call.action.independent_of.iter().collect();
-    properties.extend(
-        guards_on(catalog, &target.object_type, lifecycle, transition)
-            .flat_map(|guard| &guard.independent_of),
-    );
-    let effective = catalog.effective_type(&target.object_type);
-    // Guards live only on protected actors, of this type or a related one.
-    // Without bound guards such a transition fails closed: sibling guards
-    // are unknown, not absent.
-    if catalog.transition_guards.is_none() && catalog.related_protected(&target.object_type) {
+    let Some(properties) = independent_actor_properties(
+        catalog,
+        call.action,
+        &target.object_type,
+        lifecycle,
+        transition,
+    ) else {
         return Err(ActionRefusal::PermissionDenied {
             reason: "ACTOR-INDEPENDENT-1: transition guards are not bound for a type with protected actors".to_owned(),
         });
-    }
+    };
+    let effective = catalog.effective_type(&target.object_type);
     let lifecycles = catalog.lifecycle_properties(&target.object_type);
-    for property in properties {
+    for property in &properties {
         let stampable = effective
             .and_then(|effective| effective.property(property.as_str()))
             .is_some_and(|declared| {

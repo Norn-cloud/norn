@@ -36,6 +36,7 @@ mod input;
 mod owned_rows;
 mod parameter;
 mod predicate;
+mod read_plan;
 mod receipt;
 mod series;
 mod slice;
@@ -78,7 +79,7 @@ pub use types::{
 use input::{build_action_commands, check_action_record_size};
 use owned_rows::commit_parent_rows;
 use receipt::{consume_receipt, precondition_read_refusal};
-use slice::{authorize_slice_type, reference_read_proof};
+use slice::authorize_slice_type;
 use transition::commit_transition;
 use types::{EnvelopePolicy, Pending};
 use upsert::commit_upsert;
@@ -361,19 +362,45 @@ fn host_failure<X>(error: X) -> ActionRefusal<X> {
     ActionRefusal::Decision(DecisionRefusal::Host(error))
 }
 
-/// Loads the target and authorizes the call; existence never leaks.
+/// Loads a target fact and resolves its stored concrete subtype when present,
+/// failing closed on an incompatible subtype so polymorphic actions run against
+/// the concrete subtype's invariants, lifecycles, and governing laws.
+fn load_target_with_concrete<H: CellHost + ?Sized>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    object_kind: &str,
+    target: &FactKey,
+) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
+    crate::check_fact_key_identity(target)
+        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
+    let (concrete_type, state) = match host.load_bounded(target, u64::MAX).map_err(host_failure)? {
+        Some(bounded) => (bounded.concrete_type, bounded.state),
+        None => (None, host.load(target).map_err(host_failure)?),
+    };
+    let Some(concrete) = concrete_type else {
+        return Ok((target.clone(), state));
+    };
+    if !catalog.lineage(&concrete).contains(&target.object_type) {
+        return Err(ActionRefusal::TargetNotFound);
+    }
+    check_kind(catalog, &concrete, object_kind)?;
+    Ok((FactKey::new(concrete.as_str(), target.key.clone()), state))
+}
+
+/// Loads the target, resolves its concrete subtype, and authorizes the call;
+/// existence never leaks.
 fn authorize_target<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     effective_input: &JsonObject,
     authorizer: &dyn ActionAuthorizer,
+    object_kind: &str,
     target: &FactKey,
-) -> Result<FactState, ActionRefusal<H::Error>> {
-    crate::check_fact_key_identity(target)
-        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
-    let state = host.load(target).map_err(host_failure)?;
-    authorize_current_target(call, effective_input, authorizer, target, &state)?;
-    Ok(state)
+) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
+    let (resolved, state) = load_target_with_concrete(host, catalog, object_kind, target)?;
+    authorize_current_target(call, effective_input, authorizer, &resolved, &state)?;
+    Ok((resolved, state))
 }
 
 /// Authorizes one snapshot of the committed target, preserving absence
@@ -405,26 +432,27 @@ fn authorize_current_target<X>(
     }
 }
 
-/// Loads an upsert target and authorizes its current state when it exists.
-/// A new create is authorized after its prepared values are available.
+/// Loads an upsert target, resolves its concrete subtype when present, and
+/// authorizes its current state. A new create is authorized after its prepared
+/// values are available.
 fn authorize_upsert_target<H: CellHost + ?Sized>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     effective_input: &JsonObject,
     authorizer: &dyn ActionAuthorizer,
+    object_kind: &str,
     target: &FactKey,
-) -> Result<FactState, ActionRefusal<H::Error>> {
-    crate::check_fact_key_identity(target)
-        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
-    let state = host.load(target).map_err(host_failure)?;
+) -> Result<(FactKey, FactState), ActionRefusal<H::Error>> {
+    let (resolved, state) = load_target_with_concrete(host, catalog, object_kind, target)?;
     // A create has no resource state to inspect yet. Its identity/scope and
     // proposed-resource authorization is checked after the prepared write is
     // available, without sending an empty resource to the policy engine.
     if !state.exists() {
-        return Ok(state);
+        return Ok((resolved, state));
     }
-    authorize_current_target(call, effective_input, authorizer, target, &state)?;
-    Ok(state)
+    authorize_current_target(call, effective_input, authorizer, &resolved, &state)?;
+    Ok((resolved, state))
 }
 
 /// Prepares an action's changes and commits them with the call record.
@@ -457,8 +485,7 @@ where
         remaining_fuel,
         target,
         slice,
-        reference_only,
-        policy_footprint,
+        tracked_reads,
         link_reads,
         predicate_reads,
         precondition_reads,
@@ -548,8 +575,10 @@ where
     })?;
     let mut writes = prepared.writes;
     let mut reads = prepared.reads;
+    let mut skipped_reads = Vec::new();
     if let Some(candidate) = series_candidate {
         writes.push(candidate.counter_write);
+        skipped_reads.clone_from(&candidate.skipped_reads);
         reads.extend(candidate.skipped_reads);
     }
     let quantity = crate::action_quantity::prepare_quantity_action(call, &effective_input)?;
@@ -581,9 +610,10 @@ where
     // Precision granted after full snapshots were loaded cannot erase their
     // value-dependent admission. Revocation refuses before any write rather
     // than using empty values under newly dependent authorization.
-    if reference_only
-        && (!policy_footprint.is_exact()
-            || authorizer.action_policy_read_footprint(call.action) != policy_footprint)
+    if tracked_reads.is_exact()
+        && (!tracked_reads.policy_footprint.is_exact()
+            || authorizer.action_policy_read_footprint(call.action)
+                != tracked_reads.policy_footprint)
     {
         return Err(ActionRefusal::TargetNotFound);
     }
@@ -615,18 +645,14 @@ where
         link_reads,
         predicate_reads,
     };
-    let reference_reads = (reference_only && !generated_key)
-        .then(|| {
-            reference_read_proof(
-                catalog,
-                call.action,
-                &policy_footprint,
-                &commit,
-                &target,
-                &effective_input,
-            )
-        })
-        .flatten();
+    let reference_reads = tracked_reads.seal_proof(
+        catalog,
+        call.action,
+        &commit,
+        &target,
+        &effective_input,
+        &skipped_reads,
+    );
     // ACTOR-STAMP-1: the proof binds this exact transaction; only it admits the stamp.
     let stamp =
         creator_stamp.map(|stamp| crate::CreatorStampProof::new(stamp, &commit, limits.max_events));
@@ -794,7 +820,15 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         if let Some(outcome) = replay(&raced, record, &call.idempotency_key)? {
             // The winner may have changed authorization-relevant
             // values. A replay must use current authorization too.
-            authorize_target(host, call, effective_input, authorizer, &record.object)?;
+            authorize_target(
+                host,
+                catalog,
+                call,
+                effective_input,
+                authorizer,
+                record.object.object_type.as_str(),
+                &record.object,
+            )?;
             return Ok(outcome);
         }
     }

@@ -5,7 +5,7 @@ use norn_ir::{
 
 use crate::cell_host::{CellHost, FactKey, FactState, JsonObject, JsonValue};
 use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
-use crate::limits::{EnvelopeLimits, SliceMeter};
+use crate::limits::SliceMeter;
 use crate::naming_series::{prepare_candidate, scope_from_values};
 
 use super::input::{check_action_record_size, validate_action_input};
@@ -67,13 +67,13 @@ where
                 host,
                 catalog,
                 call,
-                &mut preparation,
+                &preparation,
                 authorizer,
                 GeneratedReplay {
                     object_id_field,
+                    object_kind: object_type.as_str(),
                     record: &record,
                 },
-                limits,
             )?;
             return Ok(ActionOutcome::Replayed { record });
         }
@@ -169,8 +169,7 @@ where
             effective_input: generated_input,
             target,
             slice: slice.facts,
-            reference_only: slice.reference_only,
-            policy_footprint: slice.policy_footprint,
+            tracked_reads: slice.tracked_reads,
             link_reads: slice.link_reads,
             predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,
@@ -215,13 +214,13 @@ where
                         host,
                         catalog,
                         call,
-                        &mut preparation,
+                        &preparation,
                         authorizer,
                         GeneratedReplay {
                             object_id_field,
+                            object_kind: object_type.as_str(),
                             record: &record,
                         },
-                        limits,
                     )?;
                     return Ok(ActionOutcome::Replayed { record });
                 }
@@ -238,17 +237,21 @@ where
 #[derive(Clone, Copy)]
 struct GeneratedReplay<'a> {
     object_id_field: &'a str,
+    object_kind: &'a str,
     record: &'a ActionCallRecord,
 }
 
+/// Validate and authorize an idempotent replay of an already-committed
+/// naming-series create without re-running slice preconditions (matching
+/// `FireTransition` and `Upsert` replay semantics so later mutations to
+/// referenced objects cannot break idempotent retries).
 fn validate_generated_replay_input<H: CellHost + ?Sized>(
     host: &H,
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
-    preparation: &mut ActionInputPreparation<'_>,
+    preparation: &ActionInputPreparation<'_>,
     authorizer: &dyn ActionAuthorizer,
     replay: GeneratedReplay<'_>,
-    limits: &EnvelopeLimits,
 ) -> Result<(), ActionRefusal<H::Error>> {
     let mut input = preparation.effective_input.clone();
     input.insert(
@@ -256,27 +259,14 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
         JsonValue::String(replay.record.object.key.clone()),
     );
     validate_action_input::<H::Error>(call.action, &input)?;
-    let state = authorize_target(host, call, &input, authorizer, &replay.record.object)?;
-    let slice = load_action_slice(
-        &ActionSliceContext {
-            host,
-            catalog,
-            call,
-            effective_input: &input,
-            authorizer,
-        },
-        &replay.record.object,
-        &state,
-        SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
-    )?;
-    check_action_preconditions(
+    authorize_target(
+        host,
         catalog,
-        call.action,
+        call,
         &input,
-        &slice,
-        &mut preparation.remaining_fuel,
-        &mut preparation.receipt_evidence_bytes,
-        usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
+        authorizer,
+        replay.object_kind,
+        &replay.record.object,
     )?;
     Ok(())
 }

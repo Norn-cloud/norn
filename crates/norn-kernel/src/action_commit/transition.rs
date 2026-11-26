@@ -68,19 +68,22 @@ where
         .object_type
         .clone()
         .unwrap_or_else(|| ObjectTypeName(object_kind.to_owned()));
-
-    let target = FactKey {
-        object_type: object_type.clone(),
+    check_kind(catalog, &object_type, object_kind)?;
+    let requested_target = FactKey {
+        object_type,
         key: object_id.clone(),
     };
-    let state = authorize_target(
+    let pre_auth_footprint = authorizer.action_policy_read_footprint(action);
+    let (target, state) = authorize_target(
         host,
+        catalog,
         call,
         &preparation.effective_input,
         authorizer,
-        &target,
+        object_kind,
+        &requested_target,
     )?;
-    check_kind(catalog, &object_type, object_kind)?;
+    let object_type = target.object_type.clone();
     crate::independence::check_independent_actor::<H::Error>(
         catalog, call, &target, lifecycle, transition, &state,
     )?;
@@ -107,6 +110,10 @@ where
         &state,
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
+    if slice.tracked_reads.is_exact() && slice.tracked_reads.policy_footprint != pre_auth_footprint
+    {
+        return Err(ActionRefusal::TargetNotFound);
+    }
     preparation.precondition_outcomes = check_action_preconditions(
         catalog,
         action,
@@ -170,8 +177,7 @@ where
             remaining_fuel: &mut preparation.remaining_fuel,
             target,
             slice: slice.facts,
-            reference_only: slice.reference_only,
-            policy_footprint: slice.policy_footprint,
+            tracked_reads: slice.tracked_reads,
             link_reads: slice.link_reads,
             predicate_reads: slice.predicate_reads,
             precondition_reads: slice.precondition_keys,
@@ -280,11 +286,13 @@ where
         }
         if operation == norn_ir::WriteChange::Created {
             if let std::collections::btree_map::Entry::Vacant(entry) = slice.facts.entry(key) {
-                let state = authorize_upsert_target(
+                let (_, state) = authorize_upsert_target(
                     host,
+                    catalog,
                     call,
                     &preparation.effective_input,
                     authorizer,
+                    entry.key().object_type.as_str(),
                     entry.key(),
                 )?;
                 entry.insert(state);

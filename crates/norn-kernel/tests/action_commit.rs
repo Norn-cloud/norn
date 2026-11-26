@@ -2948,7 +2948,7 @@ fn naming_series_preconditions_and_connector_commands_share_one_fuel_budget() {
 }
 
 #[test]
-fn naming_series_replay_rechecks_current_schema_and_preconditions() {
+fn naming_series_replay_rechecks_current_schema_and_authz_without_rerunning_preconditions() {
     let types = naming_series_types("gapless_within_commit", "year");
     let catalog = TypeCatalog::new(&types);
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
@@ -2974,16 +2974,20 @@ fn naming_series_replay_rechecks_current_schema_and_preconditions() {
     assert_eq!(outcome_key(replay), "SO-ACME-2025-00001");
     assert_eq!(cell.ledger().len(), ledger_after_create);
 
-    let mut tightened = naming_series_action("commerce.named_order.create");
-    tightened.preconditions = vec![norn_ir::ZenExpression("name == \"BLOCKED\"".to_owned())];
-    let tightened_retry = naming_call(
-        &tightened,
+    // Replay returns the already-committed record after current authorization
+    // without re-evaluating preconditions (matching `Upsert` and `FireTransition`
+    // replay semantics so later mutations cannot break idempotent retries).
+    let mut post_commit_precond = naming_series_action("commerce.named_order.create");
+    post_commit_precond.preconditions =
+        vec![norn_ir::ZenExpression("name == \"BLOCKED\"".to_owned())];
+    let precond_retry = naming_call(
+        &post_commit_precond,
         "ACME",
         "series-replay-validation",
         1_767_243_600_000,
     );
-    let refusal = commit_action(&mut cell, &catalog, &tightened_retry, &Allow).unwrap_err();
-    assert_eq!(refusal.code(), "action.precondition_failed");
+    let replayed = commit_action(&mut cell, &catalog, &precond_retry, &Allow).unwrap();
+    assert_eq!(outcome_key(replayed), "SO-ACME-2025-00001");
     assert_eq!(cell.ledger().len(), ledger_after_create);
 
     let mut required_generated_key = naming_series_action("commerce.named_order.create");

@@ -14,6 +14,8 @@
     reason = "each suite keeps the visibility and the shared helpers it had as its own test binary"
 )]
 
+#[path = "action_read_plan.rs"]
+mod action_read_plan;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "analytics_backend.rs"]
 mod analytics_backend;

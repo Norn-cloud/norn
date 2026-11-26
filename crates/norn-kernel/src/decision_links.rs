@@ -692,6 +692,37 @@ pub(crate) struct ActionCommitLinks<'a> {
     pub(crate) limits: &'a EnvelopeLimits,
 }
 
+fn resolve_written_endpoint(
+    model: &CommitModel<'_, '_>,
+    prepared_writes: &[FactWrite],
+    declared: &FactKey,
+) -> Option<FactKey> {
+    let canonical = model.canonical(declared);
+    prepared_writes.iter().find_map(|write| {
+        (matches!(write.mutation, FactMutation::Put { .. })
+            && model.canonical(&write.key) == canonical
+            && model.is_a(&write.key.object_type, &declared.object_type))
+        .then(|| write.key.clone())
+    })
+}
+
+fn resolve_linked_target(
+    model: &CommitModel<'_, '_>,
+    slice: &FactSlice,
+    prepared_writes: &[FactWrite],
+    declared: &FactKey,
+) -> Option<FactKey> {
+    let canonical = model.canonical(declared);
+    resolve_written_endpoint(model, prepared_writes, declared).or_else(|| {
+        slice.iter().find_map(|(key, state)| {
+            (state.exists()
+                && model.canonical(key) == canonical
+                && model.is_a(&key.object_type, &declared.object_type))
+            .then(|| key.clone())
+        })
+    })
+}
+
 /// Authorize and resolve all action-created links (`createLinks` +
 /// `synchronousRule` `DecisionOutput.links`) for one atomic action commit.
 pub(crate) fn prepare_action_commit_links<H: CellHost + ?Sized>(
@@ -718,14 +749,21 @@ pub(crate) fn prepare_action_commit_links<H: CellHost + ?Sized>(
         prepared_writes,
         decision_links,
     )?;
+    let model = CommitModel::new(catalog);
     let mut created_links = Vec::new();
+    let mut seen_created = BTreeSet::new();
+    let refused = || {
+        crate::synchronous_rule::refused(
+            "a link requires a written source and a captured or proposed target",
+        )
+    };
     for binding in &call.action.create_links {
-        let linked_target = action_link_endpoint::<H::Error>(
+        let declared_target = action_link_endpoint::<H::Error>(
             effective_input,
             &binding.target_type,
             &binding.target_id_field,
         )?;
-        let source = match &binding.source {
+        let declared_source = match &binding.source {
             Some(source) => action_link_endpoint::<H::Error>(
                 effective_input,
                 &source.object_type,
@@ -733,26 +771,19 @@ pub(crate) fn prepare_action_commit_links<H: CellHost + ?Sized>(
             )?,
             None => target.clone(),
         };
-        if CommitModel::new(catalog)
+        let source = resolve_written_endpoint(&model, prepared_writes, &declared_source)
+            .ok_or_else(refused)?;
+        let linked_target = resolve_linked_target(&model, slice, prepared_writes, &declared_target)
+            .ok_or_else(refused)?;
+        let key = LinkKey::new(source.clone(), &binding.link, linked_target.clone());
+        if model
             .link(&source.object_type, &binding.link)
-            .is_none_or(|link| link.target.as_str() != binding.target_type)
-            || !prepared_writes.iter().any(|write| {
-                write.key == source && matches!(write.mutation, FactMutation::Put { .. })
-            })
-            || !(slice.get(&linked_target).is_some_and(FactState::exists)
-                || prepared_writes.iter().any(|write| {
-                    write.key == linked_target && matches!(write.mutation, FactMutation::Put { .. })
-                }))
+            .is_none_or(|link| !model.is_a(&linked_target.object_type, &link.target))
             || (binding.source.is_some() && call.action.synchronous_rule.is_none())
-            || !created_links.iter().all(|write: &LinkWrite| {
-                write.key != LinkKey::new(source.clone(), &binding.link, linked_target.clone())
-            })
+            || !seen_created.insert(model.canonical_link(&key))
         {
-            return Err(crate::synchronous_rule::refused(
-                "a link requires a written source and a captured or proposed target",
-            ));
+            return Err(refused());
         }
-        let key = LinkKey::new(source, &binding.link, linked_target);
         let expected = host
             .load_link(&key)
             .map_err(|error| ActionRefusal::Decision(DecisionRefusal::Host(error)))?

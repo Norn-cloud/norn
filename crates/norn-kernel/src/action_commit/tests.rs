@@ -516,12 +516,13 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
             RuntimeValue::String("E1".to_owned()),
         ),
     ]);
-    let merged = super::receipt::create_reference_property_reads(
+    let merged = super::read_plan::bind_create_property_reads(
         &catalog,
         &aliased_action,
         &target,
         &input,
         std::slice::from_ref(&emp_ref),
+        &[],
     )
     .expect("aliased polymorphic reads proved");
     assert_eq!(
@@ -537,12 +538,13 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
         expected: FactVersion(1),
     };
     assert!(
-        super::receipt::create_reference_property_reads(
+        super::read_plan::bind_create_property_reads(
             &catalog,
             &aliased_action,
             &target,
             &input,
             &[emp_ref.clone(), extra_ref],
+            &[],
         )
         .is_none()
     );
@@ -563,12 +565,13 @@ fn create_slice_property_reads_merges_polymorphic_aliases_and_link_laws() {
             {"link": "employee", "targetType": "hr.Person", "targetIdField": "employee_id"}
         ]),
     );
-    let law_reads = super::receipt::create_reference_property_reads(
+    let law_reads = super::read_plan::bind_create_property_reads(
         &law_catalog,
         &empty_precond,
         &target,
         &input,
         std::slice::from_ref(&emp_ref),
+        &[],
     )
     .expect("forward link law read attributed");
     assert_eq!(law_reads, vec![(emp_ref, vec!["national_id".to_owned()])]);
@@ -625,5 +628,333 @@ fn create_slice_property_reads_fails_closed_on_whole_object_computed_and_inverse
     assert!(
         super::receipt::create_slice_property_reads(&inverse_catalog, &empty_precond, &target)
             .is_none()
+    );
+}
+
+#[derive(Default)]
+struct ReferenceCapableHost;
+
+impl crate::cell_host::CellHost for ReferenceCapableHost {
+    type Error = &'static str;
+    type Event = crate::decision_commit::FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+
+    fn load(&self, _: &FactKey) -> Result<crate::cell_host::FactState, Self::Error> {
+        Ok(crate::cell_host::FactState::default())
+    }
+
+    fn commit(
+        &mut self,
+        _: CellCommit<Self::Event, Self::Command, Self::Input>,
+    ) -> Result<crate::cell_host::CommitReceipt, crate::cell_host::CommitError<Self::Error>> {
+        Err(crate::cell_host::CommitError::Host("unused"))
+    }
+
+    fn supports_reference_reads(&self) -> bool {
+        true
+    }
+
+    fn supports_projected_read(&self, _: &norn_ir::ObjectTypeName, _: &[&str]) -> bool {
+        true
+    }
+}
+
+fn a3_lifecycle_types() -> Vec<norn_ir::ObjectTypeDef> {
+    serde_json::from_value(serde_json::json!([
+        {
+            "name": "hr.Employee",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "national_id", "type": {"kind": "text"}, "markings": ["pii.contact"]}
+            ]
+        },
+        {
+            "name": "hr.LeaveRequest",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "employee_id", "type": {"kind": "text"}},
+                {"id": "branch_id", "type": {"kind": "text"}},
+                {"id": "days", "type": {"kind": "integer"}},
+                {"id": "reason", "type": {"kind": "text"}},
+                {"id": "private_notes", "type": {"kind": "text"}, "markings": ["pii.contact"]},
+                {"id": "created_by", "type": {"kind": "text"}, "protected": true},
+                {
+                    "id": "status",
+                    "type": {"kind": "enum", "values": [{"value": "submitted"}, {"value": "approved"}]},
+                    "default": "submitted",
+                    "lifecycle": {
+                        "property": "status",
+                        "initial": ["submitted"],
+                        "terminal": ["approved"],
+                        "states": [
+                            {"id": "submitted", "label": "Submitted"},
+                            {"id": "approved", "label": "Approved"}
+                        ],
+                        "transitions": [{
+                            "id": "approve",
+                            "from": ["submitted"],
+                            "to": "approved",
+                            "guards": ["self.days <= 10"]
+                        }]
+                    }
+                }
+            ]
+        }
+    ]))
+    .expect("a3 types")
+}
+
+#[test]
+fn tracked_read_set_covers_fire_transition_with_guards_and_external_slice() {
+    use super::read_plan::TrackedReadSet;
+    use super::types::ActionPolicyReadFootprint;
+
+    let types = a3_lifecycle_types();
+    let approve_action: ActionRoot = serde_json::from_value(serde_json::json!({
+        "actionId": "hr.approve_leave",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true, "ledgered": true, "independentOf": ["created_by"],
+        "inputSchema": {
+            "type": "object", "additionalProperties": false,
+            "properties": {"id": {"type": "string"}, "employee_id": {"type": "string"}},
+            "required": ["id", "employee_id"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "slice": [{
+            "name": "emp", "objectType": "hr.Employee",
+            "key": {"property": {"from": "input", "property": "employee_id"}}
+        }],
+        "preconditions": ["slice.emp.status == 'active'"],
+        "effectProgram": {
+            "kind": "fire_transition", "objectIdField": "id",
+            "objectKind": "hr.LeaveRequest", "lifecycle": "status", "transition": "approve"
+        }
+    }))
+    .expect("approve action");
+    let guards = crate::independence::transition_guards(std::slice::from_ref(&approve_action));
+    let catalog = crate::decision_commit::TypeCatalog::new(&types).with_transition_guards(&guards);
+    let target = FactKey::new("hr.LeaveRequest", "L1");
+    let emp_key = FactKey::new("hr.Employee", "E1");
+    let input = JsonObject::from([
+        ("id".to_owned(), RuntimeValue::String("L1".to_owned())),
+        (
+            "employee_id".to_owned(),
+            RuntimeValue::String("E1".to_owned()),
+        ),
+    ]);
+    let footprint = ActionPolicyReadFootprint::Exact {
+        target_attributes: BTreeSet::from(["branch_id".to_owned()]),
+    };
+    let tracked = TrackedReadSet::prepare(
+        &ReferenceCapableHost,
+        &catalog,
+        &approve_action,
+        footprint,
+        &target,
+        true,
+        &input,
+    );
+    assert!(tracked.is_exact());
+    let commit: CellCommit<crate::decision_commit::FactEvent, JsonObject, JsonObject> =
+        CellCommit {
+            reads: vec![FactExpectation {
+                key: emp_key.clone(),
+                expected: FactVersion(1),
+            }],
+            writes: vec![FactWrite {
+                key: target.clone(),
+                expected: FactVersion(2),
+                mutation: FactMutation::Put {
+                    values: JsonObject::new(),
+                },
+            }],
+            ..CellCommit::empty()
+        };
+    let proof = tracked
+        .seal_proof(&catalog, &approve_action, &commit, &target, &input, &[])
+        .expect("fire_transition proof sealed");
+    assert_eq!(
+        proof.property_reads(),
+        &[
+            (
+                FactExpectation {
+                    key: emp_key,
+                    expected: FactVersion(1)
+                },
+                vec!["status".to_owned()]
+            ),
+            (
+                FactExpectation {
+                    key: target,
+                    expected: FactVersion(2)
+                },
+                vec![
+                    "branch_id".to_owned(),
+                    "created_by".to_owned(),
+                    "days".to_owned(),
+                    "status".to_owned()
+                ],
+            ),
+        ]
+    );
+}
+
+#[test]
+fn tracked_read_set_covers_lifecycle_bearing_update_only() {
+    use super::read_plan::TrackedReadSet;
+    use super::types::ActionPolicyReadFootprint;
+
+    let types = a3_lifecycle_types();
+    let catalog = crate::decision_commit::TypeCatalog::new(&types);
+    let target = FactKey::new("hr.LeaveRequest", "L1");
+    let update_action: ActionRoot = serde_json::from_value(serde_json::json!({
+        "actionId": "hr.update_leave_reason",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true, "ledgered": true,
+        "inputSchema": {
+            "type": "object", "additionalProperties": false,
+            "properties": {"id": {"type": "string"}, "reason": {"type": "string"}},
+            "required": ["id", "reason"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "effectProgram": {
+            "kind": "upsert_input_object", "objectIdField": "id",
+            "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
+            "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "update_only"}
+        }
+    }))
+    .expect("update action");
+    let update_input = JsonObject::from([
+        ("id".to_owned(), RuntimeValue::String("L1".to_owned())),
+        (
+            "reason".to_owned(),
+            RuntimeValue::String("family".to_owned()),
+        ),
+    ]);
+    let footprint = ActionPolicyReadFootprint::Exact {
+        target_attributes: BTreeSet::from(["branch_id".to_owned()]),
+    };
+    let update_tracked = TrackedReadSet::prepare(
+        &ReferenceCapableHost,
+        &catalog,
+        &update_action,
+        footprint,
+        &target,
+        true,
+        &update_input,
+    );
+    let update_commit: CellCommit<crate::decision_commit::FactEvent, JsonObject, JsonObject> =
+        CellCommit {
+            writes: vec![FactWrite {
+                key: target.clone(),
+                expected: FactVersion(2),
+                mutation: FactMutation::Put {
+                    values: JsonObject::new(),
+                },
+            }],
+            ..CellCommit::empty()
+        };
+    let update_proof = update_tracked
+        .seal_proof(
+            &catalog,
+            &update_action,
+            &update_commit,
+            &target,
+            &update_input,
+            &[],
+        )
+        .expect("lifecycle UpdateOnly proof sealed");
+    assert_eq!(
+        update_proof.property_reads(),
+        &[(
+            FactExpectation {
+                key: target,
+                expected: FactVersion(2)
+            },
+            vec!["branch_id".to_owned(), "status".to_owned()]
+        )]
+    );
+}
+
+#[test]
+fn tracked_read_set_seals_naming_series_create_with_counter_write_and_skipped_reads() {
+    use super::read_plan::TrackedReadSet;
+    use super::types::ActionPolicyReadFootprint;
+
+    let types = hr_create_types();
+    let catalog = crate::decision_commit::TypeCatalog::new(&types);
+    let action = hr_create_action(
+        &serde_json::json!(["slice.emp.status == 'active'"]),
+        &serde_json::json!([
+            {"name": "emp", "objectType": "hr.Employee", "key": {"property": {"from": "input", "property": "employee_id"}}}
+        ]),
+        &serde_json::json!([]),
+    );
+    let target = FactKey::new("hr.LeaveRequest", "LR-0002");
+    let emp_ref = FactExpectation {
+        key: FactKey::new("hr.Employee", "E1"),
+        expected: FactVersion(1),
+    };
+    let skipped = FactExpectation {
+        key: FactKey::new("hr.LeaveRequest", "LR-0001"),
+        expected: FactVersion(1),
+    };
+    let input = JsonObject::from([
+        ("id".to_owned(), RuntimeValue::String("LR-0002".to_owned())),
+        (
+            "employee_id".to_owned(),
+            RuntimeValue::String("E1".to_owned()),
+        ),
+    ]);
+    let tracked = TrackedReadSet::prepare(
+        &ReferenceCapableHost,
+        &catalog,
+        &action,
+        ActionPolicyReadFootprint::Exact {
+            target_attributes: BTreeSet::new(),
+        },
+        &target,
+        false,
+        &input,
+    );
+    let commit: CellCommit<crate::decision_commit::FactEvent, JsonObject, JsonObject> =
+        CellCommit {
+            reads: vec![emp_ref.clone(), skipped.clone()],
+            writes: vec![
+                FactWrite {
+                    key: target.clone(),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: JsonObject::new(),
+                    },
+                },
+                FactWrite {
+                    key: FactKey::new(crate::naming_series::NAMING_SERIES_COUNTER_TYPE, "c1"),
+                    expected: FactVersion(3),
+                    mutation: FactMutation::Put {
+                        values: JsonObject::new(),
+                    },
+                },
+            ],
+            ..CellCommit::empty()
+        };
+    let proof = tracked
+        .seal_proof(
+            &catalog,
+            &action,
+            &commit,
+            &target,
+            &input,
+            std::slice::from_ref(&skipped),
+        )
+        .expect("naming-series CreateOnly proof sealed");
+    // Counter write stays out of `references` (preserving any counter taint);
+    // skipped key is occurrence-only in `references` with no `property_reads`.
+    assert_eq!(proof.reference_reads(), &[emp_ref.clone(), skipped]);
+    assert_eq!(
+        proof.property_reads(),
+        &[(emp_ref, vec!["status".to_owned()])]
     );
 }
