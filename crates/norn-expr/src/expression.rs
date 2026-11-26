@@ -844,8 +844,9 @@ fn copy_cost(value: &Variable, cap: u64) -> u64 {
     let mut total: u64 = 0;
     let mut stack: Vec<Variable> = vec![value.clone()];
     while let Some(value) = stack.pop() {
-        // A container's children each cost at least 1: count them before
-        // pushing them, so the stack never outgrows the budget.
+        // Every item already waiting on `stack` and every child about to be
+        // pushed costs at least 1, so `total + own + stack.len() + children`
+        // is a strict lower bound on the final cost and keeps `stack.len() <= cap`.
         let (own, children) = match &value {
             Variable::String(text) => (u64::try_from(text.len()).unwrap_or(u64::MAX).max(1), 0),
             Variable::Dynamic(dynamic) => (
@@ -863,14 +864,16 @@ fn copy_cost(value: &Variable, cap: u64) -> u64 {
             Variable::Object(entries) => (1, entries.borrow().len()),
             Variable::Null | Variable::Bool(_) | Variable::Number(_) => (1, 0),
         };
-        total = total
+        let pending = u64::try_from(stack.len()).unwrap_or(u64::MAX);
+        let children_u64 = u64::try_from(children).unwrap_or(u64::MAX);
+        let lower_bound = total
             .saturating_add(own)
-            .saturating_add(u64::try_from(children).unwrap_or(u64::MAX));
-        if total > cap {
+            .saturating_add(pending)
+            .saturating_add(children_u64);
+        if lower_bound > cap {
             return cap.saturating_add(1);
         }
-        // Children were counted at 1 each above; each adds the rest itself.
-        total = total.saturating_sub(u64::try_from(children).unwrap_or(u64::MAX));
+        total = total.saturating_add(own);
         match &value {
             Variable::Array(items) => stack.extend(items.borrow().iter().cloned()),
             Variable::Object(entries) => stack.extend(entries.borrow().values().cloned()),

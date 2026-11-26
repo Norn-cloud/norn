@@ -311,3 +311,37 @@ fn foreign_and_unknown_delivery_consumption_refuses_before_pending_or_effects() 
         assert_eq!(local.pending_calls.get(), 1);
     }
 }
+
+#[test]
+fn shape_refusal_returns_before_probing_atomic_ownership() {
+    let types = law_object_types();
+    let catalog = TypeCatalog::new(&types);
+    let model = CommitModel::new(&catalog);
+    let foreign_key = FactKey::new(law_key(1).object_type.as_str(), "foreign");
+    let duplicate_proposal: CellCommit<(), (), ()> = CellCommit {
+        reads: vec![
+            FactExpectation {
+                key: foreign_key.clone(),
+                expected: FactVersion::ABSENT,
+            },
+            FactExpectation {
+                key: foreign_key,
+                expected: FactVersion::ABSENT,
+            },
+        ],
+        ..CellCommit::empty()
+    };
+    let result = check_commit(
+        &duplicate_proposal,
+        &model,
+        &View {
+            ownership: AtomicOwnership::Foreign,
+            hidden: false,
+            pending_calls: std::cell::Cell::default(),
+        },
+    );
+    assert!(
+        matches!(result, Err(CommitError::DuplicateKey { .. })),
+        "pre-storage shape refusal must not be overwritten by atomic_ownership, got {result:?}"
+    );
+}
