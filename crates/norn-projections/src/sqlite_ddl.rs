@@ -289,6 +289,8 @@ impl SqliteSchema {
 pub enum SqliteDdlError {
     /// Two object types share a name.
     DuplicateObjectType(String),
+    /// Two shared property types share a name.
+    DuplicatePropertyType(String),
     /// A supertype is not in the input.
     UnknownSupertype {
         /// The subtype.
@@ -336,6 +338,9 @@ impl fmt::Display for SqliteDdlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateObjectType(name) => write!(f, "object type `{name}` is declared twice"),
+            Self::DuplicatePropertyType(name) => {
+                write!(f, "property type `{name}` is declared twice")
+            }
             Self::UnknownSupertype {
                 object_type,
                 supertype,
@@ -447,11 +452,14 @@ fn project(
             ));
         }
     }
-    let property_types: BTreeMap<&str, &PropertyTypeDef> = input
-        .property_types
-        .iter()
-        .map(|def| (def.name.as_str(), def))
-        .collect();
+    let mut property_types: BTreeMap<&str, &PropertyTypeDef> = BTreeMap::new();
+    for def in input.property_types {
+        if property_types.insert(def.name.as_str(), def).is_some() {
+            return Err(SqliteDdlError::DuplicatePropertyType(
+                def.name.as_str().to_owned(),
+            ));
+        }
+    }
 
     let mut ancestors: BTreeMap<&str, Vec<&ObjectTypeDef>> = BTreeMap::new();
     for def in by_name.values() {
@@ -514,6 +522,7 @@ fn ancestor_chain<'a>(
     by_name: &BTreeMap<&str, &'a ObjectTypeDef>,
 ) -> Result<Vec<&'a ObjectTypeDef>, SqliteDdlError> {
     let mut chain = Vec::new();
+    let mut visited: BTreeSet<&str> = BTreeSet::from([def.name.as_str()]);
     let mut current = def;
     while let Some(parent) = &current.extends {
         let Some(parent_def) = by_name.get(parent.as_str()) else {
@@ -522,7 +531,7 @@ fn ancestor_chain<'a>(
                 supertype: parent.as_str().to_owned(),
             });
         };
-        if chain.len() >= MAX_CHAIN_DEPTH || parent_def.name == def.name {
+        if chain.len() >= MAX_CHAIN_DEPTH || !visited.insert(parent_def.name.as_str()) {
             return Err(SqliteDdlError::SupertypeChain(def.name.as_str().to_owned()));
         }
         chain.push(*parent_def);
@@ -539,11 +548,15 @@ fn resolve(
 ) -> Result<(PropertyKind, bool), SqliteDdlError> {
     let mut nullable = property.constraints.nullable;
     let mut current: &PropertyType = &property.property_type;
+    let mut visited: BTreeSet<&str> = BTreeSet::new();
     let mut depth = 0_usize;
     loop {
         let PropertyType::Ref { name, .. } = current else {
             return Ok((current.kind(), nullable));
         };
+        if !visited.insert(name.as_str()) {
+            return Err(SqliteDdlError::PropertyTypeChain(name.as_str().to_owned()));
+        }
         let def = lookup(owner, property, name, property_types)?;
         nullable = nullable || def.constraints.nullable;
         current = &def.property_type;
@@ -604,6 +617,26 @@ fn property_columns(
         });
     }
     Ok((columns, overflow))
+}
+
+fn check_table_columns(
+    system: &[&str],
+    columns: &[PropertyColumn],
+    has_overflow: bool,
+) -> Result<(), SqliteDdlError> {
+    let mut seen = PhysicalNames::default();
+    for column in system {
+        seen.claim(column)?;
+    }
+    for column in columns {
+        if let Some(name) = &column.column {
+            seen.claim(name)?;
+        }
+    }
+    if has_overflow {
+        seen.claim(OVERFLOW_COLUMN)?;
+    }
+    Ok(())
 }
 
 fn column_definitions(out: &mut Vec<String>, columns: &[PropertyColumn], has_overflow: bool) {
@@ -733,6 +766,7 @@ fn object_table(
         property_types,
         naming,
     )?;
+    check_table_columns(system, &columns, has_overflow)?;
 
     let mut definitions = Vec::new();
     for column in system {
@@ -814,6 +848,7 @@ fn link_table(
         property_types,
         naming,
     )?;
+    check_table_columns(&system, &columns, has_overflow)?;
 
     let mut definitions: Vec<String> = system
         .iter()

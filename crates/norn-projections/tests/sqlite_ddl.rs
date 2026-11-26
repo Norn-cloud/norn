@@ -485,3 +485,39 @@ fn a_wide_type_overflows_into_one_json_column() {
         table.statements[0]
     );
 }
+
+#[test]
+fn duplicate_property_types_and_case_colliding_columns_fail_closed() {
+    let prop_type: norn_ir::PropertyTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "acme.code",
+        "type": { "kind": "text" }
+    }))
+    .expect("property type");
+    assert_eq!(
+        project_sqlite_ddl(&SqliteDdlInput {
+            object_types: &[],
+            property_types: &[prop_type.clone(), prop_type],
+        }),
+        Err(SqliteDdlError::DuplicatePropertyType(
+            "acme.code".to_owned()
+        ))
+    );
+
+    let colliding_cols = decode_object_type(serde_json::json!({
+        "name": "acme.Item",
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            { "id": "Code", "type": { "kind": "text" } }
+        ]
+    }));
+    assert_eq!(
+        project_sqlite_ddl(&SqliteDdlInput {
+            object_types: &[colliding_cols],
+            property_types: &[],
+        }),
+        Err(SqliteDdlError::NameCollision {
+            first: "p:code".to_owned(),
+            second: "p:Code".to_owned(),
+        })
+    );
+}

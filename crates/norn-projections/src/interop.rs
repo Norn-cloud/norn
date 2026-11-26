@@ -8,7 +8,7 @@
 //! of the source tenant cell. Scope-qualified identifiers are opaque and
 //! deterministic, so equal ledger-local ids in separate cells remain distinct.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Write as _};
 
 use norn_ir::canonical::{CanonicalJsonError, HashProfile, canonical_json_of, domain_hash_hex};
@@ -99,7 +99,7 @@ impl ExportScope {
             Some((kind, local_id)) => {
                 format!("{kind}:{}:{local_id}", self.cell_digest)
             }
-            None => format!("norn:{}:{stable_id}", self.cell_digest),
+            None => format!("raw:{}:{stable_id}", self.cell_digest),
         }
     }
 }
@@ -187,16 +187,80 @@ fn object<const N: usize>(members: [(&str, JsonValue); N]) -> JsonValue {
     )
 }
 
-/// The targets of `id`'s edges of kind `kind`, in discovery order.
-fn targets<'c>(
-    chain: &'c CausalChain,
-    id: &'c str,
-    kind: LineageEdgeKind,
-) -> impl Iterator<Item = &'c LineageNode> + 'c {
-    chain
-        .causes(id)
-        .filter(move |edge| edge.kind == kind)
-        .filter_map(move |edge| chain.node(&edge.to))
+/// Pre-indexed adjacency and node lookup over one [`CausalChain`].
+struct ChainIndex<'c> {
+    nodes: BTreeMap<&'c str, &'c LineageNode>,
+    outgoing: BTreeMap<&'c str, Vec<&'c LineageEdge>>,
+    written_by: BTreeMap<&'c str, Vec<&'c str>>,
+}
+
+impl<'c> ChainIndex<'c> {
+    fn new(chain: &'c CausalChain) -> Self {
+        let mut nodes = BTreeMap::new();
+        for node in &chain.nodes {
+            nodes.entry(node.id.as_str()).or_insert(node);
+        }
+        let mut outgoing: BTreeMap<&'c str, Vec<&'c LineageEdge>> = BTreeMap::new();
+        let mut written_by: BTreeMap<&'c str, Vec<&'c str>> = BTreeMap::new();
+        for edge in &chain.edges {
+            outgoing.entry(edge.from.as_str()).or_default().push(edge);
+            if edge.kind == LineageEdgeKind::WrittenBy {
+                written_by
+                    .entry(edge.to.as_str())
+                    .or_default()
+                    .push(edge.from.as_str());
+            }
+        }
+        Self {
+            nodes,
+            outgoing,
+            written_by,
+        }
+    }
+
+    fn node(&self, id: &str) -> Option<&'c LineageNode> {
+        self.nodes.get(id).copied()
+    }
+
+    /// The targets of `id`'s edges of kind `kind`, in discovery order.
+    fn targets<'s>(
+        &'s self,
+        id: &str,
+        kind: LineageEdgeKind,
+    ) -> impl Iterator<Item = &'c LineageNode> + 's {
+        self.outgoing
+            .get(id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter(move |edge| edge.kind == kind)
+            .filter_map(|edge| self.node(&edge.to))
+    }
+}
+
+/// Ordered deduplicated `(namespace, name)` dataset references.
+#[derive(Default)]
+struct UniqueDatasets {
+    seen: BTreeSet<(String, String)>,
+    list: Vec<(String, String)>,
+}
+
+impl UniqueDatasets {
+    fn push(&mut self, namespace: &str, name: &str) {
+        let key = (namespace.to_owned(), name.to_owned());
+        if self.seen.insert(key.clone()) {
+            self.list.push(key);
+        }
+    }
+
+    fn into_json(self) -> JsonValue {
+        JsonValue::Array(
+            self.list
+                .iter()
+                .map(|(namespace, name)| dataset(namespace, name))
+                .collect(),
+        )
+    }
 }
 
 /// A deterministic UUID (version 8, RFC 9562 §5.8) for `stable_id` within
@@ -236,37 +300,29 @@ fn dataset(namespace: &str, name: &str) -> JsonValue {
     object([("namespace", string(namespace)), ("name", string(name))])
 }
 
-fn push_unique(datasets: &mut Vec<(String, String)>, namespace: &str, name: &str) {
-    if !datasets
-        .iter()
-        .any(|(seen_namespace, seen_name)| seen_namespace == namespace && seen_name == name)
-    {
-        datasets.push((namespace.to_owned(), name.to_owned()));
-    }
-}
-
 /// The source tables observation `observation` was mapped from: mapping →
 /// `derived_from` columns → `table`, namespaced by both the source system and
 /// the cell scope.
 fn source_tables(
     scope: &ExportScope,
-    chain: &CausalChain,
+    index: &ChainIndex<'_>,
     observation: &str,
-    datasets: &mut Vec<(String, String)>,
+    datasets: &mut UniqueDatasets,
 ) -> Result<(), InteropError> {
-    let system = targets(chain, observation, LineageEdgeKind::ObservedFrom)
-        .flat_map(|record| targets(chain, &record.id, LineageEdgeKind::RecordOf))
+    let system = index
+        .targets(observation, LineageEdgeKind::ObservedFrom)
+        .flat_map(|record| index.targets(&record.id, LineageEdgeKind::RecordOf))
         .find_map(|source| source.key.clone())
         .unwrap_or_else(|| NORN_NAMESPACE.to_owned());
     let namespace = scope.source_namespace(&system)?;
     let table_link = LineageEdgeKind::Link(LinkId("table".to_owned()));
-    for mapping in targets(chain, observation, LineageEdgeKind::MappedBy) {
-        for column in targets(chain, &mapping.id, LineageEdgeKind::DerivedFrom) {
-            for table in targets(chain, &column.id, table_link.clone()) {
+    for mapping in index.targets(observation, LineageEdgeKind::MappedBy) {
+        for column in index.targets(&mapping.id, LineageEdgeKind::DerivedFrom) {
+            for table in index.targets(&column.id, table_link.clone()) {
                 if table.kind == LineageNodeKind::Technical(TechnicalType::Table)
                     && let Some(key) = &table.key
                 {
-                    push_unique(datasets, &namespace, key);
+                    datasets.push(&namespace, key);
                 }
             }
         }
@@ -276,15 +332,16 @@ fn source_tables(
 
 fn run_event(
     scope: &ExportScope,
-    chain: &CausalChain,
+    index: &ChainIndex<'_>,
     commit: &LineageNode,
 ) -> Result<Option<JsonValue>, InteropError> {
     let Some(event_time) = commit.recorded_at.as_ref() else {
         return Ok(None);
     };
     let norn_namespace = scope.norn_namespace();
-    let decision = targets(chain, &commit.id, LineageEdgeKind::DecidedBy).next();
-    let observations: Vec<&LineageNode> = targets(chain, &commit.id, LineageEdgeKind::Consumed)
+    let decision = index.targets(&commit.id, LineageEdgeKind::DecidedBy).next();
+    let observations: Vec<&LineageNode> = index
+        .targets(&commit.id, LineageEdgeKind::Consumed)
         .filter(|node| node.kind == LineageNodeKind::Observation)
         .collect();
     let job = decision
@@ -292,31 +349,32 @@ fn run_event(
         .or_else(|| {
             observations
                 .iter()
-                .flat_map(|observation| targets(chain, &observation.id, LineageEdgeKind::MappedBy))
+                .flat_map(|observation| index.targets(&observation.id, LineageEdgeKind::MappedBy))
                 .find_map(|mapping| mapping.key.clone())
         })
         .unwrap_or_else(|| "norn.commit".to_owned());
 
-    let mut inputs = Vec::new();
-    for fact in targets(chain, &commit.id, LineageEdgeKind::Read) {
+    let mut inputs = UniqueDatasets::default();
+    for fact in index.targets(&commit.id, LineageEdgeKind::Read) {
         if let Some(object_type) = &fact.object_type {
-            push_unique(&mut inputs, &norn_namespace, object_type.as_str());
+            inputs.push(&norn_namespace, object_type.as_str());
         }
     }
     for observation in &observations {
-        source_tables(scope, chain, &observation.id, &mut inputs)?;
+        source_tables(scope, index, &observation.id, &mut inputs)?;
     }
-    let mut outputs = Vec::new();
-    for edge in chain
-        .edges
-        .iter()
-        .filter(|edge| edge.kind == LineageEdgeKind::WrittenBy && edge.to == commit.id)
+    let mut outputs = UniqueDatasets::default();
+    for fact_id in index
+        .written_by
+        .get(commit.id.as_str())
+        .map(Vec::as_slice)
+        .unwrap_or_default()
     {
-        if let Some(object_type) = chain
-            .node(&edge.from)
+        if let Some(object_type) = index
+            .node(fact_id)
             .and_then(|fact| fact.object_type.as_ref())
         {
-            push_unique(&mut outputs, &norn_namespace, object_type.as_str());
+            outputs.push(&norn_namespace, object_type.as_str());
         }
     }
 
@@ -337,13 +395,6 @@ fn run_event(
             string(scope.lineage_facet_id(&decision.id)),
         );
     }
-    let datasets = |list: Vec<(String, String)>| {
-        JsonValue::Array(
-            list.iter()
-                .map(|(namespace, name)| dataset(namespace, name))
-                .collect(),
-        )
-    };
     let run_id = stable_uuid(scope, &commit.id)?;
     Ok(Some(object([
         ("eventType", string("COMPLETE")),
@@ -361,8 +412,8 @@ fn run_event(
             "job",
             object([("namespace", string(norn_namespace)), ("name", string(job))]),
         ),
-        ("inputs", datasets(inputs)),
-        ("outputs", datasets(outputs)),
+        ("inputs", inputs.into_json()),
+        ("outputs", outputs.into_json()),
     ])))
 }
 
@@ -378,13 +429,14 @@ pub fn openlineage_run_events(
     scope: &ExportScope,
     chain: &CausalChain,
 ) -> Result<Vec<JsonValue>, InteropError> {
+    let index = ChainIndex::new(chain);
     let mut events = Vec::new();
     for commit in chain
         .nodes
         .iter()
         .filter(|node| node.kind == LineageNodeKind::Commit)
     {
-        if let Some(event) = run_event(scope, chain, commit)? {
+        if let Some(event) = run_event(scope, &index, commit)? {
             events.push(event);
         }
     }
@@ -457,7 +509,7 @@ fn prov_node(scope: &ExportScope, node: &LineageNode) -> Result<JsonValue, Inter
 
 fn prov_relation(
     scope: &ExportScope,
-    chain: &CausalChain,
+    index: &ChainIndex<'_>,
     edge: &LineageEdge,
 ) -> Result<JsonValue, InteropError> {
     let from = string(scope.resource_id(&edge.from)?);
@@ -471,7 +523,7 @@ fn prov_relation(
                 ("activity".to_owned(), to),
                 ("type".to_owned(), values(&[edge_type.as_str()])),
             ]);
-            if let Some(at) = chain
+            if let Some(at) = index
                 .node(&edge.to)
                 .and_then(|node| node.recorded_at.as_ref())
             {
@@ -497,7 +549,7 @@ fn prov_relation(
             ("type", values(&[edge_type.as_str()])),
         ]),
         LineageEdgeKind::Link(_)
-            if chain.node(&edge.to).map(|node| node.kind)
+            if index.node(&edge.to).map(|node| node.kind)
                 == Some(LineageNodeKind::Technical(TechnicalType::Owner)) =>
         {
             object([
@@ -535,12 +587,13 @@ fn prov_relation(
 /// Returns an error only if canonical JSON encoding fails while deriving a
 /// scope-qualified identity.
 pub fn prov_document(scope: &ExportScope, chain: &CausalChain) -> Result<JsonValue, InteropError> {
-    let mut graph = Vec::new();
+    let index = ChainIndex::new(chain);
+    let mut graph = Vec::with_capacity(chain.nodes.len().saturating_add(chain.edges.len()));
     for node in &chain.nodes {
         graph.push(prov_node(scope, node)?);
     }
     for edge in &chain.edges {
-        graph.push(prov_relation(scope, chain, edge)?);
+        graph.push(prov_relation(scope, &index, edge)?);
     }
     Ok(object([
         (
@@ -668,12 +721,17 @@ pub fn skos_concept_scheme(
     defs: &[ObjectTypeDef],
 ) -> Result<JsonValue, InteropError> {
     let views = project_views(defs);
+    let mut defs_by_name: BTreeMap<&str, &ObjectTypeDef> = BTreeMap::new();
+    for def in defs {
+        defs_by_name.entry(def.name.as_str()).or_insert(def);
+    }
     let mut schemes: Vec<String> = Vec::new();
-    let mut concepts = Vec::new();
+    let mut seen_schemes: BTreeSet<String> = BTreeSet::new();
+    let mut concepts = Vec::with_capacity(views.business.types.len());
     for business in &views.business.types {
         let name = &business.name;
         let scheme = format!("scheme:{}", name.domain().unwrap_or(name.as_str()));
-        if !schemes.contains(&scheme) {
+        if seen_schemes.insert(scheme.clone()) {
             schemes.push(scheme.clone());
         }
         let local = name.local_name();
@@ -691,7 +749,7 @@ pub fn skos_concept_scheme(
         if label != local {
             members.insert("skos:altLabel".to_owned(), string(local));
         }
-        if let Some(def) = defs.iter().find(|def| def.name == *name) {
+        if let Some(def) = defs_by_name.get(name.as_str()).copied() {
             if let Some(description) = &def.description {
                 members.insert("skos:definition".to_owned(), string(description.as_str()));
             }
@@ -703,9 +761,10 @@ pub fn skos_concept_scheme(
             }
         }
         let mut related: Vec<String> = Vec::new();
+        let mut seen_related: BTreeSet<String> = BTreeSet::new();
         for link in &business.links {
             let target = format!("type:{}", link.target.as_str());
-            if !related.contains(&target) {
+            if seen_related.insert(target.clone()) {
                 related.push(target);
             }
         }
