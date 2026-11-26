@@ -8,37 +8,104 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-// Measured Boat task durations (run 45206607883, df92ecf) and shared compile costs.
-// Also used by the hosted planner in core.sh until that job can use a prebuilt runner.
-const WEIGHTS: &[(&str, u32)] = &[
-    ("test/heavy-1", 33),
-    ("test/heavy-2", 146),
-    ("test/heavy-3", 90),
-    ("test/heavy-4", 37),
-    ("test/heavy-5", 43),
-    ("test/heavy-6", 56),
-    ("test/rest-1", 221),
-    ("test/rest-2", 391),
-    ("test/rest-3", 312),
-    ("phase/doctest", 17),
-    ("phase/features", 347),
-    ("phase/duckdb", 510),
-    ("phase/wasm", 173),
-    ("phase/clippy", 51),
-    ("phase/doc", 48),
-    ("phase/guards", 117),
-    ("phase/rivet", 259),
-    ("phase/integration-authoring", 543),
-    ("phase/integration-wasm", 293),
-    ("phase/integration-clients", 15),
-    ("phase/provenance", 4),
-    ("phase/test-shards", 3),
-    ("phase/browser", 239),
+/// Every task a plan can select, in the planner's order.
+const TASKS: [&str; 23] = [
+    "test/heavy-1",
+    "test/heavy-2",
+    "test/heavy-3",
+    "test/heavy-4",
+    "test/heavy-5",
+    "test/heavy-6",
+    "test/rest-1",
+    "test/rest-2",
+    "test/rest-3",
+    "phase/doctest",
+    "phase/features",
+    "phase/duckdb",
+    "phase/wasm",
+    "phase/clippy",
+    "phase/doc",
+    "phase/guards",
+    "phase/rivet",
+    "phase/integration-authoring",
+    "phase/integration-wasm",
+    "phase/integration-clients",
+    "phase/provenance",
+    "phase/test-shards",
+    "phase/browser",
 ];
-const COMPILE_SECONDS: u32 = 216;
-const WASM_COMPILE_SECONDS: u32 = 300;
+/// Measured task seconds and shared build costs, generated from green merge-group bundle logs
+/// by `scripts/bundle_durations.py` (never by hand). The hosted planner in core.sh reads the
+/// same file.
+const DURATIONS: &str = include_str!("bundle-durations.json");
 const TARGET_SECONDS: u32 = 660;
 const MAX_BUNDLES: usize = 6;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Durations {
+    generated_by: String,
+    runs: Vec<u64>,
+    statistic: String,
+    test_build_seconds: u32,
+    wasm_pkg_seconds: u32,
+    task_seconds: BTreeMap<String, u32>,
+}
+
+/// The cost model: each task's own seconds and the builds a bundle shares.
+struct Model {
+    tasks: BTreeMap<&'static str, Task>,
+    test_build: u32,
+    wasm_pkg: u32,
+}
+
+impl Model {
+    fn load() -> Result<Self, String> {
+        Self::parse(DURATIONS)
+    }
+
+    /// The model of a duration table: refused unless it names its measured runs, statistic
+    /// and generator, and times exactly the planner's tasks.
+    fn parse(raw: &str) -> Result<Self, String> {
+        let table: Durations =
+            serde_json::from_str(raw).map_err(|error| format!("bundle-durations.json: {error}"))?;
+        if table.runs.is_empty() || table.statistic.is_empty() || table.generated_by.is_empty() {
+            return Err("bundle-durations.json names no measured runs".into());
+        }
+        let mut tasks = BTreeMap::new();
+        for name in TASKS {
+            let &weight = table
+                .task_seconds
+                .get(name)
+                .ok_or_else(|| format!("bundle-durations.json has no seconds for {name}"))?;
+            tasks.insert(name, Task { name, weight });
+        }
+        if table.task_seconds.len() != tasks.len() {
+            return Err("bundle-durations.json times a task the planner does not know".into());
+        }
+        Ok(Self {
+            tasks,
+            test_build: table.test_build_seconds,
+            wasm_pkg: table.wasm_pkg_seconds,
+        })
+    }
+
+    fn cost(&self, tasks: &[Task]) -> u32 {
+        let mut total = tasks
+            .iter()
+            .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
+        if tasks
+            .iter()
+            .any(|task| task.build_group(true) == BuildGroup::Test)
+        {
+            total = total.saturating_add(self.test_build);
+        }
+        if tasks.iter().any(|task| task.compiles_wasm_pkg()) {
+            total = total.saturating_add(self.wasm_pkg);
+        }
+        total
+    }
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -107,70 +174,31 @@ impl Task {
     }
 }
 
-fn slice_cost(tasks: &[Task]) -> u32 {
-    let mut total = tasks
-        .iter()
-        .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
-    if tasks
-        .iter()
-        .any(|task| task.build_group(true) == BuildGroup::Test)
-    {
-        total = total.saturating_add(COMPILE_SECONDS);
-    }
-    if tasks.iter().any(|task| task.compiles_wasm_pkg()) {
-        total = total.saturating_add(WASM_COMPILE_SECONDS);
-    }
-    total
-}
-
 #[derive(Default)]
 struct Bin {
     tasks: Vec<Task>,
 }
 
 impl Bin {
-    fn added_cost(&self, task: Task) -> u32 {
-        self.cost_with(&[task]).saturating_sub(self.cost())
+    fn added_cost(&self, model: &Model, task: Task) -> u32 {
+        self.cost_with(model, &[task])
+            .saturating_sub(self.cost(model))
     }
 
-    fn cost_with(&self, extra: &[Task]) -> u32 {
-        let mut has_test = self
-            .tasks
-            .iter()
-            .any(|task| task.build_group(true) == BuildGroup::Test);
-        let mut has_wasm = self.tasks.iter().any(|task| task.compiles_wasm_pkg());
-        let mut total = self
-            .tasks
-            .iter()
-            .fold(0_u32, |acc, task| acc.saturating_add(task.weight));
-        for task in extra {
-            total = total.saturating_add(task.weight);
-            if task.build_group(true) == BuildGroup::Test {
-                has_test = true;
-            }
-            if task.compiles_wasm_pkg() {
-                has_wasm = true;
-            }
-        }
-        if has_test {
-            total = total.saturating_add(COMPILE_SECONDS);
-        }
-        if has_wasm {
-            total = total.saturating_add(WASM_COMPILE_SECONDS);
-        }
-        total
+    fn cost_with(&self, model: &Model, extra: &[Task]) -> u32 {
+        let mut tasks = self.tasks.clone();
+        tasks.extend_from_slice(extra);
+        model.cost(&tasks)
     }
 
-    fn cost(&self) -> u32 {
-        slice_cost(&self.tasks)
+    fn cost(&self, model: &Model) -> u32 {
+        model.cost(&self.tasks)
     }
 }
 
 fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
-    let known: BTreeMap<_, _> = WEIGHTS
-        .iter()
-        .map(|&(name, weight)| (name, Task { name, weight }))
-        .collect();
+    let model = Model::load()?;
+    let known = &model.tasks;
     let mut seen = BTreeSet::new();
     let mut tasks = Vec::new();
     for (prefix, names) in [("test", &plan.shard), ("phase", &plan.phase)] {
@@ -191,25 +219,26 @@ fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
     if tasks.is_empty() {
         return Ok(Vec::new());
     }
-    tasks.sort_by_key(|task| (Reverse(Bin::default().added_cost(*task)), task.name));
+    tasks.sort_by_key(|task| (Reverse(Bin::default().added_cost(&model, *task)), task.name));
     let limit = MAX_BUNDLES.min((tasks.len() / 2).max(1));
     let mut best = Vec::new();
     let mut best_key = (u32::MAX, usize::MAX, u32::MAX);
     for count in 1..=limit {
         for coalesce_test in [false, true] {
             for coalesce_wasm in [false, true] {
-                let Some(bins) = pack_count(&tasks, count, coalesce_test, coalesce_wasm)? else {
+                let Some(bins) = pack_count(&model, &tasks, count, coalesce_test, coalesce_wasm)?
+                else {
                     continue;
                 };
                 let max_cost = bins
                     .iter()
-                    .map(Bin::cost)
+                    .map(|bin| bin.cost(&model))
                     .max()
                     .unwrap_or(0)
                     .max(TARGET_SECONDS);
                 let total_cost = bins
                     .iter()
-                    .fold(0_u32, |acc, bin| acc.saturating_add(bin.cost()));
+                    .fold(0_u32, |acc, bin| acc.saturating_add(bin.cost(&model)));
                 let key = (max_cost, count, total_cost);
                 if key < best_key {
                     best = bins;
@@ -243,6 +272,7 @@ fn pack(plan: &Plan) -> Result<Vec<Bundle>, String> {
 }
 
 fn pack_count(
+    model: &Model,
     tasks: &[Task],
     count: usize,
     coalesce_test: bool,
@@ -272,7 +302,7 @@ fn pack_count(
     items.extend(other.into_iter().map(|task| vec![task]));
     items.sort_by_key(|group| {
         (
-            Reverse(slice_cost(group)),
+            Reverse(model.cost(group)),
             group.first().map_or("", |task| task.name),
         )
     });
@@ -281,7 +311,7 @@ fn pack_count(
     for group in &items {
         let bin = bins
             .iter_mut()
-            .min_by_key(|bin| bin.cost_with(group))
+            .min_by_key(|bin| bin.cost_with(model, group))
             .ok_or("no bundle for task")?;
         bin.tasks.extend_from_slice(group);
     }
@@ -296,10 +326,17 @@ fn pack_count(
                 .enumerate()
                 .filter(|(_, bin)| bin.tasks.len() > 2)
                 .flat_map(|(index, bin)| {
-                    bin.tasks.iter().map(move |&task| (index, bin.cost(), task))
+                    bin.tasks
+                        .iter()
+                        .map(move |&task| (index, bin.cost(model), task))
                 })
                 .min_by_key(|&(donor, cost, task)| {
-                    (recipient.added_cost(task), Reverse(cost), task.name, donor)
+                    (
+                        recipient.added_cost(model, task),
+                        Reverse(cost),
+                        task.name,
+                        donor,
+                    )
                 })
             else {
                 return Ok(None);
@@ -452,13 +489,15 @@ fn execute(
     all_packages: bool,
     mut run: impl FnMut(Task, bool) -> Result<(), Failure>,
 ) -> Result<(), Failure> {
+    let model = Model::load()?;
     let mut tasks = Vec::new();
     for name in &bundle.tasks {
-        let &(name, weight) = WEIGHTS
-            .iter()
-            .find(|(known, _)| known == name)
-            .ok_or("unknown bundle task")?;
-        tasks.push(Task { name, weight });
+        tasks.push(
+            *model
+                .tasks
+                .get(name.as_str())
+                .ok_or("unknown bundle task")?,
+        );
     }
     tasks.sort_by_key(|task| task.build_group(all_packages));
     let mut previous_group = None;
@@ -606,15 +645,15 @@ mod tests {
     // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/guards"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-6", "test/heavy-5", "phase/doc"]}, {"id": "b2", "tasks": ["phase/integration-wasm", "test/heavy-4", "phase/test-shards", "phase/clippy"]}, {"id": "b3", "tasks": ["phase/browser", "phase/rivet", "phase/wasm"]}, {"id": "b4", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-1", "phase/integration-clients"]}, {"id": "b5", "tasks": ["phase/duckdb", "phase/features", "phase/doctest", "phase/provenance"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-4", "test/heavy-5", "phase/test-shards", "phase/doc"]}, {"id": "b2", "tasks": ["phase/browser", "phase/guards", "phase/integration-clients"]}, {"id": "b3", "tasks": ["phase/integration-wasm", "phase/rivet", "phase/doctest"]}, {"id": "b4", "tasks": ["phase/duckdb", "phase/features", "phase/wasm"]}, {"id": "b5", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-6", "test/heavy-1", "phase/clippy"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/rivet", "phase/guards", "phase/clippy"]}]}"#,
+            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/clippy", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/rivet", "phase/guards"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-3", "test/heavy-4"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/clippy"]}, {"id": "b3", "tasks": ["test/rest-1", "phase/guards"]}, {"id": "b4", "tasks": ["test/heavy-2", "phase/rivet"]}, {"id": "b5", "tasks": ["test/heavy-3", "test/heavy-6", "test/heavy-5"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/duckdb", "phase/clippy"]}, {"id": "b2", "tasks": ["test/rest-3", "test/heavy-5"]}, {"id": "b3", "tasks": ["test/rest-1", "test/heavy-3", "test/heavy-4"]}, {"id": "b4", "tasks": ["phase/rivet", "test/heavy-6"]}, {"id": "b5", "tasks": ["test/heavy-2", "phase/guards"]}]}"#,
             "\n"
         ),
     ];
@@ -630,6 +669,151 @@ mod tests {
             assert_eq!(actual, expected.as_bytes());
             assert!(checked(expected).is_ok());
         }
+    }
+
+    /// Repacking never changes what runs: the inventory is the one CI ran before the measured
+    /// duration table, and for the full plan, the pinned affected plans and a spread of other
+    /// task subsets, the bundles hold exactly the planned tasks, each once, in at most
+    /// `MAX_BUNDLES` non-empty bundles.
+    #[test]
+    fn packing_runs_every_planned_task_exactly_once() {
+        const BEFORE: [&str; 23] = [
+            "phase/browser",
+            "phase/clippy",
+            "phase/doc",
+            "phase/doctest",
+            "phase/duckdb",
+            "phase/features",
+            "phase/guards",
+            "phase/integration-authoring",
+            "phase/integration-clients",
+            "phase/integration-wasm",
+            "phase/provenance",
+            "phase/rivet",
+            "phase/test-shards",
+            "phase/wasm",
+            "test/heavy-1",
+            "test/heavy-2",
+            "test/heavy-3",
+            "test/heavy-4",
+            "test/heavy-5",
+            "test/heavy-6",
+            "test/rest-1",
+            "test/rest-2",
+            "test/rest-3",
+        ];
+        const SUBSETS: u32 = 1 << 23;
+        let mut inventory = TASKS.to_vec();
+        inventory.sort_unstable();
+        assert_eq!(inventory, BEFORE);
+        let packed = |plan: &Plan| {
+            let bundles = pack(plan).expect("pack plan");
+            assert!(bundles.len() <= MAX_BUNDLES);
+            assert!(bundles.iter().all(|bundle| !bundle.tasks.is_empty()));
+            let mut tasks: Vec<_> = bundles
+                .into_iter()
+                .flat_map(|bundle| bundle.tasks)
+                .collect();
+            tasks.sort_unstable();
+            tasks
+        };
+        let planned = |plan: &Plan| {
+            let mut tasks: Vec<_> = plan
+                .shard
+                .iter()
+                .map(|shard| format!("test/{shard}"))
+                .chain(plan.phase.iter().map(|phase| format!("phase/{phase}")))
+                .collect();
+            tasks.sort_unstable();
+            tasks
+        };
+        for expected in PYTHON_PLANS {
+            let plan: Plan = serde_json::from_str(expected).expect("pinned plan");
+            assert_eq!(packed(&plan), planned(&plan));
+            if matches!(plan.mode, Mode::Full) {
+                assert_eq!(planned(&plan), BEFORE);
+            }
+        }
+        // About 220 task subsets spread over all of them (a fixed odd stride), as affected plans.
+        let mut mask = 1_u32;
+        while mask < SUBSETS {
+            let (mut shard, mut phase) = (Vec::new(), Vec::new());
+            for (bit, task) in (0_u32..).zip(BEFORE) {
+                if mask.checked_shr(bit).is_some_and(|rest| rest & 1 == 1) {
+                    match task.split_once('/') {
+                        Some(("test", name)) => shard.push(name.to_owned()),
+                        Some((_, name)) => phase.push(name.to_owned()),
+                        None => panic!("task without a kind: {task}"),
+                    }
+                }
+            }
+            let plan = Plan {
+                mode: Mode::Affected,
+                shard,
+                phase,
+                packages: None,
+                rest_shards: None,
+                reason: None,
+                extra: BTreeMap::new(),
+            };
+            assert_eq!(packed(&plan), planned(&plan), "{mask:#x}");
+            mask = mask.saturating_add(37_777);
+        }
+    }
+
+    #[test]
+    fn duration_tables_are_refused_unless_complete() {
+        let table: serde_json::Value = serde_json::from_str(DURATIONS).expect("duration table");
+        assert!(Model::parse(DURATIONS).is_ok());
+        let refused = |edit: &dyn Fn(&mut serde_json::Value), expected: &str| {
+            let mut edited = table.clone();
+            edit(&mut edited);
+            let error = Model::parse(&edited.to_string())
+                .err()
+                .unwrap_or_else(|| panic!("accepted a table that should fail with {expected:?}"));
+            assert!(
+                error.contains(expected),
+                "{error} does not name {expected:?}"
+            );
+        };
+        refused(
+            &|table| {
+                table["task_seconds"]
+                    .as_object_mut()
+                    .expect("task seconds")
+                    .remove("phase/browser");
+            },
+            "has no seconds for phase/browser",
+        );
+        refused(
+            &|table| table["task_seconds"]["phase/unknown"] = 1.into(),
+            "times a task the planner does not know",
+        );
+        refused(
+            &|table| table["runs"] = serde_json::json!([]),
+            "names no measured runs",
+        );
+        refused(
+            &|table| table["statistic"] = "".into(),
+            "names no measured runs",
+        );
+        refused(
+            &|table| table["generated_by"] = "".into(),
+            "names no measured runs",
+        );
+        refused(
+            &|table| table["note"] = "edited".into(),
+            "unknown field `note`",
+        );
+        refused(
+            &|table| {
+                table
+                    .as_object_mut()
+                    .expect("table")
+                    .remove("wasm_pkg_seconds");
+            },
+            "missing field `wasm_pkg_seconds`",
+        );
     }
 
     #[test]
@@ -850,41 +1034,32 @@ mod tests {
 
     #[test]
     fn integration_clients_shares_pruning_affinity_without_wasm_compile_cost() {
-        let clients = WEIGHTS
-            .iter()
-            .find_map(|&(name, weight)| {
-                (name == "phase/integration-clients").then_some(Task { name, weight })
-            })
-            .expect("phase/integration-clients weight");
-        let authoring = WEIGHTS
-            .iter()
-            .find_map(|&(name, weight)| {
-                (name == "phase/integration-authoring").then_some(Task { name, weight })
-            })
-            .expect("phase/integration-authoring weight");
+        let model = Model::load().expect("duration table");
+        let clients = model.tasks["phase/integration-clients"];
+        let authoring = model.tasks["phase/integration-authoring"];
 
-        // Standalone phase/integration-clients bin does NOT include WASM_COMPILE_SECONDS.
+        // Standalone phase/integration-clients bin does NOT include the WASM package build.
         let standalone = Bin {
             tasks: vec![clients],
         };
-        assert_eq!(standalone.cost(), clients.weight);
-        assert_eq!(Bin::default().added_cost(clients), clients.weight);
+        assert_eq!(standalone.cost(&model), clients.weight);
+        assert_eq!(Bin::default().added_cost(&model, clients), clients.weight);
 
         // Co-located phase/integration-authoring + phase/integration-clients charges
-        // WASM_COMPILE_SECONDS once and does not prune between them.
+        // the WASM package build once and does not prune between them.
         let combined = Bin {
             tasks: vec![authoring, clients],
         };
         assert_eq!(
-            combined.cost(),
-            authoring.weight + clients.weight + WASM_COMPILE_SECONDS
+            combined.cost(&model),
+            authoring.weight + clients.weight + model.wasm_pkg
         );
         assert_eq!(
             Bin {
                 tasks: vec![authoring]
             }
-            .cost_with(&[clients]),
-            authoring.weight + clients.weight + WASM_COMPILE_SECONDS
+            .cost_with(&model, &[clients]),
+            authoring.weight + clients.weight + model.wasm_pkg
         );
 
         let bundle = Bundle {
