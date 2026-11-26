@@ -1147,13 +1147,11 @@ fn describe(model: &Model, shape: &Shape) -> String {
     }
 }
 
-fn resolve(
-    model: &Model,
+fn ancestors_of(
     names: &BTreeMap<String, String>,
     edges: &BTreeMap<String, BTreeMap<String, usize>>,
-    own: &[(String, Own)],
-) -> Resolution {
-    let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut ancestors = BTreeMap::new();
     for class in names.keys() {
         let mut seen: BTreeSet<&str> = BTreeSet::new();
         let mut stack: Vec<&str> = edges
@@ -1175,6 +1173,16 @@ fn resolve(
         }
         ancestors.insert(class.clone(), seen.into_iter().map(str::to_owned).collect());
     }
+    ancestors
+}
+
+fn resolve(
+    model: &Model,
+    names: &BTreeMap<String, String>,
+    edges: &BTreeMap<String, BTreeMap<String, usize>>,
+    own: &[(String, Own)],
+) -> Resolution {
+    let ancestors = ancestors_of(names, edges);
     let mut order: Vec<&String> = names.keys().collect();
     order.sort_by_key(|class| (ancestors.get(*class).map_or(0, BTreeSet::len), *class));
     let mut by_class: BTreeMap<&str, Vec<&Own>> = BTreeMap::new();

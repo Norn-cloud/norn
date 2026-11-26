@@ -435,14 +435,29 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
             problems.push(format!("contract {key} is not an array"));
         }
     }
-    let rows = |value: &Value, key: &str| -> &[Value] {
+    fn rows<'v>(value: &'v Value, key: &str) -> &'v [Value] {
         value
             .get(key)
             .and_then(Value::as_array)
             .map_or(&[], Vec::as_slice)
-    };
-    let dataset_key = |d: &Value| text(d, "/id");
-    let upstream_datasets = by_key(projection.get("datasets"), &dataset_key);
+    }
+    fn dataset_key(d: &Value) -> Option<&str> {
+        text(d, "/id")
+    }
+    fn field_key(f: &Value) -> Option<(&str, &str)> {
+        Some((text(f, "/dataset")?, text(f, "/name")?))
+    }
+    fn constraint_key(c: &Value) -> Option<ConstraintKey<'_>> {
+        Some(ConstraintKey {
+            kind: text(c, "/kind")?,
+            dataset: text(c, "/dataset")?,
+            fields: string_list(c, "/fields")?,
+            target_dataset: text(c, "/target/dataset").unwrap_or_default(),
+            target_fields: string_list(c, "/target/fields")?,
+            collection: text(c, "/collection").unwrap_or_default(),
+        })
+    }
+    let upstream_datasets = by_key(projection.get("datasets"), dataset_key);
     for dataset in rows(contract, "datasets") {
         let Some(id) = dataset_key(dataset) else {
             problems.push("a contract dataset has no id".to_owned());
@@ -456,8 +471,7 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
             Some(_) => {}
         }
     }
-    let field_key = |f: &Value| Some((text(f, "/dataset")?, text(f, "/name")?));
-    let upstream_fields = by_key(projection.get("fields"), &field_key);
+    let upstream_fields = by_key(projection.get("fields"), field_key);
     for field in rows(contract, "fields") {
         let Some(key @ (dataset, name)) = field_key(field) else {
             problems.push("a contract field has no dataset or name".to_owned());
@@ -488,17 +502,7 @@ pub fn check_contract(contract: &Value, projection: &Value) -> Vec<String> {
     }
     // Every constraint the contract declares (of any kind) must exist upstream
     // with the same datasets, fields, target and collection.
-    let constraint_key = |c: &Value| {
-        Some(ConstraintKey {
-            kind: text(c, "/kind")?,
-            dataset: text(c, "/dataset")?,
-            fields: string_list(c, "/fields")?,
-            target_dataset: text(c, "/target/dataset").unwrap_or_default(),
-            target_fields: string_list(c, "/target/fields")?,
-            collection: text(c, "/collection").unwrap_or_default(),
-        })
-    };
-    let upstream_constraints = by_key(projection.get("constraints"), &constraint_key);
+    let upstream_constraints = by_key(projection.get("constraints"), constraint_key);
     for constraint in rows(contract, "constraints") {
         match constraint_key(constraint) {
             None => problems.push(

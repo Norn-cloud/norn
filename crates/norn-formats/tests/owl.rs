@@ -737,16 +737,20 @@ fn owl_only_the_selected_annotation_is_mapped() {
 
 #[test]
 fn owl_dag_blank_node_blowup_is_refused_within_budget() {
+    use std::fmt::Write as _;
+
     let mut nt = String::from(
         "<https://example.org/onto/Ratios/A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n\
          <https://example.org/onto/Ratios/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:b0 .\n",
     );
     for level in 0..24_u32 {
         let next = level.saturating_add(1);
-        nt.push_str(&format!(
+        writeln!(
+            nt,
             "_:b{level} <https://example.org/onto/Ratios/l> _:b{next} .\n\
-             _:b{level} <https://example.org/onto/Ratios/r> _:b{next} .\n"
-        ));
+             _:b{level} <https://example.org/onto/Ratios/r> _:b{next} ."
+        )
+        .unwrap();
     }
     nt.push_str("_:b24 <https://example.org/onto/Ratios/leaf> \"x\" .\n");
     let config = ratios_config(nt.as_bytes(), WitnessPolicy::Open);
@@ -769,25 +773,33 @@ fn owl_dag_blank_node_blowup_is_refused_within_budget() {
 
 #[test]
 fn owl_accepts_long_rdf_lists_and_all_disjoint_classes_without_spurious_statements() {
+    use std::fmt::Write as _;
+
     let mut nt = String::new();
     nt.push_str(
         "_:disj <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#AllDisjointClasses> .\n\
          _:disj <http://www.w3.org/2002/07/owl#members> _:n0 .\n",
     );
     for i in 0..40_u32 {
-        nt.push_str(&format!(
+        writeln!(
+            nt,
             "<https://example.org/onto/Ratios/C{i}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n\
-             _:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://example.org/onto/Ratios/C{i}> .\n"
-        ));
+             _:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#first> <https://example.org/onto/Ratios/C{i}> ."
+        )
+        .unwrap();
         let next = i.saturating_add(1);
         if next < 40 {
-            nt.push_str(&format!(
-                "_:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:n{next} .\n"
-            ));
+            writeln!(
+                nt,
+                "_:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> _:n{next} ."
+            )
+            .unwrap();
         } else {
-            nt.push_str(&format!(
-                "_:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> .\n"
-            ));
+            writeln!(
+                nt,
+                "_:n{i} <http://www.w3.org/1999/02/22-rdf-syntax-ns#rest> <http://www.w3.org/1999/02/22-rdf-syntax-ns#nil> ."
+            )
+            .unwrap();
         }
     }
     let import = import_ratios(&nt, WitnessPolicy::Open);

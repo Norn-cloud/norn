@@ -678,28 +678,38 @@ impl LossReport {
                 }
             }
         }
-        let has_entry = |element: &SourceElement| {
-            if sorted {
-                self.entry(element).is_some()
-            } else {
-                self.entries.iter().any(|entry| entry.element == *element)
-            }
-        };
         if let Some(schema) = source_schema {
-            for dataset in &schema.datasets {
-                let element = SourceElement::dataset(&dataset.id);
-                if !has_entry(&element) {
-                    findings.push(format!("source schema {element:?} has no loss entry"));
-                }
-            }
-            for field in &schema.fields {
-                let element = SourceElement::field(&field.dataset, &field.name);
-                if !has_entry(&element) {
-                    findings.push(format!("source schema {element:?} has no loss entry"));
-                }
-            }
+            self.validate_source_schema(schema, sorted, &mut findings);
         }
         findings
+    }
+
+    fn validate_source_schema(
+        &self,
+        schema: &SourceSchemaIr,
+        sorted: bool,
+        findings: &mut Vec<String>,
+    ) {
+        for element in schema
+            .datasets
+            .iter()
+            .map(|dataset| SourceElement::dataset(&dataset.id))
+            .chain(
+                schema
+                    .fields
+                    .iter()
+                    .map(|field| SourceElement::field(&field.dataset, &field.name)),
+            )
+        {
+            let present = if sorted {
+                self.entry(&element).is_some()
+            } else {
+                self.entries.iter().any(|entry| entry.element == element)
+            };
+            if !present {
+                findings.push(format!("source schema {element:?} has no loss entry"));
+            }
+        }
     }
 }
 

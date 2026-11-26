@@ -125,7 +125,11 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Triple>, String> {
 }
 
 fn is_disallowed_iri_char(c: char) -> bool {
-    c <= ' ' || matches!(c, '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\\')
+    c.is_control()
+        || matches!(
+            c,
+            ' ' | '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\\'
+        )
 }
 
 struct Cursor<'a> {

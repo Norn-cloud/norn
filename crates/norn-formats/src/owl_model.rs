@@ -276,7 +276,7 @@ impl Model {
             .map(|(_, object)| object)
     }
 
-    fn types<'a>(&'a self, subject: &Term) -> BTreeSet<&'a str> {
+    fn types(&self, subject: &Term) -> BTreeSet<&str> {
         self.objects(subject, RDF_TYPE)
             .filter_map(Term::iri)
             .collect()
