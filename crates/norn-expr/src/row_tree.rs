@@ -9,12 +9,10 @@
 //! members) projects to `None`, and the engine refuses rather than guess.
 //! The projection is syntax only: admission still owns types and bounds.
 
-use norn_ir::ResourceLimitProfile;
-use zen_expression::intellisense::IntelliSense;
 use zen_expression::lexer::{ArithmeticOperator, ComparisonOperator, LogicalOperator, Operator};
 use zen_expression::parser::Node;
 
-use crate::{ExprError, Number, validate_evaluation_source};
+use crate::{ExprError, Number};
 
 /// An arithmetic operator another engine computes exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,21 +79,7 @@ pub enum RowExpr {
 /// # Errors
 /// A compile error for malformed or structurally over-budget source.
 pub fn row_expression(source: &str, root: &str) -> Result<Option<RowExpr>, ExprError> {
-    validate_evaluation_source(source, &ResourceLimitProfile::norn_limits_v1()).map_err(
-        |diagnostics| ExprError::Compile {
-            message: diagnostics
-                .into_iter()
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>()
-                .join("; "),
-        },
-    )?;
-    IntelliSense::new()
-        .with_strict(true)
-        .with_ast(source, false, |ast, _metadata| project(ast, root))
-        .ok_or_else(|| ExprError::Compile {
-            message: "expression does not parse".to_owned(),
-        })
+    crate::reads::with_validated_ast(source, false, |ast| project(ast, root))
 }
 
 fn boxed(node: &Node<'_>, root: &str) -> Option<Box<RowExpr>> {

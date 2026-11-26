@@ -1,0 +1,57 @@
+{
+  "artifactId": "supply.Warehouse.closed_requires_no_stock.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.Warehouse.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.InventorySnapshot.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A warehouse cannot close while live inventory positions still hold non-zero stock there.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "self.status == 'closed'",
+    "id": "supply.Warehouse.closed_requires_no_stock",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A warehouse cannot close while live inventory positions still hold non-zero stock there.",
+    "response": {
+      "expression": "sum(map(self.positions as b0, b0.on_hand_qty)) == 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.Warehouse"
+      ],
+      "root": {
+        "id": "supply.Warehouse",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.Warehouse"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Warehouse.closed_requires_no_stock.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -533,6 +533,34 @@ declare module "@norn/authoring" {
       readonly maxItems: number
     }
 
+    /** Exact parameter binding for a quantity-ledger reserve operation (`ActionQuantityParameter`). */
+    interface ActionQuantityParameterSpec<I> {
+      readonly field: keyof I & string
+      readonly scale: number
+    }
+
+    /** Ordinary quantity-backed action operation (`ActionQuantityOperation`). */
+    type ActionQuantityOperationSpec<I> =
+      | {
+          readonly kind: "reserve"
+          readonly reservationIdField: keyof I & string
+          readonly templateId: string
+          readonly parameters: Readonly<Record<string, ActionQuantityParameterSpec<I>>>
+          readonly ttlMs: number
+        }
+      | {
+          readonly kind: "post_reservation"
+          readonly reservationIdField: keyof I & string
+          readonly postingIdField: keyof I & string
+        }
+
+    /** Atomic cell-local quantity-ledger reservation or posting (`ActionQuantityEffect`). */
+    interface ActionQuantityEffectSpec<I> {
+      readonly ledgerId: string
+      readonly balanceVersionsField: keyof I & string
+      readonly operation: ActionQuantityOperationSpec<I>
+    }
+
     interface ActionMeta<I extends Schema.Top, O extends Schema.Top> extends Localized {
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** `actionId` (`commerce.sales_order.approve`). */
@@ -590,6 +618,8 @@ declare module "@norn/authoring" {
       readonly synchronousRule?: DecisionDefinition | { readonly artifactId: string; readonly version: string }
       readonly writes?: ReadonlyArray<{ readonly type: TypeDefinition<unknown> | string; readonly change: "created" | "modified" | "deleted" }>
       readonly effect?: ActionEffectSpec<I["Type"]>
+      /** Atomic cell-local quantity-ledger reservation or posting (`ActionQuantityEffect`). */
+      readonly quantityEffect?: ActionQuantityEffectSpec<I["Type"]>
       readonly compensation?: ActionDefinition<unknown>
       /**
        * The access policy that authorizes calls (ActionIR `access`). A policy whose
@@ -752,7 +782,7 @@ declare module "@norn/authoring" {
 
     /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
     interface LawDefinition { readonly _tag: "NornLaw" }
-    /** What a law lambda reads as `self`: the subject's properties and, one level deep, its links. */
+    /** What a law lambda reads as `self`: the subject's properties, its forward links, and any declared inverse roles (LAW-LINK-MANY-1). */
     type LinkTargetProperties<K> =
       K extends { readonly target: TypeDefinition<infer T, any> } ? T
       : K extends { readonly target: InterfaceDefinition<infer T, any> } ? T
@@ -762,18 +792,25 @@ declare module "@norn/authoring" {
         ? ReadonlyArray<LinkTargetProperties<K>>
         : K["cardinality"] extends { readonly required: true } ? LinkTargetProperties<K> : LinkTargetProperties<K> | null
     }
-    type SelfOf<D> =
-      D extends TypeDefinition<infer T, infer L> ? T & LinkValues<L>
-      : D extends InterfaceDefinition<infer T, infer L> ? T & LinkValues<L>
-      : never
-    type LawPredicate<D> = (self: SelfOf<NoInfer<D>>) => boolean
-    interface LawSpecBase<D> {
+    type InverseValues<Inv extends Readonly<Record<string, TypeDefinition<any, any>>>> = {
+      readonly [K in keyof Inv]: Inv[K] extends TypeDefinition<infer T, any> ? ReadonlyArray<T> : never
+    }
+    type SelfOf<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> =
+      (
+        D extends TypeDefinition<infer T, infer L> ? T & LinkValues<L>
+        : D extends InterfaceDefinition<infer T, infer L> ? T & LinkValues<L>
+        : never
+      ) & InverseValues<Inv>
+    type LawPredicate<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> = (self: SelfOf<NoInfer<D>, NoInfer<Inv>>) => boolean
+    interface LawSpecBase<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> {
       /** The subject: an object type or an interface (every implementation inherits the law). */
       readonly on: D
+      /** LAW-LINK-MANY-1: inverse roles declared on child types (`{ positions: InventorySnapshot }`), typed as arrays on `self` and pinned in dependencies. */
+      readonly inverses?: Inv
       /** Condition under which the law applies. */
-      readonly when?: LawPredicate<D>
+      readonly when?: LawPredicate<D, Inv>
       /** `before` is a bare read of a timestamp property only (`self => self.due_at`). */
-      readonly within?: { readonly days?: number; readonly hours?: number } | { readonly before: (self: SelfOf<NoInfer<D>>) => string }
+      readonly within?: { readonly days?: number; readonly hours?: number } | { readonly before: (self: SelfOf<NoInfer<D>, NoInfer<Inv>>) => string }
       /** Default "error". */
       readonly severity?: "error" | "warning"
       /** Rationale, required. */
@@ -785,21 +822,32 @@ declare module "@norn/authoring" {
        * applies, the law does not apply. A nested `unless` re-applies what its parent lifted.
        * Only the law's owner adds exceptions; the checker refuses a malformed tree.
        */
-      readonly unless?: Exceptions<D>
+      readonly unless?: Exceptions<D, Inv>
     }
-    type Exceptions<D> = { readonly [label: string]: { readonly when: LawPredicate<D>; readonly because: string; readonly unless?: Exceptions<D> } }
+    type Exceptions<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> = { readonly [label: string]: { readonly when: LawPredicate<D, Inv>; readonly because: string; readonly unless?: Exceptions<D, Inv> } }
     /** Exactly one of `must` / `never` / `eventually`. */
-    type LawSpec<D> = LawSpecBase<D> & (
-      | { readonly must: LawPredicate<D>; readonly never?: undefined; readonly eventually?: undefined }
-      | { readonly never: LawPredicate<D>; readonly must?: undefined; readonly eventually?: undefined }
-      | { readonly eventually: LawPredicate<D>; readonly must?: undefined; readonly never?: undefined }
+    type LawSpec<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}> = LawSpecBase<D, Inv> & (
+      | { readonly must: LawPredicate<D, Inv>; readonly never?: undefined; readonly eventually?: undefined }
+      | { readonly never: LawPredicate<D, Inv>; readonly must?: undefined; readonly eventually?: undefined }
+      | { readonly eventually: LawPredicate<D, Inv>; readonly must?: undefined; readonly never?: undefined }
     )
+    /** Exactly one of `must` / `never` / `eventually`, with `when` narrowing `self` via a type predicate (matches Rust `guarded_predicate`). */
+    type NarrowedLawSpec<D, Inv extends Readonly<Record<string, TypeDefinition<any, any>>>, N extends SelfOf<NoInfer<D>, NoInfer<Inv>>> =
+      Omit<LawSpecBase<D, Inv>, "when" | "unless"> & {
+        readonly when: (self: SelfOf<NoInfer<D>, NoInfer<Inv>>) => self is N
+        readonly unless?: { readonly [label: string]: { readonly when: (self: N) => boolean; readonly because: string; readonly unless?: Exceptions<D, Inv> } }
+      } & (
+        | { readonly must: (self: N) => boolean; readonly never?: undefined; readonly eventually?: undefined }
+        | { readonly never: (self: N) => boolean; readonly must?: undefined; readonly eventually?: undefined }
+        | { readonly eventually: (self: N) => boolean; readonly must?: undefined; readonly never?: undefined }
+      )
     /**
      * A law over a subject type (dx-spec §4.5). Id, scope, `objectTypes`,
      * `lawVersion`, owner, provenance and the entity dependency are inferred;
      * the lambdas compile statically and never run.
      */
-    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any, any>>(name: string, spec: LawSpec<D>): LawDefinition
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any, any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}, N extends SelfOf<NoInfer<D>, NoInfer<Inv>> = SelfOf<NoInfer<D>, NoInfer<Inv>>>(name: string, spec: NarrowedLawSpec<D, Inv, N>): LawDefinition
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any, any>, const Inv extends Readonly<Record<string, TypeDefinition<any, any>>> = {}>(name: string, spec: LawSpec<D, Inv>): LawDefinition
 
     /** A norm: an obligation, prohibition or permission over one object type (#1176 unit B). */
     interface NormDefinition { readonly _tag: "NornNorm" }

@@ -1168,6 +1168,7 @@ pub(crate) fn validate_rule_contract(
                     code: codes::INVALID_SCHEMA,
                     subject: "RuleIR",
                     string_enums: true,
+                    allow_fixed_currency: false,
                     unions: ClosedSchemaUnions::Nullable,
                 },
             );

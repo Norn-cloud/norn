@@ -427,4 +427,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, KeyError, TypeError, json.JSONDecodeError, SelectorEvidenceError) as error:
         print(f"executed-selector validation failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

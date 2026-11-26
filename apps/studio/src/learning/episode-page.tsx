@@ -118,7 +118,7 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
           description={e.standing === "measured"
             ? "Its outcome is recorded, so it can become a curated case."
             : "Its outcome isn't recorded yet, so it stays context: it can't become a curated case or a score."}
-          actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/episodes"><ArrowLeft /> All episodes</Link></Button>}
+          actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/episodes"><ArrowLeft aria-hidden className="rtl:rotate-180" /> All episodes</Link></Button>}
         />
       </div>
 

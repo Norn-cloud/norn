@@ -73,6 +73,34 @@ interface EffectTarget {
   readonly entityArtifactVersion: string
 }
 
+/** Exact parameter binding for a quantity-ledger reserve operation (`ActionQuantityParameter`). */
+export interface ActionQuantityParameter {
+  readonly field: string
+  readonly scale: number
+}
+
+/** Ordinary quantity-backed action operation (`ActionQuantityOperation`). */
+export type ActionQuantityOperation =
+  | {
+      readonly kind: "reserve"
+      readonly reservationIdField: string
+      readonly templateId: string
+      readonly parameters: Readonly<Record<string, ActionQuantityParameter>>
+      readonly ttlMs: number
+    }
+  | {
+      readonly kind: "post_reservation"
+      readonly reservationIdField: string
+      readonly postingIdField: string
+    }
+
+/** Atomic cell-local quantity-ledger reservation or posting (`ActionQuantityEffect`). */
+export interface ActionQuantityEffect {
+  readonly ledgerId: string
+  readonly balanceVersionsField: string
+  readonly operation: ActionQuantityOperation
+}
+
 /** `ActionEffectProgram`: the closed, declarative authority-bearing operations. */
 export type ActionEffect =
   | ({ readonly kind: "upsert_input_object"; readonly writeMode?: UpsertWriteMode } & EffectTarget)
@@ -132,6 +160,8 @@ export interface ActionDef extends Localized {
   readonly createLinks?: ReadonlyArray<ActionCreateLink>
   readonly writes: ReadonlyArray<{ readonly entityKind: string; readonly change: WriteChange }>
   readonly effect?: ActionEffect
+  /** Atomic cell-local quantity-ledger reservation or posting (`ActionQuantityEffect`). */
+  readonly quantityEffect?: ActionQuantityEffect
   /** ActionIR `access`: the policy artifact that authorizes calls. */
   readonly access?: { readonly artifactId: string; readonly version?: string }
   /**
@@ -256,6 +286,7 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     createLinks: omitEmpty(def.createLinks ?? []),
     writes: omitEmpty(def.writes),
     effectProgram: def.effect,
+    quantityEffect: def.quantityEffect,
     synchronousRule: def.synchronousRule,
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
     access: def.access,

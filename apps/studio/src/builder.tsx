@@ -267,7 +267,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); run(draft) }}>
           {served === false && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-body">{CHECKER_UNSERVED}</p>}
           <fieldset disabled={served === false} className="contents">
-          <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Gold yield by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
+          <Field label="Name" field="title" invalid={invalid("title")}><Input value={draft.title} placeholder="e.g. Records by week" onChange={(event) => patch({ title: event.target.value })} /></Field>
           <div className="grid gap-2" data-field="measures">
             <span className={invalid("measures") ? "text-body text-destructive" : "text-body text-muted-foreground"}>Measures</span>
             {draft.measures.length === 0 && <p className="text-body text-muted-foreground">No measure yet.</p>}

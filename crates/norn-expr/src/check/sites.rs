@@ -236,6 +236,7 @@ pub(super) fn exact_admission<'n>(
     destination: bool,
 ) -> Vec<Diagnostic> {
     let mut pending = vec![(root, destination)];
+    let mut children = Vec::new();
     let mut out = Vec::new();
     while let Some((node, destination)) = pending.pop() {
         let round = matches!(
@@ -323,9 +324,9 @@ pub(super) fn exact_admission<'n>(
             } else {
                 site
             };
-            let mut children = Vec::new();
+            children.clear();
             bounds::children(node, &mut children);
-            pending.extend(children.into_iter().map(|child| (child, child_site)));
+            pending.extend(children.drain(..).map(|child| (child, child_site)));
         }
     }
     out

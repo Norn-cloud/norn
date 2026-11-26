@@ -146,20 +146,24 @@ const ITEMS_POINTER: &str = "/payload/outputSchema/properties/facts/items";
 /// The `facts` item schema of a decide graph's output schema: its
 /// `properties` and `required` members, when it is a list of records.
 pub struct FactSchema<'s> {
-    properties: &'s BTreeMap<String, JsonValue>,
-    required: Vec<&'s str>,
+    pub(crate) properties: &'s BTreeMap<String, JsonValue>,
+    pub(crate) required: Vec<&'s str>,
 }
 
 impl<'s> FactSchema<'s> {
     /// Parse the `facts` item schema from a decide graph's `outputSchema`.
     #[must_use]
     pub fn of(output_schema: &'s JsonValue) -> Option<Self> {
-        let facts = member(Some(output_schema), "properties")
-            .and_then(|properties| member(Some(properties), "facts"))?;
-        if type_of(Some(facts)) != Some("array") {
+        Self::of_array_member(output_schema, "facts")
+    }
+
+    pub(crate) fn of_array_member(output_schema: &'s JsonValue, name: &str) -> Option<Self> {
+        let array = member(Some(output_schema), "properties")
+            .and_then(|properties| member(Some(properties), name))?;
+        if type_of(Some(array)) != Some("array") {
             return None;
         }
-        let items = member(Some(facts), "items")?;
+        let items = member(Some(array), "items")?;
         if type_of(Some(items)) != Some("object") {
             return None;
         }
@@ -174,7 +178,7 @@ impl<'s> FactSchema<'s> {
         })
     }
 
-    fn get(&self, name: &str) -> Option<&'s JsonValue> {
+    pub(crate) fn get(&self, name: &str) -> Option<&'s JsonValue> {
         self.properties.get(name)
     }
 
@@ -194,16 +198,16 @@ impl<'s> FactSchema<'s> {
     }
 }
 
-fn member<'s>(schema: Option<&'s JsonValue>, name: &str) -> Option<&'s JsonValue> {
+pub(crate) fn member<'s>(schema: Option<&'s JsonValue>, name: &str) -> Option<&'s JsonValue> {
     schema?.as_object()?.get(name)
 }
 
-fn type_of(schema: Option<&JsonValue>) -> Option<&str> {
+pub(crate) fn type_of(schema: Option<&JsonValue>) -> Option<&str> {
     member(schema, "type")?.as_string()
 }
 
 /// The values of a `string` schema's `enum`, when every one is a string.
-fn string_enum(schema: Option<&JsonValue>) -> Option<Vec<&str>> {
+pub(crate) fn string_enum(schema: Option<&JsonValue>) -> Option<Vec<&str>> {
     if type_of(schema) != Some("string") {
         return None;
     }

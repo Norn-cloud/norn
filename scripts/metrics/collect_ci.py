@@ -33,6 +33,29 @@ CAVEATS = (
     "and tool installs. Recorded for trends only, never ratcheted.")
 
 
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
 def gh_lines(path: str, jq: str) -> list[dict]:
     out = subprocess.run(["gh", "api", "--paginate", path, "--jq", jq],
                          capture_output=True, text=True, check=True).stdout
@@ -40,10 +63,8 @@ def gh_lines(path: str, jq: str) -> list[dict]:
 
 
 def toolchain(repo: Path, sha: str) -> dict:
-    shown = subprocess.run(["git", "-C", str(repo), "show", f"{sha}:.github/workflows/ci-policy.yml"],
-                           capture_output=True, text=True)
-    match = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", shown.stdout, re.M)
-    return {"rust": match.group(1)} if shown.returncode == 0 and match else {}
+    rust = _sibling("record").pinned_rust_toolchain(repo, sha)
+    return {"rust": rust} if rust else {}
 
 
 def run_records(run: dict, jobs: list[dict], notices: dict[int, list[str]], repo: Path) -> list[dict]:
@@ -110,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".", help="checkout used to read each run's pinned toolchain")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args(argv)
-    since = args.since or (dt.date.today() - dt.timedelta(days=args.days)).isoformat()
+    since = args.since or (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=args.days)).isoformat()
     for record in collect(since, Path(args.repo), args.limit):
         print(json.dumps(record, sort_keys=True))
     return 0

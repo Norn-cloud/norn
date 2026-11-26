@@ -11,6 +11,9 @@
 #[path = "../../norn-cell/tests/query_support/mod.rs"]
 mod query_support;
 
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+use hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_routes::{ObjectAccess, get_object, get_object_page};
@@ -19,10 +22,7 @@ use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
-use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile,
-    VerifiedPrincipal,
-};
+use norn_kernel::authz::AccessRequest as PdpRequest;
 use query_support::governed::GovernedCommit as _;
 use query_support::{TYPE, capture_quality, fixture, fixture_writes, put};
 use serde_json::json;
@@ -84,42 +84,6 @@ impl Authorizer for Policy {
         } else {
             Err(Refusal::invalid("private policy diagnostic"))
         }
-    }
-}
-
-struct Mapping;
-impl ObjectAccess for Mapping {
-    fn access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        capability: ReadCapability,
-        object_type: &str,
-        row: Option<&ObjectRecord>,
-    ) -> Result<PdpRequest, Refusal> {
-        let key = ScopeKey {
-            org: scope.org_id.clone(),
-            environment: Some(scope.environment_id.clone()),
-            tenant: None,
-            workspace: None,
-            business_unit: None,
-        };
-        Ok(PdpRequest::new(
-            &VerifiedPrincipal::new(actor, ActorKind::User, None, vec![], BTreeMap::new()),
-            Some(key.clone()),
-            format!("fixture.{capability:?}"),
-            "norn.read",
-            ResourceInput {
-                object_type: row
-                    .map_or(object_type, |row| row.object_type.as_str())
-                    .into(),
-                id: row.map_or(object_type, |row| row.id.as_str()).into(),
-                scope: key,
-                attributes: BTreeMap::new(),
-            },
-            BTreeMap::new(),
-            Binding::Unbound(UnboundProfile::HostedRead),
-        ))
     }
 }
 
