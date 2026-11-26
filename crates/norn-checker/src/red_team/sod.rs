@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_datalog::{Budget, ExecBudget, Facts, Literal, Mode, Program, RelationKind, Rule, evaluate};
+use norn_datalog::{
+    Budget, ExecBudget, Facts, Literal, Mode, Program, RelationKind, Rule, evaluate,
+};
 use norn_ir::access::{AccessCondition, AccessRule, ResourceCompareOp, ResourceOperand};
 use norn_ir::{ActionEffectProgram, LifecycleOutcome, UpsertWriteMode};
 

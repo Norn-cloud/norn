@@ -86,7 +86,12 @@ fn transition_action(
     if !independent_of.is_empty() {
         payload["independentOf"] = json!(independent_of);
     }
-    envelope("action", &format!("{action_id}.action"), action_id, &payload)
+    envelope(
+        "action",
+        &format!("{action_id}.action"),
+        action_id,
+        &payload,
+    )
 }
 
 fn payout_entity() -> ArtifactEnvelope {
@@ -295,8 +300,22 @@ fn order_create_action() -> ArtifactEnvelope {
 
 #[test]
 fn law_honesty_distinguishes_enforced_from_declared_only() {
-    let enforced = law_envelope("hr.Payslip.exact_net", "hr.Payslip", "entity", "hr.Payslip", "always", json!({}));
-    let eventually = law_envelope("hr.Payout.eventually_settled", "hr.Payout", "entity", "hr.Payout", "eventually", json!({}));
+    let enforced = law_envelope(
+        "hr.Payslip.exact_net",
+        "hr.Payslip",
+        "entity",
+        "hr.Payslip",
+        "always",
+        json!({}),
+    );
+    let eventually = law_envelope(
+        "hr.Payout.eventually_settled",
+        "hr.Payout",
+        "entity",
+        "hr.Payout",
+        "eventually",
+        json!({}),
+    );
     let with_exception = law_envelope(
         "hr.Shift.max_span",
         "hr.Shift",
@@ -313,43 +332,122 @@ fn law_honesty_distinguishes_enforced_from_declared_only() {
             }]
         }),
     );
-    let app_root = law_envelope("hr.App.cross_entity", "hr.Payslip", "app", "hr", "always", json!({}));
+    let app_root = law_envelope(
+        "hr.App.cross_entity",
+        "hr.Payslip",
+        "app",
+        "hr",
+        "always",
+        json!({}),
+    );
 
     let statuses = classify_law_honesty(&[enforced, eventually, with_exception, app_root]);
     assert_eq!(statuses.len(), 4);
     let by_id = |id: &str| statuses.iter().find(|s| s.law_id == id).expect("status");
 
-    assert_eq!(by_id("hr.Payslip.exact_net").enforcement, LawEnforcementStatus::Enforced);
+    assert_eq!(
+        by_id("hr.Payslip.exact_net").enforcement,
+        LawEnforcementStatus::Enforced
+    );
     assert_eq!(by_id("hr.Payslip.exact_net").proof, LawProofStatus::Unknown);
     assert_eq!(by_id("hr.Payslip.exact_net").reason, None);
 
-    assert_eq!(by_id("hr.Payout.eventually_settled").enforcement, LawEnforcementStatus::DeclaredOnly);
-    assert!(by_id("hr.Payout.eventually_settled").reason.as_deref().unwrap().contains("temporal"));
+    assert_eq!(
+        by_id("hr.Payout.eventually_settled").enforcement,
+        LawEnforcementStatus::DeclaredOnly
+    );
+    assert!(
+        by_id("hr.Payout.eventually_settled")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("temporal")
+    );
 
-    assert_eq!(by_id("hr.Shift.max_span").enforcement, LawEnforcementStatus::DeclaredOnly);
-    assert!(by_id("hr.Shift.max_span").reason.as_deref().unwrap().contains("exception"));
+    assert_eq!(
+        by_id("hr.Shift.max_span").enforcement,
+        LawEnforcementStatus::DeclaredOnly
+    );
+    assert!(
+        by_id("hr.Shift.max_span")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("exception")
+    );
 
-    assert_eq!(by_id("hr.App.cross_entity").enforcement, LawEnforcementStatus::DeclaredOnly);
-    assert!(by_id("hr.App.cross_entity").reason.as_deref().unwrap().contains("single-entity"));
+    assert_eq!(
+        by_id("hr.App.cross_entity").enforcement,
+        LawEnforcementStatus::DeclaredOnly
+    );
+    assert!(
+        by_id("hr.App.cross_entity")
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("single-entity")
+    );
 }
 
 #[test]
 fn datalog_red_team_catches_branch_hop_unauth_settlement_self_ratify_and_unconstrained_write() {
     let report = analyze_red_team(&payout_fixture());
-    assert!(report.is_complete(), "{:?} {:?}", report.evaluation_errors, report.decode_errors);
+    assert!(
+        report.is_complete(),
+        "{:?} {:?}",
+        report.evaluation_errors,
+        report.decode_errors
+    );
 
-    assert_eq!(report.scope_confinement.len(), 2, "{:?}", report.scope_confinement);
-    assert!(report.scope_confinement.iter().any(|f| f.rule_id == "bm_roster_unscoped_duplicate" && f.resource_type == "hr.Roster"));
-    assert!(report.scope_confinement.iter().any(|f| f.rule_id == "bm_safe_departure_unscoped" && f.resource_type == "hr.SafeDepartureRule"));
+    assert_eq!(
+        report.scope_confinement.len(),
+        2,
+        "{:?}",
+        report.scope_confinement
+    );
+    assert!(
+        report
+            .scope_confinement
+            .iter()
+            .any(|f| f.rule_id == "bm_roster_unscoped_duplicate" && f.resource_type == "hr.Roster")
+    );
+    assert!(
+        report
+            .scope_confinement
+            .iter()
+            .any(|f| f.rule_id == "bm_safe_departure_unscoped"
+                && f.resource_type == "hr.SafeDepartureRule")
+    );
 
-    assert_eq!(report.unauthenticated_settlements.len(), 1, "{:?}", report.unauthenticated_settlements);
-    assert_eq!(report.unauthenticated_settlements[0].action_id, "hr.payout.confirm_succeeded");
+    assert_eq!(
+        report.unauthenticated_settlements.len(),
+        1,
+        "{:?}",
+        report.unauthenticated_settlements
+    );
+    assert_eq!(
+        report.unauthenticated_settlements[0].action_id,
+        "hr.payout.confirm_succeeded"
+    );
 
-    assert_eq!(report.self_ratifiable_transitions.len(), 1, "{:?}", report.self_ratifiable_transitions);
-    assert_eq!(report.self_ratifiable_transitions[0].action_id, "hr.payout.dispatch");
+    assert_eq!(
+        report.self_ratifiable_transitions.len(),
+        1,
+        "{:?}",
+        report.self_ratifiable_transitions
+    );
+    assert_eq!(
+        report.self_ratifiable_transitions[0].action_id,
+        "hr.payout.dispatch"
+    );
     assert_eq!(report.self_ratifiable_transitions[0].role, "owner");
 
-    assert_eq!(report.unconstrained_writes.len(), 1, "{:?}", report.unconstrained_writes);
+    assert_eq!(
+        report.unconstrained_writes.len(),
+        1,
+        "{:?}",
+        report.unconstrained_writes
+    );
     assert_eq!(report.unconstrained_writes[0].property, "late_minutes");
 }
 
@@ -357,9 +455,27 @@ fn datalog_red_team_catches_branch_hop_unauth_settlement_self_ratify_and_unconst
 fn red_team_handles_multi_lifecycle_fact_trigger_and_non_identity_sod_fail_closed() {
     let order = multi_lifecycle_order_entity();
     let create = order_create_action();
-    let submit = transition_action("hr.order.submit", "hr.Order", "approval_state", "submit", &[]);
-    let fulfill_close = transition_action("hr.order.fulfill_close", "hr.Order", "fulfillment_state", "auto_close", &["created_by"]);
-    let unauth_auto = transition_action("hr.order.force_auto_approve", "hr.Order", "approval_state", "auto_close", &[]);
+    let submit = transition_action(
+        "hr.order.submit",
+        "hr.Order",
+        "approval_state",
+        "submit",
+        &[],
+    );
+    let fulfill_close = transition_action(
+        "hr.order.fulfill_close",
+        "hr.Order",
+        "fulfillment_state",
+        "auto_close",
+        &["created_by"],
+    );
+    let unauth_auto = transition_action(
+        "hr.order.force_auto_approve",
+        "hr.Order",
+        "approval_state",
+        "auto_close",
+        &[],
+    );
     let policy = envelope(
         "policy",
         "hr.order.policy",
@@ -381,16 +497,37 @@ fn red_team_handles_multi_lifecycle_fact_trigger_and_non_identity_sod_fail_close
     );
 
     let report = analyze_red_team(&[order, create, submit, fulfill_close, unauth_auto, policy]);
-    assert!(report.is_complete(), "{:?} {:?}", report.evaluation_errors, report.decode_errors);
-    assert!(report.unauthenticated_settlements.iter().any(|f| f.action_id == "hr.order.force_auto_approve"));
-    assert!(report.self_ratifiable_transitions.iter().any(|f| f.action_id == "hr.order.submit" && f.role == "clerk"));
+    assert!(
+        report.is_complete(),
+        "{:?} {:?}",
+        report.evaluation_errors,
+        report.decode_errors
+    );
+    assert!(
+        report
+            .unauthenticated_settlements
+            .iter()
+            .any(|f| f.action_id == "hr.order.force_auto_approve")
+    );
+    assert!(
+        report
+            .self_ratifiable_transitions
+            .iter()
+            .any(|f| f.action_id == "hr.order.submit" && f.role == "clerk")
+    );
 }
 
 #[test]
 fn red_team_rejects_unprotected_field_as_sod() {
     let order = multi_lifecycle_order_entity();
     let create = order_create_action();
-    let submit = transition_action("hr.order.submit", "hr.Order", "approval_state", "submit", &[]);
+    let submit = transition_action(
+        "hr.order.submit",
+        "hr.Order",
+        "approval_state",
+        "submit",
+        &[],
+    );
     // `requester` is NOT protected (caller-writable); `requester != principal.id` MUST NOT count as SoD!
     let policy = envelope(
         "policy",
@@ -413,7 +550,12 @@ fn red_team_rejects_unprotected_field_as_sod() {
     );
 
     let report = analyze_red_team(&[order, create, submit, policy]);
-    assert!(report.is_complete(), "{:?} {:?}", report.evaluation_errors, report.decode_errors);
+    assert!(
+        report.is_complete(),
+        "{:?} {:?}",
+        report.evaluation_errors,
+        report.decode_errors
+    );
     assert!(
         report
             .self_ratifiable_transitions
@@ -428,7 +570,13 @@ fn red_team_rejects_unprotected_field_as_sod() {
 fn red_team_accepts_protected_creator_sod_predicate() {
     let order = multi_lifecycle_order_entity();
     let create = order_create_action();
-    let submit = transition_action("hr.order.submit", "hr.Order", "approval_state", "submit", &[]);
+    let submit = transition_action(
+        "hr.order.submit",
+        "hr.Order",
+        "approval_state",
+        "submit",
+        &[],
+    );
     let policy = envelope(
         "policy",
         "hr.order.protected_sod.policy",
@@ -459,7 +607,12 @@ fn red_team_accepts_protected_creator_sod_predicate() {
     );
 
     let report = analyze_red_team(&[order, create, submit, policy]);
-    assert!(report.is_complete(), "{:?} {:?}", report.evaluation_errors, report.decode_errors);
+    assert!(
+        report.is_complete(),
+        "{:?} {:?}",
+        report.evaluation_errors,
+        report.decode_errors
+    );
     assert!(
         report.self_ratifiable_transitions.is_empty(),
         "protected `created_by` ne principal.id should satisfy SoD: {:?}",

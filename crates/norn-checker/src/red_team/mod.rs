@@ -204,10 +204,7 @@ impl RedTeamReport {
             ),
         );
         if !self.evaluation_errors.is_empty() {
-            map.insert(
-                "evaluationErrors".to_owned(),
-                json!(self.evaluation_errors),
-            );
+            map.insert("evaluationErrors".to_owned(), json!(self.evaluation_errors));
         }
         if !self.decode_errors.is_empty() {
             map.insert("decodeErrors".to_owned(), json!(self.decode_errors));
@@ -223,7 +220,10 @@ pub(super) fn s(text: &str) -> Value {
 pub(super) fn atom(predicate: &str, vars: &[&str]) -> Atom {
     Atom {
         predicate: predicate.to_owned(),
-        terms: vars.iter().map(|name| Term::Variable((*name).to_owned())).collect(),
+        terms: vars
+            .iter()
+            .map(|name| Term::Variable((*name).to_owned()))
+            .collect(),
     }
 }
 
