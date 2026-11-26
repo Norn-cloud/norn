@@ -419,6 +419,10 @@ run_gate fast owl-time-allen-lean \
   "lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean" \
   command \
   lean -DwarningAsError=true verification/owl-time-v1/AllenIntervals.lean
+run_gate fast data-lineage-lean \
+  "lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean" \
+  command \
+  lean -DwarningAsError=true verification/data-lineage-v1/DataLineage.lean
 run_gate fast transition-lean \
   "lean -DwarningAsError=true verification/stripmine-2026-08-22/proofs/lean/OwnerVersionCas.lean" \
   command \

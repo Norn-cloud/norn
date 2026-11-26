@@ -40,6 +40,8 @@ mod core_time;
 mod core_units;
 #[path = "core_value_types.rs"]
 mod core_value_types;
+#[path = "data_ontology.rs"]
+mod data_ontology;
 #[path = "defined_concepts.rs"]
 mod defined_concepts;
 #[path = "definition_catalog.rs"]

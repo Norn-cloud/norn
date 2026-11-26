@@ -15,6 +15,7 @@ test/connector.test.ts
 test/constitution.test.ts
 test/core-rea.test.ts
 test/dashboard.test.ts
+test/data-pack.test.ts
 test/decisions.test.ts
 test/dev-install.test.ts
 test/dev-loop.test.ts
