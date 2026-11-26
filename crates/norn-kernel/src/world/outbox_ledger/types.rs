@@ -5,7 +5,6 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::super::outbox::{OperationKey, OutboxState, Queue};
-use super::OperationLedger;
 
 /// A 32-byte SHA-256 digest encoded as 64 lowercase hexadecimal digits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -262,7 +261,7 @@ impl OutboxRecord {
     }
 }
 
-/// Outcome of applying one [`OutboxRecord`] to an [`OperationLedger`].
+/// Outcome of applying one [`OutboxRecord`] to an [`super::OperationLedger`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ApplyStatus {
     /// The record advanced or appended immutable state on the ledger.
@@ -271,8 +270,8 @@ pub enum ApplyStatus {
     IdempotentDuplicate,
 }
 
-/// Why [`OperationLedger::start`], [`OperationLedger::apply`], or
-/// [`OperationLedger::replay`] refused a record. A refusal never mutates state.
+/// Why [`super::OperationLedger::start`], [`super::OperationLedger::apply`], or
+/// [`super::OperationLedger::replay`] refused a record. A refusal never mutates state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, thiserror::Error)]
 pub enum OutboxLedgerRefusal {
     /// Cannot replay an empty record slice.
@@ -383,6 +382,9 @@ pub struct GenerationRecord {
     pub outcome: Option<RecordedOutcome>,
     /// Restore fence commit sequence if restored at this generation.
     pub fenced_commit_seq: Option<u64>,
+    /// Whether durable reconciliation confirmed this generation's outcome
+    /// after its most recent restore fence (cleared on every `RestoreFenced`).
+    pub reconciled_since_restore: bool,
     /// Append-only reconciliation records targeting this generation.
     pub reconciliations: Vec<ReconciliationEntry>,
     /// Commit sequence that consumed this generation's outcome, if any (write-once).
@@ -396,19 +398,26 @@ impl GenerationRecord {
         self.dispatch.is_some() && self.outcome.is_none()
     }
 
-    /// Whether durable reconciliation explicitly confirmed this generation's outcome.
+    /// Whether durable reconciliation confirmed this generation's outcome
+    /// after any restore fence on this generation.
     #[must_use]
-    pub fn has_reconciled_outcome(&self) -> bool {
-        self.reconciliations.iter().any(|entry| {
-            matches!(
-                entry.decision,
-                ReconciliationDecision::ConfirmedOutcome { .. }
-            )
-        })
+    pub const fn has_reconciled_outcome(&self) -> bool {
+        self.reconciled_since_restore
     }
 }
 
-/// Compensation lifecycle status on an [`OperationLedger`].
+/// Bound reissue authorization tying a reconciliation decision to the exact
+/// source generation that authorized `next_generation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReissueAuthorization {
+    /// The active generation that recorded `AuthorizeReissue`.
+    pub from_generation: u64,
+    /// The exact newer generation authorized for reissue.
+    pub next_generation: u64,
+}
+
+/// Compensation lifecycle status on an [`super::OperationLedger`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase", deny_unknown_fields)]
 pub enum CompensationStatus {
@@ -429,7 +438,11 @@ pub enum CompensationStatus {
 }
 
 /// Pure projection of the mutable queue head derived solely from an
-/// [`OperationLedger`].
+/// [`super::OperationLedger`].
+///
+/// Reflects only the active generation: late evidence attaching to superseded
+/// prior generations never alters `HeadProjection` (inspect prior successes via
+/// [`super::OperationLedger::prior_confirmed_successes`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HeadProjection {
@@ -449,8 +462,4 @@ pub struct HeadProjection {
     /// masked by an unreconciled restore fence). Never carries an older
     /// generation's outcome.
     pub outcome: Option<RecordedOutcome>,
-    /// Whether any earlier superseded generation `< generation` recorded a
-    /// confirmed successful outcome (`ok == true`), signaling potential
-    /// compensation follow-up without mutating the active head.
-    pub has_prior_confirmed_success: bool,
 }

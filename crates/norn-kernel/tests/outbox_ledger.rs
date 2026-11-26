@@ -8,7 +8,7 @@ use norn_kernel::world::outbox::{OperationKey, OutboxState, Queue};
 use norn_kernel::world::outbox_ledger::{
     ApplyStatus, CompensationStatus, DispatchProof, HeadProjection, OperationLedger, OutboxDigest,
     OutboxLedgerRefusal, OutboxRecord, OutboxRecordKind, OutcomeEvidence, OutcomeSource,
-    ProviderDedupContract, ReconciliationDecision, RecordedOutcome,
+    ProviderDedupContract, ReconciliationDecision, RecordedOutcome, ReissueAuthorization,
 };
 
 fn op_key(name: &str) -> OperationKey {
@@ -116,10 +116,11 @@ fn old_result_never_settles_new_generation_and_attaches_to_original_via_dispatch
         req(op, 2, Queue::Fifo, 0xaa, ProviderDedupContract::None, 13),
     ];
     let mut ledger = OperationLedger::replay(&log).unwrap();
-    assert_eq!(ledger.head_projection().generation, 2);
-    assert_eq!(ledger.head_projection().state, OutboxState::Requested);
-    assert_eq!(ledger.head_projection().outcome, None);
-    assert!(!ledger.head_projection().has_prior_confirmed_success);
+    let head_before = ledger.head_projection();
+    assert_eq!(head_before.generation, 2);
+    assert_eq!(head_before.state, OutboxState::Requested);
+    assert_eq!(head_before.outcome, None);
+    assert!(ledger.prior_confirmed_successes().is_empty());
 
     let gen1_proof = DispatchProof {
         operation: op,
@@ -142,7 +143,8 @@ fn old_result_never_settles_new_generation_and_attaches_to_original_via_dispatch
     );
     assert_eq!(ledger, snapshot);
 
-    // Valid late outcome for gen 1 attaches strictly to gen 1, leaving gen 2 untouched.
+    // Valid late outcome for gen 1 attaches strictly to gen 1, leaving gen 2
+    // and the entire HeadProjection completely unchanged.
     let late_gen1_outcome = dispatch_outcome(op, 1, gen1_proof, true, 0x11, 14);
     assert_eq!(ledger.apply(&late_gen1_outcome), Ok(ApplyStatus::Applied));
     assert_eq!(
@@ -156,11 +158,7 @@ fn old_result_never_settles_new_generation_and_attaches_to_original_via_dispatch
             commit_seq: 14,
         })
     );
-    let head = ledger.head_projection();
-    assert_eq!(head.generation, 2);
-    assert_eq!(head.state, OutboxState::Requested);
-    assert_eq!(head.outcome, None);
-    assert!(head.has_prior_confirmed_success);
+    assert_eq!(ledger.head_projection(), head_before);
     assert_eq!(ledger.prior_confirmed_successes(), vec![1]);
     assert_eq!(
         ledger.apply(&consumed(op, 1, 15)),
@@ -641,8 +639,223 @@ fn assert_step_invariants(
         && current.active().is_ambiguous_dispatch()
         && current.active().dedup_contract == ProviderDedupContract::None
     {
-        assert_eq!(current.authorized_reissue(), Some(record.generation));
+        assert_eq!(
+            current.authorized_reissue(),
+            Some(ReissueAuthorization {
+                from_generation: current.active_generation(),
+                next_generation: record.generation,
+            })
+        );
     }
+}
+
+#[test]
+fn restore_fence_invalidates_pre_restore_confirmation_and_reissue_authorization() {
+    let op = op_key("restore-invalidation/1");
+    let mut confirmed = OperationLedger::replay(&[
+        req(op, 1, Queue::Fifo, 0xaa, ProviderDedupContract::None, 1),
+        dispatched(op, 1, 2),
+        reconciled(
+            op,
+            1,
+            ReconciliationDecision::ConfirmedOutcome {
+                ok: true,
+                outcome_digest: digest(0x11),
+            },
+            3,
+        ),
+        OutboxRecord {
+            operation: op,
+            generation: 1,
+            kind: OutboxRecordKind::RestoreFenced { commit_seq: 4 },
+        },
+    ])
+    .unwrap();
+    // Pre-restore ConfirmedOutcome does not satisfy post-restore consumption.
+    assert_eq!(
+        confirmed.head_projection().state,
+        OutboxState::ReconciliationRequired { fenced_at: 1 }
+    );
+    assert_eq!(
+        confirmed.apply(&consumed(op, 1, 5)),
+        Err(OutboxLedgerRefusal::Fenced { fenced_at: 1 })
+    );
+    assert_eq!(
+        confirmed.apply(&reconciled(
+            op,
+            1,
+            ReconciliationDecision::ConfirmedOutcome {
+                ok: true,
+                outcome_digest: digest(0x11),
+            },
+            6,
+        )),
+        Ok(ApplyStatus::Applied)
+    );
+    assert_eq!(
+        confirmed.apply(&consumed(op, 1, 7)),
+        Ok(ApplyStatus::Applied)
+    );
+
+    // Pre-restore AuthorizeReissue(3) must not survive RestoreFenced(1).
+    let mut auth = OperationLedger::replay(&[
+        req(op, 1, Queue::Fifo, 0xaa, ProviderDedupContract::None, 1),
+        dispatched(op, 1, 2),
+        reconciled(
+            op,
+            1,
+            ReconciliationDecision::AuthorizeReissue { next_generation: 3 },
+            3,
+        ),
+        OutboxRecord {
+            operation: op,
+            generation: 1,
+            kind: OutboxRecordKind::RestoreFenced { commit_seq: 4 },
+        },
+    ])
+    .unwrap();
+    assert_eq!(auth.authorized_reissue(), None);
+    assert_eq!(
+        auth.apply(&req(
+            op,
+            3,
+            Queue::Fifo,
+            0xaa,
+            ProviderDedupContract::None,
+            5
+        )),
+        Err(OutboxLedgerRefusal::Fenced { fenced_at: 1 })
+    );
+}
+
+#[test]
+fn reissue_authorization_is_invalidated_when_head_advances_to_another_generation() {
+    let op = op_key("auth-bound/1");
+    let mut ledger = OperationLedger::replay(&[
+        req(
+            op,
+            1,
+            Queue::Fifo,
+            0xaa,
+            ProviderDedupContract::OperationKeyIdempotent,
+            1,
+        ),
+        dispatched(op, 1, 2),
+        reconciled(
+            op,
+            1,
+            ReconciliationDecision::AuthorizeReissue { next_generation: 3 },
+            3,
+        ),
+        // Advance to gen 2 through the idempotent dedup path; gen 1's
+        // authorization for gen 3 must be invalidated.
+        req(
+            op,
+            2,
+            Queue::Fifo,
+            0xaa,
+            ProviderDedupContract::OperationKeyIdempotent,
+            4,
+        ),
+        dispatched(op, 2, 5),
+    ])
+    .unwrap();
+    assert_eq!(ledger.authorized_reissue(), None);
+    assert_eq!(
+        ledger.apply(&req(
+            op,
+            3,
+            Queue::Fifo,
+            0xbb,
+            ProviderDedupContract::None,
+            6,
+        )),
+        Err(OutboxLedgerRefusal::AmbiguousDispatchRequiresReconciliation { generation: 2 })
+    );
+}
+
+#[test]
+fn same_generation_divergence_fails_closed_even_after_supersession_or_consumption() {
+    let op = op_key("diverge-history/1");
+    let mut ledger = OperationLedger::replay(&[
+        req(op, 1, Queue::Fifo, 0x10, ProviderDedupContract::None, 1),
+        req(op, 2, Queue::Fifo, 0x20, ProviderDedupContract::None, 2),
+        dispatched(op, 2, 3),
+        dispatch_outcome(
+            op,
+            2,
+            DispatchProof {
+                operation: op,
+                generation: 2,
+                claim_commit_seq: 3,
+            },
+            true,
+            0x99,
+            4,
+        ),
+        consumed(op, 2, 5),
+    ])
+    .unwrap();
+    let before = ledger.clone();
+    // Superseded gen 1: identical replay is idempotent, divergent payload fails closed.
+    assert_eq!(
+        ledger.apply(&req(
+            op,
+            1,
+            Queue::Fifo,
+            0x10,
+            ProviderDedupContract::None,
+            6
+        )),
+        Ok(ApplyStatus::IdempotentDuplicate)
+    );
+    assert_eq!(
+        ledger.apply(&req(
+            op,
+            1,
+            Queue::Fifo,
+            0x11,
+            ProviderDedupContract::None,
+            6
+        )),
+        Err(OutboxLedgerRefusal::PayloadDiverged)
+    );
+    // Consumed gen 2: identical replay is idempotent, divergent payload fails closed.
+    assert_eq!(
+        ledger.apply(&req(
+            op,
+            2,
+            Queue::Fifo,
+            0x20,
+            ProviderDedupContract::None,
+            7
+        )),
+        Ok(ApplyStatus::IdempotentDuplicate)
+    );
+    assert_eq!(
+        ledger.apply(&req(
+            op,
+            2,
+            Queue::Fifo,
+            0x21,
+            ProviderDedupContract::None,
+            7
+        )),
+        Err(OutboxLedgerRefusal::PayloadDiverged)
+    );
+    // A brand-new generation after terminal Consumed still refuses Terminal.
+    assert_eq!(
+        ledger.apply(&req(
+            op,
+            3,
+            Queue::Fifo,
+            0x30,
+            ProviderDedupContract::None,
+            8
+        )),
+        Err(OutboxLedgerRefusal::Terminal)
+    );
+    assert_eq!(ledger, before);
 }
 
 /// Bounded BFS over reachable `OperationLedger` states across generations
@@ -710,9 +923,9 @@ fn json_roundtrip_preserves_records_ledger_and_head_projection() {
     assert_eq!(decoded_records, records);
 
     let ledger = OperationLedger::replay(&decoded_records).unwrap();
-    let encoded_ledger = serde_json::to_string(&ledger).unwrap();
-    let decoded_ledger: OperationLedger = serde_json::from_str(&encoded_ledger).unwrap();
-    assert_eq!(decoded_ledger, ledger);
+    let ledger_replayed = OperationLedger::replay(&records).unwrap();
+    assert_eq!(ledger, ledger_replayed);
+    assert!(serde_json::to_string(&ledger).is_ok());
 
     let head = ledger.head_projection();
     let encoded_head = serde_json::to_string(&head).unwrap();

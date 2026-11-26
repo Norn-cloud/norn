@@ -35,26 +35,30 @@ mod types;
 
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::outbox::{OperationKey, OutboxState, Queue};
 pub use types::{
     ApplyStatus, CompensationStatus, DispatchProof, GenerationKey, GenerationRecord,
     HeadProjection, OutboxDigest, OutboxLedgerRefusal, OutboxRecord, OutboxRecordKind,
     OutcomeEvidence, OutcomeSource, ProviderDedupContract, ReconciliationDecision,
-    ReconciliationEntry, RecordedOutcome,
+    ReconciliationEntry, RecordedOutcome, ReissueAuthorization,
 };
 
 /// Immutable per-generation ledger for one business operation (`OperationKey`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+///
+/// Always constructed through [`Self::start`] or [`Self::replay`] from
+/// immutable [`OutboxRecord`]s so every state invariant holds by construction
+/// (never directly deserialized from unvalidated snapshot state).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationLedger {
     operation: OperationKey,
     queue: Queue,
     active: GenerationRecord,
     prior_generations: BTreeMap<u64, GenerationRecord>,
     fence: Option<u64>,
-    authorized_reissue: Option<u64>,
+    authorized_reissue: Option<ReissueAuthorization>,
     compensation: Option<CompensationStatus>,
 }
 
@@ -88,6 +92,7 @@ impl OperationLedger {
                 outcome_unknown: false,
                 outcome: None,
                 fenced_commit_seq: None,
+                reconciled_since_restore: false,
                 reconciliations: Vec::new(),
                 consumed_commit_seq: None,
             },
@@ -152,9 +157,9 @@ impl OperationLedger {
         self.fence
     }
 
-    /// The currently authorized reissue generation, if any.
+    /// The currently authorized reissue, bound to the active generation, if any.
     #[must_use]
-    pub const fn authorized_reissue(&self) -> Option<u64> {
+    pub const fn authorized_reissue(&self) -> Option<ReissueAuthorization> {
         self.authorized_reissue
     }
 
@@ -239,11 +244,6 @@ impl OperationLedger {
             self.active.outcome
         };
 
-        let has_prior_confirmed_success = self
-            .prior_generations
-            .values()
-            .any(|rec| rec.outcome.is_some_and(|recorded| recorded.ok));
-
         HeadProjection {
             operation: self.operation,
             queue: self.queue,
@@ -252,7 +252,6 @@ impl OperationLedger {
             dedup_contract: self.active.dedup_contract,
             state,
             outcome,
-            has_prior_confirmed_success,
         }
     }
 
@@ -267,6 +266,27 @@ impl OperationLedger {
     pub fn apply(&mut self, record: &OutboxRecord) -> Result<ApplyStatus, OutboxLedgerRefusal> {
         if record.operation != self.operation {
             return Err(OutboxLedgerRefusal::OperationMismatch);
+        }
+        // Same-generation `Requested` checks run uniformly across active,
+        // superseded, and consumed generations so payload divergence always
+        // fails closed and identical replays remain idempotent.
+        if let OutboxRecordKind::Requested {
+            queue,
+            payload_digest,
+            dedup_contract,
+            ..
+        } = record.kind
+            && let Some(existing) = self.generation(record.generation)
+        {
+            if queue != self.queue {
+                return Err(OutboxLedgerRefusal::QueueChanged);
+            }
+            if existing.payload_digest != payload_digest
+                || existing.dedup_contract != dedup_contract
+            {
+                return Err(OutboxLedgerRefusal::PayloadDiverged);
+            }
+            return Ok(ApplyStatus::IdempotentDuplicate);
         }
         if record.generation < self.active.generation {
             return self.apply_prior(record);
@@ -397,18 +417,6 @@ impl OperationLedger {
         dedup_contract: ProviderDedupContract,
         commit_seq: u64,
     ) -> Result<ApplyStatus, OutboxLedgerRefusal> {
-        if generation == self.active.generation {
-            if queue != self.queue {
-                return Err(OutboxLedgerRefusal::QueueChanged);
-            }
-            if self.active.payload_digest != payload_digest
-                || self.active.dedup_contract != dedup_contract
-            {
-                return Err(OutboxLedgerRefusal::PayloadDiverged);
-            }
-            return Ok(ApplyStatus::IdempotentDuplicate);
-        }
-
         if self.compensation.is_some() {
             return Err(OutboxLedgerRefusal::NotPending);
         }
@@ -416,7 +424,11 @@ impl OperationLedger {
             return Err(OutboxLedgerRefusal::QueueChanged);
         }
 
-        let authorized = self.authorized_reissue == Some(generation);
+        let authorized = self.authorized_reissue
+            == Some(ReissueAuthorization {
+                from_generation: self.active.generation,
+                next_generation: generation,
+            });
         if let Some(fenced_at) = self.active_fence() {
             if !authorized || generation <= fenced_at {
                 return Err(OutboxLedgerRefusal::Fenced { fenced_at });
@@ -447,14 +459,15 @@ impl OperationLedger {
             outcome_unknown: false,
             outcome: None,
             fenced_commit_seq: None,
+            reconciled_since_restore: false,
             reconciliations: Vec::new(),
             consumed_commit_seq: None,
         };
         let previous = std::mem::replace(&mut self.active, next);
         self.prior_generations.insert(previous.generation, previous);
-        if authorized {
-            self.authorized_reissue = None;
-        }
+        // Any head advance invalidates prior reissue authorization bound to
+        // the superseded active generation.
+        self.authorized_reissue = None;
         Ok(ApplyStatus::Applied)
     }
 
@@ -604,6 +617,7 @@ impl OperationLedger {
             });
             gen_rec.outcome_unknown = false;
         }
+        gen_rec.reconciled_since_restore = true;
         gen_rec.reconciliations.push(ReconciliationEntry {
             decision,
             commit_seq,
@@ -654,12 +668,11 @@ impl OperationLedger {
             self.fence
                 .map_or(generation, |existing| existing.max(generation)),
         );
-        if self
-            .authorized_reissue
-            .is_some_and(|authorized| authorized <= generation)
-        {
-            self.authorized_reissue = None;
-        }
+        // Every restore invalidates pre-restore reissue authorizations and
+        // pre-restore outcome confirmations so fresh post-restore reconciliation
+        // is strictly required.
+        self.authorized_reissue = None;
+        self.active.reconciled_since_restore = false;
         self.active.fenced_commit_seq = Some(commit_seq);
         Ok(ApplyStatus::Applied)
     }
@@ -699,6 +712,7 @@ impl OperationLedger {
                     });
                     self.active.outcome_unknown = false;
                 }
+                self.active.reconciled_since_restore = true;
                 self.active.reconciliations.push(ReconciliationEntry {
                     decision,
                     commit_seq,
@@ -714,7 +728,10 @@ impl OperationLedger {
                 {
                     return Err(OutboxLedgerRefusal::Fenced { fenced_at });
                 }
-                self.authorized_reissue = Some(next_generation);
+                self.authorized_reissue = Some(ReissueAuthorization {
+                    from_generation: generation,
+                    next_generation,
+                });
                 self.active.reconciliations.push(ReconciliationEntry {
                     decision,
                     commit_seq,
