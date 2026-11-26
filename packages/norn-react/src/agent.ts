@@ -112,17 +112,31 @@ export function confirmReason(ux: WidgetUx, machine: Machine | undefined, nodeId
 }
 
 /**
- * Why submitting `form` needs a person (L6): its own submit confirmation is not `safe`, or its
- * `submitBindingId` starts a consequential action or one whose effects the server has not said.
+ * Why submitting `form` needs a person (L6): its own submit confirmation is not `safe` or requires
+ * confirmation, its `submitBindingId` starts a consequential or unknown-effects action, OR any
+ * machine transition triggered by the form node's `user` events starts a consequential or
+ * unknown-effects action (fails closed).
  */
-export function formConfirmReason(ux: WidgetUx, form: WidgetForm, effectsOf: (actionId: string) => ActionEffects | undefined, locale: string, translate?: Translate): string | null {
+export function formConfirmReason(
+  ux: WidgetUx,
+  machine: Machine | undefined,
+  nodeId: string,
+  form: WidgetForm,
+  effectsOf: (actionId: string) => ActionEffects | undefined,
+  locale: string,
+  translate?: Translate,
+): string | null {
   const reasons: string[] = []
   if (form.submit.confirmation.severity !== "safe") {
     reasons.push(`${text(form.submit.label, locale, translate)}: ${form.submit.confirmation.severity}`)
+  } else if (form.submit.confirmation.strength !== "none") {
+    reasons.push(`${text(form.submit.label, locale, translate)}: confirmation required`)
   }
   reasons.push(...severities(ux, form.submitBindingId, locale, translate))
   const binding = ux.actionBindings.find((candidate) => candidate.bindingId === form.submitBindingId)
   const reason = effectsReason(binding === undefined ? undefined : effectsOf(binding.action.id))
   if (reason !== null) reasons.push(`${binding?.action.id ?? form.submitBindingId}: ${reason}`)
+  const machineReason = confirmReason(ux, machine, nodeId, null, effectsOf, locale, translate)
+  if (machineReason !== null) reasons.push(machineReason)
   return reasons.length === 0 ? null : [...new Set(reasons)].join(". ")
 }

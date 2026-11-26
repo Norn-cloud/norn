@@ -17,18 +17,19 @@ import { Select, SelectContent, SelectEmpty, SelectItem, SelectItemText, SelectL
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs"
 import { Textarea } from "@ui-sdk/react/textarea"
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type FormEvent, type KeyboardEvent, type ReactNode } from "react"
-import { confirmMark, confirmReason, formConfirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
+import { confirmMark, confirmReason, formConfirmReason, rowMark, valueMark, type ActionEffects, type AgentAttributes, type MaskedProperty } from "./agent.ts"
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
 import { enabled, eventsOf } from "./machine/controls.ts"
 import { EngineNotReady } from "./machine/evaluate.ts"
 import type { Fields, Machine, MachineEvent } from "./machine/machine.ts"
 import { messageOf, type BindingCallState, type BindingReadState } from "./reads.ts"
-import type { MachineRuntime } from "./runtime.ts"
+import type { MachineRuntime, PinnedRecord } from "./runtime.ts"
 import { matchActionState, matchReadState } from "./state.ts"
 import {
   nodesOf,
   text,
+  type ActionConfirmation,
   type Component,
   type DismissalMethod,
   type FieldFormat,
@@ -322,8 +323,10 @@ function TabSectionGroup({ scope, tabs }: { readonly scope: PageScope; readonly 
           const tabDomId = `${groupId}-tab-${safe}`
           const panelDomId = `${groupId}-panel-${safe}`
           const label = text(tab.component.section.label, scope.locale, scope.translate)
+          const tabConfirm = confirmMark(confirmReason(scope.ux, scope.machine, tab.nodeId, null, scope.actionEffects, scope.locale, scope.translate))
           return (
             <TabsTab
+              {...tabConfirm}
               key={tab.nodeId}
               value={tab.nodeId}
               id={tabDomId}
@@ -343,6 +346,7 @@ function TabSectionGroup({ scope, tabs }: { readonly scope: PageScope; readonly 
         const safe = safeDomId(tab.nodeId)
         const tabDomId = `${groupId}-tab-${safe}`
         const panelDomId = `${groupId}-panel-${safe}`
+        const isActive = tab.nodeId === activeNodeId
         const binding = tab.component.section.fields[0]?.bindingId
         const read = binding === undefined ? undefined : scope.runtime.reads.get(binding)
         return (
@@ -351,15 +355,20 @@ function TabSectionGroup({ scope, tabs }: { readonly scope: PageScope; readonly 
             value={tab.nodeId}
             id={panelDomId}
             aria-labelledby={tabDomId}
+            keepMounted
             data-node={tab.nodeId}
             className="grid gap-3 outline-none"
           >
-            {binding !== undefined && (
-              <ReadView state={read}>
-                {(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={tab.component.section.fields} />}
-              </ReadView>
+            {isActive && (
+              <>
+                {binding !== undefined && (
+                  <ReadView state={read}>
+                    {(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={tab.component.section.fields} />}
+                  </ReadView>
+                )}
+                {renderChildren(scope, tab.children)}
+              </>
             )}
-            {renderChildren(scope, tab.children)}
           </TabsPanel>
         )
       })}
@@ -452,6 +461,46 @@ export function selectionEventPayload(
   return out
 }
 
+/** Flatten a projected list row into the top-level entity property shape expected by `input.selection` (`types.rs`). */
+export function flattenSelectionRecord(row: Doc): Record<string, unknown> {
+  const values = asDoc(row.values)
+  const out: Record<string, unknown> = {}
+  if (values !== null) {
+    Object.assign(out, values)
+  } else {
+    for (const [key, value] of Object.entries(row)) {
+      if (key === "values" || key === "masked" || key === "withheld" || key === "withheldProperties") continue
+      out[key] = value
+    }
+  }
+  if (typeof row.id === "string" && row.id !== "" && !Object.hasOwn(out, "id")) out.id = row.id
+  return out
+}
+
+/** Reconcile selected row ids against a refreshed list snapshot, pruning removed or withheld rows. */
+export function reconcileSelection(
+  selectedIds: readonly string[],
+  rows: readonly Doc[],
+): { readonly ids: string[]; readonly records: Record<string, unknown>[]; readonly changed: boolean } {
+  const available = new Map<string, Doc>()
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!
+    if (row.withheld === true) continue
+    available.set(rowIdOf(row, index), row)
+  }
+  const ids: string[] = []
+  const records: Record<string, unknown>[] = []
+  for (const id of selectedIds) {
+    const row = available.get(id)
+    if (row !== undefined) {
+      ids.push(id)
+      records.push(flattenSelectionRecord(row))
+    }
+  }
+  const changed = ids.length !== selectedIds.length || ids.some((id, index) => id !== selectedIds[index])
+  return { ids, records, changed }
+}
+
 function ListRows({
   scope,
   node,
@@ -476,6 +525,17 @@ function ListRows({
   const [focusIndex, setFocusIndex] = useState<number>(0)
   const rowRefs = useRef<Array<HTMLTableRowElement | null>>([])
 
+  const reconciled = selection === "none" ? { ids: [] as string[], records: [] as Record<string, unknown>[], changed: false } : reconcileSelection(selectedIds, rows)
+  const reconciledKey = selection === "none" ? "" : JSON.stringify(reconciled.records)
+
+  // Reconcile runtime selection immediately when a refresh removes or withholds selected rows.
+  useEffect(() => {
+    if (selection === "none") return
+    if (reconciled.changed) setSelectedIds(reconciled.ids)
+    scope.runtime.setSelection?.(dataBindingId, reconciled.records)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, dataBindingId, reconciledKey, reconciled.changed])
+
   if (rows.length === 0) return <p className={MUTED} data-rows="0">No records.</p>
 
   if (selection === "none") {
@@ -496,9 +556,9 @@ function ListRows({
   }
 
   const rowIds = rows.map((row, index) => rowIdOf(row, index))
-  const validSet = new Set(rowIds)
-  const activeSelected = selectedIds.filter((id) => validSet.has(id))
+  const activeSelected = reconciled.ids
   const clampedFocus = Math.min(Math.max(0, focusIndex), rows.length - 1)
+  const listConfirmMark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale, scope.translate))
 
   const toggleRow = (index: number) => {
     const row = rows[index]
@@ -507,12 +567,11 @@ function ListRows({
     const next = nextSelection(selection, activeSelected, rowId)
     setSelectedIds(next)
     setFocusIndex(index)
-    const selectedSet = new Set(next)
-    const selectedRows = rows.filter((candidate, idx) => candidate.withheld !== true && selectedSet.has(rowIds[idx]!))
-    scope.runtime.setSelection?.(dataBindingId, selectedRows)
+    const nextReconciled = reconcileSelection(next, rows)
+    scope.runtime.setSelection?.(dataBindingId, nextReconciled.records)
     const event = eventFor(scope, node)
     if (event !== undefined) {
-      const payload = selectionEventPayload(event, selection, rowId, next, selectedRows)
+      const payload = selectionEventPayload(event, selection, rowId, nextReconciled.ids, nextReconciled.records)
       raise(scope, node, payload)
     }
   }
@@ -562,6 +621,7 @@ function ListRows({
                   rowRefs.current[index] = el
                 }}
                 {...rowMark(withheld)}
+                {...(withheld ? {} : listConfirmMark)}
                 data-row-id={rowId}
                 data-selected={isSelected ? "" : undefined}
                 aria-selected={isSelected ? "true" : "false"}
@@ -749,12 +809,60 @@ function DialogNode({ scope, node, component }: { readonly scope: PageScope; rea
 
 // ---- Form (WidgetComponent::Form) ---------------------------------------------------------------
 
-/** Validate exact numeric text without converting to binary IEEE-754 float. */
+const MAX_SAFE_INT = BigInt(Number.MAX_SAFE_INTEGER)
+const MIN_SAFE_INT = BigInt(Number.MIN_SAFE_INTEGER)
+
+/**
+ * Parse an exact whole number into a JSON-safe JS integer without silent float rounding.
+ * Rejects decimals, non-digits, and values outside IEEE-754 safe-integer bounds.
+ */
+export function parseExactInteger(value: string): { readonly ok: true; readonly value: number } | { readonly ok: false; readonly message: string } {
+  const trimmed = value.trim()
+  if (!/^-?\d+$/.test(trimmed)) return { ok: false, message: "Enter a whole number." }
+  const big = BigInt(trimmed)
+  if (big < MIN_SAFE_INT || big > MAX_SAFE_INT) {
+    return { ok: false, message: "Whole number exceeds exact integer range." }
+  }
+  const num = Number(big)
+  return { ok: true, value: Object.is(num, -0) ? 0 : num }
+}
+
+/** Validate exact numeric text without converting decimals through binary IEEE-754 float. */
 export function validateExactNumber(value: string, format?: FieldFormat): string | null {
   const trimmed = value.trim()
   if (trimmed === "") return null
-  if (format === "integer") return /^-?\d+$/.test(trimmed) ? null : "Enter a whole number."
+  if (format === "integer") {
+    const parsed = parseExactInteger(trimmed)
+    return parsed.ok ? null : parsed.message
+  }
   return /^-?\d+(\.\d+)?$/.test(trimmed) ? null : "Enter a valid decimal number."
+}
+
+export type ConfirmationDecision =
+  | { readonly kind: "dispatch" }
+  | { readonly kind: "confirm" }
+  | { readonly kind: "error"; readonly message: string }
+
+/**
+ * Gate form submission against its declared `WidgetActionConfirmation` (`strength: "none" | "click" | "typed"`).
+ * Fails closed when `"typed"` confirmation lacks a non-empty phrase or the typed text does not match verbatim.
+ */
+export function canDispatchFormConfirmation(
+  confirmation: ActionConfirmation,
+  state: { readonly confirming: boolean; readonly typedPhrase: string },
+  locale: string,
+  translate?: Translate,
+): ConfirmationDecision {
+  const strength = confirmation.strength as string
+  if (strength === "none") return { kind: "dispatch" }
+  if (!state.confirming) return { kind: "confirm" }
+  if (strength === "typed") {
+    const required = confirmation.phrase === undefined ? "" : text(confirmation.phrase, locale, translate).trim()
+    if (required === "") return { kind: "error", message: "Confirmation phrase is not configured." }
+    if (state.typedPhrase !== required) return { kind: "error", message: `Type "${required}" to confirm.` }
+    return { kind: "dispatch" }
+  }
+  return { kind: "dispatch" }
 }
 
 /** Stable draft key for a `FieldPresentation`. */
@@ -768,14 +876,24 @@ export function extractFieldKey(field: FieldPresentation): string {
   return field.fieldId
 }
 
-/** Build the structured action draft payload from flat field draft state, preserving exact strings. */
+/**
+ * Build the structured action draft payload from flat field draft state:
+ * - Decimals stay exact text strings (VAL-EXACT-1, zero binary float loss).
+ * - Integers (`format: "integer"`) parse to exact JSON integers via `parseExactInteger` (never silently rounded).
+ */
 export function buildFormDraftPayload(fields: readonly FieldPresentation[], draft: Readonly<Record<string, unknown>>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const field of fields) {
     if (field.control === "display") continue
     const key = extractFieldKey(field)
     if (!Object.hasOwn(draft, key)) continue
-    const value = draft[key]
+    let value = draft[key]
+    if (field.control === "number" && field.format === "integer" && typeof value === "string") {
+      const trimmed = value.trim()
+      if (trimmed === "") continue
+      const parsed = parseExactInteger(trimmed)
+      if (parsed.ok) value = parsed.value
+    }
     const target = field.target
     if (target.kind === "form_input" && "inputName" in target && typeof target.inputName === "string") {
       out[target.inputName] = value
@@ -806,38 +924,43 @@ export function computeFormDirty(initial: Readonly<Record<string, unknown>>, dra
   return false
 }
 
-function readPrefillValue(scope: PageScope, form: WidgetForm, field: FieldPresentation): unknown {
+export interface PrefillInfo {
+  readonly value: unknown
+  readonly masked: MaskedProperty | undefined
+  readonly withheld: boolean
+}
+
+function prefillRefOf(form: WidgetForm, field: FieldPresentation): PropertyRef | undefined {
   const target = field.target
-  if (target.kind === "form_input" && "initial" in target && target.initial !== undefined) {
-    const state = scope.runtime.reads.get(target.initial.bindingId)
-    if (state?.kind === "ok") {
-      const doc = asDoc(state.document)
-      const values = asDoc(doc?.values) ?? doc
-      return own(values, target.initial.propertyId)
-    }
-  }
-  if (target.kind === "property" && target.property !== undefined) {
-    const state = scope.runtime.reads.get(target.property.bindingId)
-    if (state?.kind === "ok") {
-      const doc = asDoc(state.document)
-      const values = asDoc(doc?.values) ?? doc
-      return own(values, target.property.propertyId)
-    }
-  }
+  if (target.kind === "form_input" && "initial" in target && target.initial !== undefined) return target.initial
+  if (target.kind === "property" && target.property !== undefined) return target.property
   if (form.dataBindingId !== undefined) {
-    const state = scope.runtime.reads.get(form.dataBindingId)
-    if (state?.kind === "ok") {
-      const doc = asDoc(state.document)
-      const values = asDoc(doc?.values) ?? doc
-      if (target.kind === "parent_property" && "propertyId" in target && typeof target.propertyId === "string") {
-        return own(values, target.propertyId)
-      }
-      if (target.kind === "form_input" && "inputName" in target && typeof target.inputName === "string") {
-        return own(values, target.inputName)
-      }
+    if (target.kind === "parent_property" && "propertyId" in target && typeof target.propertyId === "string") {
+      return { bindingId: form.dataBindingId, propertyId: target.propertyId }
+    }
+    if (target.kind === "form_input" && "inputName" in target && typeof target.inputName === "string") {
+      return { bindingId: form.dataBindingId, propertyId: target.inputName }
     }
   }
   return undefined
+}
+
+/** Read a form field's server prefill together with its L6 masking/withholding metadata. */
+export function readPrefill(scope: PageScope, form: WidgetForm, field: FieldPresentation): PrefillInfo {
+  const ref = prefillRefOf(form, field)
+  if (ref === undefined) return { value: undefined, masked: undefined, withheld: false }
+  const state = scope.runtime.reads.get(ref.bindingId)
+  if (state?.kind !== "ok") return { value: undefined, masked: undefined, withheld: false }
+  const doc = asDoc(state.document)
+  if (doc === null) return { value: undefined, masked: undefined, withheld: false }
+  const masked = own(asDoc(doc.masked), ref.propertyId) as MaskedProperty | undefined
+  const withheld =
+    doc.withheld === true ||
+    masked?.mode === "refuse" ||
+    (Array.isArray(doc.withheldProperties) && doc.withheldProperties.includes(ref.propertyId))
+  if (withheld) return { value: undefined, masked, withheld: true }
+  const values = asDoc(doc.values) ?? doc
+  return { value: own(values, ref.propertyId), masked, withheld: false }
 }
 
 function defaultFieldValue(field: FieldPresentation, prefill: unknown): unknown {
@@ -850,7 +973,8 @@ function buildInitialDraft(scope: PageScope, form: WidgetForm, fields: readonly 
   const initial: Record<string, unknown> = {}
   for (const field of fields) {
     const key = extractFieldKey(field)
-    initial[key] = defaultFieldValue(field, readPrefillValue(scope, form, field))
+    const prefill = readPrefill(scope, form, field)
+    initial[key] = defaultFieldValue(field, prefill.withheld ? undefined : prefill.value)
   }
   return initial
 }
@@ -940,6 +1064,8 @@ function FormFieldControlView({
   field,
   fieldKey,
   value,
+  agentMark,
+  withheld,
   disabled,
   readOnly,
   required,
@@ -951,6 +1077,8 @@ function FormFieldControlView({
   readonly field: FieldPresentation
   readonly fieldKey: string
   readonly value: unknown
+  readonly agentMark: AgentAttributes
+  readonly withheld: boolean
   readonly disabled: boolean
   readonly readOnly: boolean
   readonly required: boolean
@@ -961,7 +1089,9 @@ function FormFieldControlView({
   const label = text(field.label, scope.locale, scope.translate)
   const help = field.help === undefined ? undefined : text(field.help, scope.locale, scope.translate)
   const control = field.control ?? "text"
-  const stringValue = typeof value === "string" ? value : value === null || value === undefined ? "" : String(value)
+  const stringValue = withheld ? "" : (typeof value === "string" ? value : value === null || value === undefined ? "" : String(value))
+  const effectiveDisabled = disabled || withheld
+  const effectiveReadOnly = readOnly || withheld
 
   if (control === "display") {
     const prop = propertyOf(field)
@@ -972,26 +1102,29 @@ function FormFieldControlView({
         <span className={MUTED}>{label}</span>
         {prop !== undefined && propRecord !== null
           ? <span className="text-body text-foreground"><Value record={propRecord} propertyId={prop.propertyId} /></span>
-          : <span className="text-body text-foreground" data-value="plain">{shown(value)}</span>}
+          : withheld
+            ? <span {...agentMark} className={MUTED} data-value="withheld">Withheld</span>
+            : <span {...agentMark} className="text-body text-foreground" data-value="plain">{shown(value)}</span>}
         {help !== undefined && <p className={MUTED}>{help}</p>}
       </div>
     )
   }
 
   if (control === "checkbox") {
-    const checked = value === true
+    const checked = !withheld && value === true
     return (
-      <Field name={fieldKey} disabled={disabled || readOnly} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control="checkbox">
+      <Field name={fieldKey} disabled={effectiveDisabled || effectiveReadOnly} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control="checkbox">
         <div className="flex items-center gap-2">
           <Checkbox
+            {...agentMark}
             checked={checked}
-            disabled={disabled}
-            readOnly={readOnly}
+            disabled={effectiveDisabled}
+            readOnly={effectiveReadOnly}
             required={required}
             aria-required={required ? "true" : undefined}
             aria-invalid={invalid ? "true" : undefined}
             onCheckedChange={(next) => {
-              if (!readOnly) onChange(next === true)
+              if (!effectiveReadOnly) onChange(next === true)
             }}
             className="inline-flex size-4 items-center justify-center rounded-[3px] border border-input bg-background text-[11px] leading-none text-background outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring data-[checked]:border-foreground data-[checked]:bg-foreground disabled:opacity-50"
           >
@@ -1012,10 +1145,10 @@ function FormFieldControlView({
     const renderSelect = (options: readonly { readonly value: string; readonly label: string }[]) => (
       <Select
         value={stringValue === "" ? null : stringValue}
-        disabled={disabled || readOnly}
+        disabled={effectiveDisabled || effectiveReadOnly}
         required={required}
         onValueChange={(next) => {
-          if (!readOnly) onChange(typeof next === "string" ? next : "")
+          if (!effectiveReadOnly) onChange(typeof next === "string" ? next : "")
         }}
       >
         <SelectLabel className={MUTED}>
@@ -1023,11 +1156,12 @@ function FormFieldControlView({
           {required && <span aria-hidden="true" className="ms-0.5 text-destructive-text">*</span>}
         </SelectLabel>
         <SelectTrigger
+          {...agentMark}
           aria-required={required ? "true" : undefined}
           aria-invalid={invalid ? "true" : undefined}
           className="inline-flex h-9 w-full items-center justify-between gap-2 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 max-sm:min-h-[44px]"
         >
-          <SelectValue placeholder={`Select ${label}`} />
+          <SelectValue placeholder={withheld ? "Withheld" : `Select ${label}`} />
         </SelectTrigger>
         <SelectContent className="z-50 rounded-[var(--radius-popup)] border border-border bg-popover p-1 text-popover-foreground shadow-md">
           {options.length === 0 ? (
@@ -1048,7 +1182,7 @@ function FormFieldControlView({
     )
     const optionState = field.optionQueryBindingId === undefined ? undefined : scope.runtime.reads.get(field.optionQueryBindingId)
     return (
-      <Field name={fieldKey} disabled={disabled || readOnly} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control={control}>
+      <Field name={fieldKey} disabled={effectiveDisabled || effectiveReadOnly} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control={control}>
         {field.optionQueryBindingId !== undefined ? (
           <ReadView state={optionState}>
             {(document) => renderSelect(extractSelectOptions(document))}
@@ -1063,73 +1197,91 @@ function FormFieldControlView({
   }
 
   return (
-    <Field name={fieldKey} disabled={disabled} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control={control} data-format={field.format}>
+    <Field name={fieldKey} disabled={effectiveDisabled} invalid={invalid} className="grid gap-1" data-field={field.fieldId} data-control={control} data-format={field.format}>
       <FieldLabel className={MUTED}>
         {label}
         {required && <span aria-hidden="true" className="ms-0.5 text-destructive-text">*</span>}
       </FieldLabel>
       {control === "text_area" ? (
         <Textarea
+          {...agentMark}
           className={TEXTAREA}
           value={stringValue}
-          disabled={disabled}
-          readOnly={readOnly}
+          placeholder={withheld ? "Withheld" : undefined}
+          disabled={effectiveDisabled}
+          readOnly={effectiveReadOnly}
           required={required}
           aria-required={required ? "true" : undefined}
           aria-invalid={invalid ? "true" : undefined}
-          onValueChange={(next) => onChange(next)}
+          onValueChange={(next) => {
+            if (!effectiveReadOnly) onChange(next)
+          }}
         />
       ) : control === "number" ? (
         // Exact-string numeric input: never passes through binary float (`type="number"` / `Number()`).
         <Input
+          {...agentMark}
           type="text"
           inputMode={field.format === "integer" ? "numeric" : "decimal"}
           className={`${INPUT} tabular-nums`}
           value={stringValue}
-          disabled={disabled}
-          readOnly={readOnly}
+          placeholder={withheld ? "Withheld" : undefined}
+          disabled={effectiveDisabled}
+          readOnly={effectiveReadOnly}
           required={required}
           aria-required={required ? "true" : undefined}
           aria-invalid={invalid ? "true" : undefined}
-          onValueChange={(next) => onChange(next)}
+          onValueChange={(next) => {
+            if (!effectiveReadOnly) onChange(next)
+          }}
         />
       ) : control === "date" ? (
         <Input
+          {...agentMark}
           type="date"
           className={`${INPUT} tabular-nums`}
           value={stringValue}
-          disabled={disabled}
-          readOnly={readOnly}
+          disabled={effectiveDisabled}
+          readOnly={effectiveReadOnly}
           required={required}
           aria-required={required ? "true" : undefined}
           aria-invalid={invalid ? "true" : undefined}
-          onValueChange={(next) => onChange(next)}
+          onValueChange={(next) => {
+            if (!effectiveReadOnly) onChange(next)
+          }}
         />
       ) : control === "date_time" ? (
         // Zoned ISO-8601 timestamp text: preserves explicit timezone offset without browser stripping.
         <Input
+          {...agentMark}
           type="text"
-          placeholder="YYYY-MM-DDTHH:MM:SSZ"
+          placeholder={withheld ? "Withheld" : "YYYY-MM-DDTHH:MM:SSZ"}
           className={`${INPUT} tabular-nums`}
           value={stringValue}
-          disabled={disabled}
-          readOnly={readOnly}
+          disabled={effectiveDisabled}
+          readOnly={effectiveReadOnly}
           required={required}
           aria-required={required ? "true" : undefined}
           aria-invalid={invalid ? "true" : undefined}
-          onValueChange={(next) => onChange(next)}
+          onValueChange={(next) => {
+            if (!effectiveReadOnly) onChange(next)
+          }}
         />
       ) : (
         <Input
+          {...agentMark}
           type="text"
           className={INPUT}
           value={stringValue}
-          disabled={disabled}
-          readOnly={readOnly}
+          placeholder={withheld ? "Withheld" : undefined}
+          disabled={effectiveDisabled}
+          readOnly={effectiveReadOnly}
           required={required}
           aria-required={required ? "true" : undefined}
           aria-invalid={invalid ? "true" : undefined}
-          onValueChange={(next) => onChange(next)}
+          onValueChange={(next) => {
+            if (!effectiveReadOnly) onChange(next)
+          }}
         />
       )}
       {help !== undefined && <FieldDescription className={MUTED}>{help}</FieldDescription>}
@@ -1153,21 +1305,38 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       })
     : scope.ux.fields.filter((candidate) => "formId" in candidate.target && candidate.target.formId === form.formId)
 
+  const baselineBindingId = form.versionConflictBinding?.property.bindingId ?? form.dataBindingId
+  const baselineRead = baselineBindingId === undefined ? undefined : scope.runtime.reads.get(baselineBindingId)
+  const liveBaselineRecord: PinnedRecord | undefined =
+    baselineBindingId !== undefined && baselineRead?.kind === "ok"
+      ? { bindingId: baselineBindingId, document: baselineRead.document }
+      : undefined
+  const liveBaselineKey = liveBaselineRecord === undefined ? "" : JSON.stringify(liveBaselineRecord.document)
+
   const prefillSnapshot = buildInitialDraft(scope, form, formFields)
   const prefillKey = JSON.stringify(prefillSnapshot)
   const [initialDraft, setInitialDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [draft, setDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
+  const [pinnedRecord, setPinnedRecord] = useState<PinnedRecord | undefined>(() => liveBaselineRecord)
   const [submitted, setSubmitted] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [typedPhrase, setTypedPhrase] = useState("")
+  const [confirmError, setConfirmError] = useState<string | null>(null)
   const dirty = computeFormDirty(initialDraft, draft)
 
-  // Hydrate from server prefill when it arrives, without clobbering a dirty user draft.
+  // Hydrate from server prefill and advance pinned baseline ONLY while the form is clean.
+  // While dirty, keep the edited baseline revision pinned so version checks never submit a newer revision.
   useEffect(() => {
     if (!dirty) {
       setInitialDraft(prefillSnapshot)
       setDraft(prefillSnapshot)
+      setPinnedRecord(liveBaselineRecord)
+      if (liveBaselineRecord !== undefined) {
+        scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, prefillSnapshot), liveBaselineRecord)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefillKey])
+  }, [prefillKey, liveBaselineKey])
 
   const draftPayload = buildFormDraftPayload(formFields, draft)
   const callState = scope.runtime.calls.get(form.submitBindingId)
@@ -1181,16 +1350,21 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
   const { on: machineAllows, waiting: engineWaiting } = hasMachineEvent ? canAct(scope, node) : { on: true, waiting: false }
   const submitDisabled = isPending || !machineAllows
   const submitLabel = text(form.submit.label, scope.locale, scope.translate)
-  const submitMark = confirmMark(formConfirmReason(scope.ux, form, scope.actionEffects, scope.locale, scope.translate))
+  const submitMark = confirmMark(formConfirmReason(scope.ux, scope.machine, node.nodeId, form, scope.actionEffects, scope.locale, scope.translate))
+  const confirmation = form.submit.confirmation
+  const requiredPhrase = confirmation.phrase === undefined ? "" : text(confirmation.phrase, scope.locale, scope.translate).trim()
+  const confirmMessage = confirmation.message === undefined ? undefined : text(confirmation.message, scope.locale, scope.translate)
 
   const fieldStates = formFields.map((field) => {
     const key = extractFieldKey(field)
-    const value = Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined)
+    const prefill = readPrefill(scope, form, field)
+    const agentMark = valueMark(prefill.masked, prefill.withheld)
+    const value = prefill.withheld ? "" : (Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined))
     const visible = evaluateCondition(scope, field.visibleWhen, draftPayload, true)
     const required = evaluateCondition(scope, field.requiredWhen, draftPayload, false)
     const readOnly = evaluateCondition(scope, field.readOnlyWhen, draftPayload, false)
     let hint: string | null = null
-    if (visible && field.control !== "display") {
+    if (visible && !prefill.withheld && field.control !== "display") {
       if (field.control === "number" && typeof value === "string") {
         hint = validateExactNumber(value, field.format)
       }
@@ -1199,13 +1373,18 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
         if (empty) hint = "This field is required."
       }
     }
-    return { field, key, value, visible, required, readOnly, hint }
+    return { field, key, value, agentMark, withheld: prefill.withheld, visible, required, readOnly, hint }
   })
 
   const updateField = (key: string, nextValue: unknown) => {
     const nextDraft = { ...draft, [key]: nextValue }
     setDraft(nextDraft)
-    scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, nextDraft))
+    if (confirming) {
+      setConfirming(false)
+      setTypedPhrase("")
+      setConfirmError(null)
+    }
+    scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, nextDraft), pinnedRecord)
   }
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -1213,8 +1392,8 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
     if (isPending || submitDisabled) return
     setSubmitted(true)
     // Check inline syntax/required hints; never enforce permissions on the client.
-    const hasClientHint = fieldStates.some(({ field, value, visible, required }) => {
-      if (!visible || field.control === "display") return false
+    const hasClientHint = fieldStates.some(({ field, value, visible, withheld, required }) => {
+      if (!visible || withheld || field.control === "display") return false
       if (field.control === "number" && typeof value === "string" && validateExactNumber(value, field.format) !== null) return true
       if (required) {
         return field.control === "checkbox" ? value !== true : (typeof value === "string" ? value.trim() === "" : value === null || value === undefined)
@@ -1222,15 +1401,31 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       return false
     })
     if (hasClientHint) return
-    scope.runtime.setDraft?.(form.formId, draftPayload)
+
+    const gate = canDispatchFormConfirmation(confirmation, { confirming, typedPhrase }, scope.locale, scope.translate)
+    if (gate.kind === "confirm") {
+      setConfirming(true)
+      setConfirmError(null)
+      return
+    }
+    if (gate.kind === "error") {
+      setConfirmError(gate.message)
+      return
+    }
+
+    setConfirming(false)
+    setTypedPhrase("")
+    setConfirmError(null)
+    scope.runtime.setDraft?.(form.formId, draftPayload, pinnedRecord)
     if (hasMachineEvent) {
       raise(scope, node, { draft: draftPayload, ...draftPayload })
     } else {
-      scope.runtime.submitForm?.(form.formId, form.submitBindingId, draftPayload)
+      scope.runtime.submitForm?.(form.formId, form.submitBindingId, draftPayload, pinnedRecord)
     }
   }
 
   const prefillState = form.dataBindingId === undefined ? undefined : scope.runtime.reads.get(form.dataBindingId)
+  const typedMismatch = confirmation.strength === "typed" && (requiredPhrase === "" || typedPhrase !== requiredPhrase)
 
   return (
     <form
@@ -1240,6 +1435,7 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       data-form={form.formId}
       data-form-mode={form.mode}
       data-dirty={dirty ? "true" : "false"}
+      data-confirming={confirming ? "true" : "false"}
       data-pending={isPending ? "true" : "false"}
       aria-busy={isPending ? "true" : undefined}
       className="grid gap-4"
@@ -1248,16 +1444,17 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
         <ReadView state={prefillState}>{() => null}</ReadView>
       )}
       <div className="grid gap-3">
-        {fieldStates.map(({ field, key, value, visible, required, readOnly, hint }) => {
+        {fieldStates.map(({ field, key, value, agentMark, withheld, visible, required, readOnly, hint }) => {
           if (!visible) {
             return (
               <input
+                {...agentMark}
                 key={field.fieldId}
                 type="hidden"
                 name={key}
                 data-field={field.fieldId}
                 data-control="hidden"
-                value={typeof value === "string" ? value : value === null || value === undefined ? "" : String(value)}
+                value={withheld ? "" : (typeof value === "string" ? value : value === null || value === undefined ? "" : String(value))}
               />
             )
           }
@@ -1268,6 +1465,8 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
               field={field}
               fieldKey={key}
               value={value}
+              agentMark={agentMark}
+              withheld={withheld}
               disabled={isPending}
               readOnly={readOnly}
               required={required}
@@ -1278,20 +1477,77 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
           )
         })}
       </div>
+      {confirming && (
+        <div
+          role="region"
+          aria-label="Confirm submission"
+          data-form-confirm={confirmation.strength}
+          className="grid gap-2 rounded-[var(--radius)] border border-border bg-card p-3"
+        >
+          <p className="text-body text-foreground">{confirmMessage ?? `Confirm ${submitLabel}.`}</p>
+          {confirmation.strength === "typed" && (
+            <label className="grid gap-1">
+              <span className={MUTED} data-confirm-phrase={requiredPhrase}>
+                {requiredPhrase === "" ? "Confirmation phrase is not configured." : `Type "${requiredPhrase}" to confirm.`}
+              </span>
+              <Input
+                type="text"
+                className={INPUT}
+                data-form-confirm-input={form.formId}
+                value={typedPhrase}
+                disabled={isPending}
+                onValueChange={(next) => {
+                  setTypedPhrase(next)
+                  setConfirmError(null)
+                }}
+              />
+            </label>
+          )}
+          {confirmError !== null && <p role="alert" className="text-meta text-destructive-text">{confirmError}</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              {...submitMark}
+              type="submit"
+              className={BUTTON}
+              data-form-confirm-submit={form.formId}
+              disabled={submitDisabled || typedMismatch}
+              focusableWhenDisabled
+              aria-busy={isPending ? "true" : undefined}
+            >
+              {`Confirm ${submitLabel}`}
+            </Button>
+            <Button
+              type="button"
+              className={BUTTON}
+              data-form-confirm-cancel={form.formId}
+              disabled={isPending}
+              onClick={() => {
+                setConfirming(false)
+                setTypedPhrase("")
+                setConfirmError(null)
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
       <FormCallStatus state={callState} />
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          {...submitMark}
-          type="submit"
-          className={BUTTON}
-          data-form-submit={form.formId}
-          disabled={submitDisabled}
-          focusableWhenDisabled
-          aria-busy={isPending ? "true" : undefined}
-          data-engine={engineWaiting ? "waiting" : undefined}
-        >
-          {isPending ? "Submitting…" : submitLabel}
-        </Button>
+        {!confirming && (
+          <Button
+            {...submitMark}
+            type="submit"
+            className={BUTTON}
+            data-form-submit={form.formId}
+            disabled={submitDisabled}
+            focusableWhenDisabled
+            aria-busy={isPending ? "true" : undefined}
+            data-engine={engineWaiting ? "waiting" : undefined}
+          >
+            {isPending ? "Submitting…" : submitLabel}
+          </Button>
+        )}
         {footerActions.map((child) => <Node key={child.nodeId} scope={scope} node={child} />)}
       </div>
     </form>
@@ -1389,6 +1645,43 @@ function Island({ scope, node }: { readonly scope: PageScope; readonly node: Wid
   return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier}><IslandComponent {...input} /></div>
 }
 
+function ListNode({
+  scope,
+  node,
+  component,
+}: {
+  readonly scope: PageScope
+  readonly node: WidgetNode
+  readonly component: Extract<Component, { readonly kind: "list" }>
+}) {
+  const readState = scope.runtime.reads.get(component.dataBindingId)
+  const isOk = readState?.kind === "ok"
+  // Clear runtime selection whenever a selectable list's read leaves `ok` so stale rows never linger.
+  useEffect(() => {
+    if (component.selection !== "none" && !isOk) {
+      scope.runtime.setSelection?.(component.dataBindingId, [])
+    }
+  }, [component.selection, component.dataBindingId, isOk, scope.runtime])
+
+  return (
+    <div data-node={node.nodeId} className="grid gap-3">
+      <ReadView state={readState}>
+        {(document) => (
+          <ListRows
+            scope={scope}
+            node={node}
+            document={document}
+            refs={component.fields}
+            dataBindingId={component.dataBindingId}
+            selection={component.selection}
+          />
+        )}
+      </ReadView>
+      {renderChildren(scope, node.children)}
+    </div>
+  )
+}
+
 /** One node of the tree. */
 export function Node({ scope, node }: { readonly scope: PageScope; readonly node: WidgetNode }): ReactNode {
   const component = node.component
@@ -1421,23 +1714,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       )
     }
     case "list":
-      return (
-        <div data-node={node.nodeId} className="grid gap-3">
-          <ReadView state={scope.runtime.reads.get(component.dataBindingId)}>
-            {(document) => (
-              <ListRows
-                scope={scope}
-                node={node}
-                document={document}
-                refs={component.fields}
-                dataBindingId={component.dataBindingId}
-                selection={component.selection}
-              />
-            )}
-          </ReadView>
-          {renderChildren(scope, node.children)}
-        </div>
-      )
+      return <ListNode scope={scope} node={node} component={component} />
     case "field": {
       const field = scope.ux.fields.find((candidate) => candidate.fieldId === component.fieldId)
       const ref = propertyOf(field)

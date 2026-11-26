@@ -8,39 +8,88 @@ import { tabs as tabsPrimitive } from "@ui-sdk/core/tabs"
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
-import type { ActionEffects } from "../src/agent.ts"
+import { formConfirmReason, type ActionEffects } from "../src/agent.ts"
 import { missingCapabilities, RENDERED_COMPONENTS, RENDERER_CAPABILITIES, requiredCapabilities } from "../src/capabilities.ts"
 import { lazyEngine, type CheckerEvaluator } from "../src/machine/evaluate.ts"
-import type { Classified } from "../src/machine/index.ts"
+import type { Classified, Clock } from "../src/machine/index.ts"
 import type { Fields, Machine, MachineEvent } from "../src/machine/machine.ts"
 import {
   buildFormDraftPayload,
   canDismissDialog,
+  canDispatchFormConfirmation,
   computeFormDirty,
+  flattenSelectionRecord,
   formatRefusalCategory,
   isDialogBlocked,
   nextListRowIndex,
   nextSelection,
   nextTabIndex,
   Node,
+  parseExactInteger,
   partitionTabRuns,
+  readPrefill,
+  reconcileSelection,
   selectionEventPayload,
   validateExactNumber,
   type PageScope,
 } from "../src/nodes.tsx"
 import type { BindingCallState, BindingReadState, WidgetCalls, WidgetReader } from "../src/reads.ts"
-import { createPageRuntime, needsEngine, type MachineRuntime } from "../src/runtime.ts"
+import { createPageRuntime, DEFAULT_SUBMIT_DEADLINE_MS, needsEngine, type MachineRuntime } from "../src/runtime.ts"
 import type { DismissalMethod, FieldPresentation, WidgetForm, WidgetNode, WidgetUx } from "../src/ux.ts"
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
+function manualClock(): Clock & { advance(ms: number): void } {
+  let now = 0
+  let next = 0
+  const pending = new Map<number, { at: number; callback: () => void }>()
+  return {
+    setTimeout(callback, ms) {
+      next += 1
+      pending.set(next, { at: now + ms, callback })
+      return next
+    },
+    clearTimeout(handle) {
+      pending.delete(handle as number)
+    },
+    advance(ms) {
+      now += ms
+      for (const [handle, timer] of [...pending].sort((a, b) => a[1].at - b[1].at)) {
+        if (timer.at <= now && pending.delete(handle)) timer.callback()
+      }
+    },
+  }
+}
+
+/** Exact slot allowlist mirrored from `crates/norn-checker-wasm/src/evaluate.rs:parse_expression_inputs`. */
+const ALLOWED_WASM_SLOTS = new Set(["record", "recordKey", "row", "draft", "selection", "context", "fields", "event"])
+
 const pathEngine: CheckerEvaluator = {
   evaluateExpression(expression, inputJson) {
+    const slots = JSON.parse(inputJson) as Record<string, unknown>
+    if (Object.hasOwn(slots, "recordKey") && !Object.hasOwn(slots, "record")) {
+      return JSON.stringify({ ok: false, error: { code: "expr.input.invalid", message: "recordKey requires record" } })
+    }
+    for (const [name, slotValue] of Object.entries(slots)) {
+      if (!ALLOWED_WASM_SLOTS.has(name)) {
+        return JSON.stringify({ ok: false, error: { code: "expr.input.invalid", message: `unknown WidgetIR input slot "${name}"` } })
+      }
+      if (name === "recordKey" && (typeof slotValue !== "string" || slotValue === "")) {
+        return JSON.stringify({ ok: false, error: { code: "expr.input.invalid", message: "recordKey must be a nonempty string" } })
+      }
+    }
     const source = expression.trim()
-    if (/^input(\.[A-Za-z_][A-Za-z0-9_]*)+$/.test(source)) {
-      let value: unknown = JSON.parse(inputJson)
-      for (const part of source.split(".").slice(1)) {
-        value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[part] : undefined
+    if (/^input(\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+$/.test(source)) {
+      let value: unknown = slots
+      const tokens = source.slice("input".length).match(/\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]/g) ?? []
+      for (const token of tokens) {
+        if (token.startsWith(".")) {
+          const part = token.slice(1)
+          value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[part] : undefined
+        } else {
+          const index = Number(token.slice(1, -1))
+          value = Array.isArray(value) ? value[index] : undefined
+        }
       }
       return JSON.stringify(value === undefined ? { ok: false, error: { code: "unknown_field", message: `${source} names nothing.` } } : { ok: true, value })
     }
@@ -191,12 +240,39 @@ describe("Tabs (WidgetSectionKind::Tab)", () => {
     expect(markup).toContain('tabindex="-1"')
     expect(markup).toContain("Invoice #42")
 
-    // Verify exact id <-> aria-controls and id <-> aria-labelledby linkage.
-    const tabMatch = /id="([^"]+tab-tab-summary)"[^>]*aria-controls="([^"]+)"/.exec(markup)
-    expect(tabMatch).not.toBeNull()
-    const [, tabDomId, panelDomId] = tabMatch!
-    expect(markup).toContain(`id="${panelDomId}"`)
-    expect(markup).toContain(`aria-labelledby="${tabDomId}"`)
+    // Verify exact id <-> aria-controls and id <-> aria-labelledby linkage for BOTH active and inactive tabs (no dangling aria-controls).
+    const tabMatches = [...markup.matchAll(/id="([^"]+tab-[^"]+)"[^>]*aria-controls="([^"]+)"/g)]
+    expect(tabMatches).toHaveLength(2)
+    for (const [, tabDomId, panelDomId] of tabMatches) {
+      expect(markup).toContain(`id="${panelDomId}"`)
+      expect(markup).toContain(`aria-labelledby="${tabDomId}"`)
+    }
+    // Inactive panel stays mounted hidden while active panel renders its body.
+    expect(markup).toMatch(/id="[^"]+panel-tab-history"[^>]*hidden=""/)
+  })
+
+  test("tab buttons carry data-agent-confirm when their declared machine event starts a consequential action", () => {
+    const root: WidgetNode = {
+      nodeId: "root",
+      component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Page" }, fields: [], order: 0 } },
+      children: [tabA, tabB],
+    }
+    const tabActionMachine: Machine = {
+      ...baseMachine,
+      events: [...baseMachine.events, { eventId: "open-history", source: { kind: "user", nodeId: "tab-history" } }],
+      transitions: [
+        ...baseMachine.transitions,
+        { transitionId: "t-hist", from: "idle", on: "open-history", target: "saving", effects: [{ kind: "start", call: { kind: "action", bindingId: "submit-order" } }] },
+      ],
+    }
+    const ux = makeUx(
+      root,
+      { actionBindings: [{ bindingId: "submit-order", action: { id: "canon.audit.action", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "canon.audit" }] },
+      tabActionMachine,
+    )
+    const markup = renderToStaticMarkup(<Node scope={makeScope(ux, { effects: () => ({ irreversible: true, destructive: false, money: [] }) })} node={root} />)
+    expect(markup).toMatch(/data-agent-confirm="canon\.audit\.action: cannot be undone"[^>]*data-tab-node="tab-history"/)
+    expect(markup).not.toMatch(/data-agent-confirm="[^"]*"[^>]*data-tab-node="tab-summary"/)
   })
 
   test("roving keyboard navigation honors ArrowLeft/ArrowRight/Home/End in LTR and flips logical direction in RTL", () => {
@@ -335,7 +411,49 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
     expect(selectionEventPayload(noPayloadEvent, "single", "row-1", ["row-1"], [{ id: "row-1" }])).toEqual({})
   })
 
-  test("runtime.setSelection wires input.selection into ActionBinding.inputMapping", async () => {
+  test("flattenSelectionRecord, reconcileSelection pruning, agent:confirm on rows, and input.selection[0].name mapping", async () => {
+    // 1. Flattened entity record shape (properties at top level, not wrapped under `values`).
+    expect(flattenSelectionRecord({ id: "row-1", values: { name: "Alpha", status: "open" }, masked: {} })).toEqual({
+      id: "row-1",
+      name: "Alpha",
+      status: "open",
+    })
+
+    // 2. Refresh pruning removes deleted and newly-withheld rows immediately.
+    const refreshed = [
+      { id: "row-1", values: { name: "Alpha v2", status: "open" } },
+      { id: "row-3", values: null, withheld: true, withheldProperties: [] },
+    ]
+    const reconciled = reconcileSelection(["row-1", "row-2", "row-3"], refreshed)
+    expect(reconciled.changed).toBe(true)
+    expect(reconciled.ids).toEqual(["row-1"])
+    expect(reconciled.records).toEqual([{ id: "row-1", name: "Alpha v2", status: "open" }])
+
+    // 3. Selectable rows carry data-agent-confirm when their declared machine event starts a consequential action.
+    const rowActionMachine: Machine = {
+      ...baseMachine,
+      events: [...baseMachine.events, { eventId: "pick-run", source: { kind: "user", nodeId: "multi-list" } }],
+      transitions: [
+        ...baseMachine.transitions,
+        { transitionId: "t-pick", from: "idle", on: "pick-run", target: "saving", effects: [{ kind: "start", call: { kind: "action", bindingId: "bulk-act" } }] },
+      ],
+    }
+    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
+    const confirmUx = makeUx(
+      listNode,
+      {
+        fields,
+        actionBindings: [{ bindingId: "bulk-act", action: { id: "canon.item.bulk.action", version: "0.1.0" }, inputMapping: {}, inputs: { selectionBindingId: "items" }, requiredCapability: "canon.item.bulk" }],
+      },
+      rowActionMachine,
+    )
+    const confirmMarkup = renderToStaticMarkup(
+      <Node scope={makeScope(confirmUx, { reads, effects: () => ({ irreversible: false, destructive: true, money: [] }) })} node={listNode} />,
+    )
+    expect(confirmMarkup).toMatch(/data-agent-confirm="canon\.item\.bulk\.action: may destroy data"[^>]*data-row-id="row-1"/)
+    expect(confirmMarkup).not.toMatch(/data-agent-confirm="[^"]*"[^>]*data-row-id="row-3"/)
+
+    // 4. End-to-end runtime evaluates `input.selection[0].name` directly against flattened records.
     const sent: Array<{ actionId: string; input: Fields }> = []
     const selectionMachine: Machine = {
       machineVersion: "0.1",
@@ -357,14 +475,13 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
         { transitionId: "t3", from: "running", on: "refused", target: "idle" },
       ],
     }
-    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
     const selUx = makeUx(
       listNode,
       {
         actionBindings: [{
           bindingId: "bulk-act",
           action: { id: "canon.item.bulk.action", version: "0.1.0" },
-          inputMapping: { selected: "input.selection" },
+          inputMapping: { firstName: "input.selection[0].name" },
           inputs: { selectionBindingId: "items" },
           requiredCapability: "canon.item.bulk",
         }],
@@ -382,14 +499,11 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
       },
       () => {},
     )
-    runtime.setSelection("items", [{ id: "row-1", values: { name: "Alpha" } }, { id: "row-2", values: { name: "Beta" } }])
+    runtime.setSelection("items", reconciled.records)
     runtime.send({ kind: "user", eventId: "run", payload: {} })
     await flush()
     expect(runtime.view().snapshot.stateId).toBe("done")
-    expect(sent).toEqual([{
-      actionId: "canon.item.bulk",
-      input: { selected: [{ id: "row-1", values: { name: "Alpha" } }, { id: "row-2", values: { name: "Beta" } }] },
-    }])
+    expect(sent).toEqual([{ actionId: "canon.item.bulk", input: { firstName: "Alpha v2" } }])
     runtime.dispose()
   })
 })
@@ -641,16 +755,23 @@ describe("component:form (WidgetComponent::Form)", () => {
     expect(markup).toContain("Create Order")
   })
 
-  test("exact-string integer/decimal validation and draft/dirty helpers preserve precision without float loss", () => {
+  test("exact-string integer/decimal validation, integer JSON number parsing without float rounding, and draft/dirty helpers", () => {
     const exact = "123456789012345678901234567890.000000000000000001"
     expect(validateExactNumber(exact, "decimal")).toBeNull()
     expect(validateExactNumber("-42.50", "currency")).toBeNull()
     expect(validateExactNumber("100", "integer")).toBeNull()
     expect(validateExactNumber("-7", "integer")).toBeNull()
+    expect(validateExactNumber(String(Number.MAX_SAFE_INTEGER), "integer")).toBeNull()
     expect(validateExactNumber("12.5", "integer")).toBe("Enter a whole number.")
+    expect(validateExactNumber("9007199254740993", "integer")).toBe("Whole number exceeds exact integer range.")
+    expect(validateExactNumber("-9007199254740993", "integer")).toBe("Whole number exceeds exact integer range.")
     expect(validateExactNumber("12.5.1", "decimal")).toBe("Enter a valid decimal number.")
     expect(validateExactNumber("abc", "decimal")).toBe("Enter a valid decimal number.")
     expect(validateExactNumber("", "decimal")).toBeNull()
+
+    expect(parseExactInteger("42")).toEqual({ ok: true, value: 42 })
+    expect(parseExactInteger("-0")).toEqual({ ok: true, value: 0 })
+    expect(parseExactInteger("9007199254740993")).toEqual({ ok: false, message: "Whole number exceeds exact integer range." })
 
     const initial = { memo: "", amount: exact, expedite: false }
     expect(computeFormDirty(initial, { ...initial })).toBe(false)
@@ -659,8 +780,117 @@ describe("component:form (WidgetComponent::Form)", () => {
     const payload = buildFormDraftPayload(formFields, { memo: "Payroll", amount: exact, quantity: "10", expedite: true })
     expect(payload.amount).toBe(exact)
     expect(typeof payload.amount).toBe("string")
-    expect(payload.quantity).toBe("10")
+    // Integer inputs reach the cell as JSON integer numbers, never strings.
+    expect(payload.quantity).toBe(10)
+    expect(typeof payload.quantity).toBe("number")
+    expect(Number.isInteger(payload.quantity)).toBe(true)
     expect(payload.expedite).toBe(true)
+
+    // Unrepresentable integer is NEVER silently rounded to 9007199254740992.
+    const unsafePayload = buildFormDraftPayload(formFields, { quantity: "9007199254740993" })
+    expect(unsafePayload.quantity).not.toBe(9007199254740992)
+  })
+
+  test("declared click and typed confirmation gates submission and formConfirmReason covers machine-started actions", () => {
+    expect(canDispatchFormConfirmation({ severity: "safe", strength: "none" }, { confirming: false, typedPhrase: "" }, "en")).toEqual({ kind: "dispatch" })
+
+    const clickConfirm = { severity: "confirm" as const, strength: "click" as const, message: { en: "Post this entry?" } }
+    expect(canDispatchFormConfirmation(clickConfirm, { confirming: false, typedPhrase: "" }, "en")).toEqual({ kind: "confirm" })
+    expect(canDispatchFormConfirmation(clickConfirm, { confirming: true, typedPhrase: "" }, "en")).toEqual({ kind: "dispatch" })
+
+    const typedConfirm = { severity: "irreversible" as const, strength: "typed" as const, phrase: { en: "DELETE ORDER" } }
+    expect(canDispatchFormConfirmation(typedConfirm, { confirming: false, typedPhrase: "" }, "en")).toEqual({ kind: "confirm" })
+    expect(canDispatchFormConfirmation(typedConfirm, { confirming: true, typedPhrase: "delete order" }, "en")).toEqual({
+      kind: "error",
+      message: 'Type "DELETE ORDER" to confirm.',
+    })
+    expect(canDispatchFormConfirmation(typedConfirm, { confirming: true, typedPhrase: "DELETE ORDER" }, "en")).toEqual({ kind: "dispatch" })
+    // Typed confirmation with missing phrase fails closed.
+    expect(canDispatchFormConfirmation({ severity: "irreversible", strength: "typed" }, { confirming: true, typedPhrase: "" }, "en")).toEqual({
+      kind: "error",
+      message: "Confirmation phrase is not configured.",
+    })
+
+    // formConfirmReason checks BOTH submitBindingId AND any machine-started binding on the form node.
+    const machineWithExtraAction: Machine = {
+      ...baseMachine,
+      transitions: [
+        ...baseMachine.transitions,
+        { transitionId: "t-extra", from: "idle", on: "save-form", target: "saving", effects: [{ kind: "start", call: { kind: "action", bindingId: "extra-ledger" } }] },
+      ],
+    }
+    const extraUx = makeUx(
+      formNode,
+      {
+        forms: [formDef],
+        actionBindings: [
+          ...formUx.actionBindings,
+          { bindingId: "extra-ledger", action: { id: "canon.ledger.post.action", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "canon.ledger.post" },
+        ],
+      },
+      machineWithExtraAction,
+    )
+    const reason = formConfirmReason(
+      extraUx,
+      machineWithExtraAction,
+      "order-form",
+      formDef,
+      (actionId) => (actionId === "canon.ledger.post.action" ? { irreversible: true, destructive: false, money: [] } : { irreversible: false, destructive: false, money: [] }),
+      "en",
+    )
+    expect(reason).toContain("canon.ledger.post.action: cannot be undone")
+  })
+
+  test("prefill propagates server masked and withheldProperties metadata onto editable and hidden inputs without leaking withheld values", () => {
+    const maskedFormDef: WidgetForm = {
+      formId: "secret-form",
+      mode: "edit",
+      dataBindingId: "secret-rec",
+      inputNames: ["ssn", "secret_note", "hidden_token", "hidden_refused"],
+      submitBindingId: "submit-order",
+      submit: { label: { en: "Save" }, confirmation: { severity: "safe", strength: "none" } },
+    }
+    const maskedFields: FieldPresentation[] = [
+      { fieldId: "f-ssn", target: { kind: "form_input", formId: "secret-form", inputName: "ssn" }, label: { en: "SSN" }, control: "text" },
+      { fieldId: "f-secret-note", target: { kind: "form_input", formId: "secret-form", inputName: "secret_note" }, label: { en: "Secret Note" }, control: "text" },
+      { fieldId: "f-hidden-tok", target: { kind: "form_input", formId: "secret-form", inputName: "hidden_token" }, label: { en: "Token" }, control: "text", visibleWhen: { expression: "false", inputs: {} } },
+      { fieldId: "f-hidden-ref", target: { kind: "form_input", formId: "secret-form", inputName: "hidden_refused" }, label: { en: "Refused" }, control: "text", visibleWhen: { expression: "false", inputs: {} } },
+    ]
+    const maskedNode: WidgetNode = {
+      nodeId: "secret-form-node",
+      component: { kind: "form", formId: "secret-form" },
+      children: maskedFields.map((field) => ({ nodeId: `n-${field.fieldId}`, component: { kind: "field", fieldId: field.fieldId }, children: [] })),
+    }
+    const maskedUx = makeUx(maskedNode, { fields: maskedFields, forms: [maskedFormDef] })
+    const reads = new Map<string, BindingReadState>([
+      ["secret-rec", {
+        kind: "ok",
+        document: {
+          id: "rec-1",
+          values: { ssn: "•••-1234", secret_note: "TOP-SECRET-LEAK", hidden_token: "•••-tok", hidden_refused: "HIDDEN-SECRET-LEAK" },
+          masked: {
+            ssn: { mode: "last_n", markings: ["pii"], revealable: false },
+            hidden_token: { mode: "redacted", markings: ["secret"], revealable: false },
+            hidden_refused: { mode: "refuse", markings: ["restricted"], revealable: false },
+          },
+          withheldProperties: ["secret_note"],
+        },
+        freshness: "snapshot",
+      }],
+    ])
+    const sc = makeScope(maskedUx, { reads })
+    expect(readPrefill(sc, maskedFormDef, maskedFields[0]!).masked?.mode).toBe("last_n")
+    expect(readPrefill(sc, maskedFormDef, maskedFields[1]!)).toMatchObject({ value: undefined, withheld: true })
+    expect(readPrefill(sc, maskedFormDef, maskedFields[3]!)).toMatchObject({ value: undefined, withheld: true })
+
+    const markup = renderToStaticMarkup(<Node scope={sc} node={maskedNode} />)
+    // Editable masked input & hidden masked input both carry data-agent-secret.
+    expect(markup).toMatch(/data-agent-secret=""[^>]*value="•••-1234"/)
+    expect(markup).toMatch(/data-agent-secret=""[^>]*type="hidden"[^>]*name="hidden_token"[^>]*value="•••-tok"/)
+    // Withheld editable and hidden inputs carry data-agent-hidden and NEVER leak values into DOM.
+    expect(markup).toContain('data-agent-hidden=""')
+    expect(markup).not.toContain("TOP-SECRET-LEAK")
+    expect(markup).not.toContain("HIDDEN-SECRET-LEAK")
   })
 
   test("pending state disables submit button; server refusals render RefusalCategory + server message across all closed states", () => {
@@ -747,15 +977,16 @@ describe("component:form (WidgetComponent::Form)", () => {
     )
     expect(needsEngine(formUx, baseMachine)).toBe(true)
 
-    // 1. Direct submitForm: maps input.draft, preserves exact decimal string, deduplicates while pending.
-    runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: "3" })
+    // 1. Direct submitForm: maps input.draft, preserves exact decimal string + integer number, deduplicates while pending.
+    runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: 3 })
     expect(runtime.view().calls.get("submit-order")?.kind).toBe("sending")
     // Duplicate submit while sending is ignored.
-    runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: "3" })
+    runtime.submitForm("create-order", "submit-order", { memo: "Q4", amount: exactAmount, quantity: 3 })
     await flush()
     expect(sent).toHaveLength(1)
     expect(sent[0]!.actionId).toBe("canon.order.create")
-    expect(sent[0]!.input).toEqual({ memo: "Q4", amount: exactAmount, quantity: "3" })
+    expect(sent[0]!.input).toEqual({ memo: "Q4", amount: exactAmount, quantity: 3 })
+    expect(typeof sent[0]!.input.quantity).toBe("number")
 
     // Server refuses with permission category -> surfaced cleanly on runtime.
     release({ outcome: "refused", category: "permission", payload: { code: "authz.denied" }, body: { code: "authz.denied", message: "Actor lacks canon.order.create." } })
@@ -766,17 +997,209 @@ describe("component:form (WidgetComponent::Form)", () => {
     })
 
     // 2. Machine-driven form submit using runtime.setDraft:
-    runtime.setDraft("create-order", { memo: "Retry", amount: exactAmount, quantity: "4" })
+    runtime.setDraft("create-order", { memo: "Retry", amount: exactAmount, quantity: 4 })
     runtime.send({ kind: "user", eventId: "save-form", payload: {} })
     await flush()
     expect(runtime.view().snapshot.stateId).toBe("saving")
     expect(sent).toHaveLength(2)
-    expect(sent[1]!.input).toEqual({ memo: "Retry", amount: exactAmount, quantity: "4" })
+    expect(sent[1]!.input).toEqual({ memo: "Retry", amount: exactAmount, quantity: 4 })
     release({ outcome: "accepted", payload: {}, body: { ok: true } })
     await flush()
     expect(runtime.view().snapshot.stateId).toBe("saved")
     expect(runtime.view().calls.get("submit-order")?.kind).toBe("committed")
     runtime.dispose()
+  })
+
+  test("versioned records send only WASM-allowed slots, and dirty edits submit their pinned baseline revision even after a newer revision arrives", async () => {
+    const revA = { id: "ord-1", version: 1, values: { memo: "Original", version: 1 } }
+    const revB = { id: "ord-1", version: 2, values: { memo: "Updated elsewhere", version: 2 } }
+    const sent: Array<{ actionId: string; input: Fields }> = []
+    let pushSnapshot: ((doc: unknown) => void) | undefined
+
+    const editMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "opening",
+      fields: [],
+      events: [
+        { eventId: "opened", source: { kind: "page_opened" } },
+        { eventId: "live-update", source: { kind: "subscription", bindingId: "order-detail" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+      ],
+      states: [
+        { stateId: "opening", role: "idle" },
+        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "order-detail" }, deadlineMs: 5000 },
+        { stateId: "editing", role: "idle" },
+      ],
+      transitions: [
+        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
+        { transitionId: "t-loaded", from: "loading", on: "accepted", target: "editing" },
+        { transitionId: "t-ref", from: "loading", on: "refused", target: "editing" },
+      ],
+    }
+
+    const editFormDef: WidgetForm = {
+      formId: "edit-order",
+      mode: "edit",
+      dataBindingId: "order-detail",
+      inputNames: ["memo"],
+      submitBindingId: "save-edit",
+      submit: { label: { en: "Save" }, confirmation: { severity: "safe", strength: "none" } },
+      versionConflictBinding: {
+        property: { bindingId: "order-detail", propertyId: "version" },
+        inputName: "expectedVersion",
+        onConflict: "reject_and_retain_draft",
+      },
+    }
+    const editNode: WidgetNode = { nodeId: "edit-form", component: { kind: "form", formId: "edit-order" }, children: [] }
+    const editUx = makeUx(
+      editNode,
+      {
+        dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }],
+        forms: [editFormDef],
+        actionBindings: [{
+          bindingId: "save-edit",
+          action: { id: "canon.order.edit.action", version: "0.1.0" },
+          inputMapping: {
+            id: "input.recordKey",
+            memo: "input.draft.memo",
+            expectedVersion: "input.record.version",
+          },
+          inputs: { draftFormId: "edit-order", recordBindingId: "order-detail" },
+          requiredCapability: "canon.order.edit",
+        }],
+      },
+      editMachine,
+    )
+
+    const runtime = createPageRuntime(
+      {
+        ux: editUx,
+        machine: editMachine,
+        reader: { kind: "live", widget: () => ({ queryKey: ["detail"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: revA }) }) },
+        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({
+          context: { orderId: "ord-1" },
+          objectTypeOf: () => "canon.Order",
+          actionIdOf: (id) => (id === "canon.order.edit.action" ? "canon.order.edit" : undefined),
+          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
+        }),
+      },
+      () => {},
+    )
+    await flush()
+    expect(runtime.view().reads.get("order-detail")).toMatchObject({ kind: "ok", document: revA })
+
+    // User makes a dirty edit against revA -> pins revA.
+    const pinnedRevA = { bindingId: "order-detail", document: revA }
+    runtime.setDraft("edit-order", { memo: "User edit on revA" }, pinnedRevA)
+
+    // Background refresh delivers revB (version: 2).
+    pushSnapshot?.(revB)
+    expect(runtime.view().reads.get("order-detail")).toMatchObject({ kind: "ok", document: revB })
+
+    // Submitting must pass WASM strict slot check (no `recordVersion` slot) AND send revA's expectedVersion (1), NOT revB (2)!
+    runtime.submitForm("edit-order", "save-edit", { memo: "User edit on revA" }, pinnedRevA)
+    await flush()
+    expect(runtime.view().fault).toBeNull()
+    expect(sent).toEqual([{ actionId: "canon.order.edit", input: { id: "ord-1", memo: "User edit on revA", expectedVersion: 1 } }])
+    runtime.dispose()
+  })
+
+  test("direct submitForm enforces a bounded deadline on stalled engine or transport and reuses idempotency key on retry", async () => {
+    const clock = manualClock()
+    const keys: string[] = []
+    const stalledEngineRuntime = createPageRuntime(
+      {
+        ux: formUx,
+        machine: baseMachine,
+        clock,
+        reader: { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) },
+        calls: { call: async (_id, _input, opts) => { keys.push(opts.idempotencyKey); return new Promise(() => {}) } },
+        engine: lazyEngine(() => new Promise(() => {})),
+        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.order.create.action" ? "canon.order.create" : undefined) }),
+      },
+      () => {},
+    )
+    stalledEngineRuntime.submitForm("create-order", "submit-order", { memo: "Stalled eval", amount: "10.00", quantity: 1 })
+    expect(stalledEngineRuntime.view().calls.get("submit-order")?.kind).toBe("sending")
+    clock.advance(DEFAULT_SUBMIT_DEADLINE_MS)
+    await flush()
+    expect(stalledEngineRuntime.view().calls.get("submit-order")?.kind).toBe("timed_out")
+    expect(keys).toEqual([])
+    stalledEngineRuntime.dispose()
+
+    // Stalled transport times out at deadline and keeps idempotency key for retry.
+    const transportClock = manualClock()
+    const transportRuntime = createPageRuntime(
+      {
+        ux: formUx,
+        machine: baseMachine,
+        clock: transportClock,
+        reader: { kind: "live", widget: () => ({ queryKey: ["noop"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: {} }) }) },
+        calls: { call: async (_id, _input, opts) => { keys.push(opts.idempotencyKey); return new Promise(() => {}) } },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({ context: {}, objectTypeOf: () => undefined, actionIdOf: (id) => (id === "canon.order.create.action" ? "canon.order.create" : undefined) }),
+      },
+      () => {},
+    )
+    transportRuntime.submitForm("create-order", "submit-order", { memo: "Slow cell", amount: "10.00", quantity: 1 })
+    await flush()
+    expect(transportRuntime.view().calls.get("submit-order")?.kind).toBe("sending")
+    transportClock.advance(DEFAULT_SUBMIT_DEADLINE_MS)
+    await flush()
+    expect(transportRuntime.view().calls.get("submit-order")?.kind).toBe("timed_out")
+    // Retry with identical draft reuses the exact idempotency key.
+    transportRuntime.submitForm("create-order", "submit-order", { memo: "Slow cell", amount: "10.00", quantity: 1 })
+    await flush()
+    expect(keys).toHaveLength(2)
+    expect(keys[0]).toBe(keys[1])
+    transportRuntime.dispose()
+  })
+
+  test("needsEngine returns true when a page's only expression is a non-literal field condition and false for literals", () => {
+    const bareMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "idle",
+      fields: [],
+      events: [],
+      states: [{ stateId: "idle", role: "idle" }],
+      transitions: [],
+    }
+    const bareForm: WidgetForm = {
+      formId: "cond-form",
+      mode: "create",
+      inputNames: ["reason"],
+      submitBindingId: "bare-submit",
+      submit: { label: { en: "Submit" }, confirmation: { severity: "safe", strength: "none" } },
+    }
+    const node: WidgetNode = {
+      nodeId: "cond-form-node",
+      component: { kind: "form", formId: "cond-form" },
+      children: [{ nodeId: "n-reason", component: { kind: "field", fieldId: "f-reason" }, children: [] }],
+    }
+    const literalUx = makeUx(
+      node,
+      {
+        forms: [bareForm],
+        actionBindings: [{ bindingId: "bare-submit", action: { id: "a", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "a" }],
+        fields: [{ fieldId: "f-reason", target: { kind: "form_input", formId: "cond-form", inputName: "reason" }, label: { en: "Reason" }, control: "text", requiredWhen: { expression: "true", inputs: {} } }],
+      },
+      bareMachine,
+    )
+    expect(needsEngine(literalUx, bareMachine)).toBe(false)
+
+    const exprUx = makeUx(
+      node,
+      {
+        forms: [bareForm],
+        actionBindings: [{ bindingId: "bare-submit", action: { id: "a", version: "0.1.0" }, inputMapping: {}, inputs: {}, requiredCapability: "a" }],
+        fields: [{ fieldId: "f-reason", target: { kind: "form_input", formId: "cond-form", inputName: "reason" }, label: { en: "Reason" }, control: "text", visibleWhen: { expression: "input.draft.expedite == true", inputs: { draftFormId: "cond-form" } } }],
+      },
+      bareMachine,
+    )
+    expect(needsEngine(exprUx, bareMachine)).toBe(true)
   })
 })
 

@@ -18,25 +18,39 @@ import { nodesOf, UI_SDK_PREFIX, type ComponentKind, type WidgetNode, type Widge
 export const AGENT_CAPABILITIES = ["agent:confirm", "agent:redaction"] as const
 
 /**
- * UI SDK primitives this renderer draws with `@ui-sdk/react`: the layers a page holds open in its
- * states (`heldIn`). A page's own controls draw as UI SDK buttons and inputs (`component:control`).
+ * UI SDK primitives this renderer draws as catalog layers (`ui-sdk:<name>` held open in `heldIn`).
  */
 export const RENDERED_PRIMITIVES = ["alert-dialog", "dialog"] as const
 export type RenderedPrimitive = (typeof RENDERED_PRIMITIVES)[number]
 
 /**
- * The foundation behaviours of {@link RENDERED_PRIMITIVES}, as the pinned catalog
- * (`crates/norn-ui-checker/catalog/ui-sdk.json`) lists them; `test/capabilities.test.ts` holds this
- * list to the catalog, so a UI SDK bump that changes them fails there.
+ * UI SDK primitives backing this renderer's native components (`section` tabs, `control`/`action`
+ * buttons, `form` fields/inputs/checkboxes/selects). Their foundation behaviours are declared in
+ * {@link RENDERED_BEHAVIORS} without claiming them as catalog `Layer` primitives.
+ */
+export const NATIVE_PRIMITIVES = ["button", "checkbox", "field", "input", "select", "tabs"] as const
+
+/**
+ * The foundation behaviours of {@link RENDERED_PRIMITIVES} and {@link NATIVE_PRIMITIVES}, as the
+ * pinned catalog (`crates/norn-ui-checker/catalog/ui-sdk.json`) lists them;
+ * `test/capabilities.test.ts` holds this list to the catalog, so a UI SDK bump that changes them
+ * fails there.
  */
 export const RENDERED_BEHAVIORS = [
-  "focus/tabbable", "motion/presence", "platform/anchoring", "platform/env", "platform/keyboard", "platform/layers",
-  "platform/moves", "platform/platform", "platform/position", "platform/scrollbar", "platform/sides", "platform/style",
-  "popups/bridge", "popups/create-popup", "popups/dismissal", "popups/frame-guards", "popups/hover", "popups/modal",
-  "popups/modal-attribute", "popups/popup", "popups/popup-behavior", "popups/popup-elements", "popups/popup-features",
-  "popups/popup-payload", "popups/popup-presets", "popups/popup-slots", "popups/popup-steps", "popups/presentation",
+  "disclosure/disclosure", "focus/collection", "focus/press-keeps-focus", "focus/roving-focus", "focus/tabbable",
+  "forms/control", "forms/form", "forms/text-field", "forms/toggle-control", "forms/value",
+  "lists/async-options", "lists/field-name", "lists/item-icon", "lists/listbox", "lists/listbox-engine",
+  "lists/listbox-keyboard", "lists/listbox-keys", "lists/listbox-listing", "lists/listbox-parts",
+  "lists/listbox-popup", "lists/listbox-search", "lists/listbox-select-all", "lists/listbox-value",
+  "motion/panel", "motion/presence", "platform/anchoring", "platform/announce", "platform/button", "platform/env",
+  "platform/keyboard", "platform/layers", "platform/layout", "platform/moves", "platform/platform",
+  "platform/position", "platform/scrollbar", "platform/sides", "platform/style",
+  "popups/bridge", "popups/create-popup", "popups/dismissal", "popups/frame-guards", "popups/hover",
+  "popups/modal", "popups/modal-attribute", "popups/popup", "popups/popup-behavior", "popups/popup-elements",
+  "popups/popup-features", "popups/popup-payload", "popups/popup-presets", "popups/popup-slots",
+  "popups/popup-steps", "popups/presentation", "selection/indicator",
   "shortcuts/create-shortcuts", "shortcuts/shortcut-order", "shortcuts/shortcut-slot", "shortcuts/shortcuts",
-  "text/accessible-name",
+  "text/accessible-name", "text/locale", "text/match", "text/typeahead",
 ] as const
 
 /**
@@ -113,6 +127,13 @@ export function unsupported(ux: WidgetUx): string[] {
     for (const node of nodesOf(page.root)) {
       if (node.component.kind === "control" && node.component.input === "choice") out.push(`control:choice (${node.nodeId})`)
       if (node.component.kind === "catalog" && node.component.entry.widget !== undefined) out.push(`catalog:pinned-widget (${node.nodeId})`)
+      if (node.component.kind === "dialog") {
+        const methods = node.component.dismissalMethods ?? []
+        const supported = methods.some((method) => method === "escape" || method === "scrim" || method === "visible_close")
+        if (!supported) {
+          out.push(methods.includes("swipe") ? `dialog:swipe-only (${node.nodeId})` : `dialog:no-dismissal (${node.nodeId})`)
+        }
+      }
     }
   }
   return out

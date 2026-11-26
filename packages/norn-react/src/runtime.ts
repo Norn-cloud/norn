@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createDriver, DEFAULT_CLOCK, type Clock, type Driver, type Transport } from "./machine/driver.ts"
-import { type EngineLoader, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
+import { type EngineLoader, lazyEngine, literal, type LazyEngine } from "./machine/evaluate.ts"
 import { init, type Machine, type Msg, type Snapshot } from "./machine/machine.ts"
 import { bindingRead, callStateOf, contextRead, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
 import { nodesOf, type WidgetUx } from "./ux.ts"
@@ -28,6 +28,15 @@ export type EngineState = "idle" | "loading" | "ready" | "failed"
 
 /** How long a message in a state with no deadline of its own waits for the engine before the page says it is unavailable. */
 export const ENGINE_WAIT_MS = 15_000
+
+/** Default deadline for direct form submits when no pending machine state declares a `deadlineMs` for the binding. */
+export const DEFAULT_SUBMIT_DEADLINE_MS = 10_000
+
+/** Baseline record snapshot pinned while a form has dirty edits so optimistic version checks submit the edited revision. */
+export interface PinnedRecord {
+  readonly bindingId: string
+  readonly document: unknown
+}
 
 /** What the page draws from its runtime: all of it from the machine and the server's answers. */
 export interface RuntimeView {
@@ -46,12 +55,12 @@ export interface MachineRuntime extends RuntimeView {
   readonly send: (msg: Msg) => void
   /** A person's Retry: load the engine again; the waiting messages replay once it is here. */
   readonly retryEngine: () => void
-  /** Record a form's current local draft so `ActionBinding` (`input.draft`) maps from it. */
-  readonly setDraft?: (formId: string, draft: Readonly<Record<string, unknown>>) => void
+  /** Record a form's current local draft (and optional pinned baseline record) so `ActionBinding` maps from it. */
+  readonly setDraft?: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
   /** Record a selectable list's selected records so `ActionBinding` (`input.selection`) maps from it. */
   readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => void
   /** Submit a form's declared action binding directly when no machine event owns the form node. */
-  readonly submitForm?: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => void
+  readonly submitForm?: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
 }
 
 export interface MachineOptions {
@@ -83,9 +92,9 @@ export interface PageRuntime {
   readonly view: () => RuntimeView
   readonly send: (msg: Msg) => void
   readonly retryEngine: () => void
-  readonly setDraft: (formId: string, draft: Readonly<Record<string, unknown>>) => void
+  readonly setDraft: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
   readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => void
-  readonly submitForm: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => void
+  readonly submitForm: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
   /** Start the engine loading, as the page does after its first paint. */
   readonly preload: () => void
   readonly dispose: () => void
@@ -127,27 +136,37 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   let view = initialView(machine, engine)
   const feeds = new Map<string, { readonly key: string; readonly stop: () => void }>()
   const drafts = new Map<string, Readonly<Record<string, unknown>>>()
+  const draftRecords = new Map<string, PinnedRecord>()
   const selections = new Map<string, readonly Readonly<Record<string, unknown>>[]>()
   const formKeys = new Map<string, string>()
-  const formInflight = new Set<AbortController>()
+  const formInflight = new Set<{ readonly controller: AbortController; readonly deadline: unknown }>()
   let wait: unknown = null
 
   const DEFINITIVE_OUTCOMES = new Set(["accepted", "refused", "pending_approval", "answer_moved"])
 
+  /**
+   * Build the exact `WidgetIR` evaluation input slots accepted by `norn-checker-wasm`
+   * (`evaluate.rs:parse_expression_inputs`): only `context`, `record`, `recordKey` (paired with
+   * `record` and nonempty), `draft`, and `selection` — never unknown top-level slots.
+   */
   const actionSources = (binding: WidgetUx["actionBindings"][number], context: Readonly<Record<string, unknown>>): Record<string, unknown> => {
+    const pinned = binding.inputs.draftFormId === undefined ? undefined : draftRecords.get(binding.inputs.draftFormId)
+    const pinnedDoc = pinned !== undefined && pinned.bindingId === binding.inputs.recordBindingId ? pinned.document : undefined
     const record = binding.inputs.recordBindingId === undefined ? undefined : view.reads.get(binding.inputs.recordBindingId)
-    const recordDoc = record?.kind === "ok" && typeof record.document === "object" && record.document !== null && !Array.isArray(record.document)
-      ? (record.document as Readonly<Record<string, unknown>>)
+    const activeDocument = pinnedDoc !== undefined ? pinnedDoc : (record?.kind === "ok" ? record.document : undefined)
+    const recordDoc = typeof activeDocument === "object" && activeDocument !== null && !Array.isArray(activeDocument)
+      ? (activeDocument as Readonly<Record<string, unknown>>)
       : undefined
     // Only the slots that hold a record: the engine refuses a present slot that is not one.
-    const recordValues = record?.kind === "ok" ? valuesOf(record.document) : undefined
+    const recordValues = activeDocument !== undefined ? valuesOf(activeDocument) : undefined
+    const hasRecord = typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues)
+    const recordKey = hasRecord && typeof recordDoc?.id === "string" && recordDoc.id !== "" ? recordDoc.id : undefined
     const draft = binding.inputs.draftFormId === undefined ? undefined : drafts.get(binding.inputs.draftFormId)
     const selection = binding.inputs.selectionBindingId === undefined ? undefined : selections.get(binding.inputs.selectionBindingId)
     return {
       context,
-      ...(typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues) ? { record: recordValues } : {}),
-      ...(typeof recordDoc?.id === "string" ? { recordKey: recordDoc.id } : {}),
-      ...(recordDoc?.version !== undefined ? { recordVersion: recordDoc.version } : {}),
+      ...(hasRecord ? { record: recordValues } : {}),
+      ...(recordKey !== undefined ? { recordKey } : {}),
       ...(draft !== undefined ? { draft } : {}),
       ...(selection !== undefined ? { selection } : {}),
     }
@@ -329,8 +348,20 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   change({ snapshot: driver.snapshot() })
   driver.dispatch({ kind: "page_opened" })
 
-  const submitForm = (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => {
+  const setDraft = (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => {
     drafts.set(formId, draft)
+    if (pinnedRecord !== undefined) draftRecords.set(formId, pinnedRecord)
+  }
+
+  const deadlineForBinding = (bindingId: string): number => {
+    const pending = machine.states.find(
+      (state) => state.role === "pending" && state.awaits?.kind === "action" && state.awaits.bindingId === bindingId && (state.deadlineMs ?? 0) > 0,
+    )
+    return pending?.deadlineMs ?? DEFAULT_SUBMIT_DEADLINE_MS
+  }
+
+  const submitForm = (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => {
+    setDraft(formId, draft, pinnedRecord)
     if (!live || view.calls.get(bindingId)?.kind === "sending") return
     const { context, actionIdOf } = options.host()
     const binding = ux.actionBindings.find((candidate) => candidate.bindingId === bindingId)
@@ -345,7 +376,17 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     const sent = { input: JSON.stringify(draft), key }
     setCall(bindingId, { kind: "sending", sent })
     const controller = new AbortController()
-    formInflight.add(controller)
+    let timedOut = false
+    const deadline = clock.setTimeout(() => {
+      timedOut = true
+      controller.abort(new Error("Submit deadline exceeded."))
+    }, deadlineForBinding(bindingId))
+    const flight = { controller, deadline }
+    formInflight.add(flight)
+    const settleFlight = () => {
+      clock.clearTimeout(deadline)
+      formInflight.delete(flight)
+    }
     void (async () => {
       let payload: Record<string, unknown>
       try {
@@ -361,22 +402,28 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
         }
         controller.signal.throwIfAborted()
       } catch (error) {
-        formInflight.delete(controller)
+        settleFlight()
         if (!live) return
+        if (timedOut) {
+          setCall(bindingId, callStateOf({ outcome: "timeout", payload: {} }, sent))
+          return
+        }
         change({ fault: errorOf(error) })
         setCall(bindingId, { kind: "unavailable", sent })
         return
       }
       try {
-        const answer = await calls.call(actionId, payload, { signal: controller.signal, idempotencyKey: key })
-        formInflight.delete(controller)
+        const answer = await abortable(calls.call(actionId, payload, { signal: controller.signal, idempotencyKey: key }), controller.signal)
+        settleFlight()
         if (!live) return
-        if (DEFINITIVE_OUTCOMES.has(answer.outcome)) formKeys.delete(keyOf)
-        setCall(bindingId, callStateOf(answer, { input: JSON.stringify(payload), key }))
+        const finalAnswer = timedOut ? ({ outcome: "timeout", payload: {} } as const) : answer
+        if (DEFINITIVE_OUTCOMES.has(finalAnswer.outcome)) formKeys.delete(keyOf)
+        setCall(bindingId, callStateOf(finalAnswer, { input: JSON.stringify(payload), key }))
       } catch {
-        formInflight.delete(controller)
+        settleFlight()
         if (!live) return
-        setCall(bindingId, callStateOf({ outcome: "network_failure", payload: {} }, { input: JSON.stringify(payload), key }))
+        const outcome = timedOut ? "timeout" : "network_failure"
+        setCall(bindingId, callStateOf({ outcome, payload: {} }, { input: JSON.stringify(payload), key }))
       }
     })()
   }
@@ -390,9 +437,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (driver.deferred() !== view.waiting) change({ waiting: driver.deferred() })
     },
     retryEngine: () => loadEngine(true),
-    setDraft: (formId, draft) => {
-      drafts.set(formId, draft)
-    },
+    setDraft,
     setSelection: (bindingId, records) => {
       selections.set(bindingId, records)
     },
@@ -407,17 +452,24 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       stopWaiting()
       for (const feed of feeds.values()) feed.stop()
       feeds.clear()
-      for (const controller of formInflight) controller.abort()
+      for (const flight of formInflight) {
+        clock.clearTimeout(flight.deadline)
+        flight.controller.abort()
+      }
       formInflight.clear()
       driver.dispose()
     },
   }
 }
 
+const needsEval = (expression: string | undefined): boolean =>
+  expression !== undefined && literal(expression) === null
+
 /**
  * Whether a page's machine evaluates any expression: a guard, an assignment or a call's input, an
- * action binding's input mapping it starts, or a catalog prop on the page it runs. A page with none
- * never loads the engine.
+ * action binding's input mapping it starts, a non-literal field condition (`visibleWhen`,
+ * `requiredWhen`, `readOnlyWhen`), or a catalog prop on the page it runs. A page with none never
+ * loads the engine.
  */
 export function needsEngine(ux: WidgetUx, machine: Machine): boolean {
   const started = new Set<string>()
@@ -430,16 +482,29 @@ export function needsEngine(ux: WidgetUx, machine: Machine): boolean {
     }
   }
   const page = ux.pages.find((candidate) => candidate.machine === machine)
+  const formIds = new Set<string>()
+  const fieldIds = new Set<string>()
   if (page !== undefined) {
     for (const node of nodesOf(page.root)) {
       const component = node.component
       if (component.kind === "form") {
+        formIds.add(component.formId)
         const form = ux.forms.find((candidate) => candidate.formId === component.formId)
         if (form !== undefined) started.add(form.submitBindingId)
+      } else if (component.kind === "field") {
+        fieldIds.add(component.fieldId)
       }
     }
   }
   if (ux.actionBindings.some((binding) => started.has(binding.bindingId) && Object.keys(binding.inputMapping).length > 0)) return true
+  if (
+    ux.fields.some((field) => {
+      const used = fieldIds.has(field.fieldId) || ("formId" in field.target && formIds.has(field.target.formId))
+      return used && (needsEval(field.visibleWhen?.expression) || needsEval(field.requiredWhen?.expression) || needsEval(field.readOnlyWhen?.expression))
+    })
+  ) {
+    return true
+  }
   return page === undefined || nodesOf(page.root).some((node) => node.component.kind === "catalog" && Object.keys(node.component.props ?? {}).length > 0)
 }
 
@@ -471,9 +536,9 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
 
   const send = useCallback((msg: Msg) => runtimeRef.current?.send(msg), [])
   const retryEngine = useCallback(() => runtimeRef.current?.retryEngine(), [])
-  const setDraft = useCallback((formId: string, draft: Readonly<Record<string, unknown>>) => runtimeRef.current?.setDraft(formId, draft), [])
+  const setDraft = useCallback((formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.setDraft(formId, draft, pinnedRecord), [])
   const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[]) => runtimeRef.current?.setSelection(bindingId, records), [])
-  const submitForm = useCallback((formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>) => runtimeRef.current?.submitForm(formId, bindingId, draft), [])
+  const submitForm = useCallback((formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.submitForm(formId, bindingId, draft, pinnedRecord), [])
 
   return {
     ...view,
