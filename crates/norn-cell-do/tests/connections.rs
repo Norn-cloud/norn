@@ -740,6 +740,52 @@ fn a_refused_refresh_marks_the_connection_reconnect_needed() {
     assert_eq!(server.seen().len(), before);
 }
 
+#[test]
+fn a_transient_token_endpoint_failure_does_not_mark_reconnect_needed() {
+    let (_dir, path) = temp_db();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&attempts);
+    let server = Mock::start(Arc::new(move |_: &Seen| {
+        if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            (
+                502,
+                vec![("content-type".to_owned(), "text/html".to_owned())],
+                "<html>bad gateway</html>".to_owned(),
+            )
+        } else {
+            (
+                200,
+                vec![("content-type".to_owned(), "application/json".to_owned())],
+                format!(
+                    r#"{{"access_token":"{NEW_ACCESS}","token_type":"Bearer","expires_in":3600,"refresh_token":"{NEW_REFRESH}"}}"#
+                ),
+            )
+        }
+    }));
+    let conns = connections(&path, server.port);
+    set(&conns, Some(2_000));
+    assert_eq!(
+        conns
+            .access_token("connection:acme.main", "acme.main", 10_000)
+            .err(),
+        Some(ConnError::Provider("unreadable_token_response"))
+    );
+    let after_transient = conns.status("acme.main").expect("status");
+    assert_eq!(after_transient.state, "connected");
+    assert_eq!(
+        after_transient.last_error.as_deref(),
+        Some("unreadable_token_response")
+    );
+    let recovered = conns
+        .access_token("connection:acme.main", "acme.main", 20_000)
+        .expect("refresh recovers after transient 502");
+    assert_eq!(recovered.expose(), NEW_ACCESS.as_bytes());
+    let after_recovery = conns.status("acme.main").expect("status");
+    assert_eq!(after_recovery.state, "connected");
+    assert_eq!(after_recovery.last_error, None);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
 // ------------------------------------------------------------------ oauth
 
 fn query_param(url: &str, name: &str) -> String {
@@ -1654,6 +1700,50 @@ fn read_policy_decides_before_the_vault_opens() {
     let admin = call("GET", path_of, query, Some("Bearer fixture:admin@demo"), "");
     assert_eq!(admin.status, 200, "{}", admin.body);
     assert_eq!(opens.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_transient_vault_open_failure_is_not_cached_forever() {
+    let (_dir, path) = temp_db();
+    let host = owner_host(&path);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&attempts);
+    let port = server.port;
+    let flaky = Routes::with_opener(move |_scope| {
+        if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+            Err("sqlite busy".to_owned())
+        } else {
+            Ok(connections(&path, port))
+        }
+    });
+    let req = request(
+        "GET",
+        "/v1/connections/acme.main/credentials",
+        SCOPE_QUERY,
+        Some("Bearer owner-token"),
+        "",
+    );
+    let first = flaky.route(&host, &Bearers, &req, 1_000).expect("routed");
+    assert_eq!(first.status, 503, "{}", first.body);
+    assert!(
+        first.body.contains("connection.unavailable"),
+        "{}",
+        first.body
+    );
+    assert!(!flaky.vault_opened());
+    assert!(flaky.connections().is_none());
+
+    let second = flaky.route(&host, &Bearers, &req, 2_000).expect("routed");
+    assert_eq!(second.status, 200, "{}", second.body);
+    assert!(flaky.vault_opened());
+    assert!(flaky.connections().is_some());
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+    let third = flaky.route(&host, &Bearers, &req, 3_000).expect("routed");
+    assert_eq!(third.status, 200, "{}", third.body);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
 }
 
 // ------------------------------------------------------------ round 2

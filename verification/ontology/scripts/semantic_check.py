@@ -354,7 +354,12 @@ def main() -> int:
     except (KeyError, OSError, TypeError, ValueError, SemanticCheckFailure) as error:
         checks.append(check("semantic_check_input", "failed", {"reason": str(error)}))
 
-    status = "failed" if any(item["status"] == "failed" for item in checks) else "semantic-checked"
+    if any(item["status"] == "failed" for item in checks):
+        status = "failed"
+    elif any(item["status"] == "skipped" for item in checks):
+        status = "incomplete"
+    else:
+        status = "semantic-checked"
     REPORT.write_text(
         json.dumps({"status": status, "checks": checks, "sourceVersions": versions}, indent=2) + "\n",
         encoding="utf-8",
