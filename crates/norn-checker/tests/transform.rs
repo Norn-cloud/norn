@@ -1240,3 +1240,56 @@ fn exact_temporal_division_with_dynamic_divisor_admits_evaluates_and_refuses_zer
 
     Ok(())
 }
+
+#[test]
+fn evaluate_shares_one_fuel_budget_across_rows_and_columns() {
+    let mut plan = admitted(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "p": {
+                "op": "project",
+                "input": "s",
+                "columns": [
+                    {"name": "id", "expression": "input.id"},
+                    {"name": "doubled", "expression": "input.credit + input.credit"}
+                ]
+            }
+        }),
+        "p",
+    );
+    let make_row = |i: usize| InputRow {
+        id: format!("c-{i}"),
+        version: 1,
+        values: BTreeMap::from([
+            ("email".to_owned(), RuntimeValue::String("a@b.c".to_owned())),
+            ("region".to_owned(), RuntimeValue::String("eu".to_owned())),
+            (
+                "credit".to_owned(),
+                RuntimeValue::Number(Decimal::from(10_i64)),
+            ),
+        ]),
+    };
+    plan.fuel_units = 200;
+    let one = TransformInput {
+        rows: BTreeMap::from([("customer".to_owned(), vec![make_row(0)])]),
+        links: BTreeMap::new(),
+    };
+    assert!(
+        evaluate(&plan, &one).is_ok(),
+        "a single row fits within the fuel budget"
+    );
+    let many = TransformInput {
+        rows: BTreeMap::from([("customer".to_owned(), (0..100).map(make_row).collect())]),
+        links: BTreeMap::new(),
+    };
+    assert_eq!(
+        evaluate(&plan, &many),
+        Err(norn_checker::transform::eval::EvalError::BoundExceeded),
+        "shared TurnFuel must refuse once cumulative row evaluations exceed plan.fuel_units"
+    );
+    plan.fuel_units = 50_000;
+    assert!(
+        evaluate(&plan, &many).is_ok(),
+        "the same 100 rows succeed once fuel_units is raised"
+    );
+}

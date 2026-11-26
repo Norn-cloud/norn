@@ -49,7 +49,7 @@ pub(crate) struct XsdProfile {
     pub qualified_references: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 fn bool_value(value: &str) -> Result<bool, String> {
-    match value {
+    match value.trim() {
         "true" | "1" => Ok(true),
         "false" | "0" => Ok(false),
         _ => Err(format!("invalid XSD boolean {value}")),
@@ -63,6 +63,7 @@ fn optional_bool(node: &XsdNode, key: &str) -> Result<Option<bool>, String> {
 }
 fn whole(value: &str) -> Result<u64, String> {
     value
+        .trim()
         .parse()
         .map_err(|error| format!("invalid or out-of-profile occurrence {value}: {error}"))
 }
@@ -73,7 +74,7 @@ pub(crate) fn occurrences(node: &XsdNode) -> Result<(u64, Option<u64>), String> 
         .attributes
         .get("minOccurs")
         .map_or(Ok(1), |v| whole(v))?;
-    let max = match node.attr("maxOccurs") {
+    let max = match node.attr("maxOccurs").trim() {
         "" => Some(1),
         "unbounded" => None,
         value => Some(whole(value)?),

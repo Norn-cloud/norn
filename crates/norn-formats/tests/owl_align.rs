@@ -375,3 +375,93 @@ fn owl_fibo_credit_agreement_is_held_not_a_claim() {
         "the lineage is held as a reported residual"
     );
 }
+
+#[test]
+fn owl_align_rejects_supersedes_cycles_and_preserves_narrowed_to_one_shape() {
+    let make_iface = |name: &str, iri: &str, extends: &[&str], to: Option<&str>| {
+        let links = to.map_or_else(Vec::new, |card| {
+            vec![serde_json::json!({
+                "id": "owner",
+                "target": "ex.Party",
+                "cardinality": { "to": card, "required": false }
+            })]
+        });
+        let (ns, local) = name.rsplit_once('.').unwrap();
+        serde_json::from_value(serde_json::json!({
+            "irVersion": "0.1",
+            "artifactId": format!("{name}.interface"),
+            "kind": "entity",
+            "namespace": ns,
+            "name": local,
+            "version": "0.1.0",
+            "lifecycle": "draft",
+            "scope": {},
+            "dependencies": [],
+            "provenance": { "source": "import", "sourcePath": iri },
+            "payload": {
+                "entityVersion": "2.0",
+                "interface": {
+                    "name": name,
+                    "extends": extends,
+                    "properties": [],
+                    "links": links
+                }
+            }
+        }))
+        .unwrap()
+    };
+    let interfaces = vec![
+        make_iface("ex.Party", "https://example.org/Party", &[], None),
+        make_iface("ex.P1", "https://example.org/P1", &[], Some("many")),
+        make_iface("ex.P2", "https://example.org/P2", &[], Some("one")),
+        make_iface(
+            "ex.Child",
+            "https://example.org/Child",
+            &["ex.P1", "ex.P2"],
+            None,
+        ),
+    ];
+    let admission = support::synthetic_ledger_config().admission;
+    let mut cyclic = table(false);
+    cyclic.anchors = vec![
+        anchor(
+            "https://example.org/P1",
+            "core.Agent",
+            "norn.core.agent",
+            &["https://example.org/P2"],
+        ),
+        anchor(
+            "https://example.org/P2",
+            "core.Claim",
+            "norn.core.claim",
+            &["https://example.org/P1"],
+        ),
+    ];
+    let err = align(&interfaces, &admission, &cyclic).unwrap_err();
+    assert!(err.contains("cycle"), "{err}");
+
+    let mut valid = table(false);
+    valid.anchors = vec![anchor(
+        "https://example.org/P1",
+        "core.Agent",
+        "norn.core.agent",
+        &[],
+    )];
+    let aligned = align(&interfaces, &admission, &valid).unwrap();
+    let pack = serde_json::to_value(&aligned.packs[0]).unwrap();
+    let child_term = term_of("ex.Child");
+    let child_shape = pack["payload"]["shapes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|shape| shape["termId"] == child_term)
+        .expect("child shape");
+    assert!(
+        child_shape["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["fieldId"] == "owner"),
+        "narrowed to_one member from P2 must not be shadowed by P1's to_many: {child_shape}"
+    );
+}
