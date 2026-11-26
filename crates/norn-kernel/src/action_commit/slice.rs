@@ -135,9 +135,7 @@ pub(super) fn reference_read_proof<E, C, I>(
     commit: &CellCommit<E, C, I>,
     target: &FactKey,
 ) -> Option<ActionReferenceReads> {
-    let Some(patch_properties) = reference_action(catalog, action, authorizer, target) else {
-        return None;
-    };
+    let patch_properties = reference_action(catalog, action, authorizer, target)?;
     if !commit.effects.is_empty()
         || commit.consumes.is_some()
         || !commit.link_reads.is_empty()

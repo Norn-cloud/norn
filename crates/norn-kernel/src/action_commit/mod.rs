@@ -54,6 +54,7 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
+    JsonValue,
 };
 use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, prepare_action_decision, widen_effect,

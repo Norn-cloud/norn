@@ -109,7 +109,7 @@ impl CreatorStampProof {
         view: &V,
     ) -> Result<bool, CommitError<V::Error>> {
         binds_prepared_commit(
-            PreparedCommitProof {
+            &PreparedCommitProof {
                 consumes: self.consumes.as_ref(),
                 reads: &self.reads,
                 link_reads: &self.link_reads,
@@ -139,7 +139,7 @@ pub(crate) struct PreparedCommitProof<'a> {
 /// delivery, and read fences sealed in `proof`. Perimeter adapters may append
 /// extra visibility/tombstone CAS reads, never drop or alter a sealed one.
 pub(crate) fn binds_prepared_commit<E, C, T, V: CommitView + ?Sized>(
-    proof: PreparedCommitProof<'_>,
+    proof: &PreparedCommitProof<'_>,
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,

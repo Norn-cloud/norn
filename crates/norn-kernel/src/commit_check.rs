@@ -17,8 +17,7 @@
 
 use crate::cell_host::{
     CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion, LinkKey,
-    LinkMutation, LinkReadTarget, LinkWrite, OwnedRowsCommitProof, PredicateQuery,
-    PredicateReadMember,
+    LinkReadTarget, OwnedRowsCommitProof, PredicateQuery, PredicateReadMember,
 };
 pub(crate) use crate::commit::{CommitLinks, MAX_LINK_LAW_SUBJECTS};
 use crate::commit::{PostState, check_commit_local};
@@ -434,7 +433,7 @@ pub fn check_commit_owned_rows<E: 'static, C, T, V: CommitView + ?Sized>(
         });
     }
     let trusted_owned_rows = binds_prepared_commit(
-        PreparedCommitProof {
+        &PreparedCommitProof {
             consumes: proof.consumes(),
             reads: proof.reads(),
             link_reads: proof.link_reads(),

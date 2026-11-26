@@ -399,13 +399,7 @@ fn prepare_action_input_inner<'a, X>(
         Some(bytes) => bytes,
         None => check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?,
     };
-    if raw_bytes > max_receipt_bytes {
-        return Err(ActionRefusal::InputBoundExceeded {
-            subject: "action call receipt input".to_owned(),
-            actual_bytes: raw_bytes,
-            max_bytes: max_receipt_bytes,
-        });
-    }
+    check_receipt_input_bytes::<X>(raw_bytes, max_receipt_bytes)?;
     let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
@@ -785,6 +779,20 @@ fn receipt_input_bound_applies(
     has_action_preparation_features(action) || normalized != raw_input
 }
 
+fn check_receipt_input_bytes<X>(
+    raw_bytes: usize,
+    max_receipt_bytes: usize,
+) -> Result<(), ActionRefusal<X>> {
+    if raw_bytes > max_receipt_bytes {
+        return Err(ActionRefusal::InputBoundExceeded {
+            subject: "action call receipt input".to_owned(),
+            actual_bytes: raw_bytes,
+            max_bytes: max_receipt_bytes,
+        });
+    }
+    Ok(())
+}
+
 /// The action call receipt input bound: the raw input's canonical bytes must
 /// fit the envelope's `max_output_bytes`. Returns those bytes.
 fn check_receipt_input_bound<X>(raw_input: &JsonObject) -> Result<usize, ActionRefusal<X>> {
@@ -795,13 +803,7 @@ fn check_receipt_input_bound<X>(raw_input: &JsonObject) -> Result<usize, ActionR
     )
     .unwrap_or(usize::MAX);
     let raw_bytes = canonical_object_bytes::<X>(raw_input)?;
-    if raw_bytes > max_receipt_bytes {
-        return Err(ActionRefusal::InputBoundExceeded {
-            subject: "action call receipt input".to_owned(),
-            actual_bytes: raw_bytes,
-            max_bytes: max_receipt_bytes,
-        });
-    }
+    check_receipt_input_bytes::<X>(raw_bytes, max_receipt_bytes)?;
     Ok(raw_bytes)
 }
 
