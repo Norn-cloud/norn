@@ -808,3 +808,88 @@ fn stale_materialization_withholds_deleted_marked_column() {
         exact_page.rows
     );
 }
+
+#[test]
+fn stale_materialization_reauthorizes_deleted_row_after_multi_event_commit() {
+    const FILTERED: &str = "shop.filtered_by_region";
+    let secret = [9_u8; 32];
+    let (host, directory) = host_with_dynamic_region_marking(FILTERED, &secret);
+    let objects: Vec<ObjectTypeDef> = types()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    let model = norn_cell::Model::from_definitions(&objects, &[]).unwrap();
+    let mut writer = CellStore::open(
+        &directory.path().join("cell.sqlite"),
+        model,
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    // Commit multiple events so `revision.seq > revision.commits` before refresh.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 500,
+            writes: vec![
+                put("shop.Customer", "c-south", &[("region", V::from("south"))]),
+                put(
+                    "shop.Order",
+                    "o2",
+                    &[("amount", V::from(Decimal::parse("20.00").unwrap()))],
+                ),
+            ],
+            links: vec![link("o2", "c-south")],
+            events: vec![
+                V::from_json(json!({"type": "note.one"})).unwrap(),
+                V::from_json(json!({"type": "note.two"})).unwrap(),
+                V::from_json(json!({"type": "note.three"})).unwrap(),
+            ],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let refreshed =
+        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
+    assert!(!refreshed.stale);
+    // Delete `c-north` at commit 3 (which is `<= revision.seq` of commit 2).
+    // `pop` is denied Values on `c-north`, so `pop` must not reuse the stale
+    // cache containing `c-north` and must fall back to live evaluation instead.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 1_000,
+            writes: vec![FactWriteRow::Delete {
+                object_type: "shop.Customer".into(),
+                key: "c-north".into(),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let pop_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("pop"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("pop falls back to live evaluation");
+    assert!(
+        pop_page.materialization.is_none(),
+        "stale cache containing denied historical row must not be served: {:?}",
+        pop_page.materialization
+    );
+    let full_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("full reader still receives stale cache");
+    assert!(full_page.materialization.as_ref().is_some_and(|m| m.stale));
+}

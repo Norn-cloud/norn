@@ -808,8 +808,8 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// Whether any non-tombstone historical version of `object_type` (or a
     /// subtype) in `world` lacks an immutable marking snapshot or a property
     /// marking row for `property` (fail closed when historical classification
-    /// evidence is missing or the indexed root range exceeds
-    /// [`MAX_HISTORY_COMPLETENESS_SCAN`], #1559 S2c).
+    /// evidence is missing or the indexed root range exceeds the history
+    /// completeness scan bound, #1559 S2c).
     ///
     /// # Errors
     /// Unknown type or a SQL-engine error.
