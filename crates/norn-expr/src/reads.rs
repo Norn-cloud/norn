@@ -414,11 +414,8 @@ fn collect(
             node: target,
             property,
         } => {
-            if let Some((reads, dynamic)) = access(target, property, root, aliases, pointers) {
+            if let Some(reads) = access(target, property, root, aliases, pointers, output) {
                 output.extend(&reads);
-                if dynamic {
-                    collect(property, root, aliases, pointers, output);
-                }
             } else {
                 collect(target, root, aliases, pointers, output);
                 collect(property, root, aliases, pointers, output);
@@ -518,26 +515,29 @@ fn collect_call(
     }
 }
 
-/// Resolves a member chain to the root-level dependency it represents.
-/// `dynamic` marks a nonliteral selector, which is conservatively a whole-root
-/// read when no first-level field can be determined.
+/// Resolves a member chain to the root-level dependency it represents,
+/// collecting any dynamic selector expressions anywhere in the chain so
+/// intermediate indices such as `self.a[self.b].c` are never dropped.
 fn access(
     target: &Node<'_>,
     property: &Node<'_>,
     root: &str,
     aliases: &BTreeMap<String, ExpressionReads>,
     pointers: &[ExpressionReads],
-) -> Option<(ExpressionReads, bool)> {
-    let mut reads = root_access(target, root, aliases, pointers)?;
-    let dynamic = !matches!(property, Node::String(_));
-    if reads.fields.is_empty() && !reads.whole_root {
-        if let Node::String(field) = property {
+    output: &mut ExpressionReads,
+) -> Option<ExpressionReads> {
+    let mut reads = root_access(target, root, aliases, pointers, output)?;
+    if let Node::String(field) = property {
+        if reads.fields.is_empty() && !reads.whole_root {
             reads.fields.insert((*field).to_owned());
-        } else {
+        }
+    } else {
+        if reads.fields.is_empty() && !reads.whole_root {
             reads.whole_root = true;
         }
+        collect(property, root, aliases, pointers, output);
     }
-    Some((reads, dynamic))
+    Some(reads)
 }
 
 fn root_access(
@@ -545,6 +545,7 @@ fn root_access(
     root: &str,
     aliases: &BTreeMap<String, ExpressionReads>,
     pointers: &[ExpressionReads],
+    output: &mut ExpressionReads,
 ) -> Option<ExpressionReads> {
     match node {
         Node::Root => Some(ExpressionReads {
@@ -557,42 +558,11 @@ fn root_access(
         }),
         Node::Identifier(name) => aliases.get(*name).cloned(),
         Node::Pointer => pointers.last().cloned(),
-        Node::Parenthesized(inner) => root_access(inner, root, aliases, pointers),
+        Node::Parenthesized(inner) => root_access(inner, root, aliases, pointers, output),
         Node::Member {
             node: target,
             property,
-        } => {
-            let mut reads = root_access(target, root, aliases, pointers)?;
-            if reads.fields.is_empty() && !reads.whole_root {
-                match property {
-                    Node::String(field) => {
-                        reads.fields.insert((*field).to_owned());
-                    }
-                    Node::Null
-                    | Node::Bool(_)
-                    | Node::Number(_)
-                    | Node::TemplateString(_)
-                    | Node::Pointer
-                    | Node::Array(_)
-                    | Node::Object(_)
-                    | Node::Assignments { .. }
-                    | Node::Identifier(_)
-                    | Node::Closure { .. }
-                    | Node::Parenthesized(_)
-                    | Node::Root
-                    | Node::Member { .. }
-                    | Node::Slice { .. }
-                    | Node::Interval { .. }
-                    | Node::Conditional { .. }
-                    | Node::Unary { .. }
-                    | Node::Binary { .. }
-                    | Node::FunctionCall { .. }
-                    | Node::MethodCall { .. }
-                    | Node::Error { .. } => reads.whole_root = true,
-                }
-            }
-            Some(reads)
-        }
+        } => access(target, property, root, aliases, pointers, output),
         Node::Null
         | Node::Bool(_)
         | Node::Number(_)
@@ -739,6 +709,20 @@ mod tests {
     fn dynamic_selector_fails_closed_to_whole_root() {
         let reads = expression_reads("self[key]", "self").expect("selector should parse");
         assert!(reads.whole_root);
+    }
+
+    #[test]
+    fn intermediate_dynamic_index_is_collected() {
+        let reads = expression_reads("self.a[self.b].c", "self").expect("nested index parses");
+        assert_eq!(reads, fields(&["a", "b"]));
+
+        let chained = expression_reads("self.a[self.b][self.c].d", "self")
+            .expect("multi-level nested index parses");
+        assert_eq!(chained, fields(&["a", "b", "c"]));
+
+        let whole = expression_reads("self[self.k].x", "self").expect("root index parses");
+        assert!(whole.whole_root);
+        assert_eq!(whole.fields, BTreeSet::from(["k".to_owned()]));
     }
 
     #[test]

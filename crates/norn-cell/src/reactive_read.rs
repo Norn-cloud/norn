@@ -13,7 +13,7 @@ use crate::reactive::{
 };
 use crate::read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, ObjectRecord, StoreReader,
-    query_expressions, read_projection, to_u64,
+    binding_sort_sql_value, decode_binding_sort_value, query_expressions, read_projection, to_u64,
 };
 use crate::system::{LINK_VERSIONS, VERSIONS};
 use norn_kernel::snapshot_observe::OBSERVED_TOMBSTONE_TYPE;
@@ -63,14 +63,6 @@ enum RootRowFilter {
     Untombstoned,
 }
 
-fn binding_sort_sql_value(value: &BindingSortValue) -> SqlValue {
-    match value {
-        BindingSortValue::Integer(value) => SqlValue::Integer(*value),
-        BindingSortValue::Text(value) => SqlValue::from(value.clone()),
-        BindingSortValue::Null => SqlValue::Null,
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
     clippy::too_many_lines,
@@ -116,8 +108,14 @@ fn binding_sorted_metadata<E: SqlEngine>(
         None
     };
     let after_value = if needs_after_value && let Some(after) = after {
-        bindings.push(binding_sort_sql_value(&after.value));
-        Some(format!("?{}", bindings.len()))
+        let (sql_value, cast_integer) = binding_sort_sql_value(&after.value);
+        bindings.push(sql_value);
+        let param = format!("?{}", bindings.len());
+        Some(if cast_integer {
+            format!("CAST({param} AS INTEGER)")
+        } else {
+            param
+        })
     } else {
         None
     };
@@ -369,22 +367,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         budget.rows = budget.rows.saturating_sub(1);
 
-        // The rowid comes from the covering index's implicit rowid entry.
-        // Only after length preflight do we fetch the owned key and identity.
+        let is_integer = matches!(column.column.encoding, ValueEncoding::Integer);
+        let projected = read_projection(&[(property, is_integer)])
+            .pop()
+            .unwrap_or_else(|| quote_identifier(property));
         let fetched = self.conn.query(
             &format!(
-                "SELECT {id}, {root_column}, {property} FROM {table} WHERE rowid = ?1 AND {world_column} = ?2",
+                "SELECT {id}, {root_column}, {projected} FROM {table} WHERE rowid = ?1 AND {world_column} = ?2",
                 id = quote_identifier(ID_COLUMN),
                 root_column = quote_identifier(TYPE_COLUMN),
-                property = quote_identifier(property),
                 table = quote_identifier(table),
                 world_column = quote_identifier(WORLD_COLUMN),
             ),
             &[SqlValue::from(rowid), SqlValue::from(world)],
         )?;
         let Some(fetched) = fetched.first() else {
-            // A concurrent delete invalidates only this candidate, never the
-            // caller's sealed boundary. Retry from the unchanged position.
             return Ok(None);
         };
         let fetched = SqlRow(fetched.clone());
@@ -394,11 +391,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             _ => return Ok(None),
         };
-        let sort_value = match fetched.get_ref(2)? {
-            SqlValue::Null => BindingSortValue::Null,
-            SqlValue::Integer(value) => BindingSortValue::Integer(*value),
-            SqlValue::Text(value) => BindingSortValue::Text(value.clone()),
-            SqlValue::Real(_) | SqlValue::Blob(_) => return Ok(None),
+        let Some(sort_value) = decode_binding_sort_value(fetched.get_ref(2)?, is_integer) else {
+            return Ok(None);
         };
         let is_null = matches!(&sort_value, BindingSortValue::Null);
         let mut has_more = metadata.len() > 1;
