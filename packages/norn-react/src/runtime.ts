@@ -223,7 +223,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
         const read = binding !== undefined ? bindingRead(binding, context, objectTypeOf) : named !== undefined ? contextRead(named, context) : null
         if (read === null) return { outcome: "not_served", payload: {} }
         const answer = await reader.widget(read).queryFn({ signal: callOptions.signal })
-        if (live && answer.outcome === "accepted" && followed(machine.events, call.bindingId)) follow(call.bindingId, read)
+        if (live && !callOptions.signal.aborted && answer.outcome === "accepted" && followed(machine.events, call.bindingId)) follow(call.bindingId, read)
         return answer
       }
       const binding = call.kind === "action" ? ux.actionBindings.find((candidate) => candidate.bindingId === call.bindingId) : undefined

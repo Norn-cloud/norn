@@ -87,8 +87,10 @@ function readBindingAtScope(read: BindingRead, scope: DecidedScope, signal: Abor
 }
 
 /** One binding's read from the recording: what it recorded, or not served when it recorded none. */
-export async function readRecordedWidget(read: BindingRead): Promise<Classified> {
+export async function readRecordedWidget(read: BindingRead, signal?: AbortSignal): Promise<Classified> {
   const { recordedRecords } = await import("./recorded-transport.ts")
+  // A read cancelled while the recording loaded answers nothing, as a cancelled fetch does.
+  signal?.throwIfAborted()
   if (read.kind === "record") {
     const reads = recordedRecords.object(read.objectType, read.id)
     return reads === null ? { outcome: "not_served", payload: {} } : { outcome: "accepted", payload: {}, body: reads }

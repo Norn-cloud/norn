@@ -165,6 +165,9 @@ export function createDriver(options: DriverOptions): Driver {
       (classified) => {
         settle(cmd.entry, flight)
         if (DEFINITIVE.has(classified.outcome)) keys.delete(keyOf)
+        // A read cancelled after its answer arrived but before this ran is stale: it delivers the
+        // cancel, never the answer. An action keeps the server's honest answer.
+        if (flight.ended === "cancelled" && cmd.call.kind === "read") return deliver(cmd.entry, { outcome: "cancelled", payload: {} })
         const answer: Classified = flight.ended === "timeout" ? { outcome: "timeout", payload: {} } : classified
         if (!disposed) options.onAnswer?.(cmd, answer, key)
         deliver(cmd.entry, answer)
