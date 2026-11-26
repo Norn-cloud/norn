@@ -98,7 +98,7 @@ export function AssistantPanel({ assistant }: { readonly assistant?: AssistantCo
   const header = (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/80 px-4">
       <h2 className="text-body">{assistant.title}</h2>
-      <button type="button" aria-label={`Close ${assistant.title}`} onClick={() => setOpen(false)} className="ms-auto flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><X aria-hidden className="size-4" /></button>
+      <button type="button" aria-label={`Close ${assistant.title}`} onClick={() => setOpen(false)} className="ms-auto flex size-8 max-sm:size-[44px] items-center justify-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"><X aria-hidden className="size-4" /></button>
     </div>
   )
   if (mobile) {

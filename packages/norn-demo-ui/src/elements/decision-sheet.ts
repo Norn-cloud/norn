@@ -710,9 +710,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     }
     return false
   }
-  let disposed = false
   const listeners = new AbortController()
-  const signal = listeners.signal
+  const { signal } = listeners
 
   root.addEventListener("click", (event) => {
     const target = event.target as Element | null
@@ -769,7 +768,6 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
     paint(driver.snapshot())
   }
   const dispose = () => {
-    disposed = true
     listeners.abort()
     driver.dispose()
   }
@@ -777,12 +775,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Mo
   if (engine === null) {
     void Promise.resolve(options.evaluate).then(
       (loaded) => {
-        if (disposed) return
+        if (signal.aborted) return
         engine = loaded
         paint(driver.snapshot())
       },
       () => {
-        if (disposed) return
+        if (signal.aborted) return
         q(".norn-sheet")?.setAttribute("data-engine", "unavailable")
       },
     )

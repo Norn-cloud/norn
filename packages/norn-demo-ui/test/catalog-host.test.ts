@@ -87,6 +87,7 @@ test("the frame allows no network and no same-origin access; the module cannot c
   expect(html).not.toContain("connect-src")
   expect(html.match(/<\/script>/gi)?.length).toBe(2)
   expect(html).not.toContain("<!--")
+  expect(html).not.toContain("{ once: true }")
 })
 
 test("checkPayload ignores prototype properties and createHost catches guard evaluation errors", () => {

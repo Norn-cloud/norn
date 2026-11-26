@@ -185,9 +185,9 @@ export function mountFrame(container: HTMLElement, moduleSource: string, host: H
   frame.srcdoc = frameDocument(moduleSource)
   const channel = new MessageChannel()
   const listeners = new AbortController()
-  channel.port1.onmessage = (event) => host.receive(event.data)
   let connected = false
   let unmounted = false
+  channel.port1.onmessage = (event) => { if (!unmounted) host.receive(event.data) }
   frame.addEventListener("load", () => {
     if (unmounted) return
     // The sandboxed frame has an opaque origin, so the port is handed over with "*"; it carries no data.
@@ -204,9 +204,9 @@ export function mountFrame(container: HTMLElement, moduleSource: string, host: H
       if (unmounted) return
       unmounted = true
       listeners.abort()
+      channel.port1.close()
       if (!connected) channel.port2.close()
       connected = false
-      channel.port1.close()
       frame.remove()
     },
   }

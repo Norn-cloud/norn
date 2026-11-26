@@ -553,7 +553,7 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
 const hasWitness = (finding: LifecycleFinding): finding is LifecycleFinding & { readonly witness: { readonly steps: readonly { readonly edge: number; readonly moves: readonly WitnessMove[] }[] } } =>
   finding.witness !== undefined && finding.witness !== null && Array.isArray(finding.witness.steps)
 
-let nextMarkerId = 0
+let markerSeq = 0
 
 /** Mount the view into `root`. Returns the disposer (it ends the live read). */
 export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOptions): () => void {
@@ -564,7 +564,6 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   // The definition's ids in words, sentence case ("on_accepted" reads "On accepted").
   const label = options.label ?? ((id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) })
   const number = new Intl.NumberFormat(rtl ? "ar-EG" : "en")
-  const markerPrefix = `norn-life-head-${++nextMarkerId}`
   const findings = (options.findings ?? []).filter((finding) => hasWitness(finding) || finding.unattributed === true)
   const doc = root.ownerDocument
   adoptLifecycleStyles(doc)
@@ -625,11 +624,12 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const boardEl = el("div", { class: "norn-life-board", "data-region": "board" })
   boardEl.style.setProperty("--norn-life-lanes", String(lanes))
   const stageEl = el("div", { class: "norn-life-stage", "data-region": "stage" })
+  const headId = `norn-life-head-${++markerSeq}`
   const svg = svgEl("svg", { class: "norn-life-arrows", dir: rtl ? "rtl" : "ltr", "aria-hidden": "true" })
   const defs = svgEl("defs")
   for (const suffix of ["", "-on"]) {
     const marker = svgEl("marker", {
-      id: `${markerPrefix}${suffix}`,
+      id: `${headId}${suffix}`,
       viewBox: "0 0 8 8",
       refX: "7",
       refY: "4",
@@ -753,7 +753,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
         const hop = toColumn - fromColumn
         const route = routeArrow(a, to, hop, rtl, floor, hop < -1 ? lane++ : 0)
         const on = active.has(transition.id)
-        const path = svgEl("path", { d: pathData(route), "marker-end": `url(#${markerPrefix}${on ? "-on" : ""})` })
+        const path = svgEl("path", { d: pathData(route), "marker-end": `url(#${headId}${on ? "-on" : ""})` })
         if (on) path.setAttribute("data-active", "")
         const text = svgEl("text", { x: String(route.label[0]), y: String(route.label[1]), "text-anchor": "middle" })
         if (on) text.setAttribute("data-active", "")
