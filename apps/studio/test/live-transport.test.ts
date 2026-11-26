@@ -1171,3 +1171,32 @@ test.each([
     client.clear()
   }
 })
+
+test("aborting one observer of a shared ModeProbe never aborts the underlying fetch for another observer", async () => {
+  refreshMode()
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let fetchAborted = false
+  let fetchCount = 0
+  const fetcher: typeof globalThis.fetch = Object.assign(
+    async (_input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => {
+      fetchCount += 1
+      init?.signal?.addEventListener("abort", () => { fetchAborted = true })
+      await gate
+      return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  )
+  const a = new AbortController()
+  const b = new AbortController()
+  const first = currentMode(fetcher, scopeA, a.signal)
+  const second = currentMode(fetcher, scopeA, b.signal)
+  a.abort(new DOMException("observer A unmounted", "AbortError"))
+  await expect(first).rejects.toThrow()
+  expect(fetchAborted).toBe(false)
+  release()
+  await expect(second).resolves.toMatchObject({ kind: "live", scope: scopeA })
+  expect(fetchCount).toBe(1)
+  refreshMode()
+})

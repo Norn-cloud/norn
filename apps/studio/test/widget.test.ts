@@ -47,3 +47,9 @@ test("bucket values keep the scale the server wrote", () => {
   const [bucket] = answerBuckets(read!)
   expect(bucket).toMatchObject({ label: "w1", value: "100.000", totals: ["2.50", "2.000"], members: [{ id: "m1", amounts: ["1.250", "1.000"] }] })
 })
+
+test("Bridge.request rejects immediately and cleans up when postMessage throws synchronously", async () => {
+  const frame = { postMessage: () => { throw new Error("detached host") } } as unknown as Window
+  const bridge = new Bridge(frame, () => undefined)
+  await expect(bridge.request("ui/initialize", {}, 60_000)).rejects.toThrow("detached host")
+})
