@@ -1809,8 +1809,8 @@ impl Scope {
         }
     }
 
-    /// Enforce mirror row scope and model pin on non-question reads (`profile`),
-    /// matching [`Engine::evaluate`].
+    /// Enforce mirror row scope and model pin (and `:bad` when `check_bad` is
+    /// set), returning the mirror population count (`None` for dataset sources).
     fn verify_mirror_rows(
         &self,
         conn: &Connection,
@@ -3521,7 +3521,7 @@ fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
     let arithmetic = |op: &str,
                       a: &RowPredicate,
                       b: &RowPredicate,
-                      scale: impl FnOnce(u32, u32) -> Outcome<u32>|
+                      scale: fn(u32, u32) -> Outcome<u32>|
      -> Outcome<LoweredRule> {
         let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
         let (K::Number(x), K::Number(y)) = (a.kind, b.kind) else {

@@ -674,18 +674,20 @@ fn member(alias: &str, id: &str, version: u64) -> Result<String, CellError> {
 
 fn load(conn: &Connection, plan: &TransformPlan, input: &TransformInput) -> Result<(), CellError> {
     for scan in plan.inputs.values() {
+        let Some(schema) = plan
+            .nodes
+            .values()
+            .find(|node| matches!(&node.step, Step::Scan { alias } if alias == &scan.alias))
+            .map(|node| &node.schema)
+        else {
+            continue;
+        };
         let Some(rows) = input.rows.get(&scan.alias) else {
             return Err(CellError::Engine(format!(
                 "missing transform input `{}`",
                 scan.alias
             )));
         };
-        let schema = plan
-            .nodes
-            .values()
-            .find(|node| matches!(&node.step, Step::Scan { alias } if alias == &scan.alias))
-            .map(|node| &node.schema)
-            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
         let mut columns = Vec::new();
         let mut placeholders = Vec::new();
         let mut is_timestamp = Vec::with_capacity(schema.columns.len());
