@@ -348,6 +348,38 @@ fn compiled(
     })
 }
 
+fn governed_actions<'a>(
+    actions: &'a [(&'a ArtifactEnvelope, ActionRoot)],
+    policies: &BTreeMap<&'a str, (&'a str, AccessIr)>,
+) -> BTreeMap<&'a str, BTreeSet<&'a str>> {
+    let mut governs: BTreeMap<&'a str, BTreeSet<&'a str>> = BTreeMap::new();
+    for (envelope, action) in actions {
+        let Some(reference) = &action.access else {
+            continue;
+        };
+        let Some((version, _)) = policies.get(reference.artifact_id.as_str()) else {
+            continue;
+        };
+        let pinned = reference.version.as_deref().or_else(|| {
+            envelope
+                .dependencies
+                .iter()
+                .find(|dependency| {
+                    dependency.artifact_id == reference.artifact_id && dependency.required
+                })
+                .and_then(|dependency| dependency.version.as_deref())
+        });
+        if pinned.is_some_and(|pinned| pinned != *version) {
+            continue;
+        }
+        governs
+            .entry(reference.artifact_id.as_str())
+            .or_default()
+            .insert(action.action_id.as_str());
+    }
+    governs
+}
+
 impl ActionPolicy {
     /// Compile the action policy of the definitions `artifacts` installed over
     /// `model`, for `scope`. `Ok(None)` when no action is callable.
@@ -391,34 +423,7 @@ impl ActionPolicy {
                 | ArtifactKind::Model => {}
             }
         }
-        // Which policy governs each action: the one its `access` ref names, at
-        // the version the ref pins or, failing that, the version its required
-        // dependency on that policy pins (as the checker resolves it).
-        let mut governs: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        for (envelope, action) in &actions {
-            let Some(reference) = &action.access else {
-                continue;
-            };
-            let Some((version, _)) = policies.get(reference.artifact_id.as_str()) else {
-                continue;
-            };
-            let pinned = reference.version.as_deref().or_else(|| {
-                envelope
-                    .dependencies
-                    .iter()
-                    .find(|dependency| {
-                        dependency.artifact_id == reference.artifact_id && dependency.required
-                    })
-                    .and_then(|dependency| dependency.version.as_deref())
-            });
-            if pinned.is_some_and(|pinned| pinned != *version) {
-                continue;
-            }
-            governs
-                .entry(reference.artifact_id.as_str())
-                .or_default()
-                .insert(action.action_id.as_str());
-        }
+        let governs = governed_actions(&actions, &policies);
         let rules = narrowed(&governs, &policies)?;
         let callable: BTreeSet<String> = rules
             .iter()

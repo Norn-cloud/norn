@@ -1034,19 +1034,30 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
     ]
 }
 
-/// Lane A2 full-stack hosted DO HTTP + MCP correspondence:
-/// 1. Verified `StringSet` principal attributes (`managed_branches`) decide
-///    current & proposed resource ABAC over HTTP and MCP, denying missing,
-///    wrong-branch, wrong-org, and spoofed-input attributes.
-/// 2. `KernelAuthorizer` + `ReadPolicy` propagate exact policy read footprints
-///    so stamped `CreateOnly` + PII `Employee` slice + `createLinks` commits
-///    cleanly over real HTTP and MCP with zero PII taint, while a classified
-///    precondition read still refuses.
+fn mcp_leave_tool_name(cell: &mut Cell, auth: &str) -> String {
+    let list_req = json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"limit":100}});
+    let list = cell.call("POST", "/v1/mcp", Some(auth), &list_req.to_string());
+    assert_eq!(list.status, 200, "{}", list.body);
+    let list_json: Value = serde_json::from_str(&list.body).unwrap();
+    list_json["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["_meta"]["norn/actionId"] == "hr.submit_leave")
+        .unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Lane A2 full-stack hosted DO HTTP ABAC: verified `StringSet` principal
+/// attributes (`managed_branches`) decide current & proposed resource checks,
+/// rejecting missing, wrong-branch, wrong-org, and spoofed-input attributes.
 #[test]
-fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
+fn hosted_abac_string_set_decides_current_and_proposed_resource_checks() {
     let directory = tempfile::tempdir().unwrap();
     let mut cell = provisioned(
-        &directory.path().join("hr.sqlite"),
+        &directory.path().join("abac.sqlite"),
         &hr_abac_ifc_artifacts(),
     );
     assert_eq!(cell.tenant.action_policy_error(), None);
@@ -1070,11 +1081,9 @@ fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
         json!({ "managed_branches": ["cairo"] }),
     );
     let no_attrs = user("admin");
-
     let emp_body = |branch: &str, key: &str| {
         json!({ "input": { "id": "E1", "status": "active", "branch_id": branch, "national_id": "123-45-6789" }, "idempotencyKey": key }).to_string()
     };
-    // Missing, wrong-branch, wrong-org, and spoofed-in-body attributes all deny.
     assert_eq!(
         cell.call(
             "POST",
@@ -1117,7 +1126,6 @@ fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
         200
     );
 
-    // Seed Employee/E1 in managed branch `cairo`; moving to unmanaged `alex` denies on proposed state, moving to `giza` succeeds.
     let seeded = cell.call(
         "POST",
         "/v1/actions/hr.seed_employee",
@@ -1142,8 +1150,45 @@ fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
         &emp_body("giza", "move-ok"),
     );
     assert_eq!(moved.status, 200, "{}", moved.body);
+}
 
-    // Stamped CreateOnly + PII Employee slice + createLinks succeeds over HTTP with unmarked precondition.
+/// Lane A2 full-stack hosted DO HTTP + MCP correspondence: `KernelAuthorizer`
+/// + `ReadPolicy` propagate exact policy read footprints so stamped `CreateOnly`
+/// + PII `Employee` slice + `createLinks` commits over real HTTP and MCP while
+/// classified precondition reads still refuse.
+#[test]
+fn hosted_exact_policy_footprint_enables_stamped_create_ifc_over_http_and_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("hr-ifc.sqlite"),
+        &hr_abac_ifc_artifacts(),
+    );
+    assert_eq!(cell.tenant.action_policy_error(), None);
+
+    let cairo_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["cairo"] }),
+    );
+    let alex_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["alex"] }),
+    );
+    let seed_body = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789" }, "idempotencyKey": "seed-1" }).to_string();
+    assert_eq!(
+        cell.call(
+            "POST",
+            "/v1/actions/hr.seed_employee",
+            Some(&cairo_mgr),
+            &seed_body
+        )
+        .status,
+        200
+    );
+
     let leave_http = json!({ "input": { "id": "L-HTTP", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-http" }).to_string();
     let http_ok = cell.call(
         "POST",
@@ -1152,7 +1197,7 @@ fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
         &leave_http,
     );
     assert_eq!(http_ok.status, 200, "{}", http_ok.body);
-    // Classified precondition read on the exact same hosted cell refuses.
+
     let leave_pii = json!({ "input": { "id": "L-PII", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-pii" }).to_string();
     let pii_refused = cell.call(
         "POST",
@@ -1162,27 +1207,10 @@ fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
     );
     assert_ne!(pii_refused.status, 200, "{}", pii_refused.body);
 
-    // Same stamped CreateOnly + ABAC + IFC works over MCP `tools/call` (and denies wrong branch).
-    let list = cell.call(
-        "POST",
-        "/v1/mcp",
-        Some(&cairo_mgr),
-        &json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"limit":100}}).to_string(),
-    );
-    assert_eq!(list.status, 200, "{}", list.body);
-    let list_json: Value = serde_json::from_str(&list.body).unwrap();
-    let tool_name = list_json["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["_meta"]["norn/actionId"] == "hr.submit_leave")
-        .unwrap()["name"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let mcp_call = |auth: &str, id: &str, branch: &str, key: &str| {
+    let tool_name = mcp_leave_tool_name(&mut cell, &cairo_mgr);
+    let mut mcp_call = |auth: &str, id: &str, key: &str| {
         let req = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-            "name": tool_name, "arguments": {"id": id, "employee_id": "E1", "branch_id": branch},
+            "name": tool_name, "arguments": {"id": id, "employee_id": "E1", "branch_id": "cairo"},
             "_meta": {"norn/idempotencyKey": key}
         }})
         .to_string();
@@ -1191,10 +1219,10 @@ fn hosted_abac_and_exact_policy_footprint_work_over_http_and_mcp() {
         serde_json::from_str::<Value>(&resp.body).unwrap()
     };
     assert_eq!(
-        mcp_call(&alex_mgr, "L-MCP-DENY", "cairo", "mcp-deny")["result"]["isError"],
+        mcp_call(&alex_mgr, "L-MCP-DENY", "mcp-deny")["result"]["isError"],
         true
     );
-    let mcp_ok = mcp_call(&cairo_mgr, "L-MCP", "cairo", "mcp-ok");
+    let mcp_ok = mcp_call(&cairo_mgr, "L-MCP", "mcp-ok");
     assert_eq!(mcp_ok["result"]["isError"], false, "{mcp_ok}");
     assert_eq!(
         mcp_ok["result"]["structuredContent"]["outcome"],
