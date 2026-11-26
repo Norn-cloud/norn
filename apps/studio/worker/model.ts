@@ -155,7 +155,24 @@ export function withFallback(primary: Model, fallback: Model): Model & { answerA
       // been billed, so its usage is unknown, not zero.
       first = { json: null, model: primary.name, inputTokens: 0, outputTokens: 0, costMicroUsd: 0, failure: error instanceof Error ? error.message : String(error), ...unbilled(error) ? {} : { uncertain: true } }
     }
-    return first.json !== null ? [first] : [first, await fallback.answer(ask)]
+    if (first.json !== null) return [first]
+    try {
+      return [first, await fallback.answer(ask)]
+    } catch (error) {
+      // Preserve `first` whenever the primary call had known spend or uncertain usage so a fallback
+      // throw (especially a definite unbilled status) can never drop primary spend from settlement.
+      if (first.costMicroUsd === 0 && first.uncertain !== true) throw error
+      const second: Answer = {
+        json: null,
+        model: fallback.name,
+        inputTokens: 0,
+        outputTokens: 0,
+        costMicroUsd: 0,
+        failure: error instanceof Error ? error.message : String(error),
+        ...unbilled(error) ? {} : { uncertain: true },
+      }
+      return [first, second]
+    }
   }
   return { name: primary.name, answerAll, answer: async (ask) => (await answerAll(ask)).at(-1) as Answer }
 }

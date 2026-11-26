@@ -334,11 +334,42 @@ function readTarString(buf: Uint8Array, start: number, length: number): string {
 }
 
 function parseTarOctal(buf: Uint8Array, start: number, length: number): number | undefined {
-  const raw = readTarString(buf, start, length).trim()
-  if (!raw) return 0
-  if (!/^[0-7]+$/.test(raw)) return undefined
-  const value = Number.parseInt(raw, 8)
-  return Number.isSafeInteger(value) ? value : undefined
+  const end = start + length
+  if (buf[start] === 0) {
+    // GNU tar's `from_header` skips a single leading NUL (`where += !*where`), so
+    // "\0" + "0000001000\0" parses as 0 under C-string reads but 512 under GNU tar.
+    // Admit a leading NUL only when the entire field is NUL.
+    for (let i = start + 1; i < end; i++) {
+      if (buf[i] !== 0) return undefined
+    }
+    return 0
+  }
+  // Parse raw ASCII bytes directly (never TextDecoder / JS .trim(), which strip
+  // UTF-8 BOM and Unicode whitespace like U+00A0 that GNU tar rejects).
+  let i = start
+  while (i < end && buf[i] === 0x20) i++
+  let value = 0
+  let digits = 0
+  while (i < end) {
+    const b = buf[i]!
+    if (b >= 0x30 && b <= 0x37) {
+      value = value * 8 + (b - 0x30)
+      if (!Number.isSafeInteger(value)) return undefined
+      digits++
+      i++
+    } else {
+      break
+    }
+  }
+  // Reject digitless blank/space-padded fields ("Blanks in header" in GNU tar).
+  if (digits === 0) return undefined
+  while (i < end) {
+    const b = buf[i]!
+    // Allow trailing ASCII spaces before NUL, and the POSIX checksum "\0 " terminator.
+    if (b !== 0 && b !== 0x20) return undefined
+    i++
+  }
+  return value
 }
 
 function parseTarSize(buf: Uint8Array, start: number, length: number): number | undefined {
@@ -401,6 +432,9 @@ function parsePaxRecords(data: Uint8Array, assetName: string): Record<string, st
     }
     if (key === "linkpath" && value.length > 0) {
       throw new Error(`refusing PAX linkpath '${value}' in ${assetName}`)
+    }
+    if ((key === "path" || key === "size" || key === "linkpath") && Object.hasOwn(records, key)) {
+      throw new Error(`refusing duplicate PAX key '${key}' in ${assetName}`)
     }
     records[key] = value
     offset += recordLen
@@ -470,6 +504,9 @@ export function inspectTarGzArchive(
       if (consecutiveZeroBlocks >= 2) break
       continue
     }
+    if (consecutiveZeroBlocks > 0) {
+      throw new Error(`refusing unexpected archive header after zero block in ${assetName}`)
+    }
     consecutiveZeroBlocks = 0
 
     if (!verifyTarChecksum(block)) {
@@ -499,15 +536,35 @@ export function inspectTarGzArchive(
       }
       const parsed = parsePaxRecords(tar.subarray(dataStart, dataEnd), assetName)
       if (typeChar === "g") {
+        if (nextPax !== undefined || nextGnuLongName !== undefined) {
+          throw new Error(`refusing global PAX header interrupting extended entry header in ${assetName}`)
+        }
+        for (const forbidden of ["path", "linkpath", "size"] as const) {
+          if (parsed[forbidden] !== undefined) {
+            throw new Error(`refusing global PAX ${forbidden} override in ${assetName}`)
+          }
+        }
         Object.assign(globalPax, parsed)
       } else {
-        nextPax = Object.assign(Object.create(null) as Record<string, string>, nextPax, parsed)
+        if (nextGnuLongName !== undefined) {
+          throw new Error(`refusing ambiguous archive entry with both GNU longname and PAX header in ${assetName}`)
+        }
+        if (nextPax !== undefined) {
+          throw new Error(`refusing duplicate PAX extended header in ${assetName}`)
+        }
+        nextPax = parsed
       }
       offset = paddedEnd
       continue
     }
 
     if (typeChar === "L") {
+      if (nextPax !== undefined) {
+        throw new Error(`refusing ambiguous archive entry with both PAX header and GNU longname in ${assetName}`)
+      }
+      if (nextGnuLongName !== undefined) {
+        throw new Error(`refusing duplicate GNU longname header in ${assetName}`)
+      }
       if (rawSize > MAX_GNU_LONGNAME_BYTES) {
         throw new Error(`oversized GNU longname (${rawSize} bytes) in ${assetName}`)
       }
@@ -531,7 +588,8 @@ export function inspectTarGzArchive(
     const gnuLong = nextGnuLongName
     nextGnuLongName = undefined
 
-    const entryPath = pax.path ?? gnuLong ?? (rawPrefix ? `${rawPrefix}/${rawName}` : rawName)
+    const rawPath = rawPrefix ? `${rawPrefix}/${rawName}` : rawName
+    const entryPath = pax.path ?? gnuLong ?? rawPath
 
     let entrySize = rawSize
     if (pax.size !== undefined) {
@@ -541,6 +599,11 @@ export function inspectTarGzArchive(
       const parsedSize = Number(pax.size)
       if (!Number.isSafeInteger(parsedSize)) {
         throw new Error(`archive ${assetName} entry '${entryPath}' exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
+      }
+      if (rawSize !== 0 && rawSize !== parsedSize) {
+        throw new Error(
+          `refusing conflicting PAX and USTAR entry sizes (${parsedSize} vs ${rawSize}) for '${entryPath}' in ${assetName}`,
+        )
       }
       entrySize = parsedSize
     }
@@ -570,6 +633,10 @@ export function inspectTarGzArchive(
 
     const isDir = typeChar === "5"
     assertSafeArchiveEntryPath(entryPath, isDir, assetName)
+    if ((pax.path !== undefined || gnuLong !== undefined) && rawPath.length > 0) {
+      // Defense-in-depth against extractors that ignore extended path headers.
+      assertSafeArchiveEntryPath(rawPath, true, assetName)
+    }
 
     entryCount++
     if (entryCount > maxEntries) {
@@ -592,6 +659,9 @@ export function inspectTarGzArchive(
     offset = nextOffset
   }
 
+  if (nextPax !== undefined || nextGnuLongName !== undefined) {
+    throw new Error(`refusing orphaned extended tar header at end of ${assetName}`)
+  }
   if (entryCount === 0) {
     throw new Error(`archive ${assetName} contains no entries`)
   }
