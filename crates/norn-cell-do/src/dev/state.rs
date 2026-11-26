@@ -4,7 +4,6 @@
 
 use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -83,7 +82,7 @@ pub(super) fn lock(state: &Path) -> Result<File, Failure> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(_held) => {
-            let running = std::fs::read_to_string(state.join("dev.json"))
+            let running = checkpoint_key::read_private(&state.join("dev.json"), 64 * 1024)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&text).ok())
                 .map_or_default(|session| {
@@ -111,6 +110,17 @@ pub(super) struct Token {
     pub(super) handle_key: [u8; 32],
 }
 
+impl Drop for Token {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.bearer);
+        zeroize::Zeroize::zeroize(&mut self.reviewer);
+        for principal in &mut self.principals {
+            zeroize::Zeroize::zeroize(principal);
+        }
+        zeroize::Zeroize::zeroize(&mut self.handle_key);
+    }
+}
+
 /// Fresh session tokens: the developer's, the reviewer's and one for each of
 /// `named` principals, plus the handle key.
 pub(super) fn token(named: usize) -> Result<Token, Failure> {
@@ -126,17 +136,17 @@ pub(super) fn token(named: usize) -> Result<Token, Failure> {
                 hex
             })
     };
-    let mut bytes = [0_u8; 96];
-    random(&mut bytes)?;
+    let mut bytes = zeroize::Zeroizing::new([0_u8; 96]);
+    random(&mut *bytes)?;
     let (bearers, key) = bytes.split_at(64);
     let (bearer, reviewer) = bearers.split_at(32);
     let mut handle_key = [0_u8; 32];
     handle_key.copy_from_slice(key);
     let principals = (0..named)
         .map(|_| {
-            let mut bearer = [0_u8; 32];
-            random(&mut bearer)?;
-            Ok(hex(&bearer))
+            let mut bearer = zeroize::Zeroizing::new([0_u8; 32]);
+            random(&mut *bearer)?;
+            Ok(hex(&*bearer))
         })
         .collect::<Result<Vec<_>, Failure>>()?;
     Ok(Token {
@@ -164,7 +174,15 @@ pub(super) fn private_dir(root: &Path) -> Result<PathBuf, Failure> {
             ),
         ));
     }
-    std::fs::create_dir_all(&state)
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&state)
         .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())))?;
     #[cfg(unix)]
     {
@@ -189,11 +207,12 @@ pub(super) fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
         )
     };
     let relative = Path::new(cell);
-    if relative.as_os_str().is_empty()
-        || !relative
-            .components()
-            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
-    {
+    let mut parts = relative.components();
+    let valid_parts = !relative.as_os_str().is_empty()
+        && !matches!(cell.rsplit(['/', '\\']).next(), Some("" | "." | ".."))
+        && matches!(parts.next_back(), Some(Component::Normal(_)))
+        && parts.all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+    if !valid_parts {
         return Err(outside());
     }
     let path = root.join(relative);
@@ -223,15 +242,10 @@ pub(super) fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
     Ok(path)
 }
 
-/// Write a session file readable by the owner only. The file is always a
-/// new one: an existing file is unlinked first, so a descriptor someone opened
-/// on an older, wider file never sees the new contents, and the file is
-/// created exclusively (`O_EXCL`, `O_NOFOLLOW`, mode 0600), never through a
-/// symlink.
+/// Write a session file readable by the owner only. Atomically replaces via
+/// a sibling `O_EXCL`/`O_NOFOLLOW` mode-0600 file so concurrent readers never
+/// observe `ENOENT`/partial JSON and older descriptors keep the old inode.
 pub(super) fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
-    let failed = |error: std::io::Error| {
-        Failure::setup("norn.dev.io", format!("{}: {error}", path.display()))
-    };
     if is_symlink(path) {
         return Err(Failure::setup(
             "norn.dev.unsafe_state",
@@ -241,20 +255,6 @@ pub(super) fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
             ),
         ));
     }
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(failed(error)),
-    }
-    let mut options = OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    options
-        .open(path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .map_err(failed)
+    checkpoint_key::write_atomic_private(path, text)
+        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", path.display())))
 }

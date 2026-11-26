@@ -3,7 +3,7 @@
 //!
 //! DEV-ONE-AUTHORITY-1: the compile worker's artifacts are untrusted input.
 //! Only what this checker admits reaches [`norn_api::host::DevHost`].
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::{InstalledDefinitionInput, Model};
 use norn_checker::{EntityArtifactSetContext, ReceiptSources};
@@ -46,21 +46,26 @@ pub(crate) const PENDING_SOURCE_SHA256: &str = "pending:same-project-source-sche
 /// schema of the set it names. A binding whose schema is not in the set
 /// stays pending, and the checker refuses it with the hash it expected.
 pub(crate) fn bind_source_schemas(artifacts: &[Value]) -> Vec<Value> {
-    let hash_of = |schema_id: &str, version: &str| {
-        artifacts
-            .iter()
-            .filter(|artifact| {
-                artifact.get("kind").and_then(Value::as_str) == Some("source_schema")
-                    && artifact.get("artifactId").and_then(Value::as_str) == Some(schema_id)
-                    && artifact.get("version").and_then(Value::as_str) == Some(version)
-            })
-            .find_map(|artifact| {
-                let envelope: ArtifactEnvelope = serde_json::from_value(artifact.clone()).ok()?;
-                norn_checker::ArtifactRef::of(&envelope)
-                    .ok()
-                    .map(|reference| reference.sha256)
-            })
-    };
+    let mut schema_hashes: BTreeMap<(&str, &str), String> = BTreeMap::new();
+    for artifact in artifacts {
+        if artifact.get("kind").and_then(Value::as_str) != Some("source_schema") {
+            continue;
+        }
+        let Some(schema_id) = artifact.get("artifactId").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(version) = artifact.get("version").and_then(Value::as_str) else {
+            continue;
+        };
+        if schema_hashes.contains_key(&(schema_id, version)) {
+            continue;
+        }
+        if let Ok(envelope) = serde_json::from_value::<ArtifactEnvelope>(artifact.clone())
+            && let Ok(reference) = norn_checker::ArtifactRef::of(&envelope)
+        {
+            schema_hashes.insert((schema_id, version), reference.sha256);
+        }
+    }
     artifacts
         .iter()
         .map(|artifact| {
@@ -71,17 +76,15 @@ pub(crate) fn bind_source_schemas(artifacts: &[Value]) -> Vec<Value> {
                     .and_then(Value::as_str)
                     == Some(PENDING_SOURCE_SHA256);
             if pending {
-                let text = |pointer: &str| {
-                    artifact
-                        .pointer(pointer)
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned()
-                };
-                let found = hash_of(
-                    &text("/payload/source/schemaId"),
-                    &text("/payload/source/version"),
-                );
+                let schema_id = artifact
+                    .pointer("/payload/source/schemaId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let version = artifact
+                    .pointer("/payload/source/version")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let found = schema_hashes.get(&(schema_id, version)).cloned();
                 if let (Some(sha256), Some(slot)) =
                     (found, artifact.pointer_mut("/payload/source/sha256"))
                 {
@@ -104,8 +107,11 @@ pub(crate) fn admit(
     installed_at: u64,
     keeps: bool,
 ) -> Result<Admitted, Refused> {
-    let artifacts = &bind_source_schemas(artifacts)[..];
-    let envelopes: Vec<ArtifactEnvelope> = serde_json::from_value(Value::Array(artifacts.to_vec()))
+    let artifacts = bind_source_schemas(artifacts);
+    let envelopes: Vec<ArtifactEnvelope> = artifacts
+        .iter()
+        .map(|artifact| serde_json::from_value(artifact.clone()))
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
             Refused::one(
                 "norn.dev.artifact_shape",
@@ -113,8 +119,7 @@ pub(crate) fn admit(
             )
         })?;
     let values = artifacts
-        .iter()
-        .cloned()
+        .into_iter()
         .map(RuntimeValue::from_json)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
@@ -293,36 +298,44 @@ pub(crate) fn retained_envelopes(canonical_set: &str) -> Result<Vec<ArtifactEnve
 /// diagnostic whose artifact and JSON pointer the compile's source map names:
 /// the longest matching pointer wins.
 pub(crate) fn source_mapped(diagnostics: Vec<Value>, source_map: &[Value]) -> Vec<Value> {
+    let mut by_artifact: BTreeMap<&str, Vec<(&str, &Value)>> = BTreeMap::new();
+    for entry in source_map {
+        if let (Some(artifact), Some(pointer), Some(at)) = (
+            entry.get("artifactId").and_then(Value::as_str),
+            entry.get("pointer").and_then(Value::as_str),
+            entry.get("at"),
+        ) {
+            by_artifact.entry(artifact).or_default().push((pointer, at));
+        }
+    }
     diagnostics
         .into_iter()
         .map(|mut diagnostic| {
-            let artifact = diagnostic
-                .get("artifactId")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let pointer = diagnostic
-                .get("span")
-                .and_then(|span| span.get("pointer"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let found = source_map
-                .iter()
-                .filter(|entry| {
-                    entry.get("artifactId").and_then(Value::as_str) == Some(artifact.as_str())
+            let found = {
+                let artifact = diagnostic
+                    .get("artifactId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let pointer = diagnostic
+                    .get("span")
+                    .and_then(|span| span.get("pointer"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                by_artifact.get(artifact).and_then(|entries| {
+                    entries
+                        .iter()
+                        .filter(|(at, _)| {
+                            pointer == *at
+                                || pointer
+                                    .strip_prefix(*at)
+                                    .is_some_and(|rest| rest.starts_with('/'))
+                        })
+                        .max_by_key(|(at, _)| at.len())
+                        .map(|(_, value)| (*value).clone())
                 })
-                .filter_map(|entry| {
-                    let at = entry.get("pointer").and_then(Value::as_str)?;
-                    let matches = pointer == at
-                        || pointer
-                            .strip_prefix(at)
-                            .is_some_and(|rest| rest.starts_with('/'));
-                    matches.then_some((at.len(), entry.get("at")?))
-                })
-                .max_by_key(|(length, _)| *length);
-            if let (Some((_, at)), Some(object)) = (found, diagnostic.as_object_mut()) {
-                object.insert("source".to_owned(), at.clone());
+            };
+            if let (Some(at), Some(object)) = (found, diagnostic.as_object_mut()) {
+                object.insert("source".to_owned(), at);
             }
             diagnostic
         })

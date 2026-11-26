@@ -30,6 +30,8 @@
 //! same admission, restatement and sign-off as `POST /v1/definitions:install`
 //! (still no network route installs), and retires each one the sources no
 //! longer declare. One the cell refuses is reported and left as it was.
+use std::collections::BTreeSet;
+
 use norn_api::cell_definitions::source_approvals;
 use norn_api::definition_routes::{
     AdmitDefinitionRequest, DefinitionKinds, GetDefinitionQuery, InstallDefinitionRequest,
@@ -135,10 +137,11 @@ type Declared = (String, String, Box<RawValue>);
 /// duplicated ones.
 fn declarations(definitions: &[Value]) -> Result<Vec<Declared>, Vec<Value>> {
     let mut refused = Vec::new();
+    let mut seen = BTreeSet::new();
     let mut declarations: Vec<Declared> = Vec::new();
     for value in definitions {
         match declared(value) {
-            Ok((_, id, _)) if declarations.iter().any(|(_, other, _)| *other == id) => {
+            Ok((_, id, _)) if !seen.insert(id.clone()) => {
                 refused.push(finding(
                     &id,
                     "norn.dev.definition_duplicate",
@@ -538,7 +541,7 @@ mod tests {
         commit(
             host,
             ACTOR,
-            &dev_kinds(),
+            dev_kinds(),
             definitions,
             candidate(extra, at),
             &active,
@@ -569,7 +572,7 @@ mod tests {
         let refused = prepare(
             &host,
             ACTOR,
-            &dev_kinds(),
+            dev_kinds(),
             &[approval("ops.a", MELT_ACTION, "admin"), malformed],
             "[]",
             1,
@@ -582,7 +585,7 @@ mod tests {
     fn a_duplicated_id_refuses_before_the_cell() {
         let host = cell();
         let gate = approval("ops.a", MELT_ACTION, "admin");
-        let refused = prepare(&host, ACTOR, &dev_kinds(), &[gate.clone(), gate], "[]", 1)
+        let refused = prepare(&host, ACTOR, dev_kinds(), &[gate.clone(), gate], "[]", 1)
             .expect_err("refused");
         assert_eq!(codes(&refused), ["norn.dev.definition_duplicate"]);
         assert_eq!(refused[0]["definitionId"], json!("ops.a"));
@@ -800,7 +803,7 @@ mod read_tests {
         sync_reads(
             host,
             ACTOR,
-            &dev_kinds(),
+            dev_kinds(),
             Some(questions),
             definitions,
             now_ms,

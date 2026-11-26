@@ -263,15 +263,18 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     let state = private_dir(&root)?;
     let _lock = lock(&state)?;
     let token = token(manifest.dev.principals.len())?;
-    write_private(&state.join("dev.token"), &format!("{}\n", token.bearer))?;
+    write_private(
+        &state.join("dev.token"),
+        &zeroize::Zeroizing::new(format!("{}\n", token.bearer)),
+    )?;
     write_private(
         &state.join("dev.reviewer.token"),
-        &format!("{}\n", token.reviewer),
+        &zeroize::Zeroizing::new(format!("{}\n", token.reviewer)),
     )?;
     for (index, bearer) in token.principals.iter().enumerate() {
         write_private(
             &root.join(principal_token_file(index.saturating_add(1))),
-            &format!("{bearer}\n"),
+            &zeroize::Zeroizing::new(format!("{bearer}\n")),
         )?;
     }
     remove_stale_principal_tokens(&state, token.principals.len())?;
@@ -452,12 +455,12 @@ fn newest(lines: &Receiver<Value>, pending: &mut VecDeque<Value>) -> Option<Valu
         pending.push_back(next);
     }
     if let Some(last) = pending.iter().rposition(is_compiled) {
-        *pending = std::mem::take(pending)
-            .into_iter()
-            .enumerate()
-            .filter(|(index, event)| *index == last || !is_compiled(event))
-            .map(|(_, event)| event)
-            .collect();
+        let mut index = 0_usize;
+        pending.retain(|event| {
+            let keep = index == last || !is_compiled(event);
+            index = index.saturating_add(1);
+            keep
+        });
     }
     let first = pending
         .iter()
@@ -751,7 +754,7 @@ impl Session<'_> {
                 definitions::commit(
                     host,
                     &self.manifest.dev.actor,
-                    &policy::dev_kinds(),
+                    policy::dev_kinds(),
                     &definitions,
                     admitted,
                     &set,
@@ -878,7 +881,7 @@ impl Session<'_> {
             definitions::sync_reads(
                 host,
                 &self.manifest.dev.actor,
-                &policy::dev_kinds(),
+                policy::dev_kinds(),
                 questions,
                 definitions,
                 now_ms(),
@@ -971,7 +974,7 @@ impl Session<'_> {
             definitions::prepare(
                 &scratch,
                 &self.manifest.dev.actor,
-                &policy::dev_kinds(),
+                policy::dev_kinds(),
                 definitions,
                 &admitted.input.canonical_set,
                 now_ms(),
@@ -1219,6 +1222,8 @@ mod tests {
             "/tmp/other.sqlite",
             "../other.sqlite",
             ".norn/../../other.sqlite",
+            ".",
+            ".norn/.",
             "",
         ] {
             let refused = cell_path(&root, cell).err().unwrap();

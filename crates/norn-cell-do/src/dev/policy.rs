@@ -38,7 +38,7 @@
 //! starting runs) by the hosted grant table over its declared roles, so a
 //! pack role that table does not name holds none of them.
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::actions::ActionPolicy;
 use crate::policy::{Caller, CallerSlot, DEMO_GRANTS, RUN_STARTERS};
@@ -64,8 +64,22 @@ pub(crate) fn reviewer(actor: &str) -> String {
 /// The retained-definition kinds the dev host admits: the hosted host's
 /// (`crate::tenant::host_kinds` over [`DEMO_GRANTS`]), so an approval,
 /// flow or binding that admits on a hosted cell admits here.
-pub(crate) fn dev_kinds() -> DefinitionKinds {
-    crate::tenant::host_kinds(&DEMO_GRANTS)
+pub(crate) fn dev_kinds() -> &'static DefinitionKinds {
+    static KINDS: OnceLock<DefinitionKinds> = OnceLock::new();
+    KINDS.get_or_init(|| crate::tenant::host_kinds(&DEMO_GRANTS))
+}
+
+fn demo_roles() -> Vec<String> {
+    static ROLES: OnceLock<Vec<String>> = OnceLock::new();
+    ROLES
+        .get_or_init(|| {
+            DEMO_GRANTS
+                .entries
+                .iter()
+                .map(|(role, _)| (*role).to_owned())
+                .collect()
+        })
+        .clone()
 }
 
 /// The action policy of the active revision (DEV-ACCESS-1): the compiled
@@ -211,13 +225,7 @@ impl LocalDeveloper {
 /// The roles a local principal holds: a named principal's declared roles
 /// (DEV-PRINCIPALS-1), otherwise every role of the hosted table.
 fn local_roles(actor: &str, named: &BTreeMap<String, Vec<String>>) -> Vec<String> {
-    named.get(actor).cloned().unwrap_or_else(|| {
-        DEMO_GRANTS
-            .entries
-            .iter()
-            .map(|(role, _)| (*role).to_owned())
-            .collect()
-    })
+    named.get(actor).cloned().unwrap_or_else(demo_roles)
 }
 
 /// A local principal as the PDP sees it.
@@ -395,6 +403,14 @@ impl DevPrincipals {
     pub(crate) fn with_named(mut self, named: NamedPrincipals) -> Self {
         self.named = named;
         self
+    }
+}
+
+impl Drop for DevPrincipals {
+    fn drop(&mut self) {
+        for (bearer, _) in &mut self.sessions {
+            zeroize::Zeroize::zeroize(bearer);
+        }
     }
 }
 
