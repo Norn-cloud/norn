@@ -512,12 +512,11 @@ fn parse_limit(limit: Option<&str>) -> Result<usize, Refusal> {
 
 fn parse_cursor(cursor: &str) -> Option<(u64, u64, &str)> {
     let (epoch, row) = cursor.split_once(':')?;
-    match epoch.split_once('@') {
-        Some((served, head)) => Some((served.parse().ok()?, head.parse().ok()?, row)),
-        None => {
-            let at: u64 = epoch.parse().ok()?;
-            Some((at, at, row))
-        }
+    if let Some((served, head)) = epoch.split_once('@') {
+        Some((served.parse().ok()?, head.parse().ok()?, row))
+    } else {
+        let at: u64 = epoch.parse().ok()?;
+        Some((at, at, row))
     }
 }
 

@@ -464,28 +464,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         let question = plan.question();
         let grain = plan.grain().as_str();
-        for sum in plan.sums() {
-            let measure_ptr = format!("/metric/{}/measure", sum.name);
-            if let Some(hit) = self.check_property_marking(
-                world,
-                grain,
-                sum.property.id.as_str(),
-                &measure_ptr,
-                historical,
-            )? {
-                return Ok(Some(hit));
-            }
-            let (time_type, time_prop) = match &sum.time_link {
-                Some(link) => (link.target_type.as_str(), link.property.id.as_str()),
-                None => (grain, sum.time_property.as_str()),
-            };
-            let time_ptr = format!("/metric/{}/time", sum.name);
-            if let Some(hit) =
-                self.check_property_marking(world, time_type, time_prop, &time_ptr, historical)?
-            {
-                return Ok(Some(hit));
-            }
-        }
         let paths = question
             .dimensions
             .iter()
@@ -531,6 +509,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 )? {
                     return Ok(Some(hit));
                 }
+            }
+        }
+        for sum in plan.sums() {
+            let measure_ptr = format!("/metric/{}/measure", sum.name);
+            if let Some(hit) = self.check_property_marking(
+                world,
+                grain,
+                sum.property.id.as_str(),
+                &measure_ptr,
+                historical,
+            )? {
+                return Ok(Some(hit));
+            }
+            let (time_type, time_prop) = match &sum.time_link {
+                Some(link) => (link.target_type.as_str(), link.property.id.as_str()),
+                None => (grain, sum.time_property.as_str()),
+            };
+            let time_ptr = format!("/metric/{}/time", sum.name);
+            if let Some(hit) =
+                self.check_property_marking(world, time_type, time_prop, &time_ptr, historical)?
+            {
+                return Ok(Some(hit));
             }
         }
         Ok(None)

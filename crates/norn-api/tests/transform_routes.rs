@@ -714,6 +714,13 @@ fn stale_materialization_fixture() -> (
                 object_type: "shop.Customer".into(),
                 key: "c-north".into(),
             }],
+            links: vec![LinkChange::Remove {
+                object_type: "shop.Order".into(),
+                link: "customer".into(),
+                source: "o1".into(),
+                target: "c-north".into(),
+                target_type: Some("shop.Customer".into()),
+            }],
             ..CommitBatch::default()
         })
         .unwrap();
@@ -862,6 +869,13 @@ fn stale_materialization_reauthorizes_deleted_row_after_multi_event_commit() {
             writes: vec![FactWriteRow::Delete {
                 object_type: "shop.Customer".into(),
                 key: "c-north".into(),
+            }],
+            links: vec![LinkChange::Remove {
+                object_type: "shop.Order".into(),
+                link: "customer".into(),
+                source: "o1".into(),
+                target: "c-north".into(),
+                target_type: Some("shop.Customer".into()),
             }],
             ..CommitBatch::default()
         })

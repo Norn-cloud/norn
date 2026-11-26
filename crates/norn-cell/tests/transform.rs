@@ -500,5 +500,5 @@ fn a_materialization_is_scoped_to_its_world() {
         .serve_transform(&plan, ("other-world", SCOPE), whole, 3_000)
         .expect("live other world");
     assert_eq!(other.materialization, None);
-    assert!(other.result.rows.is_empty());
+    assert_eq!(other.result.rows, Vec::new());
 }
