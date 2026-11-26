@@ -3,13 +3,14 @@
 
 Mechanically prevents test suites and gate scripts from silently going dark:
 1. Every tracked Python test file (`*test_*.py`, `*_test.py`) must be executed by
-   a real Python runner invocation in `scripts/ci/core.sh` or `.github/workflows/*.yml`
+   a real Python simple command in `scripts/ci/core.sh` or `.github/workflows/*.yml`
    (direct `python3 <path>` or `python3 -m unittest discover -s <dir>` whose `-p`
    pattern matches the filename), unless listed in `EXEMPT_PY_TESTS`.
 2. Every tracked JS/TS test package (`*.test.ts`, `*.test.tsx`, `*.test.mjs`,
    `*.e2e.ts`) and every standalone `apps/norn-cell-do/*.test.mjs` file must be
-   executed by an actual `bun test` or `playwright test` command in a non-comment
-   subshell targeting that package.
+   executed by an actual `bun test` or `playwright test` simple command inside
+   a subshell/block targeting that package, with standalone filenames passed as
+   arguments to that same `bun test` command.
 3. No shrink-only or CI base script may fall back to `HEAD` (`:-HEAD`), which
    compares a commit against itself and silently passes.
 """
@@ -41,9 +42,10 @@ BASE_CHECKED_SCRIPT_GLOBS = (
     "crates/norn-checker/scripts/*.sh",
 )
 
-PYTHON_CMD_RE = re.compile(r"(?:^|[\s;&|(\"'`])(?:[\w./${}-]*/)?python3?(?:\.\d+)?(?:\s|$)")
-CD_PKG_RE = re.compile(r"(?:^|[\s;&|(])cd\s+([A-Za-z0-9_./-]+)(?:$|[\s;&|)])")
-TEST_RUNNER_RE = re.compile(r"(?:^|[\s;&|(])(?:bun\s+test\b|bunx\s+playwright\s+test\b|playwright\s+test\b)")
+ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+PYTHON_BIN_RE = re.compile(r"^(?:[\w./${}-]+/)?python3?(?:\.\d+)?$")
+SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n"}
+YAML_RUN_PREFIX_RE = re.compile(r"^(?:-\s+)?run:\s+")
 
 
 def _strip_shell_comment(line: str) -> str:
@@ -68,13 +70,43 @@ def _strip_shell_comment(line: str) -> str:
     return line
 
 
-def _active_lines(text: str) -> list[str]:
-    result: list[str] = []
-    for raw in text.splitlines():
-        cleaned = _strip_shell_comment(raw).strip()
-        if cleaned:
-            result.append(cleaned)
-    return result
+def _split_simple_commands(line: str) -> list[list[str]]:
+    """Split one non-comment shell line into simple commands (`argv` lists)."""
+    cleaned = _strip_shell_comment(line).strip()
+    if not cleaned:
+        return []
+    cleaned = YAML_RUN_PREFIX_RE.sub("", cleaned)
+    lexer = shlex.shlex(cleaned, posix=True, punctuation_chars=";&|()")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+
+    commands: list[list[str]] = []
+    current: list[str] = []
+    for tok in tokens:
+        if tok in SHELL_SEPARATORS:
+            if current:
+                commands.append(current)
+                current = []
+        else:
+            current.append(tok)
+    if current:
+        commands.append(current)
+    return commands
+
+
+def _strip_env_prefix(argv: list[str]) -> list[str]:
+    """Strip leading `VAR=val` assignments and `env [VAR=val ...]` wrappers."""
+    i = 0
+    while i < len(argv) and ENV_ASSIGN_RE.match(argv[i]):
+        i += 1
+    if i < len(argv) and argv[i] == "env":
+        i += 1
+        while i < len(argv) and (argv[i].startswith("-") or ENV_ASSIGN_RE.match(argv[i])):
+            i += 1
+    return argv[i:]
 
 
 def _git_ls_files(root: Path, *patterns: str) -> list[str]:
@@ -100,94 +132,108 @@ def _ci_corpus(root: Path) -> str:
     return "\n".join(parts)
 
 
-def _extract_unittest_discover_targets(lines: list[str]) -> list[tuple[str, str]]:
-    """Return `(start_dir, pattern)` pairs for non-comment `unittest discover` invocations."""
-    targets: list[tuple[str, str]] = []
-    for line in lines:
-        if not PYTHON_CMD_RE.search(line) or "unittest" not in line or "discover" not in line:
-            continue
-        try:
-            tokens = shlex.split(line)
-        except ValueError:
-            tokens = line.split()
-        # Find `-m unittest discover` subsequence.
-        for i in range(len(tokens) - 2):
-            if tokens[i] == "-m" and tokens[i + 1] == "unittest" and tokens[i + 2] == "discover":
-                start_dir: str | None = None
-                pattern = "test*.py"
-                j = i + 3
-                while j < len(tokens):
-                    tok = tokens[j]
-                    if tok in ("&&", "||", ";", "|"):
-                        break
-                    if tok in ("-s", "--start-directory") and j + 1 < len(tokens):
-                        start_dir = tokens[j + 1].rstrip("/")
-                        j += 2
-                        continue
-                    if tok.startswith("--start-directory="):
-                        start_dir = tok.split("=", 1)[1].rstrip("/")
-                        j += 1
-                        continue
-                    if tok in ("-p", "--pattern") and j + 1 < len(tokens):
-                        pattern = tokens[j + 1]
-                        j += 2
-                        continue
-                    if tok.startswith("--pattern="):
-                        pattern = tok.split("=", 1)[1]
-                        j += 1
-                        continue
-                    j += 1
-                if start_dir:
-                    targets.append((start_dir, pattern))
-    return targets
+def _python_invocations(ci_text: str) -> tuple[set[str], list[tuple[str, str]]]:
+    """Extract `(direct_scripts, discover_targets)` from real Python simple commands."""
+    direct: set[str] = set()
+    discover_targets: list[tuple[str, str]] = []
+
+    for raw in ci_text.splitlines():
+        for raw_cmd in _split_simple_commands(raw):
+            argv = _strip_env_prefix(raw_cmd)
+            if not argv or not PYTHON_BIN_RE.match(argv[0]):
+                continue
+            args = argv[1:]
+            # Parse options up to `-m`, `-c`, or the script filename.
+            i = 0
+            while i < len(args):
+                tok = args[i]
+                if tok == "-c":
+                    break
+                if tok == "-m":
+                    if i + 2 < len(args) and args[i + 1] == "unittest" and args[i + 2] == "discover":
+                        start_dir: str | None = None
+                        pattern = "test*.py"
+                        j = i + 3
+                        while j < len(args):
+                            opt = args[j]
+                            if opt in ("-s", "--start-directory") and j + 1 < len(args):
+                                start_dir = args[j + 1].rstrip("/")
+                                j += 2
+                                continue
+                            if opt.startswith("--start-directory="):
+                                start_dir = opt.split("=", 1)[1].rstrip("/")
+                                j += 1
+                                continue
+                            if opt in ("-p", "--pattern") and j + 1 < len(args):
+                                pattern = args[j + 1]
+                                j += 2
+                                continue
+                            if opt.startswith("--pattern="):
+                                pattern = opt.split("=", 1)[1]
+                                j += 1
+                                continue
+                            j += 1
+                        if start_dir:
+                            discover_targets.append((start_dir, pattern))
+                    break
+                if tok in ("-X", "-W"):
+                    i += 2
+                    continue
+                if tok.startswith("-"):
+                    i += 1
+                    continue
+                direct.add(tok.lstrip("./"))
+                break
+
+    return direct, discover_targets
 
 
 def check_py_test_wiring(py_tests: list[str], ci_text: str) -> list[str]:
-    lines = _active_lines(ci_text)
-    python_lines = [line for line in lines if PYTHON_CMD_RE.search(line)]
-    discover_targets = _extract_unittest_discover_targets(python_lines)
-
+    direct, discover_targets = _python_invocations(ci_text)
     errors: list[str] = []
     for rel in sorted(py_tests):
         if rel in EXEMPT_PY_TESTS:
             continue
         p = Path(rel)
         parent = p.parent.as_posix()
-        direct_re = re.compile(rf'(?:^|[\s"\']){re.escape(rel)}(?:$|[\s"\';&|)])')
-        direct = any(direct_re.search(line) for line in python_lines)
-        discovered = any(
+        matched_direct = rel in direct
+        matched_discover = any(
             start_dir == parent and fnmatch.fnmatch(p.name, pattern)
             for start_dir, pattern in discover_targets
         )
-        if not (direct or discovered):
+        if not (matched_direct or matched_discover):
             errors.append(
                 f"unwired Python test file: {rel} has no active python runner invocation in scripts/ci/core.sh or .github/workflows/*.yml"
             )
     return errors
 
 
-def _extract_pkg_blocks(ci_text: str) -> dict[str, list[str]]:
-    """Map each `cd <pkg>` target to the active command lines inside its subshell/block."""
-    blocks: dict[str, list[str]] = {}
+def _extract_pkg_commands(ci_text: str) -> dict[str, list[list[str]]]:
+    """Map each `cd <pkg>` target to the simple commands executed in that subshell/block."""
+    blocks: dict[str, list[list[str]]] = {}
     lines = ci_text.splitlines()
     idx = 0
+
+    def record_cmds(cmds: list[list[str]]) -> None:
+        cwd: str | None = None
+        for raw_cmd in cmds:
+            argv = _strip_env_prefix(raw_cmd)
+            if not argv:
+                continue
+            if argv[0] == "cd" and len(argv) >= 2:
+                cwd = argv[1].rstrip("/")
+                continue
+            if cwd is not None:
+                blocks.setdefault(cwd, []).append(argv)
+
     while idx < len(lines):
         cleaned = _strip_shell_comment(lines[idx]).strip()
         if not cleaned:
             idx += 1
             continue
-        # Single-line subshell: `(cd pkg && ...)`
-        if cleaned.startswith("(") and cleaned.endswith(")"):
-            inner = cleaned[1:-1]
-            m = CD_PKG_RE.search(inner)
-            if m:
-                pkg = m.group(1).rstrip("/")
-                blocks.setdefault(pkg, []).append(inner)
-            idx += 1
-            continue
         # Multi-line subshell: `(` or `fn() (` ... `)`
         if cleaned == "(" or cleaned.endswith("() ("):
-            body: list[str] = []
+            sub_cmds: list[list[str]] = []
             idx += 1
             while idx < len(lines):
                 sub = _strip_shell_comment(lines[idx]).strip()
@@ -195,25 +241,46 @@ def _extract_pkg_blocks(ci_text: str) -> dict[str, list[str]]:
                 if sub == ")":
                     break
                 if sub:
-                    body.append(sub)
-            for b_line in body:
-                m = CD_PKG_RE.search(b_line)
-                if m:
-                    pkg = m.group(1).rstrip("/")
-                    blocks.setdefault(pkg, []).extend(body)
-                    break
+                    sub_cmds.extend(_split_simple_commands(sub))
+            record_cmds(sub_cmds)
             continue
-        # Workflow working-directory / inline cd on a single line.
-        m = CD_PKG_RE.search(cleaned)
-        if m:
-            pkg = m.group(1).rstrip("/")
-            blocks.setdefault(pkg, []).append(cleaned)
+        record_cmds(_split_simple_commands(cleaned))
         idx += 1
+
     return blocks
 
 
+def _is_js_test_command(argv: list[str]) -> bool:
+    if len(argv) >= 2 and argv[0] == "bun" and argv[1] == "test":
+        return True
+    if len(argv) >= 3 and argv[0] == "bunx" and argv[1] == "playwright" and argv[2] == "test":
+        return True
+    if len(argv) >= 2 and argv[0] == "playwright" and argv[1] == "test":
+        return True
+    return False
+
+
+def _bun_test_file_args(argv: list[str]) -> set[str]:
+    """Return normalized file arguments passed to a single `bun test ...` command."""
+    if not (len(argv) >= 2 and argv[0] == "bun" and argv[1] == "test"):
+        return set()
+    files: set[str] = set()
+    i = 2
+    while i < len(argv):
+        tok = argv[i]
+        if tok in ("--timeout", "--reporter", "--reporter-outfile", "--test-name-pattern", "--shard"):
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        files.add(Path(tok).name)
+        i += 1
+    return files
+
+
 def check_js_test_wiring(js_tests: list[str], ci_text: str) -> list[str]:
-    blocks = _extract_pkg_blocks(ci_text)
+    pkg_cmds = _extract_pkg_commands(ci_text)
     errors: list[str] = []
     packages: set[str] = set()
     standalone_mjs: list[str] = []
@@ -225,19 +292,19 @@ def check_js_test_wiring(js_tests: list[str], ci_text: str) -> list[str]:
             standalone_mjs.append(rel)
 
     for pkg in sorted(packages):
-        pkg_lines = blocks.get(pkg, [])
-        if not any(TEST_RUNNER_RE.search(line) for line in pkg_lines):
+        cmds = pkg_cmds.get(pkg, [])
+        if not any(_is_js_test_command(argv) for argv in cmds):
             errors.append(
-                f"unwired JS/TS test package: {pkg} has test files but no active `bun test` or `playwright test` invocation in scripts/ci/core.sh or .github/workflows/*.yml"
+                f"unwired JS/TS test package: {pkg} has test files but no active `bun test` or `playwright test` command in scripts/ci/core.sh or .github/workflows/*.yml"
             )
 
-    cell_do_lines = [line for line in blocks.get("apps/norn-cell-do", []) if TEST_RUNNER_RE.search(line)]
+    cell_do_tested: set[str] = set()
+    for argv in pkg_cmds.get("apps/norn-cell-do", []):
+        cell_do_tested.update(_bun_test_file_args(argv))
     for rel in standalone_mjs:
-        name = Path(rel).name
-        file_re = re.compile(rf'(?:^|[\s"\'])(?:\./)?{re.escape(name)}(?:$|[\s"\';&|)])')
-        if not any(file_re.search(line) for line in cell_do_lines):
+        if Path(rel).name not in cell_do_tested:
             errors.append(
-                f"unwired standalone test file: {rel} is not executed by `bun test` in apps/norn-cell-do"
+                f"unwired standalone test file: {rel} is not passed to `bun test` in apps/norn-cell-do"
             )
     return errors
 

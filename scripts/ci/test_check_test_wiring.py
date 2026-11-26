@@ -42,14 +42,26 @@ class TestCheckTestWiring(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("scripts/test_orphan.py", errors[0])
 
-    def test_rejects_commented_out_or_non_runner_python_mention(self) -> None:
+    def test_rejects_commented_out_and_echoed_python_commands(self) -> None:
         errors = ctw.check_py_test_wiring(
-            ["scripts/test_commented.py", "scripts/test_echoed.py"],
-            "# python3 scripts/test_commented.py\necho scripts/test_echoed.py\n",
+            [
+                "scripts/test_commented.py",
+                "scripts/test_echoed.py",
+                "scripts/test_discover_split.py",
+            ],
+            "\n".join(
+                [
+                    "# python3 scripts/test_commented.py",
+                    'echo "python3 scripts/test_echoed.py"',
+                    "python3 -V && echo -m unittest discover -s scripts",
+                ]
+            )
+            + "\n",
         )
-        self.assertEqual(len(errors), 2)
+        self.assertEqual(len(errors), 3)
         self.assertTrue(any("scripts/test_commented.py" in e for e in errors))
         self.assertTrue(any("scripts/test_echoed.py" in e for e in errors))
+        self.assertTrue(any("scripts/test_discover_split.py" in e for e in errors))
 
     def test_unittest_discover_honors_default_and_explicit_pattern(self) -> None:
         ci = 'PYTHONPATH="$PWD/tools/norn-py" python3 -m unittest discover -s tools/norn-py/tests -t tools/norn-py/tests\n'
@@ -66,13 +78,24 @@ class TestCheckTestWiring(unittest.TestCase):
             [],
         )
 
-    def test_rejects_install_only_js_package_without_test_runner(self) -> None:
+    def test_rejects_install_only_and_echoed_js_test_commands(self) -> None:
         errors = ctw.check_js_test_wiring(
-            ["apps/sidekick-bridge/relay.test.ts"],
-            "(cd apps/sidekick-bridge && bun install --frozen-lockfile --ignore-scripts --backend copyfile)\n",
+            [
+                "apps/sidekick-bridge/relay.test.ts",
+                "apps/norn-cell-do/bar.test.mjs",
+                "apps/norn-cell-do/foo.test.mjs",
+            ],
+            "\n".join(
+                [
+                    '(cd apps/sidekick-bridge && bun install --frozen-lockfile && echo "run bun test")',
+                    "(cd apps/norn-cell-do && bun test bar.test.mjs && echo foo.test.mjs)",
+                ]
+            )
+            + "\n",
         )
-        self.assertEqual(len(errors), 1)
-        self.assertIn("apps/sidekick-bridge", errors[0])
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("apps/sidekick-bridge" in e for e in errors))
+        self.assertTrue(any("apps/norn-cell-do/foo.test.mjs" in e for e in errors))
 
     def test_detects_unwired_js_package_and_standalone_mjs(self) -> None:
         errors = ctw.check_js_test_wiring(
