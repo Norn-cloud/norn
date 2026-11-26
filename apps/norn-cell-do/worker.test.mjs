@@ -533,3 +533,37 @@ describe("the engine step bound (MANIFEST-LAWS-1 S1)", () => {
     expect(JSON.parse(reply.body).code).toBe("analytics.unsettled");
   });
 });
+
+describe("worker hardening (scope validation, CORS Vary, waitUntil publish, open cleanup)", () => {
+  test("malformed or missing x-norn-cell header fails closed with 400 scope.missing", async () => {
+    const { ctx } = object();
+    const cell = new Cell(ctx, {});
+    for (const header of [null, "not-json", JSON.stringify(["only-one"]), JSON.stringify([1, 2])]) {
+      const req = new Request("https://cell.example/v1/definitions", header === null ? {} : { headers: { "x-norn-cell": header } });
+      const res = await cell.fetch(req);
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("scope.missing");
+    }
+  });
+
+  test("disallowed origin still receives Vary: Origin when ALLOWED_ORIGINS is configured", async () => {
+    const objs = objects();
+    const env = deploy(objs, { warm: false });
+    const res = await router.fetch(request(B, { authorization: "Bearer member-of-org_b", headers: { origin: "https://evil.example" } }), env);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    expect(res.headers.get("vary")).toBe("origin");
+  });
+
+  test("commit passes publish() to ctx.waitUntil", async () => {
+    const objs = new Map([[keyOf(B), object({ provisioned: true, scope: B, alarm: Date.now() + 60_000 })]]);
+    const env = deploy(objs, { warm: true });
+    quiet(objs);
+    const res = await router.fetch(
+      request(B, { method: "POST", path: "/v1/runs", authorization: "Bearer member-of-org_b", body: JSON.stringify({ flow: "ops.approve_refund" }) }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(objs.get(keyOf(B)).waited.length).toBeGreaterThanOrEqual(1);
+    await Promise.all(objs.get(keyOf(B)).waited);
+  });
+});

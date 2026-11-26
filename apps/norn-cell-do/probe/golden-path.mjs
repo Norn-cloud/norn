@@ -51,6 +51,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { isLoopback, telemetry } from "../otlp.mjs";
 
 const READING = "probe.Reading";
@@ -411,7 +412,7 @@ export async function run(argv = process.argv.slice(2), env = process.env) {
   return summary;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   run().then(
     (summary) => process.exit(summary.outcome === "pass" ? 0 : 1),
     (error) => {

@@ -127,10 +127,16 @@ export function exportConfig(env, service) {
 export function telemetry(env, service) {
   if (env === null || typeof env !== "object") return null;
   try {
-    if (configs.has(env)) return configs.get(env);
+    const key = typeof service === "string" ? service : "";
+    let byService = configs.get(env);
+    if (byService === undefined) {
+      byService = new Map();
+      configs.set(env, byService);
+    }
+    if (byService.has(key)) return byService.get(key);
     const config = exportConfig(env, service);
     const made = config === null ? null : new Telemetry(config);
-    configs.set(env, made);
+    byService.set(key, made);
     return made;
   } catch {
     return null;
@@ -154,7 +160,7 @@ function anyValue(value) {
 }
 
 const keyValues = (object) => Object.entries(object).map(([key, value]) => ({ key, value: anyValue(value) }));
-const nanos = (ms) => `${BigInt(Math.round(ms)) * 1_000_000n}`;
+const nanos = (ms) => `${BigInt(Math.round(Number.isFinite(ms) ? ms : 0)) * 1_000_000n}`;
 const hex = (bytes) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 export class Telemetry {
@@ -220,6 +226,7 @@ export class Telemetry {
 
   /** Keep one finished span (sampled by OTEL_TRACES_SAMPLER_ARG). `error` marks its status. */
   span(name, input, startMs, endMs, error = false) {
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return;
     if (this.config.sampleRatio < 1 && Math.random() >= this.config.sampleRatio) return;
     if (this.spans.length >= MAX_SPANS) {
       this.dropped += 1;
@@ -322,9 +329,13 @@ export class Telemetry {
     const post = async (path, body) => {
       if (body === null) return;
       try {
+        const headers = Object.fromEntries(
+          Object.entries(this.config.headers).filter(([name]) => name.toLowerCase() !== "content-type"),
+        );
+        headers["content-type"] = "application/json";
         const response = await send(`${this.config.endpoint}${path}`, {
           method: "POST",
-          headers: { ...this.config.headers, "content-type": "application/json" },
+          headers,
           body: JSON.stringify(body),
           redirect: "manual",
           signal: AbortSignal.timeout(SEND_TIMEOUT_MS),

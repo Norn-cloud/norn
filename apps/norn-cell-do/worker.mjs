@@ -84,9 +84,16 @@ export class Cell {
     lastJwks = { url: this.env.NORN_HOST_JWKS_URL, text: await response.text(), at: Date.now() };
     return lastJwks;
   }
-  /** The cell's scope as the router names it, [orgId, environmentId]. */
+  /** The cell's scope as the router names it, [orgId, environmentId], or null when absent/malformed. */
   static scopeOf(request) {
-    return JSON.parse(request.headers.get(CELL_HEADER));
+    const raw = request.headers.get(CELL_HEADER);
+    if (raw === null) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) && parsed.length === 2 && typeof parsed[0] === "string" && typeof parsed[1] === "string" ? parsed : null;
+    } catch {
+      return null;
+    }
   }
   /**
    * A failed open (`which` = "openFailure") or gate ("gateFailure") is cached for OPEN_RETRY_MS:
@@ -163,38 +170,46 @@ export class Cell {
       const [org, env] = scope;
       const issuer = this.env.NORN_HOST_ISSUER;
       const jwks = issuer === undefined ? undefined : await this.jwks(true);
-      // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
-      // analytics cell refuses to open without one of at least 32 bytes.
-      this.cell = new NornCell(
-        this.ctx.storage,
-        org,
-        env,
-        issuer,
-        jwks?.text,
-        { lineage: this.env.NORN_LINEAGE_KEY, checkpoint: this.env.NORN_CHECKPOINT_KEY },
-        jwks?.at ?? Date.now(),
-      );
-      // #921: the connections (NORN_SOURCES) and the secrets and storage settings they name stay in the cell.
+      let cell = null;
       try {
-        this.cell.configureConnect(this.env.NORN_SOURCES ?? "[]", connectVars(this.env));
-      } catch (error) {
-        console.error(`source connections not configured: ${error}`);
-      }
-      // D102: questions are answered on the tenant analytics engine when the Worker has one.
-      // OLAP-CRED-1 (#1493): the cell signs each engine call for its own tenant; no shared token.
-      // OLAP-01: the signing key goes to the analytics path only; its name is outside the
-      // connection secret namespace, so connectVars never hands it to a connector.
-      if (this.env.NORN_OLAP_URL !== undefined) {
+        // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
+        // analytics cell refuses to open without one of at least 32 bytes.
+        cell = new NornCell(
+          this.ctx.storage,
+          org,
+          env,
+          issuer,
+          jwks?.text,
+          { lineage: this.env.NORN_LINEAGE_KEY, checkpoint: this.env.NORN_CHECKPOINT_KEY },
+          jwks?.at ?? Date.now(),
+        );
+        // #921: the connections (NORN_SOURCES) and the secrets and storage settings they name stay in the cell.
         try {
-          this.cell.enableAnalytics(this.env[OLAP_SIGNING_KEY], this.env.NORN_OLAP_ENGINE);
+          cell.configureConnect(this.env.NORN_SOURCES ?? "[]", connectVars(this.env));
         } catch (error) {
-          console.error(`analytics not enabled: ${error}`);
+          console.error(`source connections not configured: ${error}`);
         }
+        // D102: questions are answered on the tenant analytics engine when the Worker has one.
+        // OLAP-CRED-1 (#1493): the cell signs each engine call for its own tenant; no shared token.
+        // OLAP-01: the signing key goes to the analytics path only; its name is outside the
+        // connection secret namespace, so connectVars never hands it to a connector.
+        if (this.env.NORN_OLAP_URL !== undefined) {
+          try {
+            cell.enableAnalytics(this.env[OLAP_SIGNING_KEY], this.env.NORN_OLAP_ENGINE);
+          } catch (error) {
+            console.error(`analytics not enabled: ${error}`);
+          }
+        }
+        // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
+        // already due when it opened (a cell from before alarms, a lost alarm).
+        await this.keepScope(scope, cell);
+        await this.wake.opened(cell, Date.now());
+        this.cell = cell;
+      } catch (error) {
+        cell?.free?.();
+        this.cell = null;
+        throw error;
       }
-      // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
-      // already due when it opened (a cell from before alarms, a lost alarm).
-      await this.keepScope(scope);
-      await this.wake.opened(this.cell, Date.now());
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -204,8 +219,8 @@ export class Cell {
     return this.opening;
   }
   /** TIMER-ALARM-1: store the scope only for a serving cell, never for an open of a vacant scope. */
-  async keepScope(scope) {
-    if (this.scopeKept || !this.cell.serving()) return;
+  async keepScope(scope, cell = this.cell) {
+    if (this.scopeKept || !cell?.serving()) return;
     if (JSON.stringify(await this.ctx.storage.get(SCOPE_KEY)) !== JSON.stringify(scope)) await this.ctx.storage.put(SCOPE_KEY, scope);
     this.scopeKept = true;
   }
@@ -219,7 +234,8 @@ export class Cell {
    */
   async engine(call) {
     try {
-      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+      const base = (this.env.NORN_OLAP_URL ?? "").replace(/\/+$/, "");
+      const response = await fetch(`${base}/v1/${call.op}`, {
         method: "POST",
         headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
@@ -238,7 +254,8 @@ export class Cell {
   /** The engine's file for a streamed call, or its refusal for the cell to map. */
   async stream(call) {
     try {
-      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+      const base = (this.env.NORN_OLAP_URL ?? "").replace(/\/+$/, "");
+      const response = await fetch(`${base}/v1/${call.op}`, {
         method: "POST",
         headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
@@ -327,7 +344,10 @@ export class Cell {
     if (gate === null) return true;
     const [org, env] = scope;
     const query = `orgId=${encodeURIComponent(org)}&environmentId=${encodeURIComponent(env)}`;
-    return gate.check("GET", "/v1/subscribe", query, authorization ?? undefined, Date.now(), undefined) == null;
+    const check = () => gate.check("GET", "/v1/subscribe", query, authorization ?? undefined, Date.now(), undefined);
+    let reply = check();
+    if (reply?.refreshJwks && (await this.refreshJwks(gate))) reply = check();
+    return reply == null;
   }
   /**
    * After a commit, every live subscription on this object is answered again; resolves to the
@@ -362,10 +382,19 @@ export class Cell {
         return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "authn.required", category: "permission", message: "sign in first", explanation: "a live socket carries the caller's token" }, { status: 401 });
       }
       const scope = Cell.scopeOf(request);
+      if (scope === null) {
+        return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "scope.missing", category: "invalid", message: "missing cell scope", explanation: "requests must carry a valid scope" }, { status: 400 });
+      }
       // S3: membership first. An outsider's socket is counted only among outsiders' and answered
       // by the gate, so the cell's own sockets (and whether it exists) never shape the upgrade.
       const gate = await this.gate(scope);
-      const outsider = gate !== null && gate.check("GET", url.pathname, url.search.slice(1), authorization, Date.now(), undefined) != null;
+      let gateReply = null;
+      if (gate !== null) {
+        const check = () => gate.check("GET", url.pathname, url.search.slice(1), authorization, Date.now(), undefined);
+        gateReply = check();
+        if (gateReply?.refreshJwks && (await this.refreshJwks(gate))) gateReply = check();
+      }
+      const outsider = gateReply != null;
       if (outsider) return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "", { outside: true });
       await this.ready(scope);
       return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "");
@@ -377,6 +406,9 @@ export class Cell {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });
     }
     const scope = Cell.scopeOf(request);
+    if (scope === null) {
+      return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "scope.missing", category: "invalid", message: "missing cell scope", explanation: "requests must carry a valid scope" }, { status: 400 });
+    }
     // S1: membership first. An outsider is answered before the cell's storage is opened: no saved
     // scope, deadline, alarm or sync is read or touched for them, at a busy cell or a vacant scope.
     const outside = await this.outside(scope, request, body);
@@ -387,7 +419,7 @@ export class Cell {
     if (this.cell.jwksDue(Date.now())) await this.refreshJwks();
     // TIMER-ALARM-1: a request that may write is guarded by a durable wake before it runs,
     // and the alarm follows the cell's next deadline after it, whatever its reply.
-    if (request.method === "GET") return this.respond(request, body);
+    if (request.method === "GET" || request.method === "HEAD") return this.respond(request, body);
     await this.wake.beforeWrite(this.cell, Date.now());
     try {
       return await this.respond(request, body);
@@ -420,7 +452,7 @@ export class Cell {
     reply = await this.settle(request, body, reply);
     if (reply instanceof Response) return reply;
     // After a commit, every live subscription on this object is answered again.
-    if (request.method !== "GET" && reply.status < 400) this.publish();
+    if (request.method !== "GET" && request.method !== "HEAD" && reply.status < 400) this.keep(this.publish());
     // A refusal's text is noted for its code's count (telemetry.mjs), so telemetry never reads the reply.
     return noteRefusal(this.env, new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } }), reply.body);
   }
@@ -492,7 +524,7 @@ export class Cell {
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
     syncFinished(this.env, { ...done, wallMs }, this.ctx);
     // A sync commits as it goes; live subscriptions are answered again once it ends.
-    if ((done.rowsLanded ?? 0) > 0) this.publish();
+    if ((done.rowsLanded ?? 0) > 0) await this.publish();
   }
   /**
    * TIMER-ALARM-1: the cell's clock. The wake (wake.mjs) sets a recovery
@@ -515,12 +547,12 @@ export class Cell {
     const { committed, failed, sync } = await this.wake.alarm(this.cell, Date.now());
     // The operator sees what stayed due and why; it is retried after its backoff.
     if (failed !== null) console.error(`due work not handled: ${failed}`);
-    if (committed) this.publish();
+    if (committed) await this.publish();
     if (sync) await this.runSync(sync);
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {
-    const guarded = promise.catch((error) => console.error(`source sync failed: ${error}`));
+    const guarded = promise.catch((error) => console.error(`background task failed: ${error}`));
     if (typeof this.ctx.waitUntil === "function") this.ctx.waitUntil(guarded);
   }
 }
@@ -545,7 +577,9 @@ const SOURCE_FETCH_TIMEOUT_MS = 30_000;
 /** Perform exactly the request the cell planned; the status and bytes go back to the cell, unread here. */
 async function perform(request) {
   try {
-    const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body ?? undefined, redirect: "manual", signal: AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS) });
+    const method = (request.method ?? "GET").toUpperCase();
+    const body = method === "GET" || method === "HEAD" || request.body === "" ? undefined : request.body ?? undefined;
+    const response = await fetch(request.url, { method, headers: request.headers, body, redirect: "manual", signal: AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS) });
     const bytes = await readBoundedBytes(response, MAX_SOURCE_BODY);
     return bytes === null ? { status: 413, bytes: new Uint8Array() } : { status: response.status, bytes };
   } catch {
@@ -575,29 +609,17 @@ async function readBoundedBytes(response, limit) {
 
 /** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
 async function readBounded(request, limit) {
-  const reader = request.body?.getReader();
-  if (reader === undefined) return "";
-  const chunks = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return new Blob(chunks).text();
+  const bytes = await readBoundedBytes(request, limit);
+  return bytes === null ? null : new TextDecoder().decode(bytes);
 }
 
 function cors(request, env) {
   const origin = request.headers.get("origin");
   const allowed = (env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
-  return origin !== null && allowed.includes(origin)
-    ? { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST", vary: "origin" }
-    : {};
+  if (origin !== null && allowed.includes(origin)) {
+    return { "access-control-allow-origin": origin, "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST", vary: "origin" };
+  }
+  return allowed.length > 0 ? { vary: "origin" } : {};
 }
 
 export default {

@@ -234,7 +234,7 @@ export function recordRequest(t, seen, status, refusal, startedMs, endedMs) {
   const kind = kindOf(method, route);
   const outcome = status === null ? "error" : outcomeOf(status);
   const environment = environmentOf(seen.cell);
-  const ms = endedMs - startedMs;
+  const ms = Math.max(0, endedMs - startedMs);
   const status_class = status === null ? "5xx" : statusClass(status);
   const code = status !== null && status >= 400 ? refusalCode(refusal) : "";
   const base = { route, method, kind, environment };
@@ -344,7 +344,12 @@ export function instrument(Cell) {
       const t = of(this);
       let sockets = 0;
       try {
-        if (t !== null) sockets = this.ctx.getWebSockets().length;
+        if (t !== null) {
+          sockets = this.ctx
+            .getWebSockets()
+            .filter((ws) => typeof ws?.deserializeAttachment !== "function" || ws.deserializeAttachment()?.role === "member")
+            .length;
+        }
       } catch {
         // Unrecorded.
       }
@@ -371,7 +376,7 @@ export function instrument(Cell) {
       let started = 0;
       let retry = false;
       try {
-        armed = typeof this.armed === "number" ? this.armed : null;
+        armed = typeof this.armed === "number" ? this.armed : (typeof this.wake?.armed === "number" ? this.wake.armed : null);
         started = Date.now();
         retry = (info?.retryCount ?? 0) > 0;
       } catch {

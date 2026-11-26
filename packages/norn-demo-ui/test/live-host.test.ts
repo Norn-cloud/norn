@@ -108,3 +108,62 @@ test("TENANT-ISOLATION-1: a subscription naming another tenant carries only the 
   // The cell is asked for exactly the GET named, as the subscriber: the scope is the cell's to admit.
   expect(atB.asked.at(-1)).toEqual({ path: "/v1/objects/canon.Item/item-b-1", query: "orgId=org_demo&environmentId=dev", authorization: "Bearer member-of-org_a" })
 })
+
+test("subscribable refuses dot-segment traversal, backslashes, control chars, and malformed URLs", () => {
+  for (const bad of [
+    "/v1/foo/../subscribe",
+    "/v1/../__conformance/head",
+    "/v1/objects/..\\subscribe",
+    "/v1/objects/a\nb",
+    "/v1/subscribe/extra",
+    "http://[invalid",
+  ]) {
+    expect(live.subscribable(bad)).toBeNull()
+  }
+})
+
+test("prototype keys and reserved ids cannot pollute attachment or bypass MAX_SUBSCRIPTIONS", async () => {
+  const ws = new FakeSocket({ scope: ["o", "e"], authorization: "Bearer a", subs: {} })
+  const host = cell({ status: 200, body: "{}" })
+  for (const reserved of ["__proto__", "constructor", "prototype"]) {
+    await live.message(ws, JSON.stringify({ type: "subscribe", id: reserved, path: "/v1/objects/t" }), host.ask)
+    expect(ws.sent.at(-1)).toMatchObject({ type: "refused", code: "live.invalid_id" })
+  }
+  for (let n = 0; n < live.MAX_SUBSCRIPTIONS; n += 1) {
+    await live.message(ws, JSON.stringify({ type: "subscribe", id: `s${n}`, path: `/v1/objects/t${n}` }), host.ask)
+  }
+  // Object.prototype keys like "toString" must not bypass the subscription quota.
+  await live.message(ws, JSON.stringify({ type: "subscribe", id: "toString", path: "/v1/objects/extra" }), host.ask)
+  expect(ws.sent.at(-1)).toMatchObject({ type: "refused", id: "toString", code: "live.too_many_subscriptions" })
+})
+
+test("accept refuses oversized authorization headers before accepting the WebSocket", () => {
+  let accepted = 0
+  const ctx = {
+    getWebSockets: () => [],
+    acceptWebSocket: () => {
+      accepted += 1
+    },
+  }
+  const reply = live.accept(ctx, ["o", "e"], `Bearer ${"a".repeat(2100)}`)
+  expect(reply.status).toBe(413)
+  expect(accepted).toBe(0)
+})
+
+test("evaluate preserves concurrent subscribe/unsubscribe changes written while digest is awaiting", async () => {
+  const ws = new FakeSocket({
+    scope: ["o", "e"],
+    authorization: "Bearer a",
+    subs: { a: { pathname: "/v1/objects/a", query: "", digest: "" } },
+  })
+  const host = cell({ status: 200, body: "{}" })
+  const pending = live.evaluate(ws, host.ask)
+  // Simulate a concurrent subscribe updating the persisted attachment before evaluate finishes.
+  const current = ws.deserializeAttachment() as { subs: Record<string, unknown> }
+  current.subs.b = { pathname: "/v1/objects/b", query: "", digest: "" }
+  ws.serializeAttachment(current)
+  await pending
+  const final = ws.deserializeAttachment() as { subs: Record<string, { digest: string }> }
+  expect(Object.keys(final.subs).sort()).toEqual(["a", "b"])
+  expect(final.subs.a!.digest).not.toBe("")
+})

@@ -403,3 +403,47 @@ test("B1: the resource carries only allowlisted keys with allowlisted values, an
   const keys = sent[0]!.body.resourceMetrics[0].resource.attributes.map((a: any) => a.key).sort()
   expect(keys).toEqual(["deployment.environment", "service.instance.id", "service.name", "telemetry.sdk.language", "telemetry.sdk.name"])
 })
+
+test("telemetry cache separates services on the same env, guards NaN spans, deduplicates Content-Type, and counts only member sockets", async () => {
+  const sharedEnv = { ...ON, OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20abc,Content-Type=text/plain" }
+  const cellT = telemetry(sharedEnv, "norn-cell")!
+  const studioT = telemetry(sharedEnv, "norn-studio")!
+  expect(cellT).not.toBe(studioT)
+
+  // NaN / Infinity timestamps must not throw RangeError.
+  expect(() => cellT.span("bad", {}, Number.NaN, 100)).not.toThrow()
+  expect(() => cellT.span("bad2", {}, 100, Number.POSITIVE_INFINITY)).not.toThrow()
+  cellT.count("check_total", {})
+  studioT.count("check_total", {})
+  const cellOut = capture()
+  const studioOut = capture()
+  await cellT.flush(cellOut.send)
+  await studioT.flush(studioOut.send)
+  const serviceOf = (sent: Sent[]) =>
+    sent[0]!.body.resourceMetrics[0].resource.attributes.find((a: any) => a.key === "service.name")?.value?.stringValue
+  expect(serviceOf(cellOut.sent)).toBe("norn-cell")
+  expect(serviceOf(studioOut.sent)).toBe("norn-studio")
+  const headerKeys = Object.keys(cellOut.sent[0]!.headers).filter((k) => k.toLowerCase() === "content-type")
+  expect(headerKeys).toEqual(["content-type"])
+  expect(cellOut.sent[0]!.headers["content-type"]).toBe("application/json")
+
+  // Fanout counts only member sockets when attachments are present; wake.armed feeds alarm lag.
+  const env2 = { ...ON }
+  const out = collected(env2)
+  const Cell = fakeCell(() => new Response("{}"))
+  const cell = new Cell(env2) as any
+  cell.sockets = [
+    { deserializeAttachment: () => ({ role: "member" }) },
+    { deserializeAttachment: () => ({ role: "outside" }) },
+    { deserializeAttachment: () => ({}) },
+  ]
+  cell.snapshots = 1
+  cell.wake = { armed: Date.now() - 1200 }
+  await cell.publish()
+  await cell.alarm({ retryCount: 0 })
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  await settled(cell)
+  const metrics = metricsOf(await out.all())
+  expect(points(metrics, "norn_cell_live_fanout")[0].sum).toBe(1)
+  expect(points(metrics, "norn_cell_alarm_lag_ms")[0].sum).toBeGreaterThanOrEqual(1200)
+})

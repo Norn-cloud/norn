@@ -36,14 +36,20 @@ export class Wake {
     this.storage = storage;
     // Requests whose writes may not be reflected in the cell's next deadline yet.
     this.writing = 0;
+    // Last alarm deadline armed in this isolate (read by telemetry.mjs for alarm lag).
+    this.armed = null;
   }
   /** Move the alarm to `at` (Unix ms) when none is set or the set one is later. A passed time fires at once. */
   async earliest(at, now) {
     if (at === undefined || at === null) return;
     const when = Math.max(at, now);
     const current = await this.storage.getAlarm();
-    if (current !== null && current !== undefined && current <= when) return;
+    if (current !== null && current !== undefined && current <= when) {
+      this.armed = current;
+      return;
+    }
     await this.storage.setAlarm(when);
+    this.armed = when;
   }
   /** A serving cell opened: arm for whatever is already due. */
   async opened(cell, now) {
@@ -79,6 +85,7 @@ export class Wake {
     } catch (error) {
       if (isFenced(error)) {
         await this.storage.deleteAlarm();
+        this.armed = null;
         return;
       }
       throw error;
@@ -91,7 +98,9 @@ export class Wake {
    * what was committed and failed, and the claimed sync for the caller to run.
    */
   async alarm(cell, now) {
-    await this.storage.setAlarm(now + RECOVERY_MS);
+    const recovery = now + RECOVERY_MS;
+    await this.storage.setAlarm(recovery);
+    this.armed = recovery;
     const due = cell.runDue(now);
     const { committed, failed } = due;
     due.free?.();
@@ -106,22 +115,27 @@ export class Wake {
       // alarm and return the failure report instead of looping forever.
       if (isFenced(error)) {
         await this.storage.deleteAlarm();
+        this.armed = null;
         return { committed, failed: failed ?? String(error instanceof Error ? error.message : error), sync: null };
       }
       throw error;
     }
-    const recovery = now + RECOVERY_MS;
     if (this.writing > 0) {
       // A request still writing keeps the recovery wake until its own rearm
       // runs: a deadline it commits may not be visible yet, and a crash after
       // that commit leaves only this alarm. A sooner deadline still wins.
       if (next !== undefined && next !== null && Math.max(next, now) < recovery) {
-        await this.storage.setAlarm(Math.max(next, now));
+        const when = Math.max(next, now);
+        await this.storage.setAlarm(when);
+        this.armed = when;
       }
     } else if (next !== undefined && next !== null) {
-      await this.storage.setAlarm(Math.max(next, now));
+      const when = Math.max(next, now);
+      await this.storage.setAlarm(when);
+      this.armed = when;
     } else {
       await this.storage.deleteAlarm();
+      this.armed = null;
     }
     return { committed, failed: failed ?? null, sync };
   }

@@ -33,17 +33,26 @@ export const OUTSIDE = "outside";
 export const MEMBER = "member";
 const MAX_ATTACHMENT = 2000;
 const MAX_MESSAGE = 4096;
+const UTF8 = new TextEncoder();
+const RESERVED_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+const utf8Bytes = (text) => UTF8.encode(text).byteLength;
 
 async function digest(text) {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", UTF8.encode(text)));
   return Array.from(bytes.slice(0, 12), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** A path a subscription may name: one of this cell's GET routes, never the live route itself. */
 export function subscribable(path) {
-  if (typeof path !== "string" || path.length > 512 || !path.startsWith("/v1/") || path.startsWith("/v1/subscribe")) return null;
-  const url = new URL(path, "https://cell");
-  if (url.pathname.includes("..")) return null;
+  if (typeof path !== "string" || path.length > 512 || /[\x00-\x1f\x7f\\]/.test(path) || path.includes("..")) return null;
+  let url;
+  try {
+    url = new URL(path, "https://cell");
+  } catch {
+    return null;
+  }
+  if (url.origin !== "https://cell" || !url.pathname.startsWith("/v1/") || url.pathname === "/v1/subscribe" || url.pathname.startsWith("/v1/subscribe/")) return null;
   return { pathname: url.pathname, query: url.search.slice(1) };
 }
 
@@ -69,10 +78,14 @@ export function accept(ctx, scope, authorization, requested = "", { outside = fa
   if (open >= limit) {
     return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${limit} sockets per cell` }, { status: 429 });
   }
-  const [client, server] = Object.values(new WebSocketPair());
   const role = outside ? OUTSIDE : MEMBER;
+  const attachment = { scope, authorization, subs: {}, role };
+  if (utf8Bytes(JSON.stringify(attachment)) > MAX_ATTACHMENT) {
+    return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the live authorization header is too large", explanation: `socket state must fit within ${MAX_ATTACHMENT} bytes` }, { status: 413 });
+  }
+  const [client, server] = Object.values(new WebSocketPair());
   ctx.acceptWebSocket(server, [role]);
-  server.serializeAttachment({ scope, authorization, subs: {}, role });
+  server.serializeAttachment(attachment);
   // Echo the protocol only when the client asked for it: a strict client refuses an unasked one.
   const asked = requested.split(",").map((name) => name.trim()).includes(PROTOCOL);
   return new Response(null, { status: 101, webSocket: client, ...(asked ? { headers: { "sec-websocket-protocol": PROTOCOL } } : {}) });
@@ -106,8 +119,8 @@ export function reclassify(ws) {
  */
 export async function evaluate(ws, ask, only, tally, { quiet = false } = {}) {
   const attachment = ws.deserializeAttachment();
-  if (!attachment) return false;
-  let changed = false;
+  if (!attachment || typeof attachment !== "object" || !attachment.subs || typeof attachment.subs !== "object") return false;
+  const updates = new Map();
   for (const [id, sub] of Object.entries(attachment.subs)) {
     if (only !== undefined && id !== only) continue;
     const reply = ask(sub.pathname, sub.query, attachment.authorization);
@@ -117,8 +130,7 @@ export async function evaluate(ws, ask, only, tally, { quiet = false } = {}) {
     }
     const value = await digest(`${reply.status}\n${reply.body}`);
     if (value === sub.digest) continue;
-    sub.digest = value;
-    changed = true;
+    updates.set(id, { pathname: sub.pathname, query: sub.query, digest: value });
     // The body is the GET's own JSON text, byte for byte: re-encoding a parsed value would round a
     // decimal beyond double precision. Text that is not JSON is sent as null.
     let json = true;
@@ -130,7 +142,28 @@ export async function evaluate(ws, ask, only, tally, { quiet = false } = {}) {
     const frame = `{"type":"snapshot","id":${JSON.stringify(id)},"status":${JSON.stringify(reply.status)},"digest":${JSON.stringify(value)},"body":${json ? reply.body : "null"}}`;
     if (send(ws, frame) && tally !== undefined) tally.sent += 1;
   }
-  if (changed) ws.serializeAttachment(attachment);
+  if (updates.size > 0) {
+    // Re-read attachment after async digest() so concurrent subscribe/unsubscribe updates are not overwritten.
+    const latest = ws.deserializeAttachment();
+    if (latest && typeof latest === "object" && latest.subs && typeof latest.subs === "object") {
+      let merged = false;
+      for (const [id, updated] of updates) {
+        if (!Object.hasOwn(latest.subs, id)) continue;
+        const current = latest.subs[id];
+        if (current && current.pathname === updated.pathname && current.query === updated.query) {
+          current.digest = updated.digest;
+          merged = true;
+        }
+      }
+      if (merged) {
+        try {
+          ws.serializeAttachment(latest);
+        } catch {
+          // Socket closed or attachment limit reached during publish.
+        }
+      }
+    }
+  }
   return true;
 }
 
@@ -144,25 +177,54 @@ export async function message(ws, raw, ask) {
     return ws.close(1007, "not JSON");
   }
   const attachment = ws.deserializeAttachment();
-  const id = typeof msg?.id === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(msg.id) ? msg.id : null;
+  if (!attachment || typeof attachment !== "object" || !attachment.subs || typeof attachment.subs !== "object") {
+    return ws.close(1011, "no live state");
+  }
+  const id = typeof msg?.id === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(msg.id) && !RESERVED_IDS.has(msg.id) ? msg.id : null;
   if (id === null) return send(ws, { type: "refused", id: null, code: "live.invalid_id", message: "a subscription id is 1 to 64 letters, digits or _.:-" });
   if (msg.type === "unsubscribe") {
-    delete attachment.subs[id];
-    ws.serializeAttachment(attachment);
+    if (Object.hasOwn(attachment.subs, id)) {
+      delete attachment.subs[id];
+      ws.serializeAttachment(attachment);
+    }
     return;
   }
   if (msg.type !== "subscribe") return send(ws, { type: "refused", id, code: "live.unknown_message", message: "messages are subscribe or unsubscribe" });
   const target = subscribable(msg.path);
   if (target === null) return send(ws, { type: "refused", id, code: "live.not_subscribable", message: "a subscription names one of this cell's GET routes" });
-  if (!(id in attachment.subs) && Object.keys(attachment.subs).length >= MAX_SUBSCRIPTIONS) {
+  const existed = Object.hasOwn(attachment.subs, id);
+  if (!existed && Object.keys(attachment.subs).length >= MAX_SUBSCRIPTIONS) {
     return send(ws, { type: "refused", id, code: "live.too_many_subscriptions", message: `at most ${MAX_SUBSCRIPTIONS} subscriptions per socket` });
   }
-  attachment.subs[id] = { ...target, digest: "" };
-  if (JSON.stringify(attachment).length > MAX_ATTACHMENT) {
-    delete attachment.subs[id];
+  const previous = existed ? attachment.subs[id] : undefined;
+  Object.defineProperty(attachment.subs, id, {
+    value: { ...target, digest: "" },
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  const restore = () => {
+    if (existed) {
+      Object.defineProperty(attachment.subs, id, {
+        value: previous,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } else {
+      delete attachment.subs[id];
+    }
+  };
+  if (utf8Bytes(JSON.stringify(attachment)) > MAX_ATTACHMENT) {
+    restore();
     return send(ws, { type: "refused", id, code: "live.too_many_subscriptions", message: "this socket's subscriptions are full" });
   }
-  ws.serializeAttachment(attachment);
+  try {
+    ws.serializeAttachment(attachment);
+  } catch {
+    restore();
+    return send(ws, { type: "refused", id, code: "live.too_many_subscriptions", message: "this socket's subscriptions are full" });
+  }
   await evaluate(ws, ask, id);
 }
 
