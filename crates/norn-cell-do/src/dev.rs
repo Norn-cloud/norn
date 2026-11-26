@@ -224,14 +224,14 @@ fn remove_stale_principal_tokens(state: &Path, keep: usize) -> Result<(), Failur
     for entry in std::fs::read_dir(state).map_err(failed)? {
         let entry = entry.map_err(failed)?;
         let name = entry.file_name();
-        let stale = name
+        let dropped = name
             .to_str()
             .and_then(|name| name.strip_prefix("dev.principal."))
             .and_then(|rest| rest.strip_suffix(".token"))
             .filter(|index| !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
             .and_then(|index| index.parse::<usize>().ok())
             .is_some_and(|index| index == 0 || index > keep);
-        if stale {
+        if dropped {
             match std::fs::remove_file(entry.path()) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
