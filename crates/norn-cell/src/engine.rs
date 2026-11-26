@@ -984,7 +984,7 @@ impl SqlEngine for NativeEngine {
             return Ok(());
         }
         // Inside a definition-writes scope each statement of the batch is
-        // prepared with its own target, as `execute_batch` steps it: once.
+        // prepared with its own target and stepped to completion.
         let mut batch = rusqlite::Batch::new(&self.conn, sql);
         loop {
             self.next_statement();
@@ -1157,7 +1157,7 @@ mod definition_writes {
     }
 
     #[test]
-    fn definition_writes_clears_target_on_drop_and_steps_multi_row_batch_statements() {
+    fn definition_writes_clears_target_on_drop_and_runs_returning_batch() {
         let engine = NativeEngine::open_in_memory().expect("engine");
         engine
             .execute_batch(
@@ -1166,8 +1166,19 @@ mod definition_writes {
             .expect("table");
         engine
             .definition_writes(|| {
+                engine.execute(
+                    r#"INSERT INTO "_norn_definition_active" ("id", "version") VALUES (1, 1)"#,
+                    &[],
+                )?;
+                assert!(engine.target.lock().expect("target").is_some());
+                Ok(())
+            })
+            .expect("single write succeeds");
+        assert!(engine.target.lock().expect("target").is_none());
+        engine
+            .definition_writes(|| {
                 engine.execute_batch(
-                    r#"INSERT INTO "_norn_definition_active" ("id", "version") VALUES (1, 1), (2, 1) RETURNING "id""#,
+                    r#"INSERT INTO "_norn_definition_active" ("id", "version") VALUES (2, 1), (3, 1) RETURNING "id""#,
                 )
             })
             .expect("multi-row batch succeeds");
@@ -1179,7 +1190,7 @@ mod definition_writes {
                 |row| row.get(0),
             )
             .expect("count");
-        assert_eq!(rows, 2);
+        assert_eq!(rows, 3);
     }
 
     #[test]
@@ -1193,5 +1204,6 @@ mod definition_writes {
             "SELECT 1 WHERE EXISTS (UPDATE t SET a = 1)"
         ));
         assert!(!super::read_only("—SELECT 1"));
+        assert!(!super::read_only("a——"));
     }
 }
