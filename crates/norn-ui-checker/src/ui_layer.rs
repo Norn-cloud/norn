@@ -139,16 +139,20 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
 }
 
 fn collect<'n>(node: &'n WidgetNode, pointer: &str, out: &mut Vec<(&'n WidgetNode, String)>) {
-    out.push((node, pointer.to_owned()));
-    for (index, child) in node.children.iter().enumerate() {
-        collect(child, &format!("{pointer}/children/{index}"), out);
+    let mut stack = vec![(node, pointer.to_owned())];
+    while let Some((current, current_pointer)) = stack.pop() {
+        for (index, child) in current.children.iter().enumerate().rev() {
+            stack.push((child, format!("{current_pointer}/children/{index}")));
+        }
+        out.push((current, current_pointer));
     }
 }
 
 fn descendants<'n>(node: &'n WidgetNode, out: &mut BTreeSet<&'n str>) {
-    for child in &node.children {
-        out.insert(child.node_id.as_str());
-        descendants(child, out);
+    let mut stack: Vec<&'n WidgetNode> = node.children.iter().collect();
+    while let Some(current) = stack.pop() {
+        out.insert(current.node_id.as_str());
+        stack.extend(current.children.iter());
     }
 }
 
@@ -471,28 +475,60 @@ fn notification(node: &WidgetNode, pointer: &str, findings: &mut Vec<Finding>) {
     }
 }
 
-/// `callAction`, `call-action` and `call.action` all name `call_action`.
+/// `callAction`, `CALL_ACTION`, `call-action`, `call__action` and `call.action` all name `call_action`.
 fn operation_key(operation_id: &str) -> String {
-    let mut out = String::new();
-    for c in operation_id.chars() {
-        if c.is_ascii_uppercase() {
+    let chars: Vec<char> = operation_id.trim().chars().collect();
+    let mut out = String::with_capacity(chars.len());
+    for (index, &c) in chars.iter().enumerate() {
+        if matches!(c, '_' | '-' | '.') {
             if !out.is_empty() && !out.ends_with('_') {
                 out.push('_');
             }
+        } else if c.is_ascii_uppercase() {
+            let prev_lower_or_digit = index
+                .checked_sub(1)
+                .and_then(|prev| chars.get(prev))
+                .is_some_and(|prev| prev.is_ascii_lowercase() || prev.is_ascii_digit());
+            let prev_upper = index
+                .checked_sub(1)
+                .and_then(|prev| chars.get(prev))
+                .is_some_and(char::is_ascii_uppercase);
+            let next_lower = index
+                .checked_add(1)
+                .and_then(|next| chars.get(next))
+                .is_some_and(char::is_ascii_lowercase);
+            if !out.is_empty()
+                && !out.ends_with('_')
+                && (prev_lower_or_digit || (prev_upper && next_lower))
+            {
+                out.push('_');
+            }
             out.push(c.to_ascii_lowercase());
-        } else if c == '-' || c == '.' {
-            out.push('_');
         } else {
             out.push(c);
         }
     }
+    while out.ends_with('_') {
+        out.pop();
+    }
     out
+}
+
+fn is_action_operation(operation_id: &str) -> bool {
+    let key = operation_key(operation_id);
+    if ACTION_OPERATIONS.contains(&key.as_str()) {
+        return true;
+    }
+    let compact: String = key.chars().filter(|c| *c != '_').collect();
+    ACTION_OPERATIONS
+        .iter()
+        .any(|operation| operation.chars().filter(|c| *c != '_').eq(compact.chars()))
 }
 
 fn authority(machine: &WidgetMachine, base: &str, findings: &mut Vec<Finding>) {
     let mut refuse = |call: &WidgetMachineCall, pointer: String| {
         if let WidgetMachineCall::Operation { operation_id } = call
-            && ACTION_OPERATIONS.contains(&operation_key(operation_id).as_str())
+            && is_action_operation(operation_id)
         {
             findings.push(Finding {
                 code: ACTION_OUTSIDE_BINDING,
@@ -528,8 +564,19 @@ mod tests {
     fn operation_spellings_normalize() {
         assert_eq!(operation_key("callAction"), "call_action");
         assert_eq!(operation_key("call_action"), "call_action");
+        assert_eq!(operation_key("CALL_ACTION"), "call_action");
+        assert_eq!(operation_key("POST_MESSAGE"), "post_message");
+        assert_eq!(operation_key("call__action"), "call_action");
+        assert_eq!(operation_key("call..action"), "call_action");
+        assert_eq!(operation_key("CallAction"), "call_action");
+        assert_eq!(operation_key("  callAction  "), "call_action");
         assert_eq!(operation_key("post-message"), "post_message");
         assert_eq!(operation_key("decideDecision"), "decide_decision");
+        assert!(is_action_operation("CALL_ACTION"));
+        assert!(is_action_operation("POST_MESSAGE"));
+        assert!(is_action_operation("CALLACTION"));
+        assert!(is_action_operation("call__action"));
+        assert!(!is_action_operation("decideDecision"));
     }
 
     #[test]

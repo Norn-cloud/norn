@@ -224,16 +224,7 @@ impl UxChecker<'_, '_, '_> {
             .forms
             .iter()
             .filter(|form| form.submit_binding_id == binding.binding_id);
-        let has_uses = self
-            .ux
-            .action_placements
-            .iter()
-            .any(|placement| placement.binding_id == binding.binding_id)
-            || self
-                .ux
-                .forms
-                .iter()
-                .any(|form| form.submit_binding_id == binding.binding_id);
+        let has_uses = placements.clone().next().is_some() || forms.clone().next().is_some();
         let placements_are_compatible = placements.all(|placement| match placement.location {
             WidgetActionLocation::Row => {
                 placement.selection_binding_id.as_deref() == Some(record_binding_id)

@@ -203,16 +203,9 @@ fn entries_findings(
             placed(entry) || (finding.code == DUPLICATE_RENDERER && renders(entry))
         })
     });
-    let machines = crate::ui_machine::check(owner, ux)
+    let machines = crate::ui_machine::check_catalog_entries(owner, ux, entry_ids)
         .into_iter()
-        .filter(|finding| {
-            finding.is_error()
-                && finding
-                    .span
-                    .as_ref()
-                    .and_then(|span| at(&span.pointer))
-                    .is_some_and(placed)
-        });
+        .filter(Diagnostic::is_error);
     diagnostics(owner, declared)
         .into_iter()
         .chain(machines)
@@ -380,6 +373,7 @@ fn check_props(
             });
         }
     }
+    let env = machine_env((&field_types, &event));
     for (name, expression) in props {
         let at = format!("{pointer}/component/props/{name}");
         let Some(declared) = entry.props.iter().find(|prop| &prop.field_id == name) else {
@@ -390,13 +384,24 @@ fn check_props(
             });
             continue;
         };
-        let Ok(env) = machine_env((&field_types, &event)) else {
-            continue;
+        let env = match &env {
+            Ok(env) => env,
+            Err(error) => {
+                findings.push(Finding {
+                    code: INVALID_PROP,
+                    pointer: at,
+                    message: format!(
+                        "prop `{name}` of `{}`: expression environment is invalid: {error}",
+                        entry.entry_id
+                    ),
+                });
+                continue;
+            }
         };
         let checked = Expression::compile(expression.as_str())
             .map_err(|error| vec![error.to_string()])
             .and_then(|compiled| {
-                check_expression(&compiled, &env, &field_type(declared))
+                check_expression(&compiled, env, &field_type(declared))
                     .map(|_| ())
                     .map_err(|errors| errors.into_iter().map(|error| error.message).collect())
             });
