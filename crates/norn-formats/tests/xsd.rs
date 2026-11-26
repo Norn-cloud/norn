@@ -598,3 +598,46 @@ fn xsd_duplicate_global_simple_types_are_refused() {
     let body = r#"<xs:simpleType name="T"><xs:restriction base="xs:string"/></xs:simpleType><xs:simpleType name="T"><xs:restriction base="xs:token"/></xs:simpleType>"#;
     assert!(refusal(&schema_with(body)).starts_with("duplicate global type"));
 }
+
+#[test]
+fn xsd_prohibited_particle_is_not_repeating_and_attribute_ref_uses_attribute_space() {
+    let xml = br#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn:t" targetNamespace="urn:t" elementFormDefault="qualified">
+        <xs:element name="shared" type="xs:string" nillable="true"/>
+        <xs:attribute name="shared" type="xs:boolean"/>
+        <xs:complexType name="R">
+            <xs:sequence>
+                <xs:element name="none" type="xs:string" minOccurs="0" maxOccurs="0"/>
+                <xs:element ref="tns:shared" minOccurs="1" maxOccurs=" 01 "/>
+            </xs:sequence>
+            <xs:attribute ref="tns:shared" use="required"/>
+        </xs:complexType>
+    </xs:schema>"#;
+    let files = [XsdFile {
+        path: "https://example.test/synthetic-document/1.0/profile.xsd",
+        bytes: xml,
+    }];
+    let result = XsdReader.import(&files, &synthetic(xml));
+    assert_eq!(result.diagnostics, [], "{:?}", result.diagnostics);
+    let schema = result.source_schema.unwrap();
+    let repeating = norn_formats::xsd::repeating_fields(&schema);
+    assert!(
+        repeating.is_empty(),
+        "maxOccurs=0 and maxOccurs=' 01 ' must not be marked repeating: {repeating:?}"
+    );
+    let el_ref = schema
+        .fields
+        .iter()
+        .find(|f| f.name.contains("{urn:t}shared@") && f.native_type.ends_with("}string"))
+        .expect("element ref field");
+    assert_eq!(
+        el_ref.required,
+        Some(false),
+        "global nillable=true must apply to element ref"
+    );
+    let attr_ref = schema
+        .fields
+        .iter()
+        .find(|f| f.name.contains("{urn:t}shared@") && f.native_type.ends_with("}boolean"))
+        .expect("attribute ref must resolve against global attributes, not elements");
+    assert_eq!(attr_ref.required, Some(true));
+}
