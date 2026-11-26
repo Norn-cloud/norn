@@ -2,10 +2,10 @@
 //! or proof promotion.
 //!
 //! Reference rules:
-//! - [`RULE`](crate::obligations::specialisation::RULE) (`specialisation-conjunction/1`):
+//! - [`RULE`] (`specialisation-conjunction/1`):
 //!   law-only conjunctive extensions over a single-layer base with an identical
 //!   whole-set writer inventory.
-//! - [`PROJECTED_RULE`](crate::obligations::specialisation::PROJECTED_RULE)
+//! - [`PROJECTED_RULE`]
 //!   (`specialisation-projected/1`): reviewed adapter code relying on
 //!   `Specialisation.lean::projected_safety_stuttering` (where disjoint
 //!   extension writers induce stuttering no-change steps on the projected base
@@ -56,8 +56,7 @@ pub struct PriorEvidence<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReusedEvidence {
     /// Specialisation reuse rule that justified carrying this record
-    /// ([`RULE`](crate::obligations::specialisation::RULE) or
-    /// [`PROJECTED_RULE`](crate::obligations::specialisation::PROJECTED_RULE)).
+    /// ([`RULE`] or [`PROJECTED_RULE`]).
     pub rule: &'static str,
     /// Target goal index in the freshly admitted specialisation.
     pub goal_index: usize,
@@ -75,9 +74,7 @@ pub struct ReusedEvidence {
 pub struct SpecialisationChallenge {
     /// Complete generated target; no obligation is deleted from the inventory.
     pub challenge: Challenge,
-    /// Valid carried records under
-    /// [`RULE`](crate::obligations::specialisation::RULE) or
-    /// [`PROJECTED_RULE`](crate::obligations::specialisation::PROJECTED_RULE),
+    /// Valid carried records under [`RULE`] or [`PROJECTED_RULE`],
     /// with no increase in assurance.
     pub reused: Vec<ReusedEvidence>,
     /// Every goal not covered by a carried record must be checked afresh.
@@ -86,9 +83,9 @@ pub struct SpecialisationChallenge {
 
 impl ApprovedContract {
     /// Admit and generate the complete target, then apply
-    /// [`RULE`](crate::obligations::specialisation::RULE) (for law-only
+    /// [`RULE`] (for law-only
     /// conjunctive extensions over a single-layer base with unchanged writers)
-    /// or [`PROJECTED_RULE`](crate::obligations::specialisation::PROJECTED_RULE)
+    /// or [`PROJECTED_RULE`]
     /// (for multi-layer bases and domain extensions whose new writers are
     /// provably disjoint from a base safety law's governed footprint).
     ///
