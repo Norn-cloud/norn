@@ -59,15 +59,12 @@ fn xsd_unadmitted_bytes_fail_closed_with_complete_inventory() {
         result
             .diagnostics
             .iter()
-            .any(|d| d.code == "format.xsd.invalid")
+            .any(|d| d.code == "format.xsd.invalid" && d.message.starts_with("unadmitted bytes"))
     );
-    assert_eq!(
-        result
-            .loss_report
-            .validate_inventory(&XsdReader.inventory(&files, &c))
-            .len(),
-        0
-    );
+    let inventory = XsdReader.inventory(&files, &c);
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(result.loss_report.entries.len(), 1);
+    assert_eq!(result.loss_report.validate_inventory(&inventory).len(), 0);
 }
 #[test]
 fn xsd_dtd_rejected() {
@@ -441,28 +438,6 @@ fn xsd_namespace_scopes_per_file_are_capped() {
         .map(|i| format!(r#"<a xmlns:p="urn:p{i}"/>"#))
         .collect();
     assert_eq!(refusal(&schema_with(&body)), "namespace binding limit");
-}
-
-#[test]
-fn xsd_unpinned_bytes_are_never_parsed() {
-    // A well-formed schema with a wrong pin: a parse would inventory its nodes
-    // and attributes, so an inventory of the file alone shows it never ran.
-    let bytes = DOC;
-    let files = [XsdFile {
-        path: "https://example.test/synthetic-document/1.0/profile.xsd",
-        bytes,
-    }];
-    let mut config = synthetic(bytes);
-    config.admission.files.as_mut().unwrap()[0].sha256 = "0".repeat(64);
-    let result = XsdReader.import(&files, &config);
-    assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|d| d.message.starts_with("unadmitted bytes"))
-    );
-    assert_eq!(XsdReader.inventory(&files, &config).len(), 1);
-    assert_eq!(result.loss_report.entries.len(), 1);
 }
 
 #[test]

@@ -35,10 +35,6 @@ const MEMBERS: [&str; 7] = [
     "columns",
 ];
 
-fn pointer_token(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
-}
-
 /// The `objectType` and `columns` of the retained view revision a write
 /// replaces, when that revision exists and has `kind == "view"`.
 ///
@@ -100,7 +96,7 @@ pub(crate) fn check<E: SqlEngine>(
         findings.push(RefusalDiagnostic::error(
             codes::INVALID_PAYLOAD,
             format!("unknown member {key:?}"),
-            format!("/{}", pointer_token(key)),
+            format!("/{}", crate::binding_definitions::pointer_token(key)),
         ));
     }
     check_title(object.get("title"), "/title", findings);
@@ -119,21 +115,8 @@ pub(crate) fn check<E: SqlEngine>(
         findings,
     );
     let declared = match object.get("objectType").and_then(Value::as_str) {
-        Some(object_type) => {
-            let cell = host.cell()?;
-            let reader = cell.store().read();
-            if reader.model().has_type(object_type) {
-                Some((
-                    object_type,
-                    reader
-                        .model()
-                        .effective_property_types(object_type)
-                        .map_err(Refusal::host)?,
-                ))
-            } else {
-                None
-            }
-        }
+        Some(object_type) => crate::object_routes::effective_properties(host, object_type)?
+            .map(|properties| (object_type, properties)),
         None => None,
     };
     let Some((object_type, properties)) = declared else {

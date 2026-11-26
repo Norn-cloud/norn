@@ -23,8 +23,6 @@ use norn_cell::engine::NativeEngine;
 
 use super::policy::{DevMetrics, DevPrincipals};
 
-/// Longest accepted request head (request line plus headers), in bytes.
-const MAX_HEAD_BYTES: usize = 16 * 1024;
 /// Longest accepted body, in bytes; the action route's own bound is lower.
 const MAX_BODY_BYTES: usize = 512 * 1024;
 /// How long a connection waits for a request (the first or the next) before
@@ -281,77 +279,14 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
     let deadline = std::time::Instant::now()
         .checked_add(IDLE)
         .ok_or_else(|| Refusal::invalid("the host clock cannot bound this request"))?;
-    let mut line = String::new();
-    let mut head_bytes = 0_usize;
-    let mut next = |reader: &mut BufReader<&TcpStream>, line: &mut String| -> Result<(), Refusal> {
-        arm(reader, deadline)?;
-        line.clear();
-        // One byte past the bound, so an over-long head is told apart.
-        let left = MAX_HEAD_BYTES.saturating_sub(head_bytes).saturating_add(1);
-        let read = reader
-            .by_ref()
-            .take(u64::try_from(left).unwrap_or(u64::MAX))
-            .read_line(line)
-            .map_err(|error| Refusal::invalid(format!("unreadable request: {error}")))?;
-        head_bytes = head_bytes.saturating_add(read);
-        if read == 0 || head_bytes > MAX_HEAD_BYTES {
-            return Err(Refusal::invalid(
-                "the request head is missing or exceeds the host bound",
-            ));
-        }
-        Ok(())
-    };
-    next(reader, &mut line)?;
-    let mut parts = line.split_whitespace();
-    let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
-        return Err(Refusal::invalid("the request line is malformed"));
-    };
-    let http_1_1 = parts.next() != Some("HTTP/1.0");
-    let (mut asked_close, mut asked_keep_alive) = (false, false);
-    let (method, target) = (method.to_owned(), target.to_owned());
-    let (mut length, mut authorization, mut chunked) = (None::<usize>, None, false);
-    loop {
-        next(reader, &mut line)?;
-        let header = line.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        if let Some((name, value)) = header.split_once(':') {
-            let value = value.trim();
-            if name.eq_ignore_ascii_case("content-length") {
-                // A repeated length makes the body boundary ambiguous, and a
-                // wrong boundary would leak bytes into the next request.
-                if length.is_some() {
-                    return Err(Refusal::invalid("content-length is repeated"));
-                }
-                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-                    return Err(Refusal::invalid("content-length is not a decimal length"));
-                }
-                length = Some(
-                    value
-                        .parse()
-                        .map_err(|error| Refusal::invalid(format!("content-length: {error}")))?,
-                );
-            } else if name.eq_ignore_ascii_case("authorization") {
-                authorization = Some(value.to_owned());
-            } else if name.eq_ignore_ascii_case("transfer-encoding") {
-                // Unframed here, as before: the connection ends after it.
-                chunked = true;
-            } else if name.eq_ignore_ascii_case("connection") {
-                for option in value.split(',').map(str::trim) {
-                    if option.eq_ignore_ascii_case("close") {
-                        asked_close = true;
-                    } else if option.eq_ignore_ascii_case("keep-alive") {
-                        asked_keep_alive = true;
-                    }
-                }
-            }
-        }
-    }
-    let length = length.unwrap_or(0);
-    // `close` wins wherever it appears, in one header or across several.
-    let keep_alive = !asked_close && (http_1_1 || asked_keep_alive);
-    if length > MAX_BODY_BYTES {
+    let head = crate::http_head::read_head(
+        reader,
+        |reader| arm(reader, deadline),
+        Refusal::invalid,
+        "the request head is missing or exceeds the host bound",
+        false,
+    )?;
+    if head.length > MAX_BODY_BYTES {
         return Err(Refusal::new(
             http::StatusCode::PAYLOAD_TOO_LARGE,
             "request.too_large",
@@ -359,21 +294,24 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
             "a dev host request body is at most 512 KiB",
         ));
     }
-    let mut body = vec![0_u8; length];
+    let mut body = vec![0_u8; head.length];
     arm(reader, deadline)?;
     reader.read_exact(&mut body).map_err(|error| {
         Refusal::invalid(format!("the body is shorter than content-length: {error}"))
     })?;
     let body = String::from_utf8(body)
         .map_err(|error| Refusal::invalid(format!("the body is not UTF-8: {error}")))?;
-    let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
+    let (path, query) = head
+        .target
+        .split_once('?')
+        .unwrap_or((head.target.as_str(), ""));
     Ok(Parsed {
         path: path.to_owned(),
         query: query.to_owned(),
-        method,
-        authorization,
+        method: head.method,
+        authorization: head.authorization,
         body,
-        keep_alive: keep_alive && !chunked,
+        keep_alive: head.keep_alive,
     })
 }
 

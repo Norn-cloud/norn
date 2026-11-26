@@ -683,23 +683,18 @@ fn a_call_that_leaves_its_target_unwritten_reports_its_current_version() {
     let host = rows_host();
     let query = scoped("org_demo");
     let operator = Some(OPERATOR);
-    let body = |values: &str, version: &str, key: &str| {
-        format!(
-            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
-        )
-    };
     let created = call(
         &host,
         &query,
         operator,
         ORDER_EDIT,
-        &body(r#"{"title":"first"}"#, "0", "create"),
+        &order_edit_body("order-1", r#"{"title":"first"}"#, 0, "create"),
     )
     .unwrap();
     assert_eq!(created.outcome, ActionCallOutcome::Committed);
     // An empty parent patch and no row operations: the kernel commits the call
     // record without rewriting the order.
-    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let unchanged = order_edit_body("order-1", "{}", created.version, "noop");
     let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
     assert_eq!(committed.outcome, ActionCallOutcome::Committed);
     assert_eq!(
@@ -723,20 +718,15 @@ fn a_replay_reports_the_version_as_of_its_commit_after_a_later_write() {
     let host = rows_host();
     let query = scoped("org_demo");
     let operator = Some(OPERATOR);
-    let body = |values: &str, version: &str, key: &str| {
-        format!(
-            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
-        )
-    };
     let created = call(
         &host,
         &query,
         operator,
         ORDER_EDIT,
-        &body(r#"{"title":"first"}"#, "0", "create"),
+        &order_edit_body("order-1", r#"{"title":"first"}"#, 0, "create"),
     )
     .unwrap();
-    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let unchanged = order_edit_body("order-1", "{}", created.version, "noop");
     let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
     assert_eq!(committed.version, created.version);
     let later = call(
@@ -744,11 +734,7 @@ fn a_replay_reports_the_version_as_of_its_commit_after_a_later_write() {
         &query,
         operator,
         ORDER_EDIT,
-        &body(
-            r#"{"title":"second"}"#,
-            &created.version.to_string(),
-            "later",
-        ),
+        &order_edit_body("order-1", r#"{"title":"second"}"#, created.version, "later"),
     )
     .unwrap();
     assert!(later.version > created.version);

@@ -283,6 +283,12 @@ pub struct TzdbBundle {
     inner: Arc<TzdbBundleInner>,
 }
 
+impl TzdbBundle {
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
 struct ParsedSections<'a> {
     release: &'a str,
     zone_count: usize,

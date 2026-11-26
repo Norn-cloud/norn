@@ -18,7 +18,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
@@ -252,7 +251,7 @@ fn presign(p: &Presign<'_>) -> Option<String> {
 }
 
 /// HMAC-SHA256 (RFC 2104).
-fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub(crate) fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut block = if key.len() > 64 {
         Sha256::digest(key).to_vec()
     } else {
@@ -276,14 +275,13 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
 pub fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().saturating_mul(2));
     for byte in bytes {
-        // Writing to a String cannot fail.
         let _written = write!(out, "{byte:02x}");
     }
     out
 }
 
-/// URI-encode per `SigV4`: unreserved characters stay; `/` stays when asked.
-fn encode(text: &str, keep_slash: bool) -> String {
+/// URI-encode per `SigV4` / RFC 3986: unreserved characters stay; `/` stays when asked.
+pub(crate) fn encode(text: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric()
@@ -391,7 +389,7 @@ pub fn parse_csv(text: &str) -> Result<Table, String> {
     let mut present: Vec<bool> = vec![false; columns.len()];
     for (index, record) in records.enumerate() {
         if record.len() == 1 && record.first().is_some_and(|c| c.trim().is_empty()) {
-            continue; // a blank line
+            continue;
         }
         if record.len() != columns.len() {
             return Err(format!(
@@ -862,13 +860,11 @@ fn shapes(
         fields.push(json!({"dataset": "rows", "name": column.id, "ordinal": ordinal, "nativeType": "csv",
             "typeCandidate": {"type": kind.candidate(), "origin": "declared"}, "required": !column.nullable}));
         let input = format!("input.{}", column.id);
-        let value = match (kind, column.nullable) {
-            (ColumnKind::Datetime, true) => format!("{input} == null ? null : timestamp({input})"),
-            (ColumnKind::Datetime, false) => format!("timestamp({input})"),
-            (
-                ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Text,
-                _,
-            ) => input,
+        let value = match kind {
+            ColumnKind::Datetime => format!("timestamp({input})"),
+            ColumnKind::Integer | ColumnKind::Decimal | ColumnKind::Boolean | ColumnKind::Text => {
+                input
+            }
         };
         map_properties.push(json!({"property": column.id, "value": value}));
     }
@@ -966,18 +962,12 @@ pub fn load_rows<E: SqlEngine>(
             .rows_read
             .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
-            match &ingested.outcome {
-                MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
-                    loaded.rows_landed = loaded.rows_landed.saturating_add(1);
-                }
-                quarantined @ MappingOutcome::Quarantined(_) => {
-                    loaded.rows_quarantined = loaded.rows_quarantined.saturating_add(1);
-                    for code in quarantined.codes() {
-                        let n = loaded.quarantine_reasons.entry(code).or_insert(0);
-                        *n = n.saturating_add(1);
-                    }
-                }
-            }
+            crate::pull::tally_outcome(
+                &ingested.outcome,
+                &mut loaded.rows_landed,
+                &mut loaded.rows_quarantined,
+                &mut loaded.quarantine_reasons,
+            );
         }
     }
     Ok(loaded)

@@ -239,17 +239,11 @@ fn project_resource_actions(
             continue;
         };
         let target_type = program.target().object_kind;
-        for (object_type, lineage) in &types.lineages {
-            if types.cedar_names.contains_key(*object_type)
-                && lineage
-                    .iter()
-                    .any(|ancestor| ancestor.name.as_str() == target_type)
-            {
-                pairs
-                    .entry(ObjectTypeName((*object_type).to_owned()))
-                    .or_default()
-                    .insert(action.action_id.clone());
-            }
+        for (object_type, _) in types.projected_subtypes(|ancestor| ancestor == target_type) {
+            pairs
+                .entry(ObjectTypeName(object_type.to_owned()))
+                .or_default()
+                .insert(action.action_id.clone());
         }
     }
     pairs
@@ -264,6 +258,21 @@ struct CedarObjectTypes<'a> {
     cedar_names: BTreeMap<&'a str, String>,
     namespaces: BTreeMap<String, BTreeSet<String>>,
     lineages: BTreeMap<&'a str, Vec<&'a ObjectTypeDef>>,
+}
+
+impl<'a> CedarObjectTypes<'a> {
+    fn projected_subtypes<'s>(
+        &'s self,
+        matches: impl Fn(&str) -> bool + 's,
+    ) -> impl Iterator<Item = (&'a str, &'s str)> + 's {
+        self.lineages.iter().filter_map(move |(name, lineage)| {
+            let cedar_name = self.cedar_names.get(name)?;
+            lineage
+                .iter()
+                .any(|ancestor| matches(ancestor.name.as_str()))
+                .then_some((*name, cedar_name.as_str()))
+        })
+    }
 }
 
 fn object_type_index<'a>(
@@ -393,6 +402,10 @@ fn project_inverse_attributes(
     attributes: &mut BTreeMap<String, BTreeMap<String, CedarAttribute>>,
     losses: &mut BTreeSet<CedarLoss>,
 ) {
+    let interfaces_by_name: BTreeMap<&str, &norn_ir::InterfaceDef> = interfaces
+        .iter()
+        .map(|definition| (definition.name.as_str(), definition))
+        .collect();
     for (source_name, source_type) in &types.by_name {
         if !types.cedar_names.contains_key(source_name) {
             continue;
@@ -419,19 +432,16 @@ fn project_inverse_attributes(
                         lineage.iter().any(|ancestor| {
                             ancestor.implements.iter().any(|interface| {
                                 interface.as_str() == target_name
-                                    || interfaces
-                                        .iter()
-                                        .find(|definition| definition.name == *interface)
-                                        .is_some_and(|definition| {
+                                    || interfaces_by_name.get(interface.as_str()).is_some_and(
+                                        |definition| {
                                             definition
                                                 .contract_owners(|name| {
-                                                    interfaces
-                                                        .iter()
-                                                        .find(|parent| parent.name == *name)
+                                                    interfaces_by_name.get(name.as_str()).copied()
                                                 })
                                                 .iter()
                                                 .any(|parent| parent.name.as_str() == target_name)
-                                        })
+                                        },
+                                    )
                             })
                         })
                     })
@@ -448,9 +458,6 @@ fn project_inverse_attributes(
                 );
             }
             for target in targets {
-                if !types.cedar_names.contains_key(target) {
-                    continue;
-                }
                 let projected = attributes.entry(target.to_owned()).or_default();
                 let subject = format!("{target}.{}", inverse.as_str());
                 insert_attribute(
@@ -647,15 +654,8 @@ fn render_actions(
             }
         }
         let resources: Vec<&str> = types
-            .lineages
-            .iter()
-            .filter(|(name, lineage)| {
-                types.cedar_names.contains_key(*name)
-                    && lineage
-                        .iter()
-                        .any(|ancestor| resource_kinds.contains(ancestor.name.as_str()))
-            })
-            .filter_map(|(name, _)| types.cedar_names.get(name).map(String::as_str))
+            .projected_subtypes(|ancestor| resource_kinds.contains(ancestor))
+            .map(|(_, cedar_name)| cedar_name)
             .collect();
         if resources.is_empty() {
             add_loss(
@@ -819,39 +819,26 @@ fn project_property(
     let (property_type, catalog_constraints) =
         match resolve_property_type(&property.property_type, catalog, duplicate_catalog_names) {
             Ok(resolved) => resolved,
-            Err(ResolveTypeError::Missing(name)) => {
-                add_loss(
-                    losses,
-                    format!("{subject} -> {name}"),
-                    "property type reference is absent from the supplied catalog",
-                );
-                report_property_metadata(subject, property, &[], losses);
-                return None;
-            }
-            Err(ResolveTypeError::Duplicate(name)) => {
-                add_loss(
-                    losses,
-                    format!("{subject} -> {name}"),
-                    "property type reference is ambiguous in the supplied catalog",
-                );
-                report_property_metadata(subject, property, &[], losses);
-                return None;
-            }
-            Err(ResolveTypeError::Cycle(name)) => {
-                add_loss(
-                    losses,
-                    format!("{subject} -> {name}"),
-                    "property type reference chain is cyclic",
-                );
-                report_property_metadata(subject, property, &[], losses);
-                return None;
-            }
-            Err(ResolveTypeError::TooDeep) => {
-                add_loss(
-                    losses,
-                    subject.to_owned(),
-                    "property type reference chain exceeds the catalog size",
-                );
+            Err(error) => {
+                let (loss_subject, reason) = match error {
+                    ResolveTypeError::Missing(name) => (
+                        format!("{subject} -> {name}"),
+                        "property type reference is absent from the supplied catalog",
+                    ),
+                    ResolveTypeError::Duplicate(name) => (
+                        format!("{subject} -> {name}"),
+                        "property type reference is ambiguous in the supplied catalog",
+                    ),
+                    ResolveTypeError::Cycle(name) => (
+                        format!("{subject} -> {name}"),
+                        "property type reference chain is cyclic",
+                    ),
+                    ResolveTypeError::TooDeep => (
+                        subject.to_owned(),
+                        "property type reference chain exceeds the catalog size",
+                    ),
+                };
+                add_loss(losses, loss_subject, reason);
                 report_property_metadata(subject, property, &[], losses);
                 return None;
             }
