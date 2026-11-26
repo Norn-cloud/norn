@@ -273,7 +273,7 @@ fn run_owl(
     let write = |name: &str, text: String| {
         let target = emit_dir.join(name);
         outside_repository(&target, manifest_path)?;
-        std::fs::write(&target, text).map_err(|e| format!("{name}: {e}"))
+        std::fs::write(target, text).map_err(|e| format!("{name}: {e}"))
     };
     let artifacts: Vec<_> = import
         .layers
