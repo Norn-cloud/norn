@@ -980,19 +980,45 @@ fn hr_leave_action(id: &str, precond: &str) -> Value {
     })
 }
 
-fn hr_employee_actions() -> (Value, Value) {
+fn hr_patch_action(id: &str) -> Value {
     let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
     let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
-    let writes = json!([
-        { "entityKind": "hr.Employee", "change": "created" },
-        { "entityKind": "hr.Employee", "change": "modified" }
-    ]);
-    let effect = json!({
-        "kind": "upsert_input_object", "objectIdField": "id",
-        "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
-        "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
-    });
-    let seed_emp = json!({
+    json!({
+        "irVersion": "0.1", "artifactId": format!("{id}.action"), "kind": "action",
+        "namespace": "hr", "name": id, "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "actionId": id, "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": { "id": { "type": "string" }, "status": { "type": "string" } },
+                "required": ["id", "status"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "slice": [{
+                "name": "emp", "objectType": "hr.Employee",
+                "key": { "property": { "from": "input", "property": "id" } }
+            }],
+            "preconditions": ["slice.emp.status != 'terminated'"],
+            "writes": [
+                { "entityKind": "hr.Employee", "change": "created" },
+                { "entityKind": "hr.Employee", "change": "modified" }
+            ],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectIdField": "id",
+                "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
+            }
+        }
+    })
+}
+
+fn hr_seed_employee_action() -> Value {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    json!({
         "irVersion": "0.1", "artifactId": "hr.seed_employee.action", "kind": "action",
         "namespace": "hr", "name": "seed_employee", "version": "1.0.0", "lifecycle": "active",
         "scope": scope_val, "dependencies": [], "provenance": prov,
@@ -1009,39 +1035,23 @@ fn hr_employee_actions() -> (Value, Value) {
                 "required": ["id", "status", "branch_id", "national_id"]
             },
             "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
-            "writes": writes, "effectProgram": effect
+            "writes": [
+                { "entityKind": "hr.Employee", "change": "created" },
+                { "entityKind": "hr.Employee", "change": "modified" }
+            ],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectIdField": "id",
+                "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
+            }
         }
-    });
-    let patch_emp = json!({
-        "irVersion": "0.1", "artifactId": "hr.patch_employee_status.action", "kind": "action",
-        "namespace": "hr", "name": "patch_employee_status", "version": "1.0.0", "lifecycle": "active",
-        "scope": scope_val, "dependencies": [], "provenance": prov,
-        "payload": {
-            "actionId": "hr.patch_employee_status", "scopeRequired": ["orgId", "environmentId"],
-            "idempotent": true, "ledgered": true,
-            "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
-            "inputSchema": {
-                "type": "object", "additionalProperties": false,
-                "properties": { "id": { "type": "string" }, "status": { "type": "string" } },
-                "required": ["id", "status"]
-            },
-            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
-            "slice": [{
-                "name": "emp", "objectType": "hr.Employee",
-                "key": { "property": { "from": "input", "property": "id" } }
-            }],
-            "preconditions": ["slice.emp.status != 'terminated'"],
-            "writes": writes, "effectProgram": effect
-        }
-    });
-    (seed_emp, patch_emp)
+    })
 }
 
 fn hr_abac_ifc_artifacts() -> Vec<Value> {
     let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
     let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
     let (markings_entity, emp_entity, leave_entity) = hr_abac_entities();
-    let (seed_emp, patch_emp) = hr_employee_actions();
     let access_policy = json!({
         "irVersion": "0.1", "artifactId": "hr.access.policy", "kind": "policy",
         "namespace": "hr", "name": "access", "version": "1.0.0", "lifecycle": "active",
@@ -1055,6 +1065,14 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
                     "allOf": [
                         { "role": { "anyOf": ["admin"] } },
                         { "resource": { "name": "branch_id", "op": "in", "value": { "principalAttribute": "managed_branches" } } }
+                    ]
+                },
+                {
+                    "ruleId": "patch-emp-by-nid", "actions": ["hr.patch_employee_by_national_id"],
+                    "resourceType": "hr.Employee", "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["admin"] } },
+                        { "resource": { "name": "national_id", "op": "eq", "value": { "principalAttribute": "employee_nid" } } }
                     ]
                 },
                 {
@@ -1072,8 +1090,9 @@ fn hr_abac_ifc_artifacts() -> Vec<Value> {
         markings_entity,
         emp_entity,
         leave_entity,
-        seed_emp,
-        patch_emp,
+        hr_seed_employee_action(),
+        hr_patch_action("hr.patch_employee_status"),
+        hr_patch_action("hr.patch_employee_by_national_id"),
         hr_leave_action("hr.submit_leave", "slice.emp.status == 'active'"),
         hr_leave_action(
             "hr.submit_leave_pii",
@@ -1092,7 +1111,18 @@ fn post_action(cell: &mut Cell, action: &str, auth: &str, body: &Value) -> norn_
     )
 }
 
-fn mcp_leave_tool_name(cell: &mut Cell, auth: &str) -> String {
+fn read_employee_record(cell: &mut Cell, id: &str) -> Value {
+    let resp = cell.call(
+        "GET",
+        &format!("/v1/objects/hr.Employee/{id}"),
+        Some(&user("member")),
+        "",
+    );
+    assert_eq!(resp.status, 200, "{}", resp.body);
+    serde_json::from_str(&resp.body).unwrap()
+}
+
+fn mcp_tool_name(cell: &mut Cell, auth: &str, action_id: &str) -> String {
     let list_req = json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"limit":100}});
     let list = cell.call("POST", "/v1/mcp", Some(auth), &list_req.to_string());
     assert_eq!(list.status, 200, "{}", list.body);
@@ -1101,7 +1131,7 @@ fn mcp_leave_tool_name(cell: &mut Cell, auth: &str) -> String {
         .as_array()
         .unwrap()
         .iter()
-        .find(|t| t["_meta"]["norn/actionId"] == "hr.submit_leave")
+        .find(|t| t["_meta"]["norn/actionId"] == action_id)
         .unwrap()["name"]
         .as_str()
         .unwrap()
@@ -1186,33 +1216,99 @@ fn hosted_abac_string_set_decides_current_and_proposed_resource_checks() {
         &emp_body("giza", "move-ok"),
     );
     assert_eq!(moved.status, 200, "{}", moved.body);
+}
 
-    // Direct-target-slice `Upsert` exercises exact patch policy read footprint (`branch_id` + `status`).
-    let patch_body =
-        json!({ "input": { "id": "E1", "status": "on_leave" }, "idempotencyKey": "patch-1" });
+/// Lane A2 hosted DO exact patch policy footprint: patching `status` under an
+/// unmarked policy (`branch_id`) keeps `status` unmarked (proving unread PII
+/// `national_id` did not taint it), while patching under a policy reading
+/// `national_id` propagates `pii.contact` onto `status`.
+#[test]
+fn hosted_exact_patch_policy_footprint_controls_marking_propagation() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("patch-ifc.sqlite"),
+        &hr_abac_ifc_artifacts(),
+    );
+    let cairo_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["cairo"] }),
+    );
+    let alex_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["alex"] }),
+    );
+    let nid_holder = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "employee_nid": "123-45-6789" }),
+    );
+    let seed = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789" }, "idempotencyKey": "seed" });
+    assert_eq!(
+        post_action(&mut cell, "hr.seed_employee", &cairo_mgr, &seed).status,
+        200
+    );
+
+    let patch_unmarked =
+        json!({ "input": { "id": "E1", "status": "on_leave" }, "idempotencyKey": "patch-branch" });
     assert_eq!(
         post_action(
             &mut cell,
             "hr.patch_employee_status",
             &alex_mgr,
-            &patch_body
+            &patch_unmarked
         )
         .status,
         403
     );
-    let patched = post_action(
+    let ok = post_action(
         &mut cell,
         "hr.patch_employee_status",
         &cairo_mgr,
-        &patch_body,
+        &patch_unmarked,
     );
-    assert_eq!(patched.status, 200, "{}", patched.body);
+    assert_eq!(ok.status, 200, "{}", ok.body);
+    let after_unmarked = read_employee_record(&mut cell, "E1");
+    assert_eq!(
+        after_unmarked["values"]["status"],
+        json!("on_leave"),
+        "{after_unmarked}"
+    );
+    assert!(
+        after_unmarked["masked"].get("status").is_none(),
+        "unread PII must not taint status: {after_unmarked}"
+    );
+    assert_eq!(
+        after_unmarked["masked"]["national_id"]["markings"],
+        json!(["pii.contact"]),
+        "{after_unmarked}"
+    );
+
+    let patch_pii_policy =
+        json!({ "input": { "id": "E1", "status": "verified" }, "idempotencyKey": "patch-nid" });
+    let ok_pii = post_action(
+        &mut cell,
+        "hr.patch_employee_by_national_id",
+        &nid_holder,
+        &patch_pii_policy,
+    );
+    assert_eq!(ok_pii.status, 200, "{}", ok_pii.body);
+    let after_pii = read_employee_record(&mut cell, "E1");
+    assert_eq!(
+        after_pii["masked"]["status"]["markings"],
+        json!(["pii.contact"]),
+        "policy operand national_id must propagate pii.contact onto status: {after_pii}"
+    );
 }
 
 /// Lane A2 full-stack hosted DO HTTP + MCP correspondence: `KernelAuthorizer`
 /// + `ReadPolicy` propagate exact policy read footprints so stamped `CreateOnly`
 /// + PII `Employee` slice + `createLinks` commits over real HTTP and MCP while
-/// classified precondition reads still refuse.
+/// classified precondition reads refuse over both HTTP and MCP.
 #[test]
 fn hosted_exact_policy_footprint_enables_stamped_create_ifc_over_http_and_mcp() {
     let directory = tempfile::tempdir().unwrap();
@@ -1234,40 +1330,25 @@ fn hosted_exact_policy_footprint_enables_stamped_create_ifc_over_http_and_mcp() 
         "admin",
         json!({ "managed_branches": ["alex"] }),
     );
-    let seed_body = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789" }, "idempotencyKey": "seed-1" }).to_string();
+    let seed_body = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789" }, "idempotencyKey": "seed-1" });
     assert_eq!(
-        cell.call(
-            "POST",
-            "/v1/actions/hr.seed_employee",
-            Some(&cairo_mgr),
-            &seed_body
-        )
-        .status,
+        post_action(&mut cell, "hr.seed_employee", &cairo_mgr, &seed_body).status,
         200
     );
 
-    let leave_http = json!({ "input": { "id": "L-HTTP", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-http" }).to_string();
-    let http_ok = cell.call(
-        "POST",
-        "/v1/actions/hr.submit_leave",
-        Some(&cairo_mgr),
-        &leave_http,
-    );
+    let leave_http = json!({ "input": { "id": "L-HTTP", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-http" });
+    let http_ok = post_action(&mut cell, "hr.submit_leave", &cairo_mgr, &leave_http);
     assert_eq!(http_ok.status, 200, "{}", http_ok.body);
 
-    let leave_pii = json!({ "input": { "id": "L-PII", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-pii" }).to_string();
-    let pii_refused = cell.call(
-        "POST",
-        "/v1/actions/hr.submit_leave_pii",
-        Some(&cairo_mgr),
-        &leave_pii,
-    );
+    let leave_pii = json!({ "input": { "id": "L-PII", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-pii" });
+    let pii_refused = post_action(&mut cell, "hr.submit_leave_pii", &cairo_mgr, &leave_pii);
     assert_ne!(pii_refused.status, 200, "{}", pii_refused.body);
 
-    let tool_name = mcp_leave_tool_name(&mut cell, &cairo_mgr);
-    let mut mcp_call = |auth: &str, id: &str, key: &str| {
+    let leave_tool = mcp_tool_name(&mut cell, &cairo_mgr, "hr.submit_leave");
+    let pii_tool = mcp_tool_name(&mut cell, &cairo_mgr, "hr.submit_leave_pii");
+    let mut mcp_call = |tool: &str, auth: &str, id: &str, key: &str| {
         let req = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-            "name": tool_name, "arguments": {"id": id, "employee_id": "E1", "branch_id": "cairo"},
+            "name": tool, "arguments": {"id": id, "employee_id": "E1", "branch_id": "cairo"},
             "_meta": {"norn/idempotencyKey": key}
         }})
         .to_string();
@@ -1276,15 +1357,17 @@ fn hosted_exact_policy_footprint_enables_stamped_create_ifc_over_http_and_mcp() 
         serde_json::from_str::<Value>(&resp.body).unwrap()
     };
     assert_eq!(
-        mcp_call(&alex_mgr, "L-MCP-DENY", "mcp-deny")["result"]["isError"],
+        mcp_call(&leave_tool, &alex_mgr, "L-MCP-DENY", "mcp-deny")["result"]["isError"],
         true
     );
-    let mcp_ok = mcp_call(&cairo_mgr, "L-MCP", "mcp-ok");
+    let mcp_ok = mcp_call(&leave_tool, &cairo_mgr, "L-MCP", "mcp-ok");
     assert_eq!(mcp_ok["result"]["isError"], false, "{mcp_ok}");
     assert_eq!(
         mcp_ok["result"]["structuredContent"]["outcome"],
         "committed"
     );
+    let mcp_pii = mcp_call(&pii_tool, &cairo_mgr, "L-MCP-PII", "mcp-pii");
+    assert_eq!(mcp_pii["result"]["isError"], true, "{mcp_pii}");
 }
 
 /// A tenant concept that derives metrics: additive amounts at a timestamp.

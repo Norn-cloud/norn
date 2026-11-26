@@ -128,36 +128,121 @@ fn valid_attribute_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn decode_attr_value(value: serde_json::Value) -> Option<AttrValue> {
-    match value {
-        serde_json::Value::Bool(flag) => Some(AttrValue::Bool(flag)),
-        serde_json::Value::Number(num) => Some(AttrValue::Long(num.as_i64()?)),
-        serde_json::Value::String(text) => Some(AttrValue::String(text)),
-        serde_json::Value::Array(items) => {
-            if items.len() > MAX_PRINCIPAL_SET_ITEMS {
-                return None;
-            }
-            let mut set = Vec::with_capacity(items.len());
-            let mut elem_kind: Option<u8> = None;
-            for item in items {
-                let (kind, elem) = match item {
-                    serde_json::Value::Bool(flag) => (0u8, AttrValue::Bool(flag)),
-                    serde_json::Value::Number(num) => (1u8, AttrValue::Long(num.as_i64()?)),
-                    serde_json::Value::String(text) => (2u8, AttrValue::String(text)),
-                    _ => return None,
-                };
-                if let Some(expected) = elem_kind {
-                    if expected != kind {
-                        return None;
-                    }
-                } else {
-                    elem_kind = Some(kind);
-                }
-                set.push(elem);
-            }
-            Some(AttrValue::Set(set))
+struct ScalarAttr(AttrValue);
+
+impl ScalarAttr {
+    const fn kind(&self) -> u8 {
+        match self.0 {
+            AttrValue::Bool(_) => 0,
+            AttrValue::Long(_) => 1,
+            AttrValue::String(_) => 2,
+            AttrValue::Set(_) => 3,
         }
-        _ => None,
+    }
+}
+
+impl<'de> Deserialize<'de> for ScalarAttr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ScalarVisitor;
+
+        impl serde::de::Visitor<'_> for ScalarVisitor {
+            type Value = ScalarAttr;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a boolean, signed 64-bit integer, or string")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(ScalarAttr(AttrValue::Bool(value)))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(ScalarAttr(AttrValue::Long(value)))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                let signed = i64::try_from(value)
+                    .map_err(|_| E::custom("principal attribute integer out of range"))?;
+                Ok(ScalarAttr(AttrValue::Long(signed)))
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(ScalarAttr(AttrValue::String(value.to_owned())))
+            }
+
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
+                Ok(ScalarAttr(AttrValue::String(value)))
+            }
+        }
+
+        deserializer.deserialize_any(ScalarVisitor)
+    }
+}
+
+struct PrincipalAttr(AttrValue);
+
+impl<'de> Deserialize<'de> for PrincipalAttr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ValueVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ValueVisitor {
+            type Value = PrincipalAttr;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a boolean, integer, string, or homogeneous array of scalars")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(PrincipalAttr(AttrValue::Bool(value)))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(PrincipalAttr(AttrValue::Long(value)))
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                let signed = i64::try_from(value)
+                    .map_err(|_| E::custom("principal attribute integer out of range"))?;
+                Ok(PrincipalAttr(AttrValue::Long(signed)))
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(PrincipalAttr(AttrValue::String(value.to_owned())))
+            }
+
+            fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
+                Ok(PrincipalAttr(AttrValue::String(value)))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut items = Vec::new();
+                let mut expected_kind: Option<u8> = None;
+                while let Some(elem) = seq.next_element::<ScalarAttr>()? {
+                    if items.len() >= MAX_PRINCIPAL_SET_ITEMS {
+                        return Err(serde::de::Error::custom(
+                            "too many principal attribute set items",
+                        ));
+                    }
+                    let kind = elem.kind();
+                    if let Some(expected) = expected_kind {
+                        if expected != kind {
+                            return Err(serde::de::Error::custom(
+                                "mixed types in principal attribute set",
+                            ));
+                        }
+                    } else {
+                        expected_kind = Some(kind);
+                    }
+                    items.push(elem.0);
+                }
+                Ok(PrincipalAttr(AttrValue::Set(items)))
+            }
+        }
+
+        deserializer.deserialize_any(ValueVisitor)
     }
 }
 
@@ -183,7 +268,7 @@ where
             A: serde::de::MapAccess<'de>,
         {
             let mut decoded = BTreeMap::new();
-            while let Some((name, raw)) = map.next_entry::<String, serde_json::Value>()? {
+            while let Some(name) = map.next_key::<String>()? {
                 if decoded.len() >= MAX_PRINCIPAL_ATTRIBUTES {
                     return Err(serde::de::Error::custom("too many principal attributes"));
                 }
@@ -193,8 +278,7 @@ where
                 if decoded.contains_key(&name) {
                     return Err(serde::de::Error::custom("duplicate principal attribute"));
                 }
-                let attr = decode_attr_value(raw)
-                    .ok_or_else(|| serde::de::Error::custom("invalid principal attribute value"))?;
+                let attr = map.next_value::<PrincipalAttr>()?.0;
                 decoded.insert(name, attr);
             }
             Ok(decoded)
