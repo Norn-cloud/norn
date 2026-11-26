@@ -2399,3 +2399,34 @@ fn refused_evicted_and_expired_starts_leave_no_pending_records() {
     assert!(routes.handoffs().is_empty(after));
     assert_eq!(pending_records(&path), (0, 0));
 }
+
+#[test]
+fn provider_fill_rejects_undeclared_params_and_stray_brace() {
+    let provider = test_provider(1);
+    let extra = BTreeMap::from([("undeclared".to_owned(), "abc".to_owned())]);
+    assert!(
+        provider
+            .fill("https://api.acme.example/v1", &extra)
+            .is_err()
+    );
+    assert!(
+        provider
+            .fill("https://api.acme.example/v1/}", &BTreeMap::new())
+            .is_err()
+    );
+}
+
+#[test]
+fn config_rejects_malformed_redirect_url() {
+    let vars = BTreeMap::from([
+        (
+            norn_cell_do::connections::vault::KEK_VAR.to_owned(),
+            norn_cell_do::connections::vault::DEV_KEK_VALUE.to_owned(),
+        ),
+        (
+            norn_cell_do::connections::REDIRECT_URL_VAR.to_owned(),
+            "not-a-url".to_owned(),
+        ),
+    ]);
+    assert!(Config::from_vars(&vars, true).is_err());
+}
