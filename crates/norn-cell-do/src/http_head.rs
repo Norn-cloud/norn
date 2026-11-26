@@ -109,7 +109,7 @@ pub(crate) fn read_head<R: BufRead, E>(
     // unframed `transfer-encoding` also closes the connection.
     let keep_alive = !asked_close && (http_1_1 || asked_keep_alive) && !transfer_encoding;
     #[cfg(not(feature = "native"))]
-    let _keep_alive = keep_alive;
+    let _ = keep_alive;
     Ok(RawHead {
         method,
         target,

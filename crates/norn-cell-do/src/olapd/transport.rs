@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use norn_cell::analytics::EngineRefusal;
 
 use super::refusal;
+#[cfg(any(test, doc))]
 use crate::http_head::MAX_HEAD_BYTES;
 
 /// Longest accepted body (a sync batch), in bytes.
