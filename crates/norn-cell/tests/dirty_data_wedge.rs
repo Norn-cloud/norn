@@ -150,8 +150,10 @@ fn install_set(path: &Path, artifacts: &[ArtifactEnvelope], model: Model, label:
     SqliteCell::new(store, SCOPE, |_| BTreeMap::new()).expect("cell")
 }
 
-fn open_three_systems(path: &Path) -> ObsCell {
-    let artifacts = three_systems_artifacts();
+fn open_three_systems_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> ObsCell {
+    let mut artifacts = three_systems_artifacts();
+    edit(&mut artifacts);
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
     let (base, candidate): (Vec<_>, Vec<_>) = artifacts
         .iter()
         .cloned()
@@ -172,6 +174,28 @@ fn open_three_systems(path: &Path) -> ObsCell {
     );
     let model = build_model(&artifacts);
     install_set(path, &artifacts, model, "dirty-data-wedge")
+}
+
+fn open_three_systems(path: &Path) -> ObsCell {
+    open_three_systems_with(path, |_| {})
+}
+
+fn set_holding_currency_default(artifacts: &mut [ArtifactEnvelope], default_currency: &str) {
+    for artifact in artifacts {
+        if artifact.artifact_id.as_str() != "canon.Holding.entity" {
+            continue;
+        }
+        let mut json = serde_json::to_value(&*artifact).expect("holding json");
+        for prop in json["payload"]["objectType"]["properties"]
+            .as_array_mut()
+            .expect("properties")
+        {
+            if prop["id"].as_str() == Some("cost_currency") {
+                prop["default"] = json!(default_currency);
+            }
+        }
+        *artifact = serde_json::from_value(json).expect("decode edited holding");
+    }
 }
 
 fn fixture(system: &str) -> Value {
@@ -388,13 +412,14 @@ fn assert_ivm_matches_recompute(
     advanced
 }
 
-fn property_disagreements(
+fn property_disagreements_for(
     cell: &ObsCell,
+    key: &str,
     property: &str,
 ) -> Vec<norn_cell::source_agreement::SourceDisagreement> {
     cell.store()
         .read()
-        .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
+        .source_disagreements(MAIN_WORLD, "canon.Holding", key, None)
         .expect("disagreements")
         .into_iter()
         .filter(|d| {
@@ -405,6 +430,13 @@ fn property_disagreements(
             )
         })
         .collect()
+}
+
+fn property_disagreements(
+    cell: &ObsCell,
+    property: &str,
+) -> Vec<norn_cell::source_agreement::SourceDisagreement> {
+    property_disagreements_for(cell, NORTH, property)
 }
 
 /// Wedge 1: Dirty nulls, partial updates, and `SOURCE-AGREE-1` mapping-gap attribution.
@@ -520,16 +552,53 @@ fn commit_write(
     .expect("commit fact write");
 }
 
+fn land_row(cell: &mut ObsCell, system: &str, dataset: &str, row: &Value, event: &str, ver: &str) {
+    assert_eq!(
+        ingest_row(cell, system, dataset, row, event, ver).2,
+        MappingOutcome::Landed
+    );
+}
+
+fn assert_single_disagreement(
+    cell: &ObsCell,
+    key: &str,
+    property: &str,
+    expected_earlier: (&str, Option<&str>),
+    expected_later: (&str, Option<&str>),
+) {
+    let found = property_disagreements_for(cell, key, property);
+    assert_eq!(found.len(), 1, "{key}/{property}: {found:#?}");
+    let DataQualityOutcome::SourceDisagreement { earlier, later, .. } = &found[0].finding.outcome
+    else {
+        panic!("expected SourceDisagreement");
+    };
+    assert_eq!(earlier.system, expected_earlier.0);
+    if let Some(val) = expected_earlier.1 {
+        assert_eq!(earlier.value.as_deref(), Some(val));
+    }
+    assert_eq!(later.system, expected_later.0);
+    if let Some(val) = expected_later.1 {
+        assert_eq!(later.value.as_deref(), Some(val));
+    }
+}
+
 /// Wedge 1b: Deleting a record introduces an incarnation boundary so neither
 /// `SOURCE-AGREE-1` change detection nor mapping-gap walkback crosses a
-/// tombstone to cite pre-deletion reports.
+/// tombstone to cite pre-deletion reports, while a non-deleted positive control
+/// walks back across the same mapping gap to attribute the earlier source.
 #[test]
 fn wedge1b_deletion_tombstone_stops_disagreement_walkback() {
+    const SOUTH: &str = "demo/holding/owner/south/gold";
     let dir = tempfile::tempdir().expect("tempdir");
-    let mut cell = open_three_systems(&dir.path().join("wedge1b.sqlite"));
+    // Default `cost_currency = "USD"` so Shopify's gap recreation lands with a
+    // non-null `"USD"` directly after the tombstone (no native write in between).
+    let mut cell = open_three_systems_with(&dir.path().join("wedge1b.sqlite"), |artifacts| {
+        set_holding_currency_default(artifacts, "USD");
+    });
     load_snapshot(&mut cell, "erpnext");
 
-    // Delete NORTH (version 1 -> tombstone version 2).
+    // NORTH: delete (v1 -> tombstone v2), recreate via Shopify gap (v3 gets
+    // default `"USD"` and `quantity_basis = available`), then Odoo reports `"EUR"`.
     commit_write(
         &mut cell,
         "canon.Holding",
@@ -537,77 +606,80 @@ fn wedge1b_deletion_tombstone_stops_disagreement_walkback() {
         1,
         norn_kernel::FactMutation::Delete,
     );
-
-    // Shopify recreates NORTH after deletion with `quantity_basis = available`
-    // and a gap on `cost_currency`. Must NOT disagree with pre-deletion ERPNext.
-    let mut shopify_row =
-        find_snapshot_row("shopify", "InventoryLevel", "metafield_norn_ref", NORTH);
-    let (_, _, r1) = ingest_row(
+    let shopify_north = find_snapshot_row("shopify", "InventoryLevel", "metafield_norn_ref", NORTH);
+    land_row(
         &mut cell,
         "shopify",
         "InventoryLevel",
-        &shopify_row,
+        &shopify_north,
         "recreate-shopify",
         "10",
     );
-    assert_eq!(r1, MappingOutcome::Landed);
+    let recreated = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Holding", NORTH)
+        .expect("read recreated")
+        .expect("recreated holding");
+    assert_eq!(
+        recreated.values.get("cost_currency"),
+        Some(&RuntimeValue::from("USD"))
+    );
     assert!(
         cell.store()
             .read()
             .source_disagreements(MAIN_WORLD, "canon.Holding", NORTH, None)
             .expect("disagreements")
             .is_empty(),
-        "recreation after deletion must not cross tombstone to disagree with pre-deletion source"
+        "recreation after deletion must not cross tombstone"
+    );
+    let mut odoo_north = find_snapshot_row("odoo", "stock.quant", "x_norn_ref", NORTH);
+    odoo_north["cost_currency"] = json!("EUR");
+    land_row(
+        &mut cell,
+        "odoo",
+        "stock.quant",
+        &odoo_north,
+        "odoo-1",
+        "11",
+    );
+    assert!(
+        property_disagreements_for(&cell, NORTH, "cost_currency").is_empty(),
+        "tombstone must terminate walkback from Shopify's non-null gap row"
+    );
+    assert_single_disagreement(
+        &cell,
+        NORTH,
+        "quantity_basis",
+        ("synthetic-shopify", None),
+        ("synthetic-odoo", None),
     );
 
-    // Seed non-null `cost_currency = USD` on the new incarnation, then apply a
-    // Shopify gap update carrying that inherited `"USD"` value, followed by Odoo
-    // reporting `"EUR"` and `quantity_basis = on_hand`.
-    let mut recreated = cell
-        .store()
-        .read()
-        .object(MAIN_WORLD, "canon.Holding", NORTH)
-        .expect("read recreated")
-        .expect("recreated holding");
-    recreated
-        .values
-        .insert("cost_currency".into(), RuntimeValue::from("USD"));
-    let version = recreated.version;
-    commit_write(
-        &mut cell,
-        "canon.Holding",
-        NORTH,
-        version,
-        norn_kernel::FactMutation::Put {
-            values: recreated.values,
-        },
-    );
-    shopify_row["quantity"] = json!(72);
-    shopify_row["updated_at"] = json!("2026-11-04T09:00:00Z");
-    let (_, _, r2) = ingest_row(
-        &mut cell,
+    // Positive control (SOUTH, no tombstone): ERPNext `"USD"` -> Shopify gap ->
+    // Odoo `"EUR"` walks back across the gap and attributes ERPNext vs Odoo.
+    assert_positive_gap_walkback(&mut cell, SOUTH);
+}
+
+fn assert_positive_gap_walkback(cell: &mut ObsCell, key: &str) {
+    let shopify_row = find_snapshot_row("shopify", "InventoryLevel", "metafield_norn_ref", key);
+    land_row(
+        cell,
         "shopify",
         "InventoryLevel",
         &shopify_row,
-        "shopify-gap-after-delete",
-        "11",
+        "shopify-south-gap",
+        "10",
     );
-    assert_eq!(r2, MappingOutcome::Landed);
-    let mut odoo_row = find_snapshot_row("odoo", "stock.quant", "x_norn_ref", NORTH);
+    let mut odoo_row = find_snapshot_row("odoo", "stock.quant", "x_norn_ref", key);
     odoo_row["cost_currency"] = json!("EUR");
-    assert_eq!(
-        ingest_row(&mut cell, "odoo", "stock.quant", &odoo_row, "odoo-1", "12").2,
-        MappingOutcome::Landed
+    land_row(cell, "odoo", "stock.quant", &odoo_row, "odoo-south", "11");
+    assert_single_disagreement(
+        cell,
+        key,
+        "cost_currency",
+        ("synthetic-erpnext", Some("USD")),
+        ("synthetic-odoo", Some("EUR")),
     );
-    assert!(property_disagreements(&cell, "cost_currency").is_empty());
-    let basis = property_disagreements(&cell, "quantity_basis");
-    assert_eq!(basis.len(), 1, "{basis:#?}");
-    let DataQualityOutcome::SourceDisagreement { earlier, later, .. } = &basis[0].finding.outcome
-    else {
-        panic!("expected SourceDisagreement");
-    };
-    assert_eq!(earlier.system, "synthetic-shopify");
-    assert_eq!(later.system, "synthetic-odoo");
 }
 
 /// Wedge 2: Multi-source `IncrementalQuestion` vs exact recompute parity across
