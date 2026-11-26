@@ -704,17 +704,18 @@
    * The islands' material: the applet rail and the submenu island take `--sidebar`, the main island
    * `--island`; each takes the skin's backdrop blur (none in luma), a 1px edge and its depth shadow.
    * Painted here, not by utilities, so every fallback below can make it opaque in one place. Only the
-   * shell's own islands: a page's catalog islands (`<NornAppRenderer>`, `data-island="<entry>"`) are content.
+   * shell's own islands carry `data-shell-island`: a page's catalog islands (`<NornAppRenderer>`,
+   * `data-island="<entry>"`) are content, and no entry id can take the shell's material.
    */
-  :is([data-island="nav"], [data-island="main"]) {
+  :is([data-shell-island="nav"], [data-shell-island="main"]) {
     border: 1px solid var(--island-border);
     border-radius: var(--radius-island);
     box-shadow: var(--island-shadow);
     -webkit-backdrop-filter: var(--island-blur);
     backdrop-filter: var(--island-blur);
   }
-  [data-island="nav"] { background-color: var(--sidebar); }
-  [data-island="main"] { background-color: var(--island); }
+  [data-shell-island="nav"] { background-color: var(--sidebar); }
+  [data-shell-island="main"] { background-color: var(--island); }
 
   /* Glass skins frost the surfaces inside the islands too (cards, tables, popovers, the dock tray). */
   :root[data-skin="glass"] :is([data-slot="panel"], [data-slot="stat-strip"], [data-slot="table-card"], [data-slot="records-table-frame"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="chrome-dock-tray"]) {
@@ -729,19 +730,19 @@
    */
   @media (prefers-reduced-transparency: reduce) {
     /* As specific as the glass frost above, and later, so it wins in every skin. */
-    :is([data-island="nav"], [data-island="main"]), :root[data-skin] :is([data-slot="panel"], [data-slot="stat-strip"], [data-slot="table-card"], [data-slot="records-table-frame"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="chrome-dock-tray"]) {
+    :is([data-shell-island="nav"], [data-shell-island="main"]), :root[data-skin] :is([data-slot="panel"], [data-slot="stat-strip"], [data-slot="table-card"], [data-slot="records-table-frame"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="chrome-dock-tray"]) {
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
     }
-    [data-island="nav"] { background-color: var(--shell); }
-    [data-island="main"] { background-color: var(--canvas); }
+    [data-shell-island="nav"] { background-color: var(--shell); }
+    [data-shell-island="main"] { background-color: var(--canvas); }
   }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    [data-island="nav"] { background-color: var(--shell); }
-    [data-island="main"] { background-color: var(--canvas); }
+    [data-shell-island="nav"] { background-color: var(--shell); }
+    [data-shell-island="main"] { background-color: var(--canvas); }
   }
   @media (forced-colors: active) {
-    :is([data-island="nav"], [data-island="main"]) {
+    :is([data-shell-island="nav"], [data-shell-island="main"]) {
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
       box-shadow: none;

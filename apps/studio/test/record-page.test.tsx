@@ -522,6 +522,26 @@ test("the record page is the cell's: read from the definitions, or said to be no
   expect(none).toContain("serves no record page")
 })
 
+test("a workspace that did not answer the record read keeps the person's Retry, even when its failure is not retryable", async () => {
+  const { RECORD_ISLANDS } = await import("../src/record/islands.tsx")
+  globalThis.localStorage = { getItem: () => "business", setItem: () => {} } as unknown as Storage
+  const workspace = new CellUnavailable(503, "The workspace cannot open.", { code: "cell.unopenable", retryable: false })
+  const record = { kind: "unavailable", error: new Error("The cell did not answer.", { cause: { workspace } }), retry: true } as const
+  type Input = Parameters<(typeof RECORD_ISLANDS)["record-failed"]>[0]
+  const island = RECORD_ISLANDS["record-failed"]({ props: {}, emit: () => {}, states: { reads: { record }, calls: {} } } as unknown as Input)
+  const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><ViewProvider><WorkspaceProvider workspace={RECORDED}>{island}</WorkspaceProvider></ViewProvider></QueryClientProvider>)
+  expect(html).toContain('data-record-read="workspace"')
+  expect(html).toContain('data-retryable="false"')
+  // The machine's `failed` promises a Retry (L4): the shell's Workspace unavailable always draws one.
+  expect(html).toContain("Retry</button>")
+})
+
+test("the record page's own empty state draws through Studio's translations", async () => {
+  const { message } = await import("../src/lib/translations.ts")
+  expect(message("No record page", "ar")).toBe("لا توجد صفحة سجل")
+  expect(message("This workspace's cell serves no record page, so its records cannot be shown here.", "ar")).not.toBe("This workspace's cell serves no record page, so its records cannot be shown here.")
+})
+
 test("Studio's translations resolve the record page's messages by id, and fall back to the source text", async () => {
   const { message, translate } = await import("../src/lib/translations.ts")
   const { messageId } = await import("../../../tools/norn-ts/src/builder/message.ts")

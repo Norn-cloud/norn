@@ -74,7 +74,7 @@ export function RecordPage() {
   if (ux === undefined) {
     return (
       <div data-record-page="not-served">
-        <EmptyState icon={Rows3} title="No record page">This workspace's cell serves no record page, so its records cannot be shown here.</EmptyState>
+        <EmptyState icon={Rows3} title={say("No record page")}>{say("This workspace's cell serves no record page, so its records cannot be shown here.")}</EmptyState>
       </div>
     )
   }

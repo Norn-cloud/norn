@@ -206,6 +206,13 @@
                   "kind": "outcome",
                   "outcome": "answer_moved"
                 }
+              },
+              {
+                "eventId": "cancelled",
+                "source": {
+                  "kind": "outcome",
+                  "outcome": "cancelled"
+                }
               }
             ],
             "fields": [],
@@ -391,6 +398,43 @@
                 "on": "corrected",
                 "target": "refreshing",
                 "transitionId": "corrected"
+              },
+              {
+                "effects": [
+                  {
+                    "kind": "cancel"
+                  }
+                ],
+                "from": "refreshing",
+                "on": "read-again",
+                "target": "refreshing",
+                "transitionId": "refreshing-read-again"
+              },
+              {
+                "effects": [
+                  {
+                    "kind": "cancel"
+                  }
+                ],
+                "from": "refreshing",
+                "on": "corrected",
+                "target": "refreshing",
+                "transitionId": "refreshing-corrected"
+              },
+              {
+                "effects": [
+                  {
+                    "call": {
+                      "bindingId": "record",
+                      "kind": "read"
+                    },
+                    "kind": "start"
+                  }
+                ],
+                "from": "refreshing",
+                "on": "cancelled",
+                "target": "refreshing",
+                "transitionId": "refreshing-cancelled"
               },
               {
                 "effects": [

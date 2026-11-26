@@ -398,8 +398,10 @@ fn initial_fits(value: &JsonValue, value_type: WidgetValueType, required: bool) 
 }
 
 /// Each node of `node`'s tree to the `heldIn` lists of it and of the catalog nodes above it: the
-/// renderer draws a node in a state only when every one of them names that state (a node held in
-/// no state is drawn in all of them), so only there can a person raise its events.
+/// renderer draws a node in a state only when every one of them names that state, so only there
+/// can a person raise its events. It mirrors the renderer's two catalog paths (`nodes.tsx`): a UI
+/// SDK primitive draws through `Layer`, open only in the states its `heldIn` names, so one held
+/// in no state is drawn in none; an island held in no state is drawn in all of them.
 pub(super) fn collect_held<'n>(
     node: &'n WidgetNode,
     above: &[&'n [String]],
@@ -407,7 +409,7 @@ pub(super) fn collect_held<'n>(
 ) {
     let mut lists = above.to_vec();
     if let WidgetComponent::Catalog { held_in, .. } = &node.component
-        && !held_in.is_empty()
+        && (!held_in.is_empty() || crate::ui_sdk::primitive_of(node).is_some())
     {
         lists.push(held_in);
     }

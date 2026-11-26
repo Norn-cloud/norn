@@ -24,24 +24,28 @@ const context = { objectType: "canon.Party", id: "demo/party/0001" }
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 const noEngine = lazyEngine(() => Promise.reject(new Error("the record page evaluates no expression")))
 
-/** A reader that answers the record read with `answer`, or holds it. */
-function reader(answers: Classified[]): WidgetReader & { readonly asked: BindingRead[] } {
+/** Answer the read that asks for it later: it is held until its signal aborts it, as a fetch is. */
+const HOLD = "hold"
+
+/** A reader that answers each record read with the next answer, or holds it (none left, or `HOLD`). */
+function reader(answers: (Classified | typeof HOLD)[]): WidgetReader & { readonly asked: BindingRead[] } {
   const asked: BindingRead[] = []
   return {
     kind: "live",
     asked,
     widget: (read) => ({
       queryKey: ["widget", read],
-      queryFn: () => {
+      queryFn: ({ signal }: { readonly signal: AbortSignal }) => {
         asked.push(read)
         const answer = answers.shift()
-        return answer === undefined ? new Promise<Classified>(() => {}) : Promise.resolve(answer)
+        if (answer !== undefined && answer !== HOLD) return Promise.resolve(answer)
+        return new Promise<Classified>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))
       },
     }),
   }
 }
 
-function run(answers: Classified[], hostContext: Readonly<Record<string, unknown>> = context) {
+function run(answers: (Classified | typeof HOLD)[], hostContext: Readonly<Record<string, unknown>> = context) {
   const read = reader(answers)
   let view: RuntimeView | undefined
   const runtime = createPageRuntime({
@@ -86,6 +90,24 @@ test("Retry reads again from failed; Read again keeps the page in refreshing unt
   expect(page.view().snapshot.stateId).toBe("refreshing")
   expect(page.read.asked).toHaveLength(3)
   page.runtime.dispose()
+})
+
+test("an action that finishes while the record is read again is never dropped: the earlier read is cancelled and the record read again", async () => {
+  for (const eventId of ["read-again", "corrected"]) {
+    const before = { object: { version: 1 } }
+    const after = { object: { version: 2 } }
+    const page = run([{ outcome: "accepted", payload: {}, body: before }, HOLD, { outcome: "accepted", payload: {}, body: after }])
+    await flush()
+    page.runtime.send({ kind: "user", eventId: "read-again", payload: {} })
+    expect(page.view().snapshot.stateId).toBe("refreshing")
+    // The action finishes while the read it may predate is still in flight.
+    page.runtime.send({ kind: "user", eventId, payload: {} })
+    await flush()
+    expect(page.read.asked).toHaveLength(3)
+    expect(page.view().snapshot.stateId).toBe("showing")
+    expect(page.view().reads.get("record")).toEqual({ kind: "ok", document: after, freshness: "snapshot" })
+    page.runtime.dispose()
+  }
 })
 
 test("a host that does not name the record is not served it: nothing is read", async () => {

@@ -25,6 +25,9 @@ const TRANSLATED: readonly Translated[] = [
   { source: "Record not available", ar: "السجل غير متاح" },
   { source: "The record's name, state and actions", ar: "اسم السجل وحالته وإجراءاته" },
   { source: "The record's facts, story, lineage and rules", ar: "حقائق السجل وقصته ومصدره وقواعده" },
+  // The record page's own empty state, when the cell serves no record page (record-page.tsx).
+  { source: "No record page", ar: "لا توجد صفحة سجل" },
+  { source: "This workspace's cell serves no record page, so its records cannot be shown here.", ar: "لا تقدّم خلية مساحة العمل هذه صفحة سجل، لذا لا يمكن عرض سجلاتها هنا." },
   // The record page's lifecycle panel, translated before messages existed.
   { source: "Lifecycle", ar: "دورة الحياة" },
   { source: "Type-wide view", ar: "العرض الشامل للنوع" },

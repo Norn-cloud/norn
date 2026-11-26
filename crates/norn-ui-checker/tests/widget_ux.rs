@@ -4907,6 +4907,39 @@ fn an_event_whose_source_is_held_out_of_its_state_is_no_way_out() {
     );
 }
 
+/// The renderer draws a UI SDK primitive through `Layer`, open only in the states its `heldIn`
+/// names: a dismissible dialog held in no state is drawn in none, so a Retry inside it is no way
+/// out of the error state, and the person is trapped there.
+#[test]
+fn a_retry_inside_a_layer_held_in_no_state_is_no_way_out() {
+    let retry = record_transition("retry");
+    let trapped = record_page_with(|ux| {
+        let children = ux["pages"][0]["root"]["children"].as_array_mut().req("children");
+        let mut failed = children[1].take();
+        failed["component"]
+            .as_object_mut()
+            .req("catalog component")
+            .remove("heldIn");
+        children[1] = json!({
+            "nodeId": "failed-layer",
+            "component": { "kind": "catalog", "entry": { "entryId": "ui-sdk:dialog" } },
+            "children": [failed]
+        });
+    });
+    let found = record_page_errors(trapped);
+    assert_refused_at(
+        &found,
+        &format!("/payload/ux/pages/0/machine/transitions/{retry}/from"),
+        "not drawn in `failed`",
+    );
+    assert!(
+        found
+            .iter()
+            .any(|(at, _)| at.starts_with("/payload/ux/pages/0/machine/states/5")),
+        "{found:#?}"
+    );
+}
+
 /// A UI SDK primitive no person dismisses (a button) is held only in states its page declares;
 /// a layer's states answer to its own law.
 #[test]

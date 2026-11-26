@@ -11,6 +11,8 @@
  *   (`absent`: not served, or refused as not visible), and everything else (`failed`).
  * - `failed` offers a person's Retry (L4); `showing` reads again on a person's Read again, keeping
  *   the record on screen while it does (`refreshing`); `absent` reads again after a correction.
+ * - An action that finishes while `refreshing` (its Read again, or a correction) is never dropped:
+ *   the read in flight may predate it, so it is cancelled, and its `cancelled` outcome reads again.
  *
  * What the page shows in each state is a Tier 2 catalog island (UI-CATALOG-1), held in the states
  * it is drawn in: it receives the read's closed state and draws it through `matchReadState`. The
@@ -41,6 +43,7 @@ const outcomes = [
 ] as const
 
 const read = { kind: "start", call: { kind: "read", bindingId: "record" } } as const
+const cancel = { kind: "cancel" } as const
 
 /** A Tier 2 island held in `states`: what the page shows there. */
 const island = (nodeId: string, heldIn: ReadonlyArray<string>): W.WidgetNode => ({
@@ -96,6 +99,7 @@ export const recordPage: W.WidgetDef = W.widget({
         W.outcome("network-failure", "network_failure"),
         W.outcome("timeout", "timeout"),
         W.outcome("answer-moved", "answer_moved"),
+        W.outcome("cancelled", "cancelled"),
       ],
       states: [
         { stateId: "opening", role: "idle" },
@@ -112,6 +116,10 @@ export const recordPage: W.WidgetDef = W.widget({
         { transitionId: "retry", from: "failed", on: "retry", target: "loading", effects: [read] },
         { transitionId: "read-again", from: "showing", on: "read-again", target: "refreshing", effects: [read] },
         { transitionId: "corrected", from: "showing", on: "corrected", target: "refreshing", effects: [read] },
+        // While refreshing, the read in flight may predate the action: cancel it, then read again.
+        { transitionId: "refreshing-read-again", from: "refreshing", on: "read-again", target: "refreshing", effects: [cancel] },
+        { transitionId: "refreshing-corrected", from: "refreshing", on: "corrected", target: "refreshing", effects: [cancel] },
+        { transitionId: "refreshing-cancelled", from: "refreshing", on: "cancelled", target: "refreshing", effects: [read] },
         { transitionId: "released", from: "absent", on: "released", target: "loading", effects: [read] },
       ],
     },
