@@ -673,7 +673,11 @@ impl OperationLedger {
         // is strictly required.
         self.authorized_reissue = None;
         self.active.reconciled_since_restore = false;
-        self.active.fenced_commit_seq = Some(commit_seq);
+        self.active.fenced_commit_seq = Some(
+            self.active
+                .fenced_commit_seq
+                .map_or(commit_seq, |existing| existing.max(commit_seq)),
+        );
         Ok(ApplyStatus::Applied)
     }
 
@@ -692,6 +696,14 @@ impl OperationLedger {
         let active_fence = self.active_fence();
         if active_fence.is_none() && !self.active.is_ambiguous_dispatch() {
             return Err(OutboxLedgerRefusal::NotPending);
+        }
+        if let Some(fenced_at) = active_fence
+            && self
+                .active
+                .fenced_commit_seq
+                .is_some_and(|fence_seq| commit_seq <= fence_seq)
+        {
+            return Err(OutboxLedgerRefusal::Fenced { fenced_at });
         }
 
         match decision {

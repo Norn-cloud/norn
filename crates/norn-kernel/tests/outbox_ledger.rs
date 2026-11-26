@@ -671,13 +671,26 @@ fn restore_fence_invalidates_pre_restore_confirmation_and_reissue_authorization(
         },
     ])
     .unwrap();
-    // Pre-restore ConfirmedOutcome does not satisfy post-restore consumption.
+    // Pre-restore ConfirmedOutcome does not satisfy post-restore consumption,
+    // and replaying the pre-restore sequence-3 confirmation is also refused.
     assert_eq!(
         confirmed.head_projection().state,
         OutboxState::ReconciliationRequired { fenced_at: 1 }
     );
     assert_eq!(
         confirmed.apply(&consumed(op, 1, 5)),
+        Err(OutboxLedgerRefusal::Fenced { fenced_at: 1 })
+    );
+    assert_eq!(
+        confirmed.apply(&reconciled(
+            op,
+            1,
+            ReconciliationDecision::ConfirmedOutcome {
+                ok: true,
+                outcome_digest: digest(0x11),
+            },
+            3,
+        )),
         Err(OutboxLedgerRefusal::Fenced { fenced_at: 1 })
     );
     assert_eq!(
@@ -696,8 +709,11 @@ fn restore_fence_invalidates_pre_restore_confirmation_and_reissue_authorization(
         confirmed.apply(&consumed(op, 1, 7)),
         Ok(ApplyStatus::Applied)
     );
+}
 
-    // Pre-restore AuthorizeReissue(3) must not survive RestoreFenced(1).
+#[test]
+fn restore_fence_invalidates_and_rejects_pre_restore_reissue_authorization() {
+    let op = op_key("restore-invalidation-auth/1");
     let mut auth = OperationLedger::replay(&[
         req(op, 1, Queue::Fifo, 0xaa, ProviderDedupContract::None, 1),
         dispatched(op, 1, 2),
@@ -715,6 +731,15 @@ fn restore_fence_invalidates_pre_restore_confirmation_and_reissue_authorization(
     ])
     .unwrap();
     assert_eq!(auth.authorized_reissue(), None);
+    assert_eq!(
+        auth.apply(&reconciled(
+            op,
+            1,
+            ReconciliationDecision::AuthorizeReissue { next_generation: 3 },
+            3,
+        )),
+        Err(OutboxLedgerRefusal::Fenced { fenced_at: 1 })
+    );
     assert_eq!(
         auth.apply(&req(
             op,
