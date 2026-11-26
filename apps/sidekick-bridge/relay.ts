@@ -547,7 +547,12 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   const connections = new Map<string, Connection>()
   const byCapability = new Map<string, Connection>()
   const mcpUrl = `${config.studioOrigin}/mcp`
-  const secrets = (connection: Connection) => connection.grant === null ? [] : [connection.grant.token]
+  const secrets = (connection: Connection, extra?: string) => {
+    const tokens: string[] = []
+    if (connection.grant !== null) tokens.push(connection.grant.token)
+    if (extra !== undefined && extra !== "" && !tokens.includes(extra)) tokens.push(extra)
+    return tokens
+  }
 
   /** One JSON-RPC message to Studio's /mcp as the connection's person. */
   async function studioMcp(connection: Connection, body: string, headers: Record<string, string> = {}): Promise<Response> {
@@ -572,7 +577,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         await response.body?.cancel()
         throw new Error(`tools/list answered ${response.status}`)
       }
-      const body = await response.json() as { result?: { tools?: ListedTool[]; nextCursor?: unknown } }
+      const body = JSON.parse(await readBoundedText(response, MAX_MCP_RESPONSE_BYTES)) as { result?: { tools?: ListedTool[]; nextCursor?: unknown } }
       const result = body.result
       if (result === undefined || !Array.isArray(result.tools)) throw new Error("tools/list answered no tools")
       return result
@@ -644,7 +649,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
 
   /** Fail closed immediately: revoke capability & grant, drop approvals, stop adapter, and close socket. */
   function terminate(connection: Connection, code?: number, reason?: string) {
-    const alreadyClosed = connection.closed
+    if (connection.closed) return
     connection.closed = true
     connection.grant = null
     connection.questions.clear()
@@ -653,7 +658,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     connections.delete(connection.id)
     byCapability.delete(connection.capability)
     cleanupConnection(connection)
-    if (!alreadyClosed && code !== undefined) {
+    if (code !== undefined) {
       try { connection.ws.close(code, reason) } catch { /* already closing */ }
     }
   }
@@ -670,30 +675,47 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     })
     connection.adapter = child
     void (async () => {
-      const decoder = new TextDecoder()
-      let buffer = ""
+      const parts: Uint8Array[] = []
+      let buffered = 0
       try {
         for await (const chunk of child.stdout) {
           if (connection.closed) break
-          buffer += decoder.decode(chunk, { stream: true })
           let start = 0
-          let newline: number
-          while ((newline = buffer.indexOf("\n", start)) >= 0) {
-            if (newline - start > MAX_ADAPTER_LINE_BYTES) {
+          for (;;) {
+            const newline = chunk.indexOf(0x0a, start)
+            if (newline < 0) {
+              const tail = start === 0 ? chunk : chunk.subarray(start)
+              buffered += tail.byteLength
+              if (buffered > MAX_ADAPTER_LINE_BYTES) {
+                log(`conn ${connection.id} adapter stdout buffer exceeded ${MAX_ADAPTER_LINE_BYTES} bytes`)
+                terminate(connection, 1011, "agent output limit")
+                return
+              }
+              if (tail.byteLength > 0) parts.push(tail)
+              break
+            }
+            const segment = chunk.subarray(start, newline)
+            const lineBytes = buffered + segment.byteLength
+            if (lineBytes > MAX_ADAPTER_LINE_BYTES) {
               log(`conn ${connection.id} adapter stdout line exceeded ${MAX_ADAPTER_LINE_BYTES} bytes`)
               terminate(connection, 1011, "agent output limit")
               return
             }
-            const line = buffer.slice(start, newline).trim()
+            let rawLine: Uint8Array
+            if (parts.length === 0) {
+              rawLine = segment
+            } else {
+              rawLine = new Uint8Array(lineBytes)
+              let offset = 0
+              for (const part of parts) { rawLine.set(part, offset); offset += part.byteLength }
+              rawLine.set(segment, offset)
+              parts.length = 0
+              buffered = 0
+            }
             start = newline + 1
+            const line = UTF8.decode(rawLine).trim()
             if (line !== "") fromAdapter(connection, line)
             if (connection.closed) return
-          }
-          buffer = start === 0 ? buffer : buffer.slice(start)
-          if (buffer.length > MAX_ADAPTER_LINE_BYTES) {
-            log(`conn ${connection.id} adapter stdout buffer exceeded ${MAX_ADAPTER_LINE_BYTES} bytes`)
-            terminate(connection, 1011, "agent output limit")
-            return
           }
         }
       } catch (error) {
@@ -765,6 +787,10 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
           return
         }
         // Ask the person: the browser answers with one of the two options, or the reject stands.
+        if (connection.questions.size >= MAX_PENDING_BROWSER) {
+          toAdapter(connection, { jsonrpc: "2.0", id: message.id, result: CANCELLED })
+          return
+        }
         const id = `p${connection.nextId++}`
         connection.questions.set(id, { adapterId: message.id, question: decision.ask, approval: { tool: tool as string, input } })
         log(`conn ${connection.id} permission asked ${tool}`)
@@ -892,6 +918,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       connection.inFlightToolCalls += 1
       // Runs beside the inbox: a slow read never holds up the person's answers or Stop.
       void (async () => {
+        const sentToken = connection.grant?.token
         try {
           const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: message.params?.arguments ?? {} } }), { "mcp-protocol-version": MCP_PROTOCOL_VERSION })
           if (connection.closed) { await response.body?.cancel(); return }
@@ -899,9 +926,9 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
           if (connection.closed) return
           let body: { result?: unknown; error?: { message?: string } } | null = null
           try { body = JSON.parse(text) as { result?: unknown; error?: { message?: string } } } catch { body = null }
-          send(connection.ws, body?.result !== undefined ? { jsonrpc: "2.0", id: message.id ?? null, result: body.result } : rpcError(message.id, -32000, body?.error?.message ?? `Norn answered ${response.status}.`), secrets(connection))
+          send(connection.ws, body?.result !== undefined ? { jsonrpc: "2.0", id: message.id ?? null, result: body.result } : rpcError(message.id, -32000, body?.error?.message ?? `Norn answered ${response.status}.`), secrets(connection, sentToken))
         } catch {
-          send(connection.ws, rpcError(message.id, -32000, "Norn did not answer."), secrets(connection))
+          if (!connection.closed) send(connection.ws, rpcError(message.id, -32000, "Norn did not answer."), secrets(connection, sentToken))
         } finally {
           connection.inFlightToolCalls = Math.max(0, connection.inFlightToolCalls - 1)
         }
@@ -936,7 +963,12 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       if (contentLength !== null && /^\d+$/.test(contentLength) && Number(contentLength) > MAX_MCP_BODY_BYTES) {
         return new Response("Too large", { status: 413 })
       }
-      const raw = await request.text()
+      let raw: string
+      try {
+        raw = await request.text()
+      } catch {
+        return new Response("Invalid body", { status: 400 })
+      }
       if (Buffer.byteLength(raw) > MAX_MCP_BODY_BYTES) return new Response("Too large", { status: 413 })
       let call: { id?: Message["id"]; method?: string; params?: { name?: unknown; arguments?: unknown } } | null = null
       try { call = JSON.parse(raw) } catch { return Response.json(rpcError(null, -32700, "Parse error"), { status: 400 }) }
@@ -958,6 +990,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       // key or a number spelled differently cannot reach Studio as anything but what was approved.
       let response: Response
       let text: string
+      const sentToken = connection.grant?.token
       try {
         response = await studioMcp(connection, JSON.stringify(call), forward)
         if (connection.closed) {
@@ -970,12 +1003,13 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         return Response.json(rpcError(id, -32000, "Studio MCP request failed."), { status: 502, headers: { "cache-control": "no-store" } })
       }
       if (connection.closed) return new Response("Not found", { status: 404 })
-      const safeText = scrub(text, secrets(connection))
+      const activeSecrets = secrets(connection, sentToken)
+      const safeText = scrub(text, activeSecrets)
       if (call?.method === "tools/call" && typeof call.params?.name === "string") {
         const view = connection.views.get(call.params.name)
         let result: unknown
         try { result = (JSON.parse(safeText) as { result?: unknown }).result } catch { /* streamed or not JSON */ }
-        if (view !== undefined && result !== undefined) send(connection.ws, { jsonrpc: "2.0", method: "_norn/tool_result", params: { tool: call.params.name, view, input: call.params.arguments ?? {}, result } }, secrets(connection))
+        if (view !== undefined && result !== undefined) send(connection.ws, { jsonrpc: "2.0", method: "_norn/tool_result", params: { tool: call.params.name, view, input: call.params.arguments ?? {}, result } }, activeSecrets)
         log(`conn ${connection.id} tool ${call.params.name} ${response.status}`)
       }
       const headers = new Headers({ "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store" })

@@ -510,10 +510,10 @@ test("permissionDecision and canonicalJson/proxyAdmits handle malformed options,
   expect(proxyAdmits({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "norn_call_action", arguments: deep } }, new Set(), approvals)).toBe(false)
 })
 
-test("relay: MCP proxy scrubs the live grant from upstream responses and browser rejects non-object JSON", async () => {
+test("relay: browser rejects non-object JSON, prompt notifications, and cancel without sessionId", async () => {
   const h = await harness("default")
   try {
-    h.send("null" as unknown as Record<string, unknown>)
+    h.send(null as unknown as Record<string, unknown>)
     const invalid = await h.next((message) => (message.error as { code?: number } | undefined)?.code === -32600) as { error?: { code: number } }
     expect(invalid.error?.code).toBe(-32600)
 
@@ -530,45 +530,41 @@ test("relay: MCP proxy scrubs the live grant from upstream responses and browser
 })
 
 test("relay: MCP proxy scrubs the live Bearer grant from reflected upstream responses", async () => {
-  const { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } = await import("jose")
-  const { mkdtempSync } = await import("node:fs")
-  const { tmpdir } = await import("node:os")
-  const { join } = await import("node:path")
-  const { privateKey, publicKey } = await generateKeyPair("RS256")
-  const jwk = await exportJWK(publicKey)
-  jwk.kid = "k1"
-  const grant = await new SignJWT({ azp: "norn-studio-sidekick", "norn.cloud/org": "o", "norn.cloud/env": "e", "norn.cloud/member": "m" })
-    .setProtectedHeader({ alg: "RS256", kid: "k1" })
-    .setIssuer("https://studio.test")
-    .setAudience("https://studio.test/mcp")
-    .setSubject("u1")
-    .setExpirationTime("5m")
-    .sign(privateKey)
+  const { set, sign } = await keys()
+  const grant = await sign(GRANT)
   const scratch = mkdtempSync(join(tmpdir(), "sidekick-scrub-"))
   const relay = startRelay({
-    studioOrigin: "https://studio.test",
-    allowedOrigins: new Set(["https://studio.test"]),
+    studioOrigin: STUDIO,
+    allowedOrigins: new Set([STUDIO]),
     loginHeader: "x-login",
     allowedLogins: new Set(["alice"]),
     listenHost: "127.0.0.1",
     listenPort: 0,
     mcpPort: 0,
-    adapter: ["bun", "-e", "process.stdin.on('data', () => {})"],
+    adapter: [process.execPath, "-e", "process.stdin.on('data', () => {})"],
     scratch,
     maxConnections: 2,
   }, {
-    keys: createLocalJWKSet({ keys: [jwk] }),
-    fetcher: (async (_url, init) => {
+    keys: set,
+    fetcher: (async (_url: string | URL | Request, init?: RequestInit) => {
       const auth = new Headers(init?.headers).get("authorization") ?? ""
       return Response.json({ jsonrpc: "2.0", id: 1, result: { echoed: auth } })
-    }) as typeof fetch,
+    }) as unknown as typeof fetch,
     log: () => {},
   })
+  let ws: WebSocket | undefined
   try {
-    const ws = new WebSocket(`ws://127.0.0.1:${relay.server.port}/sidekick/ws`, { headers: { "x-login": "alice", origin: "https://studio.test" } } as unknown as string[])
-    await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject })
+    ws = new WebSocket(`ws://127.0.0.1:${relay.server.port}/sidekick/ws`, { headers: { "x-login": "alice", origin: STUDIO } } as unknown as string[])
+    await new Promise<void>((resolve, reject) => { ws!.onopen = () => resolve(); ws!.onerror = reject })
+    const grantReady = new Promise<void>((resolve) => {
+      ws!.onmessage = (event) => {
+        const msg = JSON.parse(String(event.data)) as { id?: number }
+        if (msg.id === 2) resolve()
+      }
+    })
     ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, _meta: { "norn.cloud/grant": grant } } }))
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "_norn/grant", params: { grant } }))
+    await grantReady
     const conn = [...relay.connections.values()][0] as { capability: string }
     const res = await fetch(`http://127.0.0.1:${relay.mcp.port}/mcp/${conn.capability}`, {
       method: "POST",
@@ -578,8 +574,9 @@ test("relay: MCP proxy scrubs the live Bearer grant from reflected upstream resp
     const body = await res.text()
     expect(body).not.toContain(grant)
     expect(body).toContain("[redacted]")
-    ws.close()
   } finally {
+    ws?.close()
     relay.stop()
+    rmSync(scratch, { recursive: true, force: true })
   }
 })

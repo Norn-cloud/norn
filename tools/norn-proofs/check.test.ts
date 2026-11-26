@@ -13,7 +13,7 @@ test("tla_ts_apalache_parity", async () => {
     { cwd: root, stdout: "inherit", stderr: "inherit" })
   expect(await build.exited).toBe(0)
   const work = await mkdtemp(join(tmpdir(), "norn-proof-parity-"))
-  let child: ReturnType<typeof Bun.spawn> | undefined
+  let activeChild: { kill(): void } | undefined
   try {
     const fixture: unknown = await Bun.file(join(root, "crates/norn-cell/tests/fixtures/constitution.json")).json()
     if (typeof fixture !== "object" || fixture === null || !("withLoss" in fixture) || !("withoutLoss" in fixture)) {
@@ -26,14 +26,15 @@ test("tla_ts_apalache_parity", async () => {
       base.push(await Bun.file(join(root, `registry/core/artifacts/${name}.json`)).json())
     }
     await Bun.write(join(work, "base.json"), JSON.stringify(base))
-    child = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/norn-proof-quint",
+    const child = Bun.spawn(["python3", "scripts/run-generated-proofs.py", "target/debug/norn-proof-quint",
       join(work, "original.json"), join(work, "mutant.json"), join(work, "base.json"),
       "verification/profiles/constitution-one-create.json", join(work, "jobs"), tools],
       {cwd: root, stdout: "pipe", stderr: "inherit"})
+    activeChild = child
     const output = await new Response(child.stdout).text()
     console.info(output)
     expect(await child.exited).toBe(0)
-    child = undefined
+    activeChild = undefined
     const report: unknown = JSON.parse(output)
     expect(report).toMatchObject({acceptancePassed: true, staleRejected: true, cases: [
       {case: "original", total: 10, eligible: 3, discharged: 3, acceptancePassed: true},
@@ -50,8 +51,8 @@ test("tla_ts_apalache_parity", async () => {
       }
     }
   } finally {
-    if (child !== undefined) {
-      try { child.kill() } catch { /* already exited */ }
+    if (activeChild !== undefined) {
+      try { activeChild.kill() } catch { /* already exited */ }
     }
     await rm(work, {recursive: true, force: true})
   }
