@@ -193,6 +193,8 @@ fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String>
     let parent = parent.unwrap_or_else(|| Path::new("."));
     let resolved =
         std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    // The target's own location decides too: a manifest outside any
+    // repository must not disable the restriction.
     if repository_of(&resolved).is_some()
         || repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo))
     {
@@ -395,27 +397,7 @@ fn run(
     let schema = read(&manifest, originals)?;
     let projection = project(&schema, &manifest.projection, &repeating_fields(&schema))?;
     if let Some(target) = emit {
-        // A symlinked target could land inside the tree; refuse it outright.
-        if std::fs::symlink_metadata(target).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(format!(
-                "{}: --emit refuses a symbolic link",
-                target.display()
-            ));
-        }
-        let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
-        let parent = parent.unwrap_or_else(|| Path::new("."));
-        let resolved =
-            std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        // The target's own location decides too: a manifest outside any
-        // repository must not disable the restriction.
-        if repository_of(&resolved).is_some()
-            || repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo))
-        {
-            return Err(format!(
-                "{}: --emit never writes upstream-derived schema into the repository",
-                target.display()
-            ));
-        }
+        outside_repository(target, manifest_path)?;
         let module = render_review_module(&projection)?;
         return std::fs::write(target, module).map_err(|e| format!("{}: {e}", target.display()));
     }

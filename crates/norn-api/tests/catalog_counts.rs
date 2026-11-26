@@ -15,22 +15,21 @@
 #[path = "../../norn-cell/tests/query_support/mod.rs"]
 mod query_support;
 
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+use hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;
-use norn_api::object_routes::{ObjectAccess, get_object_query};
+use norn_api::object_routes::get_object_query;
 use norn_api::objects::NornQueryTotal;
 use norn_api::refusal::Refusal;
 use norn_api::routes::object_counts;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_ir::RuntimeValue as V;
-use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile,
-    VerifiedPrincipal,
-};
 use proptest::prelude::*;
 use query_support::governed::GovernedCommit as _;
 use query_support::{CLOCK, TYPE, object_type};
@@ -77,42 +76,6 @@ impl Authorizer for Grants {
         } else {
             Err(Refusal::invalid("private policy diagnostic"))
         }
-    }
-}
-
-struct Mapping;
-impl ObjectAccess for Mapping {
-    fn access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        capability: ReadCapability,
-        object_type: &str,
-        row: Option<&ObjectRecord>,
-    ) -> Result<PdpRequest, Refusal> {
-        let key = ScopeKey {
-            org: scope.org_id.clone(),
-            environment: Some(scope.environment_id.clone()),
-            tenant: None,
-            workspace: None,
-            business_unit: None,
-        };
-        Ok(PdpRequest::new(
-            &VerifiedPrincipal::new(actor, ActorKind::User, None, vec![], BTreeMap::new()),
-            Some(key.clone()),
-            format!("fixture.{capability:?}"),
-            "norn.read",
-            ResourceInput {
-                object_type: row
-                    .map_or(object_type, |row| row.object_type.as_str())
-                    .into(),
-                id: row.map_or(object_type, |row| row.id.as_str()).into(),
-                scope: key,
-                attributes: BTreeMap::new(),
-            },
-            BTreeMap::new(),
-            Binding::Unbound(UnboundProfile::HostedRead),
-        ))
     }
 }
 

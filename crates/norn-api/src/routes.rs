@@ -142,6 +142,27 @@ fn artifacts_schema() -> utoipa::openapi::schema::Array {
         .build()
 }
 
+/// Acquire a definition read epoch after verifying `ReadDefinitions` authority
+/// and scope admission.
+pub(crate) fn admit_definition_read<'h, E: SqlEngine>(
+    host: &'h DevHost<E>,
+    org_id: Option<&str>,
+    environment_id: Option<&str>,
+    actor: Option<&str>,
+) -> Result<std::sync::RwLockReadGuard<'h, ()>, Refusal> {
+    let epoch = host.definition_read();
+    let authorized = host.authorizer.authorize(&crate::authz::AccessRequest {
+        scope: host.scope(),
+        actor,
+        operation: crate::authz::Operation::ReadDefinitions,
+    });
+    let scoped = host.scope().admit(org_id, environment_id);
+    if authorized.is_err() || scoped.is_err() {
+        return Err(crate::authz::read_denied());
+    }
+    epoch
+}
+
 /// Read under one definition epoch; scope and authorization precede store access.
 ///
 /// # Errors
@@ -152,24 +173,12 @@ pub fn get_defs<E: SqlEngine>(
     query: &DefinitionsQuery,
     actor: Option<&str>,
 ) -> Result<DefsResponse, Refusal> {
-    let epoch = host.definition_read();
-    let authorized = host.authorizer.authorize(&crate::authz::AccessRequest {
-        scope: host.scope(),
+    let _epoch = admit_definition_read(
+        host,
+        query.org_id.as_deref(),
+        query.environment_id.as_deref(),
         actor,
-        operation: crate::authz::Operation::ReadDefinitions,
-    });
-    let scoped = host
-        .scope()
-        .admit(query.org_id.as_deref(), query.environment_id.as_deref());
-    if authorized.is_err() || scoped.is_err() {
-        return Err(Refusal::new(
-            StatusCode::FORBIDDEN,
-            crate::refusal::codes::AUTHZ_DENIED,
-            "the read request is not authorized",
-            "access to the requested read is denied",
-        ));
-    }
-    let _epoch = epoch?;
+    )?;
     let installed = host
         .cell()?
         .store()

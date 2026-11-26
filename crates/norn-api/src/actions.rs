@@ -13,7 +13,7 @@ use crate::{
     authz::{AccessRequest, KernelAuthorizer, Operation, RefusalDetailRequest},
     host::DevHost,
     question_routes::{QuestionRuntime, handle_key, world_values},
-    refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes},
+    refusal::{Refusal, RefusalDiagnostic, codes},
 };
 use http::StatusCode;
 use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, engine::SqlEngine};
@@ -200,15 +200,11 @@ pub fn action_denied() -> Refusal {
 
 fn invalid_at(pointer: &str, message: &str) -> Refusal {
     let mut refusal = Refusal::invalid(message.to_owned());
-    refusal.diagnostics = vec![RefusalDiagnostic {
-        code: codes::INVALID_REQUEST.to_owned(),
-        severity: "error".to_owned(),
-        message: message.to_owned(),
-        span: Some(RefusalSpan {
-            pointer: pointer.to_owned(),
-        }),
-        law: None,
-    }];
+    refusal.diagnostics = vec![RefusalDiagnostic::error(
+        codes::INVALID_REQUEST,
+        message,
+        pointer,
+    )];
     refusal
 }
 

@@ -355,17 +355,7 @@ pub fn check_artifact_set_with_receipt(
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    let context = artifacts.validated_context(context)?;
-    check_artifact_set_with_profile(ReceiptCheckRequest {
-        artifacts: &artifacts.artifacts,
-        context: &context,
-        limits,
-        artifact_set: artifacts.identity.clone(),
-        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
-        flow_source_map: None,
-        retained: false,
-        check: crate::check_artifact_set,
-    })
+    check_artifact_set_with_flow_source_map(artifacts, context, limits, None)
 }
 
 /// Check retained exact semantic sources and bind their Norn1 bytes.
@@ -879,7 +869,6 @@ pub fn recover_legacy_admission_receipt(
         ));
     }
 
-    // The checker context's registry contains external property type names.
     let empty_registry = BTreeSet::new();
     let context = EntityArtifactSetContext {
         registry: &empty_registry,
@@ -1095,7 +1084,6 @@ impl ArtifactSetRef {
         Self::of_with(artifacts, base, ArtifactRef::of)
     }
 
-    /// The full-envelope identity used by persisted checker 0.1.0 receipts.
     /// Full-envelope identity for checker 0.1.0 receipt reconstruction.
     /// New admissions use [`Self::of`] to exclude editor geometry.
     ///
