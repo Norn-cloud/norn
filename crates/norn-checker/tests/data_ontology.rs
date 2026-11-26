@@ -49,7 +49,7 @@ fn load_envelope(path: &std::path::Path) -> ArtifactEnvelope {
 
 fn core_base_artifacts() -> Vec<ArtifactEnvelope> {
     let core = repo_root().join("registry/core/artifacts");
-    [
+    let mut base: Vec<ArtifactEnvelope> = [
         "core.Agent.interface.json",
         "core.TimeInterval.interface.json",
         "core.value_types.entity.json",
@@ -57,7 +57,55 @@ fn core_base_artifacts() -> Vec<ArtifactEnvelope> {
     ]
     .iter()
     .map(|name| load_envelope(&core.join(name)))
-    .collect()
+    .collect();
+    base.push(load_envelope(
+        &repo_root().join("registry/privacy/artifacts/privacy.markings.entity.json"),
+    ));
+    let extra_markings: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1",
+        "artifactId": "core.extra_markings.entity",
+        "kind": "entity",
+        "namespace": "core",
+        "name": "Core extra markings",
+        "version": "0.1.0",
+        "lifecycle": "active",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "system" },
+        "payload": {
+            "entityVersion": "2.0",
+            "markings": [
+                {
+                    "id": "pii.financial",
+                    "label": "Financial PII",
+                    "severity": "high",
+                    "category": "pii.financial",
+                    "mask": { "kind": "redacted" }
+                },
+                {
+                    "id": "confidential.finance",
+                    "label": "Confidential finance",
+                    "severity": "high",
+                    "category": "confidential.finance",
+                    "mask": { "kind": "redacted" }
+                },
+                {
+                    "id": "pii.health",
+                    "label": "Health PII",
+                    "severity": "high",
+                    "category": "pii.health",
+                    "mask": { "kind": "redacted" }
+                }
+            ]
+        }
+    }))
+    .expect("extra markings envelope decodes");
+    assert!(
+        extra_markings.validate().is_ok(),
+        "extra markings envelope validates"
+    );
+    base.push(extra_markings);
+    base
 }
 
 fn data_pack_artifacts() -> Vec<ArtifactEnvelope> {

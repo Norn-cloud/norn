@@ -644,3 +644,174 @@ export const QualityCase = Norn.type({
     },
   ],
 })
+
+// ---------------------------------------------------------------------------
+// Governed actions for concrete reference object types and QualityCase lifecycle
+// ---------------------------------------------------------------------------
+
+export const RegisterCatalogDataset = Norn.action({
+  id: "data.catalog_dataset.register",
+  title: "Register a catalog dataset",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: DatasetProperties,
+  output: Schema.Struct({ dataset_id: Schema.String }),
+  writes: [{ type: CatalogDataset, change: "created" }],
+  effect: { kind: "upsert_input_object", type: CatalogDataset, objectIdField: "dataset_id", writeMode: { kind: "create_only" } },
+})
+
+export const RecordPipelineRun = Norn.action({
+  id: "data.pipeline_run.record",
+  title: "Record a provenance pipeline run",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    run_id: Schema.String,
+    starts_at: Norn.timestamp("utc"),
+    ends_at: Norn.timestamp("utc"),
+    timezone: Schema.NullOr(Schema.String),
+    activity_kind: Schema.Literals(["sync", "transform", "training", "evaluation", "restatement", "export"]),
+    code_digest: Schema.String,
+  }),
+  output: Schema.Struct({ run_id: Schema.String }),
+  writes: [{ type: PipelineRun, change: "created" }],
+  effect: { kind: "upsert_input_object", type: PipelineRun, objectIdField: "run_id", writeMode: { kind: "create_only" } },
+})
+
+const RecordSnapshotInput = Schema.Struct({
+  snapshot_id: Schema.String,
+  dataset_id: Schema.String,
+  activity_id: Schema.String,
+  content_sha256: Schema.String,
+  schema_digest: Schema.String,
+  record_count: Schema.Int,
+  byte_size: Schema.Int,
+  effective_at: Norn.timestamp("utc"),
+  known_at: Norn.timestamp("utc"),
+})
+
+export const RecordSnapshot = Norn.action({
+  id: "data.snapshot_record.record",
+  title: "Record an immutable dataset snapshot produced by a pipeline run",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: RecordSnapshotInput,
+  output: Schema.Struct({ snapshot_id: Schema.String }),
+  slice: [
+    { name: "dataset", type: CatalogDataset, key: { property: { from: "input", property: "dataset_id" } } },
+    { name: "activity", type: PipelineRun, key: { property: { from: "input", property: "activity_id" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        input: RecordSnapshotInput,
+        slice: Schema.Struct({
+          activity: Schema.Struct({
+            starts_at: Norn.timestamp("utc"),
+            ends_at: Norn.timestamp("utc"),
+          }),
+        }),
+      }),
+      (ctx) =>
+        Norn.timestampAtOrBefore(ctx.slice.activity.ends_at, ctx.input.known_at) &&
+        Norn.timestampAtOrBefore(ctx.input.effective_at, ctx.input.known_at),
+      { root: "context" },
+    ),
+  ],
+  createLinks: [
+    { link: "dataset", targetType: CatalogDataset, targetIdField: "dataset_id" },
+    { link: "generated_by", targetType: PipelineRun, targetIdField: "activity_id" },
+  ],
+  writes: [{ type: SnapshotRecord, change: "created" }],
+  effect: { kind: "upsert_input_object", type: SnapshotRecord, objectIdField: "snapshot_id", writeMode: { kind: "create_only" } },
+})
+
+export const RecordTelemetryEvent = Norn.action({
+  id: "data.telemetry_event.record",
+  title: "Record an append-only telemetry observation",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    observation_id: Schema.String,
+    occurred_at: Norn.timestamp("utc"),
+    observed_at: Norn.timestamp("utc"),
+    source_system: Schema.String,
+    observable_property: Schema.String,
+    payload_digest: Schema.String,
+  }),
+  output: Schema.Struct({ observation_id: Schema.String }),
+  writes: [{ type: TelemetryEvent, change: "created" }],
+  effect: { kind: "upsert_input_object", type: TelemetryEvent, objectIdField: "observation_id", writeMode: { kind: "create_only" } },
+})
+
+export const OpenQualityCase = Norn.action({
+  id: "data.quality_case.open",
+  title: "Open a data quality resolution case",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    finding_id: Schema.String,
+    snapshot_id: Schema.String,
+    dimension: Schema.Literals(["accuracy", "completeness", "consistency", "credibility", "currentness"]),
+    severity: Schema.Literals(["info", "warning", "error"]),
+    offending_path: Schema.String,
+  }),
+  output: Schema.Struct({ finding_id: Schema.String }),
+  slice: [
+    { name: "snapshot", type: SnapshotRecord, key: { property: { from: "input", property: "snapshot_id" } } },
+  ],
+  createLinks: [
+    { link: "snapshot", targetType: SnapshotRecord, targetIdField: "snapshot_id" },
+  ],
+  writes: [{ type: QualityCase, change: "created" }],
+  effect: { kind: "upsert_input_object", type: QualityCase, objectIdField: "finding_id", writeMode: { kind: "create_only" } },
+})
+
+export const AcknowledgeQualityCase = Norn.action({
+  id: "data.quality_case.acknowledge",
+  title: "Acknowledge a data quality case",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ finding_id: Schema.String }),
+  output: Schema.Struct({ finding_id: Schema.String }),
+  writes: [{ type: QualityCase, change: "modified" }],
+  effect: { kind: "fire_transition", type: QualityCase, objectIdField: "finding_id", lifecycle: "status", transition: "acknowledge" },
+})
+
+export const QuarantineQualityCase = Norn.action({
+  id: "data.quality_case.quarantine",
+  title: "Quarantine a dataset snapshot quality case",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ finding_id: Schema.String }),
+  output: Schema.Struct({ finding_id: Schema.String }),
+  writes: [{ type: QualityCase, change: "modified" }],
+  effect: { kind: "fire_transition", type: QualityCase, objectIdField: "finding_id", lifecycle: "status", transition: "quarantine" },
+})
+
+export const ResolveQualityCase = Norn.action({
+  id: "data.quality_case.resolve",
+  title: "Resolve a data quality case",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ finding_id: Schema.String }),
+  output: Schema.Struct({ finding_id: Schema.String }),
+  writes: [{ type: QualityCase, change: "modified" }],
+  effect: { kind: "fire_transition", type: QualityCase, objectIdField: "finding_id", lifecycle: "status", transition: "resolve" },
+})
