@@ -118,11 +118,11 @@ test("PR-A authoring lowers origins, immutableAfterCreate, Norn.commitTime(), po
       payload: { objectType: { properties: Array<Record<string, unknown>> } }
     }
     const byId = Object.fromEntries(entity.payload.objectType.properties.map((p) => [p.id as string, p]))
-    expect(byId.created_by.origin).toBe("actor")
-    expect(byId.stamped_at.origin).toBe("clock")
-    expect(byId.generation.origin).toBe("derived")
-    expect(byId.last_evidence_digest.origin).toBe("receipt")
-    expect(byId.payslip_id.immutableAfterCreate).toBe(true)
+    expect(byId.created_by?.origin).toBe("actor")
+    expect(byId.stamped_at?.origin).toBe("clock")
+    expect(byId.generation?.origin).toBe("derived")
+    expect(byId.last_evidence_digest?.origin).toBe("receipt")
+    expect(byId.payslip_id?.immutableAfterCreate).toBe(true)
 
     const create = compiled.artifacts.find((a) => (a as { artifactId: string }).artifactId === "test.payout.create.action") as {
       payload: { derive: Array<{ field: string; expression: string; inputRequired?: boolean }> }
