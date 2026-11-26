@@ -299,7 +299,7 @@ const of = (self) => {
  * Wrap the cell object's handlers. `fetch` is timed and classified; `publish`
  * counts its fan-out and the snapshots it sends; `alarm`, when the class has
  * one (TIMER-ALARM-1), records how late it fired against the deadline it was
- * armed for (`this.armed`).
+ * armed for (`this.wake?.armed`, falling back to `this.armed`).
  */
 export function instrument(Cell) {
   const proto = Cell.prototype;

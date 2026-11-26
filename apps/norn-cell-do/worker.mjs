@@ -391,12 +391,14 @@ export class Cell {
     if (request.method === "GET") return this.respond(request, body);
     await this.wake.beforeWrite(this.cell, Date.now());
     try {
-      const response = await this.respond(request, body);
-      // A provisioning request makes the cell serving: persist its scope before arming the alarm.
-      await this.keepScope(scope);
-      return response;
+      return await this.respond(request, body);
     } finally {
-      await this.wake.afterWrite(this.cell, Date.now());
+      try {
+        // A provisioning request makes the cell serving: persist its scope before arming the alarm.
+        await this.keepScope(scope);
+      } finally {
+        await this.wake.afterWrite(this.cell, Date.now());
+      }
     }
   }
   /** Serve one request on the opened cell. */

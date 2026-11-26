@@ -595,4 +595,37 @@ describe("live subscription and telemetry hardening", () => {
     expect(isLoopback("127.999.0.1")).toBe(false);
     expect(isLoopback("127.0.256.1")).toBe(false);
   });
+
+  test("provisioning persists scope before afterWrite even when respond throws", async () => {
+    const { ctx } = object({ provisioned: false });
+    const cell = new Cell(ctx, {});
+    const events = [];
+    cell.outside = async () => null;
+    cell.open = async () => {
+      cell.cell = { serving: () => false, jwksDue: () => false, nextDue: (now) => now + 5_000 };
+    };
+    cell.respond = async () => {
+      cell.cell.serving = () => true;
+      throw new Error("boom after provision");
+    };
+    const origKeepScope = cell.keepScope.bind(cell);
+    cell.keepScope = async (scope) => {
+      events.push("keepScope");
+      return origKeepScope(scope);
+    };
+    const origAfterWrite = cell.wake.afterWrite.bind(cell.wake);
+    cell.wake.afterWrite = async (c, now) => {
+      events.push("afterWrite");
+      return origAfterWrite(c, now);
+    };
+    const req = new Request("https://cell.invalid/v1/cell:provision?orgId=org_b&environmentId=prod", {
+      method: "POST",
+      headers: { "x-norn-cell": JSON.stringify(["org_b", "prod"]) },
+      body: "{}",
+    });
+    await expect(cell.fetch(req)).rejects.toThrow("boom after provision");
+    expect(events).toEqual(["keepScope", "afterWrite"]);
+    expect(cell.wake.writing).toBe(0);
+    expect(typeof cell.wake.armed).toBe("number");
+  });
 });
