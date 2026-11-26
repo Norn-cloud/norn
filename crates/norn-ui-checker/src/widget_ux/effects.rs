@@ -12,8 +12,8 @@ use norn_ir::{
 use norn_checker::entity_instance::EffectiveObjectType;
 
 use super::{
-    MAX_COMPOSITION_EXPANSIONS, UxChecker, dependency_matches, exceeds_widget_node_depth,
-    is_nonblank_locale_text,
+    MAX_COMPOSITION_EXPANSIONS, UxChecker, action_cache_key, dependency_matches,
+    exceeds_widget_node_depth, is_nonblank_locale_text,
 };
 
 /// Why a transition's canonical UI enabled condition could not be generated.
@@ -610,7 +610,7 @@ impl UxChecker<'_, '_, '_> {
         let ArtifactPayload::Action(payload) = &artifact.payload else {
             return None;
         };
-        let key = (artifact.artifact_id.as_str(), artifact.version.as_str());
+        let key = action_cache_key(artifact);
         let cached = self
             .validated_actions
             .borrow_mut()

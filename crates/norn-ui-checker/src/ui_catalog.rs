@@ -373,6 +373,9 @@ fn check_props(
             });
         }
     }
+    if props.is_empty() {
+        return;
+    }
     let env = machine_env((&field_types, &event));
     for (name, expression) in props {
         let at = format!("{pointer}/component/props/{name}");

@@ -56,6 +56,22 @@ pub(super) fn is_nonblank_locale_text(text: &norn_ir::LocaleText) -> bool {
     !text.0.is_empty() && text.0.values().all(|value| !value.trim().is_empty())
 }
 
+pub(super) type ActionCacheKey<'a> = (&'a str, &'a str, [Option<&'a str>; 5]);
+
+pub(super) fn action_cache_key(artifact: &ArtifactEnvelope) -> ActionCacheKey<'_> {
+    (
+        artifact.artifact_id.as_str(),
+        artifact.version.as_str(),
+        [
+            artifact.scope.org_id.as_deref(),
+            artifact.scope.tenant_id.as_deref(),
+            artifact.scope.workspace_id.as_deref(),
+            artifact.scope.environment_id.as_deref(),
+            artifact.scope.business_unit_id.as_deref(),
+        ],
+    )
+}
+
 pub(super) fn exceeds_widget_node_depth(ux: &WidgetUx) -> Option<String> {
     for (index, page) in ux.pages.iter().enumerate() {
         let mut stack = vec![(&page.root, 1usize)];
@@ -214,7 +230,7 @@ struct UxChecker<'a, 'u, 'd> {
     composition_stack: BTreeSet<(String, String, String)>,
     composition_expansions: usize,
     object_type_defs: RefCell<Option<BTreeMap<String, norn_ir::ObjectTypeDef>>>,
-    validated_actions: RefCell<BTreeMap<(&'a str, &'a str), Option<ActionRoot>>>,
+    validated_actions: RefCell<BTreeMap<ActionCacheKey<'a>, Option<ActionRoot>>>,
     next_record: Cell<usize>,
     enforce_effect_root: bool,
 }
