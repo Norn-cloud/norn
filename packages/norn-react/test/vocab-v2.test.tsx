@@ -18,9 +18,11 @@ import {
   canDismissDialog,
   canDispatchFormConfirmation,
   computeFormDirty,
+  evaluateFieldCondition,
   flattenSelectionRecord,
   formatRefusalCategory,
   isDialogBlocked,
+  mergePrefillSecurity,
   nextListRowIndex,
   nextSelection,
   nextTabIndex,
@@ -34,6 +36,7 @@ import {
   type PageScope,
 } from "../src/nodes.tsx"
 import type { BindingCallState, BindingReadState, WidgetCalls, WidgetReader } from "../src/reads.ts"
+import { NornAppRenderer } from "../src/renderer.tsx"
 import { createPageRuntime, DEFAULT_SUBMIT_DEADLINE_MS, needsEngine, type MachineRuntime } from "../src/runtime.ts"
 import type { DismissalMethod, FieldPresentation, WidgetForm, WidgetNode, WidgetUx } from "../src/ux.ts"
 
@@ -79,9 +82,9 @@ const pathEngine: CheckerEvaluator = {
       }
     }
     const source = expression.trim()
-    if (/^input(\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+$/.test(source)) {
+    const resolvePath = (path: string): unknown => {
       let value: unknown = slots
-      const tokens = source.slice("input".length).match(/\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]/g) ?? []
+      const tokens = path.slice("input".length).match(/\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\]/g) ?? []
       for (const token of tokens) {
         if (token.startsWith(".")) {
           const part = token.slice(1)
@@ -91,6 +94,16 @@ const pathEngine: CheckerEvaluator = {
           value = Array.isArray(value) ? value[index] : undefined
         }
       }
+      return value
+    }
+    const eqMatch = /^(input(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+)\s*==\s*("[^"]*")$/.exec(source)
+    if (eqMatch !== null) {
+      const actual = resolvePath(eqMatch[1]!)
+      const expected = JSON.parse(eqMatch[2]!) as string
+      return JSON.stringify({ ok: true, value: actual === expected })
+    }
+    if (/^input(\.[A-Za-z_][A-Za-z0-9_]*|\[\d+\])+$/.test(source)) {
+      const value = resolvePath(source)
       return JSON.stringify(value === undefined ? { ok: false, error: { code: "unknown_field", message: `${source} names nothing.` } } : { ok: true, value })
     }
     try {
@@ -506,6 +519,113 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
     expect(sent).toEqual([{ actionId: "canon.item.bulk", input: { firstName: "Alpha v2" } }])
     runtime.dispose()
   })
+
+  test("runtime synchronously reconciles list selection BEFORE dispatching subscription or read-outcome events", async () => {
+    const sent: Array<{ actionId: string; input: Fields }> = []
+    let pushSnapshot: ((doc: unknown) => void) | undefined
+    const subMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "opening",
+      fields: [],
+      events: [
+        { eventId: "opened", source: { kind: "page_opened" } },
+        { eventId: "items-changed", source: { kind: "subscription", bindingId: "items" } },
+        { eventId: "reread", source: { kind: "user", nodeId: "reread-btn" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+      ],
+      states: [
+        { stateId: "opening", role: "idle" },
+        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "items" }, deadlineMs: 5000 },
+        { stateId: "ready", role: "idle" },
+        { stateId: "syncing", role: "pending", awaits: { kind: "action", bindingId: "sync-selected" }, deadlineMs: 5000 },
+        { stateId: "errored", role: "error" },
+      ],
+      transitions: [
+        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "items" } }] },
+        { transitionId: "t-loaded", from: "loading", on: "accepted", target: "ready" },
+        // Read refusal immediately triggers an action reading `input.selection` (must see []).
+        { transitionId: "t-read-refused", from: "loading", on: "refused", target: "syncing", effects: [{ kind: "start", call: { kind: "action", bindingId: "sync-selected" } }] },
+        // Subscription snapshot immediately triggers an action reading `input.selection` BEFORE any React effect runs!
+        { transitionId: "t-sub", from: "ready", on: "items-changed", target: "syncing", effects: [{ kind: "start", call: { kind: "action", bindingId: "sync-selected" } }] },
+        { transitionId: "t-sync-ok", from: "syncing", on: "accepted", target: "ready" },
+        { transitionId: "t-sync-err", from: "syncing", on: "refused", target: "errored" },
+        { transitionId: "t-reread", from: "ready", on: "reread", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "items" } }] },
+      ],
+    }
+    const listNode: WidgetNode = { nodeId: "multi-list", component: { kind: "list", dataBindingId: "items", fields: refs, selection: "multiple" }, children: [] }
+    const subUx = makeUx(
+      listNode,
+      {
+        dataBindings: [{ bindingId: "items", object: { id: "canon.Item.entity", version: "0.1.0" }, query: { kind: "object_list", filters: [], sort: [], page: { size: 10, maxSize: 20 } } }],
+        actionBindings: [{
+          bindingId: "sync-selected",
+          action: { id: "canon.item.sync.action", version: "0.1.0" },
+          inputMapping: { selected: "input.selection" },
+          inputs: { selectionBindingId: "items" },
+          requiredCapability: "canon.item.sync",
+        }],
+      },
+      subMachine,
+    )
+    const answers: Classified[] = [
+      {
+        outcome: "accepted",
+        payload: {},
+        body: {
+          records: [
+            { id: "row-1", values: { name: "Alpha" } },
+            { id: "row-2", values: { name: "Beta" } },
+            { id: "row-3", values: { name: "Gamma" } },
+          ],
+        },
+      },
+      { outcome: "refused", category: "permission", payload: { code: "authz.denied" }, body: { code: "authz.denied" } },
+    ]
+    const runtime = createPageRuntime(
+      {
+        ux: subUx,
+        machine: subMachine,
+        reader: { kind: "live", widget: () => ({ queryKey: ["items"], queryFn: async () => answers.shift()! }) },
+        calls: { call: async (actionId, input) => { sent.push({ actionId, input }); return { outcome: "accepted", payload: {}, body: {} } } },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({
+          context: {},
+          objectTypeOf: () => "canon.Item",
+          actionIdOf: (id) => (id === "canon.item.sync.action" ? "canon.item.sync" : undefined),
+          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
+        }),
+      },
+      () => {},
+    )
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("ready")
+
+    // Select all 3 rows from initial snapshot.
+    runtime.setSelection("items", [
+      { id: "row-1", name: "Alpha" },
+      { id: "row-2", name: "Beta" },
+      { id: "row-3", name: "Gamma" },
+    ])
+
+    // Live subscription snapshot removes row-2, withholds row-3, updates row-1, and synchronously triggers sync-selected.
+    pushSnapshot?.({
+      records: [
+        { id: "row-1", values: { name: "Alpha updated" } },
+        { id: "row-3", values: null, withheld: true, withheldProperties: [] },
+      ],
+    })
+    await flush()
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.input).toEqual({ selected: [{ id: "row-1", name: "Alpha updated" }] })
+
+    // Re-read settles to `refused` -> selection is synchronously cleared to [] before outcome triggers sync-selected.
+    runtime.send({ kind: "user", eventId: "reread", payload: {} })
+    await flush()
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.input).toEqual({ selected: [] })
+    runtime.dispose()
+  })
 })
 
 describe("component:dialog (WidgetComponent::Dialog)", () => {
@@ -891,6 +1011,125 @@ describe("component:form (WidgetComponent::Form)", () => {
     expect(markup).toContain('data-agent-hidden=""')
     expect(markup).not.toContain("TOP-SECRET-LEAK")
     expect(markup).not.toContain("HIDDEN-SECRET-LEAK")
+
+    // During a pending or refused refresh while dirty, pinned L6 masking & withholding metadata stay intact!
+    const pinnedDoc = reads.get("secret-rec")!.kind === "ok" ? (reads.get("secret-rec") as { readonly kind: "ok"; readonly document: unknown }).document : undefined
+    const pinnedRecord = { bindingId: "secret-rec", document: pinnedDoc }
+    for (const degradedState of [
+      { kind: "pending" as const },
+      { kind: "refused" as const, refusal: { code: "authz.denied", category: "permission", document: { message: "Denied." } } },
+    ]) {
+      const degradedScope = makeScope(maskedUx, { reads: new Map([["secret-rec", degradedState]]) })
+      const liveMasked = readPrefill(degradedScope, maskedFormDef, maskedFields[0]!)
+      expect(liveMasked.masked).toBeUndefined()
+      const pinnedMasked = readPrefill(degradedScope, maskedFormDef, maskedFields[0]!, pinnedRecord)
+      const mergedMasked = mergePrefillSecurity(liveMasked, pinnedMasked)
+      expect(mergedMasked.masked?.mode).toBe("last_n")
+
+      const liveWithheld = readPrefill(degradedScope, maskedFormDef, maskedFields[1]!)
+      const pinnedWithheld = readPrefill(degradedScope, maskedFormDef, maskedFields[1]!, pinnedRecord)
+      const mergedWithheld = mergePrefillSecurity(liveWithheld, pinnedWithheld)
+      expect(mergedWithheld.withheld).toBe(true)
+      expect(mergedWithheld.value).toBeUndefined()
+    }
+  })
+
+  test("edit form does not mount editable inputs or allow submitting before its initial baseline record loads", () => {
+    const editFormDef: WidgetForm = {
+      formId: "edit-order",
+      mode: "edit",
+      dataBindingId: "order-detail",
+      inputNames: ["memo"],
+      submitBindingId: "submit-order",
+      submit: { label: { en: "Save Changes" }, confirmation: { severity: "safe", strength: "none" } },
+      versionConflictBinding: {
+        property: { bindingId: "order-detail", propertyId: "version" },
+        inputName: "expectedVersion",
+        onConflict: "reject_and_retain_draft",
+      },
+    }
+    const editFields: FieldPresentation[] = [
+      { fieldId: "f-edit-memo", target: { kind: "form_input", formId: "edit-order", inputName: "memo" }, label: { en: "Memo" }, control: "text" },
+    ]
+    const editNode: WidgetNode = {
+      nodeId: "edit-order-node",
+      component: { kind: "form", formId: "edit-order" },
+      children: [{ nodeId: "n-edit-memo", component: { kind: "field", fieldId: "f-edit-memo" }, children: [] }],
+    }
+    const editUx = makeUx(editNode, { fields: editFields, forms: [editFormDef] })
+
+    // Before initial record loads (idle, pending, refused, unavailable): NO <form>, NO <input>, NO submit button.
+    for (const [readState, expectedAttr] of [
+      [undefined, 'data-read="idle"'],
+      [{ kind: "pending" as const }, 'data-read="pending"'],
+      [{ kind: "refused" as const, refusal: { code: "authz.denied", category: "permission", document: { message: "Forbidden." } } }, 'data-read="refused"'],
+      [{ kind: "unavailable" as const, error: new Error("Offline."), retry: true }, 'data-read="unavailable"'],
+    ] as const) {
+      const reads = readState === undefined ? new Map<string, BindingReadState>() : new Map<string, BindingReadState>([["order-detail", readState]])
+      const markup = renderToStaticMarkup(<Node scope={makeScope(editUx, { reads })} node={editNode} />)
+      expect(markup).toContain('data-form-awaiting-baseline="true"')
+      expect(markup).toContain(expectedAttr)
+      expect(markup).not.toContain("<form")
+      expect(markup).not.toContain("<input")
+      expect(markup).not.toContain("Save Changes")
+    }
+
+    // Once initial record loads (`ok`), interactive <form> mounts hydrated with baseline values.
+    const okReads = new Map<string, BindingReadState>([
+      ["order-detail", { kind: "ok", document: { id: "ord-1", values: { memo: "Loaded Rev 1", version: 1 } }, freshness: "snapshot" }],
+    ])
+    const loadedMarkup = renderToStaticMarkup(<Node scope={makeScope(editUx, { reads: okReads })} node={editNode} />)
+    expect(loadedMarkup).not.toContain("data-form-awaiting-baseline")
+    expect(loadedMarkup).toContain("<form")
+    expect(loadedMarkup).toContain('value="Loaded Rev 1"')
+    expect(loadedMarkup).toContain("Save Changes")
+  })
+
+  test("field conditions receive recordKey paired with record (input.recordKey == \"ord-1\")", () => {
+    const condFormDef: WidgetForm = {
+      formId: "key-cond-form",
+      mode: "edit",
+      dataBindingId: "order-detail",
+      inputNames: ["special_note"],
+      submitBindingId: "submit-order",
+      submit: { label: { en: "Save" }, confirmation: { severity: "safe", strength: "none" } },
+    }
+    const condField: FieldPresentation = {
+      fieldId: "f-special",
+      target: { kind: "form_input", formId: "key-cond-form", inputName: "special_note" },
+      label: { en: "Special Note" },
+      control: "text",
+      visibleWhen: { expression: 'input.recordKey == "ord-1"', inputs: { recordBindingId: "order-detail" } },
+    }
+    const condNode: WidgetNode = {
+      nodeId: "key-cond-node",
+      component: { kind: "form", formId: "key-cond-form" },
+      children: [{ nodeId: "n-special", component: { kind: "field", fieldId: "f-special" }, children: [] }],
+    }
+    const condUx = makeUx(condNode, { fields: [condField], forms: [condFormDef] })
+    const syncEval: MachineRuntime["evaluate"] = (expr, input) => {
+      const parsed = JSON.parse(pathEngine.evaluateExpression(expr, JSON.stringify(input))) as { ok: boolean; value?: unknown }
+      if (!parsed.ok) throw new Error("eval failed")
+      return parsed.value
+    }
+
+    const scopeOrd1 = makeScope(condUx, {
+      reads: new Map([["order-detail", { kind: "ok", document: { id: "ord-1", values: { special_note: "Match" } }, freshness: "snapshot" }]]),
+      evaluate: syncEval,
+    })
+    const scopeOrd2 = makeScope(condUx, {
+      reads: new Map([["order-detail", { kind: "ok", document: { id: "ord-2", values: { special_note: "Other" } }, freshness: "snapshot" }]]),
+      evaluate: syncEval,
+    })
+    expect(evaluateFieldCondition(scopeOrd1, condField.visibleWhen, {}, false)).toBe(true)
+    expect(evaluateFieldCondition(scopeOrd2, condField.visibleWhen, {}, true)).toBe(false)
+
+    // In rendered form: visible text input for ord-1, hidden input for ord-2.
+    const markup1 = renderToStaticMarkup(<Node scope={scopeOrd1} node={condNode} />)
+    expect(markup1).toContain('data-field="f-special" data-control="text"')
+    const markup2 = renderToStaticMarkup(<Node scope={scopeOrd2} node={condNode} />)
+    expect(markup2).toContain('type="hidden"')
+    expect(markup2).toContain('data-field="f-special" data-control="hidden"')
   })
 
   test("pending state disables submit button; server refusals render RefusalCategory + server message across all closed states", () => {
@@ -1226,6 +1465,52 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(requiredCapabilities(combined)).toContain("component:list")
     expect(requiredCapabilities(combined)).toContain("component:section")
     expect(missingCapabilities(combined)).toEqual([])
+  })
+
+  test("NornAppRenderer refuses contracts referencing input.recordVersion or unformatted number controls whole", () => {
+    const recVersionUx = makeUx(
+      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
+      {
+        actionBindings: [{
+          bindingId: "edit-parent",
+          action: { id: "canon.order.edit.action", version: "0.1.0" },
+          inputMapping: { expectedVersion: "input.recordVersion" },
+          inputs: { recordBindingId: "order" },
+          requiredCapability: "canon.order.edit",
+        }],
+      },
+    )
+    const refusedMarkup = renderToStaticMarkup(
+      <NornAppRenderer
+        ux={recVersionUx}
+        workspace={{ kind: "deciding" }}
+        calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
+        engine={() => Promise.reject(new Error("unused"))}
+        objectTypeOf={() => undefined}
+        actionIdOf={() => undefined}
+      />,
+    )
+    expect(refusedMarkup).toContain('data-norn-refused=""')
+    expect(refusedMarkup).toContain("expr:recordVersion (action:edit-parent.expectedVersion)")
+
+    const unformattedNumUx = makeUx(
+      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
+      {
+        fields: [{ fieldId: "f-qty", target: { kind: "form_input", formId: "f", inputName: "qty" }, label: { en: "Qty" }, control: "number" }],
+      },
+    )
+    const numRefusedMarkup = renderToStaticMarkup(
+      <NornAppRenderer
+        ux={unformattedNumUx}
+        workspace={{ kind: "deciding" }}
+        calls={{ call: async () => ({ outcome: "not_served", payload: {} }) }}
+        engine={() => Promise.reject(new Error("unused"))}
+        objectTypeOf={() => undefined}
+        actionIdOf={() => undefined}
+      />,
+    )
+    expect(numRefusedMarkup).toContain('data-norn-refused=""')
+    expect(numRefusedMarkup).toContain("field:number:unformatted (f-qty)")
   })
 
   test("packages/norn-react/src never imports Radix", () => {

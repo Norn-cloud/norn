@@ -111,9 +111,14 @@ export function requiredCapabilities(ux: WidgetUx): string[] {
   return [...out].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
 }
 
+const REFERENCES_RECORD_VERSION = /\binput\s*(?:\.\s*recordVersion\b|\[\s*["']recordVersion["']\s*\])/
+const NUMBER_FORMATS = new Set(["integer", "decimal", "currency", "percent"])
+
 /**
  * What the renderer cannot draw although the capability catalog does not name it: a data binding
- * read it has no reader for, a control input it has no data for, a catalog island it was not given.
+ * read it has no reader for, a control input it has no data for, a catalog island it was not given,
+ * a swipe-only dialog, an unformatted numeric field (ambiguous integer vs exact decimal), or an
+ * expression referencing `input.recordVersion` (unsupported by the current WASM ABI).
  */
 export function unsupported(ux: WidgetUx): string[] {
   const out: string[] = []
@@ -122,6 +127,43 @@ export function unsupported(ux: WidgetUx): string[] {
     if (query.kind === "object_list" && query.filters.length === 0 && query.sort.length === 0) continue
     if (query.kind === "object_runtime_detail") continue
     out.push(`read:${query.kind}${query.kind === "object_list" ? ":filtered" : ""} (${binding.bindingId})`)
+  }
+  for (const binding of ux.actionBindings) {
+    for (const [member, expression] of Object.entries(binding.inputMapping)) {
+      if (REFERENCES_RECORD_VERSION.test(expression)) {
+        out.push(`expr:recordVersion (action:${binding.bindingId}.${member})`)
+      }
+    }
+  }
+  for (const field of ux.fields) {
+    if (field.control === "number" && (field.format === undefined || !NUMBER_FORMATS.has(field.format))) {
+      out.push(`field:number:unformatted (${field.fieldId})`)
+    }
+    for (const condition of [field.visibleWhen, field.requiredWhen, field.readOnlyWhen]) {
+      if (condition !== undefined && REFERENCES_RECORD_VERSION.test(condition.expression)) {
+        out.push(`expr:recordVersion (field:${field.fieldId})`)
+      }
+    }
+  }
+  for (const placement of ux.actionPlacements) {
+    const extra = placement as unknown as {
+      readonly enabledWhen?: { readonly expression?: string }
+      readonly selectionInputMapping?: Readonly<Record<string, string>>
+    }
+    if (typeof extra.enabledWhen?.expression === "string" && REFERENCES_RECORD_VERSION.test(extra.enabledWhen.expression)) {
+      out.push(`expr:recordVersion (placement:${placement.placementId})`)
+    }
+    for (const [member, expression] of Object.entries(extra.selectionInputMapping ?? {})) {
+      if (REFERENCES_RECORD_VERSION.test(expression)) {
+        out.push(`expr:recordVersion (placement:${placement.placementId}.${member})`)
+      }
+    }
+  }
+  for (const item of ux.navigationItems) {
+    const extra = item as unknown as { readonly visibleWhen?: { readonly expression?: string } }
+    if (typeof extra.visibleWhen?.expression === "string" && REFERENCES_RECORD_VERSION.test(extra.visibleWhen.expression)) {
+      out.push(`expr:recordVersion (navigation:${item.itemId})`)
+    }
   }
   for (const page of ux.pages) {
     for (const node of nodesOf(page.root)) {

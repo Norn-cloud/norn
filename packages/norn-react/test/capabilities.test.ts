@@ -89,6 +89,32 @@ test("dialog and form components are declared capabilities; child_grid and compo
   expect(missingCapabilities(swipeOnly)).toEqual(["dialog:swipe-only (swipe-dlg)"])
   const noDismiss = { ...fixture, pages: [{ ...page, root: { ...page.root, children: [...page.root.children, { nodeId: "trap-dlg", component: { kind: "dialog" as const, blocking: false, dismissalMethods: [] }, children: [] }] } }] }
   expect(missingCapabilities(noDismiss)).toEqual(["dialog:no-dismissal (trap-dlg)"])
+  // Unformatted `number` controls fail closed: IR omits integer vs decimal scalar kind without `format`.
+  const unformattedNumber: WidgetUx = {
+    ...fixture,
+    fields: [...fixture.fields, { fieldId: "f-ambiguous", target: { kind: "form_input", formId: "f", inputName: "qty" }, label: { en: "Qty" }, control: "number" }],
+  }
+  expect(missingCapabilities(unformattedNumber)).toEqual(["field:number:unformatted (f-ambiguous)"])
+  // Expressions referencing `input.recordVersion` fail closed until the WASM ABI supports that slot.
+  const recordVersionAction: WidgetUx = {
+    ...fixture,
+    actionBindings: fixture.actionBindings.map((binding) => ({ ...binding, inputMapping: { ...binding.inputMapping, expectedVersion: "input.recordVersion" } })),
+  }
+  expect(missingCapabilities(recordVersionAction)).toEqual(["expr:recordVersion (action:save.expectedVersion)"])
+  const recordVersionField: WidgetUx = {
+    ...fixture,
+    fields: [
+      ...fixture.fields,
+      {
+        fieldId: "f-ver-cond",
+        target: { kind: "form_input", formId: "f", inputName: "note" },
+        label: { en: "Note" },
+        control: "text",
+        visibleWhen: { expression: 'input.recordVersion != "0"', inputs: { recordBindingId: "records" } },
+      },
+    ],
+  }
+  expect(missingCapabilities(recordVersionField)).toEqual(["expr:recordVersion (field:f-ver-cond)"])
 })
 
 test("a page that needs what the renderer does not draw is refused, saying what", () => {

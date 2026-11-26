@@ -946,12 +946,13 @@ function prefillRefOf(form: WidgetForm, field: FieldPresentation): PropertyRef |
 }
 
 /** Read a form field's server prefill together with its L6 masking/withholding metadata. */
-export function readPrefill(scope: PageScope, form: WidgetForm, field: FieldPresentation): PrefillInfo {
+export function readPrefill(scope: PageScope, form: WidgetForm, field: FieldPresentation, pinnedRecord?: PinnedRecord): PrefillInfo {
   const ref = prefillRefOf(form, field)
   if (ref === undefined) return { value: undefined, masked: undefined, withheld: false }
+  const pinnedDoc = pinnedRecord !== undefined && pinnedRecord.bindingId === ref.bindingId ? pinnedRecord.document : undefined
   const state = scope.runtime.reads.get(ref.bindingId)
-  if (state?.kind !== "ok") return { value: undefined, masked: undefined, withheld: false }
-  const doc = asDoc(state.document)
+  const rawDoc = pinnedDoc !== undefined ? pinnedDoc : (state?.kind === "ok" ? state.document : undefined)
+  const doc = asDoc(rawDoc)
   if (doc === null) return { value: undefined, masked: undefined, withheld: false }
   const masked = own(asDoc(doc.masked), ref.propertyId) as MaskedProperty | undefined
   const withheld =
@@ -963,36 +964,77 @@ export function readPrefill(scope: PageScope, form: WidgetForm, field: FieldPres
   return { value: own(values, ref.propertyId), masked, withheld: false }
 }
 
+/**
+ * Merge live prefill L6 security metadata with the pinned baseline's metadata:
+ * never drop `masked` or `withheld` when a refresh is pending, refused, or delivers a new revision while dirty.
+ */
+export function mergePrefillSecurity(live: PrefillInfo, pinned: PrefillInfo | undefined): PrefillInfo {
+  if (pinned === undefined) return live
+  const withheld = live.withheld || pinned.withheld
+  const masked = live.masked ?? pinned.masked
+  return {
+    value: withheld ? undefined : (live.value !== undefined ? live.value : pinned.value),
+    masked,
+    withheld,
+  }
+}
+
 function defaultFieldValue(field: FieldPresentation, prefill: unknown): unknown {
   if (field.control === "checkbox") return typeof prefill === "boolean" ? prefill : false
   if (prefill === undefined || prefill === null) return ""
   return typeof prefill === "string" ? prefill : String(prefill)
 }
 
-function buildInitialDraft(scope: PageScope, form: WidgetForm, fields: readonly FieldPresentation[]): Record<string, unknown> {
+function buildPrefillMap(
+  scope: PageScope,
+  form: WidgetForm,
+  fields: readonly FieldPresentation[],
+  pinnedRecord?: PinnedRecord,
+): Record<string, PrefillInfo> {
+  const map: Record<string, PrefillInfo> = {}
+  for (const field of fields) {
+    map[field.fieldId] = readPrefill(scope, form, field, pinnedRecord)
+  }
+  return map
+}
+
+function buildInitialDraft(
+  fields: readonly FieldPresentation[],
+  prefills: Readonly<Record<string, PrefillInfo>>,
+): Record<string, unknown> {
   const initial: Record<string, unknown> = {}
   for (const field of fields) {
     const key = extractFieldKey(field)
-    const prefill = readPrefill(scope, form, field)
-    initial[key] = defaultFieldValue(field, prefill.withheld ? undefined : prefill.value)
+    const prefill = prefills[field.fieldId]
+    initial[key] = defaultFieldValue(field, prefill === undefined || prefill.withheld ? undefined : prefill.value)
   }
   return initial
 }
 
-function evaluateCondition(
+/**
+ * Evaluate a `ZenCondition` (`visibleWhen`, `requiredWhen`, `readOnlyWhen`) with the exact slots
+ * `norn-checker-wasm` accepts (`context`, `record`, `recordKey` paired with `record`, and `draft`).
+ */
+export function evaluateFieldCondition(
   scope: PageScope,
   condition: ZenCondition | undefined,
   draftPayload: Readonly<Record<string, unknown>>,
   fallback: boolean,
+  pinnedRecord?: PinnedRecord,
 ): boolean {
   if (condition === undefined) return fallback
   const recordBindingId = condition.inputs.recordBindingId
+  const pinnedDoc = pinnedRecord !== undefined && pinnedRecord.bindingId === recordBindingId ? pinnedRecord.document : undefined
   const recordState = recordBindingId === undefined ? undefined : scope.runtime.reads.get(recordBindingId)
-  const recordDoc = recordState?.kind === "ok" ? asDoc(recordState.document) : null
+  const activeDocument = pinnedDoc !== undefined ? pinnedDoc : (recordState?.kind === "ok" ? recordState.document : undefined)
+  const recordDoc = asDoc(activeDocument)
   const recordValues = recordDoc !== null ? (asDoc(recordDoc.values) ?? recordDoc) : undefined
+  const hasRecord = recordValues !== undefined
+  const recordKey = hasRecord && typeof recordDoc?.id === "string" && recordDoc.id !== "" ? recordDoc.id : undefined
   const sources = {
     context: scope.context ?? {},
-    ...(recordValues !== undefined ? { record: recordValues } : {}),
+    ...(hasRecord ? { record: recordValues } : {}),
+    ...(recordKey !== undefined ? { recordKey } : {}),
     ...(condition.inputs.draftFormId !== undefined ? { draft: draftPayload } : {}),
   }
   try {
@@ -1306,6 +1348,7 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
     : scope.ux.fields.filter((candidate) => "formId" in candidate.target && candidate.target.formId === form.formId)
 
   const baselineBindingId = form.versionConflictBinding?.property.bindingId ?? form.dataBindingId
+  const requiresBaseline = (form.mode === "edit" || form.versionConflictBinding !== undefined) && baselineBindingId !== undefined
   const baselineRead = baselineBindingId === undefined ? undefined : scope.runtime.reads.get(baselineBindingId)
   const liveBaselineRecord: PinnedRecord | undefined =
     baselineBindingId !== undefined && baselineRead?.kind === "ok"
@@ -1313,30 +1356,64 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       : undefined
   const liveBaselineKey = liveBaselineRecord === undefined ? "" : JSON.stringify(liveBaselineRecord.document)
 
-  const prefillSnapshot = buildInitialDraft(scope, form, formFields)
+  const livePrefills = buildPrefillMap(scope, form, formFields)
+  const prefillSnapshot = buildInitialDraft(formFields, livePrefills)
   const prefillKey = JSON.stringify(prefillSnapshot)
   const [initialDraft, setInitialDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [draft, setDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [pinnedRecord, setPinnedRecord] = useState<PinnedRecord | undefined>(() => liveBaselineRecord)
+  const [pinnedPrefills, setPinnedPrefills] = useState<Readonly<Record<string, PrefillInfo>>>(() => livePrefills)
   const [submitted, setSubmitted] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [typedPhrase, setTypedPhrase] = useState("")
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const dirty = computeFormDirty(initialDraft, draft)
 
-  // Hydrate from server prefill and advance pinned baseline ONLY while the form is clean.
-  // While dirty, keep the edited baseline revision pinned so version checks never submit a newer revision.
+  // Hydrate from server prefill and advance pinned baseline + masking metadata ONLY while clean.
+  // While dirty (or while a baseline refresh is in flight/failed), keep the edited baseline revision
+  // and its L6 security metadata pinned so version checks never submit a newer revision and
+  // pending/refused refreshes never drop redaction marks.
   useEffect(() => {
-    if (!dirty) {
+    if (dirty) return
+    if (requiresBaseline) {
+      if (liveBaselineRecord === undefined) return
       setInitialDraft(prefillSnapshot)
       setDraft(prefillSnapshot)
       setPinnedRecord(liveBaselineRecord)
-      if (liveBaselineRecord !== undefined) {
-        scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, prefillSnapshot), liveBaselineRecord)
+      setPinnedPrefills(livePrefills)
+      scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, prefillSnapshot), liveBaselineRecord)
+      return
+    }
+    setInitialDraft(prefillSnapshot)
+    setDraft(prefillSnapshot)
+    setPinnedPrefills((previous) => {
+      const merged: Record<string, PrefillInfo> = {}
+      for (const field of formFields) {
+        merged[field.fieldId] = mergePrefillSecurity(livePrefills[field.fieldId]!, previous[field.fieldId])
       }
+      return merged
+    })
+    if (liveBaselineRecord !== undefined) {
+      setPinnedRecord(liveBaselineRecord)
+      scope.runtime.setDraft?.(form.formId, buildFormDraftPayload(formFields, prefillSnapshot), liveBaselineRecord)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefillKey, liveBaselineKey])
+
+  // Do not mount interactive edit inputs or allow submission before the initial baseline record loads.
+  if (requiresBaseline && pinnedRecord === undefined) {
+    return (
+      <div
+        data-node={node.nodeId}
+        data-form={form.formId}
+        data-form-mode={form.mode}
+        data-form-awaiting-baseline="true"
+        className="grid gap-3"
+      >
+        <ReadView state={baselineRead}>{() => null}</ReadView>
+      </div>
+    )
+  }
 
   const draftPayload = buildFormDraftPayload(formFields, draft)
   const callState = scope.runtime.calls.get(form.submitBindingId)
@@ -1357,12 +1434,12 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
 
   const fieldStates = formFields.map((field) => {
     const key = extractFieldKey(field)
-    const prefill = readPrefill(scope, form, field)
+    const prefill = mergePrefillSecurity(livePrefills[field.fieldId]!, pinnedPrefills[field.fieldId])
     const agentMark = valueMark(prefill.masked, prefill.withheld)
     const value = prefill.withheld ? "" : (Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined))
-    const visible = evaluateCondition(scope, field.visibleWhen, draftPayload, true)
-    const required = evaluateCondition(scope, field.requiredWhen, draftPayload, false)
-    const readOnly = evaluateCondition(scope, field.readOnlyWhen, draftPayload, false)
+    const visible = evaluateFieldCondition(scope, field.visibleWhen, draftPayload, true, pinnedRecord)
+    const required = evaluateFieldCondition(scope, field.requiredWhen, draftPayload, false, pinnedRecord)
+    const readOnly = evaluateFieldCondition(scope, field.readOnlyWhen, draftPayload, false, pinnedRecord)
     let hint: string | null = null
     if (visible && !prefill.withheld && field.control !== "display") {
       if (field.control === "number" && typeof value === "string") {

@@ -177,7 +177,72 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     view = { ...view, ...next }
     onChange(view)
   }
-  const setRead = (bindingId: string, state: BindingReadState) => change({ reads: new Map(view.reads).set(bindingId, state) })
+
+  /**
+   * Synchronously prune/refresh a collection binding's stored selection BEFORE any machine
+   * subscription or read-outcome event is dispatched, so event-triggered actions never consume a
+   * removed or withheld row from an earlier snapshot.
+   */
+  const reconcileRuntimeSelection = (bindingId: string, state: BindingReadState) => {
+    const current = selections.get(bindingId)
+    if (current === undefined || current.length === 0) return
+    if (state.kind !== "ok") {
+      selections.set(bindingId, [])
+      return
+    }
+    const page = typeof state.document === "object" && state.document !== null && !Array.isArray(state.document)
+      ? (state.document as Readonly<Record<string, unknown>>)
+      : null
+    const rawRows = Array.isArray(page?.records) ? page.records : Array.isArray(page?.items) ? page.items : null
+    if (rawRows === null) return
+    const available = new Map<string, Record<string, unknown>>()
+    for (let index = 0; index < rawRows.length; index += 1) {
+      const item = rawRows[index]
+      if (typeof item !== "object" || item === null || Array.isArray(item)) continue
+      const row = item as Readonly<Record<string, unknown>>
+      if (row.withheld === true) continue
+      const rowValues = typeof row.values === "object" && row.values !== null && !Array.isArray(row.values)
+        ? (row.values as Readonly<Record<string, unknown>>)
+        : null
+      const rowId =
+        typeof row.id === "string" && row.id !== ""
+          ? row.id
+          : typeof row.key === "string" && row.key !== ""
+            ? row.key
+            : typeof rowValues?.id === "string" && rowValues.id !== ""
+              ? rowValues.id
+              : String(index)
+      const flattened: Record<string, unknown> = {}
+      if (rowValues !== null) {
+        Object.assign(flattened, rowValues)
+      } else {
+        for (const [key, value] of Object.entries(row)) {
+          if (key === "values" || key === "masked" || key === "withheld" || key === "withheldProperties") continue
+          flattened[key] = value
+        }
+      }
+      if (typeof row.id === "string" && row.id !== "" && !Object.hasOwn(flattened, "id")) flattened.id = row.id
+      available.set(rowId, flattened)
+    }
+    const pruned: Record<string, unknown>[] = []
+    for (let index = 0; index < current.length; index += 1) {
+      const selected = current[index]!
+      const selectedId =
+        typeof selected.id === "string" && selected.id !== ""
+          ? selected.id
+          : typeof selected.key === "string" && selected.key !== ""
+            ? selected.key
+            : String(index)
+      const fresh = available.get(selectedId)
+      if (fresh !== undefined) pruned.push(fresh)
+    }
+    selections.set(bindingId, pruned)
+  }
+
+  const setRead = (bindingId: string, state: BindingReadState) => {
+    reconcileRuntimeSelection(bindingId, state)
+    change({ reads: new Map(view.reads).set(bindingId, state) })
+  }
   const setCall = (bindingId: string, state: BindingCallState) => change({ calls: new Map(view.calls).set(bindingId, state) })
   const stopWaiting = () => {
     if (wait !== null) clock.clearTimeout(wait)
