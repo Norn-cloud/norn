@@ -167,6 +167,7 @@ where
         }];
         let pending = Pending {
             effective_input: generated_input,
+            requested_target: target.clone(),
             target,
             slice: slice.facts,
             tracked_reads: slice.tracked_reads,

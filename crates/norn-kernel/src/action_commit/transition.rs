@@ -182,6 +182,7 @@ where
             effective_input: preparation.effective_input.clone(),
             remaining_fuel: &mut preparation.remaining_fuel,
             target,
+            requested_target,
             slice: slice.facts,
             tracked_reads: slice.tracked_reads,
             link_reads: slice.link_reads,

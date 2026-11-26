@@ -461,6 +461,7 @@ where
         effective_input,
         remaining_fuel,
         target,
+        requested_target,
         slice,
         tracked_reads,
         link_reads,
@@ -554,7 +555,12 @@ where
     let mut reads = prepared.reads;
     let skipped_reads = if let Some(candidate) = series_candidate {
         writes.push(candidate.counter_write);
-        read_plan::reconcile_skipped_reads(catalog, &mut reads, candidate.skipped_reads)?
+        read_plan::reconcile_skipped_reads(
+            catalog,
+            &mut reads,
+            candidate.skipped_reads,
+            &precondition_reads,
+        )?
     } else {
         Vec::new()
     };
@@ -680,6 +686,7 @@ where
                 effective_input: &effective_input,
                 record_key: &record_key,
                 record: &record,
+                requested_target: &requested_target,
                 precondition_reads: &precondition_reads,
                 generated_key,
             },
@@ -747,6 +754,7 @@ struct ActionReplayState<'a> {
     effective_input: &'a JsonObject,
     record_key: &'a FactKey,
     record: &'a ActionCallRecord,
+    requested_target: &'a FactKey,
     precondition_reads: &'a BTreeSet<FactKey>,
     generated_key: bool,
 }
@@ -763,6 +771,7 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
         effective_input,
         record_key,
         record,
+        requested_target,
         precondition_reads,
         generated_key,
     } = *state;
@@ -798,7 +807,7 @@ fn action_commit_conflict<H: CellHost + ?Sized>(
             catalog,
             &raced,
             record,
-            &record.object,
+            requested_target,
             &call.idempotency_key,
         )? {
             // The winner may have changed authorization-relevant

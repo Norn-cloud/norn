@@ -79,11 +79,13 @@ pub(super) fn load_target_with_concrete<H: CellHost + ?Sized>(
 
 /// Reconcile naming-series collision probes with already-captured slice reads
 /// by canonical key so an `allow_gaps` create that slice-reads a skipped key
-/// never emits duplicate read expectations or hides a version disagreement.
+/// never emits duplicate read expectations or silently retries a stale
+/// precondition read.
 pub(super) fn reconcile_skipped_reads<X>(
     catalog: &TypeCatalog<'_>,
     reads: &mut Vec<FactExpectation>,
     probes: Vec<FactExpectation>,
+    precondition_reads: &BTreeSet<FactKey>,
 ) -> Result<Vec<FactExpectation>, ActionRefusal<X>> {
     let model = crate::CommitModel::new(catalog);
     let mut skipped_reads = Vec::new();
@@ -94,6 +96,15 @@ pub(super) fn reconcile_skipped_reads<X>(
             .find(|read| model.canonical(&read.key) == canonical)
         {
             if existing.expected != skipped.expected {
+                if precondition_reads
+                    .iter()
+                    .any(|key| model.canonical(key) == canonical)
+                {
+                    return Err(ActionRefusal::StalePreconditionRead {
+                        key: existing.key.clone(),
+                        link: None,
+                    });
+                }
                 return Err(ActionRefusal::Decision(DecisionRefusal::Stale {
                     key: existing.key.clone(),
                     expected: skipped.expected,

@@ -969,6 +969,7 @@ pub(super) struct Pending<'fuel> {
     /// The turn's one tank, borrowed: a retried attempt keeps what it spent.
     pub(super) remaining_fuel: &'fuel mut norn_expr::TurnFuel,
     pub(super) target: FactKey,
+    pub(super) requested_target: FactKey,
     pub(super) slice: FactSlice,
     pub(super) tracked_reads: super::read_plan::TrackedReadSet,
     pub(super) link_reads: Vec<LinkReadExpectation>,
