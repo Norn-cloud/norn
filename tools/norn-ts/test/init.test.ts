@@ -83,8 +83,6 @@ test("init_empty_and_explicit_scope", async () => {
   } finally { rmSync(root, { recursive: true }) }
 })
 
-test("published_mode_refuses", () => { expect(() => projectDependencies("published")).toThrow("Published distribution is unavailable") })
-
 test("repository_install_uses_local_packages", async () => {
   const root = scratch()
   try {

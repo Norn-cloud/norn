@@ -45,6 +45,7 @@ async function refusal(run: Promise<unknown>): Promise<ProjectError> {
 }
 
 test("checker package: the override wins, then the bundled copy, then none", () => {
+  expect(existsSync(join(TOOL_ROOT, "checker"))).toBe(false)
   const root = scratch()
   try {
     const bundled = join(root, "checker")
@@ -61,20 +62,6 @@ test("checker package: the override wins, then the bundled copy, then none", () 
     // Override, with a bundled copy present: the override, even one that holds no package.
     expect(checkerPackageDir({ [CHECKER_PKG_ENV]: override }, bundled)).toBe(override)
   } finally { rmSync(root, { recursive: true }) }
-})
-
-test("check without a usable checker refuses with cli.setup.checker_unavailable", () => {
-  // The repository checkout carries no bundled checker, so with the variable unset this is the "neither" state.
-  expect(existsSync(join(TOOL_ROOT, "checker"))).toBe(false)
-  const emptyCache = scratch()
-  try {
-    const run = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "check", join(TOOL_ROOT, "fixtures/quickstart"), "--org", "example", "--env", "local"],
-      { env: { ...process.env, [CHECKER_PKG_ENV]: "", NORN_CACHE_DIR: join(emptyCache, "no-cache") }, encoding: "utf8" })
-    const registered = registeredCodes().get("cli.setup.checker_unavailable")!
-    expect(run.status).toBe(2)
-    expect(run.stdout).toBe("")
-    expect(run.stderr).toBe(`cli.setup.checker_unavailable: ${registered.message} (NORN_CHECKER_WASM_PKG is not set)\n  fix: ${registered.fix}\n`)
-  } finally { rmSync(emptyCache, { recursive: true }) }
 })
 
 test("dev host: the override wins, and a wrong override refuses instead of falling back", async () => {

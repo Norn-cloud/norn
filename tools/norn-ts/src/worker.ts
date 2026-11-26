@@ -22,11 +22,11 @@
  * but an edit to its target triggers no recompile until a source is saved.
  */
 import { createHash } from "node:crypto"
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch, type FSWatcher } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
 import type { Json } from "./canonical.ts"
 import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
-import { artifactId, compilePack, packModules, readArtifacts, type PackResult } from "./pack.ts"
+import { artifactId, compilePack, isArtifact, packModules, readArtifacts, type PackResult } from "./pack.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
 
@@ -70,16 +70,15 @@ function sourceDirs(root: string, manifest: Project): string[] {
  * The modules compiled as one set: each source directory's top-level `*.ts`.
  * A module that is a symlink is compiled only if it resolves inside the project.
  */
-export function projectModules(root: string, manifest: Project): string[] {
-  const realRoot = realpathSync(root)
-  return sourceDirs(root, manifest).flatMap((dir) => packModules(dir)).map((module) => {
+function projectModules(root: string, dirs: readonly string[], realRoot: string): string[] {
+  return dirs.flatMap((dir) => packModules(dir)).map((module) => {
     if (!insideProject(realRoot, module)) throw outside(`module ${posix(relative(root, module))}`)
     return module
   })
 }
 
-function sourceFiles(root: string, manifest: Project): string[] {
-  const files = new Set<string>(projectModules(root, manifest))
+function sourceFiles(root: string, dirs: readonly string[], realRoot: string): string[] {
+  const files = new Set<string>(projectModules(root, dirs, realRoot))
   // Below the top level, symlinks are never followed (no cycle, nothing
   // outside the project), and each real directory is read once.
   const visited = new Set<string>()
@@ -94,7 +93,7 @@ function sourceFiles(root: string, manifest: Project): string[] {
       else if (kind.isFile() && (entry.endsWith(".ts") || entry.endsWith(".json"))) files.add(path)
     }
   }
-  for (const dir of sourceDirs(root, manifest)) walk(dir)
+  for (const dir of dirs) walk(dir)
   return [...files]
 }
 
@@ -104,34 +103,21 @@ function sourceFiles(root: string, manifest: Project): string[] {
  * (its bytes are its target's).
  */
 export function sourceDigest(root: string, manifest: Project): string {
+  const realRoot = realpathSync(root)
+  const dirs = sourceDirs(root, manifest)
   const hash = createHash("sha256")
-  for (const file of sourceFiles(root, manifest).map((path) => posix(relative(root, path))).sort()) {
+  for (const file of sourceFiles(root, dirs, realRoot).map((path) => posix(relative(root, path))).sort()) {
     const bytes = readFileSync(resolve(root, file))
     hash.update(`${file}\0${bytes.length}\0`).update(bytes)
   }
   return hash.digest("hex")
 }
 
-/**
- * Pre-compiled artifact envelopes (`*.json`) at the top level of each source
- * directory: generated registry artifacts a project carries as files, for
- * example the three-systems packs, whose TypeScript compiles only as the
- * registry release. The same checker admits them with the compiled modules;
- * nothing here trusts them.
- */
-export function projectArtifacts(root: string, manifest: Project): unknown[] {
-  const realRoot = realpathSync(root)
-  return sourceDirs(root, manifest).flatMap((dir) => readArtifacts(dir)).map(({ file, artifact }) => {
-    if (!insideProject(realRoot, file)) throw outside(`artifact ${posix(relative(root, file))}`)
-    return artifact
-  })
-}
-
 /** The retained kinds a project's JSON sources may declare. */
 const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval"])
 
 /** A JSON source that names a retained kind but is not a definition of it. */
-export class DefinitionSourceError extends Error {
+class DefinitionSourceError extends Error {
   constructor(readonly construct: string, message: string) { super(message) }
 }
 
@@ -152,35 +138,43 @@ function exactNumbers(inexact: string[]): (key: string, value: unknown, context?
 }
 
 /**
- * Retained definitions (`{ kind, id, payload }`, kind `approval`) carried as
- * JSON files at the top level of each source directory, read exactly as
- * `projectArtifacts` reads artifact envelopes. A document whose `kind` is a
- * retained kind but whose `id` or `payload` is malformed, or whose `id`
- * another JSON source declares, throws `DefinitionSourceError`: a gate the
- * author declared is never silently dropped. Other JSON documents are not
- * definitions and are skipped.
+ * Top-level `*.json` files in each source directory, checked for project
+ * confinement before reading and parsed once for both pre-compiled artifact
+ * envelopes and retained definitions (`{ kind, id, payload }`, kind `approval`).
  */
-export function projectDefinitions(root: string, manifest: Project): RetainedDefinitionDoc[] {
-  const realRoot = realpathSync(root)
+function projectJsonSources(
+  root: string,
+  dirs: readonly string[],
+  realRoot: string,
+): { readonly artifacts: Json[]; readonly definitions: RetainedDefinitionDoc[] } {
+  const artifacts: Json[] = []
+  const definitions: RetainedDefinitionDoc[] = []
   const seen = new Set<string>()
-  return sourceDirs(root, manifest).flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => join(dir, f))).flatMap((file) => {
-    const path = posix(relative(root, file))
-    if (!insideProject(realRoot, file)) throw outside(`definition ${path}`)
-    const inexact: string[] = []
-    const value = JSON.parse(readFileSync(file, "utf8"), exactNumbers(inexact)) as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
-    const named = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.kind === "string" && RETAINED_KINDS.has(value.kind)
-    if (!named) return []
-    // #1469 S10: a number is checked as written, before any rounding.
-    if (inexact.length > 0) {
-      throw new DefinitionSourceError(path, `${path} writes the number ${inexact[0]}, which JSON cannot carry exactly: write an integer such as 1000, or the exact decimal as text, such as "1000.10"`)
+  for (const dir of dirs) {
+    for (const entry of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
+      const file = join(dir, entry)
+      const path = posix(relative(root, file))
+      if (!insideProject(realRoot, file)) throw outside(`artifact ${path}`)
+      if (!statSync(file).isFile()) continue
+      const inexact: string[] = []
+      const value: unknown = JSON.parse(readFileSync(file, "utf8"), exactNumbers(inexact))
+      if (isArtifact(value)) artifacts.push(value)
+      if (typeof value !== "object" || value === null || Array.isArray(value)) continue
+      const doc = value as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
+      if (typeof doc.kind !== "string" || !RETAINED_KINDS.has(doc.kind)) continue
+      // #1469 S10: a number is checked as written, before any rounding.
+      if (inexact.length > 0) {
+        throw new DefinitionSourceError(path, `${path} writes the number ${inexact[0]}, which JSON cannot carry exactly: write an integer such as 1000, or the exact decimal as text, such as "1000.10"`)
+      }
+      if (typeof doc.id !== "string" || doc.id === "" || typeof doc.payload !== "object" || doc.payload === null || Array.isArray(doc.payload)) {
+        throw new DefinitionSourceError(path, `${path} declares an ${String(doc.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
+      }
+      if (seen.has(doc.id)) throw new DefinitionSourceError(doc.id, `definition ${doc.id} is declared by more than one JSON source`)
+      seen.add(doc.id)
+      definitions.push({ kind: "approval" as const, id: doc.id, payload: doc.payload as Json })
     }
-    if (typeof value.id !== "string" || value.id === "" || typeof value.payload !== "object" || value.payload === null || Array.isArray(value.payload)) {
-      throw new DefinitionSourceError(path, `${path} declares an ${String(value.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
-    }
-    if (seen.has(value.id)) throw new DefinitionSourceError(value.id, `definition ${value.id} is declared by more than one JSON source`)
-    seen.add(value.id)
-    return [{ kind: "approval" as const, id: value.id, payload: value.payload as Json }]
-  })
+  }
+  return { artifacts, definitions }
 }
 
 /**
@@ -207,34 +201,64 @@ function cellOwned(artifacts: ReadonlyArray<Json>): Json[] {
  * definitions, and the cell-owned types a mapping needs.
  */
 export function compileProjectPack(root: string, manifest: Project, options: { readonly forbidUnsafeZen?: boolean } = {}): PackResult {
+  const realRoot = realpathSync(root)
+  const dirs = sourceDirs(root, manifest)
   const pack = compilePack(root, {
-    modules: projectModules(root, manifest),
+    modules: projectModules(root, dirs, realRoot),
     scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId },
     root,
     ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
   })
   if (!pack.ok) return pack
-  const files = projectArtifacts(root, manifest) as Json[]
-  const owned = cellOwned([...files, ...pack.artifacts])
-  const sources = new Map(pack.sources)
   const refused = (construct: string, message: string): PackResult =>
     ({ ok: false, profile: pack.profile, failures: [{ file: ".", diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct, message }] }] })
+  let files: Json[]
+  let definitions: RetainedDefinitionDoc[]
+  try {
+    const jsonSources = projectJsonSources(root, dirs, realRoot)
+    files = jsonSources.artifacts
+    definitions = jsonSources.definitions
+  } catch (error) {
+    if (error instanceof DefinitionSourceError) return refused(error.construct, error.message)
+    throw error
+  }
+  const owned = cellOwned([...files, ...pack.artifacts])
+  const sources = new Map(pack.sources)
   for (const artifact of files) {
     const id = artifactId(artifact)
     if (sources.has(id)) return refused(id, `artifact ${id} is declared by a JSON source and by ${sources.get(id)}`)
     sources.set(id, "json")
   }
   for (const artifact of owned) sources.set(artifactId(artifact), "registry/core")
-  let definitions: RetainedDefinitionDoc[]
-  try { definitions = projectDefinitions(root, manifest) }
-  catch (error) {
-    if (error instanceof DefinitionSourceError) return refused(error.construct, error.message)
-    throw error
-  }
   const ids = new Set(pack.retained.map((definition) => definition.id))
   const duplicate = definitions.find((definition) => ids.has(definition.id))
   if (duplicate) return refused(duplicate.id, `definition ${duplicate.id} is declared by a JSON source and by a module`)
   return { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...definitions] }
+}
+
+/** Shared project-vs-pack loader used by `norn check`, `norn compile`, `norn codegen`, and `norn plan|apply`. */
+export function compileInputPack(
+  input: string,
+  options: {
+    readonly scope?: { readonly orgId: string; readonly environmentId: string }
+    readonly overrideProjectScope?: boolean
+    readonly forbidUnsafeZen?: boolean
+  } = {},
+): PackResult {
+  const full = resolve(input)
+  const stat = statSync(full)
+  if (stat.isDirectory() && existsSync(join(full, "norn.json"))) {
+    const { root, manifest } = readProject(full)
+    const effective = options.overrideProjectScope && options.scope ? { ...manifest, scope: options.scope } : manifest
+    return compileProjectPack(root, effective, { ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}) })
+  }
+  if (!options.scope) throw new Error("--org and --env are required")
+  return compilePack(full, {
+    scope: options.scope,
+    root: process.cwd(),
+    ...(options.forbidUnsafeZen !== undefined ? { forbidUnsafeZen: options.forbidUnsafeZen } : {}),
+    ...(stat.isFile() ? { modules: [full] } : {}),
+  })
 }
 
 /** Compile every top-level module of every source directory as one set. */
@@ -260,7 +284,8 @@ function emit(event: unknown): void {
 
 function option(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name)
-  return index < 0 ? undefined : args[index + 1]
+  const value = index < 0 ? undefined : args[index + 1]
+  return value === undefined || value.startsWith("--") ? undefined : value
 }
 
 export function main(args: readonly string[]): void {
@@ -286,9 +311,6 @@ export function main(args: readonly string[]): void {
   }
   compile()
   if (args.includes("--once")) return
-  // The host holds our stdin open for its lifetime: end of input means it is gone.
-  process.stdin.on("end", () => process.exit(0))
-  process.stdin.resume()
   // One batch per burst of saves: editors write several events per save.
   let timer: ReturnType<typeof setTimeout> | undefined
   const changed = () => {
@@ -298,7 +320,19 @@ export function main(args: readonly string[]): void {
   // A source that resolves outside the project is reported by each compile, never watched.
   let dirs: string[] = []
   try { dirs = sourceDirs(root, manifest) } catch { /* reported by compile() above */ }
-  for (const dir of dirs) watch(dir, { recursive: true }, changed)
+  const watchers: FSWatcher[] = []
+  for (const dir of dirs) {
+    const watcher = watch(dir, { recursive: true }, changed)
+    watcher.on("error", () => { /* watched dir disappeared; next compile reports it */ })
+    watchers.push(watcher)
+  }
+  // The host holds our stdin open for its lifetime: end of input means it is gone.
+  process.stdin.on("end", () => {
+    if (timer) clearTimeout(timer)
+    for (const watcher of watchers) watcher.close()
+    process.exit(0)
+  })
+  process.stdin.resume()
 }
 
 if (import.meta.main) main(process.argv.slice(2))
