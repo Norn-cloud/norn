@@ -41,10 +41,10 @@ pub(super) fn write_atomic_private(path: &Path, text: &str) -> std::io::Result<(
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
-    let result = options
-        .open(&tmp)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .and_then(|()| std::fs::rename(&tmp, path));
+    let mut file = options.open(&tmp)?;
+    let write = file.write_all(text.as_bytes());
+    drop(file);
+    let result = write.and_then(|()| std::fs::rename(&tmp, path));
     if result.is_err() {
         let _ignored = std::fs::remove_file(&tmp);
     }
@@ -68,7 +68,8 @@ pub(super) fn read_private(path: &Path, limit: u64) -> std::io::Result<String> {
             "not a regular file",
         ));
     }
-    let mut bytes = Vec::new();
+    let cap = usize::try_from(limit.saturating_add(1)).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(cap);
     file.take(limit.saturating_add(1)).read_to_end(&mut bytes)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
         return Err(std::io::Error::new(

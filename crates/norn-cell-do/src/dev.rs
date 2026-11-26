@@ -1059,6 +1059,7 @@ fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
     let relative = Path::new(cell);
     let mut parts = relative.components();
     let valid_parts = !relative.as_os_str().is_empty()
+        && !matches!(cell.rsplit(['/', '\\']).next(), Some("" | "." | ".."))
         && matches!(parts.next_back(), Some(Component::Normal(_)))
         && parts.all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
     if !valid_parts {

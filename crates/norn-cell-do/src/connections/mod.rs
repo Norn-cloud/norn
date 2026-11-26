@@ -715,29 +715,9 @@ impl<E: SqlEngine> Routes<E> {
                 "revoking the grant at the provider needs authority over every connection of the cell; disconnect without revokeGrant",
             ));
         }
-        if let Err(error) = &self.serving {
-            return Some(coded(
-                503,
-                "connection.unavailable",
-                &format!("the connection configuration is malformed: {error}"),
-            ));
-        }
-        let opened = self.opened.get_or_init(|| {
-            let opened = (self.open)(&host.scope().key());
-            if let Ok(connections) = &opened {
-                let _ignored = connections.forget_pending(&[], now_ms);
-            }
-            opened
-        });
-        let connections = match opened {
+        let connections = match self.open_connections(&host.scope().key(), now_ms) {
             Ok(connections) => connections,
-            Err(error) => {
-                return Some(coded(
-                    503,
-                    "connection.unavailable",
-                    &format!("the connection vault did not open: {error}"),
-                ));
-            }
+            Err(response) => return Some(response),
         };
         let result = match (route, request.method) {
             (Route::Credentials(_), "GET") => connections.status(id).map(|status| json!(status)),
@@ -758,6 +738,32 @@ impl<E: SqlEngine> Routes<E> {
         Some(match result {
             Ok(body) => reply(200, &body),
             Err(error) => refused(&error),
+        })
+    }
+
+    /// Open the cell's connections on first authorized request, sweeping any
+    /// expired pending OAuth states left from before a restart.
+    fn open_connections(&self, scope: &str, now_ms: u64) -> Result<&Connections<E>, Response> {
+        if let Err(error) = &self.serving {
+            return Err(coded(
+                503,
+                "connection.unavailable",
+                &format!("the connection configuration is malformed: {error}"),
+            ));
+        }
+        let opened = self.opened.get_or_init(|| {
+            let opened = (self.open)(scope);
+            if let Ok(connections) = &opened {
+                let _ignored = connections.forget_pending(&[], now_ms);
+            }
+            opened
+        });
+        opened.as_ref().map_err(|error| {
+            coded(
+                503,
+                "connection.unavailable",
+                &format!("the connection vault did not open: {error}"),
+            )
         })
     }
 
