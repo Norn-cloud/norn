@@ -385,6 +385,25 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
                 .collect::<Vec<_>>(),
             named
         );
+        // The route serves Studio's built-in pages; detail full returns only named
+        // workspace artifacts, so never those, even when one is named.
+        assert!(
+            catalog["builtins"]
+                .as_array()
+                .is_some_and(|pages| !pages.is_empty()),
+            "{catalog}"
+        );
+        assert_eq!(full.get("builtins"), None);
+        assert_eq!(full.get("receipt"), None);
+        let builtin = call_tool(
+            &cell,
+            auth,
+            "norn_catalog",
+            &json!({"detail": "full", "names": [norn_api::builtin_pages::RECORD_PAGE_ID]}),
+        )["structuredContent"]
+            .clone();
+        assert_eq!(builtin.get("builtins"), None);
+        assert_eq!(builtin["artifacts"], json!([]));
         assert_eq!(
             call_tool(&cell, auth, "norn_catalog", &json!({"detail": "full"}))["isError"],
             true

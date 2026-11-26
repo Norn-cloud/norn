@@ -185,12 +185,27 @@ mod tests {
         );
     }
 
+    /// Each served digest is the sha256 the page's provenance record pins, so a page whose bytes
+    /// change without a regenerated record fails here, not only in the provenance gate.
     #[test]
-    fn the_digest_is_the_embedded_bytes() {
-        let page = served(&[]).unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(
-            page[0].sha256,
-            crate::uploads::sha256_hex(PAGES[0].1.as_bytes())
-        );
+    fn the_digest_is_the_provenance_records() {
+        let pages = served(&[]).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(pages.len(), PAGES.len());
+        for ((id, _), page) in PAGES.iter().zip(&pages) {
+            let path = root().join(format!(
+                ".github/ci/provenance/artifacts/registry/studio/artifacts/{id}.json.json"
+            ));
+            let record: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+            )
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            assert_eq!(
+                Some(page.sha256.as_str()),
+                record["sha256"].as_str(),
+                "{id}: the served digest is not {}'s",
+                path.display()
+            );
+        }
     }
 }
