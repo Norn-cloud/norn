@@ -616,7 +616,8 @@ impl<E: SqlEngine> Routes<E> {
     }
 
     /// Routes over the connections `open` returns for a cell scope key,
-    /// called once, on the first authorized request.
+    /// opened on the first authorized request and retried on transient open
+    /// failures until it succeeds.
     pub fn with_opener(
         open: impl Fn(&str) -> Result<Connections<E>, String> + Send + Sync + 'static,
     ) -> Self {
@@ -774,14 +775,7 @@ impl<E: SqlEngine> Routes<E> {
             )
         })?;
         let _ignored = connections.forget_pending(&[], now_ms);
-        let _ = self.opened.set(connections);
-        self.opened.get().ok_or_else(|| {
-            coded(
-                503,
-                "connection.unavailable",
-                "the connection vault did not open",
-            )
-        })
+        Ok(self.opened.get_or_init(|| connections))
     }
 
     /// `oauth:start`, its state reserved for the caller (OAUTH-HANDOFF-1)

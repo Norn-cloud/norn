@@ -1723,7 +1723,7 @@ fn a_transient_vault_open_failure_is_not_cached_forever() {
         "GET",
         "/v1/connections/acme.main/credentials",
         SCOPE_QUERY,
-        Some("Bearer owner"),
+        Some("Bearer owner-token"),
         "",
     );
     let first = flaky.route(&host, &Bearers, &req, 1_000).expect("routed");
