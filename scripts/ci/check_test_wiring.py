@@ -101,6 +101,28 @@ def _split_shell_segments(line: str) -> list[str]:
             i += 1
             continue
         if not in_single and not in_double:
+            # Consume unquoted multi-character redirections (`>|`, `>&`, `<&`, `&>`, `&>>`)
+            # as whole atoms so their `|`/`&` never split commands, while escaped `\>` + `&`
+            # still splits at the real `&` control operator.
+            if ch == ">" and i + 1 < n and line[i + 1] in ("|", "&"):
+                buf.append(ch)
+                buf.append(line[i + 1])
+                i += 2
+                continue
+            if ch == "<" and i + 1 < n and line[i + 1] == "&":
+                buf.append(ch)
+                buf.append(line[i + 1])
+                i += 2
+                continue
+            if ch == "&" and i + 1 < n and line[i + 1] == ">":
+                buf.append(ch)
+                buf.append(line[i + 1])
+                if i + 2 < n and line[i + 2] == ">":
+                    buf.append(line[i + 2])
+                    i += 3
+                else:
+                    i += 2
+                continue
             if ch in (";", "(", ")"):
                 seg = "".join(buf).strip()
                 if seg:
@@ -108,17 +130,19 @@ def _split_shell_segments(line: str) -> list[str]:
                 buf.clear()
                 i += 1
                 continue
-            if ch in ("&", "|"):
-                # Keep fd redirections (`2>&1`, `<&0`) attached to the same command.
-                if ch == "&" and buf and buf[-1] in (">", "<"):
-                    buf.append(ch)
-                    i += 1
-                    continue
+            if ch == "|":
                 seg = "".join(buf).strip()
                 if seg:
                     segments.append(seg)
                 buf.clear()
-                i += 2 if (i + 1 < n and line[i + 1] == ch) else 1
+                i += 2 if (i + 1 < n and line[i + 1] in ("|", "&")) else 1
+                continue
+            if ch == "&":
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf.clear()
+                i += 2 if (i + 1 < n and line[i + 1] == "&") else 1
                 continue
         buf.append(ch)
         i += 1

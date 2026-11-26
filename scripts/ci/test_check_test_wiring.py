@@ -127,6 +127,30 @@ class TestCheckTestWiring(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("scripts/ci/core.sh:2", errors[0])
 
+    def test_shell_redirections_and_escaped_redirect_prefix(self) -> None:
+        self.assertEqual(ctw._split_shell_segments("echo hi >|out"), ["echo hi >|out"])
+        self.assertEqual(ctw._split_shell_segments("echo hi &>out"), ["echo hi &>out"])
+        self.assertEqual(ctw._split_shell_segments("echo hi &>>out"), ["echo hi &>>out"])
+        self.assertEqual(ctw._split_shell_segments("bun test 2>&1"), ["bun test 2>&1"])
+        self.assertEqual(
+            ctw._split_shell_segments(r"echo \>& bun test"),
+            [r"echo \>", "bun test"],
+        )
+        # Escaped `>` followed by real `&` still recognizes the subsequent test command.
+        self.assertEqual(
+            ctw.check_js_test_wiring(
+                ["apps/sidekick-bridge/relay.test.ts"],
+                r"(cd apps/sidekick-bridge && echo \>& bun test)" + "\n",
+            ),
+            [],
+        )
+        # Redirections into filenames named after runners never count as running tests.
+        errors = ctw.check_py_test_wiring(
+            ["scripts/test_redir.py"],
+            "echo hi >|python3 scripts/test_redir.py\necho hi &>python3 scripts/test_redir.py\n",
+        )
+        self.assertEqual(len(errors), 1)
+
     def test_live_repository_passes_all_invariants(self) -> None:
         self.assertEqual(ctw.check_repo(Path(ctw.REPO)), [])
 
