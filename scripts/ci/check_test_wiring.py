@@ -44,7 +44,6 @@ BASE_CHECKED_SCRIPT_GLOBS = (
 
 ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 PYTHON_BIN_RE = re.compile(r"^(?:[\w./${}-]+/)?python3?(?:\.\d+)?$")
-SHELL_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n"}
 YAML_RUN_PREFIX_RE = re.compile(r"^(?:-\s+)?run:\s+")
 
 
@@ -70,30 +69,79 @@ def _strip_shell_comment(line: str) -> str:
     return line
 
 
+def _split_shell_segments(line: str) -> list[str]:
+    """Split a non-comment shell line on unquoted control operators only."""
+    segments: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and not in_single:
+            buf.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+            continue
+        if not in_single and not in_double:
+            if ch in (";", "(", ")"):
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf.clear()
+                i += 1
+                continue
+            if ch in ("&", "|"):
+                # Keep fd redirections (`2>&1`, `<&0`) attached to the same command.
+                if ch == "&" and buf and buf[-1] in (">", "<"):
+                    buf.append(ch)
+                    i += 1
+                    continue
+                seg = "".join(buf).strip()
+                if seg:
+                    segments.append(seg)
+                buf.clear()
+                i += 2 if (i + 1 < n and line[i + 1] == ch) else 1
+                continue
+        buf.append(ch)
+        i += 1
+    seg = "".join(buf).strip()
+    if seg:
+        segments.append(seg)
+    return segments
+
+
 def _split_simple_commands(line: str) -> list[list[str]]:
     """Split one non-comment shell line into simple commands (`argv` lists)."""
     cleaned = _strip_shell_comment(line).strip()
     if not cleaned:
         return []
     cleaned = YAML_RUN_PREFIX_RE.sub("", cleaned)
-    lexer = shlex.shlex(cleaned, posix=True, punctuation_chars=";&|()")
-    lexer.whitespace_split = True
-    try:
-        tokens = list(lexer)
-    except ValueError:
-        return []
-
     commands: list[list[str]] = []
-    current: list[str] = []
-    for tok in tokens:
-        if tok in SHELL_SEPARATORS:
-            if current:
-                commands.append(current)
-                current = []
-        else:
-            current.append(tok)
-    if current:
-        commands.append(current)
+    for seg in _split_shell_segments(cleaned):
+        try:
+            argv = shlex.split(seg, posix=True)
+        except ValueError:
+            continue
+        if argv:
+            commands.append(argv)
     return commands
 
 

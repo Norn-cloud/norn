@@ -47,20 +47,23 @@ class TestCheckTestWiring(unittest.TestCase):
             [
                 "scripts/test_commented.py",
                 "scripts/test_echoed.py",
+                "scripts/test_quoted_op.py",
                 "scripts/test_discover_split.py",
             ],
             "\n".join(
                 [
                     "# python3 scripts/test_commented.py",
                     'echo "python3 scripts/test_echoed.py"',
+                    'echo "&&" python3 scripts/test_quoted_op.py',
                     "python3 -V && echo -m unittest discover -s scripts",
                 ]
             )
             + "\n",
         )
-        self.assertEqual(len(errors), 3)
+        self.assertEqual(len(errors), 4)
         self.assertTrue(any("scripts/test_commented.py" in e for e in errors))
         self.assertTrue(any("scripts/test_echoed.py" in e for e in errors))
+        self.assertTrue(any("scripts/test_quoted_op.py" in e for e in errors))
         self.assertTrue(any("scripts/test_discover_split.py" in e for e in errors))
 
     def test_unittest_discover_honors_default_and_explicit_pattern(self) -> None:
@@ -82,19 +85,22 @@ class TestCheckTestWiring(unittest.TestCase):
         errors = ctw.check_js_test_wiring(
             [
                 "apps/sidekick-bridge/relay.test.ts",
+                "packages/quoted-op/foo.test.ts",
                 "apps/norn-cell-do/bar.test.mjs",
                 "apps/norn-cell-do/foo.test.mjs",
             ],
             "\n".join(
                 [
                     '(cd apps/sidekick-bridge && bun install --frozen-lockfile && echo "run bun test")',
+                    '(cd packages/quoted-op && echo "&&" bun test)',
                     "(cd apps/norn-cell-do && bun test bar.test.mjs && echo foo.test.mjs)",
                 ]
             )
             + "\n",
         )
-        self.assertEqual(len(errors), 2)
+        self.assertEqual(len(errors), 3)
         self.assertTrue(any("apps/sidekick-bridge" in e for e in errors))
+        self.assertTrue(any("packages/quoted-op" in e for e in errors))
         self.assertTrue(any("apps/norn-cell-do/foo.test.mjs" in e for e in errors))
 
     def test_detects_unwired_js_package_and_standalone_mjs(self) -> None:
