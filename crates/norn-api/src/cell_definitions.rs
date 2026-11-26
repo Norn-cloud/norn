@@ -435,29 +435,38 @@ fn candidate<E: SqlEngine>(
     ))
 }
 
-/// The action ids of a canonical artifact set.
-pub(crate) fn set_actions(
+/// The action specs (`action_id -> reads_clock`) of a canonical artifact set.
+pub(crate) fn set_action_specs(
     canonical_set: &str,
-) -> Result<std::collections::BTreeSet<String>, Refusal> {
+) -> Result<std::collections::BTreeMap<String, bool>, Refusal> {
     let artifacts: Vec<serde_json::Value> =
         serde_json::from_str(canonical_set).map_err(Refusal::host)?;
-    Ok(artifacts
-        .iter()
-        .filter(|artifact| {
-            artifact.get("kind").and_then(serde_json::Value::as_str) == Some("action")
-        })
-        .filter_map(|artifact| {
-            artifact
-                .pointer("/payload/actionId")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .collect())
+    let mut specs = std::collections::BTreeMap::new();
+    for artifact in &artifacts {
+        if artifact.get("kind").and_then(serde_json::Value::as_str) != Some("action") {
+            continue;
+        }
+        let Some(action_id) = artifact
+            .pointer("/payload/actionId")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let reads_clock = artifact
+            .get("payload")
+            .and_then(|payload| serde_json::from_value::<norn_ir::ActionRoot>(payload.clone()).ok())
+            .is_some_and(|action| {
+                norn_kernel::clock_derived_fields(&action).is_err_or(|fields| !fields.is_empty())
+            });
+        specs.insert(action_id.to_owned(), reads_clock);
+    }
+    Ok(specs)
 }
 
 /// Admit every approval of the change against the candidate set's actions
 /// (#1469); with `signed_at`, as an apply. One approval per action, and one
-/// refusal refuses the change.
+/// refusal refuses the change. Also refuses introducing `clock` derivation on
+/// any action that remains gated by an active approval.
 fn riding<E: SqlEngine>(
     host: &DevHost<E>,
     actor: Option<&str>,
@@ -466,11 +475,7 @@ fn riding<E: SqlEngine>(
     approvals: &Approvals,
     signed_at: Option<u64>,
 ) -> Result<Vec<crate::definition_routes::RidingApproval>, Refusal> {
-    if approvals.is_empty() {
-        return Ok(Vec::new());
-    }
-    let actor = actor.ok_or_else(crate::authz::read_denied)?;
-    let actions = set_actions(&candidate.admitted.canonical_set)?;
+    let actions = set_action_specs(&candidate.admitted.canonical_set)?;
     let mut ids = std::collections::BTreeSet::new();
     let mut gated = std::collections::BTreeSet::new();
     for (index, request) in approvals.iter().enumerate() {
@@ -485,6 +490,23 @@ fn riding<E: SqlEngine>(
             )]));
         }
     }
+    let retained_gated =
+        crate::approval_definitions::gated_except(host, &|other| ids.contains(other))?;
+    for action_id in &retained_gated {
+        if actions.get(action_id).copied().unwrap_or(false) {
+            return Err(refused(vec![RefusalDiagnostic::error(
+                crate::approval_definitions::codes::INVALID,
+                format!(
+                    "action {action_id:?} derives from `clock` and is gated by an active approval (advancing the clock between approval and release invalidates the prepared intent digest)"
+                ),
+                "/artifacts",
+            )]));
+        }
+    }
+    if approvals.is_empty() {
+        return Ok(Vec::new());
+    }
+    let actor = actor.ok_or_else(crate::authz::read_denied)?;
     // #1469 S2: one gate per action in the FINAL set. The change's own
     // approvals were checked against each other above; an active approval
     // the change revises gates whatever its new payload says, so it is not
@@ -689,7 +711,7 @@ pub fn source_approvals<E: SqlEngine>(
 ) -> Result<Vec<SourceApproval>, Box<(String, Refusal)>> {
     use crate::definition_routes::{InstallDefinitionRequest, SignoffRequest};
     let whole = |refusal: Refusal| Box::new(("approval".to_owned(), refusal));
-    let actions = set_actions(canonical_set).map_err(whole)?;
+    let actions = set_action_specs(canonical_set).map_err(whole)?;
     let active = crate::definition_routes::active_approvals(host).map_err(whole)?;
     let retiring: std::collections::BTreeSet<String> = active
         .iter()

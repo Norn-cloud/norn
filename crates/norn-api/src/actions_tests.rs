@@ -2336,3 +2336,279 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
     assert_eq!(replayed.version, 3);
 }
+
+struct WriteAndCallPolicy;
+impl Authorizer for WriteAndCallPolicy {
+    fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+        match (&request.operation, request.actor) {
+            (
+                Operation::CallAction(_) | Operation::WriteDefinitions | Operation::ReadDefinitions,
+                Some(OPERATOR),
+            ) => Ok(()),
+            _ => DenyAll.authorize(request),
+        }
+    }
+    fn read(&self, _request: &ReadRequest<'_>) -> Result<(), Refusal> {
+        Err(read_denied())
+    }
+    fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        if request.actor == OPERATOR {
+            Ok(())
+        } else {
+            Err(ActionDenial::Forbidden {
+                reason: codes::AUTHZ_DENIED.into(),
+            })
+        }
+    }
+    fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
+        if request.actor == OPERATOR {
+            Ok(())
+        } else {
+            Err(ActionDenial::Invisible)
+        }
+    }
+    fn action_read_type(
+        &self,
+        request: &ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), ActionDenial> {
+        if request.actor == OPERATOR {
+            Ok(())
+        } else {
+            Err(ActionDenial::Invisible)
+        }
+    }
+    fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
+        request.actor == OPERATOR
+    }
+}
+
+fn clock_order_documents(with_clock: bool) -> Vec<Value> {
+    let order = entity(
+        "test.ClockOrder.entity",
+        &json!({
+            "name": "test.ClockOrder",
+            "properties": [
+                { "id": "order_id", "type": { "kind": "text" } },
+                { "id": "amount", "type": { "kind": "integer" } },
+                { "id": "stamped_at", "type": { "kind": "timestamp", "timezone": "utc" } }
+            ]
+        }),
+        &[],
+    );
+    let mut payload = json!({
+        "actionId": "test.clock_order.create",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "order_id": { "type": "string" },
+                "amount": { "type": "integer" },
+                "stamped_at": { "type": "string" }
+            },
+            "required": ["order_id", "amount", "stamped_at"],
+            "additionalProperties": false
+        },
+        "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+        "writes": [{ "entityKind": "test.ClockOrder", "change": "created" }],
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "order_id",
+            "objectKind": "test.ClockOrder",
+            "entityArtifactId": "test.ClockOrder.entity",
+            "entityArtifactVersion": "1.0.0",
+            "writeMode": { "kind": "create_only" }
+        }
+    });
+    if with_clock {
+        payload["derive"] = json!([
+            { "field": "stamped_at", "expression": "clock.nowIso", "inputRequired": false }
+        ]);
+    }
+    let create = envelope(
+        "test.ClockOrder.create.action",
+        "action",
+        &payload,
+        &["test.ClockOrder.entity"],
+    );
+    vec![order, create]
+}
+
+fn seed_approval_gate(host: &DevHost<NativeEngine>, id: &str, payload: &Value) {
+    let canonical = serde_json::to_string(payload).unwrap();
+    let active = {
+        let cell = host.cell().unwrap();
+        let reader = cell.store().read();
+        reader.installed_definitions(None).unwrap().unwrap()
+    };
+    let model = {
+        let cell = host.cell().unwrap();
+        cell.store().model().clone()
+    };
+    let input = norn_cell::InstalledDefinitionInput {
+        canonical_set: active.canonical_set,
+        registry: active.registry,
+        receipt_sha256: active.receipt_sha256,
+        admission_receipt: active.admission_receipt,
+        readmission: None,
+        diff: json!({}),
+        installed_at: active.installed_at.saturating_add(1),
+        layout: None,
+    };
+    let change = norn_cell::retained::RetainedDefinitionChange {
+        definition: norn_cell::retained::RetainedDefinition {
+            kind: "approval".to_owned(),
+            id: id.to_owned(),
+            revision: 1,
+            lifecycle: norn_cell::retained::RetainedLifecycle::Active,
+            title: "test.clock_order.create".to_owned(),
+            payload_sha256: norn_cell::retained::payload_sha256(&canonical),
+            payload: canonical,
+            signoff: None,
+            authority: None,
+        },
+        expected_revision: None,
+    };
+    host.cell()
+        .unwrap()
+        .install_retained_definition(model, &input, Some(active.version), &change)
+        .unwrap();
+}
+
+fn write_call_host(docs: &[Value]) -> DevHost<NativeEngine> {
+    let store = admitted_store(docs, crate::action_admission::prepare_action_model);
+    DevHost::from_store(
+        store,
+        CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        },
+        |command| command.payload.clone(),
+    )
+    .unwrap()
+    .with_authorizer(WriteAndCallPolicy)
+}
+
+fn clock_order_approval_payload() -> Value {
+    json!({
+        "action": "test.clock_order.create",
+        "decider": { "roles": ["admin"] },
+        "question": "Approve large clock order?",
+        "risk": "high",
+        "when": { "property": "amount", "op": "gt", "value": 1000 }
+    })
+}
+
+/// ACTION-CLOCK-1 / APPROVAL-1:
+/// 1. Standalone and bundled approval admission refuse gating a `clock`-deriving action.
+/// 2. Updating an already-gated action to derive from `clock` is refused at `:plan`.
+#[test]
+fn approval_admission_refuses_clock_deriving_actions_and_upgrades() {
+    let scope_query = crate::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let kinds = crate::definition_routes::DefinitionKinds::default().with_roles(["admin"]);
+    let approval_payload = clock_order_approval_payload();
+    let clock_docs = clock_order_documents(true);
+    let clock_host = write_call_host(&clock_docs);
+
+    let standalone = crate::definition_routes::admit_definition(
+        &clock_host,
+        &scope_query,
+        Some(OPERATOR),
+        &kinds,
+        None,
+        &crate::definition_routes::AdmitDefinitionRequest {
+            kind: "approval".to_owned(),
+            id: "gate.clock_order".to_owned(),
+            payload: serde_json::value::RawValue::from_string(approval_payload.to_string())
+                .unwrap(),
+        },
+    )
+    .unwrap();
+    assert!(!standalone.admitted, "{standalone:?}");
+    assert!(
+        standalone
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("clock")),
+        "{standalone:?}"
+    );
+
+    let bundled_err = crate::cell_definitions::plan_definitions(
+        &clock_host,
+        &scope_query,
+        Some(OPERATOR),
+        &kinds,
+        &json!({
+            "artifacts": clock_docs,
+            "approvals": [{
+                "kind": "approval",
+                "id": "gate.clock_order",
+                "payload": approval_payload
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap_err();
+    assert!(
+        bundled_err
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("clock")),
+        "{bundled_err:?}"
+    );
+
+    let plain_host = write_call_host(&clock_order_documents(false));
+    seed_approval_gate(&plain_host, "gate.clock_order", &approval_payload);
+    let upgrade_err = crate::cell_definitions::plan_definitions(
+        &plain_host,
+        &scope_query,
+        Some(OPERATOR),
+        &kinds,
+        &json!({ "artifacts": clock_docs }).to_string(),
+    )
+    .unwrap_err();
+    assert!(
+        upgrade_err
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("clock")),
+        "{upgrade_err:?}"
+    );
+}
+
+/// ACTION-CLOCK-1 / APPROVAL-WHEN-1: under a pre-existing conditional `when`
+/// gate on a `clock`-deriving action, excluded calls still commit while
+/// matching calls refuse instead of parking an unreleasable approval.
+#[test]
+fn conditional_when_gate_allows_excluded_clock_action_and_refuses_matching() {
+    let clock_host = write_call_host(&clock_order_documents(true));
+    seed_approval_gate(
+        &clock_host,
+        "gate.clock_order",
+        &clock_order_approval_payload(),
+    );
+    let query = scoped("org_demo");
+    let small = call(
+        &clock_host,
+        &query,
+        Some(OPERATOR),
+        "test.clock_order.create",
+        r#"{"input":{"order_id":"ord-small","amount":500},"idempotencyKey":"k-small"}"#,
+    )
+    .expect("excluded call under conditional `when` gate must commit");
+    assert_eq!(small.outcome, ActionCallOutcome::Committed);
+
+    let large_err = call(
+        &clock_host,
+        &query,
+        Some(OPERATOR),
+        "test.clock_order.create",
+        r#"{"input":{"order_id":"ord-large","amount":2000},"idempotencyKey":"k-large"}"#,
+    )
+    .expect_err("matching call under conditional `when` gate on clock action must refuse");
+    assert_eq!(large_err.status, http::StatusCode::UNPROCESSABLE_ENTITY);
+}

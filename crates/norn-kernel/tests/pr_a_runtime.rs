@@ -389,29 +389,46 @@ fn refuses_immutable_updates_malformed_pre_slice_and_spoofed_server_derived() {
 }
 
 #[test]
-fn prepare_action_intent_refuses_clock_deriving_action() {
+fn approved_release_refuses_clock_deriving_action_while_prepare_exposes_writes() {
     let types = payout_types();
     let catalog = TypeCatalog::new(&types).with_transition_guards(&[]);
-    let cell = Cell::new(|_| JsonObject::new());
+    let mut cell = Cell::new(|_| JsonObject::new());
     let create_action = create_payout_action();
     let raw_create: JsonObject =
         serde_json::from_value(json!({ "id": "po_approval", "payslip_id": "ps_approval" }))
             .unwrap();
-    let err = norn_kernel::prepare_action_intent(
+    // Preparing still computes proposed writes so conditional `when` gates can
+    // inspect whether the call falls outside the gate.
+    let prepared = norn_kernel::prepare_action_intent(
         &cell,
         &catalog,
         &call(
             &create_action,
             "test.payout.create.action",
-            raw_create,
+            raw_create.clone(),
             "k-approval-clock",
             1_764_115_200_000,
         ),
         &Allow,
     )
-    .unwrap_err();
+    .expect("prepare_action_intent exposes writes for conditional gate evaluation");
+    let norn_kernel::Prepared::Commit(intent) = prepared else {
+        panic!("expected Prepared::Commit, got: {prepared:?}");
+    };
+    assert!(!intent.writes.is_empty());
+
+    // Committing under an approved intent at a later clock refuses fail-closed.
+    let mut approved_call = call(
+        &create_action,
+        "test.payout.create.action",
+        raw_create,
+        "k-approval-clock",
+        1_764_115_260_000,
+    );
+    approved_call.approved_intent = Some(intent.digest);
+    let err = commit_action(&mut cell, &catalog, &approved_call, &Allow).unwrap_err();
     assert!(
         matches!(err, ActionRefusal::UnsupportedEffect { ref action_id } if action_id == "test.payout.create"),
-        "expected UnsupportedEffect when preparing approval intent for clock-deriving action, got: {err:?}"
+        "expected UnsupportedEffect when releasing approved clock-deriving action, got: {err:?}"
     );
 }

@@ -209,7 +209,11 @@ pub(super) fn bind_approved_intent<X>(
     if capture.is_none() && call.approved_intent.is_none() {
         return Ok(());
     }
-    if super::post_slice::action_reads_clock(call.action) {
+    // ACTION-CLOCK-1 / APPROVAL-1: preparing intent still captures proposed
+    // writes so conditional `when` gates can evaluate whether the call is
+    // excluded, while executing under a bound `approved_intent` refuses any
+    // `clock`-deriving action whose digest would break as the clock advances.
+    if call.approved_intent.is_some() && super::post_slice::action_reads_clock(call.action) {
         return Err(ActionRefusal::UnsupportedEffect {
             action_id: call.action.action_id.clone(),
         });
