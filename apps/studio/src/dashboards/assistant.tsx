@@ -7,7 +7,7 @@ import { Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { CELL_FETCH_TIMEOUT_MS, dashboardField, defaultFetch, fetchWithTimeout, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope, type Tile } from "@/lib/definitions"
+import { CELL_FETCH_TIMEOUT_MS, dashboardField, defaultFetch, fetchWithTimeout, getDisplayedScope, scopeHeaders, studioScopeKey, type Dashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { usePinnedScope } from "@/lib/session"
 import { plainMetricLabel } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
@@ -199,7 +199,8 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
   const client = useQueryClient()
   const [request, setRequest] = useState("")
   const pinnedScope = usePinnedScope(dashboardId ?? "new")
-  const listing = useQuery({ queryKey: ["dashboard-proposals"], queryFn: ({ signal }) => call<Listing>("", { signal }, pinnedScope), retry: false })
+  const scopeKey = studioScopeKey(pinnedScope ?? null)
+  const listing = useQuery({ queryKey: ["dashboard-proposals", scopeKey], queryFn: ({ signal }) => call<Listing>("", { signal }, pinnedScope), retry: false })
   const ask = useMutation({
     mutationFn: (text: string) => call<Proposal>("", { method: "POST", body: JSON.stringify({ request: text, ...dashboardId ? { dashboardId } : {} }) }, pinnedScope),
     onSuccess: () => { setRequest(""); void client.invalidateQueries({ queryKey: ["dashboard-proposals"] }) },
@@ -212,12 +213,12 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
     <section className="space-y-4" aria-label="Dashboard assistant">
       <div className="space-y-3 rounded-2xl border bg-card p-3 shadow-elevation">
         <form className="group/prompt rounded-xl border bg-background transition-shadow focus-within:border-foreground/25 focus-within:shadow-sm"
-          onSubmit={(event) => { event.preventDefault(); if (request.trim() !== "" && !capped) ask.mutate(request.trim()) }}>
+          onSubmit={(event) => { event.preventDefault(); if (!ask.isPending && request.trim() !== "" && !capped) ask.mutate(request.trim()) }}>
           <p aria-hidden className="flex items-center gap-2 px-3 pt-2.5 text-body">
             <Mascot tone="ink" size={16} className="text-muted-foreground" />{dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"}
           </p>
           <Textarea value={request} maxLength={2000} rows={2} aria-label={dashboardId ? "Ask the assistant to change this dashboard" : "Ask for a dashboard"} placeholder={dashboardId ? "e.g. Show the trend as bars and add a total" : "Describe what you want to see"} onChange={(event) => setRequest(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && request.trim() !== "") ask.mutate(request.trim()) }}
+            onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !ask.isPending && request.trim() !== "" && !capped) { event.preventDefault(); ask.mutate(request.trim()) } }}
             className="min-h-16 resize-none border-0 bg-transparent px-3 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent" />
           <div className="flex items-center gap-2 px-3 pb-2.5">
             <p className="text-meta text-muted-foreground">The server proposes; its checker decides; nothing is saved until you accept.</p>

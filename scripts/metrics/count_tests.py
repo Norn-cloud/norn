@@ -41,13 +41,14 @@ def grep(repo: str, rev: str, pattern: str, fixed: bool = False) -> Counter:
     """Matches per crate directory: every occurrence of a fixed string, or every matching line."""
     mode = ["-o", "-F"] if fixed else ["-E"]
     out = subprocess.run(["git", "-C", repo, "grep", "--no-color", *mode, pattern, rev, "--",
-                          "crates/**/*.rs", "crates/*.rs"], capture_output=True, text=True)
+                          "crates/**/*.rs", "crates/*.rs"], capture_output=True, text=True, timeout=120)
     if out.returncode not in (0, 1):
         raise SystemExit(out.stderr)
     counts: Counter = Counter()
     for line in out.stdout.splitlines():
         path = line.split(":", 2)[1]
-        counts[path.split("/")[1]] += 1
+        parts = path.split("/")
+        counts[parts[1] if len(parts) >= 3 else ""] += 1
     return counts
 
 
@@ -59,8 +60,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--by-url", help="the run that counted")
     parser.add_argument("--ref", default="main")
     args = parser.parse_args(argv)
-    sha, date = subprocess.run(["git", "-C", args.repo, "show", "-s", "--format=%H%n%cI", args.rev],
-                               capture_output=True, text=True, check=True).stdout.split()
+    resolved = subprocess.run(
+        ["git", "-C", args.repo, "rev-parse", "--verify", "--end-of-options", f"{args.rev}^{{commit}}"],
+        capture_output=True, text=True, check=True, timeout=120,
+    ).stdout.strip()
+    sha, date = subprocess.run(["git", "-C", args.repo, "show", "-s", "--format=%H%n%cI", resolved],
+                               capture_output=True, text=True, check=True, timeout=120).stdout.split()
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     tests = grep(args.repo, sha, PATTERNS["test"], fixed=True)
     tokio, blocks = (grep(args.repo, sha, PATTERNS[k]) for k in ("tokio", "proptest"))

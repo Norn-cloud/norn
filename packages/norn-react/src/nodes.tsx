@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogBackdrop, AlertDialogContent, AlertDialogDescri
 import { Button } from "@ui-sdk/react/button"
 import { Dialog, DialogBackdrop, DialogContent, DialogDescription, DialogTitle } from "@ui-sdk/react/dialog"
 import { Input } from "@ui-sdk/react/input"
-import { useLayoutEffect, useRef, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, type ComponentType, type ReactNode } from "react"
 import { confirmMark, confirmReason, rowMark, valueMark, type ActionEffects, type MaskedProperty } from "./agent.ts"
 import { primitiveOf } from "./capabilities.ts"
 import { tierOf, type IslandRegistry, type IslandStates } from "./islands.ts"
@@ -42,6 +42,12 @@ const MUTED = "text-meta text-muted-foreground"
 
 type Doc = Readonly<Record<string, unknown>>
 const asDoc = (value: unknown): Doc | null => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Doc) : null)
+const own = (doc: Doc | null, key: string): unknown => (doc !== null && Object.hasOwn(doc, key) ? doc[key] : undefined)
+const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect
+const escapeSelector = (value: string): string =>
+  typeof CSS !== "undefined" && typeof CSS.escape === "function"
+    ? CSS.escape(value)
+    : value.replace(/["\\\]\[]/g, "\\$&")
 
 /** A value as the cell sent it: text (an exact number's text included) as is, anything else as JSON. */
 const shown = (value: unknown): string => (value === null || value === undefined ? "—" : typeof value === "string" ? value : JSON.stringify(value))
@@ -134,12 +140,12 @@ function CallLine({ state }: { readonly state: BindingCallState | undefined }) {
 
 /** One value with the mark the server's projection implies. */
 function Value({ record, propertyId }: { readonly record: Doc; readonly propertyId: string }) {
-  const masked = asDoc(record.masked)?.[propertyId] as MaskedProperty | undefined
+  const masked = own(asDoc(record.masked), propertyId) as MaskedProperty | undefined
   const withheld = record.withheld === true || (Array.isArray(record.withheldProperties) && record.withheldProperties.includes(propertyId))
   const mark = valueMark(masked, withheld)
   if ("data-agent-hidden" in mark) return <span {...mark} className={MUTED} data-value="withheld">Withheld</span>
-  const values = asDoc(record.values) ?? {}
-  return <span {...mark} data-value={masked === undefined ? "plain" : "masked"} data-mask={masked?.mode}>{shown(values[propertyId])}</span>
+  const values = asDoc(record.values)
+  return <span {...mark} data-value={masked === undefined ? "plain" : "masked"} data-mask={masked?.mode}>{shown(own(values, propertyId))}</span>
 }
 
 const fieldLabel = (scope: PageScope, ref: PropertyRef): string =>
@@ -186,11 +192,11 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
   const { on, waiting } = canAct(scope, node)
   const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, placementId, scope.actionEffects, scope.locale))
   if (node.component.kind === "control" && node.component.input === "text") {
-    const value = scope.runtime.snapshot.fields[node.nodeId]
+    const value = Object.hasOwn(scope.runtime.snapshot.fields, node.nodeId) ? scope.runtime.snapshot.fields[node.nodeId] : undefined
     return (
       <label className="grid gap-1" data-node={node.nodeId}>
         <span className={MUTED}>{label}</span>
-        <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground" disabled={!on} data-engine={waiting ? "waiting" : undefined}
+        <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" disabled={!on} data-engine={waiting ? "waiting" : undefined}
           defaultValue={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
       </label>
     )
@@ -220,18 +226,17 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   // Where focus returns when the machine closes the layer: what had it when the layer opened.
   const wasOpen = useRef(false)
   const returnTo = useRef<HTMLElement | null>(null)
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (open && !wasOpen.current && typeof document !== "undefined") {
-      // What had focus, or (an agent presses without focusing) the control whose event opened it.
-      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+      // What had focus before the layer opened (ignoring focus already moved inside the layer by
+      // child layout effects), or the control whose event opened it.
+      const candidate = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
+      const active = candidate !== null && candidate.closest("[data-layer]") === null ? candidate : null
       const raised = scope.raisedBy.current
-      const escaped = raised
-        ? (typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(raised) : raised.replace(/["\\]/g, "\\$&"))
-        : ""
-      returnTo.current = active ?? (escaped ? document.querySelector<HTMLElement>(`[data-node="${escaped}"]`) : null)
+      returnTo.current = active ?? (raised === null ? null : document.querySelector<HTMLElement>(`[data-node="${escapeSelector(raised)}"]`))
     }
     wasOpen.current = open
-  }, [open, scope])
+  }, [open, scope.raisedBy])
   const finalFocus = () => returnTo.current
   const options = {
     open,
@@ -276,26 +281,27 @@ function Island({ scope, node }: { readonly scope: PageScope; readonly node: Wid
   if (node.component.kind !== "catalog") return null
   const entryId = node.component.entry.entryId
   const entry = scope.ux.catalog?.find((candidate) => candidate.entryId === entryId)
-  const island = scope.islands[entryId] as ((input: unknown) => ReactNode) | undefined
+  const IslandComponent = (Object.hasOwn(scope.islands, entryId) ? scope.islands[entryId] : undefined) as ComponentType<Record<string, unknown>> | undefined
   const tier = entry === undefined ? null : tierOf(entry.trust)
-  if (island === undefined || tier === null) return null
+  if (IslandComponent === undefined || tier === null) return null
   const mark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale))
   const { props, waiting } = propsOf(scope, node)
   if (waiting.length > 0) {
-    return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="waiting" aria-busy="true" className="h-9 animate-pulse rounded-[var(--radius)] bg-muted" />
+    return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier} data-engine="waiting" aria-busy="true" className="h-9 animate-pulse rounded-[var(--radius)] bg-muted motion-reduce:animate-none" />
   }
-  const states: IslandStates = { reads: Object.fromEntries(scope.runtime.reads), calls: Object.fromEntries(scope.runtime.calls) }
-  const input = {
+  const input: Record<string, unknown> = {
     props,
     emit: (event: string, payload: Fields = {}) => raise(scope, node, payload, event),
-    ...(tier === "stateful" ? { states } : {}),
+    ...(tier === "stateful"
+      ? { states: { reads: Object.fromEntries(scope.runtime.reads), calls: Object.fromEntries(scope.runtime.calls) } satisfies IslandStates }
+      : {}),
   }
-  return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier}>{island(input)}</div>
+  return <div {...mark} data-node={node.nodeId} data-island={entryId} data-tier={tier}><IslandComponent {...input} /></div>
 }
 
 /** One node of the tree. */
 export function Node({ scope, node }: { readonly scope: PageScope; readonly node: WidgetNode }): ReactNode {
-  const children = node.children.map((child) => <Node key={child.nodeId} scope={scope} node={child} />)
+  const renderChildren = () => node.children.map((child) => <Node key={child.nodeId} scope={scope} node={child} />)
   const component = node.component
   switch (component.kind) {
     case "section": {
@@ -306,7 +312,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
         <section aria-label={label} data-node={node.nodeId} className="grid gap-3">
           <h2 className="text-heading font-medium">{label}</h2>
           {binding !== undefined && <ReadView state={read}>{(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={component.section.fields} />}</ReadView>}
-          {children}
+          {renderChildren()}
         </section>
       )
     }
@@ -315,7 +321,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       return (
         <div data-node={node.nodeId} className="grid gap-3">
           <ReadView state={scope.runtime.reads.get(component.dataBindingId)}>{(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={refs} />}</ReadView>
-          {children}
+          {renderChildren()}
         </div>
       )
     }
@@ -323,7 +329,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       return (
         <div data-node={node.nodeId} className="grid gap-3">
           <ReadView state={scope.runtime.reads.get(component.dataBindingId)}>{(document) => <ListRows scope={scope} document={document} refs={component.fields} />}</ReadView>
-          {children}
+          {renderChildren()}
         </div>
       )
     case "field": {
@@ -333,7 +339,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       return (
         <div data-node={node.nodeId} className="grid gap-1">
           <span className={MUTED}>{text(field?.label ?? { en: component.fieldId }, scope.locale)}</span>
-          {ref !== undefined && read?.kind === "ok" && <Value record={asDoc(read.document) ?? {}} propertyId={ref.propertyId} />}
+          {ref !== undefined && <ReadView state={read}>{(document) => <Value record={asDoc(document) ?? {}} propertyId={ref.propertyId} />}</ReadView>}
         </div>
       )
     }

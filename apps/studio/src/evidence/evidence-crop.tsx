@@ -220,7 +220,7 @@ export function EvidenceList({ refs, record, filter, actionFor }: { readonly ref
   const scopeKey = studioScopeKey(scope.data ?? null)
   const evidence = useQuery({ queryKey: ["evidence", scopeKey, refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
   // The first page decides: a cell that serves scanned pages serves them all.
-  const first = evidence.data?.find((item) => safeDirectEvidenceUri(item.documentUri) === null)
+  const first = evidence.data?.find((item) => safeDirectEvidenceUri(item.documentUri) === null && !/^https?:\/\//i.test(item.documentUri.trim()))
   const page = useQuery({ queryKey: ["scan", scopeKey, first?.documentUri], queryFn: () => readScan(first!.documentUri), retry: false, staleTime: 4 * 60_000, enabled: first !== undefined })
   if (refs.length === 0) return null
   if (evidence.isPending) return <p className="text-meta text-muted-foreground">Reading the evidence…</p>

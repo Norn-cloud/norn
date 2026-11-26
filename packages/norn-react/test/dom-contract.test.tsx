@@ -5,6 +5,7 @@
 // (it fails closed). Rendered to markup from the admitted fixture page and the stand-in's real
 // `NornObjectPage` envelope; nothing here decides what is masked.
 import { expect, test } from "bun:test"
+import { useState } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { ActionEffects } from "../src/agent.ts"
 import type { IslandRegistry } from "../src/islands.ts"
@@ -12,8 +13,9 @@ import { lazyEngine } from "../src/machine/evaluate.ts"
 import type { Machine } from "../src/machine/machine.ts"
 import { Node, type PageScope } from "../src/nodes.tsx"
 import type { BindingCallState, BindingReadState } from "../src/reads.ts"
+import { refusalsOf } from "../src/renderer.tsx"
 import type { MachineRuntime } from "../src/runtime.ts"
-import { nodesOf, type WidgetNode, type WidgetUx } from "../src/ux.ts"
+import { nodesOf, text, type WidgetNode, type WidgetUx } from "../src/ux.ts"
 import { ACTION, matrixArtifact } from "./fixtures/matrix-page.ts"
 
 const ux = matrixArtifact().payload.ux as WidgetUx
@@ -154,4 +156,34 @@ test("a control is enabled exactly when the current state can take its event", (
   // Disabled but focusable (`aria-disabled`), so focus never falls out of a waiting layer.
   expect(browsing).not.toMatch(/aria-disabled="true"/)
   expect(saving).toMatch(/aria-disabled="true"/)
+})
+
+test("prototype keys never bypass island refusals, locale text, or masking, and Hook-using islands render as components", () => {
+  const protoUx: WidgetUx = {
+    ...ux,
+    catalog: [{ entryId: "toString", label: { en: "Proto" }, trust: "opaque_island" }],
+  }
+  expect(refusalsOf(protoUx, {}, true)).toContain("island:toString")
+  expect(text({ en: "English" }, "toString")).toBe("English")
+
+  const protoRow = { id: "r1", values: { toString: "literal" }, masked: {} }
+  const fieldNode: WidgetNode = { nodeId: "proto-field", component: { kind: "field", fieldId: "f1" }, children: [] }
+  const fieldUx: WidgetUx = {
+    ...ux,
+    fields: [{ fieldId: "f1", label: { en: "Field" }, target: { kind: "property", property: { bindingId: "rec", propertyId: "toString" } } }],
+  }
+  const okMarkup = renderToStaticMarkup(<Node scope={scope("browsing", new Map([["rec", { kind: "ok", document: protoRow, freshness: "snapshot" }]]), new Map(), false, { ux: fieldUx })} node={fieldNode} />)
+  expect(okMarkup).toContain('data-value="plain"')
+  expect(okMarkup).not.toContain("data-agent-secret")
+
+  const pendingMarkup = renderToStaticMarkup(<Node scope={scope("browsing", new Map([["rec", { kind: "pending" }]]), new Map(), false, { ux: fieldUx })} node={fieldNode} />)
+  expect(pendingMarkup).toContain('data-read="pending"')
+
+  function HookIsland(input: { readonly props: Record<string, unknown> }) {
+    const [tag] = useState("hooked")
+    return <span>{`${tag}:${String(input.props.caption ?? "")}`}</span>
+  }
+  const islands: IslandRegistry = { "fixture-meter": HookIsland, "fixture-status": () => null }
+  const hookMarkup = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), false, { islands })} node={node("meter-node")} />)
+  expect(hookMarkup).toContain("hooked:Records read")
 })

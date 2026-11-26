@@ -152,17 +152,8 @@ export function useAccount() {
   return useQuery(accountQuery(client))
 }
 
-/**
- * Freeze the workspace scope that was active when a form/workflow opened (`key` changed), so a
- * background `/api/me` session refresh while the form stays open never shifts its target workspace.
- * Reads the cached session / displayed scope without issuing extra `/api/me` requests or requiring
- * a QueryClientProvider in isolated component tests.
- */
-export function usePinnedWorkspaceScope(key: unknown = true): WorkspaceScope | null | undefined {
-  const client = useContext(QueryClientContext)
-  const account = client?.getQueryData<Account | null>(SESSION)
-  const current = account !== undefined ? workspaceScopeFromAccount(account) : getDisplayedWorkspaceScope()
-  const pinnedRef = useRef<WorkspaceScope | null | undefined>(undefined)
+function usePinned<T>(key: unknown, current: T | undefined): T | undefined {
+  const pinnedRef = useRef<T | undefined>(undefined)
   const prevKeyRef = useRef<unknown>(Symbol("uninitialized"))
   const active = key !== null && key !== false
   if (!Object.is(key, prevKeyRef.current)) {
@@ -174,21 +165,21 @@ export function usePinnedWorkspaceScope(key: unknown = true): WorkspaceScope | n
   return pinnedRef.current
 }
 
+/**
+ * Freeze the workspace scope that was active when a form/workflow opened (`key` changed), so a
+ * background `/api/me` session refresh while the form stays open never shifts its target workspace.
+ * Reads the cached session / displayed scope without issuing extra `/api/me` requests or requiring
+ * a QueryClientProvider in isolated component tests.
+ */
+export function usePinnedWorkspaceScope(key: unknown = true): WorkspaceScope | null | undefined {
+  const account = useContext(QueryClientContext)?.getQueryData<Account | null>(SESSION)
+  return usePinned(key, account !== undefined ? workspaceScopeFromAccount(account) : getDisplayedWorkspaceScope())
+}
+
 /** Like `usePinnedWorkspaceScope`, requiring a provisioned cell environment (`StudioScope`). */
 export function usePinnedScope(key: unknown = true): StudioScope | null | undefined {
-  const client = useContext(QueryClientContext)
-  const account = client?.getQueryData<Account | null>(SESSION)
-  const current = account !== undefined ? scopeFromAccount(account) : getDisplayedScope()
-  const pinnedRef = useRef<StudioScope | null | undefined>(undefined)
-  const prevKeyRef = useRef<unknown>(Symbol("uninitialized"))
-  const active = key !== null && key !== false
-  if (!Object.is(key, prevKeyRef.current)) {
-    prevKeyRef.current = key
-    pinnedRef.current = active ? current : undefined
-  } else if (active && pinnedRef.current === undefined && current !== undefined) {
-    pinnedRef.current = current
-  }
-  return pinnedRef.current
+  const account = useContext(QueryClientContext)?.getQueryData<Account | null>(SESSION)
+  return usePinned(key, account !== undefined ? scopeFromAccount(account) : getDisplayedScope())
 }
 
 /** The header carrying a sign-up invitation (worker/auth.ts SIGNUP_INVITE_HEADER). */
