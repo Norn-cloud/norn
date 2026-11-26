@@ -1231,6 +1231,37 @@ test("inspectTarGzArchive refuses tar header precedence differentials and ambigu
     expect(() => inspectTarGzArchive(nulSizeArchive, "leading-nul-size.tar.gz")).toThrow(
       "invalid tar entry size",
     )
+
+    // UTF-8 BOM and Unicode NBSP in size fields: GNU tar rejects them while TextDecoder/.trim() would accept.
+    const badRawSizes: ReadonlyArray<{ readonly label: string; readonly bytes: Uint8Array }> = [
+      {
+        label: "bom-size.tar.gz",
+        bytes: new Uint8Array([0xef, 0xbb, 0xbf, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x00, 0x00]),
+      },
+      {
+        label: "nbsp-prefix-size.tar.gz",
+        bytes: new Uint8Array([0xc2, 0xa0, 0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0x00, 0x00]),
+      },
+      {
+        label: "nbsp-suffix-size.tar.gz",
+        bytes: new Uint8Array([0x30, 0x30, 0x30, 0x30, 0x31, 0x30, 0x30, 0x30, 0xc2, 0xa0, 0x00, 0x00]),
+      },
+      {
+        label: "newline-prefix-size.tar.gz",
+        bytes: enc.encode("\n0000001000\0"),
+      },
+    ]
+    for (const bad of badRawSizes) {
+      const buf = new Uint8Array(smuggledTar)
+      buf.set(bad.bytes, 124)
+      buf.fill(0x20, 148, 156)
+      let sum = 0
+      for (let i = 0; i < 512; i++) sum += buf[i]!
+      buf.set(enc.encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148)
+      const p = join(root, bad.label)
+      writeFileSync(p, Bun.gzipSync(buf))
+      expect(() => inspectTarGzArchive(p, bad.label)).toThrow("invalid tar entry size")
+    }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

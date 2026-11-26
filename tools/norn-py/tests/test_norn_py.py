@@ -33,7 +33,7 @@ import tempfile
 import types
 import unittest
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from unittest import mock
@@ -1871,12 +1871,38 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
 
         trap = _Trap()
         holder = types.SimpleNamespace(trap=trap)
+
+        class _EvilEnum(Enum):
+            A = 1
+
+            def __add__(self, _other: object) -> object:
+                trap.called = True
+                return lit(1)
+
+            def __eq__(self, _other: object) -> bool:
+                trap.called = True
+                return True
+
+        class _EvilMix:
+            def __sub__(self, _other: object) -> object:
+                trap.called = True
+                return lit(1)
+
+        class _MixedEnum(_EvilMix, Enum):
+            B = 2
+
+        class _CleanStatus(StrEnum):
+            DRAFT = "draft"
+
         bad_callbacks = [
             lambda s: trap.eq(s.hours),  # noqa: E731
             lambda s: holder.trap.is_null(),  # noqa: E731
             lambda s: (trap + s.hours).eq(Decimal("1")),  # noqa: E731
             lambda s: (Decimal(trap + 1) + s.hours).eq(Decimal("1")),  # noqa: E731
             lambda s: (trap == s.hours).eq(True),  # noqa: E731
+            lambda s: (_EvilEnum.A + s.hours).eq(1),  # noqa: E731
+            lambda s: (_EvilEnum.A == s.hours).eq(True),  # noqa: E731
+            lambda s: (_MixedEnum.B - s.hours).eq(1),  # noqa: E731
         ]
         for cb in bad_callbacks:
             with self.assertRaises(NornTracingError) as c_attr:
@@ -1884,7 +1910,7 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
             self.assertEqual(c_attr.exception.code, "NORN-PY-FORBIDDEN-CALL")
         self.assertFalse(trap.called)
 
-        # Symbolic receivers (parameter attributes, comparisons, arithmetic, lit(), module Expr) still pass.
+        # Symbolic receivers (parameter attributes, comparisons, arithmetic, lit(), module Expr, clean StrEnum) still pass.
         thresh = lit(5)
         good_callbacks = [
             lambda s: s.hours.eq(Decimal("8")),  # noqa: E731
@@ -1892,6 +1918,7 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
             lambda s: (1 + 2 + s.hours).eq(10),  # noqa: E731
             lambda s: (s.hours > Decimal("0")).eq(True),  # noqa: E731
             lambda s: (s.hours > 0).is_not_null(),  # noqa: E731
+            lambda s: (s.status == _CleanStatus.DRAFT).eq(True),  # noqa: E731
             lambda s: (s.hours + thresh).eq(10),  # noqa: E731
             lambda s: thresh.eq(s.hours),  # noqa: E731
             lambda s: lit("ok").eq(s.status),  # noqa: E731

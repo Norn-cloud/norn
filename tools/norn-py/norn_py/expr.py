@@ -1452,6 +1452,40 @@ def _resolve_callback_name(
     return False, None
 
 
+_SAFE_ENUM_BASES: frozenset[type[object]] = frozenset(
+    {enum.StrEnum, enum.IntEnum, enum.ReprEnum, enum.Enum, str, int, object}
+)
+_SAFE_ENUM_CLASS_DUNDERS: frozenset[str] = frozenset(
+    {
+        "__annotations__",
+        "__doc__",
+        "__firstlineno__",
+        "__format__",
+        "__module__",
+        "__new__",
+        "__qualname__",
+        "__static_attributes__",
+        "__str__",
+    }
+)
+
+
+def _is_plain_safe_enum_member(value: object, attr: str) -> bool:
+    """Admit only plain stdlib Enum classes with no custom metaclass, mixins, or operator overrides."""
+    if type(value) is not enum.EnumType or not isinstance(value, type):
+        return False
+    if not set(value.__mro__[1:]).issubset(_SAFE_ENUM_BASES):
+        return False
+    if any(k.startswith("__") and k not in _SAFE_ENUM_CLASS_DUNDERS for k in value.__dict__):
+        return False
+    member_map = type.__getattribute__(value, "_member_map_")
+    if not isinstance(member_map, dict) or attr not in member_map:
+        return False
+    member = member_map[attr]
+    raw_val = object.__getattribute__(member, "_value_")
+    return type(raw_val) in (str, int, bool)
+
+
 def _is_safe_receiver_subexpr(
     node: ast.AST,
     param_name: str,
@@ -1476,12 +1510,7 @@ def _is_safe_receiver_subexpr(
         ) and _is_safe_receiver_subexpr(node.right, param_name, closure_map, fn_globals)
     if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
         found, value = _resolve_callback_name(node.value.id, closure_map, fn_globals)
-        return (
-            found
-            and isinstance(value, type)
-            and issubclass(value, enum.Enum)
-            and node.attr in value.__members__
-        )
+        return found and _is_plain_safe_enum_member(value, node.attr)
     if isinstance(node, ast.Name):
         found, value = _resolve_callback_name(node.id, closure_map, fn_globals)
         return found and (value is None or type(value) in (bool, int, str, Decimal))

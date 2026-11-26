@@ -344,18 +344,30 @@ function parseTarOctal(buf: Uint8Array, start: number, length: number): number |
     }
     return 0
   }
-  let nul = start
-  while (nul < end && buf[nul] !== 0) nul++
-  for (let i = nul + 1; i < end; i++) {
+  // Parse raw ASCII bytes directly (never TextDecoder / JS .trim(), which strip
+  // UTF-8 BOM and Unicode whitespace like U+00A0 that GNU tar rejects).
+  let i = start
+  while (i < end && buf[i] === 0x20) i++
+  let value = 0
+  let digits = 0
+  while (i < end) {
     const b = buf[i]!
-    // Allow trailing NUL padding and the POSIX checksum "\0 " terminator only.
-    if (b !== 0 && b !== 0x20) return undefined
+    if (b >= 0x30 && b <= 0x37) {
+      value = value * 8 + (b - 0x30)
+      if (!Number.isSafeInteger(value)) return undefined
+      digits++
+      i++
+    } else {
+      break
+    }
   }
-  const raw = UTF8_DECODER.decode(buf.subarray(start, nul)).trim()
-  if (!raw) return 0
-  if (!/^[0-7]+$/.test(raw)) return undefined
-  const value = Number.parseInt(raw, 8)
-  return Number.isSafeInteger(value) ? value : undefined
+  while (i < end) {
+    const b = buf[i]!
+    // Allow trailing ASCII spaces before NUL, and the POSIX checksum "\0 " terminator.
+    if (b !== 0 && b !== 0x20) return undefined
+    i++
+  }
+  return value
 }
 
 function parseTarSize(buf: Uint8Array, start: number, length: number): number | undefined {
