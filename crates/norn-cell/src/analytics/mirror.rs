@@ -3,6 +3,8 @@
 //! own value commitments (`_norn_fact_values`), checked against its property
 //! and sent typed; the engine never reads the cell.
 
+use std::collections::BTreeMap;
+
 use norn_checker::entity_instance::EffectiveProperty;
 use norn_checker::metric::compute::contribution::instant_key;
 use norn_ir::RuntimeValue;
@@ -138,7 +140,11 @@ impl<E: SqlEngine> CellStore<E> {
                 // Cut at the last whole commit; a single larger commit goes whole.
                 let seq = |row: Option<&Vec<crate::engine::SqlValue>>| -> Result<u64, CellError> {
                     let row = row.ok_or(CellError::OutOfRange("delta row"))?;
-                    to_u64(SqlRow(row.clone()).get(4)?, "commit")
+                    let value = match row.get(4) {
+                        Some(crate::engine::SqlValue::Integer(value)) => *value,
+                        _ => return Err(CellError::Engine("delta row commit_seq is not an integer".to_owned())),
+                    };
+                    to_u64(value, "commit")
                 };
                 let last = seq(rows.get(limit))?;
                 let first = seq(rows.first())?;
@@ -150,10 +156,16 @@ impl<E: SqlEngine> CellStore<E> {
                     )?;
                     through = first;
                 } else {
-                    rows.retain(|row| SqlRow(row.clone()).get::<i64>(4).is_ok_and(|seq| u64::try_from(seq).is_ok_and(|seq| seq < last)));
+                    rows.retain(|row| {
+                        matches!(row.get(4), Some(crate::engine::SqlValue::Integer(seq)) if u64::try_from(*seq).is_ok_and(|seq| seq < last))
+                    });
                     through = last.saturating_sub(1);
                 }
             }
+            let tables_by_name: BTreeMap<&str, &TableSchema> =
+                tables.iter().map(|table| (table.name.as_str(), table)).collect();
+            let mut props_by_root: BTreeMap<&str, BTreeMap<&str, &EffectiveProperty>> =
+                BTreeMap::new();
             let mut out = Vec::with_capacity(rows.len());
             for row in rows {
                 let row = SqlRow(row);
@@ -164,7 +176,7 @@ impl<E: SqlEngine> CellStore<E> {
                 let commit_seq = to_u64(row.get(4)?, "fact commit")?;
                 let encoded: String = row.get(5)?;
                 let hash: String = row.get(6)?;
-                let Some(table) = tables.iter().find(|t| t.name == root) else {
+                let Some(table) = tables_by_name.get(root.as_str()).copied() else {
                     continue;
                 };
                 let snapshot = crate::history::decode_snapshot(world, &root, &id, version, &encoded, &hash)?;
@@ -176,17 +188,27 @@ impl<E: SqlEngine> CellStore<E> {
                     Some(record) if record.version == version => snapshot.values.map(|_| record.values),
                     Some(_) | None => snapshot.values,
                 };
-                let contract = model.query_contract(&root)?;
+                let properties = match props_by_root.entry(table.name.as_str()) {
+                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        let contract = model.query_contract(table.name.as_str())?;
+                        entry.insert(
+                            contract
+                                .properties
+                                .iter()
+                                .map(|property| (property.id.as_str(), property))
+                                .collect(),
+                        )
+                    }
+                };
                 let mut bad = false;
                 let values = values.map(|values| {
                     table
                         .columns
                         .iter()
                         .map(|column| {
-                            let stored = contract
-                                .properties
-                                .iter()
-                                .find(|p| p.id.as_str() == column.id)
+                            let stored = properties
+                                .get(column.id.as_str())
                                 .and_then(|property| stored(column, property, values.get(&column.id)));
                             stored.unwrap_or_else(|| {
                                 bad = true;
