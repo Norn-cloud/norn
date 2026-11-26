@@ -448,16 +448,36 @@ fn a_law_refusing_a_fact_is_reported() {
 /// and nullable `unit`/`currency` fields.
 #[test]
 fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
-    let base: Vec<Value> = [
+    let mut base: Vec<Value> = [
+        include_str!("../../../../registry/privacy/artifacts/privacy.markings.entity.json"),
         include_str!("../../../../registry/core/artifacts/core.value_types.entity.json"),
         include_str!("../../../../registry/core/artifacts/std.value_types.entity.json"),
         include_str!("../../../../registry/core/artifacts/core.Agent.interface.json"),
         include_str!("../../../../registry/core/artifacts/core.Resource.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.EconomicEvent.interface.json"),
         include_str!("../../../../registry/core/artifacts/core.Commitment.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.Hold.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.LedgerEffect.interface.json"),
+        include_str!("../../../../registry/core/artifacts/core.Claim.interface.json"),
     ]
     .into_iter()
     .map(|raw| serde_json::from_str(raw).expect("core artifact"))
     .collect();
+    base.push(json!({
+        "irVersion": "0.1", "kind": "entity",
+        "artifactId": "test.core_markings.entity", "version": "0.1.0",
+        "namespace": "test", "name": "core_markings", "lifecycle": "active",
+        "scope": {}, "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
+        "payload": {
+            "entityVersion": "2.0",
+            "markings": [
+                { "id": "pii.financial", "label": "Financial PII", "category": "pii.financial", "severity": "high", "mask": { "kind": "refuse" } },
+                { "id": "confidential.finance", "label": "Confidential finance", "category": "confidential.finance", "severity": "high", "mask": { "kind": "refuse" } },
+                { "id": "pii.health", "label": "Health PII", "category": "pii.health", "severity": "critical", "mask": { "kind": "refuse" } }
+            ]
+        }
+    }));
 
     let make_source = |extra_invariants: Value| -> DefinitionSource {
         let party = json!({

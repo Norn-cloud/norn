@@ -300,7 +300,7 @@ fn invariants_nullables_and_exact_decimal_match_native_commit() {
                 ]
             }
         },
-        "provenance": { "source": "authored", "sourcePath": "tests/lifecycle_correspondence" },
+        "provenance": { "source": "system", "sourcePath": "tests/lifecycle_correspondence" },
         "scope": {},
         "version": "0.1.0"
     });
@@ -361,7 +361,7 @@ fn invariants_nullables_and_exact_decimal_match_native_commit() {
                 }]
             }
         },
-        "provenance": { "source": "authored", "sourcePath": "tests/lifecycle_correspondence" },
+        "provenance": { "source": "system", "sourcePath": "tests/lifecycle_correspondence" },
         "scope": {},
         "version": "0.1.0"
     });
