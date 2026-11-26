@@ -1159,7 +1159,7 @@ fn composed_evidence_action(precondition: &str) -> ActionRoot {
 fn seed_composed_cell(
     path: &Path,
     definitions: &[ObjectTypeDef],
-) -> (Cell, Vec<norn_ir::quantity_ledger::BalanceVersion>) {
+) -> (Cell, Vec<norn_ir::quantity_ledger::QuantityBalanceVersion>) {
     use norn_ir::quantity_ledger::{QuantityOperation, QuantityResolution};
     let mut cell = open(path, definitions, &[]);
     cell.commit(CellCommit {
@@ -1237,7 +1237,14 @@ fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically()
             "reservation_id": "r", "posting_id": "shipment", "balance_versions": stale_fences}),
         "q-stale",
     );
-    assert!(commit_action(&mut cell, &catalog, &stale_call, &members).is_err());
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &stale_call, &members),
+        Err(norn_kernel::ActionRefusal::Decision(
+            norn_kernel::DecisionRefusal::Host(CellError::Quantity(
+                norn_kernel::quantity::QuantityError::StaleVersion { .. }
+            ))
+        ))
+    ));
     assert_eq!(cell.store().read().dump().unwrap(), baseline);
 
     // 2. Classified precondition read refuses `createLinks` and posts zero quantity.
@@ -1267,6 +1274,7 @@ fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically()
     );
     let ActionOutcome::Committed {
         receipt: first_receipt,
+        record: first_record,
         ..
     } = commit_action(&mut cell, &catalog, &valid_call, &members).unwrap()
     else {
@@ -1303,10 +1311,13 @@ fn stamped_create_with_reference_reads_and_quantity_effect_composes_atomically()
             .unwrap()
             .is_some()
     );
-    assert!(matches!(
-        commit_action(&mut reopened, &catalog, &valid_call, &members).unwrap(),
-        ActionOutcome::Replayed { .. }
-    ));
+    let ActionOutcome::Replayed {
+        record: replayed_record,
+    } = commit_action(&mut reopened, &catalog, &valid_call, &members).unwrap()
+    else {
+        panic!("expected exact idempotent replay after reopen");
+    };
+    assert_eq!(replayed_record, first_record);
     assert_eq!(reopened.store().read().dump().unwrap(), committed_dump);
     assert!(
         first_receipt
