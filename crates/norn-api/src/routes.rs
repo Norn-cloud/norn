@@ -624,7 +624,11 @@ mod tests {
         use crate::builtin_pages::{PAGES, RECORD_PAGE_ID};
         let host = host().with_authorizer(Fixture);
         let served = get_defs(&host, &query(), Some("reviewer@demo")).unwrap();
-        assert_eq!(served.artifacts.len(), 1, "the workspace's own revision is unchanged");
+        assert_eq!(
+            served.artifacts.len(),
+            1,
+            "the workspace's own revision is unchanged"
+        );
         let [page] = served.builtins.as_slice() else {
             panic!("expected one built-in page, got {}", served.builtins.len());
         };
@@ -640,10 +644,16 @@ mod tests {
             envelope,
             serde_json::from_str::<serde_json::Value>(&committed).unwrap()
         );
-        assert_eq!(page.sha256, crate::uploads::sha256_hex(committed.as_bytes()));
+        assert_eq!(
+            page.sha256,
+            crate::uploads::sha256_hex(committed.as_bytes())
+        );
         assert_eq!(PAGES.len(), 1);
         let wire: serde_json::Value = serde_json::to_value(&served).unwrap();
-        assert_eq!(wire["builtins"][0]["artifact"]["artifactId"], RECORD_PAGE_ID);
+        assert_eq!(
+            wire["builtins"][0]["artifact"]["artifactId"],
+            RECORD_PAGE_ID
+        );
         assert_eq!(wire["builtins"][0]["sha256"], page.sha256.as_str());
     }
     /// A workspace that installed its own record page is served that one, and no built-in.
@@ -653,12 +663,11 @@ mod tests {
         let host = host_with(&[SOURCE, page.trim()]).with_authorizer(Fixture);
         let served = get_defs(&host, &query(), Some("reviewer@demo")).unwrap();
         assert_eq!(served.artifacts.len(), 2);
-        assert!(
-            served
-                .artifacts
-                .iter()
-                .any(|artifact| artifact.get().contains(crate::builtin_pages::RECORD_PAGE_ID))
-        );
+        assert!(served.artifacts.iter().any(|artifact| {
+            artifact
+                .get()
+                .contains(crate::builtin_pages::RECORD_PAGE_ID)
+        }));
         assert!(served.builtins.is_empty(), "the installed page wins");
     }
     #[test]

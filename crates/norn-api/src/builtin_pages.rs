@@ -109,7 +109,11 @@ mod tests {
         for (id, bytes) in PAGES {
             let envelope: ArtifactEnvelope =
                 serde_json::from_str(bytes).unwrap_or_else(|error| panic!("{id}: {error}"));
-            assert_eq!(envelope.artifact_id.as_str(), *id, "{id} is embedded under its own id");
+            assert_eq!(
+                envelope.artifact_id.as_str(),
+                *id,
+                "{id} is embedded under its own id"
+            );
             let findings = norn_ui_checker::check_artifact_set(
                 std::slice::from_ref(&envelope),
                 &EntityArtifactSetContext {
@@ -129,17 +133,31 @@ mod tests {
         let mut committed: Vec<(String, String)> = std::fs::read_dir(&dir)
             .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
             .map(|entry| {
-                let path = entry.map(|entry| entry.path()).unwrap_or_else(|error| panic!("{error}"));
-                let id = path.file_stem().and_then(|stem| stem.to_str()).map(str::to_owned);
-                let bytes = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-                (id.unwrap_or_else(|| panic!("{} has no id", path.display())), bytes)
+                let path = entry
+                    .map(|entry| entry.path())
+                    .unwrap_or_else(|error| panic!("{error}"));
+                let id = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(str::to_owned);
+                let bytes = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                (
+                    id.unwrap_or_else(|| panic!("{} has no id", path.display())),
+                    bytes,
+                )
             })
             .collect();
         committed.sort();
-        let mut embedded: Vec<(String, String)> =
-            PAGES.iter().map(|(id, bytes)| ((*id).to_owned(), (*bytes).to_owned())).collect();
+        let mut embedded: Vec<(String, String)> = PAGES
+            .iter()
+            .map(|(id, bytes)| ((*id).to_owned(), (*bytes).to_owned()))
+            .collect();
         embedded.sort();
-        assert_eq!(embedded, committed, "the embedded pages drifted from registry/studio/artifacts");
+        assert_eq!(
+            embedded, committed,
+            "the embedded pages drifted from registry/studio/artifacts"
+        );
     }
 
     fn raw(json: &str) -> Box<RawValue> {
@@ -160,13 +178,21 @@ mod tests {
         assert_eq!(builtin.len(), 1);
         assert!(builtin[0].contains(RECORD_PAGE_ID));
         let mut installed = others.to_vec();
-        installed.push(raw(&format!(r#"{{"artifactId":"{RECORD_PAGE_ID}","kind":"widget"}}"#)));
-        assert!(served_beside(&installed).is_empty(), "the workspace's own page wins");
+        installed.push(raw(&format!(
+            r#"{{"artifactId":"{RECORD_PAGE_ID}","kind":"widget"}}"#
+        )));
+        assert!(
+            served_beside(&installed).is_empty(),
+            "the workspace's own page wins"
+        );
     }
 
     #[test]
     fn the_digest_is_the_embedded_bytes() {
         let page = served(&[]).unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(page[0].sha256, crate::uploads::sha256_hex(PAGES[0].1.as_bytes()));
+        assert_eq!(
+            page[0].sha256,
+            crate::uploads::sha256_hex(PAGES[0].1.as_bytes())
+        );
     }
 }
