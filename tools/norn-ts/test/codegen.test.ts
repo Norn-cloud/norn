@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import ts from "typescript"
 import { CodegenError, generateTypes, readArtifactSet } from "../src/codegen.ts"
-import { mayReadActor } from "../src/zen-reads.ts"
+import { compileDefinitions } from "../src/compiler/definitions.ts"
+import { mayReadActor, mayReadClock } from "../src/zen-reads.ts"
 import { admit, compilePack } from "../src/pack.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 
@@ -364,3 +365,77 @@ test("CODEGEN-TS-ISLANDS: a widget's islands are typed, tiered and digested; a s
   }
   expect(() => generateTypes([protoRequired])).toThrow(CodegenError)
 })
+
+test("CODEGEN-TS-8: canonical derive defaults inputRequired to true, rejects malformed steps, handles multi-step and clock derivations, and types all definition fixtures", () => {
+  const parcelWithDerive = (derive: readonly unknown[]) => {
+    const set = structuredClone(compiled("tracking").artifacts) as Array<{ artifactId: string; payload: any }>
+    const action = set.find((a) => a.artifactId === "tracking.parcel.register.action")!
+    action.payload.derive = derive
+    return set
+  }
+  const inputOf = (derive: readonly unknown[]) => {
+    const generated = generateTypes(parcelWithDerive(derive), { base: catalogs() })
+    return generated.slice(generated.indexOf("readonly input: {"), generated.indexOf("readonly output: {"))
+  }
+
+  // Canonical IR omits `inputRequired` when true (`ActionInputDerivation`); codegen treats omitted as required.
+  expect(inputOf([{ field: "label", expression: "trim(input.label)" }])).toContain('readonly "label": string')
+  expect(inputOf([{ field: "label", expression: "trim(input.label)", inputRequired: true }])).toContain('readonly "label": string')
+  expect(inputOf([{ field: "label", expression: 'input.label ?? input.parcel_id', inputRequired: false }])).toContain('readonly "label"?: string')
+
+  // Multi-step derivations targeting the same field: if any step requires input, the caller must supply it;
+  // if any `inputRequired: false` step reads actor/clock, the caller may not supply it.
+  expect(inputOf([
+    { field: "label", expression: "trim(input.label)" },
+    { field: "label", expression: 'input.label ?? input.parcel_id', inputRequired: false },
+  ])).toContain('readonly "label": string')
+  expect(inputOf([
+    { field: "label", expression: 'input.label ?? input.parcel_id', inputRequired: false },
+    { field: "label", expression: "upper(input.label)" },
+  ])).toContain('readonly "label": string')
+  expect(inputOf([
+    { field: "registered_by", expression: "actor.subjectId", inputRequired: false },
+    { field: "registered_by", expression: "upper(input.registered_by)", inputRequired: false },
+  ])).not.toContain('"registered_by"')
+
+  // Malformed derivation steps fail closed with CodegenError.
+  refused(parcelWithDerive([{ field: "label", expression: "trim(input.label)", inputRequired: null }]), "a derivation is not `{ field, expression, inputRequired? }`")
+  refused(parcelWithDerive([{ field: "label", expression: "trim(input.label)", inputRequired: "false" }]), "a derivation is not `{ field, expression, inputRequired? }`")
+  refused(parcelWithDerive([{ field: "label", expression: "trim(input.label)", extra: true }]), "a derivation is not `{ field, expression, inputRequired? }`")
+
+  // ACTION-CLOCK-1: derivations reading the server commit clock without caller input are omitted from caller input.
+  for (const expression of [
+    "clock.nowIso", "clock.nowMillis", "clock", "$root.clock.nowIso", "`${clock.nowIso}`",
+    "input.lines[clock.index]", "input.label ?? @",
+  ]) {
+    expect([expression, mayReadClock(expression)]).toEqual([expression, true])
+    expect(inputOf([{ field: "label", expression, inputRequired: false }])).not.toContain('"label"')
+  }
+  for (const expression of [
+    'input.label ?? "clock"', "input.clock", "{ clock: input.label }", "clock_id", "input.label ?? input.parcel_id",
+  ]) {
+    expect([expression, mayReadClock(expression)]).toEqual([expression, false])
+    expect(inputOf([{ field: "label", expression, inputRequired: false }])).toContain('readonly "label"?: string')
+  }
+
+  // Every authored definition fixture (including `action-preconditions.source.ts`, whose `derive` omits `inputRequired`)
+  // must compile and generate TypeScript types cleanly over the core registry catalogs.
+  const core = readArtifactSet(CORE)
+  const defsDir = join(ROOT, "fixtures/definitions")
+  const sources = readdirSync(defsDir).filter((name) => name.endsWith(".source.ts")).sort()
+  expect(sources).toContain("action-preconditions.source.ts")
+  for (const file of sources) {
+    const compiledDef = compileDefinitions(join(defsDir, file), {
+      scope: { orgId: "org_demo", environmentId: "dev" },
+      sourcePath: `tools/norn-ts/fixtures/definitions/${file}`,
+    })
+    if (!compiledDef.ok) throw new Error(`${file}: ${JSON.stringify(compiledDef.diagnostics)}`)
+    const generated = generateTypes(compiledDef.artifacts, { base: core })
+    expect(generated.startsWith("// Generated by `norn codegen --ts`.")).toBe(true)
+    if (file === "action-preconditions.source.ts") {
+      const actionSlice = generated.slice(generated.indexOf('"fashion.season.create": {'))
+      expect(actionSlice).toContain('readonly "code": string')
+      expect(actionSlice).toContain('readonly "brand"?: string')
+    }
+  }
+}, 30_000)

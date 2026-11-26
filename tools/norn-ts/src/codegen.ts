@@ -24,7 +24,7 @@ import { join, resolve } from "node:path"
 import { canonicalJson, type Json } from "./canonical.ts"
 import { CodegenError, collectIslands } from "./codegen-islands.ts"
 import { isArtifact, readArtifacts } from "./pack.ts"
-import { mayReadActor } from "./zen-reads.ts"
+import { mayReadActor, mayReadClock } from "./zen-reads.ts"
 
 export { CodegenError }
 
@@ -263,12 +263,20 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
 }
 
 /**
- * ACTION-ACTOR-1 (`norn_kernel::actor_derived_fields`): a derivation the caller may not pre-empt
- * (`inputRequired: false`) whose expression may read the verified actor, as `mayReadActor` decides
- * it on the expression's parsed ZEN AST (`./zen-reads.ts`): a literal `actor…` path, a `$root`, a
- * closure (or its pointer) or an assignment anywhere, or an expression that does not parse. Such a
- * field is not the caller's to send: the kernel refuses any caller value for it.
+ * ACTION-ACTOR-1 (`norn_kernel::actor_derived_fields`) and ACTION-CLOCK-1
+ * (`norn_kernel::clock_derived_fields`): a derivation the caller may not pre-empt
+ * (`inputRequired: false`) whose expression may read the verified actor or server commit clock,
+ * as `mayReadActor` / `mayReadClock` decide it on the expression's parsed ZEN AST
+ * (`./zen-reads.ts`): a literal `actor…` / `clock…` path, a `$root`, a closure (or its pointer)
+ * or an assignment anywhere, or an expression that does not parse. Such a field is not the
+ * caller's to send: the kernel refuses any caller value for it.
+ *
+ * `inputRequired` defaults to `true` and is omitted from canonical IR
+ * (`norn_ir::ActionInputDerivation`). If any step targeting a field requires caller input,
+ * the field remains required even when another step for the same field has `inputRequired: false`.
  */
+
+const DERIVE_MEMBERS = new Set(["field", "expression", "inputRequired"])
 
 function callerInput(payload: Node, at: string): string {
   const schema = payload["inputSchema"]
@@ -276,15 +284,26 @@ function callerInput(payload: Node, at: string): string {
   if (schema["type"] !== "object") throw new CodegenError(`${at}#/inputSchema`, "an action input is not a closed object")
   const derive = payload["derive"] ?? []
   if (!Array.isArray(derive)) throw new CodegenError(`${at}#/derive`, "`derive` is not a list")
-  const omit = new Set<string>(), optional = new Set<string>()
+  const omit = new Set<string>(), optional = new Set<string>(), requiredByDerive = new Set<string>()
   derive.forEach((step: unknown, index) => {
-    if (!record(step) || typeof step["field"] !== "string" || typeof step["expression"] !== "string" || typeof step["inputRequired"] !== "boolean") {
-      throw new CodegenError(`${at}#/derive/${index}`, "a derivation is not `{ field, expression, inputRequired }`")
+    if (
+      !record(step)
+      || Object.keys(step).some((member) => !DERIVE_MEMBERS.has(member))
+      || typeof step["field"] !== "string"
+      || typeof step["expression"] !== "string"
+      || (step["inputRequired"] !== undefined && typeof step["inputRequired"] !== "boolean")
+    ) {
+      throw new CodegenError(`${at}#/derive/${index}`, "a derivation is not `{ field, expression, inputRequired? }`")
     }
-    if (step["inputRequired"]) return
-    if (mayReadActor(step["expression"])) omit.add(step["field"])
+    const inputRequired = step["inputRequired"] ?? true
+    if (inputRequired) {
+      requiredByDerive.add(step["field"])
+      return
+    }
+    if (mayReadActor(step["expression"]) || mayReadClock(step["expression"])) omit.add(step["field"])
     else optional.add(step["field"])
   })
+  for (const field of requiredByDerive) optional.delete(field)
   return schemaType(schema, `${at}#/inputSchema`, 2, "input", true, omit, optional)
 }
 

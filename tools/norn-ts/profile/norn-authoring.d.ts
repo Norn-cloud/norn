@@ -592,13 +592,21 @@ declare module "@norn/authoring" {
         readonly targetType: TypeDefinition<unknown> | string
         readonly targetIdField: keyof I["Type"] & string
       }>
-      /** Connector commands the action enqueues (ERPNext write-back through perform); `name` and `fields` values are ZEN Expressions. */
+      /** Connector commands the action enqueues (ERPNext write-back through perform); `name`, `expectedModified`, `fields`, and `childMerges` expressions are ZEN Expressions. */
       readonly commands?: ReadonlyArray<{
         readonly connector: string
-        readonly operation: "submit" | "create" | "update"
+        readonly operation: "submit" | "create" | "update" | "cancel"
         readonly doctype: string
         readonly name?: Expression<string>
         readonly fields?: { readonly [field: string]: Expression<unknown> }
+        readonly expectedModified?: Expression<string>
+        readonly childMerges?: ReadonlyArray<{
+          readonly field: string
+          readonly ownershipField: string
+          readonly ownershipValue: Expression<string>
+          readonly rowKeyField: string
+          readonly rows: Expression<unknown>
+        }>
       }>
       /** Pinned facts-only synchronous RuleIR writer; execution requires the matching host profile. */
       readonly synchronousRule?: DecisionDefinition | { readonly artifactId: string; readonly version: string }
@@ -628,6 +636,15 @@ declare module "@norn/authoring" {
        * (`artifact_set.action.independent_actor`), not by TypeScript.
        */
       readonly independentOf?: ReadonlyArray<string>
+      /** Closed UI-facing effect declarations not derivable from writes/commands (`ActionUiEffects`). */
+      readonly uiEffects?: {
+        readonly effectsVersion?: "0.1"
+        readonly irreversible?: boolean
+        readonly destructive?: boolean
+        readonly money?: ReadonlyArray<string>
+        readonly errorCodes?: ReadonlyArray<string>
+        readonly resultCodes?: ReadonlyArray<string>
+      }
     }
 
     /** An ActionIR action. */

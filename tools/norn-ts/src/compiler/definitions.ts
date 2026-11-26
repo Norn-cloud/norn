@@ -1343,7 +1343,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "quantityEffect", "compensation", "dependencies", "access", "fromCaller", "independentOf", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "quantityEffect", "compensation", "dependencies", "access", "fromCaller", "independentOf", "uiEffects", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string, temporalWire = false): S.ObjectSchema => {
       const node = need(key)
@@ -1469,6 +1469,7 @@ class DefinitionCompiler {
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
       ...(members.has("independentOf") ? { independentOf: this.strings(need("independentOf")) } : {}),
+      ...(members.has("uiEffects") ? { uiEffects: this.actionUiEffects(need("uiEffects")) } : {}),
       at: this.at(call),
     })
   }
@@ -1572,11 +1573,37 @@ class DefinitionCompiler {
     throw new CompileError("NORN-FLOW-EXPRESSION", "raw ZEN is not typed authoring; use Norn.expression(Schema, input => ...) or the explicit unsafeZen escape", input)
   }
 
+  private actionUiEffects(input: ts.Expression): A.ActionUiEffects {
+    const m = this.closedRecord(
+      input,
+      ["effectsVersion", "irreversible", "destructive", "money", "errorCodes", "resultCodes"],
+      [],
+    )
+    const versionNode = m.get("effectsVersion")
+    const effectsVersion = versionNode ? this.string(versionNode) : "0.1"
+    if (effectsVersion !== "0.1") {
+      throw new CompileError("NORN-FLOW-LITERAL", 'uiEffects.effectsVersion must be "0.1"', versionNode!)
+    }
+    const irreversible = m.get("irreversible")
+    const destructive = m.get("destructive")
+    const money = m.get("money")
+    const errorCodes = m.get("errorCodes")
+    const resultCodes = m.get("resultCodes")
+    return {
+      effectsVersion: "0.1",
+      ...(irreversible ? { irreversible: this.boolean(irreversible) } : {}),
+      ...(destructive ? { destructive: this.boolean(destructive) } : {}),
+      ...(money ? { money: this.strings(money) } : {}),
+      ...(errorCodes ? { errorCodes: this.strings(errorCodes) } : {}),
+      ...(resultCodes ? { resultCodes: this.strings(resultCodes) } : {}),
+    }
+  }
+
   private command(input: ts.Expression): A.ActionCommand {
-    const m = this.closedRecord(input, ["connector", "operation", "doctype", "name", "fields"], ["connector", "operation", "doctype"])
+    const m = this.closedRecord(input, ["connector", "operation", "doctype", "name", "fields", "expectedModified", "childMerges"], ["connector", "operation", "doctype"])
     const operation = this.string(m.get("operation")!)
     if (operation !== "submit" && operation !== "create" && operation !== "update" && operation !== "cancel") throw new CompileError("NORN-FLOW-LITERAL", "a command operation is submit, create, update, or cancel", m.get("operation")!)
-    const name = m.get("name"), fields = m.get("fields")
+    const name = m.get("name"), fields = m.get("fields"), expectedModified = m.get("expectedModified"), childMergesNode = m.get("childMerges")
     const values: Record<string, string> = {}
     if (fields) {
       for (const [field, value] of this.record(fields)) {
@@ -1584,12 +1611,26 @@ class DefinitionCompiler {
         values[field] = this.zen(value)
       }
     }
+    const childMerges = childMergesNode
+      ? this.list(childMergesNode).map((entry): A.ActionCommandChildMerge => {
+          const cm = this.closedRecord(entry, ["field", "ownershipField", "ownershipValue", "rowKeyField", "rows"], ["field", "ownershipField", "ownershipValue", "rowKeyField", "rows"])
+          return {
+            field: this.string(cm.get("field")!),
+            ownershipField: this.string(cm.get("ownershipField")!),
+            ownershipValue: this.zen(cm.get("ownershipValue")!),
+            rowKeyField: this.string(cm.get("rowKeyField")!),
+            rows: this.zen(cm.get("rows")!),
+          }
+        })
+      : undefined
     return {
       connector: this.string(m.get("connector")!),
       operation,
       doctype: this.string(m.get("doctype")!),
       ...(name ? { name: this.zen(name) } : {}),
       ...(fields ? { fields: values } : {}),
+      ...(expectedModified ? { expectedModified: this.zen(expectedModified) } : {}),
+      ...(childMerges && childMerges.length > 0 ? { childMerges } : {}),
     }
   }
 
