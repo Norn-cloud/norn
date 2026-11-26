@@ -204,13 +204,13 @@ mod tests {
         let addr = listener.local_addr()?;
         let fetches = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&fetches);
-        let served = document.clone();
+        let body = document.clone();
         let app = axum::Router::new().fallback(move || {
             let counted = Arc::clone(&counted);
-            let served = served.clone();
+            let body = body.clone();
             async move {
                 counted.fetch_add(1, Ordering::SeqCst);
-                (StatusCode::OK, served).into_response()
+                (StatusCode::OK, body).into_response()
             }
         });
         let server = tokio::spawn(async move {
@@ -253,11 +253,11 @@ mod tests {
         assert!(keys.refresh_due_with(now_secs));
 
         let http = outbound_client()?;
-        let fetched = fetch_jwks(&http, url, false).await?;
+        let refreshed = fetch_jwks(&http, url, false).await?;
         assert_eq!(fetches.load(Ordering::SeqCst), 1);
-        assert!(fetched.at < future_ms);
+        assert!(refreshed.at < future_ms);
 
-        keys.replace_jwks_at(&fetched.text, fetched.at / 1000, now_secs)
+        keys.replace_jwks_at(&refreshed.text, refreshed.at / 1000, now_secs)
             .map_err(|refused| anyhow!(refused.message))?;
         assert!(keys.principal_with(&token, &scope, now_secs).is_some());
         assert!(keys.principal_with(&token, &scope, now_secs).is_some());
