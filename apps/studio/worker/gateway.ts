@@ -72,7 +72,7 @@ export class Gateway {
     const { fetcher } = this
     let response: Response
     try {
-      response = await fetcher(`${this.origin}${path}`, { method, headers, signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS), ...body === undefined ? {} : { body: JSON.stringify(body) } })
+      response = await fetcher(`${this.origin}${path}`, { method, headers, redirect: "manual", signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS), ...body === undefined ? {} : { body: JSON.stringify(body) } })
     } catch (error) {
       const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
       throw new GatewayError(timedOut ? 504 : 502, timedOut ? "GatewayTimeout" : "GatewayUnreachable", timedOut ? `The gateway did not answer within ${GATEWAY_TIMEOUT_MS / 1000} s.` : "The gateway could not be reached.")

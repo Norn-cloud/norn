@@ -142,7 +142,14 @@ export function createHost(options: HostOptions): Host {
 export function frameDocument(moduleSource: string): string {
   const csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:"
   const bridge = `
-    const ready = new Promise((resolve) => addEventListener("message", (event) => { if (event.data === "norn.port") resolve(event.ports[0]) }, { once: true }));
+    const ready = new Promise((resolve) => {
+      const onPort = (event) => {
+        if (event.data !== "norn.port") return;
+        removeEventListener("message", onPort);
+        resolve(event.ports[0]);
+      };
+      addEventListener("message", onPort);
+    });
     window.norn = {
       async connect(render) {
         const port = await ready;
@@ -150,7 +157,7 @@ export function frameDocument(moduleSource: string): string {
         return { emit: (eventId, payload = {}, to) => port.postMessage({ type: "emit", eventId, payload, ...(to ? { to } : {}) }) };
       },
     };`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bridge}</script></head><body><script type="module">${moduleSource.replaceAll("</script", "<\\/script")}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bridge}</script></head><body><script type="module">${moduleSource.replace(/<\/script/gi, "<\\/script")}</script></body></html>`
 }
 
 /** A mounted frame: `show` sends the component a new view; `unmount` removes it. */
@@ -166,21 +173,28 @@ export function mountFrame(container: HTMLElement, moduleSource: string, host: H
   frame.setAttribute("title", title)
   frame.srcdoc = frameDocument(moduleSource)
   const channel = new MessageChannel()
-  channel.port1.onmessage = (event) => host.receive(event.data)
+  const listeners = new AbortController()
   let connected = false
+  let unmounted = false
+  channel.port1.onmessage = (event) => { if (!unmounted) host.receive(event.data) }
   frame.addEventListener("load", () => {
+    if (unmounted) return
     // The sandboxed frame has an opaque origin, so the port is handed over with "*"; it carries no data.
     frame.contentWindow?.postMessage("norn.port", "*", [channel.port2])
     connected = true
     channel.port1.postMessage(host.view())
-  }, { once: true })
+  }, { once: true, signal: listeners.signal })
   container.replaceChildren(frame)
   return {
     show: (view) => {
-      if (connected) channel.port1.postMessage(view)
+      if (connected && !unmounted) channel.port1.postMessage(view)
     },
     unmount: () => {
+      if (unmounted) return
+      unmounted = true
+      listeners.abort()
       channel.port1.close()
+      if (!connected) channel.port2.close()
       frame.remove()
     },
   }
