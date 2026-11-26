@@ -17,9 +17,7 @@ export type Check =
   | { readonly kind: "enum"; readonly name: string; readonly values: readonly string[] }
   /** An object with any members (`additionalProperties: true` or `{}`). */
   | { readonly kind: "record" }
-  /** `type: [X, "null"]`. */
   | { readonly kind: "nullable"; readonly of: Check }
-  /** `type: "null"`. */
   | { readonly kind: "null" }
   | { readonly kind: "array"; readonly of: Check }
   /** Exactly one member admits the value. */

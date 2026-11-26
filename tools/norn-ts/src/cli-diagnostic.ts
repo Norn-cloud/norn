@@ -39,7 +39,6 @@ export type Finding = DiagnosticV2 & { readonly source?: SourceLocation; readonl
 
 let registry: ReadonlyMap<string, RegisteredCode> | undefined
 
-/** Every registered diagnostic code, by code. */
 export function registeredCodes(): ReadonlyMap<string, RegisteredCode> {
   if (!registry) {
     const snapshot = JSON.parse(readFileSync(join(TOOL_ROOT, "generated/diagnostics.json"), "utf8")) as { codes: RegisteredCode[] }

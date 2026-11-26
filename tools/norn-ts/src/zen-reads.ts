@@ -495,7 +495,7 @@ const OPENING = new Set([..."+-*/%^!<>=&|?:"].map((c) => c.charCodeAt(0)))
  * `bounds::lexical`, on the raw UTF-8 source with no string tracking, as the kernel scans it: the
  * source size, bracket nesting, and the count of characters and keywords that open a parser level.
  */
-function lexicalBounds(source: string): boolean {
+export function lexicalBounds(source: string): boolean {
   const bytes = utf8.encode(source)
   if (bytes.length > LIMITS.sourceBytes) return false
   let brackets = 0, levels = 0, word = ""
