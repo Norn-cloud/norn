@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Compute usage events meter an admitted non-currency compute or storage UCUM unit.",
+  "name": "Compute usage events meter an admitted compute or storage UCUM unit rather than a currency.",
   "namespace": "compute",
   "payload": {
     "id": "compute.UsageEvent.metered_in_compute_unit",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/compute-units/units.ts"
     },
-    "rationale": "Compute usage events meter an admitted non-currency compute or storage UCUM unit.",
+    "rationale": "Compute usage events meter an admitted compute or storage UCUM unit rather than a currency.",
     "response": {
-      "expression": "(self.currency == null) and (((((((((self.unit == '{token}') or (self.unit == '{input_token}')) or (self.unit == '{output_token}')) or (self.unit == '{request}')) or (self.unit == '{vCPU}.s')) or (self.unit == '{vCPU}.h')) or (self.unit == '{GPU}.s')) or (self.unit == '{GPU}.h')) or (self.unit == 'GiBy'))",
+      "expression": "(self.currency == null) and (self.unit in ['{token}', '{input_token}', '{output_token}', '{request}', '{vCPU}.s', '{vCPU}.h', '{GPU}.s', '{GPU}.h', 'GiBy'])",
       "kind": "predicate"
     },
     "scope": {

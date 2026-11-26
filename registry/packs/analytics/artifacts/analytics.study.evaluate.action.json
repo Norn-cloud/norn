@@ -4,11 +4,19 @@
   "irVersion": "0.1",
   "kind": "action",
   "lifecycle": "active",
-  "name": "Evaluate a preregistered study",
+  "name": "Evaluate a preregistered study from a verified diagnostic receipt",
   "namespace": "analytics",
   "payload": {
     "actionId": "analytics.study.evaluate",
     "effectProgram": {
+      "acceptReceipt": {
+        "digestProperty": "receipt_digest",
+        "manifestDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "referenceField": "receipt",
+        "resultBindings": {
+          "diagnostics_passed": "diagnostics_passed"
+        }
+      },
       "entityArtifactId": "analytics.Study.entity",
       "entityArtifactVersion": "0.1.0",
       "kind": "fire_transition",
@@ -23,10 +31,14 @@
       "properties": {
         "id": {
           "type": "string"
+        },
+        "receipt": {
+          "type": "string"
         }
       },
       "required": [
-        "id"
+        "id",
+        "receipt"
       ],
       "type": "object"
     },
@@ -47,7 +59,7 @@
       "orgId",
       "environmentId"
     ],
-    "title": "Evaluate a preregistered study",
+    "title": "Evaluate a preregistered study from a verified diagnostic receipt",
     "writes": [
       {
         "change": "modified",

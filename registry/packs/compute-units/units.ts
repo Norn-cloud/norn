@@ -10,7 +10,7 @@
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Resource, EconomicEvent, Hold, Commitment } from "../../core/src/rea.ts"
+import { Agent, Resource, EconomicEvent, Hold, Commitment } from "../../core/src/rea.ts"
 
 // ---------------------------------------------------------------- Unit catalogs
 
@@ -268,8 +268,27 @@ export const tokenPoolNegativeAvailableViolated = Norn.example("token pool with 
   expect: "violated",
 })
 
+export const ComputeAgent = Norn.type({
+  name: "compute.Agent",
+  role: "thing",
+  title: "Compute agent",
+  version: "0.1.0",
+  description:
+    "Concrete accountable compute provider, customer, or workload actor implementing core.Agent.",
+  implements: [Agent],
+  properties: Schema.Struct({
+    id: Schema.String,
+    display_name: Norn.ref("core.display_name"),
+    kind: Schema.Literals(["person", "organization", "system"]),
+  }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+
 const UsagePriceInput = Schema.Struct({
   id: Schema.String,
+  provider_id: Schema.String,
+  receiver_id: Schema.String,
+  resource_id: Schema.String,
   action: Schema.Literals(["consume"]),
   occurred_at: Schema.String,
   quantity: Norn.decimal(6),
@@ -304,9 +323,9 @@ export const UsageEvent = Norn.type({
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   links: [
-    { id: "provider", description: "Compute provider delivering capacity.", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
-    { id: "receiver", description: "Customer or workload consuming compute.", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
-    { id: "resource", description: "Compute resource or token pool consumed.", target: "core.Resource", cardinality: { to: "one", from: "many", required: true } },
+    { id: "provider", description: "Compute provider delivering capacity.", target: ComputeAgent, cardinality: { to: "one", from: "many", required: true } },
+    { id: "receiver", description: "Customer or workload consuming compute.", target: ComputeAgent, cardinality: { to: "one", from: "many", required: true } },
+    { id: "resource", description: "Compute resource or token pool consumed.", target: TokenPool, cardinality: { to: "one", from: "many", required: true } },
     { id: "fulfils", description: "Optional capacity commitment fulfilled by this usage.", target: "core.Commitment", cardinality: { to: "one", from: "many" } },
     { id: "reverses", description: "Prior posted usage event reversed by this correction.", target: "core.EconomicEvent", cardinality: { to: "one", from: "one" } },
   ],
@@ -316,16 +335,8 @@ export const usageEventComputeUnit = Norn.law("metered_in_compute_unit", {
   on: UsageEvent,
   must: (self) =>
     self.currency === null &&
-    (self.unit === "{token}" ||
-      self.unit === "{input_token}" ||
-      self.unit === "{output_token}" ||
-      self.unit === "{request}" ||
-      self.unit === "{vCPU}.s" ||
-      self.unit === "{vCPU}.h" ||
-      self.unit === "{GPU}.s" ||
-      self.unit === "{GPU}.h" ||
-      self.unit === "GiBy"),
-  because: "Compute usage events meter an admitted non-currency compute or storage UCUM unit.",
+    ["{token}", "{input_token}", "{output_token}", "{request}", "{vCPU}.s", "{vCPU}.h", "{GPU}.s", "{GPU}.h", "GiBy"].includes(self.unit),
+  because: "Compute usage events meter an admitted compute or storage UCUM unit rather than a currency.",
 })
 
 // Scoped to `{token}` events so GPU/storage events are not forced to bill per `{token}`.
@@ -354,6 +365,23 @@ export const usageEventComputeUnitHolds = Norn.example("GPU-second usage event s
     billed_amount: 0,
   },
   expect: "holds",
+})
+
+export const usageEventMassUnitViolated = Norn.example("mass-unit usage event violates metered_in_compute_unit", {
+  of: usageEventComputeUnit,
+  given: {
+    id: "usage-mass-001",
+    action: "consume",
+    occurred_at: "2026-10-26T12:00:00Z",
+    quantity: 100,
+    unit: "g",
+    currency: null,
+    billing_currency: "USD",
+    token_quantity: 0,
+    rate_per_token: 0,
+    billed_amount: 0,
+  },
+  expect: "violated",
 })
 
 export const usageEventTokenPricingHolds = Norn.example("token usage event with exact Rate<USD,{token}> * Quantity<{token}> holds", {
@@ -417,6 +445,11 @@ export const PriceComputeUsage = Norn.action({
   ledgered: true,
   input: UsagePriceInput,
   output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "provider", type: ComputeAgent, key: { property: { from: "input", property: "provider_id" } } },
+    { name: "receiver", type: ComputeAgent, key: { property: { from: "input", property: "receiver_id" } } },
+    { name: "resource", type: TokenPool, key: { property: { from: "input", property: "resource_id" } } },
+  ],
   derive: [
     {
       field: "billed_amount",
@@ -425,6 +458,11 @@ export const PriceComputeUsage = Norn.action({
     },
   ],
   preconditions: [Norn.expression(UsagePriceInput, (input) => input.token_quantity > 0)],
+  createLinks: [
+    { link: "provider", targetType: ComputeAgent, targetIdField: "provider_id" },
+    { link: "receiver", targetType: ComputeAgent, targetIdField: "receiver_id" },
+    { link: "resource", targetType: TokenPool, targetIdField: "resource_id" },
+  ],
   writes: [{ type: UsageEvent, change: "created" }],
   effect: { kind: "upsert_input_object", type: UsageEvent, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
@@ -451,8 +489,8 @@ export const QuotaHold = Norn.type({
     status: "open",
   },
   links: [
-    { id: "resource", description: "Compute resource or token pool locked by this hold.", target: "core.Resource", cardinality: { to: "one", from: "many", required: true } },
-    { id: "holder", description: "Agent or workload holding the quota reservation.", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "resource", description: "Compute resource or token pool locked by this hold.", target: TokenPool, cardinality: { to: "one", from: "many", required: true } },
+    { id: "holder", description: "Agent or workload holding the quota reservation.", target: ComputeAgent, cardinality: { to: "one", from: "many", required: true } },
     { id: "secures", description: "Optional capacity commitment secured by this hold.", target: "core.Commitment", cardinality: { to: "one", from: "many" } },
   ],
   lifecycles: [
@@ -497,8 +535,8 @@ export const CapacityCommitment = Norn.type({
     status: "requested",
   },
   links: [
-    { id: "provider", description: "Cloud or AI provider promising capacity.", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
-    { id: "receiver", description: "Customer receiving reserved capacity.", target: "core.Agent", cardinality: { to: "one", from: "many", required: true } },
+    { id: "provider", description: "Cloud or AI provider promising capacity.", target: ComputeAgent, cardinality: { to: "one", from: "many", required: true } },
+    { id: "receiver", description: "Customer receiving reserved capacity.", target: ComputeAgent, cardinality: { to: "one", from: "many", required: true } },
     { id: "resource", description: "Compute resource promised by this commitment.", target: "core.Resource", cardinality: { to: "one", from: "many" } },
   ],
   lifecycles: [
@@ -520,4 +558,247 @@ export const CapacityCommitment = Norn.type({
       ],
     },
   ],
+})
+
+export const RegisterComputeUnit = Norn.action({
+  id: "units.compute.register",
+  title: "Register a compute UCUM unit definition",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    code: Schema.Literals([
+      "ms", "us", "ns", "bit", "By", "KiBy", "MiBy", "GiBy", "TiBy",
+      "kBy", "MBy", "GBy", "TBy", "{token}", "{input_token}", "{output_token}",
+      "{request}", "{vCPU}.s", "{vCPU}.h", "{GPU}.s", "{GPU}.h", "{seat}",
+    ]),
+    dimension: Schema.Literals(["time", "information", "compute_count", "compute_time"]),
+    base_code: Schema.Literals([
+      "s", "By", "{token}", "{input_token}", "{output_token}",
+      "{request}", "{vCPU}.s", "{GPU}.s", "{seat}",
+    ]),
+    numerator: Schema.Int,
+    denominator: Schema.Int,
+    standard: Schema.Literals(["ucum-2.2", "iec-80000-13"]),
+  }),
+  output: Schema.Struct({ code: Schema.String }),
+  writes: [{ type: ComputeUnitDefinition, change: "created" }],
+  effect: { kind: "upsert_input_object", type: ComputeUnitDefinition, objectIdField: "code", writeMode: { kind: "create_only" } },
+})
+
+export const RegisterPhysicalUnit = Norn.action({
+  id: "units.physical.register",
+  title: "Register a physical UCUM unit definition",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    code: Schema.Literals(["m", "cm", "mm", "km", "m2", "L", "mL", "m3", "J", "kW.h"]),
+    dimension: Schema.Literals(["length", "area", "volume", "energy"]),
+    base_code: Schema.Literals(["m", "m2", "m3", "J"]),
+    numerator: Schema.Int,
+    denominator: Schema.Int,
+    standard: Schema.Literals(["ucum-2.2", "iso-80000"]),
+  }),
+  output: Schema.Struct({ code: Schema.String }),
+  writes: [{ type: PhysicalUnitDefinition, change: "created" }],
+  effect: { kind: "upsert_input_object", type: PhysicalUnitDefinition, objectIdField: "code", writeMode: { kind: "create_only" } },
+})
+
+export const CreateTokenPool = Norn.action({
+  id: "compute.token_pool.create",
+  title: "Create a compute token pool",
+  version: "0.1.0",
+  dependencies: [{ artifactId: "units.compute.UnitDefinition.entity", version: "0.1.0", kind: "entity" }],
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    id: Schema.String,
+    resource_code: Schema.String,
+    quantity: Norn.decimal(6),
+    unit: Schema.String,
+    currency: Schema.NullOr(Schema.String),
+    valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
+    available: Norn.decimal(0, { unit: { system: "ucum", code: "{token}" }, additivity: { kind: "semi_additive" } }),
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: TokenPool, change: "created" }],
+  effect: { kind: "upsert_input_object", type: TokenPool, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
+const PlaceQuotaHoldInput = Schema.Struct({
+  id: Schema.String,
+  resource_id: Schema.String,
+  holder_id: Schema.String,
+  quantity: Norn.decimal(6, { unit: { system: "ucum", code: "{token}" } }),
+  unit: Schema.NullOr(Schema.String),
+  currency: Schema.NullOr(Schema.String),
+  expires_at: Schema.NullOr(Norn.timestamp("utc")),
+  quota_scope: Schema.Literals(["rate_limit", "budget_lock", "gpu_reservation"]),
+})
+
+export const PlaceQuotaHold = Norn.action({
+  id: "compute.quota_hold.place",
+  title: "Place a compute quota hold",
+  version: "0.1.0",
+  dependencies: [{ artifactId: "units.compute.UnitDefinition.entity", version: "0.1.0", kind: "entity" }],
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: PlaceQuotaHoldInput,
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "resource", type: TokenPool, key: { property: { from: "input", property: "resource_id" } } },
+    { name: "holder", type: ComputeAgent, key: { property: { from: "input", property: "holder_id" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        input: PlaceQuotaHoldInput,
+        slice: Schema.Struct({
+          resource: Schema.Struct({
+            unit: Schema.String,
+            available: Norn.decimal(0),
+          }),
+        }),
+      }),
+      (ctx) =>
+        ctx.input.quantity > 0 &&
+        ctx.input.currency === null &&
+        ctx.input.unit !== null &&
+        (ctx.input.unit ?? "") === ctx.slice.resource.unit &&
+        ctx.input.quantity <= ctx.slice.resource.available,
+      { root: "context" },
+    ),
+  ],
+  createLinks: [
+    { link: "resource", targetType: TokenPool, targetIdField: "resource_id" },
+    { link: "holder", targetType: ComputeAgent, targetIdField: "holder_id" },
+  ],
+  writes: [{ type: QuotaHold, change: "created" }],
+  effect: { kind: "upsert_input_object", type: QuotaHold, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
+export const ConsumeQuotaHold = Norn.action({
+  id: "compute.quota_hold.consume",
+  title: "Consume a compute quota hold",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: QuotaHold, change: "modified" }],
+  effect: { kind: "fire_transition", type: QuotaHold, objectIdField: "id", lifecycle: "status", transition: "consume" },
+})
+
+export const ReleaseQuotaHold = Norn.action({
+  id: "compute.quota_hold.release",
+  title: "Release a compute quota hold",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: QuotaHold, change: "modified" }],
+  effect: { kind: "fire_transition", type: QuotaHold, objectIdField: "id", lifecycle: "status", transition: "release" },
+})
+
+export const ExpireQuotaHold = Norn.action({
+  id: "compute.quota_hold.expire",
+  title: "Expire a compute quota hold",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: QuotaHold, change: "modified" }],
+  effect: { kind: "fire_transition", type: QuotaHold, objectIdField: "id", lifecycle: "status", transition: "expire" },
+})
+
+export const CreateCapacityCommitment = Norn.action({
+  id: "compute.capacity_commitment.create",
+  title: "Request a compute capacity commitment",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    id: Schema.String,
+    provider_id: Schema.String,
+    receiver_id: Schema.String,
+    due_at: Norn.timestamp("utc"),
+    quantity: Norn.decimal(6),
+    unit: Schema.NullOr(Schema.String),
+    currency: Schema.NullOr(Schema.String),
+    plan_kind: Schema.Literals(["reserved_gpu_hours", "monthly_token_plan", "storage_tier"]),
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "provider", type: ComputeAgent, key: { property: { from: "input", property: "provider_id" } } },
+    { name: "receiver", type: ComputeAgent, key: { property: { from: "input", property: "receiver_id" } } },
+  ],
+  createLinks: [
+    { link: "provider", targetType: ComputeAgent, targetIdField: "provider_id" },
+    { link: "receiver", targetType: ComputeAgent, targetIdField: "receiver_id" },
+  ],
+  writes: [{ type: CapacityCommitment, change: "created" }],
+  effect: { kind: "upsert_input_object", type: CapacityCommitment, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
+export const PromiseCapacity = Norn.action({
+  id: "compute.capacity_commitment.promise",
+  title: "Promise a compute capacity commitment",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: CapacityCommitment, change: "modified" }],
+  effect: { kind: "fire_transition", type: CapacityCommitment, objectIdField: "id", lifecycle: "status", transition: "promise" },
+})
+
+export const FulfilCapacity = Norn.action({
+  id: "compute.capacity_commitment.fulfil",
+  title: "Fulfil a compute capacity commitment",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: CapacityCommitment, change: "modified" }],
+  effect: { kind: "fire_transition", type: CapacityCommitment, objectIdField: "id", lifecycle: "status", transition: "fulfil" },
+})
+
+export const CancelCapacity = Norn.action({
+  id: "compute.capacity_commitment.cancel",
+  title: "Cancel a compute capacity commitment",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: CapacityCommitment, change: "modified" }],
+  effect: { kind: "fire_transition", type: CapacityCommitment, objectIdField: "id", lifecycle: "status", transition: "cancel" },
+})
+
+export const BreachCapacity = Norn.action({
+  id: "compute.capacity_commitment.breach",
+  title: "Record a breach of a compute capacity commitment",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String }),
+  output: Schema.Struct({ id: Schema.String }),
+  writes: [{ type: CapacityCommitment, change: "modified" }],
+  effect: { kind: "fire_transition", type: CapacityCommitment, objectIdField: "id", lifecycle: "status", transition: "breach" },
 })

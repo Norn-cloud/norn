@@ -37,7 +37,7 @@
           },
           "description": "Accountable reviewer who authorized or withheld publication.",
           "id": "reviewer",
-          "target": "core.Agent"
+          "target": "analytics.Analyst"
         }
       ],
       "name": "analytics.Publication",

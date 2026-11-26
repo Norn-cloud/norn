@@ -15,6 +15,23 @@
   "namespace": "compute",
   "payload": {
     "actionId": "compute.usage.price",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "provider_id",
+        "targetType": "compute.Agent"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiver_id",
+        "targetType": "compute.Agent"
+      },
+      {
+        "link": "resource",
+        "targetIdField": "resource_id",
+        "targetType": "compute.TokenPool"
+      }
+    ],
     "derive": [
       {
         "expression": "input.rate_per_token * input.token_quantity",
@@ -74,6 +91,9 @@
         "occurred_at": {
           "type": "string"
         },
+        "provider_id": {
+          "type": "string"
+        },
         "quantity": {
           "nornType": {
             "kind": "decimal",
@@ -96,6 +116,12 @@
           },
           "type": "number"
         },
+        "receiver_id": {
+          "type": "string"
+        },
+        "resource_id": {
+          "type": "string"
+        },
         "token_quantity": {
           "nornType": {
             "additivity": {
@@ -116,6 +142,9 @@
       },
       "required": [
         "id",
+        "provider_id",
+        "receiver_id",
+        "resource_id",
         "action",
         "occurred_at",
         "quantity",
@@ -147,6 +176,38 @@
     "scopeRequired": [
       "orgId",
       "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "provider_id"
+          }
+        },
+        "name": "provider",
+        "objectType": "compute.Agent"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiver_id"
+          }
+        },
+        "name": "receiver",
+        "objectType": "compute.Agent"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resource_id"
+          }
+        },
+        "name": "resource",
+        "objectType": "compute.TokenPool"
+      }
     ],
     "title": "Price a compute token usage event",
     "writes": [

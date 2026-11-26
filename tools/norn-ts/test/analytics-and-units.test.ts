@@ -41,12 +41,15 @@ function loadCoreBase(): any[] {
   const core = join(REPO, "registry/core/artifacts")
   const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
   return [
-    ...physics.map((name) => `core.${name}.interface.json`),
-    "core.value_types.entity.json",
-    "std.value_types.entity.json",
-    "core.units.json",
-    "core.time.json",
-  ].map((name) => JSON.parse(readFileSync(join(core, name), "utf8")))
+    ...[
+      ...physics.map((name) => `core.${name}.interface.json`),
+      "core.value_types.entity.json",
+      "std.value_types.entity.json",
+      "core.units.json",
+      "core.time.json",
+    ].map((name) => JSON.parse(readFileSync(join(core, name), "utf8"))),
+    JSON.parse(readFileSync(join(REPO, "registry/privacy/artifacts/privacy.markings.entity.json"), "utf8")),
+  ]
 }
 
 describe("compute-units and analytics packs", () => {

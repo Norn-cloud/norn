@@ -77,7 +77,7 @@
           },
           "description": "Accountable analyst or investigator owning this preregistered study.",
           "id": "owner",
-          "target": "core.Agent"
+          "target": "analytics.Analyst"
         },
         {
           "cardinality": {
@@ -113,6 +113,14 @@
         },
         {
           "id": "method_digest",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "default": "pending",
+          "id": "receipt_digest",
           "type": {
             "kind": "ref",
             "name": "core.code"

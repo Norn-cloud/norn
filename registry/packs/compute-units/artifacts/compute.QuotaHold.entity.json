@@ -85,7 +85,7 @@
           },
           "description": "Compute resource or token pool locked by this hold.",
           "id": "resource",
-          "target": "core.Resource"
+          "target": "compute.TokenPool"
         },
         {
           "cardinality": {
@@ -95,7 +95,7 @@
           },
           "description": "Agent or workload holding the quota reservation.",
           "id": "holder",
-          "target": "core.Agent"
+          "target": "compute.Agent"
         },
         {
           "cardinality": {

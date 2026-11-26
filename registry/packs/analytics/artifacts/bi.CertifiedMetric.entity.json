@@ -68,7 +68,7 @@
           },
           "description": "Accountable owner of this certified metric contract.",
           "id": "owner",
-          "target": "core.Agent"
+          "target": "analytics.Analyst"
         }
       ],
       "name": "bi.CertifiedMetric",

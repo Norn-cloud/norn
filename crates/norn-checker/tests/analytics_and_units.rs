@@ -65,7 +65,7 @@ fn load_pack(pack: &str) -> Vec<ArtifactEnvelope> {
 
 fn core_base_values() -> Vec<Value> {
     let core = repo_root().join("registry/core/artifacts");
-    [
+    let mut values: Vec<Value> = [
         "core.Agent.interface.json",
         "core.AgentRole.interface.json",
         "core.Resource.interface.json",
@@ -81,7 +81,49 @@ fn core_base_values() -> Vec<Value> {
     ]
     .iter()
     .map(|name| read_json(&core.join(name)))
-    .collect()
+    .collect();
+    values.push(read_json(
+        &repo_root().join("registry/privacy/artifacts/privacy.markings.entity.json"),
+    ));
+    values.push(json!({
+        "irVersion": "0.1",
+        "artifactId": "core.extra_markings.entity",
+        "kind": "entity",
+        "namespace": "core",
+        "name": "Core extra markings",
+        "version": "0.1.0",
+        "lifecycle": "active",
+        "scope": {},
+        "dependencies": [],
+        "provenance": { "source": "system" },
+        "payload": {
+            "entityVersion": "2.0",
+            "markings": [
+                {
+                    "id": "pii.financial",
+                    "label": "Financial PII",
+                    "severity": "high",
+                    "category": "pii.financial",
+                    "mask": { "kind": "redacted" }
+                },
+                {
+                    "id": "confidential.finance",
+                    "label": "Confidential finance",
+                    "severity": "high",
+                    "category": "confidential.finance",
+                    "mask": { "kind": "redacted" }
+                },
+                {
+                    "id": "pii.health",
+                    "label": "Health PII",
+                    "severity": "critical",
+                    "category": "pii.health",
+                    "mask": { "kind": "refuse" }
+                }
+            ]
+        }
+    }));
+    values
 }
 
 fn core_base() -> Vec<ArtifactEnvelope> {
@@ -141,6 +183,7 @@ fn study_bounds(train: &str, holdout: &str, diag: Vec<String>) -> Bounds {
             ("study_code".into(), vec!["\"SCRAP-OLS\"".into()]),
             ("population_digest".into(), vec!["\"22cee202\"".into()]),
             ("method_digest".into(), vec!["\"ols-v1\"".into()]),
+            ("receipt_digest".into(), vec!["\"fn-receipt-001\"".into()]),
             ("train_cutoff_at".into(), vec![format!("\"{train}\"")]),
             ("holdout_start_at".into(), vec![format!("\"{holdout}\"")]),
             ("diagnostics_passed".into(), diag),
@@ -155,7 +198,8 @@ fn study_subset() -> Vec<Value> {
             matches!(
                 artifact.get("artifactId").and_then(Value::as_str),
                 Some(
-                    "bi.CertifiedMetric.entity"
+                    "analytics.Analyst.entity"
+                        | "bi.CertifiedMetric.entity"
                         | "analytics.Study.entity"
                         | "analytics.Study.temporal_split_ordered.law"
                         | "analytics.Study.publish_requires_diagnostics.law"
@@ -170,7 +214,7 @@ fn compute_units_and_analytics_packs_admit_cleanly_over_core() {
     let base = core_base();
     let mut artifacts = load_pack("compute-units");
     artifacts.extend(load_pack("analytics"));
-    assert_eq!(artifacts.len(), 30);
+    assert_eq!(artifacts.len(), 48);
 
     for artifact in &artifacts {
         let validated = artifact.validate();
@@ -444,11 +488,15 @@ fn proof_lifecycle_certified_metric_is_sound_with_resting_and_cancelled_endings(
         .filter(|artifact| {
             matches!(
                 artifact["artifactId"].as_str(),
-                Some("bi.CertifiedMetric.entity" | "bi.CertifiedMetric.freshness_sla_positive.law")
+                Some(
+                    "analytics.Analyst.entity"
+                        | "bi.CertifiedMetric.entity"
+                        | "bi.CertifiedMetric.freshness_sla_positive.law"
+                )
             )
         })
         .collect();
-    assert_eq!(subset.len(), 2);
+    assert_eq!(subset.len(), 3);
 
     let source = lifecycle_source(&subset, &core_base_values());
     let bounds = Bounds {
@@ -479,7 +527,7 @@ fn proof_lifecycle_certified_metric_is_sound_with_resting_and_cancelled_endings(
 #[test]
 fn proof_lifecycle_study_with_withhold_remedy_is_sound_and_rejects_overlap() {
     let subset = study_subset();
-    assert_eq!(subset.len(), 4);
+    assert_eq!(subset.len(), 5);
 
     let source = lifecycle_source(&subset, &core_base_values());
     let full_batch = approve(&source)

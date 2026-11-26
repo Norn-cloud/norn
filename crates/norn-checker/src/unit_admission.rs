@@ -171,7 +171,7 @@ fn visit(
                 ) {
                     let mut diagnostic = crate::property_types::error(
                         MISMATCH,
-                        "VAL-UNIT-1: unit requires a visible, exact unit catalog pin (`core.units` or `units.<ns>.UnitDefinition.entity`) and an admitted UCUM code; conversion must be explicit".to_owned(),
+                        "VAL-UNIT-1: unit requires a visible, exact core unit catalog pin and an admitted UCUM code; conversion must be explicit".to_owned(),
                         Span::pointer(format!("{path}/{field}")),
                     );
                     diagnostic.artifact_id = Some(owner.artifact_id.clone());

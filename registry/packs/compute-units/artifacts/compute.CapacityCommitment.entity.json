@@ -93,7 +93,7 @@
           },
           "description": "Cloud or AI provider promising capacity.",
           "id": "provider",
-          "target": "core.Agent"
+          "target": "compute.Agent"
         },
         {
           "cardinality": {
@@ -103,7 +103,7 @@
           },
           "description": "Customer receiving reserved capacity.",
           "id": "receiver",
-          "target": "core.Agent"
+          "target": "compute.Agent"
         },
         {
           "cardinality": {

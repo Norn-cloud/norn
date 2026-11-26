@@ -37,7 +37,7 @@
           },
           "description": "Compute provider delivering capacity.",
           "id": "provider",
-          "target": "core.Agent"
+          "target": "compute.Agent"
         },
         {
           "cardinality": {
@@ -47,7 +47,7 @@
           },
           "description": "Customer or workload consuming compute.",
           "id": "receiver",
-          "target": "core.Agent"
+          "target": "compute.Agent"
         },
         {
           "cardinality": {
@@ -57,7 +57,7 @@
           },
           "description": "Compute resource or token pool consumed.",
           "id": "resource",
-          "target": "core.Resource"
+          "target": "compute.TokenPool"
         },
         {
           "cardinality": {

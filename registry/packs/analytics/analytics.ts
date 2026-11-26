@@ -12,8 +12,25 @@
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
+import { Agent } from "../../core/src/rea.ts"
 
 // ------------------------------------------------------------------ BI metrics
+
+export const Analyst = Norn.type({
+  name: "analytics.Analyst",
+  role: "thing",
+  title: "Analytics steward",
+  version: "0.1.0",
+  description:
+    "Concrete accountable analyst, reviewer, or system steward implementing core.Agent for governed metrics, studies, and publications.",
+  implements: [Agent],
+  properties: Schema.Struct({
+    id: Schema.String,
+    display_name: Norn.ref("core.display_name"),
+    kind: Schema.Literals(["person", "organization", "system"]),
+  }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
 
 export const CertifiedMetric = Norn.type({
   name: "bi.CertifiedMetric",
@@ -39,7 +56,7 @@ export const CertifiedMetric = Norn.type({
     {
       id: "owner",
       description: "Accountable owner of this certified metric contract.",
-      target: "core.Agent",
+      target: Analyst,
       cardinality: { to: "one", from: "many", required: true },
     },
   ],
@@ -93,6 +110,33 @@ export const certifiedMetricZeroFreshnessViolated = Norn.example("certified metr
     status: "draft",
   },
   expect: "violated",
+})
+
+export const RegisterCertifiedMetric = Norn.action({
+  id: "bi.certified_metric.register",
+  title: "Register a certified metric contract",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    id: Schema.String,
+    owner_id: Schema.String,
+    metric_name: Schema.String,
+    additivity: Schema.Literals(["additive", "semi_additive", "non_additive"]),
+    grain: Schema.String,
+    unit_code: Schema.String,
+    freshness_sla_ms: Schema.Int,
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "owner", type: Analyst, key: { property: { from: "input", property: "owner_id" } } },
+  ],
+  createLinks: [
+    { link: "owner", targetType: Analyst, targetIdField: "owner_id" },
+  ],
+  writes: [{ type: CertifiedMetric, change: "created" }],
+  effect: { kind: "upsert_input_object", type: CertifiedMetric, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
 
 export const CertifyMetric = Norn.action({
@@ -279,6 +323,57 @@ export const metricSliceAdditiveNotApplicable = Norn.example("additive slice is 
   expect: "not_applicable",
 })
 
+const RecordMetricSliceInput = Schema.Struct({
+  id: Schema.String,
+  metric_id: Schema.String,
+  slice_key: Schema.String,
+  additivity: Schema.Literals(["additive", "semi_additive", "non_additive"]),
+  unit_code: Schema.String,
+  effective_at: Schema.String,
+  known_at: Schema.String,
+  numerator: Norn.decimal(6),
+  denominator: Norn.decimal(6),
+  value: Norn.decimal(6),
+})
+
+export const RecordMetricSlice = Norn.action({
+  id: "bi.metric_slice.record",
+  title: "Record an observed metric slice",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: RecordMetricSliceInput,
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "metric", type: CertifiedMetric, key: { property: { from: "input", property: "metric_id" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        input: RecordMetricSliceInput,
+        slice: Schema.Struct({
+          metric: Schema.Struct({
+            additivity: Schema.Literals(["additive", "semi_additive", "non_additive"]),
+            unit_code: Schema.String,
+            status: Schema.Literals(["draft", "certified", "deprecated"]),
+          }),
+        }),
+      }),
+      (ctx) =>
+        ctx.slice.metric.status === "certified" &&
+        ctx.input.additivity === ctx.slice.metric.additivity &&
+        ctx.input.unit_code === ctx.slice.metric.unit_code,
+      { root: "context" },
+    ),
+  ],
+  createLinks: [
+    { link: "metric", targetType: CertifiedMetric, targetIdField: "metric_id" },
+  ],
+  writes: [{ type: MetricSlice, change: "created" }],
+  effect: { kind: "upsert_input_object", type: MetricSlice, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
 // -------------------------------------------------- Analytics preregistration
 
 export const Study = Norn.type({
@@ -293,6 +388,7 @@ export const Study = Norn.type({
     study_code: Norn.ref<Schema.String>("core.code"),
     population_digest: Norn.ref<Schema.String>("core.code"),
     method_digest: Norn.ref<Schema.String>("core.code"),
+    receipt_digest: Norn.ref<Schema.String>("core.code"),
     train_cutoff_at: Norn.ref<Schema.String>("iso8601.timestamp"),
     holdout_start_at: Norn.ref<Schema.String>("iso8601.timestamp"),
     diagnostics_passed: Schema.Boolean,
@@ -300,6 +396,7 @@ export const Study = Norn.type({
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   defaults: {
+    receipt_digest: "pending",
     diagnostics_passed: false,
     publication_status: "preregistered",
   },
@@ -307,7 +404,7 @@ export const Study = Norn.type({
     {
       id: "owner",
       description: "Accountable analyst or investigator owning this preregistered study.",
-      target: "core.Agent",
+      target: Analyst,
       cardinality: { to: "one", from: "many", required: true },
     },
     {
@@ -423,17 +520,56 @@ export const studyWithheldFailedDiagnosticsHolds = Norn.example("withheld study 
   expect: "holds",
 })
 
-export const EvaluateStudy = Norn.action({
-  id: "analytics.study.evaluate",
-  title: "Evaluate a preregistered study",
+export const PreregisterStudy = Norn.action({
+  id: "analytics.study.preregister",
+  title: "Preregister an analytical study",
   version: "0.1.0",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
-  input: Schema.Struct({ id: Schema.String }),
+  input: Schema.Struct({
+    id: Schema.String,
+    owner_id: Schema.String,
+    study_code: Schema.String,
+    population_digest: Schema.String,
+    method_digest: Schema.String,
+    train_cutoff_at: Schema.String,
+    holdout_start_at: Schema.String,
+  }),
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "owner", type: Analyst, key: { property: { from: "input", property: "owner_id" } } },
+  ],
+  createLinks: [
+    { link: "owner", targetType: Analyst, targetIdField: "owner_id" },
+  ],
+  writes: [{ type: Study, change: "created" }],
+  effect: { kind: "upsert_input_object", type: Study, objectIdField: "id", writeMode: { kind: "create_only" } },
+})
+
+export const EvaluateStudy = Norn.action({
+  id: "analytics.study.evaluate",
+  title: "Evaluate a preregistered study from a verified diagnostic receipt",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({ id: Schema.String, receipt: Schema.String }),
   output: Schema.Struct({ id: Schema.String }),
   writes: [{ type: Study, change: "modified" }],
-  effect: { kind: "fire_transition", type: Study, objectIdField: "id", lifecycle: "publication_status", transition: "evaluate" },
+  effect: {
+    kind: "fire_transition",
+    type: Study,
+    objectIdField: "id",
+    lifecycle: "publication_status",
+    transition: "evaluate",
+    acceptReceipt: {
+      referenceField: "receipt",
+      manifestDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+      digestProperty: "receipt_digest",
+      resultBindings: { diagnostics_passed: "diagnostics_passed" },
+    },
+  },
 })
 
 export const PublishStudy = Norn.action({
@@ -489,7 +625,7 @@ export const Publication = Norn.type({
     {
       id: "reviewer",
       description: "Accountable reviewer who authorized or withheld publication.",
-      target: "core.Agent",
+      target: Analyst,
       cardinality: { to: "one", from: "many", required: true },
     },
   ],
@@ -527,4 +663,60 @@ export const publicationFailedViolated = Norn.example("published record with fai
     decision: "published",
   },
   expect: "violated",
+})
+
+const RecordPublicationInput = Schema.Struct({
+  id: Schema.String,
+  study_id: Schema.String,
+  reviewer_id: Schema.String,
+  study_code: Schema.String,
+  receipt_digest: Schema.String,
+  population_digest: Schema.String,
+  published_at: Schema.String,
+  diagnostics_passed: Schema.Boolean,
+  decision: Schema.Literals(["published", "withheld"]),
+})
+
+export const RecordPublication = Norn.action({
+  id: "analytics.publication.record",
+  title: "Record a study publication decision",
+  version: "0.1.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: RecordPublicationInput,
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "study", type: Study, key: { property: { from: "input", property: "study_id" } } },
+    { name: "reviewer", type: Analyst, key: { property: { from: "input", property: "reviewer_id" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        input: RecordPublicationInput,
+        slice: Schema.Struct({
+          study: Schema.Struct({
+            diagnostics_passed: Schema.Boolean,
+            receipt_digest: Schema.String,
+            study_code: Schema.String,
+            population_digest: Schema.String,
+            publication_status: Schema.Literals(["preregistered", "evaluated", "published", "withheld"]),
+          }),
+        }),
+      }),
+      (ctx) =>
+        ctx.slice.study.publication_status === ctx.input.decision &&
+        ctx.input.diagnostics_passed === ctx.slice.study.diagnostics_passed &&
+        ctx.input.receipt_digest === ctx.slice.study.receipt_digest &&
+        ctx.input.study_code === ctx.slice.study.study_code &&
+        ctx.input.population_digest === ctx.slice.study.population_digest,
+      { root: "context" },
+    ),
+  ],
+  createLinks: [
+    { link: "study", targetType: Study, targetIdField: "study_id" },
+    { link: "reviewer", targetType: Analyst, targetIdField: "reviewer_id" },
+  ],
+  writes: [{ type: Publication, change: "created" }],
+  effect: { kind: "upsert_input_object", type: Publication, objectIdField: "id", writeMode: { kind: "create_only" } },
 })
