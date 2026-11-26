@@ -939,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_and_duplicate_table_columns_and_duplicate_nodes_are_refused() {
+    fn reserved_and_duplicate_table_columns_are_refused() {
         let limits = ResourceLimitProfile::norn_limits_v1();
         let reserved_input = JdmDecisionTableContent {
             hit_policy: JdmHitPolicy::First,
@@ -1018,7 +1018,10 @@ mod tests {
             super::validate_table_node("t.rule", "graph.nodes[0].content", &reserved_cell, &limits),
             Err(AdmissionError::InvalidSchema { .. })
         ));
+    }
 
+    #[test]
+    fn duplicate_node_ids_are_refused() {
         let duplicate_nodes = JdmGraph {
             content_type: None,
             imports: Vec::new(),
