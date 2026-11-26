@@ -225,15 +225,11 @@ impl Lineage {
             } else {
                 format!("{member} ← supertype {type_name} (every property of the type)")
             };
-            push(strings(object.get("markings")), type_path.clone());
+            push(strings(object.get("markings")), type_path);
             pending_interfaces.extend(strings(object.get("implements")));
             for holder in
                 std::iter::once(object).chain(self.extensions.get(&type_name).into_iter().flatten())
             {
-                if !std::ptr::eq(holder, object) {
-                    push(strings(holder.get("markings")), type_path.clone());
-                    pending_interfaces.extend(strings(holder.get("implements")));
-                }
                 if let Some(own) = declared(holder) {
                     let prop_path = if is_self {
                         member.clone()
@@ -344,21 +340,10 @@ impl Lineage {
                 else {
                     continue;
                 };
-                let mut shared_fields = BTreeSet::new();
-                let mut shared_whole = false;
-                for key in ["when", "subject", "sourceRecord"] {
-                    if let Some(expr) = map.get(key) {
-                        match expr.as_str() {
-                            Some(source) => {
-                                let read = input_reads(source);
-                                shared_whole |= read.whole_root;
-                                shared_fields.extend(read.fields);
-                            }
-                            None if !expr.is_null() => shared_whole = true,
-                            None => {}
-                        }
-                    }
-                }
+                let when_read = map
+                    .get("when")
+                    .filter(|expr| !expr.is_null())
+                    .map(|expr| expr.as_str().map_or_else(whole_root_reads, input_reads));
                 for written in map
                     .get("properties")
                     .and_then(Value::as_array)
@@ -368,50 +353,97 @@ impl Lineage {
                         written.get("property").and_then(Value::as_str) == Some(property)
                     })
                 {
-                    let mut read = written.get("value").and_then(Value::as_str).map_or(
-                        norn_expr::ExpressionReads {
-                            fields: BTreeSet::new(),
-                            whole_root: true,
-                        },
-                        input_reads,
-                    );
-                    read.whole_root |= shared_whole;
-                    read.fields.extend(shared_fields.iter().cloned());
-                    if read.whole_root {
-                        for ((source_dataset, field), schemas) in &self.source_fields {
-                            if source_dataset != dataset {
-                                continue;
-                            }
-                            for (schema, markings) in schemas {
-                                paths.push((
-                                    markings.clone(),
-                                    format!(
-                                        "{schema}: {dataset}.{field} → mapping {mapping} → {member}"
-                                    ),
-                                ));
-                            }
+                    if let Some(when_read) = &when_read {
+                        self.push_dataset_reads(dataset, when_read, mapping, member, &mut paths);
+                    }
+                    let value_read = written
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .map_or_else(whole_root_reads, input_reads);
+                    if let Some(nested) = written.get("nested").filter(|value| !value.is_null()) {
+                        let parent_read = nested.get("field").and_then(Value::as_str).map_or_else(
+                            whole_root_reads,
+                            |field| norn_expr::ExpressionReads {
+                                fields: BTreeSet::from([field.to_owned()]),
+                                whole_root: false,
+                            },
+                        );
+                        self.push_dataset_reads(dataset, &parent_read, mapping, member, &mut paths);
+                        let where_read = nested
+                            .get("where")
+                            .and_then(Value::as_str)
+                            .map_or_else(whole_root_reads, input_reads);
+                        let mut child_read = value_read;
+                        child_read.whole_root |= where_read.whole_root;
+                        child_read.fields.extend(where_read.fields);
+                        if let Some(child_dataset) = nested.get("dataset").and_then(Value::as_str) {
+                            self.push_dataset_reads(
+                                child_dataset,
+                                &child_read,
+                                mapping,
+                                member,
+                                &mut paths,
+                            );
+                        } else {
+                            self.push_dataset_reads(
+                                dataset,
+                                &whole_root_reads(),
+                                mapping,
+                                member,
+                                &mut paths,
+                            );
                         }
                     } else {
-                        for field in read.fields {
-                            for (schema, markings) in self
-                                .source_fields
-                                .get(&(dataset.to_owned(), field.clone()))
-                                .into_iter()
-                                .flatten()
-                            {
-                                paths.push((
-                                    markings.clone(),
-                                    format!(
-                                        "{schema}: {dataset}.{field} → mapping {mapping} → {member}"
-                                    ),
-                                ));
-                            }
-                        }
+                        self.push_dataset_reads(dataset, &value_read, mapping, member, &mut paths);
                     }
                 }
             }
         }
         paths
+    }
+
+    fn push_dataset_reads(
+        &self,
+        dataset: &str,
+        read: &norn_expr::ExpressionReads,
+        mapping: &str,
+        member: &str,
+        paths: &mut Vec<(Vec<String>, String)>,
+    ) {
+        if read.whole_root {
+            for ((source_dataset, field), schemas) in &self.source_fields {
+                if source_dataset != dataset {
+                    continue;
+                }
+                for (schema, markings) in schemas {
+                    paths.push((
+                        markings.clone(),
+                        format!("{schema}: {dataset}.{field} → mapping {mapping} → {member}"),
+                    ));
+                }
+            }
+        } else {
+            for field in &read.fields {
+                for (schema, markings) in self
+                    .source_fields
+                    .get(&(dataset.to_owned(), field.clone()))
+                    .into_iter()
+                    .flatten()
+                {
+                    paths.push((
+                        markings.clone(),
+                        format!("{schema}: {dataset}.{field} → mapping {mapping} → {member}"),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn whole_root_reads() -> norn_expr::ExpressionReads {
+    norn_expr::ExpressionReads {
+        fields: BTreeSet::new(),
+        whole_root: true,
     }
 }
 

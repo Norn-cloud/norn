@@ -763,10 +763,98 @@ fn privacy_3_follows_bracket_dynamic_and_when_mapping_reads() {
         account(),
         customer(),
         markings(&redacted),
-        source,
+        source.clone(),
         when_mapping,
         model(&churn_payload()),
     ])
     .expect("map.when reading PII source field must refuse");
     assert!(when_msg.contains("contacts.postal_region"), "{when_msg}");
+
+    // PII in subject/sourceRecord must not falsely taint an unrelated non-PII feature.
+    let key_only_mapping = envelope(
+        "crm.contacts.mapping",
+        "mapping",
+        &json!({ "format": "norn.mapping/1", "maps": [{
+            "id": "customer", "source": { "dataset": "contacts" },
+            "target": { "entity": "sales.Customer.entity" },
+            "subject": "input.postal_region",
+            "sourceRecord": "input.postal_region",
+            "properties": [{ "property": "region", "value": "input.tier" }]
+        }] }),
+    );
+    assert_eq!(
+        refusal(&[
+            account(),
+            customer(),
+            markings(&redacted),
+            source,
+            key_only_mapping,
+            model(&churn_payload()),
+        ]),
+        None
+    );
+}
+
+#[test]
+fn privacy_3_follows_nested_property_dataset_where_and_parent_field() {
+    let redacted = json!({ "kind": "redacted" });
+    let source = envelope(
+        "crm.source.source",
+        "source_schema",
+        &json!({ "fields": [
+            { "dataset": "contacts", "name": "phones", "ordinal": 0, "nativeType": "json",
+              "typeCandidate": { "type": "json", "origin": "declared" } },
+            { "dataset": "contact_phones", "name": "number", "ordinal": 0, "nativeType": "varchar",
+              "typeCandidate": { "type": "string", "origin": "declared" }, "markings": ["pii.contact"] },
+            { "dataset": "contact_phones", "name": "kind", "ordinal": 1, "nativeType": "varchar",
+              "typeCandidate": { "type": "string", "origin": "declared" } }
+        ] }),
+    );
+    let nested_value_mapping = envelope(
+        "crm.contacts.mapping",
+        "mapping",
+        &json!({ "format": "norn.mapping/1", "maps": [{
+            "id": "customer", "source": { "dataset": "contacts" },
+            "target": { "entity": "sales.Customer.entity" },
+            "properties": [{
+                "property": "region",
+                "value": "input.number",
+                "nested": { "dataset": "contact_phones", "field": "phones", "where": "input.kind == 'mobile'" }
+            }]
+        }] }),
+    );
+    let msg = refusal(&[
+        account(),
+        customer(),
+        markings(&redacted),
+        source.clone(),
+        nested_value_mapping,
+        model(&churn_payload()),
+    ])
+    .expect("nested.dataset PII read in value must refuse");
+    assert!(msg.contains("contact_phones.number"), "{msg}");
+
+    let nested_where_mapping = envelope(
+        "crm.contacts.mapping",
+        "mapping",
+        &json!({ "format": "norn.mapping/1", "maps": [{
+            "id": "customer", "source": { "dataset": "contacts" },
+            "target": { "entity": "sales.Customer.entity" },
+            "properties": [{
+                "property": "region",
+                "value": "input.kind",
+                "nested": { "dataset": "contact_phones", "field": "phones", "where": "input.number != ''" }
+            }]
+        }] }),
+    );
+    let where_msg = refusal(&[
+        account(),
+        customer(),
+        markings(&redacted),
+        source,
+        nested_where_mapping,
+        model(&churn_payload()),
+    ])
+    .expect("nested.where PII read must refuse");
+    assert!(where_msg.contains("contact_phones.number"), "{where_msg}");
 }

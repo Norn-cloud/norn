@@ -434,8 +434,11 @@ fn eval_expr(expr: &TypedExpression, row: &Row, fuel: &mut TurnFuel) -> Result<V
     });
     match attempt.result {
         Ok(value) => Ok(value.into_value()),
-        Err(e) if matches!(e, ExprError::BudgetExhausted { .. }) => Err(EvalError::BoundExceeded),
-        Err(e) => Err(EvalError::Expression(e.to_string())),
+        Err(e) => Err(if matches!(e, ExprError::BudgetExhausted { .. }) {
+            EvalError::BoundExceeded
+        } else {
+            EvalError::Expression(e.to_string())
+        }),
     }
 }
 

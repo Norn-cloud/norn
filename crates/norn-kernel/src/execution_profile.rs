@@ -77,7 +77,7 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
         model: crate::CommitModel<'_, '_>,
         result: &Result<R, CommitError<V::Error>>,
     ) -> Result<(), CommitError<V::Error>> {
-        if result.as_ref().is_err_and(is_shape_refusal) {
+        if result.as_ref().is_err_and(is_shape_refusal) && self.reads.borrow().is_empty() {
             return Ok(());
         }
         self.validate(commit, model)
