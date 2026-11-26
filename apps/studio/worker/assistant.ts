@@ -1,7 +1,7 @@
 import { MAX_OUTPUT_TOKENS, MAX_PROMPT_BYTES, editableDashboard, guardKeepingDates, propose } from "./agent.ts"
 import type { Cell } from "./cell.ts"
 import { unbilled, worstCallMicroUsd, type Answer, type Ask, type Model } from "./model.ts"
-import { decide, getProposal, insertProposal, listProposals, reserve, reserved, settle, spent, type Proposal, type Scope } from "./proposals.ts"
+import { claimAccept, decide, getProposal, insertProposal, listProposals, releaseAcceptClaim, reserve, reserved, settle, spent, type Proposal, type Scope } from "./proposals.ts"
 
 /**
  * `/api/agent/dashboards*`: the dashboard assistant's routes. The person asks;
@@ -132,7 +132,10 @@ async function answerAdmitted(deps: AssistantDeps, proposalId: string, asked: st
     // and keeps counting against the cap.
     const certain = !dispatched || unbilled(error)
     await settleWith(null, !certain).catch(() => undefined)
-    if (dispatched && unbilled(error)) return refused(502, "The model did not answer; nothing was charged. Try again.")
+    if (dispatched && unbilled(error)) {
+      const nothingCharged = answers.every((answer) => answer.costMicroUsd === 0 && answer.uncertain !== true)
+      return refused(502, nothingCharged ? "The model did not answer; nothing was charged. Try again." : "The model did not answer. Try again.")
+    }
     throw error
   }
 }
@@ -142,26 +145,49 @@ async function acceptRoute(id: string, deps: AssistantDeps): Promise<Response> {
   const proposal = await getProposal(db, scope, id)
   if (proposal === undefined) return refused(404, "No such proposal.")
   if (proposal.state !== "pending") return json({ error: `This proposal is already ${proposal.state}.`, proposal }, 409)
+  // Claim the pending row BEFORE calling the cell so concurrent accepts or declines cannot double-install.
+  if (!(await claimAccept(db, scope, id, now))) {
+    const current = await getProposal(db, scope, id)
+    const message = current && current.state !== "pending" ? `This proposal is already ${current.state}.` : "This proposal is already being accepted."
+    return json({ error: message, proposal: current ?? proposal }, 409)
+  }
   const install = {
     kind: "dashboard", id: proposal.targetId, payload: proposal.definition,
     ...proposal.targetVersion === null ? {} : { expectedVersion: proposal.targetVersion },
     // Accepting is signing the checker's words for this definition (D59); the cell recomputes them and records the signer.
     ...proposal.verdict.restatementSha256 === null ? {} : { signoff: { restatementSha256: proposal.verdict.restatementSha256 } },
   }
-  const answer = await cell.post("/v1/definitions:install", install)
-  if (answer.kind === "no-cell") return refused(409, "This workspace has no data cell yet.")
+  let answer: Awaited<ReturnType<Cell["post"]>>
+  try {
+    answer = await cell.post("/v1/definitions:install", install)
+  } catch (error) {
+    await releaseAcceptClaim(db, scope, id, now).catch(() => undefined)
+    throw error
+  }
+  if (answer.kind === "no-cell") {
+    await releaseAcceptClaim(db, scope, id, now)
+    return refused(409, "This workspace has no data cell yet.")
+  }
   const body = isRecord(answer.body) ? answer.body : {}
   if (answer.status === 200 && body.installed === true && typeof body.id === "string" && typeof body.version === "number") {
-    await decide(db, scope, id, { state: "accepted", installed: { id: body.id, version: body.version } }, now)
-    return json(await getProposal(db, scope, id))
+    const decided = await decide(db, scope, id, { state: "accepted", installed: { id: body.id, version: body.version } }, now, now)
+    const current = await getProposal(db, scope, id)
+    if (!decided) return json({ error: `This proposal is already ${current?.state ?? "decided"}.`, proposal: current ?? proposal }, 409)
+    return json(current)
   }
-  if (answer.status === 409) return json({ error: "The dashboard changed since this proposal was made; ask again.", proposal }, 409)
+  if (answer.status === 409) {
+    await releaseAcceptClaim(db, scope, id, now)
+    return json({ error: "The dashboard changed since this proposal was made; ask again.", proposal }, 409)
+  }
   if (answer.status === 422) {
     const findings = (Array.isArray(body.diagnostics) ? body.diagnostics : []).map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) => ({ code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null }))
     const verdict = { ...proposal.verdict, admitted: false, findings: findings.length > 0 ? findings : [{ code: String(body.code ?? "definition.refused"), message: String(body.message ?? "The cell refused this dashboard."), pointer: null }] }
-    await decide(db, scope, id, { state: "refused", verdict }, now)
-    return json(await getProposal(db, scope, id))
+    const decided = await decide(db, scope, id, { state: "refused", verdict }, now, now)
+    const current = await getProposal(db, scope, id)
+    if (!decided) return json({ error: `This proposal is already ${current?.state ?? "decided"}.`, proposal: current ?? proposal }, 409)
+    return json(current)
   }
+  await releaseAcceptClaim(db, scope, id, now)
   if (answer.status === 403) return refused(403, "Your role may not create dashboards here.")
   return refused(502, `The cell did not answer (${answer.status}).`)
 }
@@ -209,7 +235,11 @@ export async function assistant(request: Request, route: string, deps: Assistant
   if (verb === "accept") return acceptRoute(id, deps)
   const proposal = await getProposal(deps.db, deps.scope, id)
   if (proposal === undefined) return refused(404, "No such proposal.")
-  if (!(await decide(deps.db, deps.scope, id, { state: "declined" }, deps.now))) return json({ error: `This proposal is already ${proposal.state}.`, proposal }, 409)
+  if (!(await decide(deps.db, deps.scope, id, { state: "declined" }, deps.now))) {
+    const current = await getProposal(deps.db, deps.scope, id)
+    const message = current && current.state !== "pending" ? `This proposal is already ${current.state}.` : "This proposal is already being accepted."
+    return json({ error: message, proposal: current ?? proposal }, 409)
+  }
   return json(await getProposal(deps.db, deps.scope, id))
 }
 

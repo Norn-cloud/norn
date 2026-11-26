@@ -329,10 +329,21 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       if (cell === null) return noEnvironment()
       const retired = await cell.retire(existing.definition.id, existing.definition.version).catch((error: unknown) => { if (error instanceof CellUnavailable) return error; throw error })
       if (retired instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", retired.message)
-      const refused = cellRefusal(retired)
-      if (refused !== null) return refused
+      if (!confirmedRetired(retired)) {
+        const refused = cellRefusal(retired)
+        if (refused !== null) return refused
+      }
     }
-    await removeBinding(db, actor.orgId, id)
+    const removed = await removeBinding(db, actor.orgId, id, {
+      definitionId: existing.definition?.id ?? null,
+      definitionVersion: existing.definition?.version ?? null,
+    })
+    if (!removed) {
+      const current = await getBinding(db, actor.orgId, id)
+      if (current === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
+      if (current.state === "pending") return stillPending()
+      return refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
+    }
     return ok({ removed: id, retired: existing.definition?.id ?? null })
   }
 
