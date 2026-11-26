@@ -651,7 +651,7 @@ fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
     .expect_err("dynamic filter on marked column must refuse");
     assert_eq!(
         (refused.status, refused.code.as_str()),
-        (422, "core.compute.stale_input")
+        (422, "privacy.marked_column")
     );
     assert!(
         refused
@@ -711,5 +711,28 @@ fn stale_materialization_withholds_deleted_marked_column() {
         !stale_page.rows[0].values.contains_key("region"),
         "stale cached marked column must fail closed and be withheld: {:?}",
         stale_page.rows[0].values
+    );
+    // A cursor minted on the stale snapshot must return 409 after manual refresh.
+    let stale_cursor = format!(
+        "{}@{}:{}",
+        stale_page.commits,
+        stale_page.commits + 1,
+        stale_page.rows[0].row_id
+    );
+    let _ = refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW)
+        .expect("refresh after delete");
+    let moved = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(None, Some(&stale_cursor)),
+        &Mapping,
+        NOW,
+    )
+    .expect_err("stale cursor must move after manual refresh");
+    assert_eq!(
+        (moved.status, moved.code.as_str()),
+        (409, "transform.snapshot_moved")
     );
 }

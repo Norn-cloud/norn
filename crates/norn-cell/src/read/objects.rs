@@ -810,7 +810,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// marking row for `property` (fail closed when historical classification
     /// evidence is missing or the indexed root range exceeds
     /// [`MAX_HISTORY_COMPLETENESS_SCAN`], #1559 S2c).
-    fn property_history_unclassified(
+    ///
+    /// # Errors
+    /// Unknown type or a SQL-engine error.
+    pub fn property_history_unclassified(
         &self,
         world: &str,
         object_type: &str,

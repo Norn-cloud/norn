@@ -389,14 +389,18 @@ fn row_access<E: SqlEngine>(
 }
 
 /// The rows a reader is served: live, or a materialized transform's stored
-/// result when the reader may read every input row (VIEW-MAT-1).
+/// result when the reader may read every input row (VIEW-MAT-1), together with
+/// the effective column markings and live head commit checked on the same cell
+/// guard.
+type EvaluatedTransform = (TransformPlan, Served, Vec<(String, Vec<String>)>, u64);
+
 fn evaluate<E: SqlEngine>(
     host: &DevHost<E>,
     (scope, actor): (&ScopeQuery, Option<&str>),
     transform: &str,
     access: &dyn ObjectAccess,
     now: LogicalTime,
-) -> Result<(TransformPlan, Served), Refusal> {
+) -> Result<EvaluatedTransform, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let store = cell.store();
@@ -411,10 +415,26 @@ fn evaluate<E: SqlEngine>(
             now.as_millis(),
         )
         .map_err(Refusal::from_compute)?;
-    if served.materialization.as_ref().is_some_and(|m| m.stale) {
+    let head_commits = store
+        .verified_head()
+        .map_err(Refusal::from_compute)?
+        .commits;
+    let mut stale = served.materialization.as_ref().is_some_and(|m| m.stale)
+        || served.result.revision.commits != head_commits;
+    if stale {
         refuse_dynamic_filter_order_markings(host, store, &plan, true)?;
     }
-    Ok((plan, served))
+    let mut marked = effective_marked_columns(host, store, &plan, stale)?;
+    let after_head = store
+        .verified_head()
+        .map_err(Refusal::from_compute)?
+        .commits;
+    if !stale && after_head != head_commits {
+        stale = true;
+        refuse_dynamic_filter_order_markings(host, store, &plan, true)?;
+        marked = effective_marked_columns(host, store, &plan, stale)?;
+    }
+    Ok((plan, served, marked, after_head))
 }
 
 fn additivity(value: &PropertyAdditivity) -> &'static str {
@@ -496,7 +516,7 @@ fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
         if live_marked || history_marked {
             let mut refusal = Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "core.compute.stale_input",
+                "privacy.marked_column",
                 "the transform filters or orders by a marked property",
                 "remove the filter or order over marked properties",
             );
@@ -524,11 +544,10 @@ fn grain_marked(marked: &[(String, Vec<String>)], grain: &[String]) -> bool {
 /// a stale materialized result reads a property with historical markings).
 fn effective_marked_columns<E: SqlEngine>(
     host: &DevHost<E>,
+    store: &CellStore<E>,
     plan: &TransformPlan,
     stale: bool,
 ) -> Result<Vec<(String, Vec<String>)>, Refusal> {
-    let cell = host.cell()?;
-    let store = cell.store();
     let reader = store.read();
     let catalog = host.marking_catalog(&reader)?;
     let mut out = Vec::with_capacity(plan.output_schema().columns.len());
@@ -594,6 +613,17 @@ fn parse_limit(limit: Option<&str>) -> Result<usize, Refusal> {
     }
 }
 
+fn parse_cursor(cursor: &str) -> Option<(u64, u64, &str)> {
+    let (epoch, row) = cursor.split_once(':')?;
+    match epoch.split_once('@') {
+        Some((served, head)) => Some((served.parse().ok()?, head.parse().ok()?, row)),
+        None => {
+            let at: u64 = epoch.parse().ok()?;
+            Some((at, at, row))
+        }
+    }
+}
+
 /// One page of a transform's rows, evaluated now under the reader's visibility.
 ///
 /// # Errors
@@ -612,26 +642,17 @@ pub fn get_transform_rows<E: SqlEngine>(
     now: LogicalTime,
 ) -> Result<NornTransformPage, Refusal> {
     let limit = parse_limit(params.limit.as_deref())?;
-    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
+    let (plan, served, marked, head_commits) =
+        evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
     let commits = result.revision.commits;
-    let stale = served.materialization.as_ref().is_some_and(|m| m.stale);
-    let cursor_epoch = host
-        .cell()?
-        .store()
-        .verified_head()
-        .map_err(Refusal::from_compute)?
-        .commits;
-    let marked = effective_marked_columns(host, &plan, stale)?;
     let key = crate::privacy::row_ids(host, grain_marked(&marked, &result.grain))?;
     let start = match params.after.as_deref() {
         None => 0,
         Some(cursor) => {
-            let (at, row) = cursor
-                .split_once(':')
-                .and_then(|(at, row)| at.parse::<u64>().ok().map(|at| (at, row)))
+            let (served_at, head_at, row) = parse_cursor(cursor)
                 .ok_or_else(|| Refusal::invalid("the cursor was not issued for this transform"))?;
-            if at != cursor_epoch {
+            if served_at != commits || head_at != head_commits {
                 let mut moved = Refusal::new(
                     StatusCode::CONFLICT,
                     "transform.snapshot_moved",
@@ -674,7 +695,7 @@ pub fn get_transform_rows<E: SqlEngine>(
     let next_after = (end < total)
         .then(|| {
             page.last()
-                .map(|row| format!("{cursor_epoch}:{}", row.row_id))
+                .map(|row| format!("{commits}@{head_commits}:{}", row.row_id))
         })
         .flatten();
     let mut page_columns = columns(plan.output_schema());
@@ -714,10 +735,8 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     access: &dyn ObjectAccess,
     now: LogicalTime,
 ) -> Result<NornTransformLineage, Refusal> {
-    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
+    let (plan, served, marked, _) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
-    let stale = served.materialization.as_ref().is_some_and(|m| m.stale);
-    let marked = effective_marked_columns(host, &plan, stale)?;
     let key = crate::privacy::row_ids(host, grain_marked(&marked, &result.grain))?;
     let found = result
         .rows
