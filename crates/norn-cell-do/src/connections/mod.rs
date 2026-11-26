@@ -579,7 +579,8 @@ type Opener<E> = Box<dyn Fn(&str) -> Result<Connections<E>, String> + Send + Syn
 pub struct Routes<E: SqlEngine> {
     serving: Result<bool, String>,
     open: Opener<E>,
-    opened: OnceLock<Result<Connections<E>, String>>,
+    open_lock: Mutex<()>,
+    opened: OnceLock<Connections<E>>,
     handoffs: Handoffs,
 }
 
@@ -600,12 +601,14 @@ impl<E: SqlEngine> Routes<E> {
             Ok(None) => Self {
                 serving: Ok(false),
                 open: Box::new(|_| Err("no connections".to_owned())),
+                open_lock: Mutex::new(()),
                 opened: OnceLock::new(),
                 handoffs: Handoffs::default(),
             },
             Err(error) => Self {
                 serving: Err(error),
                 open: Box::new(|_| Err("no connections".to_owned())),
+                open_lock: Mutex::new(()),
                 opened: OnceLock::new(),
                 handoffs: Handoffs::default(),
             },
@@ -620,6 +623,7 @@ impl<E: SqlEngine> Routes<E> {
         Self {
             serving: Ok(true),
             open: Box::new(open),
+            open_lock: Mutex::new(()),
             opened: OnceLock::new(),
             handoffs: Handoffs::default(),
         }
@@ -637,7 +641,7 @@ impl<E: SqlEngine> Routes<E> {
 
     /// The opened connections, once an authorized request opened them.
     pub fn connections(&self) -> Option<&Connections<E>> {
-        self.opened.get().and_then(|opened| opened.as_ref().ok())
+        self.opened.get()
     }
 
     /// Route `request` if it is a connection route; `None` otherwise.
@@ -742,7 +746,8 @@ impl<E: SqlEngine> Routes<E> {
     }
 
     /// Open the cell's connections on first authorized request, sweeping any
-    /// expired pending OAuth states left from before a restart.
+    /// expired pending OAuth states left from before a restart. Transient open
+    /// failures are never cached so later requests can recover.
     fn open_connections(&self, scope: &str, now_ms: u64) -> Result<&Connections<E>, Response> {
         if let Err(error) = &self.serving {
             return Err(coded(
@@ -751,18 +756,30 @@ impl<E: SqlEngine> Routes<E> {
                 &format!("the connection configuration is malformed: {error}"),
             ));
         }
-        let opened = self.opened.get_or_init(|| {
-            let opened = (self.open)(scope);
-            if let Ok(connections) = &opened {
-                let _ignored = connections.forget_pending(&[], now_ms);
-            }
-            opened
-        });
-        opened.as_ref().map_err(|error| {
+        if let Some(connections) = self.opened.get() {
+            return Ok(connections);
+        }
+        let _guard = self
+            .open_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(connections) = self.opened.get() {
+            return Ok(connections);
+        }
+        let connections = (self.open)(scope).map_err(|error| {
             coded(
                 503,
                 "connection.unavailable",
                 &format!("the connection vault did not open: {error}"),
+            )
+        })?;
+        let _ignored = connections.forget_pending(&[], now_ms);
+        let _ = self.opened.set(connections);
+        self.opened.get().ok_or_else(|| {
+            coded(
+                503,
+                "connection.unavailable",
+                "the connection vault did not open",
             )
         })
     }

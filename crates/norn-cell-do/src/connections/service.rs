@@ -1400,7 +1400,13 @@ impl<E: SqlEngine> Connections<E> {
             .map_err(oauth_error);
         let response = match refreshed {
             Ok(response) => response,
-            Err(ConnError::Provider(code)) => {
+            Err(ConnError::Provider(
+                code @ ("invalid_grant"
+                | "invalid_client"
+                | "unauthorized_client"
+                | "unsupported_grant_type"
+                | "invalid_scope"),
+            )) => {
                 return self
                     .mark_reconnect(actor, id, &record, code, now_ms)
                     .and(Err(ConnError::ReconnectNeeded));
@@ -1446,14 +1452,8 @@ impl<E: SqlEngine> Connections<E> {
         };
         self.transaction(|vault| {
             if Self::epoch(vault, id)? != seen {
-                Self::audit(
-                    vault,
-                    now_ms,
-                    id,
-                    "credential.failure",
-                    actor,
-                    Some("superseded"),
-                )?;
+                let why = Some("superseded");
+                Self::audit(vault, now_ms, id, "credential.failure", actor, why)?;
                 return Ok(Decided::Refused(ConnError::Conflict));
             }
             Self::store(vault, id, next, &rotated, false, now_ms)?;
