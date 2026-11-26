@@ -8,8 +8,9 @@ import { compileDefinitions } from "./compiler/definitions.ts"
 import { compileFile } from "./compiler/index.ts"
 
 const MAX_BYTES = 1_048_576
+const UTF8_ENCODER = new TextEncoder()
 export function compileModule(source: string, scope: Readonly<Record<string, string>>) {
-  if (new TextEncoder().encode(source).length > MAX_BYTES) return { ok: false, diagnostics: [{code: "NORN-FLOW-UNBOUNDED", message: "module exceeds 1 MiB"}] }
+  if (UTF8_ENCODER.encode(source).length > MAX_BYTES) return { ok: false, diagnostics: [{code: "NORN-FLOW-UNBOUNDED", message: "module exceeds 1 MiB"}] }
   // Single-module MCP requests cannot read arbitrary host files via imports or references.
   const info = ts.preProcessFile(source, true, true)
   if (info.referencedFiles.length || info.typeReferenceDirectives.length || info.libReferenceDirectives.length || info.importedFiles.some((i) => i.fileName !== "@norn/authoring" && !/^effect(?:\/[A-Za-z0-9_-]+)*$/.test(i.fileName))) {

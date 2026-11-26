@@ -1068,3 +1068,12 @@ test("parseSha256Sums rejects duplicate entries and malformed lines", () => {
   expect(() => parseSha256Sums(`${valid}  dup.tar.gz\n${valid}  dup.tar.gz\n`)).toThrow("more than once")
   expect(() => parseSha256Sums("not-a-hash  bad.tar.gz\n")).toThrow("malformed SHA256SUMS line")
 })
+
+test("resolveReleaseBaseUrl rejects invalid or traversal --repo values", () => {
+  expect(resolveReleaseBaseUrl({ repo: "Norn-cloud/norn", env: {} }).baseUrl).toBe(
+    "https://github.com/Norn-cloud/norn/releases/latest/download",
+  )
+  for (const bad of ["../attacker/repo", "owner/..", "./repo", "owner/repo?x=1", "owner/repo#frag", "just-one"]) {
+    expect(() => resolveReleaseBaseUrl({ repo: bad, env: {} })).toThrow("refusing invalid repository")
+  }
+})

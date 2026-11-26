@@ -23,6 +23,13 @@ type JsonScalar = None | bool | int | str
 type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 NORN1_DOMAIN_TAG: bytes = b"norn.canonical.json/norn1\0"
+MAX_JSON_DEPTH: int = 128
+
+
+def _check_valid_unicode(text: str, path: str) -> None:
+    """Reject unpaired UTF-16 surrogates that cannot be encoded as valid UTF-8/UTF-16."""
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in text):
+        raise NonJsonValueError(path, "string contains unpaired UTF-16 surrogate")
 
 
 class NonJsonValueError(ValueError):
@@ -55,15 +62,19 @@ def _normalize_json(
     norn1: bool,
     path: str = "$",
     seen: set[int] | None = None,
+    depth: int = 0,
 ) -> JsonValue:
+    if depth > MAX_JSON_DEPTH:
+        raise NonJsonValueError(path, f"nesting depth exceeds {MAX_JSON_DEPTH}")
     if seen is None:
         seen = set()
 
-    if value is None or isinstance(value, bool):
+    if value is None or type(value) is bool:
         return value
-    if isinstance(value, str):
+    if type(value) is str:
+        _check_valid_unicode(value, path)
         return unicodedata.normalize("NFC", value) if norn1 else value
-    if isinstance(value, int):
+    if type(value) is int:
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -75,20 +86,24 @@ def _normalize_json(
     if obj_id in seen:
         raise NonJsonValueError(path, "cycle")
 
-    if isinstance(value, (list, tuple)):
+    if type(value) is list or type(value) is tuple:
         seen.add(obj_id)
         try:
-            return [_normalize_json(item, norn1=norn1, path=f"{path}[{idx}]", seen=seen) for idx, item in enumerate(value)]
+            return [
+                _normalize_json(item, norn1=norn1, path=f"{path}[{idx}]", seen=seen, depth=depth + 1)
+                for idx, item in enumerate(value)
+            ]
         finally:
             seen.remove(obj_id)
 
-    if isinstance(value, dict):
+    if type(value) is dict:
         seen.add(obj_id)
         try:
             entries: dict[str, object] = {}
             for raw_key, member in value.items():
-                if not isinstance(raw_key, str):
+                if type(raw_key) is not str:
                     raise NonJsonValueError(path, f"non-string object key {raw_key!r}")
+                _check_valid_unicode(raw_key, path)
                 if raw_key == "__proto__":
                     raise NonJsonValueError(
                         f"{path}.{raw_key}", "__proto__ is not a portable JSON member name"
@@ -106,7 +121,16 @@ def _normalize_json(
                     key = raw_key
                 entries[key] = member
             ordered_keys = sorted(entries.keys()) if norn1 else sorted(entries.keys(), key=_utf16_sort_key)
-            return {key: _normalize_json(entries[key], norn1=norn1, path=f"{path}.{key}", seen=seen) for key in ordered_keys}
+            return {
+                key: _normalize_json(
+                    entries[key],
+                    norn1=norn1,
+                    path=f"{path}.{key}",
+                    seen=seen,
+                    depth=depth + 1,
+                )
+                for key in ordered_keys
+            }
         finally:
             seen.remove(obj_id)
 
