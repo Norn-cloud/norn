@@ -28,7 +28,7 @@ mod lifecycle_tests;
 pub mod quint;
 #[cfg(test)]
 mod quint_tests;
-/// Conjunction-only specialisation evidence provenance.
+/// Conjunctive and projected-safety specialisation evidence provenance.
 pub mod specialisation;
 /// Exact symbolic projections of the shared declaration relation.
 pub mod transition;

@@ -60,6 +60,12 @@ impl LedgerPackSeal {
     pub fn unit_bindings_sha256(&self) -> &str {
         self.unit_bindings_sha256.as_str()
     }
+
+    /// Compiled normalized ledger pack bound by this seal.
+    #[must_use]
+    pub const fn compiled(&self) -> &CompiledLedgerPack {
+        &self.compiled
+    }
 }
 
 /// Computes the domain-separated SHA-256 identity of the exact ordered pack.
