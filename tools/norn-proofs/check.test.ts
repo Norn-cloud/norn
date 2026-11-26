@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 test("tla_ts_apalache_parity", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url))
   const tools = process.env.NORN_VERIFICATION_TOOL_ROOT
   if (!tools) throw new Error("NORN_VERIFICATION_TOOL_ROOT is required for real backend parity")
-  const targetDir = process.env.CARGO_TARGET_DIR || join(root, "target")
+  const targetDir = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(root, "target")
   const build = Bun.spawn(["cargo", "build", "--locked", "-p", "norn-checker",
     "--features", "native-proof-driver", "--bin", "norn-proof-quint", "--target-dir", targetDir],
     { cwd: root, stdout: "inherit", stderr: "inherit" })
@@ -64,16 +64,18 @@ test("check_ts_rejects_extra_args_and_records_missing_library_as_unknown", async
   const runnerDir = fileURLToPath(new URL(".", import.meta.url))
   const work = await mkdtemp(join(tmpdir(), "norn-proof-check-"))
   try {
+    const spec = join(work, "spec.tla")
+    await Bun.write(spec, "---- MODULE Spec ----\n====\n")
     const out = join(work, "result.json")
-    const extra = Bun.spawn(["bun", "run", "check.ts", join(work, "spec.tla"), out, work, "0", "extra"],
+    const extra = Bun.spawn(["bun", "run", "check.ts", spec, out, work, "0", "extra"],
       {cwd: runnerDir, stdout: "ignore", stderr: "ignore"})
     expect(await extra.exited).not.toBe(0)
 
-    const missingLib = Bun.spawn(["bun", "run", "check.ts", join(work, "spec.tla"), out, work, "0"],
+    const missingLib = Bun.spawn(["bun", "run", "check.ts", spec, out, work, "0"],
       {cwd: runnerDir, stdout: "ignore", stderr: "ignore"})
     expect(await missingLib.exited).toBe(0)
     const report: unknown = await Bun.file(out).json()
-    expect(report).toMatchObject({status: "unknown", reason: expect.any(String)})
+    expect(report).toMatchObject({status: "unknown", reason: expect.stringContaining("Apalache.tla")})
   } finally {
     await rm(work, {recursive: true, force: true})
   }
