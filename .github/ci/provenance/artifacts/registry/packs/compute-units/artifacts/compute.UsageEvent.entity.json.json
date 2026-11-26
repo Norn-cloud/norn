@@ -1,9 +1,19 @@
 {
-  "category": "generated",
-  "license": "Proprietary",
+  "sha256": "3e2a7ef5d6930bff9f7e57a7e4bb7b6f1a6b4fdd7fc9361ed42a6e0ec7df84be",
   "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
   "parents": [
     "registry/packs/compute-units/units.ts"
   ],
-  "sha256": "3e2a7ef5d6930bff9f7e57a7e4bb7b6f1a6b4fdd7fc9361ed42a6e0ec7df84be"
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
 }
