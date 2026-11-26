@@ -2670,7 +2670,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `{k1: v1, k2: v2, ...}[key]`: bounded lookup in a non-empty literal
+    /// `({k1: v1, k2: v2, ...})[key]`: bounded lookup in a non-empty literal
     /// table by a non-null string key. Yields `V?` (the common value type, or
     /// `null` on miss), paying only one key-length scan regardless of table
     /// size. Environment records stay closed to computed keys.
