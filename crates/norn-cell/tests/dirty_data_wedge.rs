@@ -499,6 +499,27 @@ fn wedge1_dirty_nulls_partial_updates_and_gap_provenance() {
     assert_eq!(later.value.as_deref(), Some("GBP"));
 }
 
+fn commit_write(
+    cell: &mut ObsCell,
+    object_type: &str,
+    id: &str,
+    expected: u64,
+    mutation: norn_kernel::FactMutation,
+) {
+    norn_kernel::CellHost::commit(
+        cell,
+        norn_kernel::CellCommit {
+            writes: vec![norn_kernel::FactWrite {
+                key: norn_kernel::FactKey::new(object_type, id),
+                expected: norn_kernel::FactVersion(expected),
+                mutation,
+            }],
+            ..norn_kernel::CellCommit::empty()
+        },
+    )
+    .expect("commit fact write");
+}
+
 /// Wedge 1b: Deleting a record introduces an incarnation boundary so neither
 /// `SOURCE-AGREE-1` change detection nor mapping-gap walkback crosses a
 /// tombstone to cite pre-deletion reports.
@@ -509,34 +530,27 @@ fn wedge1b_deletion_tombstone_stops_disagreement_walkback() {
     load_snapshot(&mut cell, "erpnext");
 
     // Delete NORTH (version 1 -> tombstone version 2).
-    norn_kernel::CellHost::commit(
+    commit_write(
         &mut cell,
-        norn_kernel::CellCommit {
-            writes: vec![norn_kernel::FactWrite {
-                key: norn_kernel::FactKey::new("canon.Holding", NORTH),
-                expected: norn_kernel::FactVersion(1),
-                mutation: norn_kernel::FactMutation::Delete,
-            }],
-            ..norn_kernel::CellCommit::empty()
-        },
-    )
-    .expect("delete holding");
-
-    // Shopify recreates NORTH after deletion with `basis = available` and a
-    // gap on `cost_currency`. Must NOT disagree with pre-deletion ERPNext.
-    let shopify_row = find_snapshot_row("shopify", "InventoryLevel", "norn_ref", NORTH);
-    assert_eq!(
-        ingest_row(
-            &mut cell,
-            "shopify",
-            "InventoryLevel",
-            &shopify_row,
-            "recreate-shopify",
-            "10",
-        )
-        .2,
-        MappingOutcome::Landed
+        "canon.Holding",
+        NORTH,
+        1,
+        norn_kernel::FactMutation::Delete,
     );
+
+    // Shopify recreates NORTH after deletion with `quantity_basis = available`
+    // and a gap on `cost_currency`. Must NOT disagree with pre-deletion ERPNext.
+    let mut shopify_row =
+        find_snapshot_row("shopify", "InventoryLevel", "metafield_norn_ref", NORTH);
+    let (_, _, r1) = ingest_row(
+        &mut cell,
+        "shopify",
+        "InventoryLevel",
+        &shopify_row,
+        "recreate-shopify",
+        "10",
+    );
+    assert_eq!(r1, MappingOutcome::Landed);
     assert!(
         cell.store()
             .read()
@@ -546,20 +560,47 @@ fn wedge1b_deletion_tombstone_stops_disagreement_walkback() {
         "recreation after deletion must not cross tombstone to disagree with pre-deletion source"
     );
 
-    // Odoo later reports `cost_currency = EUR` and `basis = on_hand`.
-    // Only post-recreation Shopify vs Odoo on `basis` disagrees; `cost_currency`
-    // walkback must stop at the tombstone rather than citing pre-deletion ERPNext.
+    // Seed non-null `cost_currency = USD` on the new incarnation, then apply a
+    // Shopify gap update carrying that inherited `"USD"` value, followed by Odoo
+    // reporting `"EUR"` and `quantity_basis = on_hand`.
+    let mut recreated = cell
+        .store()
+        .read()
+        .object(MAIN_WORLD, "canon.Holding", NORTH)
+        .expect("read recreated")
+        .expect("recreated holding");
+    recreated
+        .values
+        .insert("cost_currency".into(), RuntimeValue::from("USD"));
+    let version = recreated.version;
+    commit_write(
+        &mut cell,
+        "canon.Holding",
+        NORTH,
+        version,
+        norn_kernel::FactMutation::Put {
+            values: recreated.values,
+        },
+    );
+    shopify_row["quantity"] = json!(72);
+    shopify_row["updated_at"] = json!("2026-11-04T09:00:00Z");
+    let (_, _, r2) = ingest_row(
+        &mut cell,
+        "shopify",
+        "InventoryLevel",
+        &shopify_row,
+        "shopify-gap-after-delete",
+        "11",
+    );
+    assert_eq!(r2, MappingOutcome::Landed);
     let mut odoo_row = find_snapshot_row("odoo", "stock.quant", "x_norn_ref", NORTH);
     odoo_row["cost_currency"] = json!("EUR");
     assert_eq!(
-        ingest_row(&mut cell, "odoo", "stock.quant", &odoo_row, "odoo-1", "11").2,
+        ingest_row(&mut cell, "odoo", "stock.quant", &odoo_row, "odoo-1", "12").2,
         MappingOutcome::Landed
     );
-    assert!(
-        property_disagreements(&cell, "cost_currency").is_empty(),
-        "walkback across tombstone must not cite pre-deletion ERPNext cost_currency"
-    );
-    let basis = property_disagreements(&cell, "basis");
+    assert!(property_disagreements(&cell, "cost_currency").is_empty());
+    let basis = property_disagreements(&cell, "quantity_basis");
     assert_eq!(basis.len(), 1, "{basis:#?}");
     let DataQualityOutcome::SourceDisagreement { earlier, later, .. } = &basis[0].finding.outcome
     else {
@@ -662,6 +703,10 @@ fn wedge3a_duplicates_and_feed_conflicts_invalidate_ivm() {
     // Exact redelivery of the identical raw envelope is idempotent.
     let (_, fresh, outcome) = ingest_envelope(&mut cell, &exact_raw, &input);
     assert!(!fresh && outcome == MappingOutcome::AlreadyLanded);
+    // Advance IVM to the landed commit before injecting the inbox-only conflict
+    // so the conflict must invalidate IVM with zero ledger advancement.
+    let _ = assert_ivm_matches_recompute(&cell, &plan, &mut view, &ctx, "pre-conflict sync");
+    let commits_before_conflict = cell.store().export_commit_count().expect("commits");
 
     // FEED-CONFLICT: same event_id ("ev-redeliver"), tampered quantity.
     let mut tampered = row;
@@ -670,6 +715,11 @@ fn wedge3a_duplicates_and_feed_conflicts_invalidate_ivm() {
     let (conflict_id, fresh, outcome) = ingest_envelope(&mut cell, &tampered_raw, &input);
     assert!(fresh && conflict_id.starts_with("mapping-conflict:"));
     assert!(matches!(outcome, MappingOutcome::Quarantined(_)));
+    assert_eq!(
+        cell.store().export_commit_count().expect("commits"),
+        commits_before_conflict,
+        "FEED-CONFLICT is inbox-only and must not advance the ledger frontier"
+    );
     assert!(
         cell.store()
             .read()
@@ -928,7 +978,7 @@ fn wedge5b_mistyped_overscale_and_non_object_payloads() {
             "bad-ccy",
             "cost_currency",
             json!("ZZZ"),
-            "mapping.runtime.invalid_record",
+            "mapping.runtime.evaluation_failed",
         ),
         (
             "bad-ts",
@@ -1536,6 +1586,16 @@ fn upgrade_and_delete_base_account(cell: &mut ObsCell, v2: &[ArtifactEnvelope], 
     .expect("delete base account");
 }
 
+fn account_mapping_input(mapping: &str, dataset: &str, ts: &str) -> MappingInput {
+    MappingInput {
+        mapping: mapping.into(),
+        dataset: dataset.into(),
+        connector_instance: "demo".into(),
+        partition: "default".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp(ts.into()),
+    }
+}
+
 /// Wedge 7c: An ancestor finding pinned under an older definitions version
 /// (before a subtype was installed) recovers cleanly when the record is deleted
 /// and recreated as the new subtype.
@@ -1552,19 +1612,20 @@ fn wedge7c_ancestor_finding_before_subtype_install_recovers_cleanly() {
     );
 
     // Record an open ancestor finding pinned at definitions_version = 1.
-    let crm_input = MappingInput {
-        mapping: "crm.feed.mapping".into(),
-        dataset: "Account".into(),
-        connector_instance: "demo".into(),
-        partition: "default".into(),
-        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
-    };
+    let crm_input = account_mapping_input("crm.feed.mapping", "Account", "2026-11-03T00:00:00Z");
     let bad_base = json!({"id": "ACCT-MIG", "name": "INVALID"});
     let raw_base = raw_envelope("crm", "ACCT-MIG", "ev-base-bad", "1", &bad_base, 1_000);
     assert_eq!(
         ingest_envelope(&mut cell, &raw_base, &crm_input).2,
         MappingOutcome::Landed
     );
+    let v1_findings = cell
+        .store()
+        .read()
+        .observation_findings(MAIN_WORLD, "crm.Account", "ACCT-MIG")
+        .expect("v1 findings");
+    assert_eq!(v1_findings.len(), 1, "{v1_findings:#?}");
+    let v1_finding_id = v1_findings[0].id.clone();
     assert!(
         cell.store()
             .read()
@@ -1576,13 +1637,11 @@ fn wedge7c_ancestor_finding_before_subtype_install_recovers_cleanly() {
     // Upgrade to definitions v2 introducing subtype `billing.EnterpriseAccount`,
     // delete base incarnation (v1 -> tombstone v2), and recreate as the subtype.
     upgrade_and_delete_base_account(&mut cell, &v2, "ACCT-MIG");
-    let billing_input = MappingInput {
-        mapping: "billing.feed.mapping".into(),
-        dataset: "EnterpriseAccount".into(),
-        connector_instance: "demo".into(),
-        partition: "default".into(),
-        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-04T00:00:00Z".into()),
-    };
+    let billing_input = account_mapping_input(
+        "billing.feed.mapping",
+        "EnterpriseAccount",
+        "2026-11-04T00:00:00Z",
+    );
     let still_bad = json!({"id": "ACCT-MIG", "name": "INVALID", "credit_limit": "500.00"});
     let raw_sub_bad = raw_envelope("billing", "ACCT-MIG", "ev-sub-bad", "1", &still_bad, 11_000);
     assert_eq!(
@@ -1596,8 +1655,8 @@ fn wedge7c_ancestor_finding_before_subtype_install_recovers_cleanly() {
         .expect("subtype findings while invalid");
     assert!(
         open.iter()
-            .any(|f| f.status == DataQualityFindingStatus::Open),
-        "{open:#?}"
+            .any(|f| f.id == v1_finding_id && f.status == DataQualityFindingStatus::Open),
+        "v1 ancestor finding {v1_finding_id} must remain open: {open:#?}"
     );
     assert!(
         cell.store()
@@ -1620,11 +1679,13 @@ fn wedge7c_ancestor_finding_before_subtype_install_recovers_cleanly() {
         .observation_findings(MAIN_WORLD, "billing.EnterpriseAccount", "ACCT-MIG")
         .expect("subtype findings after fix");
     assert!(
-        !resolved.is_empty()
+        resolved
+            .iter()
+            .any(|f| f.id == v1_finding_id && f.status == DataQualityFindingStatus::Resolved)
             && resolved
                 .iter()
                 .all(|f| f.status == DataQualityFindingStatus::Resolved),
-        "{resolved:#?}"
+        "v1 ancestor finding {v1_finding_id} must resolve: {resolved:#?}"
     );
     let auth = cell
         .store()
