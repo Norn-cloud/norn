@@ -814,13 +814,15 @@ fn high_impact_reason(action: &ActionRoot) -> Option<String> {
     // Draft creation and host-authenticated receipt confirmations are not human
     // approval decisions, so skip the name-based heuristic for them while still
     // honoring explicit irreversible/destructive/monetary declarations above (DX-9).
-    if matches!(
-        action.effect_program,
-        Some(ActionEffectProgram::UpsertInputObject {
-            write_mode: norn_kernel::pack_mbt_support::UpsertWriteMode::CreateOnly,
-            ..
-        })
-    ) {
+    if action.quantity_effect.is_none()
+        && matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::UpsertInputObject {
+                write_mode: norn_kernel::pack_mbt_support::UpsertWriteMode::CreateOnly,
+                ..
+            })
+        )
+    {
         return None;
     }
     if matches!(

@@ -5,11 +5,10 @@
 //! "structurally admitted" with "enforced at commit" or "formally proved".
 
 use norn_ir::{ArtifactEnvelope, ArtifactKind, LawIR, LawModality, LawResponse, LawRoot};
-use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 /// Whether `norn-kernel` enforces this law on every commit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LawEnforcementStatus {
     /// Checked on every native commit by `norn-kernel::governing_laws`.
     Enforced,
@@ -18,9 +17,19 @@ pub enum LawEnforcementStatus {
     DeclaredOnly,
 }
 
+impl LawEnforcementStatus {
+    /// Wire kebab-case token for JSON projections.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Enforced => "enforced",
+            Self::DeclaredOnly => "declared-only",
+        }
+    }
+}
+
 /// Honest verification/proof evidence level for one law (`AGENTS.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LawProofStatus {
     /// No static discharge or admission check has been recorded for this law.
     Unknown,
@@ -36,9 +45,23 @@ pub enum LawProofStatus {
     CheckedProof,
 }
 
+impl LawProofStatus {
+    /// Wire kebab-case token for JSON projections.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Structural => "structural",
+            Self::FrameProved => "frame-proved",
+            Self::ExhaustiveFinite => "exhaustive-finite",
+            Self::BoundedChecked => "bounded-checked",
+            Self::CheckedProof => "checked-proof",
+        }
+    }
+}
+
 /// One law's honest enforcement and proof record.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LawReceiptEntry {
     /// Artifact envelope id (e.g. `soliman.Payslip.zero_break_and_exact_net.law`).
     pub artifact_id: String,
@@ -49,11 +72,28 @@ pub struct LawReceiptEntry {
     /// Static proof/evidence level.
     pub proof: LawProofStatus,
     /// Optional content digest of the attached proof/certificate evidence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_digest: Option<String>,
     /// Human-readable explanation when `DeclaredOnly` or partially discharged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+impl LawReceiptEntry {
+    /// Canonical camelCase JSON representation for CLI/WASM projections.
+    #[must_use]
+    pub fn to_json_value(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("artifactId".to_owned(), json!(self.artifact_id));
+        map.insert("lawId".to_owned(), json!(self.law_id));
+        map.insert("enforcement".to_owned(), json!(self.enforcement.as_str()));
+        map.insert("proof".to_owned(), json!(self.proof.as_str()));
+        if let Some(digest) = &self.evidence_digest {
+            map.insert("evidenceDigest".to_owned(), json!(digest));
+        }
+        if let Some(reason) = &self.reason {
+            map.insert("reason".to_owned(), json!(reason));
+        }
+        Value::Object(map)
+    }
 }
 
 /// Classifies one decoded [`LawIR`] against the exact commit-path support rules

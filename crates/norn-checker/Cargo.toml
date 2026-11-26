@@ -47,14 +47,15 @@ norn-ir = { path = "../norn-ir" }
 # zen-expression to `regex-lite`), so `pattern` constraints are checked in the
 # dialect rules and runtime evaluate them in (SKELETON.md 2026-09-27 amendment).
 regex-lite = "0.1.9"
-serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 # Exact import-field paths; already locked, no-std/alloc, synchronous and sans-IO.
 serde_path_to_error = "=0.1.20"
 sha2 = "0.10.9"
 
 [build-dependencies]
-# Fixed shared AST admission and build-time projection; never a runtime executor.
+# Fixed shared AST admission and build-time Ascent projection for core admission
+# checks; runtime `norn-datalog::evaluate` is used only for opt-in advisory
+# `RED-TEAM-1` checks (`red_team::analyze_red_team`).
 norn-datalog = { path = "../norn-datalog" }
 # Maintained Rust token generation; already present transitively in the workspace.
 quote = "1.0"
