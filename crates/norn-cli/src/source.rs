@@ -148,13 +148,13 @@ fn accepted(
 ) -> Result<RuntimeValue, String> {
     let mut response = response.map_err(|e| format!("source request failed: {e}"))?;
     let status = response.status();
+    if status != 200 {
+        return Err(format!("source refused the read: HTTP {status}"));
+    }
     let body = response
         .body_mut()
         .read_to_string()
         .map_err(|e| format!("source response unreadable: {e}"))?;
-    if status != 200 {
-        return Err(format!("source refused the read: HTTP {status}"));
-    }
     RuntimeValue::from_json_text(&body).map_err(|e| e.to_string())
 }
 

@@ -46,6 +46,29 @@ use tempfile::TempDir;
 
 type FactSqliteCell = SqliteCell<FactEvent, JsonObject, JsonObject>;
 type ObsSqliteCell = SqliteCell<ObservationEvent, JsonObject, JsonObject>;
+type ObservedFactCell = ObservedSqliteCell<FactEvent, JsonObject, JsonObject>;
+
+fn build_pack_model(pack: &AdmittedPack) -> Result<Model, String> {
+    Model::from_definitions_with_interfaces(
+        &pack.object_types,
+        &pack.property_types,
+        &pack.interfaces,
+    )
+    .map_err(|e| format!("model: {e}"))?
+    .with_governing_laws(&pack.law_envelopes)
+    .map_err(|e| format!("laws: {e}"))
+}
+
+fn open_observed_fact_cell(
+    pack: &AdmittedPack,
+) -> Result<(ObservedFactCell, Arc<DomainCoverageRecorder>), String> {
+    let model = build_pack_model(pack)?;
+    let recorder = Arc::new(DomainCoverageRecorder::new());
+    let cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
+        .map_err(|e| format!("open: {e}"))?
+        .into_observed(Arc::clone(&recorder));
+    Ok((cell, recorder))
+}
 
 fn runtime_obj(pairs: &[(&str, RuntimeValue)]) -> RuntimeObject {
     pairs
@@ -213,18 +236,7 @@ fn observed_sqlite_cell_handles_multi_object_self_loop_and_immutable_refusal() -
     let pack = AdmittedPack::from_envelopes("obs_test", &envelopes)?;
     let extra = [action_call_object_type()];
     let catalog = pack.type_catalog(&extra);
-    let model = Model::from_definitions_with_interfaces(
-        &pack.object_types,
-        &pack.property_types,
-        &pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
-    let recorder = Arc::new(DomainCoverageRecorder::new());
-    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
-        .map_err(|e| format!("open: {e}"))?
-        .into_observed(Arc::clone(&recorder));
+    let (mut cell, recorder) = open_observed_fact_cell(&pack)?;
 
     let (k1, k2) = seed_two_open_tickets(&mut cell, &catalog)?;
     assert!(
@@ -309,14 +321,7 @@ fn observed_sqlite_cell_records_quarantined_observation_violation_not_hold() -> 
     let pack = AdmittedPack::from_envelopes("obs_quarantine", &envelopes)?;
     let extra = [action_call_object_type()];
     let catalog = pack.type_catalog(&extra);
-    let model = Model::from_definitions_with_interfaces(
-        &pack.object_types,
-        &pack.property_types,
-        &pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
+    let model = build_pack_model(&pack)?;
     let recorder = Arc::new(DomainCoverageRecorder::new());
     let mut cell = ObsSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
         .map_err(|e| format!("open: {e}"))?
@@ -1032,18 +1037,7 @@ fn observed_sqlite_cell_credits_invariant_backed_law_holds() -> Result<(), Strin
     let pack = invariant_order_pack()?;
     let extra = [action_call_object_type()];
     let catalog = pack.type_catalog(&extra);
-    let model = Model::from_definitions_with_interfaces(
-        &pack.object_types,
-        &pack.property_types,
-        &pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
-    let recorder = Arc::new(DomainCoverageRecorder::new());
-    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
-        .map_err(|e| format!("open: {e}"))?
-        .into_observed(Arc::clone(&recorder));
+    let (mut cell, recorder) = open_observed_fact_cell(&pack)?;
 
     let k_open = FactKey::new("obs.Order", "o-1");
     let slice1 = load_slice(&cell, [k_open]).map_err(|e| format!("{e}"))?;
@@ -1332,18 +1326,7 @@ fn linked_and_invariant_pack() -> Result<AdmittedPack, String> {
 fn observed_sqlite_cell_credits_invariant_law_alongside_linked_predicate_law() -> Result<(), String>
 {
     let pack = linked_and_invariant_pack()?;
-    let model = Model::from_definitions_with_interfaces(
-        &pack.object_types,
-        &pack.property_types,
-        &pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
-    let recorder = Arc::new(DomainCoverageRecorder::new());
-    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
-        .map_err(|e| format!("open: {e}"))?
-        .into_observed(Arc::clone(&recorder));
+    let (mut cell, recorder) = open_observed_fact_cell(&pack)?;
 
     let account_key = FactKey::new("mix.Account", "acct-1");
     let charge_key = FactKey::new("mix.Charge", "chg-1");
@@ -1525,18 +1508,7 @@ fn link_only_recheck_pack() -> Result<AdmittedPack, String> {
 #[test]
 fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String> {
     let pack = link_only_recheck_pack()?;
-    let model = Model::from_definitions_with_interfaces(
-        &pack.object_types,
-        &pack.property_types,
-        &pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
-    let recorder = Arc::new(DomainCoverageRecorder::new());
-    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
-        .map_err(|e| format!("open: {e}"))?
-        .into_observed(Arc::clone(&recorder));
+    let (mut cell, recorder) = open_observed_fact_cell(&pack)?;
 
     let account_key = FactKey::new("lo.Account", "acct-1");
     let charge_key = FactKey::new("lo.Charge", "chg-1");
@@ -1632,18 +1604,7 @@ fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String>
 #[test]
 fn observed_sqlite_cell_records_subtype_hold_on_ancestor_addressed_link() -> Result<(), String> {
     let pack = link_only_recheck_pack()?;
-    let model = Model::from_definitions_with_interfaces(
-        &pack.object_types,
-        &pack.property_types,
-        &pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
-    let recorder = Arc::new(DomainCoverageRecorder::new());
-    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
-        .map_err(|e| format!("open: {e}"))?
-        .into_observed(Arc::clone(&recorder));
+    let (mut cell, recorder) = open_observed_fact_cell(&pack)?;
 
     let account_key = FactKey::new("lo.Account", "acct-sub");
     let prem_key = FactKey::new("lo.PremiumCharge", "prem-1");
