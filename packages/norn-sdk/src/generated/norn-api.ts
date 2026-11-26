@@ -2346,6 +2346,15 @@ export interface components {
             /** @description A property value: an exact decimal as a raw JSON number token (read its text, not a binary float), or a UTC RFC 3339 timestamp or ISO 8601 date string. */
             upper: unknown;
         };
+        /** @description One built-in page as `GET /v1/definitions` serves it. */
+        NornBuiltinDefinition: {
+            /** @description One built-in artifact envelope, admitted by both checker rings when this host was built. */
+            artifact: {
+                [key: string]: unknown;
+            };
+            /** @description The sha256 (lowercase hex) of the bytes this host embeds for the page. */
+            sha256: string;
+        };
         /** @description A current checker admission receipt. */
         NornCheckReceipt: {
             /** @description Whether the candidate set passed admission. */
@@ -2646,6 +2655,12 @@ export interface components {
             }[];
             /** @description Read-only base artifact identities. */
             baseArtifactIds: string[];
+            /**
+             * @description Studio's built-in pages this host serves for ids `artifacts` does not hold
+             *     (`builtin_pages`): in no revision and no receipt, admitted by both checker rings when the
+             *     host was built. A definition the workspace installed with a built-in's id replaces it.
+             */
+            builtins: components["schemas"]["NornBuiltinDefinition"][];
             /** @description Always null: finding text is not retained with a revision; `receipt` carries the admission's digest. Kept for the shape readers already rely on; `null` is frozen, so real diagnostics would arrive as a new member. */
             diagnostics: null;
             layout: components["schemas"]["LayoutSidecar"];

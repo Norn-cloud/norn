@@ -133,9 +133,7 @@ mod tests {
         let mut committed: Vec<(String, String)> = std::fs::read_dir(&dir)
             .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
             .map(|entry| {
-                let path = entry
-                    .map(|entry| entry.path())
-                    .unwrap_or_else(|error| panic!("{error}"));
+                let path = entry.unwrap_or_else(|error| panic!("{error}")).path();
                 let id = path
                     .file_stem()
                     .and_then(|stem| stem.to_str())

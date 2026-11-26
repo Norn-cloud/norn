@@ -8787,6 +8787,25 @@
           }
         }
       },
+      "NornBuiltinDefinition": {
+        "type": "object",
+        "description": "One built-in page as `GET /v1/definitions` serves it.",
+        "required": [
+          "artifact",
+          "sha256"
+        ],
+        "properties": {
+          "artifact": {
+            "type": "object",
+            "description": "One built-in artifact envelope, admitted by both checker rings when this host was built.",
+            "additionalProperties": true
+          },
+          "sha256": {
+            "type": "string",
+            "description": "The sha256 (lowercase hex) of the bytes this host embeds for the page."
+          }
+        }
+      },
       "NornCheckReceipt": {
         "type": "object",
         "description": "A current checker admission receipt.",
@@ -9535,6 +9554,7 @@
           "registry",
           "baseArtifactIds",
           "artifacts",
+          "builtins",
           "objectCounts"
         ],
         "properties": {
@@ -9560,6 +9580,13 @@
               "type": "string"
             },
             "description": "Read-only base artifact identities."
+          },
+          "builtins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornBuiltinDefinition"
+            },
+            "description": "Studio's built-in pages this host serves for ids `artifacts` does not hold\n(`builtin_pages`): in no revision and no receipt, admitted by both checker rings when the\nhost was built. A definition the workspace installed with a built-in's id replaces it."
           },
           "diagnostics": {
             "type": "null",
