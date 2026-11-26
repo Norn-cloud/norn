@@ -1019,8 +1019,9 @@ impl LawContext<'_> {
             );
         }
         for (index, exception) in law.exceptions.iter().enumerate() {
-            predicate(
+            guarded_predicate(
                 exception.condition.as_str(),
+                law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                 &env,
                 artifact,
                 &format!("/payload/exceptions/{index}/condition"),
@@ -1125,8 +1126,9 @@ impl LawContext<'_> {
                 predicate(condition.as_str(), env, artifact, "/payload/condition", out);
             }
             for (index, exception) in law.exceptions.iter().enumerate() {
-                predicate(
+                guarded_predicate(
                     exception.condition.as_str(),
+                    law.condition.as_ref().map(norn_ir::ZenExpression::as_str),
                     env,
                     artifact,
                     &format!("/payload/exceptions/{index}/condition"),
@@ -1388,6 +1390,7 @@ fn link_reads(
     env: &ZenTypeEnv,
     out: &mut Vec<Diagnostic>,
 ) {
+    use std::borrow::Cow;
     let Some(record) = env.record(subject) else {
         return;
     };
@@ -1399,8 +1402,14 @@ fn link_reads(
     let sources = law
         .condition
         .iter()
-        .map(|condition| ("/payload/condition", condition.as_str()))
-        .chain(response);
+        .map(|c| (Cow::Borrowed("/payload/condition"), c.as_str()))
+        .chain(law.exceptions.iter().enumerate().map(|(i, ex)| {
+            (
+                Cow::Owned(format!("/payload/exceptions/{i}/condition")),
+                ex.condition.as_str(),
+            )
+        }))
+        .chain(response.map(|(p, s)| (Cow::Borrowed(p), s)));
     for (pointer, source) in sources {
         // An unparsable source is reported by its predicate check.
         let Ok(paths) = norn_expr::expression_read_paths(source, "self") else {
@@ -1425,7 +1434,7 @@ fn link_reads(
             )
         {
             if said.insert(message.clone()) {
-                out.push(finding(codes::UNKNOWN_BINDING, artifact, pointer, message));
+                out.push(finding(codes::UNKNOWN_BINDING, artifact, &pointer, message));
             }
         }
     }

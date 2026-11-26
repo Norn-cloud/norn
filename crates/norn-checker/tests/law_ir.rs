@@ -922,6 +922,54 @@ fn law_link_reads_admit_one_to_one_hop_only() {
         says(&second, &["`self.order.ticket` is a second hop"]),
         "{second:?}"
     );
+    // Exception conditions enforce the same guarded non-null narrowing and 1-hop link bound.
+    let check_exception = |condition: Option<&str>, ex_condition: &str| {
+        let mut law = laws()[1].clone();
+        let id = law["payload"]["id"].as_str().expect("id").to_owned();
+        let payload = law["payload"].as_object_mut().expect("payload");
+        match condition {
+            Some(condition) => payload.insert("condition".into(), json!(condition)),
+            None => payload.remove("condition"),
+        };
+        law["payload"]["response"]["expression"] = json!("self.amount <= 100");
+        law["payload"]["exceptions"] = json!([{
+            "id": "ex",
+            "overrides": id,
+            "condition": ex_condition,
+            "rationale": "linked exception",
+            "source": {"artifactId": "erpnext.approved_amount.law", "pointer": "/payload"}
+        }]);
+        diagnostics(vec![law], &base)
+    };
+    let ex_admitted = check_exception(Some("self.order != null"), "self.order.paid == true");
+    assert!(
+        !refused(&ex_admitted, codes::UNKNOWN_BINDING)
+            && !refused(&ex_admitted, codes::PREDICATE_TYPE),
+        "{ex_admitted:?}"
+    );
+    let ex_unguarded =
+        check_exception(Some("self.status == 'approved'"), "self.order.paid == true");
+    assert!(
+        refused(&ex_unguarded, codes::PREDICATE_TYPE),
+        "{ex_unguarded:?}"
+    );
+    let ex_second = check_exception(
+        Some("self.order != null"),
+        "self.order.ticket.status == 'accepted'",
+    );
+    assert!(
+        ex_second.iter().any(|found| {
+            found.code.as_str() == codes::UNKNOWN_BINDING
+                && found
+                    .message
+                    .contains("`self.order.ticket` is a second hop")
+                && found
+                    .span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/exceptions/0/condition")
+        }),
+        "{ex_second:?}"
+    );
 }
 
 /// The artifacts of the canon itemized-document concept and of the documents

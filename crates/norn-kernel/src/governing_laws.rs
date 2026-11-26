@@ -207,6 +207,19 @@ fn inverse_declarations(
     found
 }
 
+fn law_expressions(law: &LawIR) -> impl Iterator<Item = &str> {
+    let response = if let LawResponse::Predicate { expression } = &law.response {
+        Some(expression.as_str())
+    } else {
+        None
+    };
+    law.condition
+        .iter()
+        .chain(law.exceptions.iter().map(|exception| &exception.condition))
+        .map(norn_ir::ZenExpression::as_str)
+        .chain(response)
+}
+
 /// LAW-LINK-1 / LAW-LINK-MANY-1: the links of `subject` a law reads, in
 /// order: a declared to-one forward link and its target's properties, or an
 /// inverse role and its sources' own properties. A to-many forward link, a
@@ -229,19 +242,7 @@ pub fn law_link_reads(
         })
     };
     let mut reads = std::collections::BTreeSet::new();
-    let response = match &law.response {
-        LawResponse::Predicate { expression } => Some(expression.as_str()),
-        LawResponse::Invariant { .. }
-        | LawResponse::Action { .. }
-        | LawResponse::Transition { .. }
-        | LawResponse::TranslationPreserves { .. } => None,
-    };
-    for text in law
-        .condition
-        .iter()
-        .map(norn_ir::ZenExpression::as_str)
-        .chain(response)
-    {
+    for text in law_expressions(law) {
         let paths = norn_expr::expression_read_paths(text, "self")
             .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?;
         for path in paths {
@@ -407,18 +408,8 @@ fn law_operands(
     targets: &std::collections::BTreeMap<String, JsonObject>,
     sources: &std::collections::BTreeMap<String, Vec<JsonObject>>,
 ) -> std::collections::BTreeMap<String, norn_ir::RuntimeValue> {
-    let response = if let LawResponse::Predicate { expression } = &law.response {
-        Some(expression.as_str())
-    } else {
-        None
-    };
     let mut operands = std::collections::BTreeMap::new();
-    for text in law
-        .condition
-        .iter()
-        .map(norn_ir::ZenExpression::as_str)
-        .chain(response)
-    {
+    for text in law_expressions(law) {
         let Ok(paths) = norn_expr::expression_read_paths(text, "self") else {
             continue;
         };
@@ -581,6 +572,12 @@ pub fn law_rule(
     if !supported(law) {
         return Err(LawEvaluationError::Unsupported(law.id.clone()));
     }
+    if !law.exceptions.is_empty() {
+        return Err(LawEvaluationError::Unsupported(format!(
+            "{}: a law with exceptions has no dataset semantics",
+            law.id
+        )));
+    }
     if !law_link_reads(catalog, subject, law)?.is_empty() {
         return Err(LawEvaluationError::Unsupported(format!(
             "{}: a law that reads a link has no dataset semantics",
@@ -601,17 +598,16 @@ pub fn law_row_tree(source: &str) -> Option<norn_expr::RowExpr> {
 }
 
 fn supported(law: &LawIR) -> bool {
-    // An exception tree has no commit-path semantics until the per-write fold
-    // lands; refusing keeps a law from being evaluated without its exceptions.
-    law.exceptions.is_empty()
-        && law.timing.is_none()
+    law.timing.is_none()
         && law.scope.lifecycle_states.is_empty()
         && law.scope.commitments.is_empty()
         && matches!(law.modality, LawModality::Always {} | LawModality::Never {})
         && match law.response {
             LawResponse::Predicate { .. } => true,
             LawResponse::Invariant { .. } => {
-                matches!(law.modality, LawModality::Always {}) && law.condition.is_none()
+                law.exceptions.is_empty()
+                    && matches!(law.modality, LawModality::Always {})
+                    && law.condition.is_none()
             }
             LawResponse::Action { .. }
             | LawResponse::Transition { .. }
@@ -732,7 +728,11 @@ pub(crate) fn classify(
         let Ok(law) = decode(catalog, artifact) else {
             continue;
         };
-        if !supported(law) || pin(artifact, law).as_ref() != Ok(rule_ref) {
+        if !supported(law)
+            || (!law.exceptions.is_empty()
+                && norn_checker::law_exceptions::check_tree(&law.id, &law.exceptions).is_err())
+            || pin(artifact, law).as_ref() != Ok(rule_ref)
+        {
             continue;
         }
         let governs = |subject: &ObjectTypeName| {
@@ -861,6 +861,11 @@ pub fn evaluate_linked(
         if !supported(law) {
             return Err(LawEvaluationError::Unsupported(law.id.clone()));
         }
+        if !law.exceptions.is_empty() {
+            norn_checker::law_exceptions::check_tree(&law.id, &law.exceptions).map_err(
+                |refusal| LawEvaluationError::Invalid(format!("{}: {}", law.id, refusal.code())),
+            )?;
+        }
         let reads = law_link_reads(catalog, &key.object_type, law)?;
         if !reads.is_empty() && links.defers() {
             continue;
@@ -877,42 +882,50 @@ pub fn evaluate_linked(
         let result = match activation {
             Ok(false) => continue,
             Err(outcome) => Err(outcome),
-            Ok(true) => match &law.response {
-                LawResponse::Predicate { expression } => {
-                    boolean(catalog, expression.as_str(), &context, remaining)?.and_then(|value| {
-                        if value == matches!(law.modality, LawModality::Always {}) {
-                            Ok(())
-                        } else {
-                            Err(DataQualityOutcome::NotSatisfied)
-                        }
-                    })
-                }
-                LawResponse::Invariant { .. } => {
-                    let id =
-                        invariant_id.ok_or_else(|| LawEvaluationError::Invalid(law.id.clone()))?;
-                    let failures = crate::commit_check::evaluate_named_invariant(
-                        catalog, key, values, remaining, id,
-                    )
-                    .map_err(|error| match error {
-                        crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
-                            LawEvaluationError::BudgetExceeded
-                        }
-                        other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(_)
-| crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => LawEvaluationError::Invalid(format!("{other:?}")),
-                    })?;
-                    if let Some(failure) = failures.into_iter().next() {
-                        let outcome = failure.outcome.clone();
-                        invariant_failure = Some(bind_invariant_failure(catalog, failure)?);
-                        Err(outcome)
-                    } else {
-                        Ok(())
+            Ok(true) => match exception_lifts(catalog, law, &context, remaining)? {
+                Ok(true) => continue,
+                Err(outcome) => Err(outcome),
+                Ok(false) => match &law.response {
+                    LawResponse::Predicate { expression } => {
+                        boolean(catalog, expression.as_str(), &context, remaining)?.and_then(
+                            |value| {
+                                if value == matches!(law.modality, LawModality::Always {}) {
+                                    Ok(())
+                                } else {
+                                    Err(DataQualityOutcome::NotSatisfied)
+                                }
+                            },
+                        )
                     }
-                }
-                LawResponse::Action { .. }
-                | LawResponse::Transition { .. }
-                | LawResponse::TranslationPreserves { .. } => {
-                    return Err(LawEvaluationError::Unsupported(law.id.clone()));
-                }
+                    LawResponse::Invariant { .. } => {
+                        let id = invariant_id
+                            .ok_or_else(|| LawEvaluationError::Invalid(law.id.clone()))?;
+                        let failures = crate::commit_check::evaluate_named_invariant(
+                            catalog, key, values, remaining, id,
+                        )
+                        .map_err(|error| match error {
+                            crate::commit_check::InvariantEvaluationError::BudgetExceeded => {
+                                LawEvaluationError::BudgetExceeded
+                            }
+                            other @ (crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(_)
+                            | crate::commit_check::InvariantEvaluationError::MissingInterface(_)) => {
+                                LawEvaluationError::Invalid(format!("{other:?}"))
+                            }
+                        })?;
+                        if let Some(failure) = failures.into_iter().next() {
+                            let outcome = failure.outcome.clone();
+                            invariant_failure = Some(bind_invariant_failure(catalog, failure)?);
+                            Err(outcome)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    LawResponse::Action { .. }
+                    | LawResponse::Transition { .. }
+                    | LawResponse::TranslationPreserves { .. } => {
+                        return Err(LawEvaluationError::Unsupported(law.id.clone()));
+                    }
+                },
             },
         };
         if let Err(outcome) = result {
@@ -923,6 +936,27 @@ pub fn evaluate_linked(
         }
     }
     Ok(failures)
+}
+/// Evaluate an admitted exception tree under `remaining` fuel and fold it with
+/// `norn_checker::law_exceptions::fold`; evaluation errors fail closed.
+fn exception_lifts(
+    catalog: &TypeCatalog<'_>,
+    law: &LawIR,
+    context: &Value,
+    remaining: &mut TurnFuel,
+) -> Result<Result<bool, DataQualityOutcome>, LawEvaluationError> {
+    if law.exceptions.is_empty() {
+        return Ok(Ok(false));
+    }
+    let mut matched = Vec::with_capacity(law.exceptions.len());
+    for exception in &law.exceptions {
+        match boolean(catalog, exception.condition.as_str(), context, remaining)? {
+            Ok(value) => matched.push(value),
+            Err(outcome) => return Ok(Err(outcome)),
+        }
+    }
+    let (lifted, _applied) = norn_checker::law_exceptions::fold(&law.id, &law.exceptions, &matched);
+    Ok(Ok(lifted))
 }
 fn boolean(
     catalog: &TypeCatalog<'_>,

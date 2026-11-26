@@ -4054,35 +4054,374 @@ fn property_domain_unsupported_record_member_is_not_a_validity_finding() {
     assert_eq!(native.outbox(), []);
 }
 
-#[test]
-fn law_with_exceptions_refuses_until_the_fold_lands() {
-    // #1187: a commit governed by a law with an exception tree is refused with
-    // `core.laws.unsupported_semantics`, never evaluated without its exceptions.
-    let mut law = serde_json::to_value(direct_amount_law()).unwrap();
-    law["payload"]["exceptions"] = json!([{
-        "id": "small", "overrides": "amount_bounded", "condition": "self.amount < 10",
-        "rationale": "Small amounts are exempt.",
+fn law_exception(id: &str, overrides: &str, condition: &str) -> Value {
+    json!({
+        "id": id,
+        "overrides": overrides,
+        "condition": condition,
+        "rationale": format!("{id} exception"),
         "source": {"artifactId": "invariant.amount.law", "pointer": "/payload"}
-    }]);
+    })
+}
+
+#[test]
+fn law_with_exceptions_folds_nested_overrides_and_is_order_independent() {
+    let base_exceptions = vec![
+        law_exception("vip", "amount_bounded", "self.item_id == 'vip'"),
+        law_exception("too_big", "vip", "self.amount > 1000"),
+        law_exception("board_cap", "too_big", "self.amount == 2000"),
+        law_exception("exact_150", "amount_bounded", "self.amount == 150"),
+    ];
+    for reversed in [false, true] {
+        let mut exceptions = base_exceptions.clone();
+        if reversed {
+            exceptions.reverse();
+        }
+        let mut law = serde_json::to_value(direct_amount_law()).unwrap();
+        law["payload"]["exceptions"] = Value::Array(exceptions);
+        let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(law).unwrap();
+        let types = vec![quality_item_type()];
+        let catalog = TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&artifact));
+        let mut native = cell().with_types(types).with_governing_laws(vec![artifact]);
+        let commit_row = |cell: &mut CommandCell, key: &str, item_id: &str, amount: i64| {
+            cell.commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: FactKey::new(ITEM, key),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: object(json!({"item_id": item_id, "amount": amount})),
+                    },
+                }],
+                ..CellCommit::empty()
+            })
+        };
+
+        // Base law holds without needing any exception.
+        commit_row(&mut native, "base-ok", "regular", 50).expect("base law holds");
+        // Sibling exception lifts the violation.
+        commit_row(&mut native, "sibling-lifted", "regular", 150).expect("sibling lifts");
+        // First-level exception lifts the violation.
+        commit_row(&mut native, "vip-lifted", "vip", 500).expect("vip lifts");
+        // Third-level exception overrides `too_big`, restoring `vip`'s lift.
+        commit_row(&mut native, "board-relifted", "vip", 2000).expect("board cap re-lifts");
+
+        // Unexcepted violation refuses with DIAG-REASON-1 operands including exception reads.
+        let regular_refusal = commit_row(&mut native, "regular-bad", "regular", 500)
+            .expect_err("unexcepted write must refuse");
+        assert_eq!(regular_refusal.code(), "core.laws.violated");
+        let CommitError::Law {
+            reason: norn_kernel::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = regular_refusal
+        else {
+            panic!("expected law violation");
+        };
+        assert_eq!(failure.outcome, DataQualityOutcome::NotSatisfied);
+        assert_eq!(
+            failure.values.get("item_id"),
+            Some(&RuntimeValue::String("regular".into()))
+        );
+        assert_eq!(
+            failure.values.get("amount"),
+            Some(&RuntimeValue::Number(
+                norn_ir::Decimal::parse("500").unwrap()
+            ))
+        );
+        assert_eq!(
+            catalog
+                .classify_data_quality_rule(&failure.rule_ref)
+                .unwrap(),
+            norn_kernel::DataQualityRuleClassification::Integrity
+        );
+
+        // Second-level exception overrides `vip`, re-applying the base law.
+        let override_refusal = commit_row(&mut native, "vip-overridden", "vip", 1500)
+            .expect_err("nested override must re-apply the law");
+        assert_eq!(override_refusal.code(), "core.laws.violated");
+        assert!(
+            native
+                .load(&FactKey::new(ITEM, "vip-overridden"))
+                .unwrap()
+                .values
+                .is_none()
+        );
+    }
+
+    // `Always` modality with `when` guard + `unless` exception.
+    let mut always = serde_json::to_value(direct_amount_law()).unwrap();
+    always["payload"]["modality"] = json!({"kind": "always"});
+    always["payload"]["condition"] = json!("self.amount >= 0");
+    always["payload"]["response"]["expression"] = json!("self.amount <= 100");
+    always["payload"]["exceptions"] = json!([law_exception(
+        "vip",
+        "amount_bounded",
+        "self.item_id == 'vip'"
+    )]);
     let mut native = cell()
         .with_types(vec![quality_item_type()])
-        .with_governing_laws(vec![serde_json::from_value(law).unwrap()]);
-    let key = FactKey::new(ITEM, "excepted");
-    let refusal = native
-        .commit(CellCommit {
+        .with_governing_laws(vec![serde_json::from_value(always).unwrap()]);
+    for (key, item_id, amount, ok) in [
+        ("inapplicable", "regular", -5, true),
+        ("lifted", "vip", 500, true),
+        ("violated", "regular", 500, false),
+    ] {
+        let res = native.commit(CellCommit {
             writes: vec![FactWrite {
-                key: key.clone(),
+                key: FactKey::new(ITEM, key),
                 expected: FactVersion::ABSENT,
                 mutation: FactMutation::Put {
-                    values: object(json!({"item_id":"excepted", "amount":500})),
+                    values: object(json!({"item_id": item_id, "amount": amount})),
+                },
+            }],
+            ..CellCommit::empty()
+        });
+        assert_eq!(res.is_ok(), ok, "key={key} res={res:?}");
+    }
+}
+
+#[test]
+fn law_with_exceptions_fails_closed_on_malformed_tree_broken_expr_invariant_and_dataset_rule() {
+    // Malformed exception tree (cycle) refuses even when `when` is false, and never classifies as Integrity.
+    let mut cyclic = serde_json::to_value(direct_amount_law()).unwrap();
+    cyclic["payload"]["condition"] = json!("false");
+    cyclic["payload"]["exceptions"] = json!([
+        law_exception("a", "b", "true"),
+        law_exception("b", "a", "true")
+    ]);
+    let cyclic_payload = cyclic["payload"].clone();
+    let cyclic_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(cyclic).unwrap();
+    let types = vec![quality_item_type()];
+    let cyclic_catalog =
+        TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&cyclic_artifact));
+    let mut cyclic_cell = cell()
+        .with_types(types.clone())
+        .with_governing_laws(vec![cyclic_artifact.clone()]);
+    let cyclic_err = cyclic_cell
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new(ITEM, "cyc"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: object(json!({"item_id": "cyc", "amount": 5})),
                 },
             }],
             ..CellCommit::empty()
         })
-        .expect_err("a law with exceptions has no commit-path semantics yet");
-    assert_eq!(refusal.code(), "core.laws.unsupported_semantics");
-    assert!(native.load(&key).unwrap().values.is_none());
-    assert_eq!(native.ledger(), []);
+        .expect_err("malformed exception tree must refuse even when condition is false");
+    assert_eq!(cyclic_err.code(), "core.laws.unresolved_scope");
+    let cyclic_pin = DataQualityRuleRef::Law {
+        artifact_id: cyclic_artifact.artifact_id.clone(),
+        law_id: "amount_bounded".into(),
+        version: {
+            let decoded: norn_ir::LawIR = serde_json::from_value(cyclic_payload).unwrap();
+            let bytes = norn_ir::canonical::canonical_json_of(&decoded).unwrap();
+            format!(
+                "sha256:{}",
+                norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+            )
+        },
+    };
+    assert_eq!(
+        cyclic_catalog
+            .classify_data_quality_rule(&cyclic_pin)
+            .unwrap(),
+        norn_kernel::DataQualityRuleClassification::Unverified
+    );
+
+    // Non-boolean and failing exception conditions fail closed (never lift or ignore).
+    for (expr, is_non_bool) in [("self.amount", true), ("1 / 0 == 1", false)] {
+        let mut broken = serde_json::to_value(direct_amount_law()).unwrap();
+        broken["payload"]["exceptions"] = json!([law_exception("bad", "amount_bounded", expr)]);
+        let mut broken_cell = cell()
+            .with_types(types.clone())
+            .with_governing_laws(vec![serde_json::from_value(broken).unwrap()]);
+        let err = broken_cell
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: FactKey::new(ITEM, "k"),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put {
+                        values: object(json!({"item_id": "k", "amount": 5})),
+                    },
+                }],
+                ..CellCommit::empty()
+            })
+            .expect_err("broken exception condition must refuse");
+        assert_eq!(err.code(), "core.laws.violated");
+        let CommitError::Law {
+            reason: norn_kernel::governing_laws::LawEvaluationError::Violated(failure),
+            ..
+        } = err
+        else {
+            panic!("expected Violated");
+        };
+        assert_eq!(
+            matches!(failure.outcome, DataQualityOutcome::NonBoolean { .. }),
+            is_non_bool
+        );
+    }
+
+    // Invariant response with exceptions still refuses as unsupported semantics.
+    let mut inv = serde_json::to_value(invariant_amount_law()).unwrap();
+    inv["payload"]["exceptions"] = json!([law_exception("small", "amount_bounded", "true")]);
+    let mut inv_cell = cell()
+        .with_types(types.clone())
+        .with_governing_laws(vec![serde_json::from_value(inv).unwrap()]);
+    let inv_err = inv_cell
+        .commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new(ITEM, "inv"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: object(json!({"item_id": "inv", "amount": 5})),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .expect_err("invariant law with exceptions is unsupported");
+    assert_eq!(inv_err.code(), "core.laws.unsupported_semantics");
+
+    // Bulk/dataset `law_rule` remains fail-closed for laws with exceptions, and zero fuel refuses.
+    let mut valid = serde_json::to_value(direct_amount_law()).unwrap();
+    valid["payload"]["exceptions"] = json!([law_exception(
+        "vip",
+        "amount_bounded",
+        "self.item_id == 'vip'"
+    )]);
+    let valid_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(valid).unwrap();
+    let valid_catalog =
+        TypeCatalog::new(&types).with_governing_laws(std::slice::from_ref(&valid_artifact));
+    let dataset_err = norn_kernel::governing_laws::law_rule(
+        &valid_catalog,
+        &ObjectTypeName(ITEM.into()),
+        &valid_artifact,
+    )
+    .expect_err("dataset law_rule must refuse laws with exceptions");
+    assert_eq!(dataset_err.code(), "core.laws.unsupported_semantics");
+    let fuel_err = norn_kernel::governing_laws::evaluate(
+        &valid_catalog,
+        &FactKey::new(ITEM, "fuel"),
+        &object(json!({"item_id": "vip", "amount": 500})),
+        &mut TurnFuel::new(0),
+    )
+    .expect_err("zero fuel must fail closed");
+    assert_eq!(
+        fuel_err,
+        norn_kernel::governing_laws::LawEvaluationError::BudgetExceeded
+    );
+}
+
+#[test]
+fn law_exception_reading_links_rechecks_on_target_mutation_and_supports_observations() -> Checked {
+    let types = document_types()?;
+    let mut law = serde_json::to_value(link_law(
+        "line_within_default_cap",
+        SPECIAL_LINE,
+        "self.amount > 100",
+    )?)?;
+    law["payload"]["condition"] = json!("self.doc != null");
+    law["payload"]["exceptions"] = json!([{
+        "id": "high_limit_doc",
+        "overrides": "line_within_default_cap",
+        "condition": "self.doc.limit >= 1000",
+        "rationale": "High-limit documents allow larger lines.",
+        "source": {"artifactId": "line_within_default_cap.law", "pointer": "/payload"}
+    }]);
+    let artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(law)?;
+    let mut cell = CommandCell::new(|command| command.payload.clone())
+        .with_types(types)
+        .with_governing_laws(vec![artifact]);
+    let doc = FactKey::new(DOC, "d");
+    let line = FactKey::new(SPECIAL_LINE, "l");
+
+    // Unlinked line: `when: self.doc != null` is false, so exception link read is skipped.
+    cell.commit(CellCommit {
+        writes: vec![put_new(SPECIAL_LINE, "unlinked", json!({"amount": 500}))?],
+        ..CellCommit::empty()
+    })?;
+
+    // Linked line: `doc.limit == 1000` satisfies `high_limit_doc` exception, lifting the cap.
+    cell.commit(CellCommit {
+        writes: vec![
+            put_new(DOC, "d", json!({"limit": 1000}))?,
+            put_new(SPECIAL_LINE, "l", json!({"amount": 500}))?,
+        ],
+        links: vec![add_link(&line, "doc", &doc)],
+        ..CellCommit::empty()
+    })?;
+
+    // Lowering `doc.limit` revokes the exception and refuses the target mutation with link + operand evidence.
+    let lowered = cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: doc,
+            expected: FactVersion(1),
+            mutation: FactMutation::Put {
+                values: object(json!({"limit": 50})),
+            },
+        }],
+        ..CellCommit::empty()
+    });
+    let Err(CommitError::Law {
+        reason: norn_kernel::governing_laws::LawEvaluationError::Violated(failure),
+        ..
+    }) = lowered
+    else {
+        panic!("mutating a target that revokes a linked exception must refuse");
+    };
+    let pin = failure.links.get("doc").expect("pinned target version");
+    assert_eq!(
+        (pin.object_type.as_str(), pin.key.as_str(), pin.version),
+        (DOC, "d", 2)
+    );
+    assert_eq!(
+        failure.values.get("doc.limit"),
+        Some(&RuntimeValue::Number(
+            norn_ir::Decimal::parse("50").unwrap()
+        ))
+    );
+
+    // Observed snapshot path: lifted write records zero findings; unexcepted write records a finding.
+    let mut obs_law = serde_json::to_value(direct_amount_law())?;
+    obs_law["payload"]["exceptions"] = json!([law_exception(
+        "vip",
+        "amount_bounded",
+        "self.item_id == 'vip'"
+    )]);
+    let obs_artifact: norn_ir::ArtifactEnvelope = serde_json::from_value(obs_law)?;
+    let obs_types = vec![quality_item_type()];
+    let obs_catalog =
+        TypeCatalog::new(&obs_types).with_governing_laws(std::slice::from_ref(&obs_artifact));
+    let mut obs_cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
+        .with_types(obs_types)
+        .with_governing_laws(vec![obs_artifact]);
+    let provenance = source_provenance();
+    for (id, item_id, expected_findings) in [("obs-vip", "vip", 0), ("obs-reg", "regular", 1)] {
+        let key = FactKey::new(ITEM, id);
+        let slice = load_slice(&obs_cell, [key.clone()])?;
+        let vals = object(json!({"item_id": item_id, "amount": 500}));
+        let prepared = prepare_observed_snapshot(
+            &obs_catalog,
+            &slice,
+            &turn(id),
+            ObservedSnapshot {
+                key: &key,
+                values: &vals,
+                lifecycles: &[],
+                provenance: &provenance,
+            },
+        )?;
+        let (commit, auth) = prepared.into_parts();
+        obs_cell.commit_observed(commit, auth)?;
+        let count = obs_cell.ledger().last().map_or(0, |entry| {
+            entry
+                .events
+                .iter()
+                .filter(|event| matches!(event, ObservationEvent::DataQualityFinding { .. }))
+                .count()
+        });
+        assert_eq!(count, expected_findings, "id={id}");
+    }
+    Ok(())
 }
 
 #[test]

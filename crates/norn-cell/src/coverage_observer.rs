@@ -631,9 +631,6 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             let Some(law) = decode_law_artifact(artifact) else {
                 continue;
             };
-            if !law.exceptions.is_empty() {
-                continue;
-            }
             if let Some(triggers) = touched_link_triggers {
                 let single = [artifact.clone()];
                 let single_catalog = ctx.model.type_catalog().with_governing_laws(&single);
@@ -776,7 +773,7 @@ fn linked_law_condition_active<S: SqlEngine>(
     key: &FactKey,
     effective_values: &norn_kernel::cell_host::JsonObject,
 ) -> bool {
-    if law.condition.is_none() {
+    if law.condition.is_none() && law.exceptions.is_empty() {
         return true;
     }
     let mut probe_law = law.clone();
