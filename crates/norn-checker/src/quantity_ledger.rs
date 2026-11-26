@@ -22,10 +22,11 @@ use norn_ir::{Diagnostic, DiagnosticRemediation, DiagnosticSeverity};
 mod boundary;
 mod decimal;
 mod expression;
+pub(crate) use boundary::normalize_ledger_pack_for_conservation;
 pub use boundary::{
-    LedgerPackSeal, classify_quantity_replay, conservation_certificate_sha256, ledger_pack_sha256,
-    ledger_unit_bindings_sha256, prepare_quantity_posting, seal_ledger_pack,
-    verify_conservation_certificate, verify_quantity_commit_observation,
+    LedgerPackSeal, classify_quantity_replay, compile_ledger_pack, conservation_certificate_sha256,
+    ledger_pack_sha256, ledger_unit_bindings_sha256, prepare_quantity_posting, seal_ledger_pack,
+    validate_ledger_pack, verify_conservation_certificate, verify_quantity_commit_observation,
 };
 use decimal::checked_pow10;
 pub use expression::lower_ledger_amount_expression;
@@ -246,28 +247,6 @@ pub struct CompiledLedgerPack {
     pub templates: BTreeMap<String, CompiledLedgerTemplate>,
 }
 
-impl CompiledLedgerPack {
-    /// Certifies symbolic conservation for every compiled template in this pack
-    /// through the Aeneas-proved CONS-LINEAR-1 decision core.
-    ///
-    /// Evidence is conditional on the lowering in
-    /// [`crate::obligations::conservation::ledger`]; coefficients outside `i64`
-    /// fail closed as [`crate::obligations::conservation::Failure::Unknown`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::obligations::conservation::Failure`] if the pack is
-    /// malformed, exceeds exact `i64` rational representation, or is unbalanced.
-    pub fn certify_conservation(
-        &self,
-    ) -> Result<
-        crate::obligations::conservation::LedgerPackCertification,
-        crate::obligations::conservation::Failure,
-    > {
-        crate::obligations::conservation::certify_ledger_pack(self)
-    }
-}
-
 /// One checked template with exact parameter premises and fixed legs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledLedgerTemplate {
@@ -276,27 +255,6 @@ pub struct CompiledLedgerTemplate {
     parameters: BTreeMap<String, ParameterModel>,
     /// Normalized template legs in declaration order.
     pub legs: Vec<CompiledLedgerLeg>,
-}
-
-impl CompiledLedgerTemplate {
-    /// Declared parameter identifiers in canonical sorted order.
-    pub fn parameter_ids(&self) -> impl Iterator<Item = &str> {
-        self.parameters.keys().map(String::as_str)
-    }
-
-    /// Number of declared template parameters.
-    #[must_use]
-    pub fn parameter_count(&self) -> usize {
-        self.parameters.len()
-    }
-
-    /// Declared decimal scale of `parameter_id`, if present on this template.
-    #[must_use]
-    pub fn parameter_scale(&self, parameter_id: &str) -> Option<u8> {
-        self.parameters
-            .get(parameter_id)
-            .map(|parameter| parameter.scale)
-    }
 }
 
 /// A leg normalized to its unit's canonical stored precision.
@@ -315,20 +273,6 @@ pub struct CompiledLedgerLeg {
     amount: NormalizedLinear,
 }
 
-impl CompiledLedgerLeg {
-    /// Exact constant term normalized to `unit_precision`.
-    #[must_use]
-    pub const fn constant_unscaled(&self) -> i128 {
-        self.amount.constant
-    }
-
-    /// Exact parameter coefficients normalized to `unit_precision`, keyed by parameter id.
-    #[must_use]
-    pub const fn coefficients_unscaled(&self) -> &BTreeMap<String, i128> {
-        &self.amount.coefficients
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ParameterModel {
     scale: u8,
@@ -340,60 +284,6 @@ struct ParameterModel {
 struct NormalizedLinear {
     constant: i128,
     coefficients: BTreeMap<String, i128>,
-}
-
-/// Validates identifiers, exact numeric premises, bounded evaluation, and
-/// symbolic conservation for a ledger pack.
-#[must_use]
-pub fn validate_ledger_pack(pack: &LedgerPackIr) -> LedgerPackValidation {
-    check_ledger_pack(pack).0
-}
-
-/// Compiles a valid pack into the one normalized representation consumed at
-/// runtime. Invalid packs return deterministic first-N diagnostics and a typed refusal
-/// when the count or serialized-byte budget is exhausted.
-///
-/// # Errors
-///
-/// Returns the [`LedgerPackValidation`] report containing all collected
-/// diagnostics when the pack fails validation.
-pub fn compile_ledger_pack(
-    pack: &LedgerPackIr,
-) -> Result<CompiledLedgerPack, LedgerPackValidation> {
-    let (validation, compiled) = check_ledger_pack(pack);
-    compiled.ok_or(validation)
-}
-
-/// Normalizes a structurally valid ledger pack without rejecting unbalanced
-/// constant or coefficient residuals, so CONS-LINEAR-1 can check conservation
-/// directly through its Aeneas-proved decision core and surface algebraic
-/// counterexamples.
-///
-/// # Errors
-///
-/// Returns the [`LedgerPackValidation`] report if any structural, scale,
-/// identifier, bound, or `i128` overflow check failed, or if diagnostics were
-/// truncated.
-pub(crate) fn normalize_ledger_pack_for_conservation(
-    pack: &LedgerPackIr,
-) -> Result<CompiledLedgerPack, LedgerPackValidation> {
-    let (validation, compiled, truncated) = check_ledger_pack_raw(pack);
-    let only_balance_findings = !truncated
-        && validation.diagnostics.iter().all(|diagnostic| {
-            diagnostic.code == diagnostic_codes::UNBALANCED_CONSTANT
-                || diagnostic.code == diagnostic_codes::UNBALANCED_COEFFICIENT
-        });
-    if only_balance_findings {
-        Ok(compiled)
-    } else {
-        Err(validation)
-    }
-}
-
-fn check_ledger_pack(pack: &LedgerPackIr) -> (LedgerPackValidation, Option<CompiledLedgerPack>) {
-    let (validation, compiled, _truncated) = check_ledger_pack_raw(pack);
-    let admitted = validation.ok.then_some(compiled);
-    (validation, admitted)
 }
 
 fn check_ledger_pack_raw(pack: &LedgerPackIr) -> (LedgerPackValidation, CompiledLedgerPack, bool) {

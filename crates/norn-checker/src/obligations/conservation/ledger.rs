@@ -2,8 +2,8 @@
 //! [`norn_ir::ActionQuantityEffect`] actions into exact-rational conservation systems.
 //!
 //! Evidence boundary: the per-writer weighted-balance decision in
-//! [`super::decision::check_writer`] is proved by Aeneas/Lean
-//! (`ConservationProof.lean`). This adapter is reviewed glue (structural
+//! [`crate::obligations::conservation::decision::check_writer`] is proved by
+//! Aeneas/Lean (`ConservationProof.lean`). This adapter is reviewed glue (structural
 //! lowering, fail-closed `i128` -> `i64` exact-rational conversion, and action
 //! template/parameter binding), not itself a machine-checked theorem of
 //! declaration-to-runtime correspondence.
