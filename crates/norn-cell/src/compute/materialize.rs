@@ -180,7 +180,15 @@ impl<E: SqlEngine> CellStore<E> {
                         } => now_ms.saturating_sub(stored.refreshed_at_ms) <= age,
                         Materialization::OnRead { max_age_ms: None } => false,
                     };
-                    if exact || within_age {
+                    if exact
+                        || (within_age
+                            && self.stale_inputs_authorized(
+                                plan,
+                                (world, scope),
+                                stored.result.revision.seq,
+                                &mut access,
+                            )?)
+                    {
                         let classified =
                             classify(&self.read(), !exact).map_err(crate::GuardedError::Guard)?;
                         return Ok((
@@ -289,6 +297,70 @@ impl<E: SqlEngine> CellStore<E> {
                     stale: false,
                 }))
             })
+    }
+
+    /// VIEW-MAT-1: reauthorize every scanned input row that existed at a stale
+    /// stored result's frontier. Returns `false` if any row at that frontier
+    /// is not readable under `access`, or if history cannot be verified within
+    /// the transform row bound (forcing live evaluation).
+    fn stale_inputs_authorized(
+        &self,
+        plan: &TransformPlan,
+        (world, scope): (&str, &str),
+        frontier_seq: u64,
+        access: &mut impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+    ) -> Result<bool, CellError> {
+        let reader = self.read();
+        if reader
+            .check_history("stale transform authorization")
+            .is_err()
+        {
+            return Ok(false);
+        }
+        let frontier_sql = to_i64(frontier_seq, "stale transform frontier")?;
+        let bound = i64::try_from(norn_checker::transform::MAX_ROWS)
+            .unwrap_or(i64::MAX)
+            .saturating_add(1);
+        let mut checked = std::collections::BTreeSet::new();
+        for scan in plan.inputs.values() {
+            if !checked.insert(scan.object_type.as_str()) {
+                continue;
+            }
+            let Ok(root) = reader.root_type_or_self(&scan.object_type) else {
+                return Ok(false);
+            };
+            let rows = self.conn.query(
+                &format!(
+                    "SELECT \"id\", MAX(\"version\") FROM \"{fv}\" \
+                     WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) \
+                       AND \"commit_seq\" <= ?3 \
+                     GROUP BY \"id\" \
+                     LIMIT ?4",
+                    fv = crate::system::FACT_VALUES,
+                ),
+                params![world, root, frontier_sql, bound],
+            )?;
+            if rows.len() > norn_checker::transform::MAX_ROWS {
+                return Ok(false);
+            }
+            for row in rows {
+                let row = crate::engine::SqlRow(row);
+                let id: String = row.get(0)?;
+                let version = to_u64(row.get::<i64>(1)?, "fact version")?;
+                let Ok(record) = reader.object_at_version(world, &scan.object_type, &id, version)
+                else {
+                    return Ok(false);
+                };
+                if let Some(record) = record
+                    && self.model.is_a(&record.object_type, &scan.object_type)
+                    && record.scope == scope
+                    && access(&record)? != RowAccess::Read
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     fn evaluate_snapshot(

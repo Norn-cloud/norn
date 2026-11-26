@@ -2557,8 +2557,17 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
         min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
     // `auditor` holds whole-world Population, Values, and Sources grants.
-    let answer = get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime)
-        .expect("question over unmarked fields answers cleanly");
+    let QuestionAnswer::Live(answer) =
+        get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime)
+            .expect("question over unmarked fields answers cleanly")
+    else {
+        panic!("expected live answer");
+    };
+    assert_eq!(
+        answer.revision.hash,
+        keyed_revision_handle(&HANDLE_KEY, &raw_head),
+        "marked cell answer must key raw ledger head hash consistently with trace"
+    );
     let trace = get_numeric_trace(
         &host,
         &trace_query(&answer.lineage_ref),

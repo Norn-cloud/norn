@@ -332,8 +332,12 @@ pub(crate) fn world_values<E: SqlEngine>(
     store: &CellStore<E>,
     actor: &str,
 ) -> bool {
+    let unmarked = host
+        .marking_catalog(&store.read())
+        .is_ok_and(|c| c.is_empty());
     let mut types = store.model().object_types().peekable();
-    types.peek().is_some()
+    unmarked
+        && types.peek().is_some()
         && types.all(|object_type| {
             let name = object_type.name.as_str();
             runtime
