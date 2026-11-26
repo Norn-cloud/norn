@@ -168,10 +168,10 @@ function TileCard({ tile, index, count, invalid, catalog, scope, onChange, onEdi
         <RowActions index={index} count={count} label={`tile ${index + 1}`} onDuplicate={onDuplicate} onMove={onMove} onRemove={onRemove} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-body">
-        <select aria-label={`Tile ${index + 1} view`} className="h-8 rounded-3xl bg-input/50 px-3" value={viewKey(tile.view)} onChange={(event) => onChange({ ...tile, view: viewOf(event.target.value) })}>
+        <select aria-label={`Tile ${index + 1} view`} className="h-8 max-sm:min-h-[44px] rounded-3xl bg-input/50 px-3 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" value={viewKey(tile.view)} onChange={(event) => onChange({ ...tile, view: viewOf(event.target.value) })}>
           {VIEWS.map(([key, text]) => <option key={key} value={key}>{text}</option>)}
         </select>
-        <select aria-label={`Tile ${index + 1} width`} className="h-8 rounded-3xl bg-input/50 px-3" value={String(tile.layout.w)} onChange={(event) => onChange({ ...tile, layout: { ...tile.layout, w: Number(event.target.value) } })}>
+        <select aria-label={`Tile ${index + 1} width`} className="h-8 max-sm:min-h-[44px] rounded-3xl bg-input/50 px-3 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" value={String(tile.layout.w)} onChange={(event) => onChange({ ...tile, layout: { ...tile.layout, w: Number(event.target.value) } })}>
           <option value="1">Half width</option>
           <option value="2">Full width</option>
         </select>

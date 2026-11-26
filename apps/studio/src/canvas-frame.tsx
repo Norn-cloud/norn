@@ -150,7 +150,8 @@ function Frame(props: CanvasFrameProps) {
     return () => { window.removeEventListener("pointerdown", pointer, true); window.removeEventListener("focusin", focus, true) }
   }, [])
   const graph = state.present
-  const dirty = JSON.stringify(graph) !== JSON.stringify(initial)
+  const initialJson = useMemo(() => JSON.stringify(initial), [initial])
+  const dirty = useMemo(() => JSON.stringify(graph) !== initialJson, [graph, initialJson])
 
   const edit = useCallback((next: g.Graph | g.Refusal) => {
     if (g.isRefusal(next)) { setNotice({ tone: "refusal", text: next.message }); return }
@@ -202,8 +203,9 @@ function Frame(props: CanvasFrameProps) {
     setNotice({ tone: "info", text: "Draft discarded; showing the admitted definition." })
   }
 
-  useEffect(() => {
-    const keys = (event: KeyboardEvent) => {
+  const keysRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
+  useLayoutEffect(() => {
+    keysRef.current = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || typing(event.target)) return
       const key = event.key.toLowerCase()
       const act = (run: () => void) => { event.preventDefault(); run() }
@@ -221,9 +223,12 @@ function Frame(props: CanvasFrameProps) {
       else if (key === "a") act(() => setSelection({ nodes: graph.nodes.map(({ id }) => id), edges: graph.edges.map(({ id }) => id) }))
       else if (key === "s") act(saveDraft)
     }
+  })
+  useEffect(() => {
+    const keys = (event: KeyboardEvent) => keysRef.current(event)
     window.addEventListener("keydown", keys)
     return () => window.removeEventListener("keydown", keys)
-  })
+  }, [])
 
   const { issues, status } = useMemo(() => props.issues(graph), [props.issues, graph])
   const on = (key: "node" | "edge", id: string) => issues.filter((issue) => issue[key] === id)
@@ -463,7 +468,7 @@ function InspectorDrawer({ open, onClose, children }: { readonly open: boolean; 
   return (
     <aside role="dialog" aria-modal="false" aria-label="Inspector" aria-hidden={!open} inert={!open}
       className={cn("fixed inset-y-3 end-3 z-40 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col rounded-node border border-node-border bg-card shadow-float transition-transform duration-200 ease-out motion-reduce:transition-none",
-        open ? "translate-x-0" : "translate-x-[calc(100%+1.5rem)]")}>
+        open ? "translate-x-0" : "ltr:translate-x-[calc(100%+1.5rem)] rtl:-translate-x-[calc(100%+1.5rem)]")}>
       <header className="flex items-center justify-between border-b border-node-border px-4 py-3">
         <h2 className="text-heading font-medium">Inspector</h2>
         <Button size="icon" variant="ghost" aria-label="Close inspector" title="Close (Esc)" className="max-sm:size-[44px]" onClick={onClose}><X /></Button>

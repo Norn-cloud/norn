@@ -41,112 +41,92 @@ const fn severity_rank(severity: &DiagnosticSeverity) -> u8 {
     }
 }
 
-fn push_legacy_widget_extra(
-    out: &mut Vec<(norn_ir::Diagnostic, bool)>,
-    extra: Vec<norn_ir::Diagnostic>,
-) {
-    for finding in extra {
-        if let Some(index) = out.iter().position(|(existing, _)| {
-            existing.code == finding.code
-                && existing.artifact_id == finding.artifact_id
-                && existing.path == finding.path
-        }) {
-            let Some((existing, from_ring0)) = out.get(index) else {
-                continue;
-            };
-            let from_ring0 = *from_ring0;
-            let new_rank = severity_rank(&finding.severity);
-            let old_rank = severity_rank(&existing.severity);
-            if new_rank > old_rank {
-                if let Some(slot) = out.get_mut(index) {
-                    *slot = (finding, false);
+fn merge_widget_entries<T>(
+    ring0: Vec<T>,
+    extra: Vec<T>,
+    is_marker: impl Fn(&T) -> bool,
+    same_key: impl Fn(&T, &T) -> bool,
+    severity: impl Fn(&T) -> &DiagnosticSeverity,
+) -> impl Iterator<Item = T> {
+    let mut out: Vec<(T, bool)> = Vec::with_capacity(ring0.len().saturating_add(extra.len()));
+    let push_extra = |out: &mut Vec<(T, bool)>, extras: Vec<T>| {
+        for finding in extras {
+            if let Some(index) = out
+                .iter()
+                .position(|(existing, _)| same_key(existing, &finding))
+            {
+                let Some((existing, from_ring0)) = out.get(index) else {
+                    continue;
+                };
+                let from_ring0 = *from_ring0;
+                let new_rank = severity_rank(severity(&finding));
+                let old_rank = severity_rank(severity(existing));
+                if new_rank > old_rank {
+                    if let Some(slot) = out.get_mut(index) {
+                        *slot = (finding, false);
+                    }
+                } else if from_ring0 && new_rank == old_rank {
+                    out.remove(index);
+                    out.push((finding, false));
                 }
-            } else if from_ring0 && new_rank == old_rank {
-                out.remove(index);
+            } else {
                 out.push((finding, false));
             }
+        }
+    };
+    let mut pending = Some(extra);
+    for finding in ring0 {
+        if is_marker(&finding) {
+            if let Some(extras) = pending.take() {
+                push_extra(&mut out, extras);
+            }
         } else {
-            out.push((finding, false));
+            out.push((finding, true));
         }
     }
+    if let Some(extras) = pending {
+        push_extra(&mut out, extras);
+    }
+    out.into_iter().map(|(diagnostic, _)| diagnostic)
 }
 
 fn merge_legacy_widget_diagnostics(
     ring0: Vec<norn_ir::Diagnostic>,
     extra: Vec<norn_ir::Diagnostic>,
 ) -> Vec<norn_ir::Diagnostic> {
-    let mut out: Vec<(norn_ir::Diagnostic, bool)> =
-        Vec::with_capacity(ring0.len().saturating_add(extra.len()));
-    let mut pending = Some(extra);
-    for finding in ring0 {
-        if finding.code == norn_checker::codes::WIDGET_RING1_REQUIRED {
-            if let Some(extras) = pending.take() {
-                push_legacy_widget_extra(&mut out, extras);
-            }
-        } else {
-            out.push((finding, true));
-        }
-    }
-    if let Some(extras) = pending {
-        push_legacy_widget_extra(&mut out, extras);
-    }
-    out.into_iter().map(|(diagnostic, _)| diagnostic).collect()
+    merge_widget_entries(
+        ring0,
+        extra,
+        |finding| finding.code == norn_checker::codes::WIDGET_RING1_REQUIRED,
+        |existing, finding| {
+            existing.code == finding.code
+                && existing.artifact_id == finding.artifact_id
+                && existing.path == finding.path
+        },
+        |finding| &finding.severity,
+    )
+    .collect()
 }
 
-fn push_widget_extra(out: &mut Vec<(Diagnostic, bool)>, extra: Vec<Diagnostic>) {
-    for finding in extra {
-        let finding_ptr = finding
-            .span
-            .as_ref()
-            .map_or("", |span| span.pointer.as_str());
-        if let Some(index) = out.iter().position(|(existing, _)| {
+fn merge_widget_diagnostics(ring0: Vec<Diagnostic>, extra: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    norn_checker::entity_artifacts::dedupe_findings(merge_widget_entries(
+        ring0,
+        extra,
+        |finding| finding.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED,
+        |existing, finding| {
             existing.code == finding.code
                 && existing.artifact_id == finding.artifact_id
                 && existing
                     .span
                     .as_ref()
                     .map_or("", |span| span.pointer.as_str())
-                    == finding_ptr
-        }) {
-            let Some((existing, from_ring0)) = out.get(index) else {
-                continue;
-            };
-            let from_ring0 = *from_ring0;
-            let new_rank = severity_rank(&finding.severity);
-            let old_rank = severity_rank(&existing.severity);
-            if new_rank > old_rank {
-                if let Some(slot) = out.get_mut(index) {
-                    *slot = (finding, false);
-                }
-            } else if from_ring0 && new_rank == old_rank {
-                out.remove(index);
-                out.push((finding, false));
-            }
-        } else {
-            out.push((finding, false));
-        }
-    }
-}
-
-fn merge_widget_diagnostics(ring0: Vec<Diagnostic>, extra: Vec<Diagnostic>) -> Vec<Diagnostic> {
-    let mut out: Vec<(Diagnostic, bool)> =
-        Vec::with_capacity(ring0.len().saturating_add(extra.len()));
-    let mut pending = Some(extra);
-    for finding in ring0 {
-        if finding.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED {
-            if let Some(extras) = pending.take() {
-                push_widget_extra(&mut out, extras);
-            }
-        } else {
-            out.push((finding, true));
-        }
-    }
-    if let Some(extras) = pending {
-        push_widget_extra(&mut out, extras);
-    }
-    norn_checker::entity_artifacts::dedupe_findings(
-        out.into_iter().map(|(diagnostic, _)| diagnostic),
-    )
+                    == finding
+                        .span
+                        .as_ref()
+                        .map_or("", |span| span.pointer.as_str())
+        },
+        |finding| &finding.severity,
+    ))
 }
 
 fn widget_extra_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {

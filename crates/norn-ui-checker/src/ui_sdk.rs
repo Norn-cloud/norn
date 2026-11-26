@@ -281,28 +281,78 @@ pub fn native_behaviors(component: &WidgetComponent) -> BTreeSet<String> {
     out
 }
 
+fn component_kind(component: &WidgetComponent) -> &'static str {
+    match component {
+        WidgetComponent::Section { .. } => "section",
+        WidgetComponent::List { .. } => "list",
+        WidgetComponent::Detail { .. } => "detail",
+        WidgetComponent::Dialog { .. } => "dialog",
+        WidgetComponent::Form { .. } => "form",
+        WidgetComponent::ChildGrid { .. } => "child_grid",
+        WidgetComponent::Field { .. } => "field",
+        WidgetComponent::Action { .. } => "action",
+        WidgetComponent::Navigation { .. } => "navigation",
+        WidgetComponent::Catalog { .. } => "catalog",
+        WidgetComponent::Control { .. } => "control",
+        WidgetComponent::Composition { .. } => "composition",
+    }
+}
+
+fn view_kind(kind: norn_ir::WidgetViewKind) -> &'static str {
+    match kind {
+        norn_ir::WidgetViewKind::Collection => "collection",
+        norn_ir::WidgetViewKind::Record => "record",
+        norn_ir::WidgetViewKind::Form => "form",
+        norn_ir::WidgetViewKind::Question => "question",
+        norn_ir::WidgetViewKind::Dashboard => "dashboard",
+        norn_ir::WidgetViewKind::Run => "run",
+        norn_ir::WidgetViewKind::DecisionInbox => "decision_inbox",
+        norn_ir::WidgetViewKind::Lineage => "lineage",
+        norn_ir::WidgetViewKind::Lifecycle => "lifecycle",
+    }
+}
+
+fn event_source_kind(source: &norn_ir::WidgetMachineEventSource) -> &'static str {
+    match source {
+        norn_ir::WidgetMachineEventSource::PageOpened => "page_opened",
+        norn_ir::WidgetMachineEventSource::User { .. } => "user",
+        norn_ir::WidgetMachineEventSource::Outcome { .. } => "outcome",
+        norn_ir::WidgetMachineEventSource::Subscription { .. } => "subscription",
+        norn_ir::WidgetMachineEventSource::Timer { .. } => "timer",
+    }
+}
+
+fn outcome_kind(outcome: norn_ir::WidgetCallOutcome) -> &'static str {
+    match outcome {
+        norn_ir::WidgetCallOutcome::Accepted => "accepted",
+        norn_ir::WidgetCallOutcome::Refused => "refused",
+        norn_ir::WidgetCallOutcome::PendingApproval => "pending_approval",
+        norn_ir::WidgetCallOutcome::AnswerMoved => "answer_moved",
+        norn_ir::WidgetCallOutcome::NetworkFailure => "network_failure",
+        norn_ir::WidgetCallOutcome::NotServed => "not_served",
+        norn_ir::WidgetCallOutcome::Stale => "stale",
+        norn_ir::WidgetCallOutcome::SubscriptionRefused => "subscription_refused",
+        norn_ir::WidgetCallOutcome::Timeout => "timeout",
+        norn_ir::WidgetCallOutcome::Cancelled => "cancelled",
+    }
+}
+
+fn call_kind(call: &norn_ir::WidgetMachineCall) -> &'static str {
+    match call {
+        norn_ir::WidgetMachineCall::Action { .. } => "action",
+        norn_ir::WidgetMachineCall::Read { .. } => "read",
+        norn_ir::WidgetMachineCall::Operation { .. } => "operation",
+    }
+}
+
 /// The renderer capability catalog a contract requires (UI-VIEW-1): every view kind, component
 /// kind, UI SDK primitive, behaviour, effect, event source and outcome its pages use, as
 /// `<family>:<name>` strings, and the agent capabilities every renderer needs (L6). A renderer
 /// that lacks one cannot draw the contract and must refuse it.
 #[must_use]
 pub fn renderer_capabilities(ux: &WidgetUx) -> BTreeSet<String> {
-    // The wire name of a closed value: a unit variant's string, or a tagged one's `kind`.
-    fn tag(value: serde_json::Result<Value>) -> String {
-        let value = value.unwrap_or(Value::Null);
-        value
-            .as_str()
-            .or_else(|| value.get("kind").and_then(Value::as_str))
-            .unwrap_or_default()
-            .to_owned()
-    }
-    macro_rules! name {
-        ($value:expr) => {
-            tag(serde_json::to_value($value))
-        };
-    }
     fn walk(node: &WidgetNode, out: &mut BTreeSet<String>) {
-        out.insert(format!("component:{}", name!(&node.component)));
+        out.insert(format!("component:{}", component_kind(&node.component)));
         if let Some((component, _)) = primitive_of(node) {
             out.insert(format!("ui-sdk:{component}"));
         }
@@ -325,26 +375,28 @@ pub fn renderer_capabilities(ux: &WidgetUx) -> BTreeSet<String> {
     for page in &ux.pages {
         walk(&page.root, &mut out);
         if let Some(view) = &page.view {
-            out.insert(format!("view:{}", name!(&view.kind)));
+            out.insert(format!("view:{}", view_kind(view.kind)));
         }
         let Some(machine) = &page.machine else {
             continue;
         };
         for event in &machine.events {
-            out.insert(format!("event:{}", name!(&event.source)));
+            out.insert(format!("event:{}", event_source_kind(&event.source)));
             if let norn_ir::WidgetMachineEventSource::Outcome { outcome, .. } = &event.source {
-                out.insert(format!("outcome:{}", name!(outcome)));
+                out.insert(format!("outcome:{}", outcome_kind(*outcome)));
             }
         }
         for transition in &machine.transitions {
             for effect in &transition.effects {
                 match effect {
                     norn_ir::WidgetMachineEffect::Start { call, .. } => {
-                        out.insert(format!("effect:start:{}", name!(call)));
+                        out.insert(format!("effect:start:{}", call_kind(call)));
                     }
-                    other @ (norn_ir::WidgetMachineEffect::Cancel
-                    | norn_ir::WidgetMachineEffect::Navigate { .. }) => {
-                        out.insert(format!("effect:{}", name!(other)));
+                    norn_ir::WidgetMachineEffect::Cancel => {
+                        out.insert("effect:cancel".to_owned());
+                    }
+                    norn_ir::WidgetMachineEffect::Navigate { .. } => {
+                        out.insert("effect:navigate".to_owned());
                     }
                 }
             }

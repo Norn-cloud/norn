@@ -32,8 +32,8 @@ struct MappedExpression<'a> {
 
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_actions(&mut self) {
-        let bindings = self.ux.action_bindings.clone();
-        for (index, binding) in bindings.iter().enumerate() {
+        let ux = self.ux;
+        for (index, binding) in ux.action_bindings.iter().enumerate() {
             let path = format!("/payload/ux/actionBindings/{index}");
             if binding.required_capability.trim().is_empty() {
                 self.error(
@@ -94,20 +94,20 @@ impl UxChecker<'_, '_, '_> {
             };
             self.actions.insert(binding.binding_id.clone(), parsed);
         }
-        for (index, binding) in bindings.iter().enumerate() {
+        for (index, binding) in ux.action_bindings.iter().enumerate() {
             let path = format!("/payload/ux/actionBindings/{index}/inputMapping");
             let input_env = self.expression_env(
                 &binding.inputs,
                 &format!("/payload/ux/actionBindings/{index}"),
             );
-            if let Some(action) = self.actions.get(binding.binding_id.as_str()).cloned() {
-                self.check_action_mapping(binding, &action, input_env.as_ref(), &path);
+            if let Some(action) = self.actions.get(binding.binding_id.as_str()) {
+                self.check_action_mapping(binding, action, input_env.as_ref(), &path);
             }
         }
     }
 
     fn check_action_mapping(
-        &mut self,
+        &self,
         binding: &WidgetUxActionBinding,
         action: &ParsedAction,
         input_env: Option<&ZenTypeEnv>,
@@ -137,7 +137,7 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    fn check_mapped_expression(&mut self, input: MappedExpression<'_>) {
+    fn check_mapped_expression(&self, input: MappedExpression<'_>) {
         let MappedExpression {
             source,
             schema,
@@ -310,7 +310,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn integer_source_proven(
-        &mut self,
+        &self,
         source: &str,
         inputs: &WidgetExpressionInputs,
         path: &str,
@@ -322,7 +322,7 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn direct_input_type(
-        &mut self,
+        &self,
         source: &str,
         inputs: &WidgetExpressionInputs,
         path: &str,
@@ -363,16 +363,18 @@ impl UxChecker<'_, '_, '_> {
             }
             "draft" => {
                 let form_id = inputs.draft_form_id.as_deref()?;
-                let form = (*self.forms.get(form_id)?).clone();
-                let binding = (*self.action_bindings.get(form.submit_binding_id.as_str())?).clone();
+                let form = self.forms.get(form_id).copied()?;
+                let binding = self
+                    .action_bindings
+                    .get(form.submit_binding_id.as_str())
+                    .copied()?;
                 let (schema, required) = self
                     .actions
                     .get(binding.binding_id.as_str())?
                     .fields
-                    .get(member)?
-                    .clone();
+                    .get(member)?;
                 let mut records = BTreeMap::new();
-                let mut type_ = self.schema_type(&schema, &mut records);
+                let mut type_ = self.schema_type(schema, &mut records);
                 if !required {
                     type_ = type_.optional();
                 }
@@ -383,8 +385,8 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn check_placements(&mut self) {
-        let placements = self.ux.action_placements.clone();
-        for (index, placement) in placements.iter().enumerate() {
+        let ux = self.ux;
+        for (index, placement) in ux.action_placements.iter().enumerate() {
             let path = format!("/payload/ux/actionPlacements/{index}");
             self.check_generated_transition_condition(&placement.binding_id, &path);
             if placement.label.is_blank() {
@@ -396,8 +398,7 @@ impl UxChecker<'_, '_, '_> {
             let action_binding = self
                 .action_bindings
                 .get(placement.binding_id.as_str())
-                .copied()
-                .cloned();
+                .copied();
             if action_binding.is_none() {
                 self.error(
                     &format!("{path}/bindingId"),
@@ -405,12 +406,7 @@ impl UxChecker<'_, '_, '_> {
                 );
             }
             if let Some(form_id) = &placement.form_id {
-                self.check_placement_form_opener(
-                    placement,
-                    form_id,
-                    action_binding.as_ref(),
-                    &path,
-                );
+                self.check_placement_form_opener(placement, form_id, action_binding, &path);
             }
             if placement
                 .group
@@ -427,7 +423,7 @@ impl UxChecker<'_, '_, '_> {
                     "selection input mappings are only valid on selection placements",
                 );
             }
-            if !self.check_placement_selection_context(placement, action_binding.as_ref(), &path) {
+            if !self.check_placement_selection_context(placement, action_binding, &path) {
                 continue;
             }
             self.check_confirmation(&placement.confirmation, &format!("{path}/confirmation"));
@@ -435,7 +431,7 @@ impl UxChecker<'_, '_, '_> {
                 placement.enabled_when.as_ref(),
                 &format!("{path}/enabledWhen"),
             );
-            if let Some(binding) = action_binding.as_ref() {
+            if let Some(binding) = action_binding {
                 self.check_placement_selection_mappings(placement, binding, &path);
             }
         }
@@ -565,33 +561,27 @@ impl UxChecker<'_, '_, '_> {
         selection: &str,
         path: &str,
     ) {
-        if placement.location == WidgetActionLocation::Row
-            && action_binding.is_some_and(|binding| {
-                binding
-                    .inputs
-                    .record_binding_id
-                    .as_deref()
-                    .is_some_and(|record| record != selection)
-            })
-        {
-            self.error(
-                &format!("{path}/selectionBindingId"),
-                "row action input.record must name its containing list binding",
-            );
-        }
-        if placement.location == WidgetActionLocation::Selection
-            && action_binding.is_some_and(|binding| {
-                binding
-                    .inputs
-                    .record_binding_id
-                    .as_deref()
-                    .is_some_and(|record| record != selection)
-            })
-        {
-            self.error(
-                &format!("{path}/selectionBindingId"),
-                "selection action input.record must name its selected list binding",
-            );
+        if action_binding.is_some_and(|binding| {
+            binding
+                .inputs
+                .record_binding_id
+                .as_deref()
+                .is_some_and(|record| record != selection)
+        }) {
+            let message = match placement.location {
+                WidgetActionLocation::Row => {
+                    Some("row action input.record must name its containing list binding")
+                }
+                WidgetActionLocation::Selection => {
+                    Some("selection action input.record must name its selected list binding")
+                }
+                WidgetActionLocation::Toolbar
+                | WidgetActionLocation::Detail
+                | WidgetActionLocation::FormFooter => None,
+            };
+            if let Some(message) = message {
+                self.error(&format!("{path}/selectionBindingId"), message);
+            }
         }
         if let Some(binding_id) = action_binding
             .and_then(|binding| binding.inputs.record_binding_id.as_deref())
@@ -631,12 +621,12 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_placement_selection_mappings(
-        &mut self,
+        &self,
         placement: &norn_ir::WidgetActionPlacement,
         binding: &WidgetUxActionBinding,
         path: &str,
     ) {
-        let Some(action) = self.actions.get(placement.binding_id.as_str()).cloned() else {
+        let Some(action) = self.actions.get(placement.binding_id.as_str()) else {
             return;
         };
         let mut inputs = binding.inputs.clone();
@@ -667,7 +657,7 @@ impl UxChecker<'_, '_, '_> {
                     required: *required,
                     binding: &placement_binding,
                     action_field_name: name,
-                    action: &action,
+                    action,
                     env: input_env.as_ref(),
                     path: &format!("{path}/selectionInputMapping/{name}"),
                 });

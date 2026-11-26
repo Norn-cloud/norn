@@ -106,7 +106,7 @@ function Branches({ editing, id, branches }: { readonly editing: Editing; readon
             </span>
           </div>
           {/* The whole condition stays readable: it wraps instead of clipping, and hovering shows it in full. */}
-          <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="invoice.status == paid"
+          <Textarea aria-label={`Branch b${index}`} rows={2} className="min-h-0 resize-y font-mono break-all" title={formatCondition(all) || "No condition yet"} defaultValue={formatCondition(all)} placeholder="record.status == approved"
             onBlur={(event) => {
               const parsed = parseCondition(event.target.value)
               // A part that is not `left op right` is refused, never kept as a mangled condition; the previous branch stays.
@@ -148,7 +148,7 @@ function Options({ editing, id, options, pick }: { readonly editing: Editing; re
               <option value="binding">Tool binding</option><option value="action">Action</option>
             </select>
             {effectOf(option)?.kind === "action"
-              ? <Input aria-label={`Option ${index + 1} action`} placeholder="action id, e.g. billing.send_reminder" defaultValue={effectOf(option)?.ref} onBlur={(event) => { const ref = event.target.value.trim(); if (ref !== effectOf(option)?.ref) set(options.map((one) => one.id === option.id ? { ...one, effect: { action: ref } } : one)) }} />
+              ? <Input aria-label={`Option ${index + 1} action`} placeholder="action id, e.g. records.approve" defaultValue={effectOf(option)?.ref} onBlur={(event) => { const ref = event.target.value.trim(); if (ref !== effectOf(option)?.ref) set(options.map((one) => one.id === option.id ? { ...one, effect: { action: ref } } : one)) }} />
               : <select aria-label={`Option ${index + 1} tool binding`} className="h-9 w-full min-w-0 rounded-(--radius) border border-input bg-card px-2 text-body max-sm:min-h-[44px]" value={effectOf(option)?.ref ?? ""} onChange={(event) => set(options.map((one) => one.id === option.id ? { ...one, effect: { binding: event.target.value } } : one))}>
                 <option value="">Choose a tool binding</option>
                 {RECORDED_TOOLS.map(({ id: tool }) => <option key={tool} value={tool}>{tool}</option>)}

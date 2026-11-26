@@ -717,7 +717,7 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    pub(super) fn check_generated_transition_condition(&mut self, binding_id: &str, path: &str) {
+    pub(super) fn check_generated_transition_condition(&self, binding_id: &str, path: &str) {
         let Some(root) = self.effect_action(self.owner, self.ux, binding_id, path) else {
             return;
         };
@@ -727,9 +727,9 @@ impl UxChecker<'_, '_, '_> {
         ) {
             return;
         }
-        let binding = self.action_bindings.get(binding_id).copied().cloned();
-        let Some(record_id) = binding
-            .as_ref()
+        let Some(record_id) = self
+            .action_bindings
+            .get(binding_id)
             .and_then(|binding| binding.inputs.record_binding_id.as_deref())
         else {
             return;

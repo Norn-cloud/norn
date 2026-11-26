@@ -294,8 +294,6 @@ export const PLUGIN_BILLING_PATHS = new Set([
   "/api/auth/customer/benefits/list",
   "/api/auth/customer/subscriptions/list",
 ])
-/** Matched as Better Auth's router could: any case, with or without a trailing slash. */
-const pluginBillingPath = (pathname: string) => PLUGIN_BILLING_PATHS.has(pathname.toLowerCase().replace(/\/+$/, ""))
 
 /** A Polar page (checkout, portal) the plugin minted for this person; refused unless it is https. */
 async function toPolar(response: Response): Promise<Response> {
@@ -423,18 +421,18 @@ const handler = {
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
-    if (routePath(pathname) === "/api/auth/config") return authConfig(request, env)
-    if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
+    const normalizedPath = routePath(pathname)
+    if (normalizedPath === "/api/auth/config") return authConfig(request, env)
+    if (normalizedPath === "/api/auth/sign-in/magic-link" || normalizedPath === "/api/auth/magic-link/verify") {
       const host = new URL(request.url).host
       if ([request.headers.get("host"), request.headers.get("x-forwarded-host")].some((value) => value !== null && value.toLowerCase() !== host.toLowerCase())) return refuse(403, "Magic link host does not match this origin.")
     }
-    if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
-    if (routePath(pathname) === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
+    if (normalizedPath === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
+    if (normalizedPath === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
-    if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
-    if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
-    const normalizedPath = routePath(pathname)
+    if (SIGN_IN_ELSEWHERE.has(normalizedPath)) return refuse(403, "Studio sign-in is by email and password or magic link.")
+    if (PLUGIN_BILLING_PATHS.has(normalizedPath)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
     if (normalizedPath.startsWith("/api/auth/") && (DISABLED_AUTH_PATHS.has(normalizedPath.slice("/api/auth".length)) || DISABLED_ORG_PATHS.has(normalizedPath.slice("/api/auth".length)))) {
       return Response.json({ code: "NOT_FOUND", message: "No such endpoint." }, { status: 404, headers: { "cache-control": "no-store" } })
     }

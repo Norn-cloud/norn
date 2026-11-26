@@ -14,9 +14,9 @@ use super::{ActionSurface, Usage, UxChecker};
 
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_overrides(&mut self) {
-        let overrides = self.ux.overrides.clone();
+        let ux = self.ux;
         let mut operations = BTreeSet::new();
-        for (index, override_) in overrides.iter().enumerate() {
+        for (index, override_) in ux.overrides.iter().enumerate() {
             let path = format!("/payload/ux/overrides/{index}");
             let operation = match &override_.value {
                 WidgetOverrideValue::Label { .. } => "label",
