@@ -902,7 +902,9 @@ def studio_browser_phase_canaries() -> None:
         bin_dir.mkdir()
         tools = {
             "cargo": "exit 0",
-            "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
+            "bun": 'if [ "$1" = test ]; then '
+                   'if [ "$2" = test/canvas.test.ts ]; then printf "%s\\n" "$BUN_CANVAS_OUTPUT"; exit "$BUN_CANVAS_STATUS"; fi; '
+                   'printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
             "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.100.0"; fi',
             "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
                     'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
@@ -939,7 +941,9 @@ def studio_browser_phase_canaries() -> None:
                 ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
                 ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
                 ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99"),
-                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99")):
+                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-canvas test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-canvas case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99")):
             config.unlink(missing_ok=True)
             if has_config:
                 config.write_text("export default {}\n")
@@ -955,12 +959,16 @@ def studio_browser_phase_canaries() -> None:
                                                                 "CARGO_HOME": str(Path(directory) / "cargo-home"),
                                                                 "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
                                                                 "WASM_LIBDIR": libdir, "RAN": ran,
-                                                                "BUN_TEST_STATUS": "1" if label.endswith("test fails") else "0",
+                                                                "BUN_TEST_STATUS": "1" if label == "config, checker-admission test fails" else "0",
                                                                 "BUN_TEST_OUTPUT": {
                                                                     "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
                                                                     "config, checker-admission case missing": "(pass) the decider reads the real time limit",
                                                                     "config, only a longer name passed": "(pass) the checker admits what a drawn decision lowers to, twice [1.00ms]",
                                                                 }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
+                                                                "BUN_CANVAS_STATUS": "1" if label == "config, checker-canvas test fails" else "0",
+                                                                "BUN_CANVAS_OUTPUT": {
+                                                                    "config, checker-canvas case skipped": "(skip) the checker finds the stuck state a deleted step leaves",
+                                                                }.get(label, "(pass) the checker finds the stuck state a deleted step leaves [1.00ms]"),
                                                                 "SKIPPED": str(int(listed) - int(ran))})
             if result.returncode != expected:
                 raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
