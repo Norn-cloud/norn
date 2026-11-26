@@ -102,6 +102,8 @@ def strip_comments_and_strings(
                 index += 1
                 interp_braces.append(1)
                 in_string = None
+            elif is_lean and in_string == "plain" and source[index] == "{":
+                fail("unescaped '{' inside Lean string literal is forbidden in trusted proof sources")
             else:
                 output.append(
                     source[index]
@@ -139,23 +141,17 @@ def strip_comments_and_strings(
         elif (
             is_lean
             and source[index] == "r"
-            and (index == 0 or not _is_ident_tail(source[index - 1]))
-            and (raw_open := RAW_STRING_OPEN.match(source, index)) is not None
+            and (index == 0 or (not _is_ident_tail(source[index - 1]) and source[index - 1] != "."))
+            and RAW_STRING_OPEN.match(source, index) is not None
         ):
-            hashes = raw_open.group(1)
-            closing = '"' + hashes
-            close = source.find(closing, raw_open.end())
-            if close < 0:
-                fail("unterminated raw string in trusted Lean source")
-            end = close + len(closing)
-            span = source[index:end]
-            output.extend(
-                span
-                if preserve_strings
-                else "".join("\n" if ch == "\n" else " " for ch in span)
-            )
-            index = end
-        elif is_lean and source.startswith('!"', index):
+            fail("raw string literal is forbidden in trusted Lean proof sources")
+        elif (
+            is_lean
+            and source.startswith('!"', index)
+            and index >= 1
+            and source[index - 1] in ("s", "m", "f")
+            and (index == 1 or (not _is_ident_tail(source[index - 2]) and source[index - 2] != "."))
+        ):
             output.extend('!"' if preserve_strings else "  ")
             index += 2
             in_string = "interp"
@@ -283,8 +279,7 @@ def run_lexer_canaries() -> None:
     lean_clean = (
         '-- sorry native_decide unsafe\n'
         '/- axiom /- constant hidden : False -/ implemented_by opaque -/\n'
-        'def quoted := "constant native_decide implemented_by unsafe opaque"\n'
-        'def rawQuoted := r#"sorry \\" axiom"#\n'
+        'def quoted := "constant native_decide implemented_by unsafe opaque \\{ok}"\n'
         'def interpClean (n : Nat) := s!"count={n} sorry"\n'
         "def quoteChar := '\"'\n"
         "def x' := \"still clean\"\n"
@@ -298,7 +293,7 @@ def run_lexer_canaries() -> None:
         "def quote_blind := '\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
         "def esc_blind := '\\\"'\ndef theorem_bad : True := by sorry\ndef close := \"\"\n",
         'def «"» := 1\ndef theorem_bad : True := by sorry\ndef close := ""\n',
-        'def raw_blind := r"\\"\naxiom impossible : False\ndef close := \'"\'\n',
+        'def Foo.r (s : String) : String := s\ndef a := Foo.r"\\""\naxiom bad : False\n-- "\n',
         'def interp_hide := s!"{(Lean.ofReduceBool : Nat)}"\n',
         "def guillemet_hide := Lean.«ofReduceBool»\n",
         "set_option debug.«skipKernelTC» true\n",
@@ -329,6 +324,21 @@ def run_lexer_canaries() -> None:
     ):
         if not lean_proof_hole_locations(lean_bad):
             fail(f"Lean proof-hole scanner canary failed for {lean_bad.strip()!r}")
+
+    for lean_rejected in (
+        'def raw_blind := r"\\"\naxiom impossible : False\ndef close := \'"\'\n',
+        'def raw_hashed := r#"sorry"#\n',
+        'def a : Nat := panic!"{"\naxiom bad : False\ndef b := "}"\n',
+        'def a := throwError "{(Lean.ofReduceBool : Nat)}"\n',
+        'def a := dbg_trace "{(by run_tac Lean.addDecl d; exact 0 : Nat)}"; 0\n',
+        'def a := s! "{Lean.ofReduceBool}"\n',
+        'def a := m! "{Lean.modifyEnv}"\n',
+    ):
+        try:
+            lean_proof_hole_locations(lean_rejected)
+        except ValueError:
+            continue
+        fail(f"Lean proof-hole scanner canary did not reject {lean_rejected.strip()!r}")
 
     fstar_clean = strip_comments_and_strings(
         "// admit\n(* assume *)\nlet id (x' : 'a) : 'a = x'\nlet q = '\"'\nlet theorem_ok = ()\n",
