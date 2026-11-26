@@ -215,8 +215,10 @@ fn lifecycle_steps(
 fn guard_inputs(guards: &[ZenExpression]) -> BTreeSet<String> {
     let mut inputs = BTreeSet::new();
     for guard in guards {
-        if let Ok(reads) = norn_expr::expression_reads(guard.as_str(), "self") {
-            inputs.extend(reads.fields);
+        if let Ok(paths) =
+            norn_kernel::pack_mbt_support::expression_read_paths(guard.as_str(), "self")
+        {
+            inputs.extend(paths.into_iter().filter_map(|path| path.into_iter().next()));
         }
     }
     inputs
