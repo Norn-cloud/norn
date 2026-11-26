@@ -663,7 +663,7 @@ pub(crate) fn record_reveal<E: SqlEngine>(
 /// Population decides membership; a member without Values is recorded so its
 /// bucket's amounts are withheld (DATA-VALUES-1).
 pub(crate) fn withhold_values(
-    result: &mut norn_cell::QueryResult,
+    result: &mut norn_cell::compute::QueryResult,
     withheld: &std::collections::BTreeSet<String>,
     min_disclosed: usize,
 ) {
@@ -678,7 +678,7 @@ pub(crate) fn withhold_values(
 /// marking snapshot) so raw ledger and receipt hashes are also withheld.
 pub(crate) fn redact_trace_contributions<E: SqlEngine>(
     host: &DevHost<E>,
-    (actor, world, historical_answer): (&str, &str, bool),
+    (actor, world): (&str, &str),
     reader: &StoreReader<'_, E>,
     contributions: &mut [norn_cell::compute::lineage::NumericContribution],
 ) -> Result<bool, Refusal> {
@@ -696,17 +696,8 @@ pub(crate) fn redact_trace_contributions<E: SqlEngine>(
             version: contribution.fact.version,
             values: contribution.values.clone().unwrap_or_default(),
         };
-        let version_arg = if historical_answer {
-            Some(record.version)
-        } else {
-            let current = reader
-                .version(world, &record.object_type, &record.id)
-                .map_err(Refusal::host)?
-                == record.version;
-            (!current).then_some(record.version)
-        };
         let markings = reader
-            .effective_markings(world, &record.object_type, &record.id, version_arg)
+            .effective_markings(world, &record.object_type, &record.id, Some(record.version))
             .map_err(Refusal::host)?;
         let marked = markings
             .as_ref()
@@ -856,7 +847,9 @@ pub(crate) fn effective_marked_columns<E: SqlEngine>(
     Ok(out)
 }
 
-/// Classify a served transform against one checked head and definition set.
+/// Classify a served transform against the exact head and definition set it
+/// was evaluated at, failing closed with `409 transform.snapshot_moved` on any
+/// concurrent commit or definition change.
 pub(crate) fn classify_transform_snapshot<E: SqlEngine>(
     host: &DevHost<E>,
     store: &norn_cell::CellStore<E>,
@@ -864,42 +857,34 @@ pub(crate) fn classify_transform_snapshot<E: SqlEngine>(
     served: &norn_cell::compute::materialize::Served,
     eval_defs: Option<&(u64, String)>,
 ) -> Result<ClassifiedSnapshot, Refusal> {
-    let mut stale = served.materialization.as_ref().is_some_and(|m| m.stale);
-    let mut expected_head = served.snapshot_head.commits;
-    for _ in 0..2 {
-        let reader = store.read();
-        let current_head = store
-            .verified_head()
-            .map_err(Refusal::from_compute)?
-            .commits;
-        if current_head != expected_head {
-            stale = true;
-            expected_head = current_head;
-        }
-        let catalog = host.marking_catalog(&reader)?;
-        refuse_dynamic_filter_order_markings(&reader, store.model(), &catalog, plan, stale)?;
-        let marked = effective_marked_columns(&reader, store.model(), &catalog, plan, stale)?;
-        let after_head = store
-            .verified_head()
-            .map_err(Refusal::from_compute)?
-            .commits;
-        let after_defs = reader
-            .active_definitions_identity()
-            .map_err(Refusal::host)?;
-        if after_defs.as_ref() != eval_defs {
-            return Err(transform_snapshot_moved());
-        }
-        if after_head == expected_head {
-            return Ok(ClassifiedSnapshot {
-                marked,
-                head_commits: after_head,
-                catalog,
-            });
-        }
-        stale = true;
-        expected_head = after_head;
+    let stale = served.materialization.as_ref().is_some_and(|m| m.stale);
+    let expected_head = served.snapshot_head.commits;
+    let reader = store.read();
+    let current_head = store
+        .verified_head()
+        .map_err(Refusal::from_compute)?
+        .commits;
+    if current_head != expected_head {
+        return Err(transform_snapshot_moved());
     }
-    Err(transform_snapshot_moved())
+    let catalog = host.marking_catalog(&reader)?;
+    refuse_dynamic_filter_order_markings(&reader, store.model(), &catalog, plan, stale)?;
+    let marked = effective_marked_columns(&reader, store.model(), &catalog, plan, stale)?;
+    let after_head = store
+        .verified_head()
+        .map_err(Refusal::from_compute)?
+        .commits;
+    let after_defs = reader
+        .active_definitions_identity()
+        .map_err(Refusal::host)?;
+    if after_head != expected_head || after_defs.as_ref() != eval_defs {
+        return Err(transform_snapshot_moved());
+    }
+    Ok(ClassifiedSnapshot {
+        marked,
+        head_commits: expected_head,
+        catalog,
+    })
 }
 
 #[cfg(test)]

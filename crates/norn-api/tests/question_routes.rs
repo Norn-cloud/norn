@@ -2543,6 +2543,7 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
         })
         .expect("commit with marked loss");
     let raw_receipt = committed.receipt().hash.clone();
+    let raw_head = store.verified_head().expect("head").hash;
     let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
         .expect("host")
         .with_authorizer(Policy);
@@ -2567,9 +2568,10 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
     )
     .expect("trace succeeds with projection");
     assert!(!trace.contributions.is_empty());
-    assert_ne!(
-        trace.result.revision.hash, raw_receipt,
-        "marked trace must withhold raw ledger head hash even for whole-world Values readers"
+    assert_eq!(
+        trace.result.revision.hash,
+        keyed_revision_handle(&HANDLE_KEY, &raw_head),
+        "marked trace must key raw ledger head hash even for whole-world Values readers"
     );
     for c in &trace.contributions {
         assert_eq!(c.fact_digest, None, "marked row must withhold fact_digest");
@@ -2581,9 +2583,9 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
             "marked row must redact source provenance even for Sources readers: {:?}",
             c.source
         );
-        assert_ne!(
+        assert_eq!(
             c.receipt_hash.as_deref(),
-            Some(raw_receipt.as_str()),
+            Some(keyed_receipt_handle(&HANDLE_KEY, &raw_receipt).as_str()),
             "marked trace must key receipt hashes"
         );
         let loss = c

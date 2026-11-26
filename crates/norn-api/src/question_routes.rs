@@ -612,7 +612,7 @@ fn trace_plan<E: SqlEngine>(
     let mut trace = outcome.map_err(Refusal::from_compute)?;
     let any_marked = crate::privacy::redact_trace_contributions(
         host,
-        (actor, &world_name, answered.is_some()),
+        (actor, &world_name),
         &cell.store().read(),
         &mut trace.contributions,
     )?;

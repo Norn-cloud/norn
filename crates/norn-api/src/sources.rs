@@ -1009,6 +1009,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         queue: std::collections::VecDeque::new(),
         after: None,
         watermark_from: "{}".to_owned(),
+        committed_watermarks: BTreeMap::new(),
         read,
         landed,
         quarantined,

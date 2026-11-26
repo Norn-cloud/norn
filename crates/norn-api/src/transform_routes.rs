@@ -901,7 +901,17 @@ pub fn refresh_transform<E: SqlEngine>(
     let store = cell.store();
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    refuse_dynamic_filter_order_markings(host, store, &plan, false)?;
+    {
+        let reader = store.read();
+        let catalog = host.marking_catalog(&reader)?;
+        crate::privacy::refuse_dynamic_filter_order_markings(
+            &reader,
+            store.model(),
+            &catalog,
+            &plan,
+            false,
+        )?;
+    }
     if plan.materialization.is_none() {
         return Err(Refusal::invalid(
             "the transform is evaluated on every read; only a materialized transform refreshes",
