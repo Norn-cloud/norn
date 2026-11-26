@@ -1011,7 +1011,7 @@ mod read_tests {
         edited[0]["payload"]["objectType"]["properties"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"id": "note", "type": {"kind": "text"}}));
+            .push(json!({"id": "note", "type": {"kind": "text"}, "default": "none"}));
         let both =
             save(&edited, &[question_def(&amount, "2026-11-15T00:00:00Z")]).expect("installed");
         assert_eq!(both.version, active());
