@@ -305,6 +305,21 @@ declare module "@norn/authoring" {
      */
     function callerId(): Expression<string>
 
+    /**
+     * ACTION-CLOCK-1: canonical UTC ISO-8601 commit timestamp (`clock.nowIso`),
+     * bound from the cell's commit clock (`call.turn.now`).
+     */
+    function commitTime(): Expression<string>
+
+    /**
+     * ACTION-CLOCK-1: canonical epoch-millisecond commit instant (`clock.nowMillis`),
+     * bound from the cell's commit clock (`call.turn.now`).
+     */
+    function commitTimeMillis(): Expression<number>
+
+    /** ORIGIN-DATAFLOW-1: declared write-origin provenance for a stored property. */
+    type PropertyOrigin = "caller" | "actor" | "receipt" | "derived" | "clock" | "default"
+
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
     interface RegistryInterfaceTypes {}
@@ -432,6 +447,10 @@ declare module "@norn/authoring" {
        * principal through `fromCaller`; it is immutable afterwards.
        */
       readonly protected?: ReadonlyArray<keyof S["Type"] & string>
+      /** ORIGIN-DATAFLOW-1: per-property write-origin provenance constraints. */
+      readonly origins?: Partial<Record<keyof S["Type"] & string, PropertyOrigin>>
+      /** ORIGIN-DATAFLOW-1: properties that may only be written at creation (`create_only`). */
+      readonly immutableAfterCreate?: ReadonlyArray<keyof S["Type"] & string>
     }
 
     /** An EntityIR v2 object type. */
@@ -472,6 +491,8 @@ declare module "@norn/authoring" {
             readonly digestProperty: string
             readonly resultBindings: Readonly<Record<string, string>>
           }
+          /** TRANSITION-PATCH-1: target properties patched from derived/validated action input fields. */
+          readonly setFields?: Readonly<Record<string, keyof I & string>>
         }
       | {
           readonly kind: "upsert_input_object"

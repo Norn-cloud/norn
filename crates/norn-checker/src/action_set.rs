@@ -90,7 +90,9 @@ use crate::predicate_property::{
     EQUALITY, ScalarClass, WINDOW, indexed_scalar_property, scalar_class,
 };
 use crate::property_types::error;
-use crate::typed_roots::{action_input_field_type, check_action_slice_preconditions};
+use crate::typed_roots::{
+    action_input_field_type, check_action_slice_derivations, check_action_slice_preconditions,
+};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 mod actor_binding;
@@ -584,6 +586,49 @@ fn action_slice_findings(
         let aggregates = action_aggregate_types(artifact, root, model);
         findings.extend(aggregates.findings);
         if slice.typed_slice && aggregates.typed {
+            let has_post_slice_derive = (!root.slice.is_empty() || !root.aggregates.is_empty())
+                && root.derive.iter().any(|step| {
+                    (!root.slice.is_empty()
+                        && norn_expr::expression_reads(step.expression.as_str(), "slice")
+                            .is_ok_and(|r| r.whole_root || !r.fields.is_empty()))
+                        || (!root.aggregates.is_empty()
+                            && norn_expr::expression_reads(step.expression.as_str(), "aggregates")
+                                .is_ok_and(|r| r.whole_root || !r.fields.is_empty()))
+                });
+            if has_post_slice_derive {
+                let unsupported_post_slice = match &root.effect_program {
+                    Some(ActionEffectProgram::MutateParentWithRows { .. }) => {
+                        Some("mutate_parent_with_rows does not support post-slice derive steps")
+                    }
+                    Some(ActionEffectProgram::UpsertInputObject { object_kind, .. })
+                        if model.effective_object_type_named(object_kind).is_some_and(|v| {
+                            v.keys.iter().any(|key| key.naming_series.is_some())
+                        }) =>
+                    {
+                        Some("naming-series upserts do not support post-slice derive steps")
+                    }
+                    _ => None,
+                };
+                if let Some(reason) = unsupported_post_slice {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        reason.to_owned(),
+                        artifact,
+                        "/payload/derive",
+                    ));
+                }
+            }
+            findings.extend(
+                check_action_slice_derivations(
+                    root,
+                    &slice.records,
+                    &slice.fields,
+                    &aggregates.fields,
+                    Some(&artifact.artifact_id),
+                )
+                .into_iter()
+                .map(Diagnostic::from),
+            );
             findings.extend(
                 check_action_slice_preconditions(
                     root,
@@ -1472,6 +1517,80 @@ impl Defined<'_> {
                 })
             {
                 findings.push(finding(codes::TARGET_NOT_WRITABLE, "acceptReceipt requires a required string reference, a manifest digest, and writable typed result/digest properties".to_owned(), action, "/payload/effectProgram/acceptReceipt"));
+            }
+        }
+        if let ActionEffectProgram::FireTransition {
+            lifecycle,
+            transition,
+            accept_receipt,
+            set_fields,
+            ..
+        } = program
+            && !set_fields.is_empty()
+        {
+            let view = self
+                .effective_object_type
+                .as_ref()
+                .and_then(|view| view.as_ref().ok());
+            let input_properties = root
+                .input_schema
+                .get("properties")
+                .and_then(JsonValue::as_object);
+            let guarded_fields: BTreeSet<String> = view
+                .and_then(|view| view.lifecycle(lifecycle.as_str()))
+                .and_then(|lc| lc.lifecycle.transitions.iter().find(|tr| tr.id == *transition))
+                .into_iter()
+                .flat_map(|tr| tr.guards.iter())
+                .filter_map(|guard| norn_expr::expression_reads(guard.as_str(), "self").ok())
+                .flat_map(|reads| reads.fields)
+                .collect();
+            let trusted_sources: BTreeSet<String> = root
+                .actor_stamped_fields()
+                .into_iter()
+                .chain(root.clock_stamped_fields())
+                .chain(root.server_derived_fields())
+                .collect();
+            let writable = |id: &norn_ir::PropertyId| {
+                !id.as_str().starts_with("_norn")
+                    && view.is_some_and(|view| {
+                        view.property(id.as_str())
+                            .is_some_and(|property| !property.computed && !property.protected())
+                            && view.lifecycle(id.as_str()).is_none()
+                            && !view.keys.iter().any(|key| key.components.contains(id))
+                    })
+            };
+            for (target_prop, source_field) in set_fields {
+                let receipt_overlap = accept_receipt.as_ref().is_some_and(|receipt| {
+                    &receipt.digest_property == target_prop
+                        || receipt.result_bindings.contains_key(target_prop)
+                });
+                let has_input = input_properties.is_some_and(|props| props.contains_key(source_field));
+                if !writable(target_prop) || receipt_overlap || !has_input {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "fire_transition setFields {:?} -> {:?} requires a writable non-lifecycle, non-identity target property and a declared input field",
+                            target_prop.as_str(),
+                            source_field
+                        ),
+                        action,
+                        "/payload/effectProgram/setFields",
+                    ));
+                } else if guarded_fields.contains(target_prop.as_str())
+                    && !trusted_sources.contains(source_field)
+                {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "fire_transition setFields {:?} -> {:?} cannot feed a caller-controlled input into a property read by transition {:?}'s guard",
+                            target_prop.as_str(),
+                            source_field,
+                            transition.as_str()
+                        ),
+                        action,
+                        "/payload/effectProgram/setFields",
+                    ));
+                }
             }
         }
         findings.extend(self.naming_series_findings(action, root, program));

@@ -162,6 +162,9 @@ const DASHBOARD = "@norn/authoring#Norn.dashboard"
 const METRIC_ID = "@norn/authoring#Norn.metricId"
 const APPROVAL = "@norn/authoring#Norn.approval"
 const CALLER_ID = "@norn/authoring#Norn.callerId"
+const COMMIT_TIME = "@norn/authoring#Norn.commitTime"
+const COMMIT_TIME_MILLIS = "@norn/authoring#Norn.commitTimeMillis"
+const VALID_ORIGINS: ReadonlySet<string> = new Set(["caller", "actor", "receipt", "derived", "clock", "default"])
 const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM, SETTING])
 const OBJECT_TYPES: ReadonlySet<string> = new Set([TYPE])
 const INTERFACES: ReadonlySet<string> = new Set([INTERFACE])
@@ -978,7 +981,7 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", "protected", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", "protected", "origins", "immutableAfterCreate", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     // FA-PROTECT-1 / ACTOR-STAMP-1: protected properties are written only by a
@@ -991,6 +994,26 @@ class DefinitionCompiler {
         if (!projected.some((p) => p.id === id)) throw new CompileError("NORN-FLOW-LITERAL", `protected names undeclared property ${id}`, node)
         if (protectedIds.has(id)) throw new CompileError("NORN-FLOW-LITERAL", `protected names ${id} twice`, node)
         protectedIds.add(id)
+      }
+    }
+    const origins = new Map<string, E.PropertyOrigin>()
+    const originsNode = members.get("origins")
+    if (originsNode) {
+      for (const [key, value] of this.record(originsNode)) {
+        if (!projected.some((p) => p.id === key)) throw new CompileError("NORN-FLOW-LITERAL", `origins names undeclared property ${key}`, value)
+        const origin = this.string(value)
+        if (!VALID_ORIGINS.has(origin)) throw new CompileError("NORN-FLOW-LITERAL", `origin must be one of caller, actor, receipt, derived, clock, default`, value)
+        origins.set(key, origin as E.PropertyOrigin)
+      }
+    }
+    const immutableAfterCreateIds = new Set<string>()
+    const immutableNode = members.get("immutableAfterCreate")
+    if (immutableNode) {
+      for (const node of this.list(immutableNode)) {
+        const id = this.string(node)
+        if (!projected.some((p) => p.id === id)) throw new CompileError("NORN-FLOW-LITERAL", `immutableAfterCreate names undeclared property ${id}`, node)
+        if (immutableAfterCreateIds.has(id)) throw new CompileError("NORN-FLOW-LITERAL", `immutableAfterCreate names ${id} twice`, node)
+        immutableAfterCreateIds.add(id)
       }
     }
     const defaults = new Map<string, E.DefaultValue>()
@@ -1017,6 +1040,8 @@ class DefinitionCompiler {
         return {
           id: p.id,
           ...(protectedIds.has(p.id) ? { protected: true } : {}),
+          ...(origins.has(p.id) ? { origin: origins.get(p.id)! } : {}),
+          ...(immutableAfterCreateIds.has(p.id) ? { immutableAfterCreate: true } : {}),
           ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}),
           type: p.projection.type,
           ...(p.projection.nullable ? { nullable: true } : {}),
@@ -1475,10 +1500,18 @@ class DefinitionCompiler {
   /** Read syntax-only expression wrappers in action/lifecycle expression slots. */
   private zen(input: ts.Expression, root = "input"): string {
     const e = this.deref(input)
-    // ACTION-ACTOR-1: the verified caller's subject id, bound by the server.
+    // ACTION-ACTOR-1 / ACTION-CLOCK-1: verified caller & server commit clock.
     if (ts.isCallExpression(e) && this.id(e) === CALLER_ID) {
       if (e.arguments.length !== 0) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.callerId() takes no argument", e)
       return "actor.subjectId"
+    }
+    if (ts.isCallExpression(e) && this.id(e) === COMMIT_TIME) {
+      if (e.arguments.length !== 0) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.commitTime() takes no argument", e)
+      return "clock.nowIso"
+    }
+    if (ts.isCallExpression(e) && this.id(e) === COMMIT_TIME_MILLIS) {
+      if (e.arguments.length !== 0) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.commitTimeMillis() takes no argument", e)
+      return "clock.nowMillis"
     }
     if (ts.isCallExpression(e) && this.id(e) === "@norn/authoring#Norn.unsafeZen") {
       if (this.forbidUnsafeZen) throw new CompileError("NORN-AUTHORING-UNSAFE-ZEN", "unsafeZen is forbidden (--forbid-unsafe-zen); replace it with a typed TypeScript expression callback", e)
@@ -1600,21 +1633,21 @@ class DefinitionCompiler {
   private effect(input: ts.Expression): A.ActionEffect {
     const m = this.closedRecord(
       input,
-      ["kind", "type", "objectIdField", "lifecycle", "transition", "writeMode", "acceptReceipt", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"],
+      ["kind", "type", "objectIdField", "lifecycle", "transition", "writeMode", "acceptReceipt", "setFields", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"],
       ["kind", "type", "objectIdField"],
     )
     const kind = this.string(m.get("kind")!)
     const type = this.typeRef(m.get("type")!, OBJECT_TYPES, "a Norn.type definition")
     const field = this.string(m.get("objectIdField")!)
     if (kind === "upsert_input_object") {
-      for (const extra of ["lifecycle", "transition", "acceptReceipt", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"]) {
+      for (const extra of ["lifecycle", "transition", "acceptReceipt", "setFields", "parentValuesField", "rowOpsField", "parentVersionField", "parentDeleteField", "collections"]) {
         if (m.has(extra)) throw new CompileError("NORN-FLOW-LITERAL", `upsert_input_object takes no ${extra}`, m.get(extra)!)
       }
       const writeMode = m.get("writeMode")
       return A.upsertInputObject(type, field, writeMode ? this.upsertWriteMode(writeMode) : undefined)
     }
     if (kind === "mutate_parent_with_rows") {
-      for (const extra of ["lifecycle", "transition", "writeMode", "acceptReceipt"]) {
+      for (const extra of ["lifecycle", "transition", "writeMode", "acceptReceipt", "setFields"]) {
         if (m.has(extra)) throw new CompileError("NORN-FLOW-LITERAL", `mutate_parent_with_rows takes no ${extra}`, m.get(extra)!)
       }
       const parentValuesField = m.get("parentValuesField")
@@ -1658,8 +1691,10 @@ class DefinitionCompiler {
     }
     const lifecycle = m.get("lifecycle"), transition = m.get("transition")
     if (!lifecycle || !transition) throw new CompileError("NORN-FLOW-LITERAL", "fire_transition names its lifecycle and transition", input)
+    const setFieldsNode = m.get("setFields")
+    const setFields = setFieldsNode ? this.stringMap(setFieldsNode) : undefined
     const receipt = m.get("acceptReceipt")
-    if (!receipt) return A.fireTransition(type, field, this.string(lifecycle), this.string(transition))
+    if (!receipt) return A.fireTransition(type, field, this.string(lifecycle), this.string(transition), undefined, setFields)
     const r = this.closedRecord(receipt, ["referenceField", "manifestDigest", "digestProperty", "resultBindings"], ["referenceField", "manifestDigest", "digestProperty", "resultBindings"])
     const resultBindings: Record<string, string> = {}
     for (const [target, source] of this.record(r.get("resultBindings")!)) {
@@ -1669,7 +1704,7 @@ class DefinitionCompiler {
     return A.fireTransition(type, field, this.string(lifecycle), this.string(transition), {
       referenceField: this.string(r.get("referenceField")!), manifestDigest: this.string(r.get("manifestDigest")!),
       digestProperty: this.string(r.get("digestProperty")!), resultBindings,
-    })
+    }, setFields)
   }
 
   private upsertWriteMode(input: ts.Expression): A.UpsertWriteMode {

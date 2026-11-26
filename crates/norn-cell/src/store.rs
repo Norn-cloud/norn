@@ -3800,6 +3800,8 @@ mod identity_history_tests {
                 implements: vec![],
                 properties: vec![norn_ir::entity_v2::object::Property {
                     protected: false,
+                origin: None,
+                immutable_after_create: false,
                     id: PropertyId("code".into()),
                     description: None,
                     property_type: PropertyType::Text { format: None },

@@ -327,10 +327,18 @@ enum WriteAuthority {
     CallersAndRules,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PostCreateMutability {
+    Mutable,
+    Immutable,
+}
+
 /// One effective property with every constraint set that applies to it.
 #[derive(Debug, Clone)]
 pub struct EffectiveProperty {
     write_authority: WriteAuthority,
+    origin: Option<norn_ir::PropertyOrigin>,
+    post_create: PostCreateMutability,
     /// The property id: the key in object payloads.
     pub id: PropertyId,
     /// The resolved type.
@@ -382,6 +390,18 @@ impl EffectiveProperty {
     #[must_use]
     pub const fn protected(&self) -> bool {
         matches!(self.write_authority, WriteAuthority::RulesOnly)
+    }
+
+    /// ORIGIN-DATAFLOW-1: declared write-origin constraint, if any.
+    #[must_use]
+    pub const fn origin(&self) -> Option<norn_ir::PropertyOrigin> {
+        self.origin
+    }
+
+    /// ORIGIN-DATAFLOW-1: whether writes after creation are forbidden.
+    #[must_use]
+    pub const fn immutable_after_create(&self) -> bool {
+        matches!(self.post_create, PostCreateMutability::Immutable)
     }
 
     /// Resolved members of the closed record, including referenced constraints.
@@ -438,6 +458,12 @@ impl EffectiveProperty {
             } else {
                 WriteAuthority::CallersAndRules
             },
+            origin: property.origin,
+            post_create: if property.immutable_after_create {
+                PostCreateMutability::Immutable
+            } else {
+                PostCreateMutability::Mutable
+            },
             patterns,
             record_members: Vec::new(),
         }
@@ -480,6 +506,8 @@ impl EffectiveProperty {
             *remaining = remaining.saturating_sub(1);
             let property = norn_ir::Property {
                 protected: false,
+                origin: None,
+                immutable_after_create: false,
                 id: member.id.clone(),
                 description: None,
                 property_type: member.property_type.clone(),

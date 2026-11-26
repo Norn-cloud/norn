@@ -1126,6 +1126,11 @@ where
                 reason: error.to_string(),
             })?;
     }
+    if super::input::first_slice_derivation_index(call.action).is_some() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: call.action.action_id.clone(),
+        });
+    }
     let action_slice = load_action_slice(
         &ActionSliceContext {
             host,

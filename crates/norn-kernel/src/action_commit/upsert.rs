@@ -9,7 +9,7 @@ use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
 use crate::limits::SliceMeter;
 use crate::naming_series::type_series;
 
-use super::input::check_action_record_size;
+use super::input::{apply_post_slice_derivations, check_action_record_size};
 use super::series::commit_upsert_series;
 use super::slice::{ActionSliceContext, check_action_preconditions, load_action_slice};
 use super::transition::{WriterTarget, writer_output};
@@ -221,6 +221,7 @@ where
             field: object_id_field.to_owned(),
         });
     };
+    let object_id = object_id.clone();
     if object_id.trim().is_empty() {
         return Err(ActionRefusal::InvalidInput {
             field: object_id_field.to_owned(),
@@ -301,6 +302,13 @@ where
         &state,
         SliceMeter::for_profile(&ResourceLimitProfile::norn_limits_v1()),
     )?;
+    apply_post_slice_derivations(
+        catalog,
+        call,
+        &mut preparation,
+        &slice,
+        usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
+    )?;
     preparation.precondition_outcomes = check_action_preconditions(
         catalog,
         action,
@@ -311,6 +319,8 @@ where
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
     let mut record = record;
+    record.effective_input = preparation.recorded_effective_input();
+    record.derived_values.clone_from(&preparation.derived_values);
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
@@ -331,7 +341,7 @@ where
         UpsertWriteMode::Upsert | UpsertWriteMode::CreateOnly if !state.exists() => {
             vec![FactChange::Create {
                 object_type: object_type.clone(),
-                key: object_id.clone(),
+                key: object_id,
                 values: business_input.clone(),
             }]
         }

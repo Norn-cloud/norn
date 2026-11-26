@@ -317,6 +317,12 @@ pub fn synthesize_object(
         .first()
         .map_or_default(|spec| spec.properties.iter().map(PropertyId::as_str).collect());
 
+    // DX-8: when the pack supplies positive `LAW-EXAMPLE-1` witnesses for any
+    // law targeting this entity type, seed non-key, non-lifecycle properties
+    // from a `Holds` witness so strict multi-field arithmetic laws (e.g.
+    // `Payslip.net_pay_egp == base + additions - deductions`) hold from step 0.
+    let witness_subject = positive_law_witness_for(pack, object_type.name.as_str(), seed);
+
     let mut values = JsonObject::new();
     for prop in effective_properties(pack, object_type) {
         if prop.is_read_only() {
@@ -331,6 +337,12 @@ pub fn synthesize_object(
             values.insert(id.to_owned(), JsonValue::String(key.to_owned()));
             continue;
         }
+        if let Some(witness) = witness_subject
+            && let Some(witness_val) = witness.get(id)
+        {
+            values.insert(id.to_owned(), witness_val.clone());
+            continue;
+        }
         if let Some(default) = prop.default
             && let Some(converted) = json_default_to_runtime(default, &prop, &shared)
         {
@@ -341,6 +353,38 @@ pub fn synthesize_object(
         values.insert(id.to_owned(), synthesized);
     }
     values
+}
+
+fn positive_law_witness_for<'a>(
+    pack: &'a AdmittedPack,
+    object_type_name: &str,
+    seed: u64,
+) -> Option<&'a JsonObject> {
+    let matching_law_ids: BTreeSet<&str> = pack
+        .laws
+        .iter()
+        .filter(|law| law.subject == object_type_name)
+        .map(|law| law.id.as_str())
+        .collect();
+    if matching_law_ids.is_empty() {
+        return None;
+    }
+    let positives: Vec<&JsonObject> = pack
+        .law_examples
+        .iter()
+        .filter(|ex| {
+            ex.expected == super::Verdict::Holds && matching_law_ids.contains(ex.law_id.as_str())
+        })
+        .map(|ex| &ex.subject)
+        .collect();
+    if positives.is_empty() {
+        return None;
+    }
+    let idx = usize::try_from(seed)
+        .unwrap_or(0)
+        .checked_rem(positives.len())
+        .unwrap_or(0);
+    positives.get(idx).copied()
 }
 
 /// Synthesizes an object that satisfies all declared `guards` for `lifecycle`
@@ -944,5 +988,65 @@ fn alternate_value(
             );
             Some(JsonValue::Object(obj))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pack_mbt::{AdmittedPack, LawExampleCase, Verdict};
+    use serde_json::json;
+
+    #[test]
+    fn synthesize_object_seeds_from_positive_law_example_witness() {
+        let object_type: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "hr.Payslip",
+            "properties": [
+                { "id": "id", "type": { "kind": "text" } },
+                { "id": "base", "type": { "kind": "integer" } },
+                { "id": "deduction", "type": { "kind": "integer" } },
+                { "id": "net", "type": { "kind": "integer" } }
+            ],
+            "identity": [{ "name": "primary", "properties": ["id"] }]
+        }))
+        .expect("payslip type");
+        let law: norn_kernel::pack_mbt_support::LawIR = serde_json::from_value(json!({
+            "lawVersion": "0.1",
+            "id": "hr.Payslip.exact_net",
+            "owner": "hr",
+            "severity": "error",
+            "rationale": "net == base - deduction",
+            "provenance": { "source": "authoring_sdk", "sourcePath": "hr.ts" },
+            "subject": "hr.Payslip",
+            "scope": { "root": { "kind": "entity", "id": "hr.Payslip" }, "objectTypes": ["hr.Payslip"] },
+            "modality": { "kind": "always" },
+            "response": { "kind": "predicate", "expression": "self.net == self.base - self.deduction" }
+        }))
+        .expect("payslip law");
+        let subject: JsonObject = serde_json::from_value(json!({
+            "id": "ps_witness",
+            "base": 8000,
+            "deduction": 500,
+            "net": 7500
+        }))
+        .expect("subject");
+        let pack = AdmittedPack {
+            name: "hr".to_owned(),
+            object_types: vec![object_type.clone()],
+            laws: vec![law],
+            ..AdmittedPack::default()
+        }
+        .with_law_examples(vec![LawExampleCase {
+            name: "valid payslip".to_owned(),
+            law_id: "hr.Payslip.exact_net".to_owned(),
+            subject,
+            expected: Verdict::Holds,
+        }]);
+
+        let synthesized = synthesize_object(&pack, &object_type, "ps_generated_1", 0);
+        assert_eq!(synthesized.get("id"), Some(&JsonValue::String("ps_generated_1".to_owned())));
+        assert_eq!(synthesized.get("base"), Some(&JsonValue::from(8000_i64)));
+        assert_eq!(synthesized.get("deduction"), Some(&JsonValue::from(500_i64)));
+        assert_eq!(synthesized.get("net"), Some(&JsonValue::from(7500_i64)));
     }
 }

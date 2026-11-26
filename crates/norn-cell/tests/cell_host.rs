@@ -4303,6 +4303,8 @@ fn r2_action_call_type() -> norn_ir::ObjectTypeDef {
         markings: Vec::new(),
         computed: None,
         protected: false,
+            origin: None,
+            immutable_after_create: false,
     })
     .collect();
     object

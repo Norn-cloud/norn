@@ -108,8 +108,9 @@ pub use action::{
     ACTOR_SUBJECT_STAMP, AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation,
     ActionCompensation, ActionCreateLink, ActionInputDerivation, ActionLinkSource,
     ActionQuantityEffect, ActionQuantityOperation, ActionQuantityParameter, ActionRoot,
-    ActionRuleRef, ActionUiEffect, ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES,
-    MAX_TRACE_ID_BYTES, McpTool, McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
+    ActionRuleRef, ActionUiEffect, ActionUiEffects, ActionWrite, CLOCK_NOW_ISO_STAMP,
+    CLOCK_NOW_MILLIS_STAMP, MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, McpTool, McpToolAnnotations,
+    TraceContext, TraceContextError, WriteChange,
 };
 pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
@@ -169,7 +170,7 @@ pub use entity_v2::naming_series::{
 pub use entity_v2::object::{
     ComponentNormalization, DefaultValue, IdentityRule, KeyName, KeySpec, MEMBER_ID_PATTERN,
     Normalization, OBJECT_TYPE_NAME_PATTERN, ObjectTypeDef, ObjectTypeName, OwnedChildCollection,
-    Property, PropertyId, ResolutionPolicyName,
+    Property, PropertyId, PropertyOrigin, ResolutionPolicyName,
 };
 pub use entity_v2::property::{
     DECIMAL_LITERAL_PATTERN, DecimalLiteral, EnumValue, PROPERTY_TYPE_NAME_PATTERN,
@@ -707,6 +708,10 @@ pub enum ActionEffectProgram {
         )]
         #[schemars(with = "ReceiptAcceptance")]
         accept_receipt: Option<ReceiptAcceptance>,
+        /// TRANSITION-PATCH-1: writable target properties patched from derived/validated
+        /// action input fields atomically with the transition (e.g. `generation -> next_generation`).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        set_fields: BTreeMap<PropertyId, String>,
     },
     /// Atomically mutate a parent and its declared ordered child rows.
     /// Membership and order are checked against the host's protected

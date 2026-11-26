@@ -7,12 +7,14 @@ use norn_ir::{
 };
 
 use crate::cell_host::JsonObject;
-use crate::decision_commit::{DecisionRefusal, expr_value};
+use crate::decision_commit::{DecisionRefusal, TypeCatalog, expr_value};
 use crate::limits::EnvelopeLimits;
+use crate::observations::LogicalTime;
 
+use super::slice::LoadedActionSlice;
 use super::types::{
-    ActionCallRecord, ActionDerivedValue, ActionDerivedValueRef, ActionInputPreparation,
-    ActionRefusal,
+    ActionCall, ActionCallRecord, ActionDerivedValue, ActionDerivedValueRef,
+    ActionInputPreparation, ActionRefusal,
 };
 
 /// Evaluates the declared outbound commands over the action input. The
@@ -289,7 +291,7 @@ pub fn prepare_action_input<'a, X>(
     action: &'a ActionRoot,
     raw_input: &'a JsonObject,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
-    prepare_action_input_inner(action, raw_input, None, None, None)
+    prepare_action_input_inner(action, raw_input, None, None, None, None)
 }
 
 /// Prepares one action call's input, binding the opaque result to the action
@@ -314,7 +316,64 @@ pub fn prepare_action_input_for_call<'a, X>(
         Some(action_artifact_id),
         Some(action_version),
         Some(actor),
+        None,
     )
+}
+
+/// ACTION-CLOCK-1: prepares one action call's pre-slice input with both the
+/// authenticated principal (`actor.subjectId`) and the server commit clock
+/// (`clock.nowMillis`, `clock.nowIso`).
+///
+/// # Errors
+///
+/// Refuses missing required input, spoofed actor/clock fields, invalid derived
+/// values or final input, expression failures, and size limits.
+pub(super) fn prepare_action_input_for_call_at<'a, X>(
+    action: &'a ActionRoot,
+    raw_input: &'a JsonObject,
+    action_artifact_id: &'a str,
+    action_version: &'a str,
+    actor: &str,
+    now: LogicalTime,
+) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
+    prepare_action_input_inner(
+        action,
+        raw_input,
+        Some(action_artifact_id),
+        Some(action_version),
+        Some(actor),
+        Some(now),
+    )
+}
+
+/// ACTION-SLICE-DERIVE-1: index of the first derivation step that reads
+/// `slice` or `aggregates` (when declared on the action) and therefore runs
+/// after `load_action_slice`.
+pub(super) fn first_slice_derivation_index(action: &ActionRoot) -> Option<usize> {
+    if action.slice.is_empty() && action.aggregates.is_empty() {
+        return None;
+    }
+    action.derive.iter().position(|step| {
+        (!action.slice.is_empty()
+            && norn_expr::expression_reads(step.expression.as_str(), "slice")
+                .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty()))
+            || (!action.aggregates.is_empty()
+                && norn_expr::expression_reads(step.expression.as_str(), "aggregates")
+                    .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty()))
+    })
+}
+
+pub(super) fn clock_derived_fields(action: &ActionRoot) -> Vec<String> {
+    let mut fields = Vec::new();
+    for step in &action.derive {
+        if !step.input_required
+            && norn_expr::expression_reads(step.expression.as_str(), norn_expr::CLOCK_VARIABLE)
+                .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty())
+        {
+            fields.push(step.field.clone());
+        }
+    }
+    fields
 }
 
 fn normalize_action_input<X>(
@@ -328,11 +387,12 @@ fn normalize_action_input<X>(
     .map_err(|violation| ActionRefusal::InvalidInput {
         field: violation.path,
     })?;
-    // ACTION-ACTOR-1: identity is never caller-supplied, not even as a value
-    // the derivation would overwrite, nor as a `null` the normalization below
-    // would drop: the raw input is checked before anything is removed.
+    // ACTION-ACTOR-1 / ACTION-CLOCK-1: server-stamped identity and clock fields
+    // are never caller-supplied, not even as `null` or a value that derivation
+    // would overwrite.
     if let Some(field) = actor_derived_fields(action)
         .into_iter()
+        .chain(clock_derived_fields(action))
         .find(|field| raw_input.contains_key(field))
     {
         return Err(ActionRefusal::InvalidInput { field });
@@ -362,6 +422,7 @@ fn prepare_action_input_inner<'a, X>(
     action_artifact_id: Option<&'a str>,
     action_version: Option<&'a str>,
     actor: Option<&str>,
+    now: Option<LogicalTime>,
 ) -> Result<ActionInputPreparation<'a>, ActionRefusal<X>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
@@ -421,14 +482,18 @@ fn prepare_action_input_inner<'a, X>(
     }
     let mut derived_values = Vec::with_capacity(action.derive.len());
     let mut remaining_fuel = TurnFuel::turn(&profile);
+    let pre_slice_limit = first_slice_derivation_index(action).unwrap_or(action.derive.len());
 
-    for (index, derivation) in action.derive.iter().enumerate() {
+    for (index, derivation) in action.derive.iter().take(pre_slice_limit).enumerate() {
         let (value, next_receipt_bytes) = prepare_action_derivation(
             action,
             index,
             derivation,
             &effective_input,
             actor,
+            now,
+            None,
+            None,
             &mut remaining_fuel,
             receipt_evidence_bytes,
         )?;
@@ -448,7 +513,9 @@ fn prepare_action_input_inner<'a, X>(
         check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
     }
 
-    validate_action_input(action, &effective_input)?;
+    if pre_slice_limit == action.derive.len() {
+        validate_action_input(action, &effective_input)?;
+    }
     Ok(ActionInputPreparation {
         action,
         raw_input,
@@ -461,6 +528,81 @@ fn prepare_action_input_inner<'a, X>(
         receipt_evidence_bytes,
         precondition_outcomes: Vec::new(),
     })
+}
+
+/// ACTION-SLICE-DERIVE-1: runs deferred post-slice derivations right after
+/// `load_action_slice` and validates the final effective input before
+/// preconditions and writes.
+pub(super) fn apply_post_slice_derivations<X>(
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    preparation: &mut ActionInputPreparation<'_>,
+    slice: &LoadedActionSlice,
+    max_receipt_bytes: usize,
+) -> Result<(), ActionRefusal<X>> {
+    let action = call.action;
+    let Some(split) = first_slice_derivation_index(action) else {
+        return Ok(());
+    };
+    let profile = ResourceLimitProfile::norn_limits_v1();
+    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
+    let Some(first_step) = action.derive.get(split) else {
+        return Ok(());
+    };
+    let catalog_env = action
+        .slice
+        .first()
+        .map(|entry| &entry.object_type)
+        .or_else(|| {
+            action
+                .aggregates
+                .first()
+                .map(|aggregate| &aggregate.object_type)
+        })
+        .map(|object_type| catalog.expression_environment(object_type))
+        .transpose()
+        .map_err(|reason| ActionRefusal::DerivationFailed {
+            field: first_step.field.clone(),
+            expression: first_step.expression.as_str().to_owned(),
+            reason,
+        })?;
+    for (offset, derivation) in action.derive.get(split..).unwrap_or_default().iter().enumerate() {
+        let index = split.saturating_add(offset);
+        let (value, next_receipt_bytes) = prepare_action_derivation(
+            action,
+            index,
+            derivation,
+            &preparation.effective_input,
+            Some(call.actor.as_str()),
+            Some(call.turn.now),
+            Some(slice),
+            catalog_env.as_ref(),
+            &mut preparation.remaining_fuel,
+            preparation.receipt_evidence_bytes,
+        )?;
+        preparation.receipt_evidence_bytes = next_receipt_bytes;
+        if preparation.receipt_evidence_bytes > max_receipt_bytes {
+            return Err(ActionRefusal::InputBoundExceeded {
+                subject: "action call receipt evidence".to_owned(),
+                actual_bytes: preparation.receipt_evidence_bytes,
+                max_bytes: max_receipt_bytes,
+            });
+        }
+        preparation
+            .effective_input
+            .insert(derivation.field.clone(), value.clone());
+        preparation.derived_values.push(ActionDerivedValue {
+            field: derivation.field.clone(),
+            value,
+        });
+        check_canonical_object_bound::<X>(
+            "effective input",
+            &preparation.effective_input,
+            max_input_bytes,
+        )?;
+    }
+    validate_action_input(action, &preparation.effective_input)?;
+    Ok(())
 }
 
 /// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
@@ -544,7 +686,7 @@ pub(super) fn reserved_action_identity(raw_input: &JsonObject) -> Option<(&'stat
 }
 
 fn reserved_identity_member(input: &JsonObject) -> Option<&'static str> {
-    ["actor", "approved"]
+    ["actor", "approved", "clock"]
         .into_iter()
         .find(|field| input.contains_key(*field))
 }
@@ -571,45 +713,90 @@ fn action_derivation_destination(
     declared
 }
 
-/// ACTION-ACTOR-1: bind actor data only from the authenticated call principal.
+/// ACTION-ACTOR-1 / ACTION-CLOCK-1: bind actor and commit clock data only from
+/// the authenticated call context, plus loaded slice/aggregates when post-slice.
 fn action_derivation_context<X>(
+    action: &ActionRoot,
     effective_input: &JsonObject,
     actor: Option<&str>,
+    now: Option<LogicalTime>,
+    slice: Option<&LoadedActionSlice>,
     derivation: &norn_ir::ActionInputDerivation,
 ) -> Result<ExprValue, ActionRefusal<X>> {
-    let mut context = action_expression_context(effective_input, &JsonObject::new(), None)
+    let empty_slice = JsonObject::new();
+    let slice_values = slice.map_or(&empty_slice, |loaded| &loaded.values);
+    let aggregates = slice
+        .filter(|_| !action.aggregates.is_empty())
+        .map(|loaded| &loaded.aggregates);
+    let mut context = action_expression_context(effective_input, slice_values, aggregates)
         .map_err(|reason| ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
             expression: derivation.expression.as_str().to_owned(),
             reason,
         })?;
-    if let Some(principal) = actor {
-        let ExprValue::Object(fields) = &mut context else {
-            return Err(ActionRefusal::InvalidInput {
-                field: "actor".into(),
-            });
-        };
-        fields.insert(
-            "actor".into(),
-            ExprValue::Object(BTreeMap::from([(
-                "subjectId".into(),
-                ExprValue::String(principal.into()),
-            )])),
-        );
+    if let ExprValue::Object(fields) = &mut context {
+        if let Some(principal) = actor {
+            fields.insert(
+                "actor".into(),
+                ExprValue::Object(BTreeMap::from([(
+                    "subjectId".into(),
+                    ExprValue::String(principal.into()),
+                )])),
+            );
+        }
+        if let Some(instant) = now {
+            let millis = instant.as_millis();
+            let now_iso = norn_expr::temporal::format_utc_millis(millis).map_err(|error| {
+                ActionRefusal::DerivationFailed {
+                    field: derivation.field.clone(),
+                    expression: derivation.expression.as_str().to_owned(),
+                    reason: format!("commit clock out of range: {error}"),
+                }
+            })?;
+            let signed_millis = i64::try_from(millis).map_err(|_error| {
+                ActionRefusal::DerivationFailed {
+                    field: derivation.field.clone(),
+                    expression: derivation.expression.as_str().to_owned(),
+                    reason: "commit clock millis out of i64 range".to_owned(),
+                }
+            })?;
+            let now_millis = expr_value(&RuntimeValue::from(signed_millis)).map_err(|reason| {
+                ActionRefusal::DerivationFailed {
+                    field: derivation.field.clone(),
+                    expression: derivation.expression.as_str().to_owned(),
+                    reason: format!("commit clock millis invalid: {reason}"),
+                }
+            })?;
+            fields.insert(
+                "clock".into(),
+                ExprValue::Object(BTreeMap::from([
+                    ("nowMillis".into(), now_millis),
+                    ("nowIso".into(), ExprValue::String(now_iso)),
+                ])),
+            );
+        }
     }
     Ok(context)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "pre-slice and post-slice derivations share one metered evaluator"
+)]
 fn prepare_action_derivation<X>(
     action: &ActionRoot,
     completed: usize,
     derivation: &norn_ir::ActionInputDerivation,
     effective_input: &JsonObject,
     actor: Option<&str>,
+    now: Option<LogicalTime>,
+    slice: Option<&LoadedActionSlice>,
+    catalog_env: Option<&norn_expr::ZenTypeEnv>,
     remaining_fuel: &mut TurnFuel,
     receipt_evidence_bytes: usize,
 ) -> Result<(RuntimeValue, usize), ActionRefusal<X>> {
-    let context = action_derivation_context(effective_input, actor, derivation)?;
+    let context =
+        action_derivation_context(action, effective_input, actor, now, slice, derivation)?;
     let expression = Expression::compile(derivation.expression.as_str()).map_err(|error| {
         ActionRefusal::DerivationFailed {
             field: derivation.field.clone(),
@@ -617,14 +804,16 @@ fn prepare_action_derivation<X>(
             reason: error.to_string(),
         }
     })?;
-    let env =
-        norn_expr::schema::action_derivation_environment(action, completed).map_err(|reason| {
-            ActionRefusal::DerivationFailed {
-                field: derivation.field.clone(),
-                expression: derivation.expression.as_str().to_owned(),
-                reason,
-            }
-        })?;
+    let env = if slice.is_some() {
+        norn_expr::schema::action_slice_derivation_environment(action, catalog_env, completed)
+    } else {
+        norn_expr::schema::action_derivation_environment(action, completed)
+    }
+    .map_err(|reason| ActionRefusal::DerivationFailed {
+        field: derivation.field.clone(),
+        expression: derivation.expression.as_str().to_owned(),
+        reason,
+    })?;
     let expected = action_derivation_destination(action, derivation, &env);
     let attempt = remaining_fuel
         .spend(|budget| expression.evaluate_admitted_metered(&context, budget, &env, &expected));

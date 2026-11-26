@@ -128,6 +128,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    if !input::clock_derived_fields(call.action).is_empty() {
+        return Err(ActionRefusal::InvalidInput {
+            field: "clock".to_owned(),
+        });
+    }
     commit_action_inner(
         host,
         catalog,
@@ -262,12 +267,13 @@ where
                 field: "$prepared_input".to_owned(),
             });
         }
-        None => prepare_action_input_for_call::<H::Error>(
+        None => input::prepare_action_input_for_call_at::<H::Error>(
             action,
             &call.input,
             call.action_artifact_id,
             call.action_version,
             &call.actor,
+            call.turn.now,
         )?,
     };
     match action.effect_program.as_ref() {
@@ -281,6 +287,7 @@ where
             lifecycle,
             transition,
             accept_receipt,
+            set_fields,
             ..
         }) => commit_transition(
             host,
@@ -293,6 +300,7 @@ where
             lifecycle,
             transition,
             accept_receipt.as_ref(),
+            set_fields,
             envelope,
         ),
         Some(ActionEffectProgram::UpsertInputObject {

@@ -880,14 +880,40 @@ fn validate_action_derivations(
     // them conservatively as possibly absent so a malformed payload cannot
     // gain admission by whichever declaration happened to be last.
     required_targets.retain(|field| !optional_targets.contains(field));
+    let declares_slice_or_aggregates = ["slice", "aggregates"].iter().any(|member| {
+        payload
+            .get(*member)
+            .and_then(JsonValue::as_array)
+            .is_some_and(|entries| !entries.is_empty())
+    });
+    let local_limit = if declares_slice_or_aggregates {
+        first_slice_derivation_index(&derive).unwrap_or(derive.len())
+    } else {
+        derive.len()
+    };
     validate_action_derivation_steps(
-        &derive,
+        derive.get(..local_limit).unwrap_or(&derive),
         input_schema,
         &optional_targets,
         &required_targets,
         diagnostics,
         artifact_id,
     )
+}
+
+/// ACTION-SLICE-DERIVE-1: whether one derivation expression reads `slice` or `aggregates`.
+pub(crate) fn derivation_needs_slice(expression: &str) -> bool {
+    ["slice", "aggregates"].into_iter().any(|root| {
+        norn_expr::expression_reads(expression, root)
+            .is_ok_and(|reads| reads.whole_root || !reads.fields.is_empty())
+    })
+}
+
+/// ACTION-SLICE-DERIVE-1: index of the first derivation step that depends on the loaded slice.
+pub(crate) fn first_slice_derivation_index(derive: &[ActionInputDerivation]) -> Option<usize> {
+    derive
+        .iter()
+        .position(|step| derivation_needs_slice(step.expression.as_str()))
 }
 
 fn validate_action_derivation_declarations(
@@ -1128,6 +1154,186 @@ fn check_action_input_preconditions(
     aggregate_cost
 }
 
+fn post_slice_key_cycle_findings(
+    root: &ActionRoot,
+    split: usize,
+    artifact_id: Option<&str>,
+) -> Vec<Diagnostic> {
+    let mut pre_slice_inputs = BTreeSet::new();
+    if let Some(target) = root.effect_program.as_ref().map(|p| p.target()) {
+        pre_slice_inputs.insert(target.object_id_field.to_owned());
+    }
+    for entry in &root.slice {
+        match &entry.key {
+            SliceKey::Property { from, property } if from == "input" => {
+                pre_slice_inputs.insert(property.as_str().to_owned());
+            }
+            SliceKey::Predicate { filter, window, .. } => {
+                pre_slice_inputs.extend(filter.values().cloned());
+                if let Some(window) = window {
+                    pre_slice_inputs.insert(window.start.clone());
+                    pre_slice_inputs.insert(window.end.clone());
+                }
+            }
+            SliceKey::Property { .. }
+            | SliceKey::Link { .. }
+            | SliceKey::Parameter { .. }
+            | SliceKey::TriggerObject
+            | SliceKey::TriggerBefore
+            | SliceKey::TriggerAfter
+            | SliceKey::TriggerChanges => {}
+        }
+    }
+    for aggregate in &root.aggregates {
+        pre_slice_inputs.extend(aggregate.filter.values().cloned());
+        if let Some(window) = &aggregate.window {
+            pre_slice_inputs.insert(window.start.clone());
+            pre_slice_inputs.insert(window.end.clone());
+        }
+    }
+    let mut diagnostics = Vec::new();
+    for (offset, step) in root.derive.get(split..).unwrap_or_default().iter().enumerate() {
+        let index = split.saturating_add(offset);
+        if pre_slice_inputs.contains(&step.field) {
+            diagnostics.push(invalid_diagnostic(
+                ACTION_CODE,
+                format!(
+                    "post-slice derivation cannot write input field {:?}, which is used to resolve slice keys, aggregates, or target identity",
+                    step.field
+                ),
+                format!("payload.derive[{index}].field"),
+                artifact_id,
+            ));
+        }
+    }
+    diagnostics
+}
+
+/// ACTION-SLICE-DERIVE-1: type-check post-slice action derivations (steps from
+/// the first slice/aggregate reader onward) against `input + actor + clock +
+/// slice + aggregates`, and refuse any cycle back into slice keys or target id.
+pub(crate) fn check_action_slice_derivations(
+    root: &ActionRoot,
+    records: &BTreeMap<String, BTreeMap<String, Type>>,
+    slice_fields: &BTreeMap<String, Type>,
+    aggregate_fields: &BTreeMap<String, Type>,
+    artifact_id: Option<&str>,
+) -> Vec<Diagnostic> {
+    let Some(split) = first_slice_derivation_index(&root.derive) else {
+        return Vec::new();
+    };
+    let schema = JsonValue::Object(root.input_schema.clone());
+    let mut diagnostics = post_slice_key_cycle_findings(root, split, artifact_id);
+    let Some((mut fields, _)) = action_post_derivation_fields_prefix(&schema, &root.derive, split)
+    else {
+        return diagnostics;
+    };
+    let declares_aggregates = !root.aggregates.is_empty();
+    for (offset, derivation) in root.derive.get(split..).unwrap_or_default().iter().enumerate() {
+        let index = split.saturating_add(offset);
+        if action_input_field_type(Some(&schema), &derivation.field).is_none()
+            || derivation.expression.as_str().trim().is_empty()
+        {
+            continue;
+        }
+        let Some(expected) = action_derivation_target_type(Some(&schema), &derivation.field) else {
+            continue;
+        };
+        let Some(environment) = action_slice_derivation_env(
+            records,
+            slice_fields,
+            aggregate_fields,
+            declares_aggregates,
+            fields.clone(),
+        ) else {
+            diagnostics.push(invalid_diagnostic(
+                codes::ACTION_COMMAND_ENVIRONMENT_UNDERIVABLE,
+                "post-slice derivations require every declared slice object and aggregate to have a resolved, closed type",
+                "payload.slice",
+                artifact_id,
+            ));
+            return diagnostics;
+        };
+        let path = format!("payload.derive[{index}].expression");
+        let expression = match Expression::compile(derivation.expression.as_str()) {
+            Ok(expression) => expression,
+            Err(error) => {
+                diagnostics.push(invalid_diagnostic(
+                    ACTION_CODE,
+                    format!(
+                        "derivation expression {:?} does not compile: {error}",
+                        derivation.expression.as_str()
+                    ),
+                    path,
+                    artifact_id,
+                ));
+                continue;
+            }
+        };
+        match check_expression_with_root_bounds(
+            &expression,
+            &environment,
+            &expected,
+            &ResourceLimitProfile::norn_limits_v1(),
+            &action_expression_root_bounds(&environment),
+        ) {
+            Ok(checked) => {
+                fields.insert(
+                    derivation.field.clone(),
+                    refined_derivation_type(expected, checked.inferred()),
+                );
+            }
+            Err(findings) => {
+                for finding in findings {
+                    diagnostics.push(invalid_diagnostic(
+                        ACTION_CODE,
+                        format!(
+                            "derivation expression {:?} is invalid: {} ({})",
+                            derivation.expression.as_str(),
+                            finding.message,
+                            finding.code
+                        ),
+                        path.clone(),
+                        artifact_id,
+                    ));
+                }
+            }
+        }
+    }
+    diagnostics
+}
+
+fn action_slice_derivation_env(
+    records: &BTreeMap<String, BTreeMap<String, Type>>,
+    slice_fields: &BTreeMap<String, Type>,
+    aggregate_fields: &BTreeMap<String, Type>,
+    declares_aggregates: bool,
+    fields: BTreeMap<String, Type>,
+) -> Option<ZenTypeEnv> {
+    let mut env_records = records.clone();
+    let slice_record = "norn:ActionSlice".to_owned();
+    env_records.insert(slice_record.clone(), slice_fields.clone());
+    let aggregate_record = "norn:ActionAggregates".to_owned();
+    if declares_aggregates {
+        env_records.insert(aggregate_record.clone(), aggregate_fields.clone());
+    }
+    let mut environment = ZenTypeEnv::action_derivation_with_records(
+        env_records,
+        fields,
+        EnvOptions::from_limit_profile(&ResourceLimitProfile::norn_limits_v1()),
+    )
+    .ok()?;
+    environment = environment
+        .bind_operand("slice", Type::Record(slice_record))
+        .ok()?;
+    if declares_aggregates {
+        environment = environment
+            .bind_operand("aggregates", Type::Record(aggregate_record))
+            .ok()?;
+    }
+    bind_flat_input_aliases(environment)
+}
+
 /// Type-check action preconditions over the resolved slice object records
 /// and aggregate result types. Entity type resolution belongs to the
 /// artifact-set checker; this helper only assembles the closed ZEN
@@ -1257,19 +1463,27 @@ fn action_post_derivation_fields(
     schema: &JsonValue,
     derive: &[ActionInputDerivation],
 ) -> Option<(BTreeMap<String, Type>, u64)> {
-    let optional: BTreeSet<_> = derive
+    action_post_derivation_fields_prefix(schema, derive, derive.len())
+}
+
+fn action_post_derivation_fields_prefix(
+    schema: &JsonValue,
+    all_derive: &[ActionInputDerivation],
+    limit: usize,
+) -> Option<(BTreeMap<String, Type>, u64)> {
+    let optional: BTreeSet<_> = all_derive
         .iter()
         .filter(|step| !step.input_required)
         .map(|step| step.field.clone())
         .collect();
-    let required: BTreeSet<_> = derive
+    let required: BTreeSet<_> = all_derive
         .iter()
         .filter(|step| step.input_required && !optional.contains(&step.field))
         .map(|step| step.field.clone())
         .collect();
     let mut fields = action_input_fields(schema, &optional, &required)?;
     let mut cost = 0_u64;
-    for step in derive {
+    for step in all_derive.iter().take(limit) {
         let environment = action_derivation_environment(fields.clone())?;
         let expected = action_input_field_type(Some(schema), &step.field)?;
         let expression = Expression::compile(step.expression.as_str()).ok()?;
@@ -1297,11 +1511,36 @@ fn action_slice_environment(
     slice_fields: BTreeMap<String, Type>,
     aggregate_fields: BTreeMap<String, Type>,
 ) -> Option<ZenTypeEnv> {
-    let (fields, _) = action_post_derivation_fields(input_schema, &root.derive)?;
+    let split = first_slice_derivation_index(&root.derive).unwrap_or(root.derive.len());
+    let (mut fields, _) = action_post_derivation_fields_prefix(input_schema, &root.derive, split)?;
+    let declares_aggregates = !root.aggregates.is_empty();
+    for step in root.derive.get(split..).unwrap_or_default() {
+        let environment = action_slice_derivation_env(
+            &records,
+            &slice_fields,
+            &aggregate_fields,
+            declares_aggregates,
+            fields.clone(),
+        )?;
+        let expected = action_input_field_type(Some(input_schema), &step.field)?;
+        let expression = Expression::compile(step.expression.as_str()).ok()?;
+        let checked = check_expression_with_root_bounds(
+            &expression,
+            &environment,
+            &expected,
+            &ResourceLimitProfile::norn_limits_v1(),
+            &action_expression_root_bounds(&environment),
+        )
+        .ok()?;
+        fields.insert(
+            step.field.clone(),
+            refined_derivation_type(expected, checked.inferred()),
+        );
+    }
     let slice_record = "norn:ActionSlice".to_owned();
     records.insert(slice_record.clone(), slice_fields);
     let aggregate_record = "norn:ActionAggregates".to_owned();
-    if !root.aggregates.is_empty() {
+    if declares_aggregates {
         records.insert(aggregate_record.clone(), aggregate_fields);
     }
     let mut environment = ZenTypeEnv::input_only_with_records(
@@ -1313,7 +1552,7 @@ fn action_slice_environment(
     environment = environment
         .bind_operand("slice", Type::Record(slice_record))
         .ok()?;
-    if !root.aggregates.is_empty() {
+    if declares_aggregates {
         environment = environment
             .bind_operand("aggregates", Type::Record(aggregate_record))
             .ok()?;

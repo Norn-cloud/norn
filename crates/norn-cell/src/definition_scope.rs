@@ -341,6 +341,8 @@ pub fn kernel_record_types_recording_principal_inputs() -> Vec<ObjectTypeDef> {
 fn nullable(id: &str, property_type: PropertyType) -> Property {
     Property {
         protected: false,
+                origin: None,
+                immutable_after_create: false,
         id: PropertyId(id.into()),
         property_type,
         description: None,

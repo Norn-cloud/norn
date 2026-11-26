@@ -88,9 +88,9 @@ pub use check::{
 };
 pub use convert::rescale_decimal;
 pub use env::{
-    ACTOR_VARIABLE, EntityDefinitions, EnvError, EnvOptions, Field, FieldSource, INPUT_VARIABLE,
-    RecordKind, RecordType, SELF_VARIABLE, TYPE_ENV_HASH_PROFILE, TYPE_ENV_ID, TYPE_ENV_VERSION,
-    Type, TypeEnvRef, ZenTypeEnv,
+    ACTOR_VARIABLE, CLOCK_VARIABLE, EntityDefinitions, EnvError, EnvOptions, Field, FieldSource,
+    INPUT_VARIABLE, RecordKind, RecordType, SELF_VARIABLE, TYPE_ENV_HASH_PROFILE, TYPE_ENV_ID,
+    TYPE_ENV_VERSION, Type, TypeEnvRef, ZenTypeEnv,
 };
 pub use error::ExprError;
 pub use expression::{

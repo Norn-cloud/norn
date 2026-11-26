@@ -45,6 +45,11 @@ where
     H::Input: From<JsonObject>,
 {
     let limits = envelope.limits;
+    if super::input::first_slice_derivation_index(call.action).is_some() {
+        return Err(ActionRefusal::UnsupportedEffect {
+            action_id: call.action.action_id.clone(),
+        });
+    }
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", call.action.action_id, call.idempotency_key),

@@ -22,6 +22,8 @@
     "`@norn/authoring#Norn.expression`",
     "`@norn/authoring#Norn.unsafeZen`",
     "`@norn/authoring#Norn.callerId`",
+    "`@norn/authoring#Norn.commitTime`",
+    "`@norn/authoring#Norn.commitTimeMillis`",
     "`@norn/authoring#Norn.flow`",
     "`@norn/authoring#Norn.perform`",
     "`@norn/authoring#Norn.fn`",

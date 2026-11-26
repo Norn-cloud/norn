@@ -790,6 +790,19 @@ pub fn action_derivation_environment(
     action_environment_with(action, None, completed, true)
 }
 
+/// ACTION-SLICE-DERIVE-1: post-slice derivation environment combining `input`,
+/// `actor`, `clock`, resolved `slice` records, and `aggregates`.
+///
+/// # Errors
+/// Returns the reason the action input, slice, or a completed derivation cannot be typed.
+pub fn action_slice_derivation_environment(
+    action: &norn_ir::ActionRoot,
+    catalog: Option<&crate::ZenTypeEnv>,
+    completed: usize,
+) -> Result<crate::ZenTypeEnv, String> {
+    action_environment_with(action, catalog, completed, true)
+}
+
 /// #1105: each aggregate is a count (an integer) or a sum typed as its
 /// summed property, read as `aggregates.<name>`.
 fn aggregate_types(
