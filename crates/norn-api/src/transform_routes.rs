@@ -417,37 +417,33 @@ fn evaluate<E: SqlEngine>(
         .map_err(Refusal::host)?;
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    {
-        let reader = store.read();
-        let catalog = host.marking_catalog(&reader)?;
-        crate::privacy::refuse_dynamic_filter_order_markings(
-            &reader,
-            store.model(),
-            &catalog,
-            &plan,
-            false,
-        )?;
-    }
-    let served = store
-        .serve_transform(
+    let (served, classified) = store
+        .serve_transform_checked(
             &plan,
             (MAIN_WORLD, &host.scope().key()),
             |row| Ok(row_access(host, access, &actor, row)),
             now.as_millis(),
+            |reader, stale| {
+                crate::privacy::classify_transform_in_tx(
+                    host,
+                    reader,
+                    store.model(),
+                    &plan,
+                    eval_defs.as_ref(),
+                    stale,
+                )
+            },
         )
-        .map_err(Refusal::from_compute)?;
-    let classified = crate::privacy::classify_transform_snapshot(
-        host,
-        store,
-        &plan,
-        &served,
-        eval_defs.as_ref(),
-    )?;
+        .map_err(|error| match error {
+            norn_cell::GuardedError::Store(err) => Refusal::from_compute(err),
+            norn_cell::GuardedError::Guard(refusal) => refusal,
+        })?;
+    let head_commits = served.snapshot_head.commits;
     Ok(EvaluatedTransform {
         plan,
         served,
         marked: classified.marked,
-        head_commits: classified.head_commits,
+        head_commits,
         catalog: classified.catalog,
     })
 }
@@ -899,32 +895,39 @@ pub fn refresh_transform<E: SqlEngine>(
     let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let store = cell.store();
+    let eval_defs = store
+        .read()
+        .active_definitions_identity()
+        .map_err(Refusal::host)?;
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    {
-        let reader = store.read();
-        let catalog = host.marking_catalog(&reader)?;
-        crate::privacy::refuse_dynamic_filter_order_markings(
-            &reader,
-            store.model(),
-            &catalog,
-            &plan,
-            false,
-        )?;
-    }
     if plan.materialization.is_none() {
         return Err(Refusal::invalid(
             "the transform is evaluated on every read; only a materialized transform refreshes",
         ));
     }
     store
-        .refresh_transform(
+        .refresh_transform_checked(
             &plan,
             (MAIN_WORLD, &host.scope().key()),
             |row| Ok(row_access(host, access, &actor, row)),
             now.as_millis(),
+            |reader| {
+                let _ = crate::privacy::guard_transform_in_tx(
+                    host,
+                    reader,
+                    store.model(),
+                    &plan,
+                    eval_defs.as_ref(),
+                    false,
+                )?;
+                Ok(())
+            },
         )
-        .map_err(Refusal::from_compute)?
+        .map_err(|error| match error {
+            norn_cell::GuardedError::Store(err) => Refusal::from_compute(err),
+            norn_cell::GuardedError::Guard(refusal) => refusal,
+        })?
         .map(|state| materialization(&state))
         .ok_or_else(read_denied)
 }

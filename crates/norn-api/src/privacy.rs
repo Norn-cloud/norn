@@ -699,10 +699,14 @@ pub(crate) fn redact_trace_contributions<E: SqlEngine>(
         let markings = reader
             .effective_markings(world, &record.object_type, &record.id, Some(record.version))
             .map_err(Refusal::host)?;
-        let marked = markings
+        let occurrence = reader
+            .fact_occurrence_markings(world, &record.object_type, &record.id, Some(record.version))
+            .map_err(Refusal::host)?;
+        let property_marked = markings
             .as_ref()
             .is_none_or(|m| m.values().any(|ids| !ids.is_empty()));
-        if !marked {
+        let occurrence_marked = occurrence.as_ref().is_none_or(|ids| !ids.is_empty());
+        if !(property_marked || occurrence_marked) {
             continue;
         }
         any_marked = true;
@@ -716,11 +720,10 @@ pub(crate) fn redact_trace_contributions<E: SqlEngine>(
     Ok(any_marked)
 }
 
-/// Effective transform markings, validated head commit and catalog checked on
-/// the same cell guard as transform evaluation.
-pub(crate) struct ClassifiedSnapshot {
+/// Effective transform markings and catalog checked inside the evaluation
+/// transaction.
+pub(crate) struct ClassifiedTransform {
     pub(crate) marked: Vec<(String, Vec<String>)>,
-    pub(crate) head_commits: u64,
     pub(crate) catalog: MarkingCatalog,
 }
 
@@ -745,7 +748,7 @@ fn is_implicit_id(model: &norn_cell::Model, object_type: &str, property: &str) -
 /// PRIVACY-4: refuse a transform whose `Filter` predicate or `orderBy` reads a
 /// property carrying live (or, for stale materializations, historical)
 /// `_norn_markings` or lacking a marking snapshot.
-pub(crate) fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
+fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     model: &norn_cell::Model,
     catalog: &MarkingCatalog,
@@ -847,44 +850,42 @@ pub(crate) fn effective_marked_columns<E: SqlEngine>(
     Ok(out)
 }
 
-/// Classify a served transform against the exact head and definition set it
-/// was evaluated at, failing closed with `409 transform.snapshot_moved` on any
-/// concurrent commit or definition change.
-pub(crate) fn classify_transform_snapshot<E: SqlEngine>(
+/// Verify active definitions and dynamic filter/order markings inside the
+/// transform evaluation or refresh transaction.
+pub(crate) fn guard_transform_in_tx<E: SqlEngine>(
     host: &DevHost<E>,
-    store: &norn_cell::CellStore<E>,
+    reader: &StoreReader<'_, E>,
+    model: &norn_cell::Model,
     plan: &norn_checker::transform::TransformPlan,
-    served: &norn_cell::compute::materialize::Served,
     eval_defs: Option<&(u64, String)>,
-) -> Result<ClassifiedSnapshot, Refusal> {
-    let stale = served.materialization.as_ref().is_some_and(|m| m.stale);
-    let expected_head = served.snapshot_head.commits;
-    let reader = store.read();
-    let current_head = store
-        .verified_head()
-        .map_err(Refusal::from_compute)?
-        .commits;
-    if current_head != expected_head {
-        return Err(transform_snapshot_moved());
-    }
-    let catalog = host.marking_catalog(&reader)?;
-    refuse_dynamic_filter_order_markings(&reader, store.model(), &catalog, plan, stale)?;
-    let marked = effective_marked_columns(&reader, store.model(), &catalog, plan, stale)?;
-    let after_head = store
-        .verified_head()
-        .map_err(Refusal::from_compute)?
-        .commits;
-    let after_defs = reader
+    include_history: bool,
+) -> Result<MarkingCatalog, Refusal> {
+    let tx_defs = reader
         .active_definitions_identity()
         .map_err(Refusal::host)?;
-    if after_head != expected_head || after_defs.as_ref() != eval_defs {
-        return Err(transform_snapshot_moved());
+    if tx_defs.as_ref() != eval_defs {
+        return Err(Refusal::from_compute(norn_cell::CellError::ComputeRefused(
+            "core.compute.stale_input",
+        )));
     }
-    Ok(ClassifiedSnapshot {
-        marked,
-        head_commits: expected_head,
-        catalog,
-    })
+    let catalog = host.marking_catalog(reader)?;
+    refuse_dynamic_filter_order_markings(reader, model, &catalog, plan, include_history)?;
+    Ok(catalog)
+}
+
+/// Classify a transform inside the same SQLite transaction that evaluates or
+/// serves it, pinning active definitions and dynamic markings to that snapshot.
+pub(crate) fn classify_transform_in_tx<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &StoreReader<'_, E>,
+    model: &norn_cell::Model,
+    plan: &norn_checker::transform::TransformPlan,
+    eval_defs: Option<&(u64, String)>,
+    stale: bool,
+) -> Result<ClassifiedTransform, Refusal> {
+    let catalog = guard_transform_in_tx(host, reader, model, plan, eval_defs, stale)?;
+    let marked = effective_marked_columns(reader, model, &catalog, plan, stale)?;
+    Ok(ClassifiedTransform { marked, catalog })
 }
 
 #[cfg(test)]
