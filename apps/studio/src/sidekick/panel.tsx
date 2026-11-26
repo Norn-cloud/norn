@@ -40,7 +40,7 @@ const DeliveryView = lazy(() => import("@/widget/views").then((module) => ({ def
 const VIEWS: readonly View[] = ["answer", "lineage", "dashboard", "receipt", "records", "findings", "plan", "inbox"]
 const viewOf = (name: string): View | null => VIEWS.find((view) => view === name) ?? null
 
-export const SUGGESTIONS = ["What's our stock worth?", "Where does that number come from?", "What needs my attention?"] as const
+export const SUGGESTIONS = ["What changed this week?", "Where does that number come from?", "What needs my attention?"] as const
 
 /** Each tool part's state: its ACP-like `data-status`, its word, and its dot (DESIGN.md 4.3). */
 const STATE: Readonly<Record<DynamicToolUIPart["state"], { readonly status: string; readonly word: string; readonly dot: "outline" | "info" | "warning" | "success" | "destructive" }>> = {
@@ -196,7 +196,14 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
 
   const host = useMemo<ToolHost>(() => ({
     callTool: (name, args) => transport.callTool(name, args),
-    openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer") },
+    openLink: (url) => {
+      try {
+        const parsed = new URL(url, window.location.origin)
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+          window.open(parsed.href, "_blank", "noopener,noreferrer")
+        }
+      } catch { /* ignore invalid URLs */ }
+    },
   }), [transport])
 
   const last = messages.at(-1)

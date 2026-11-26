@@ -23,14 +23,15 @@ type Read<T> = { readonly result: CellResult<T>; readonly receivedAt: number }
 const listKey = ["decisions", "pending"] as const
 
 /** The cell's "now", ticking each second: the page's `serverNowMs` plus the time since it arrived. */
-function useCellClock(serverNowMs: number | undefined, receivedAt: number | undefined): number | undefined {
+function useCellClock(serverNowMs: number | undefined, receivedAt: number | undefined, active: boolean): number | undefined {
   const [tick, setTick] = useState(() => Date.now())
   useEffect(() => {
-    if (serverNowMs === undefined) return
+    if (serverNowMs === undefined || !active) return
+    setTick(Date.now())
     const timer = setInterval(() => setTick(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [serverNowMs])
-  return serverNowMs === undefined || receivedAt === undefined ? undefined : cellNow(serverNowMs, receivedAt, tick)
+  }, [serverNowMs, active])
+  return serverNowMs === undefined || receivedAt === undefined ? undefined : cellNow(serverNowMs, receivedAt, Math.max(tick, receivedAt))
 }
 
 export { useDecisionBadge } from "../lib/nav-menus.ts"
@@ -81,7 +82,7 @@ export function DecisionsPage() {
   // A decision arriving, decided elsewhere or withdrawn reaches the list when the cell commits it.
   useLiveRefresh("/v1/decisions?state=pending", listKey)
   const page = read.data?.result.kind === "ok" ? read.data.result.value : undefined
-  const now = useCellClock(page?.serverNowMs, read.data?.receivedAt)
+  const now = useCellClock(page?.serverNowMs, read.data?.receivedAt, (page?.items.length ?? 0) > 0)
   // A decision whose deadline passes leaves the list at once; the cell's next read confirms it.
   const open = useMemo(() => (page?.items ?? []).filter((d) => now === undefined || remaining(d.expiresAtMs, now) !== null), [page, now])
   const lapsed = (page?.items.length ?? 0) - open.length
@@ -169,9 +170,9 @@ function RequestedCalls() {
   useLiveRefresh(requestedPath(), requestedKey)
   const catalog = useQuery({ queryKey: ["actions", "all", null], queryFn: () => listActions(undefined), retry: false, staleTime: 60_000 })
   const page = read.data?.result.kind === "ok" ? read.data.result.value : undefined
-  const now = useCellClock(page?.serverNowMs, read.data?.receivedAt)
-  const [acting, setActing] = useState<OpenAction | null>(null)
   const items = page?.items ?? []
+  const now = useCellClock(page?.serverNowMs, read.data?.receivedAt, items.some((item) => item.status === "pending"))
+  const [acting, setActing] = useState<OpenAction | null>(null)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const run = (item: RequestedDecision) => setActing({ action: requestedAction(actions, item), parked: parkedFrom(item), runNow: true })
   const open = (item: RequestedDecision) => setActing({ action: requestedAction(actions, item), parked: parkedFrom(item) })
