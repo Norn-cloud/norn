@@ -421,16 +421,15 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
     Ok(by_name)
 }
 
+type LineageMap<'a> = BTreeMap<&'a str, BTreeSet<&'a str>>;
+
 /// The anchor and held classes each class's lineage reaches, computed in one
 /// pass over the class graph.
 fn lineages<'a, A, H>(
     by_name: &'a BTreeMap<String, Class>,
     anchored: &BTreeMap<&'a str, A>,
     held: &BTreeMap<&'a str, H>,
-) -> (
-    BTreeMap<&'a str, BTreeSet<&'a str>>,
-    BTreeMap<&'a str, BTreeSet<&'a str>>,
-) {
+) -> (LineageMap<'a>, LineageMap<'a>) {
     let mut reached = BTreeMap::new();
     let mut held_by = BTreeMap::new();
     for name in by_name.keys() {
