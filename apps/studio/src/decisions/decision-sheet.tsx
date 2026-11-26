@@ -15,7 +15,7 @@ import { defineDecisionSheet, decideRequest, type NornDecisionSheet, type SheetD
 import { fetchTransport, wasmEvaluate } from "../../../../packages/norn-react/src/machine/index.ts"
 import { sharedEngine } from "../lib/canvas/checker.ts"
 import { defaultFetch } from "../lib/cell-read.ts"
-import { scopedHostFetch } from "../lib/definitions.ts"
+import { readStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { flowTitle, remaining, stepTitle, urgent, type Decision, type Risk } from "../lib/decisions.ts"
 import { usePinnedScope } from "../lib/session.ts"
 import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
@@ -38,7 +38,7 @@ export function Countdown({ expiresAtMs, now }: { readonly expiresAtMs: number; 
   const at = new Date(expiresAtMs)
   return (
     <span title={`Decide by ${at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
-      className={cn("inline-flex items-center gap-1 text-meta tabular-nums", left === null ? "text-destructive" : urgent(expiresAtMs, now) ? "text-destructive" : "text-muted-foreground")}>
+      className={cn("inline-flex items-center gap-1 text-meta tabular-nums", left === null ? "text-destructive-text" : urgent(expiresAtMs, now) ? "text-destructive-text" : "text-muted-foreground")}>
       <Clock className="size-3" aria-hidden />{left === null ? "Expired" : `${left} left`}
     </span>
   )
@@ -66,15 +66,23 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
   const { view } = useView()
   const navigate = useNavigate()
   // Pin the workspace scope that loaded this decision so a session switch/refresh cannot redirect submission.
+  const scope = useStudioScope()
+  const scopeKey = studioScopeKey(scope.data ?? null)
   const pinnedScope = usePinnedScope(decision?.id ?? false)
+  const lockedScope = useRef<{ decisionId: string | null; scope: StudioScope | null | undefined }>({ decisionId: null, scope: undefined })
+  if (lockedScope.current.decisionId !== (decision?.id ?? null)) {
+    lockedScope.current = { decisionId: decision?.id ?? null, scope: pinnedScope }
+  } else if (lockedScope.current.scope === undefined && pinnedScope !== undefined) {
+    lockedScope.current = { decisionId: decision?.id ?? null, scope: pinnedScope }
+  }
   const learning = useLearningCapabilities()
   const episodesAvailable = useRef(learning.episodes)
   episodesAvailable.current = learning.episodes
   // Loaded once per page, starting when the inbox renders, so it compiles while the person reads.
   // The sheet draws its first state without it and takes input once it is here.
   const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => sharedEngine(), staleTime: Infinity, retry: false })
-  const access = useQuery({ queryKey: ["live-access"], queryFn: () => liveAccess(), retry: false, staleTime: 60_000 })
-  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog, retry: false, staleTime: 60_000 })
+  const access = useQuery({ queryKey: ["live-access", scopeKey], queryFn: () => liveAccess(), retry: false, staleTime: 60_000 })
+  const catalog = useQuery({ queryKey: ["catalog", scopeKey], queryFn: transport.catalog, retry: false, staleTime: 60_000 })
   const principal = access.data?.kind === "read" ? access.data.read.document.principal : undefined
   const caller = principal ? `${principal.subjectId}${principal.roles.length > 0 ? ` · ${principal.roles.join(", ")}` : ""}` : undefined
   const laws = useMemo<Readonly<Record<string, SheetLawInfo>>>(() => {
@@ -102,7 +110,14 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
     if (decision === null || target === null) return
     defineDecisionSheet()
     const sheet = document.createElement("norn-decision-sheet") as NornDecisionSheet
-    const call = scopedHostFetch(defaultFetch, "/api/host", pinnedScope !== undefined ? async () => pinnedScope : undefined)
+    const call = scopedHostFetch(defaultFetch, "/api/host", async () => {
+      if (lockedScope.current.scope !== undefined) return lockedScope.current.scope
+      const resolved = await readStudioScope(defaultFetch)
+      if (lockedScope.current.decisionId === decision.id && lockedScope.current.scope === undefined) {
+        lockedScope.current = { decisionId: decision.id, scope: resolved }
+      }
+      return resolved
+    })
     sheet.options = {
       document: DOCUMENT,
       decision,
@@ -146,7 +161,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
         <SheetTitle asChild><span className="sr-only">{decision?.question ?? ""}</span></SheetTitle>
         <SheetDescription asChild><span className="sr-only">{decision ? `${flowTitle(decision)} · ${stepTitle(decision)}` : ""}</span></SheetDescription>
         {engine.isError
-          ? <p role="alert" className="p-6 text-body text-destructive">The decision engine is not part of this build, so nothing can be decided here.</p>
+          ? <p role="alert" className="p-6 text-body text-destructive-text">The decision engine is not part of this build, so nothing can be decided here.</p>
           : <div ref={setHost} className="contents" />}
       </SheetContent>
     </Sheet>

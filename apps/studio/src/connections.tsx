@@ -17,7 +17,27 @@ import { CodedMessage } from "@/components/coded-message"
  */
 
 const Note = ({ children }: { children: ReactNode }) => <p className="px-4 py-3 text-body text-muted-foreground">{children}</p>
-const go = ({ url }: { url: string }) => window.location.assign(url)
+
+/** Allow only https: redirects, or http: strictly on loopback / same-origin. */
+export function safeConnectorUrl(raw: string, origin = typeof window !== "undefined" ? window.location.origin : "https://studio.invalid"): string | null {
+  if (raw.trim() === "") return null
+  try {
+    const parsed = new URL(raw, origin)
+    if (parsed.protocol === "https:") return parsed.href
+    if (parsed.protocol === "http:" && (parsed.origin === origin || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]")) {
+      return parsed.href
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function redirectTo(raw: string): void {
+  const safe = safeConnectorUrl(raw)
+  if (safe === null) throw new Error("Refused an unsafe redirect URL from the connector gateway.")
+  window.location.assign(safe)
+}
 
 /** A refusal: what went wrong, its code, and the button that fixes it when there is one. */
 export function ConnectorProblem({ error, scope }: { readonly error: unknown; readonly scope?: WorkspaceScope | null }) {
@@ -30,11 +50,11 @@ export function ConnectorProblem({ error, scope }: { readonly error: unknown; re
   const action = typed?.action ?? null
   return (
     <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-body">
-      <TriangleAlert aria-hidden className="size-4 text-destructive" />
+      <TriangleAlert aria-hidden className="size-4 text-destructive-text" />
       <span className="min-w-0 flex-1">{typed ? <CodedMessage code={typed.code} message={typed.message} showCode /> : error instanceof Error ? error.message : String(error)}</span>
-      {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => startFix(action, undefined, effectiveScope).then((url) => window.location.assign(url), (e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
+      {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => void startFix(action, undefined, effectiveScope).then((url) => redirectTo(url)).catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
       {action !== null && !offersButton(action) && <span className="text-muted-foreground">{fixLabel(action)}.</span>}
-      {failed && <span className="w-full text-destructive">{failed}</span>}
+      {failed && <span className="w-full text-destructive-text">{failed}</span>}
     </div>
   )
 }
@@ -48,7 +68,12 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
   const effectiveScope = scope !== undefined ? scope : pinnedRowScope
   const scopeKey = effectiveScope ? `${effectiveScope.orgId}:${effectiveScope.environmentId ?? ""}` : ""
   const refresh = () => client.invalidateQueries({ queryKey: ["connectors"] })
-  const connect = useMutation({ mutationFn: () => api<{ url: string }>(`/apps/${encodeURIComponent(app)}/accounts/${encodeURIComponent(requirement.requirement)}/connect`, { method: "POST", body: account === null ? {} : { account }, scope: effectiveScope }), onSuccess: go })
+  const connect = useMutation({
+    mutationFn: async () => {
+      const { url } = await api<{ url: string }>(`/apps/${encodeURIComponent(app)}/accounts/${encodeURIComponent(requirement.requirement)}/connect`, { method: "POST", body: account === null ? {} : { account }, scope: effectiveScope })
+      redirectTo(url)
+    },
+  })
   // Inherit the row's originating scope for rename so opening the input after a refresh never targets another workspace.
   const rename = useMutation({ mutationFn: (next: string) => api(`/accounts/${encodeURIComponent(account ?? "")}`, { method: "PATCH", body: { label: next }, scope: effectiveScope }), onSuccess: () => { setRenaming(null); return refresh() } })
   // Unlinks the account from this app's requirement; the gateway deletes it only when no other app uses it.
@@ -87,7 +112,7 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
               <dt className="text-muted-foreground">Provider</dt><dd>{detail.data.provider}</dd>
               <dt className="text-muted-foreground">Used by</dt><dd>{detail.data.apps.join(", ") || "—"}</dd>
               <dt className="text-muted-foreground">Health</dt><dd>{detail.data.health ?? "not checked"}</dd>
-              <dt className="text-muted-foreground">Account id</dt><dd className="font-mono">{detail.data.id}</dd>
+              <dt className="text-muted-foreground">Account id</dt><dd className="font-mono"><bdi dir="ltr">{detail.data.id}</bdi></dd>
             </>
           )}
         </dl>
@@ -102,7 +127,7 @@ function AppAccounts({ app, name, inventory, scope }: { readonly app: string; re
   const requirements = useQuery({ queryKey: ["connectors", "requirements", app, scopeKey], queryFn: () => api<{ requirements: readonly Requirement[] }>(`/apps/${encodeURIComponent(app)}/accounts`, { scope }) })
   const labelOf = (account: string | null) => inventory.accounts.find((entry) => entry.id === account)?.label ?? null
   return (
-    <section aria-label={name} className="rounded-md border bg-background">
+    <section aria-label={name}>
       <header className="px-4 pt-3 text-body">{name}</header>
       {requirements.isPending ? <Note>Loading…</Note>
         : requirements.isError ? <ConnectorProblem error={requirements.error} scope={scope} />
@@ -122,7 +147,12 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
   const inventory = useQuery({ queryKey: ["connectors", "inventory", scopeKey], queryFn: () => api<Inventory>("/inventory", { scope: activeScope }), enabled: linked, retry: false })
   const fallbackPinnedScope = usePinnedWorkspaceScope(status.data?.gateway ?? true)
   const pinnedScope = activeScope !== undefined ? activeScope : fallbackPinnedScope
-  const link = useMutation({ mutationFn: () => api<{ url: string }>("/link", { method: "POST", scope: pinnedScope }), onSuccess: go })
+  const link = useMutation({
+    mutationFn: async () => {
+      const { url } = await api<{ url: string }>("/link", { method: "POST", scope: pinnedScope })
+      redirectTo(url)
+    },
+  })
   const unlink = useMutation({ mutationFn: () => api("/unlink", { method: "POST", scope: pinnedScope }), onSuccess: () => client.invalidateQueries({ queryKey: ["connectors"] }) })
 
   return (
@@ -152,7 +182,7 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
       </Panel>
       {linked && (
         <Panel icon={Cable} label="Connected apps">
-          <Well className="space-y-3 p-3">
+          <Well className="divide-y divide-border">
             {inventory.isPending ? <Note>Loading…</Note>
               : inventory.isError ? <ConnectorProblem error={inventory.error} scope={pinnedScope} />
               : inventory.data.apps.length === 0 ? <EmptyState icon={Cable}>No apps yet. Add one in the gateway.</EmptyState>
