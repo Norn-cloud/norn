@@ -343,4 +343,57 @@ describe("one workspace's reads and calls stay in it", () => {
     expect(pageKey({ kind: "live", scope: scopeA })).not.toBe(pageKey({ kind: "live", scope: { ...scopeA, environmentId: "ops" } }))
     expect(pageKey({ kind: "recorded" })).not.toBe(pageKey({ kind: "live", scope: scopeA }))
   })
+
+  test("live feed resubscribes when a binding target changes and stops on dispose", async () => {
+    const subscribed: { target: BindingRead; stopped: boolean }[] = []
+    let currentType = "canon.PolicyA"
+    const liveMachine: Machine = {
+      ...machine,
+      events: [
+        ...machine.events,
+        { eventId: "records-changed", source: { kind: "subscription", bindingId: "records" } },
+      ],
+      transitions: [
+        ...machine.transitions,
+        { transitionId: "reload-records", from: "browsing", on: "records-changed", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "records" } }] },
+      ],
+    }
+    const r = reader([{ records: [] }, { records: [] }])
+    const runtime = createPageRuntime({
+      ux,
+      machine: liveMachine,
+      reader: r,
+      calls: calls(),
+      engine: lazyEngine(async () => pathEngine),
+      host: () => ({
+        context: {},
+        objectTypeOf: () => currentType,
+        actionIdOf: () => undefined,
+        live: {
+          subscribe: (read) => {
+            const entry = { target: read, stopped: false }
+            subscribed.push(entry)
+            return () => { entry.stopped = true }
+          },
+        },
+      }),
+      clock: manualClock(),
+    }, () => {})
+    await flush()
+    expect(subscribed).toHaveLength(1)
+    expect(subscribed[0]!.target.objectType).toBe("canon.PolicyA")
+    expect(subscribed[0]!.stopped).toBe(false)
+
+    // Re-reading with a changed target stops the previous subscription and opens a new one.
+    currentType = "canon.PolicyB"
+    runtime.send({ kind: "subscription", bindingId: "records" })
+    await flush()
+    expect(subscribed).toHaveLength(2)
+    expect(subscribed[0]!.stopped).toBe(true)
+    expect(subscribed[1]!.target.objectType).toBe("canon.PolicyB")
+    expect(subscribed[1]!.stopped).toBe(false)
+
+    runtime.dispose()
+    expect(subscribed[1]!.stopped).toBe(true)
+  })
 })

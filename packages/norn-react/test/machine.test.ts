@@ -383,3 +383,114 @@ describe("lazy engine", () => {
     expect(() => engine.evaluate("input.fields.ready", input)).toThrow(EngineNotReady)
   })
 })
+
+describe("driver idempotency and inflight tracking", () => {
+  const none: Evaluate = () => {
+    throw new Error("no expressions")
+  }
+  const retryable: Machine = {
+    machineVersion: "0.1",
+    initialStateId: "idle",
+    fields: [],
+    events: [
+      { eventId: "send", source: { kind: "user", nodeId: "send" } },
+      { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+      { eventId: "timeout", source: { kind: "outcome", outcome: "timeout" } },
+    ],
+    states: [
+      { stateId: "idle", role: "idle" },
+      { stateId: "sending", role: "pending", awaits: { kind: "action", bindingId: "send" }, deadlineMs: 1000 },
+      { stateId: "failed", role: "error" },
+    ],
+    transitions: [
+      { transitionId: "send", from: "idle", on: "send", target: "sending", effects: [{ kind: "start", call: { kind: "action", bindingId: "send" } }] },
+      { transitionId: "retry", from: "failed", on: "send", target: "sending", effects: [{ kind: "start", call: { kind: "action", bindingId: "send" } }] },
+      { transitionId: "ok", from: "sending", on: "accepted", target: "idle" },
+      { transitionId: "timed", from: "sending", on: "timeout", target: "failed" },
+    ],
+  }
+
+  test("late resolution after timeout preserves the idempotency key for retry", async () => {
+    const clock = manualClock()
+    const calls: { key: string; resolve: (value: Classified) => void }[] = []
+    let seq = 0
+    const driver = createDriver({
+      machine: retryable,
+      evaluate: none,
+      clock,
+      newKey: () => `k${++seq}`,
+      transport: {
+        // Deliberately ignores abort signal to simulate a non-aborting transport resolving late after timeout.
+        call: (_call, _input, options) => new Promise<Classified>((resolve) => { calls.push({ key: options.idempotencyKey, resolve }) }),
+      },
+    })
+    driver.dispatch({ kind: "user", eventId: "send" })
+    expect(calls[0]?.key).toBe("k1")
+    clock.advance(1000)
+    // Late definitive resolution from a transport that settled after deadline must resolve as timeout and NOT evict k1.
+    calls[0]?.resolve({ outcome: "accepted", payload: {} })
+    await settle()
+    expect(driver.snapshot().stateId).toBe("failed")
+    driver.dispatch({ kind: "user", eventId: "send" })
+    expect(calls[1]?.key).toBe("k1")
+    // Definitive resolution on the active attempt DOES rotate the key for subsequent calls.
+    calls[1]?.resolve({ outcome: "accepted", payload: {} })
+    await settle()
+    expect(driver.snapshot().stateId).toBe("idle")
+    driver.dispatch({ kind: "user", eventId: "send" })
+    expect(calls[2]?.key).toBe("k2")
+    driver.dispose()
+  })
+
+  test("multiple concurrent starts in one entry are all aborted on dispose, and deadlineMs <= 0 does not time out", async () => {
+    const clock = manualClock()
+    const signals: AbortSignal[] = []
+    const multi: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "idle",
+      fields: [],
+      events: [
+        { eventId: "go", source: { kind: "user", nodeId: "go" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "timeout", source: { kind: "outcome", outcome: "timeout" } },
+      ],
+      states: [
+        { stateId: "idle", role: "idle" },
+        { stateId: "running", role: "pending", awaits: { kind: "read", bindingId: "a" }, deadlineMs: 0 },
+        { stateId: "failed", role: "error" },
+      ],
+      transitions: [
+        {
+          transitionId: "go",
+          from: "idle",
+          on: "go",
+          target: "running",
+          effects: [
+            { kind: "start", call: { kind: "read", bindingId: "a" } },
+            { kind: "start", call: { kind: "read", bindingId: "b" } },
+          ],
+        },
+        { transitionId: "ok", from: "running", on: "accepted", target: "idle" },
+        { transitionId: "timed", from: "running", on: "timeout", target: "failed" },
+      ],
+    }
+    const driver = createDriver({
+      machine: multi,
+      evaluate: none,
+      clock,
+      transport: {
+        call: (_call, _input, options) => {
+          signals.push(options.signal)
+          return new Promise<Classified>(() => {})
+        },
+      },
+    })
+    driver.dispatch({ kind: "user", eventId: "go" })
+    expect(signals).toHaveLength(2)
+    clock.advance(60_000)
+    expect(driver.snapshot().stateId).toBe("running")
+    expect(signals.every((s) => !s.aborted)).toBe(true)
+    driver.dispose()
+    expect(signals.every((s) => s.aborted)).toBe(true)
+  })
+})

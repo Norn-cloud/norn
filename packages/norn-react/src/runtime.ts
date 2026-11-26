@@ -118,7 +118,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
   const clock = options.clock ?? GLOBAL_CLOCK
   let live = true
   let view = initialView(machine, engine)
-  const feeds = new Map<string, () => void>()
+  const feeds = new Map<string, { readonly target: string; readonly stop: () => void }>()
   let wait: unknown = null
 
   const change = (next: Partial<RuntimeView>) => {
@@ -197,8 +197,15 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
 
   const follow = (bindingId: string, read: NonNullable<ReturnType<typeof bindingRead>>) => {
     const feed = options.host().live
-    if (feed === undefined || feeds.has(bindingId)) return
-    feeds.set(bindingId, feed.subscribe(read, {
+    if (feed === undefined) return
+    const target = JSON.stringify(read)
+    const existing = feeds.get(bindingId)
+    if (existing !== undefined) {
+      if (existing.target === target) return
+      existing.stop()
+      feeds.delete(bindingId)
+    }
+    const stop = feed.subscribe(read, {
       snapshot: (document) => {
         setRead(bindingId, { kind: "ok", document, freshness: "live" })
         driver.dispatch({ kind: "subscription", bindingId })
@@ -211,7 +218,8 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
         const before = view.reads.get(bindingId)
         if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "snapshot" })
       },
-    }))
+    })
+    feeds.set(bindingId, { target, stop })
   }
 
   const transport: Transport = {
@@ -284,15 +292,28 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     dispose: () => {
       live = false
       stopWaiting()
-      for (const stop of feeds.values()) stop()
+      for (const entry of feeds.values()) entry.stop()
+      feeds.clear()
       driver.dispose()
     },
   }
 }
 
+function stableContextKey(context: Readonly<Record<string, unknown>>): string {
+  const sorted = Object.keys(context)
+    .sort()
+    .map((key) => [key, context[key]] as const)
+  try {
+    return JSON.stringify(sorted)
+  } catch {
+    return String(sorted.length)
+  }
+}
+
 /** Runs one page machine for as long as the component is mounted. */
 export function useWidgetMachine(options: MachineOptions): MachineRuntime {
-  const { ux, machine, reader } = options
+  const { ux, machine, reader, calls, live } = options
+  const contextKey = stableContextKey(options.context)
   const latest = useRef(options)
   latest.current = options
   const engine = useMemo(() => lazyEngine((attempt) => latest.current.engine(attempt)), [])
@@ -301,7 +322,7 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
 
   useEffect(() => {
     // The reader and calls this runtime is given are the ones it uses for its whole life.
-    const { calls, clock } = latest.current
+    const { clock } = latest.current
     const runtime = createPageRuntime({ ux, machine, reader, calls, engine, host: () => latest.current, ...(clock === undefined ? {} : { clock }) }, setView)
     runtimeRef.current = runtime
     // A rebuilt runtime starts from nothing read and nothing called.
@@ -313,7 +334,7 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
       runtime.dispose()
       runtimeRef.current = null
     }
-  }, [ux, machine, reader, engine])
+  }, [ux, machine, reader, calls, live, contextKey, engine])
 
   return {
     ...view,

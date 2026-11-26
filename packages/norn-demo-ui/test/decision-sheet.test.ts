@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url"
 import { parseFragment } from "parse5"
 
 import { type SheetDecision, type SheetDocument, decideRequest, directCall, needsConfirm, refusalPanelMarkup, sheetMarkup } from "../src/elements/decision-sheet.ts"
+import { SHEET_CSS } from "../src/elements/sheet.css.ts"
 import { type Evaluate, type Snapshot, enabled, init, update, walks, wasmEvaluate } from "../../norn-react/src/machine/index.ts"
 import { sheetPayloads } from "./support/sheet-payloads.ts"
 
@@ -157,6 +158,34 @@ describe("sheetMarkup", () => {
     expect(redacted.html).not.toContain("Decided at")
     expect(redacted.html).not.toContain("Refund authority limit")
     expect(redacted.html).not.toContain("data-checked=")
+
+    // 4. Arabic refusal uses Western (latn) digits and wraps technical codes/pins in <bdi dir="ltr">.
+    const arRefusal = refusalPanelMarkup(
+      {
+        code: "core.laws.violated",
+        message: "a declared precondition does not hold",
+        decidedAt: "2027-01-15T08:00:00Z",
+        reason: {
+          law: "canon.refund.limit",
+          pin: { artifactId: "canon.refund.limit.law", version: "sha256:1" },
+          subject: "canon.Refund/ref-1",
+          values: { amount: "1240.00" },
+        },
+      },
+      { decision, choiceLabel: "Approve", note: "", locale: "ar", technical: true, caller: "user:sara", laws, receivedAt },
+    )
+    expect(arRefusal.html).toContain('<bdi dir="ltr">core.laws.violated · canon.Refund/ref-1</bdi>')
+    expect(arRefusal.html).toContain('<bdi dir="ltr">canon.refund.limit.law@sha256:1</bdi>')
+    expect(arRefusal.html).not.toMatch(/[\u0660-\u0669]/)
+  })
+
+  test("SHEET_CSS follows DESIGN.md weights, dot-first chip, danger tokens, reduced motion, and touch targets", () => {
+    expect(SHEET_CSS).not.toContain("font-weight: 600")
+    expect(SHEET_CSS).toContain(".norn-chip::before")
+    expect(SHEET_CSS).toContain("--destructive-text")
+    expect(SHEET_CSS).toContain("--destructive-foreground")
+    expect(SHEET_CSS).toContain("prefers-reduced-motion: reduce")
+    expect(SHEET_CSS).toContain("min-height: 44px")
   })
 })
 

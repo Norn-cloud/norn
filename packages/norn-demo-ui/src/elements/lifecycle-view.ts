@@ -309,10 +309,15 @@ export interface Counts {
  */
 export function countsFrom(lifecycle: LifecycleDoc, answer: LiveAnswer | null, locale: Locale = "en"): Counts {
   const w = WORDS[locale]
-  const number = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en")
+  const number = new Intl.NumberFormat(locale === "ar" ? "ar-EG-u-nu-latn" : "en")
   const pending = new Map(lifecycle.states.map((state) => [state, { kind: "pending" } as StateCount]))
   if (answer === null) return { states: pending, notes: [], refused: null }
-  if (answer.status === 401 || answer.status === 403 || answer.status === 404) return { states: pending, notes: [], refused: w.refused }
+  if (answer.status === 401 || answer.status === 403 || answer.status === 404) {
+    const serverMessage = typeof (answer.body as { message?: unknown } | undefined)?.message === "string"
+      ? (answer.body as { message: string }).message.trim()
+      : ""
+    return { states: pending, notes: [], refused: serverMessage !== "" ? serverMessage : w.refused }
+  }
   if (answer.status >= 400) {
     const message = typeof (answer.body as { message?: unknown } | undefined)?.message === "string"
       ? (answer.body as { message: string }).message
@@ -554,16 +559,20 @@ const hasWitness = (finding: LifecycleFinding): finding is LifecycleFinding & { 
   finding.witness !== undefined && finding.witness !== null && Array.isArray(finding.witness.steps)
 
 let markerSeq = 0
+const escapeAttr = (value: string) =>
+  typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&")
 
 /** Mount the view into `root`. Returns the disposer (it ends the live read). */
 export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOptions): () => void {
+  const page = options.read === undefined ? null : options.document.payload.ux.pages[0]
+  if (options.read !== undefined && !page) throw new Error("the lifecycle view's document has no page")
   const { lifecycle } = options
   const locale = options.locale ?? "en"
   const rtl = locale === "ar"
   const w = WORDS[locale]
   // The definition's ids in words, sentence case ("on_accepted" reads "On accepted").
   const label = options.label ?? ((id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) })
-  const number = new Intl.NumberFormat(rtl ? "ar-EG" : "en")
+  const number = new Intl.NumberFormat(rtl ? "ar-EG-u-nu-latn" : "en")
   const findings = (options.findings ?? []).filter((finding) => hasWitness(finding) || finding.unattributed === true)
   const doc = root.ownerDocument
   adoptLifecycleStyles(doc)
@@ -682,17 +691,17 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
         )
         if (options.technical) {
           const technical = el("p", { class: "norn-life-technical" })
-          technical.append(el("code", {}, finding.code))
+          technical.append(el("code", { dir: "ltr" }, finding.code))
           article.append(technical)
         }
         findingsSection.append(article)
         return
       }
       const article = el("article", { class: "norn-life-finding", "data-finding": String(index) })
-      article.append(el("button", { type: "button", "data-pick": String(index) }, headline(finding)))
+      article.append(el("button", { type: "button", "data-pick": String(index), "aria-expanded": "false" }, headline(finding)))
       if (options.technical) {
         const technical = el("p", { class: "norn-life-technical" })
-        technical.append(el("code", {}, finding.code), doc.createTextNode(` ${finding.message}`))
+        technical.append(el("code", { dir: "ltr" }, finding.code), doc.createTextNode(` ${finding.message}`))
         article.append(technical)
       }
       const stepper = el("div", { "data-region": "stepper" })
@@ -734,7 +743,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
     const arrows = q<SVGSVGElement>(".norn-life-arrows")
     if (!stage || !arrows) return
     const origin = stage.getBoundingClientRect()
-    const box = (state: string) => q(`[data-state="${CSS.escape(state)}"]`)?.getBoundingClientRect()
+    const box = (state: string) => q(`[data-state="${escapeAttr(state)}"]`)?.getBoundingClientRect()
     const active = picked === null ? new Set<string>() : stepState(lifecycle, findings[picked]!, taken).transitions
     // Cards in the non-scrolling stage's own coordinates: identical in LTR and RTL at any scroll offset.
     const local = (rect: DOMRect): Box => ({ left: rect.left - origin.left, right: rect.right - origin.left, top: rect.top - origin.top, bottom: rect.bottom - origin.top })
@@ -778,12 +787,17 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       const finding = findings[index]
       if (!finding || !hasWitness(finding)) continue
       const open = index === picked
-      article.toggleAttribute("aria-current", open)
+      if (open) article.setAttribute("aria-current", "true")
+      else article.removeAttribute("aria-current")
+      article.querySelector<HTMLButtonElement>("[data-pick]")?.setAttribute("aria-expanded", String(open))
       const stepper = article.querySelector<HTMLElement>('[data-region="stepper"]')
       if (stepper) stepper.hidden = !open
       if (!open) continue
       const total = finding.witness.steps.length
-      for (const item of article.querySelectorAll<HTMLElement>("[data-step]")) item.toggleAttribute("aria-current", Number(item.dataset.step) === taken)
+      for (const item of article.querySelectorAll<HTMLElement>("[data-step]")) {
+        if (Number(item.dataset.step) === taken) item.setAttribute("aria-current", "step")
+        else item.removeAttribute("aria-current")
+      }
       const position = article.querySelector('[data-region="position"]')
       if (position) position.textContent = w.step(number.format(taken), number.format(total))
       article.querySelector<HTMLButtonElement>('[data-move="-1"]')!.disabled = taken === 0
@@ -886,8 +900,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
 
   const read = options.read
   // The machine decides every load state; the view only draws the one it is in.
-  const page = options.document.payload.ux.pages[0]
-  if (!page) throw new Error("the lifecycle view's document has no page")
+  const activePage = page!
 
   const paintState = (state: string, last: LiveAnswer | null) => {
     section.setAttribute("data-machine-state", state)
@@ -918,7 +931,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   }
 
   const controller = createLifecycleReadController({
-    machine: page.machine,
+    machine: activePage.machine,
     read,
     ...(options.changes ? { changes: options.changes } : {}),
     onState: paintState,

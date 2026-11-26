@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { type ArrowRoute, type Box, type LifecycleDoc, type LifecycleFinding, type LifecycleViewDocument, type LiveAnswer, type LiveSubscriptionRefusal, type Point, countsFrom, createLifecycleReadController, isFacetsAnswer, layout, lifecycleStateRole, orderLifecycleStates, routeArrow, stepState } from "../src/elements/lifecycle-view.ts"
+import { LIFECYCLE_CSS } from "../src/elements/lifecycle.css.ts"
 
 const ORDER: LifecycleDoc = {
   property: "status",
@@ -76,7 +77,7 @@ test("when otherRows > 0, omitted declared states are unlisted rather than count
 
   const truncatedAr = countsFrom(ORDER, { ...truncated, body: { ...truncated.body, lowerBound: true } }, "ar")
   expect(truncatedAr.states.get("cancelled")).toEqual({ kind: "unlisted" })
-  expect(truncatedAr.notes).toEqual(["٢ على الأقل في قيم غير مدرجة (الحالات غير المدرجة لا تُعدّ صفراً)"])
+  expect(truncatedAr.notes).toEqual(["2 على الأقل في قيم غير مدرجة (الحالات غير المدرجة لا تُعدّ صفراً)"])
 })
 
 test("legacy approximate bodies without lowerBound are rejected as invalid facets documents", () => {
@@ -103,6 +104,14 @@ test("before an answer every count is pending; a refusal shows no number at all"
   const refused = countsFrom(ORDER, { status: 403, body: { code: "authz.denied" } }, "ar")
   expect(refused.refused).toBe("لا يمكنك رؤية أعداد هذه السجلات.")
   expect([...refused.states.values()].every((count) => count.kind === "pending")).toBe(true)
+  const explained = countsFrom(ORDER, { status: 403, body: { code: "authz.denied", message: "Role lacks facets permission." } }, "en")
+  expect(explained.refused).toBe("Role lacks facets permission.")
+})
+
+test("LIFECYCLE_CSS follows DESIGN.md weights, calm case, and mobile touch targets", () => {
+  expect(LIFECYCLE_CSS).not.toContain("font-weight: 600")
+  expect(LIFECYCLE_CSS).not.toContain("text-transform: uppercase")
+  expect(LIFECYCLE_CSS).toContain("min-height: 44px")
 })
 
 test("a counterexample steps by its witness: taken lifecycle transitions and where the object is", () => {
