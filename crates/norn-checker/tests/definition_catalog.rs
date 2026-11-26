@@ -1409,12 +1409,54 @@ fn enum_alias_chains_preserve_lifecycle_metadata() {
     }
 }
 
-#[test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "end-to-end interface lifecycle catalog fixture and assertions"
-)]
-fn interface_lifecycles_project_and_pin_narrowing_child_transitions() {
+fn interface_lifecycle_finish_action() -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1",
+        "artifactId": "test.task.finish.action",
+        "kind": "action",
+        "namespace": "test",
+        "name": "finish",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": {},
+        "dependencies": [{
+            "artifactId": "test.Task.entity",
+            "version": "1.0.0",
+            "kind": "entity",
+            "required": true
+        }],
+        "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "test.task.finish",
+            "scopeRequired": ["orgId"],
+            "idempotent": false,
+            "ledgered": false,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code"],
+                "properties": { "code": { "type": "string" } }
+            },
+            "outputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+            },
+            "writes": [{ "entityKind": "test.Task", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectIdField": "code",
+                "objectKind": "test.Task",
+                "entityArtifactId": "test.Task.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "status",
+                "transition": "finish"
+            }
+        }
+    }))
+}
+
+fn interface_lifecycle_catalog_fixtures() -> Vec<ArtifactEnvelope> {
     let parent_iface = artifact(
         "test.a.ParentContract.interface",
         &json!({
@@ -1477,52 +1519,18 @@ fn interface_lifecycles_project_and_pin_narrowing_child_transitions() {
             }
         }),
     );
-    let fire_action = envelope(json!({
-        "irVersion": "0.1",
-        "artifactId": "test.task.finish.action",
-        "kind": "action",
-        "namespace": "test",
-        "name": "finish",
-        "version": "1.0.0",
-        "lifecycle": "draft",
-        "scope": {},
-        "dependencies": [{
-            "artifactId": "test.Task.entity",
-            "version": "1.0.0",
-            "kind": "entity",
-            "required": true
-        }],
-        "provenance": { "source": "system" },
-        "payload": {
-            "actionId": "test.task.finish",
-            "scopeRequired": ["orgId"],
-            "idempotent": false,
-            "ledgered": false,
-            "inputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["code"],
-                "properties": { "code": { "type": "string" } }
-            },
-            "outputSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {}
-            },
-            "writes": [{ "entityKind": "test.Task", "change": "modified" }],
-            "effectProgram": {
-                "kind": "fire_transition",
-                "objectIdField": "code",
-                "objectKind": "test.Task",
-                "entityArtifactId": "test.Task.entity",
-                "entityArtifactVersion": "1.0.0",
-                "lifecycle": "status",
-                "transition": "finish"
-            }
-        }
-    }));
+    vec![
+        parent_iface,
+        child_iface,
+        obj,
+        interface_lifecycle_finish_action(),
+    ]
+}
 
-    let catalog = admitted_catalog(&[parent_iface, child_iface, obj, fire_action], &[]);
+#[test]
+fn interface_lifecycles_project_and_pin_narrowing_child_transitions() {
+    let fixtures = interface_lifecycle_catalog_fixtures();
+    let catalog = admitted_catalog(&fixtures, &[]);
 
     // Parent interface projects PropertyRow.lifecycle, states, and transition.
     let parent_status = catalog
