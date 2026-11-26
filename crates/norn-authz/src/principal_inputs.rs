@@ -319,12 +319,11 @@ impl HoldsRolePolicy {
     ///
     /// A grant does not compile.
     pub fn pdp(&self, grants: &[CapabilityGrant]) -> Result<HoldsRolePdp, AuthzError> {
-        let pdp = match &self.rules {
-            Some(rules) => Some(Pdp::new(rules.clone(), grants)?),
-            None => {
-                crate::grants::CompiledGrants::compile(grants)?;
-                None
-            }
+        let pdp = if let Some(rules) = &self.rules {
+            Some(Pdp::new(rules.clone(), grants)?)
+        } else {
+            crate::grants::CompiledGrants::compile(grants)?;
+            None
         };
         Ok(HoldsRolePdp {
             pdp,

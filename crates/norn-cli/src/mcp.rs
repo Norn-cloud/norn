@@ -6,7 +6,7 @@ use norn_api::{
     refusal::Refusal,
 };
 use norn_ir::{McpTool, McpToolAnnotations, RuntimeObject, RuntimeValue};
-use std::io::{BufRead as _, Read as _, Write as _};
+use std::io::{BufRead as _, Read as _};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 

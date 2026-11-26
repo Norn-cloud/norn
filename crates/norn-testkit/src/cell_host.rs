@@ -89,8 +89,8 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Proposed, Provenance, Timer,
-    TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
+    Performed, PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadMember, Proposed,
+    Provenance, Timer, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
 };
 use proptest::prelude::*;
 use proptest::strategy::Union;
@@ -375,7 +375,7 @@ impl<E, C, I> MemoryCell<E, C, I> {
         }
         let model = CommitModel::new(&catalog);
         let mut bytes = 0_u64;
-        let mut candidates: Vec<(FactKey, FactVersion, &JsonObject)> = Vec::new();
+        let mut candidates = Vec::new();
         for (key, state) in &self.facts {
             let (Some(values), Some(concrete)) = (state.values.as_ref(), self.concrete.get(key))
             else {
@@ -385,34 +385,28 @@ impl<E, C, I> MemoryCell<E, C, I> {
                 continue;
             }
             if max_bytes < u64::MAX {
-                let encoded_len = JsonValue::Object(values.clone())
-                    .canonical_json()
-                    .ok()
-                    .map_or(u64::MAX, |value| {
-                        u64::try_from(value.len()).unwrap_or(u64::MAX)
-                    });
-                bytes = bytes.saturating_add(encoded_len);
+                bytes = bytes.saturating_add(canonical_json_bytes(values));
                 if bytes > max_bytes {
                     return None;
                 }
             }
             candidates.push((
-                FactKey {
-                    object_type: concrete.clone(),
-                    key: key.key.clone(),
-                },
+                FactKey::new(concrete.as_str(), &key.key),
                 state.version,
                 values,
             ));
         }
+        let rows = candidates.iter().map(|(k, v, vals)| (k, *v, *vals));
         Some(norn_kernel::predicate_read::select_members(
-            predicate,
-            candidates
-                .iter()
-                .map(|(key, version, values)| (key, *version, *values)),
-            limit,
+            predicate, rows, limit,
         ))
     }
+}
+
+fn canonical_json_bytes(values: &JsonObject) -> u64 {
+    JsonValue::Object(values.clone())
+        .canonical_json()
+        .map_or(u64::MAX, |v| u64::try_from(v.len()).unwrap_or(u64::MAX))
 }
 
 /// What a [`MemoryCell`] has committed, as [`norn_kernel::check_commit`] reads it.
@@ -678,15 +672,10 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, Infallible> {
         let (state, concrete) = self.load_with_concrete(key);
-        let bytes = state
-            .values
-            .as_ref()
-            .and_then(|values| JsonValue::Object(values.clone()).canonical_json().ok())
-            .map_or(0, |value| u64::try_from(value.len()).unwrap_or(u64::MAX));
-        if bytes > max_bytes {
+        if state.values.as_ref().map_or(0, canonical_json_bytes) > max_bytes {
             return Ok(None);
         }
-        let concrete_type = if state.exists() { concrete } else { None };
+        let concrete_type = state.exists().then_some(concrete).flatten();
         Ok(Some(BoundedFact {
             concrete_type,
             state,
@@ -706,6 +695,23 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
         max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
         Ok(self.predicate_objects(predicate, max_members.saturating_add(1), max_bytes))
+    }
+
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        _max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<PredicateActionRead, Infallible> {
+        let Some(mut objects) = self
+            .predicate_objects(predicate, usize::MAX, u64::MAX)
+            .filter(|rows| rows.iter().all(&mut *authorize))
+        else {
+            return Ok(PredicateActionRead::Concealed);
+        };
+        objects.truncate(max_members.saturating_add(1));
+        Ok(PredicateActionRead::Admitted(objects))
     }
 
     fn read_link_targets(
@@ -1439,10 +1445,6 @@ impl CellModel {
             state.values = None;
         }
         state
-    }
-
-    fn load(&self, key: &FactKey) -> FactState {
-        self.with_model(|model| self.load_with(*model, key))
     }
 
     fn pending(&self, consumed: &Consumed) -> bool {
