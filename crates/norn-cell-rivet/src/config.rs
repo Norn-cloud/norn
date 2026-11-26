@@ -87,6 +87,8 @@ pub struct HostConfig {
     pub jwks_url: Option<String>,
     /// `NORN_LINEAGE_KEY`: the stage secret for lineage handles.
     pub lineage_key: Option<String>,
+    /// `NORN_CHECKPOINT_KEY`: the stage secret (64 hex chars) authenticating open checkpoints.
+    pub checkpoint_key: Option<String>,
     /// `NORN_SOURCES`: the cell's source connections (JSON array).
     pub sources: String,
     /// The variables the connections read (`NORN_SECRET_*`, `NORN_S3_*`,
@@ -183,6 +185,7 @@ impl HostConfig {
             issuer: var("NORN_HOST_ISSUER"),
             jwks_url: var("NORN_HOST_JWKS_URL"),
             lineage_key: var("NORN_LINEAGE_KEY"),
+            checkpoint_key: var("NORN_CHECKPOINT_KEY"),
             sources: var("NORN_SOURCES").unwrap_or_else(|| "[]".to_owned()),
             connect_vars: connect_vars.to_string(),
             olap_url: var("NORN_OLAP_URL"),
