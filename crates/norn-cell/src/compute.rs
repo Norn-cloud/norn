@@ -299,6 +299,9 @@ pub(crate) fn check_question_cutoff(
     plan: &QuestionPlan,
     cutoff: Option<crate::KnowledgeCutoff>,
 ) -> Result<(), CellError> {
+    if cutoff.is_some() && plan.time_link().is_some() {
+        return Err(refused(UNSUPPORTED_ENGINE));
+    }
     if matches!(plan.question().freshness, FreshnessPolicy::AsOf { .. }) {
         let point = cutoff.ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
         if !asof_matches(plan, point.recorded_at.as_millis()) {
@@ -373,6 +376,9 @@ impl<E: SqlEngine> CellStore<E> {
         self.conn.transaction(|| {
             let reader = self.read();
             reader.check_live()?;
+            if cutoff.is_some() && plan.time_link().is_some() {
+                return Err(refused(UNSUPPORTED_ENGINE));
+            }
             let mut budget = question_budget()?;
             let grain = plan.grain().as_str();
             let frontier_receipt = match cutoff {

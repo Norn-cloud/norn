@@ -1316,40 +1316,18 @@ fn a_transform_cannot_filter_or_order_by_a_marked_column() {
         json!({
             "entityVersion": "2.0",
             "markings": [{
-                "id": "pii.email",
-                "label": "Email",
-                "severity": "high",
-                "category": "pii.contact",
-                "mask": {"kind": "redacted"}
+                "id": "pii.email", "label": "Email", "severity": "high",
+                "category": "pii.contact", "mask": {"kind": "redacted"}
             }]
         }),
     ));
     let check_view = |nodes: Value, output: &str| {
         let mut set = pool.clone();
-        set.push(artifact(
-            "shop.view",
-            "derived",
-            json!([]),
-            json!({
-                "viewId": "shop.view",
-                "title": "Marked check",
-                "maintenance": "on_read",
-                "inputs": [{"alias": "customer", "kind": "entity", "ref": "shop.Customer"}],
-                "calc": {"kind": "relational", "nodes": nodes, "output": output}
-            }),
-        ));
-        let envelopes: Vec<ArtifactEnvelope> = set
-            .into_iter()
-            .map(|v| serde_json::from_value(v).expect("envelope"))
-            .collect();
-        admit(
-            envelopes.last().expect("view"),
-            &envelopes,
-            &BTreeSet::new(),
-        )
+        set.push(view(nodes, output));
+        let set = envelopes(set);
+        admit(set.last().expect("view"), &set, &BTreeSet::new())
     };
 
-    // Filtering by a marked column is refused.
     let filter_err = check_view(
         json!({
             "s": {"op": "scan", "input": "customer"},
@@ -1358,21 +1336,19 @@ fn a_transform_cannot_filter_or_order_by_a_marked_column() {
         "f",
     )
     .expect_err("filter on marked column must refuse");
-    assert!(
+    assert_eq!(
         filter_err
             .iter()
-            .any(|d| d.code == "question.validation.marked_field"),
-        "{filter_err:?}"
+            .map(|d| d.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["question.validation.marked_field"]
     );
 
-    // Ordering by a marked column is refused.
     let order_err = check_view(
         json!({
             "s": {"op": "scan", "input": "customer"},
             "w": {
-                "op": "window",
-                "input": "s",
-                "partitionBy": ["region"],
+                "op": "window", "input": "s", "partitionBy": ["region"],
                 "orderBy": [
                     {"column": "email", "direction": "asc"},
                     {"column": "id", "direction": "asc"}
@@ -1383,20 +1359,19 @@ fn a_transform_cannot_filter_or_order_by_a_marked_column() {
         "w",
     )
     .expect_err("order by marked column must refuse");
-    assert!(
+    assert_eq!(
         order_err
             .iter()
-            .any(|d| d.code == "question.validation.marked_field"),
-        "{order_err:?}"
+            .map(|d| d.code.as_str())
+            .collect::<Vec<_>>(),
+        vec!["question.validation.marked_field"]
     );
 
-    // Projecting a marked column (masked at read time) still admits cleanly.
     let projected = check_view(
         json!({
             "s": {"op": "scan", "input": "customer"},
             "p": {
-                "op": "project",
-                "input": "s",
+                "op": "project", "input": "s",
                 "columns": [
                     {"name": "id", "expression": "input.id"},
                     {"name": "email", "expression": "input.email"}

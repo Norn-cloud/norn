@@ -2144,13 +2144,27 @@ fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
         panic!("ingest failure must terminate the run");
     };
     assert_eq!(summary.outcome, "failed");
+    // The durable `source.Connection` end watermark persisted on `failing_host`
+    // must remain empty (`"{}"`) rather than advancing past uncaptured rows.
+    let recorded_conn = failing_host
+        .host_object("source.Connection", "odoo.rest")
+        .expect("read connection")
+        .expect("end run recorded");
+    assert_eq!(
+        recorded_conn.get("watermark"),
+        Some(&RuntimeValue::String("{}".into())),
+        "persisted end watermark must not advance on mid-page ingest failure: {recorded_conn:?}"
+    );
 
-    // Re-claiming must re-request from the initial watermark (NOT the advanced
-    // watermark of the unfinished page).
-    sources
+    // Restarting with fresh `Sources` state against the same `failing_host`
+    // store (which reloads the persisted watermark) must re-request from the
+    // initial cursor, not the unfinished page's advanced cursor.
+    let mut restarted = self::sources();
+    restarted
         .claim("odoo.rest", Trigger::Manual, "user:a", EXTRACTED_AT_MS + 2)
         .expect("re-claim");
-    let Step::Request(retry_req) = sources.step(&good_host, "odoo.rest", None, EXTRACTED_AT_MS + 2)
+    let Step::Request(retry_req) =
+        restarted.step(&failing_host, "odoo.rest", None, EXTRACTED_AT_MS + 2)
     else {
         panic!("expected retry request");
     };

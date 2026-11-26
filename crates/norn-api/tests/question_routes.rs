@@ -2522,7 +2522,7 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
     context.world = norn_cell::MAIN_WORLD.into();
     install_runtime_marking(&mut store, &context.scope);
     let keys = fixture_keys();
-    store
+    let committed = store
         .commit(&CommitBatch {
             world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
@@ -2542,6 +2542,7 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
             ..CommitBatch::default()
         })
         .expect("commit with marked loss");
+    let raw_receipt = committed.receipt().hash.clone();
     let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
         .expect("host")
         .with_authorizer(Policy);
@@ -2554,28 +2555,41 @@ fn a_question_trace_projects_marked_values_and_withholds_digest_and_source() {
         resolved: Arc::new(AtomicUsize::new(0)),
         min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
     };
-    let answer = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime)
+    // `auditor` holds whole-world Population, Values, and Sources grants.
+    let answer = get_answer(&host, &scope(), Some("auditor"), QUESTION, &runtime)
         .expect("question over unmarked fields answers cleanly");
     let trace = get_numeric_trace(
         &host,
         &trace_query(&answer.lineage_ref),
-        Some("reader"),
+        Some("auditor"),
         QUESTION,
         &runtime,
     )
     .expect("trace succeeds with projection");
     assert!(!trace.contributions.is_empty());
+    assert_ne!(
+        trace.result.revision.hash, raw_receipt,
+        "marked trace must withhold raw ledger head hash even for whole-world Values readers"
+    );
     for c in &trace.contributions {
         assert_eq!(c.fact_digest, None, "marked row must withhold fact_digest");
         assert!(
-            matches!(c.source, norn_cell::compute::ContributionSource::Restricted),
-            "marked row must redact source provenance: {:?}",
+            matches!(
+                c.source,
+                norn_cell::compute::lineage::ContributionSource::Restricted
+            ),
+            "marked row must redact source provenance even for Sources readers: {:?}",
             c.source
+        );
+        assert_ne!(
+            c.receipt_hash.as_deref(),
+            Some(raw_receipt.as_str()),
+            "marked trace must key receipt hashes"
         );
         let loss = c
             .values
             .as_ref()
-            .expect("projected values")
+            .expect("auditor receives projected values")
             .get("loss")
             .expect("loss field");
         assert_eq!(

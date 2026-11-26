@@ -619,8 +619,16 @@ fn trace_plan<E: SqlEngine>(
         },
     )?;
     let mut trace = outcome.map_err(Refusal::from_compute)?;
-    redact_trace_contributions(host, actor, &cell.store().read(), &mut trace.contributions)?;
-    let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
+    let any_marked = redact_trace_contributions(
+        host,
+        actor,
+        &world_name,
+        answered.is_some(),
+        &cell.store().read(),
+        &mut trace.contributions,
+    )?;
+    let world =
+        !any_marked && withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
     if !world {
@@ -639,18 +647,22 @@ fn trace_plan<E: SqlEngine>(
 
 /// PRIVACY-1: trace contributions never disclose raw marked property values,
 /// raw snapshot digests of marked versions, or source provenance for marked
-/// versions.
+/// versions. Returns `true` if any contribution carried markings (or lacked a
+/// marking snapshot) so raw ledger and receipt hashes are also withheld.
 fn redact_trace_contributions<E: SqlEngine>(
     host: &DevHost<E>,
     actor: &str,
+    world: &str,
+    historical_answer: bool,
     reader: &norn_cell::StoreReader<'_, E>,
-    contributions: &mut [norn_cell::compute::NumericContribution],
-) -> Result<(), Refusal> {
+    contributions: &mut [norn_cell::compute::lineage::NumericContribution],
+) -> Result<bool, Refusal> {
     let catalog = host.marking_catalog(reader)?;
     if catalog.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let scope = host.scope().key();
+    let mut any_marked = false;
     for contribution in contributions {
         let mut record = ObjectRecord {
             object_type: contribution.fact.object_type.0.clone(),
@@ -659,21 +671,33 @@ fn redact_trace_contributions<E: SqlEngine>(
             version: contribution.fact.version,
             values: contribution.values.clone().unwrap_or_default(),
         };
-        let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
+        let version_arg = if historical_answer {
+            Some(record.version)
+        } else {
+            let current = reader
+                .version(world, &record.object_type, &record.id)
+                .map_err(Refusal::host)?
+                == record.version;
+            (!current).then_some(record.version)
+        };
+        let markings = reader
+            .effective_markings(world, &record.object_type, &record.id, version_arg)
+            .map_err(Refusal::host)?;
         let marked = markings
             .as_ref()
             .is_none_or(|m| m.values().any(|ids| !ids.is_empty()));
         if !marked {
             continue;
         }
+        any_marked = true;
         contribution.fact_digest = None;
-        contribution.source = norn_cell::compute::ContributionSource::Restricted;
+        contribution.source = norn_cell::compute::lineage::ContributionSource::Restricted;
         if contribution.values.is_some() {
             let _ = crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
             contribution.values = Some(record.values);
         }
     }
-    Ok(())
+    Ok(any_marked)
 }
 
 fn mapped<E: SqlEngine>(

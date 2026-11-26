@@ -402,7 +402,7 @@ fn evaluate<E: SqlEngine>(
     let store = cell.store();
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    refuse_dynamic_filter_order_markings(host, store, &plan)?;
+    refuse_dynamic_filter_order_markings(host, store, &plan, false)?;
     let served = store
         .serve_transform(
             &plan,
@@ -411,6 +411,9 @@ fn evaluate<E: SqlEngine>(
             now.as_millis(),
         )
         .map_err(Refusal::from_compute)?;
+    if served.materialization.as_ref().is_some_and(|m| m.stale) {
+        refuse_dynamic_filter_order_markings(host, store, &plan, true)?;
+    }
     Ok((plan, served))
 }
 
@@ -462,11 +465,13 @@ fn is_implicit_id(model: &norn_cell::Model, object_type: &str, property: &str) -
 }
 
 /// PRIVACY-4: refuse a transform whose `Filter` predicate or `orderBy` reads a
-/// property carrying dynamic `_norn_markings` (or lacking a marking snapshot).
+/// property carrying live (or, for stale materializations, historical)
+/// `_norn_markings` or lacking a marking snapshot.
 fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     plan: &TransformPlan,
+    include_history: bool,
 ) -> Result<(), Refusal> {
     let reader = store.read();
     let catalog = host.marking_catalog(&reader)?;
@@ -477,13 +482,21 @@ fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
         if is_implicit_id(store.model(), &object_type, &property) {
             continue;
         }
-        let labels = reader
+        let live_marked = !reader
             .property_marking_summary(MAIN_WORLD, &object_type, &property)
-            .map_err(Refusal::host)?;
-        if !labels.is_some_and(|labels| labels.is_empty()) {
+            .map_err(Refusal::host)?
+            .is_some_and(|labels| labels.is_empty());
+        let history_marked = include_history
+            && (reader
+                .property_history_marked(MAIN_WORLD, &object_type, &property)
+                .map_err(Refusal::host)?
+                || reader
+                    .property_history_unclassified(MAIN_WORLD, &object_type, &property)
+                    .map_err(Refusal::host)?);
+        if live_marked || history_marked {
             let mut refusal = Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "transform.marked_field",
+                "core.compute.stale_input",
                 "the transform filters or orders by a marked property",
                 "remove the filter or order over marked properties",
             );
@@ -507,10 +520,12 @@ fn grain_marked(marked: &[(String, Vec<String>)], grain: &[String]) -> bool {
 
 /// Each output column with its effective markings: static lineage markings
 /// unioned with live dynamic `_norn_markings` across all column origins
-/// (failing closed to `norn.unknown-lineage` if any row lacks a snapshot).
+/// (failing closed to `norn.unknown-lineage` if any row lacks a snapshot, or if
+/// a stale materialized result reads a property with historical markings).
 fn effective_marked_columns<E: SqlEngine>(
     host: &DevHost<E>,
     plan: &TransformPlan,
+    stale: bool,
 ) -> Result<Vec<(String, Vec<String>)>, Refusal> {
     let cell = host.cell()?;
     let store = cell.store();
@@ -535,6 +550,20 @@ fn effective_marked_columns<E: SqlEngine>(
                     None => {
                         markings.insert("norn.unknown-lineage".to_owned());
                     }
+                }
+                if stale
+                    && (reader
+                        .property_history_marked(MAIN_WORLD, &scan.object_type, &origin.property)
+                        .map_err(Refusal::host)?
+                        || reader
+                            .property_history_unclassified(
+                                MAIN_WORLD,
+                                &scan.object_type,
+                                &origin.property,
+                            )
+                            .map_err(Refusal::host)?)
+                {
+                    markings.insert("norn.unknown-lineage".to_owned());
                 }
             }
         }
@@ -586,7 +615,14 @@ pub fn get_transform_rows<E: SqlEngine>(
     let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
     let commits = result.revision.commits;
-    let marked = effective_marked_columns(host, &plan)?;
+    let stale = served.materialization.as_ref().is_some_and(|m| m.stale);
+    let cursor_epoch = host
+        .cell()?
+        .store()
+        .verified_head()
+        .map_err(Refusal::from_compute)?
+        .commits;
+    let marked = effective_marked_columns(host, &plan, stale)?;
     let key = crate::privacy::row_ids(host, grain_marked(&marked, &result.grain))?;
     let start = match params.after.as_deref() {
         None => 0,
@@ -595,7 +631,7 @@ pub fn get_transform_rows<E: SqlEngine>(
                 .split_once(':')
                 .and_then(|(at, row)| at.parse::<u64>().ok().map(|at| (at, row)))
                 .ok_or_else(|| Refusal::invalid("the cursor was not issued for this transform"))?;
-            if at != commits {
+            if at != cursor_epoch {
                 let mut moved = Refusal::new(
                     StatusCode::CONFLICT,
                     "transform.snapshot_moved",
@@ -636,7 +672,10 @@ pub fn get_transform_rows<E: SqlEngine>(
     )?;
     let end = start.saturating_add(page.len());
     let next_after = (end < total)
-        .then(|| page.last().map(|row| format!("{commits}:{}", row.row_id)))
+        .then(|| {
+            page.last()
+                .map(|row| format!("{cursor_epoch}:{}", row.row_id))
+        })
         .flatten();
     let mut page_columns = columns(plan.output_schema());
     for (col, (_, eff)) in page_columns.iter_mut().zip(&marked) {
@@ -677,7 +716,8 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
 ) -> Result<NornTransformLineage, Refusal> {
     let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
     let result = &served.result;
-    let marked = effective_marked_columns(host, &plan)?;
+    let stale = served.materialization.as_ref().is_some_and(|m| m.stale);
+    let marked = effective_marked_columns(host, &plan, stale)?;
     let key = crate::privacy::row_ids(host, grain_marked(&marked, &result.grain))?;
     let found = result
         .rows
@@ -926,7 +966,7 @@ pub fn refresh_transform<E: SqlEngine>(
     let store = cell.store();
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    refuse_dynamic_filter_order_markings(host, store, &plan)?;
+    refuse_dynamic_filter_order_markings(host, store, &plan, false)?;
     if plan.materialization.is_none() {
         return Err(Refusal::invalid(
             "the transform is evaluated on every read; only a materialized transform refreshes",

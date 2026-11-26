@@ -511,10 +511,10 @@ fn dynamic_marking_definitions(filtered_id: &str) -> Vec<Value> {
     defs.push(artifact(
         filtered_id,
         "derived",
-        json!([]),
+        json!([{"artifactId": "shop.Customer", "kind": "entity", "version": "0.1.0", "required": true}]),
         json!({
-            "viewId": filtered_id, "title": "Filtered by region", "maintenance": "on_read",
-            "inputs": [{"alias": "customer", "kind": "entity", "ref": "shop.Customer"}],
+            "viewVersion": "0.1", "viewId": filtered_id,
+            "inputs": [{"artifactId": "shop.Customer", "kind": "entity", "version": "0.1.0", "alias": "customer"}],
             "calc": {
                 "kind": "relational",
                 "nodes": {
@@ -522,7 +522,8 @@ fn dynamic_marking_definitions(filtered_id: &str) -> Vec<Value> {
                     "f": {"op": "filter", "input": "c", "predicate": "input.region == 'north'"}
                 },
                 "output": "f"
-            }
+            },
+            "outputSchema": {}, "maintenance": "recompute_on_read"
         }),
     ));
     defs
@@ -650,6 +651,65 @@ fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
     .expect_err("dynamic filter on marked column must refuse");
     assert_eq!(
         (refused.status, refused.code.as_str()),
-        (422, "transform.marked_field")
+        (422, "core.compute.stale_input")
+    );
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn stale_materialization_withholds_deleted_marked_column() {
+    const FILTERED: &str = "shop.filtered_by_region";
+    let secret = [9_u8; 32];
+    let (host, directory) = host_with_dynamic_region_marking(FILTERED, &secret);
+    // Refresh manual materialized view while c-north carries dynamic `pii.region`.
+    let state =
+        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
+    assert!(!state.stale);
+    // Delete c-north on a second handle so live `property_marking_summary` sees
+    // zero live rows, making the cached `STORED` materialization stale.
+    let objects: Vec<ObjectTypeDef> = types()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).unwrap())
+        .collect();
+    let model = norn_cell::Model::from_definitions(&objects, &[]).unwrap();
+    let mut writer = CellStore::open(
+        &directory.path().join("cell.sqlite"),
+        model,
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 1_000,
+            writes: vec![FactWriteRow::Delete {
+                object_type: "shop.Customer".into(),
+                key: "c-north".into(),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let stale_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("stale materialized read");
+    assert!(stale_page.materialization.as_ref().is_some_and(|m| m.stale));
+    assert!(
+        !stale_page.rows[0].values.contains_key("region"),
+        "stale cached marked column must fail closed and be withheld: {:?}",
+        stale_page.rows[0].values
     );
 }

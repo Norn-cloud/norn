@@ -223,12 +223,6 @@ fn an_entry_takes_its_events_time_and_one_without_an_event_is_counted_never_buck
 #[test]
 fn a_linked_time_question_at_a_knowledge_cutoff_is_refused() {
     let (mut store, plan) = fixture();
-    commit(
-        &mut store,
-        1,
-        vec![event("e1", "2026-07-07T10:00:00Z"), entry("x1", 10)],
-        vec![link("x1", "e1")],
-    );
     let context = QueryContext {
         world: WORLD.into(),
         scope: "synthetic".into(),
@@ -239,11 +233,47 @@ fn a_linked_time_question_at_a_knowledge_cutoff_is_refused() {
         source_cursors: BTreeMap::new(),
         watermarks: BTreeMap::new(),
     };
+    // Refuses even on an empty population before scanning any subject.
+    let empty_err = store
+        .evaluate_question_known_at(
+            &plan,
+            context.clone(),
+            KnowledgeCutoff {
+                frontier: 0,
+                recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK),
+            },
+            |_| Ok(true),
+        )
+        .expect_err("linked-time at cutoff must refuse on empty population");
+    assert!(
+        matches!(
+            empty_err,
+            CellError::ComputeRefused("core.compute.unsupported_engine")
+        ),
+        "{empty_err:?}"
+    );
+    commit(
+        &mut store,
+        1,
+        vec![event("e1", "2026-07-07T10:00:00Z"), entry("x1", 10)],
+        vec![link("x1", "e1")],
+    );
     let err = store
-        .evaluate_question_known_at(&plan, context, KnowledgeCutoff::at_commit(1), |_| Ok(true))
-        .expect_err("linked-time at a knowledge cutoff must refuse");
-    assert_eq!(
-        err,
-        CellError::ComputeRefused("core.compute.unsupported_engine")
+        .evaluate_question_known_at(
+            &plan,
+            context,
+            KnowledgeCutoff {
+                frontier: 1,
+                recorded_at: norn_kernel::LogicalTime::from_millis(CLOCK + 1),
+            },
+            |_| Ok(true),
+        )
+        .expect_err("linked-time at cutoff must refuse on non-empty population");
+    assert!(
+        matches!(
+            err,
+            CellError::ComputeRefused("core.compute.unsupported_engine")
+        ),
+        "{err:?}"
     );
 }
