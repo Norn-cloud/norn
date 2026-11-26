@@ -596,19 +596,20 @@ fn action_slice_findings(
                                 .is_ok_and(|r| r.whole_root || !r.fields.is_empty()))
                 });
             if has_post_slice_derive {
-                let unsupported_post_slice = match &root.effect_program {
-                    Some(ActionEffectProgram::MutateParentWithRows { .. }) => {
-                        Some("mutate_parent_with_rows does not support post-slice derive steps")
-                    }
-                    Some(ActionEffectProgram::UpsertInputObject { object_kind, .. })
-                        if model.effective_object_type_named(object_kind).is_some_and(|v| {
-                            v.keys.iter().any(|key| key.naming_series.is_some())
-                        }) =>
-                    {
-                        Some("naming-series upserts do not support post-slice derive steps")
-                    }
-                    _ => None,
-                };
+                let unsupported_post_slice =
+                    match &root.effect_program {
+                        Some(ActionEffectProgram::MutateParentWithRows { .. }) => {
+                            Some("mutate_parent_with_rows does not support post-slice derive steps")
+                        }
+                        Some(ActionEffectProgram::UpsertInputObject { object_kind, .. })
+                            if model.effective_object_type_named(object_kind).is_some_and(
+                                |v| v.keys.iter().any(|key| key.naming_series.is_some()),
+                            ) =>
+                        {
+                            Some("naming-series upserts do not support post-slice derive steps")
+                        }
+                        _ => None,
+                    };
                 if let Some(reason) = unsupported_post_slice {
                     findings.push(finding(
                         codes::TARGET_NOT_WRITABLE,
@@ -1538,7 +1539,12 @@ impl Defined<'_> {
                 .and_then(JsonValue::as_object);
             let guarded_fields: BTreeSet<String> = view
                 .and_then(|view| view.lifecycle(lifecycle.as_str()))
-                .and_then(|lc| lc.lifecycle.transitions.iter().find(|tr| tr.id == *transition))
+                .and_then(|lc| {
+                    lc.lifecycle
+                        .transitions
+                        .iter()
+                        .find(|tr| tr.id == *transition)
+                })
                 .into_iter()
                 .flat_map(|tr| tr.guards.iter())
                 .filter_map(|guard| norn_expr::expression_reads(guard.as_str(), "self").ok())
@@ -1564,7 +1570,8 @@ impl Defined<'_> {
                     &receipt.digest_property == target_prop
                         || receipt.result_bindings.contains_key(target_prop)
                 });
-                let has_input = input_properties.is_some_and(|props| props.contains_key(source_field));
+                let has_input =
+                    input_properties.is_some_and(|props| props.contains_key(source_field));
                 if !writable(target_prop) || receipt_overlap || !has_input {
                     findings.push(finding(
                         codes::TARGET_NOT_WRITABLE,

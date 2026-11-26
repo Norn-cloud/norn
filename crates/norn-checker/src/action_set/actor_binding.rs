@@ -94,7 +94,14 @@ pub(super) fn actor_binding_findings(
         Some(kind),
     ) = (program, kind)
     {
-        parent_rows_origin_findings(artifact, root, kind, parent_values_field, view, &mut findings);
+        parent_rows_origin_findings(
+            artifact,
+            root,
+            kind,
+            parent_values_field,
+            view,
+            &mut findings,
+        );
     }
     let transition = matches!(program, Some(ActionEffectProgram::FireTransition { .. }));
     let mut seen = BTreeSet::new();

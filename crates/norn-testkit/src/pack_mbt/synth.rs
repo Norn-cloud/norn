@@ -1044,9 +1044,15 @@ mod tests {
         }]);
 
         let synthesized = synthesize_object(&pack, &object_type, "ps_generated_1", 0);
-        assert_eq!(synthesized.get("id"), Some(&JsonValue::String("ps_generated_1".to_owned())));
+        assert_eq!(
+            synthesized.get("id"),
+            Some(&JsonValue::String("ps_generated_1".to_owned()))
+        );
         assert_eq!(synthesized.get("base"), Some(&JsonValue::from(8000_i64)));
-        assert_eq!(synthesized.get("deduction"), Some(&JsonValue::from(500_i64)));
+        assert_eq!(
+            synthesized.get("deduction"),
+            Some(&JsonValue::from(500_i64))
+        );
         assert_eq!(synthesized.get("net"), Some(&JsonValue::from(7500_i64)));
     }
 }

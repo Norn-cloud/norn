@@ -151,18 +151,34 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
     let err = commit_action(
         &mut cell,
         &catalog,
-        &call(&create_action, "test.payout.create.action", spoofed, "k-spoof", 1_764_115_200_000),
+        &call(
+            &create_action,
+            "test.payout.create.action",
+            spoofed,
+            "k-spoof",
+            1_764_115_200_000,
+        ),
         &Allow,
     )
     .unwrap_err();
-    assert!(matches!(err, ActionRefusal::InvalidInput { ref field } if field == "stamped_at"), "{err:?}");
+    assert!(
+        matches!(err, ActionRefusal::InvalidInput { ref field } if field == "stamped_at"),
+        "{err:?}"
+    );
 
     // Honest create stamps `clock.nowIso` from `call.turn.now` (2025-11-26T00:00:00Z).
-    let raw_create: JsonObject = serde_json::from_value(json!({ "id": "po_1", "payslip_id": "ps_1" })).unwrap();
+    let raw_create: JsonObject =
+        serde_json::from_value(json!({ "id": "po_1", "payslip_id": "ps_1" })).unwrap();
     let outcome = commit_action(
         &mut cell,
         &catalog,
-        &call(&create_action, "test.payout.create.action", raw_create, "k-create", 1_764_115_200_000),
+        &call(
+            &create_action,
+            "test.payout.create.action",
+            raw_create,
+            "k-create",
+            1_764_115_200_000,
+        ),
         &Allow,
     )
     .unwrap();
@@ -175,7 +191,10 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
         created_vals.get("stamped_at"),
         Some(&RuntimeValue::String("2025-11-26T00:00:00Z".to_owned()))
     );
-    assert_eq!(created_vals.get("generation"), Some(&RuntimeValue::from(1_i64)));
+    assert_eq!(
+        created_vals.get("generation"),
+        Some(&RuntimeValue::from(1_i64))
+    );
 
     // Fail the payout, then retry with post-slice `generation + 1` via `setFields`.
     let fail_action: ActionRoot = serde_json::from_value(json!({
@@ -205,7 +224,13 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
     commit_action(
         &mut cell,
         &catalog,
-        &call(&fail_action, "test.payout.fail.action", serde_json::from_value(json!({ "id": "po_1" })).unwrap(), "k-fail", 1_764_115_260_000),
+        &call(
+            &fail_action,
+            "test.payout.fail.action",
+            serde_json::from_value(json!({ "id": "po_1" })).unwrap(),
+            "k-fail",
+            1_764_115_260_000,
+        ),
         &Allow,
     )
     .unwrap();
@@ -251,15 +276,27 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
     commit_action(
         &mut cell,
         &catalog,
-        &call(&retry_action, "test.payout.retry.action", serde_json::from_value(json!({ "id": "po_1" })).unwrap(), "k-retry", 1_764_115_320_000),
+        &call(
+            &retry_action,
+            "test.payout.retry.action",
+            serde_json::from_value(json!({ "id": "po_1" })).unwrap(),
+            "k-retry",
+            1_764_115_320_000,
+        ),
         &Allow,
     )
     .unwrap();
 
     let retried = cell.load(&key).unwrap();
     let retried_vals = retried.values.as_ref().unwrap();
-    assert_eq!(retried_vals.get("state"), Some(&RuntimeValue::String("requested".to_owned())));
-    assert_eq!(retried_vals.get("generation"), Some(&RuntimeValue::from(2_i64)));
+    assert_eq!(
+        retried_vals.get("state"),
+        Some(&RuntimeValue::String("requested".to_owned()))
+    );
+    assert_eq!(
+        retried_vals.get("generation"),
+        Some(&RuntimeValue::from(2_i64))
+    );
 
     // ORIGIN-DATAFLOW-1 runtime enforcement: mutating an `immutableAfterCreate`
     // property via an update action must fail closed in `norn-kernel`.

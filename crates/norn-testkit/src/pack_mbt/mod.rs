@@ -352,8 +352,8 @@ pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = Js
 pub fn action_call_object_type() -> ObjectTypeDef {
     let text = |id: &str, nullable: bool| Property {
         protected: false,
-                origin: None,
-                immutable_after_create: false,
+        origin: None,
+        immutable_after_create: false,
         id: PropertyId(id.to_owned()),
         description: None,
         property_type: PropertyType::Text { format: None },
@@ -367,8 +367,8 @@ pub fn action_call_object_type() -> ObjectTypeDef {
     };
     let json_ext = |id: &str| Property {
         protected: false,
-                origin: None,
-                immutable_after_create: false,
+        origin: None,
+        immutable_after_create: false,
         id: PropertyId(id.to_owned()),
         description: None,
         property_type: PropertyType::JsonExt { schema: None },

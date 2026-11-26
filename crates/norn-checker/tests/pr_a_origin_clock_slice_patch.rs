@@ -205,7 +205,10 @@ fn admits_clock_origin_post_slice_derive_and_transition_set_fields() {
         }),
     );
 
-    assert_eq!(check(&[payout_entity(), create, retry, confirm]), Vec::<String>::new());
+    assert_eq!(
+        check(&[payout_entity(), create, retry, confirm]),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -245,10 +248,22 @@ fn refuses_origin_violations_immutable_updates_and_slice_key_cycles() {
         }),
     );
     let errs = check(&[payout_entity(), bad_upsert]);
-    assert!(errs.iter().any(|e| e.contains("immutableAfterCreate")), "{errs:?}");
-    assert!(errs.iter().any(|e| e.contains("origin `clock`")), "{errs:?}");
-    assert!(errs.iter().any(|e| e.contains("origin `derived`")), "{errs:?}");
-    assert!(errs.iter().any(|e| e.contains("origin `receipt`")), "{errs:?}");
+    assert!(
+        errs.iter().any(|e| e.contains("immutableAfterCreate")),
+        "{errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("origin `clock`")),
+        "{errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("origin `derived`")),
+        "{errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("origin `receipt`")),
+        "{errs:?}"
+    );
 
     // 2. Post-slice derivation trying to overwrite slice key `id` (cycle)
     let cyclic = envelope(

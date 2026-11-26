@@ -320,7 +320,9 @@ where
     )?;
     let mut record = record;
     record.effective_input = preparation.recorded_effective_input();
-    record.derived_values.clone_from(&preparation.derived_values);
+    record
+        .derived_values
+        .clone_from(&preparation.derived_values);
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);

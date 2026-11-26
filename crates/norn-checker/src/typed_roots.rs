@@ -1192,7 +1192,13 @@ fn post_slice_key_cycle_findings(
         }
     }
     let mut diagnostics = Vec::new();
-    for (offset, step) in root.derive.get(split..).unwrap_or_default().iter().enumerate() {
+    for (offset, step) in root
+        .derive
+        .get(split..)
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
         let index = split.saturating_add(offset);
         if pre_slice_inputs.contains(&step.field) {
             diagnostics.push(invalid_diagnostic(
@@ -1229,7 +1235,13 @@ pub(crate) fn check_action_slice_derivations(
         return diagnostics;
     };
     let declares_aggregates = !root.aggregates.is_empty();
-    for (offset, derivation) in root.derive.get(split..).unwrap_or_default().iter().enumerate() {
+    for (offset, derivation) in root
+        .derive
+        .get(split..)
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
         let index = split.saturating_add(offset);
         if action_input_field_type(Some(&schema), &derivation.field).is_none()
             || derivation.expression.as_str().trim().is_empty()

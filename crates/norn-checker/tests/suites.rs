@@ -120,10 +120,10 @@ mod ontology_registry;
 mod owned_collections;
 #[path = "path_mapping.rs"]
 mod path_mapping;
-#[path = "predicate_slice_and_links.rs"]
-mod predicate_slice_and_links;
 #[path = "pr_a_origin_clock_slice_patch.rs"]
 mod pr_a_origin_clock_slice_patch;
+#[path = "predicate_slice_and_links.rs"]
+mod predicate_slice_and_links;
 #[path = "principal_inputs.rs"]
 mod principal_inputs;
 #[path = "property_types.rs"]

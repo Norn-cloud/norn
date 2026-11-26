@@ -48,10 +48,10 @@ mod invariant_commit;
 mod limits;
 #[path = "location_hierarchy.rs"]
 mod location_hierarchy;
-#[path = "predicate_slice_and_links.rs"]
-mod predicate_slice_and_links;
 #[path = "pr_a_runtime.rs"]
 mod pr_a_runtime;
+#[path = "predicate_slice_and_links.rs"]
+mod predicate_slice_and_links;
 #[path = "psm_action_laws.rs"]
 mod psm_action_laws;
 #[path = "psm_action_transition.rs"]

@@ -566,7 +566,13 @@ pub(super) fn apply_post_slice_derivations<X>(
             expression: first_step.expression.as_str().to_owned(),
             reason,
         })?;
-    for (offset, derivation) in action.derive.get(split..).unwrap_or_default().iter().enumerate() {
+    for (offset, derivation) in action
+        .derive
+        .get(split..)
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
         let index = split.saturating_add(offset);
         let (value, next_receipt_bytes) = prepare_action_derivation(
             action,
@@ -753,13 +759,12 @@ fn action_derivation_context<X>(
                     reason: format!("commit clock out of range: {error}"),
                 }
             })?;
-            let signed_millis = i64::try_from(millis).map_err(|_error| {
-                ActionRefusal::DerivationFailed {
+            let signed_millis =
+                i64::try_from(millis).map_err(|_error| ActionRefusal::DerivationFailed {
                     field: derivation.field.clone(),
                     expression: derivation.expression.as_str().to_owned(),
                     reason: "commit clock millis out of i64 range".to_owned(),
-                }
-            })?;
+                })?;
             let now_millis = expr_value(&RuntimeValue::from(signed_millis)).map_err(|reason| {
                 ActionRefusal::DerivationFailed {
                     field: derivation.field.clone(),

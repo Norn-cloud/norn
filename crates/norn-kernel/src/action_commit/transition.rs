@@ -119,7 +119,9 @@ where
         usize::try_from(limits.max_output_bytes).unwrap_or(usize::MAX),
     )?;
     record.effective_input = preparation.recorded_effective_input();
-    record.derived_values.clone_from(&preparation.derived_values);
+    record
+        .derived_values
+        .clone_from(&preparation.derived_values);
     preparation.precondition_outcomes = check_action_preconditions(
         catalog,
         action,

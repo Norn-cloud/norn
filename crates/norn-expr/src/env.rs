@@ -686,10 +686,7 @@ impl ZenTypeEnv {
                 ACTOR_VARIABLE,
                 Type::Record(ACTION_PRINCIPAL_RECORD.to_owned()),
             )?
-            .bind_operand(
-                CLOCK_VARIABLE,
-                Type::Record(ACTION_CLOCK_RECORD.to_owned()),
-            )
+            .bind_operand(CLOCK_VARIABLE, Type::Record(ACTION_CLOCK_RECORD.to_owned()))
     }
 
     /// An actor-free environment that binds only `input`, with explicitly
