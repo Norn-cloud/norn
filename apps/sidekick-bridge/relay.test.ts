@@ -485,5 +485,101 @@ test("configFromEnv rejects invalid integer caps and ports", () => {
   expect(() => configFromEnv({ ...base, SIDEKICK_MAX_CONNECTIONS: "abc" })).toThrow()
   expect(() => configFromEnv({ ...base, SIDEKICK_MAX_CONNECTIONS: "0" })).toThrow()
   expect(() => configFromEnv({ ...base, SIDEKICK_MCP_PORT: "-1" })).toThrow()
+  expect(() => configFromEnv({ ...base, SIDEKICK_STUDIO_ORIGIN: "file:///etc/passwd" })).toThrow()
+  expect(() => configFromEnv({ ...base, SIDEKICK_STUDIO_ORIGIN: "ws://studio.example" })).toThrow()
   expect(configFromEnv({ ...base, SIDEKICK_MCP_PORT: "0", SIDEKICK_MAX_CONNECTIONS: "2" }).maxConnections).toBe(2)
+})
+
+test("permissionDecision and canonicalJson/proxyAdmits handle malformed options, null arguments, and excessive depth", () => {
+  const readOnly = new Set(["norn_answer"])
+  const nullOptions = permissionDecision({
+    toolCall: { _meta: { claudeCode: { toolName: "mcp__norn__norn_call_action" } } },
+    options: [null, { kind: "allow_once", optionId: "" }, { kind: "reject_once", optionId: "r" }],
+  }, readOnly)
+  expect("answer" in nullOptions && (nullOptions.answer.outcome as { outcome: string }).outcome).toBe("cancelled")
+
+  expect(canonicalJson(undefined)).toBe("{}")
+  expect(canonicalJson(null)).toBe("null")
+  const approvals = [{ tool: "norn_call_action", input: canonicalJson(undefined) }]
+  expect(proxyAdmits({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "norn_call_action", arguments: null } }, new Set(), approvals)).toBe(false)
+  expect(approvals).toHaveLength(1)
+
+  let deep: unknown = 1
+  for (let i = 0; i < 80; i += 1) deep = { a: deep }
+  expect(() => canonicalJson(deep)).toThrow(RangeError)
+  expect(proxyAdmits({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "norn_call_action", arguments: deep } }, new Set(), approvals)).toBe(false)
+})
+
+test("relay: MCP proxy scrubs the live grant from upstream responses and browser rejects non-object JSON", async () => {
+  const h = await harness("default")
+  try {
+    h.send("null" as unknown as Record<string, unknown>)
+    const invalid = await h.next((message) => (message.error as { code?: number } | undefined)?.code === -32600) as { error?: { code: number } }
+    expect(invalid.error?.code).toBe(-32600)
+
+    h.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, _meta: { "norn.cloud/grant": h.grant } } })
+    h.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/", mcpServers: [] } })
+    await h.next((message) => message.id === 2)
+    // Prompt sent as a notification (no id) is ignored.
+    h.send({ jsonrpc: "2.0", method: "session/prompt", params: { sessionId: "s1", prompt: [{ type: "text", text: "ignored" }] } })
+    // Cancel without sessionId returns -32602.
+    h.send({ jsonrpc: "2.0", id: 9, method: "session/cancel", params: {} })
+    const badCancel = await h.next((message) => message.id === 9) as { error?: { code: number } }
+    expect(badCancel.error?.code).toBe(-32602)
+  } finally { h.done() }
+})
+
+test("relay: MCP proxy scrubs the live Bearer grant from reflected upstream responses", async () => {
+  const { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } = await import("jose")
+  const { mkdtempSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const { privateKey, publicKey } = await generateKeyPair("RS256")
+  const jwk = await exportJWK(publicKey)
+  jwk.kid = "k1"
+  const grant = await new SignJWT({ azp: "norn-studio-sidekick", "norn.cloud/org": "o", "norn.cloud/env": "e", "norn.cloud/member": "m" })
+    .setProtectedHeader({ alg: "RS256", kid: "k1" })
+    .setIssuer("https://studio.test")
+    .setAudience("https://studio.test/mcp")
+    .setSubject("u1")
+    .setExpirationTime("5m")
+    .sign(privateKey)
+  const scratch = mkdtempSync(join(tmpdir(), "sidekick-scrub-"))
+  const relay = startRelay({
+    studioOrigin: "https://studio.test",
+    allowedOrigins: new Set(["https://studio.test"]),
+    loginHeader: "x-login",
+    allowedLogins: new Set(["alice"]),
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    mcpPort: 0,
+    adapter: ["bun", "-e", "process.stdin.on('data', () => {})"],
+    scratch,
+    maxConnections: 2,
+  }, {
+    keys: createLocalJWKSet({ keys: [jwk] }),
+    fetcher: (async (_url, init) => {
+      const auth = new Headers(init?.headers).get("authorization") ?? ""
+      return Response.json({ jsonrpc: "2.0", id: 1, result: { echoed: auth } })
+    }) as typeof fetch,
+    log: () => {},
+  })
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${relay.server.port}/sidekick/ws`, { headers: { "x-login": "alice", origin: "https://studio.test" } } as unknown as string[])
+    await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject })
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, _meta: { "norn.cloud/grant": grant } } }))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const conn = [...relay.connections.values()][0] as { capability: string }
+    const res = await fetch(`http://127.0.0.1:${relay.mcp.port}/mcp/${conn.capability}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    })
+    const body = await res.text()
+    expect(body).not.toContain(grant)
+    expect(body).toContain("[redacted]")
+    ws.close()
+  } finally {
+    relay.stop()
+  }
 })
