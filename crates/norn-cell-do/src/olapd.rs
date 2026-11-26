@@ -408,6 +408,13 @@ struct Job {
     _held: Held,
 }
 
+impl Job {
+    /// Return the stream, dropping the buffered request and held body quota at once.
+    fn into_stream(self) -> TcpStream {
+        self.stream
+    }
+}
+
 /// One engine worker: run each queued call until the daemon stops.
 fn work(queue: &Mutex<Receiver<Job>>, engine: &dyn AnalyticalEngine, gate: &Gate) {
     loop {
@@ -696,13 +703,7 @@ fn preadmit(
             Ok(())
         }
         Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
-            let Job {
-                stream,
-                request,
-                tenant,
-                _held,
-            } = job;
-            drop((request, tenant, _held));
+            let stream = job.into_stream();
             let _sent = respond(&stream, 503, "application/json", BUSY_BODY);
             drop(pending);
             Ok(())
