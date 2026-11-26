@@ -274,6 +274,15 @@ def git(repo: Path, *args: str, data: bytes | None = None, env: dict | None = No
     return result
 
 
+def pinned_rust_toolchain(repo: Path, sha: str) -> str | None:
+    """Rust toolchain pinned by `.github/workflows/ci-policy.yml` at `sha`, or None."""
+    shown = git(repo, "show", f"{sha}:.github/workflows/ci-policy.yml", check=False)
+    if shown.returncode != 0:
+        return None
+    match = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", shown.stdout.decode(errors="replace"), re.M)
+    return match.group(1) if match else None
+
+
 def fetch_tip(repo: Path, remote: str, branch: str) -> str | None:
     """Fetch the branch into refs/remotes/<remote>/<branch>; None when it does not exist yet."""
     probe = git(repo, *_auth_config(), "ls-remote", "--exit-code", remote, f"refs/heads/{branch}", check=False)

@@ -9,10 +9,11 @@ from pathlib import Path
 import re
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 import zipfile
+
+ROOT = Path(__file__).resolve().parents[1]
 
 def _sibling(name, directory=None):
     """Load sibling module `name` from its source by explicit path: never through sys.path,
@@ -244,7 +245,7 @@ def run(args):
         tla_bytes, compilation = compile_tla(args, root, environment, work)
         tla = work / "generated.tla"
         primary_path = work / "primary.json"
-        subprocess.run([str(args.bun), "run", "tools/norn-proofs/check.ts", str(tla), str(primary_path), str(work), str(args.seed)],
+        subprocess.run([str(args.bun), "run", str(ROOT / "tools/norn-proofs/check.ts"), str(tla), str(primary_path), str(work), str(args.seed)],
                        env=environment, capture_output=True, check=True, timeout=120)
         primary_raw = primary_path.read_text()
         primary = json.loads(primary_raw)
