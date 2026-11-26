@@ -427,29 +427,55 @@ pub(super) fn evaluate(
     })
 }
 
-/// Whether a projected row is in the bucket `group` names.
-fn in_bucket(row: &Projected, group: &GroupKey, dims: usize) -> Outcome<bool> {
-    let wanted: Vec<&GroupKey> = match (group, dims) {
-        (_, 0) => Vec::new(),
-        (GroupKey::Tuple(members), n) if n > 1 && members.len() == n => members.iter().collect(),
-        (one, 1) => vec![one],
+/// One compiled bucket key component, validated and normalized once per query.
+enum CompiledKey {
+    Null,
+    Bool(bool),
+    Number(Option<String>),
+    Text(String),
+    Period(i64),
+}
+
+fn compile_group(group: &GroupKey, dims: usize) -> Outcome<Vec<CompiledKey>> {
+    let raw: &[GroupKey] = match (group, dims) {
+        (_, 0) => &[],
+        (GroupKey::Tuple(members), n) if n > 1 && members.len() == n => members.as_slice(),
+        (one, 1) => std::slice::from_ref(one),
         _ => return Err(refusal(UNSUPPORTED, "a bucket of another shape")),
     };
+    raw.iter()
+        .map(|key| match key {
+            GroupKey::Null => Ok(CompiledKey::Null),
+            GroupKey::Bool(flag) => Ok(CompiledKey::Bool(*flag)),
+            GroupKey::Number(text) => Ok(CompiledKey::Number(
+                norn_ir::Decimal::parse(text)
+                    .ok()
+                    .map(|decimal| decimal.canonical()),
+            )),
+            GroupKey::Text(text) => Ok(CompiledKey::Text(nfc(text))),
+            GroupKey::Period { day, .. } => Ok(CompiledKey::Period(*day)),
+            GroupKey::Tuple(_) => Err(refusal(UNSUPPORTED, "a bucket of another kind")),
+        })
+        .collect()
+}
+
+/// Whether a projected row is in the compiled bucket.
+fn matches_bucket(row: &Projected, wanted: &[CompiledKey]) -> Outcome<bool> {
     let mut matches = true;
-    for (key, actual) in wanted.into_iter().zip(&row.groups) {
+    for (key, actual) in wanted.iter().zip(&row.groups) {
         matches &= match (key, actual) {
-            (GroupKey::Null, actual) => *actual == Group::Null,
-            (GroupKey::Bool(flag), Group::Bool(b)) => flag == b,
-            (GroupKey::Number(text), Group::Number(value)) => {
-                norn_ir::Decimal::parse(text).is_ok_and(|d| d.canonical() == value.canonical())
+            (CompiledKey::Null, actual) => *actual == Group::Null,
+            (CompiledKey::Bool(flag), Group::Bool(b)) => flag == b,
+            (CompiledKey::Number(canonical), Group::Number(value)) => {
+                canonical.as_deref() == Some(value.canonical().as_str())
             }
-            (GroupKey::Text(text), Group::Text(normal)) => nfc(text) == *normal,
-            (GroupKey::Period { day, .. }, Group::Day(actual)) => day == actual,
+            (CompiledKey::Text(wanted_text), Group::Text(normal)) => wanted_text == normal,
+            (CompiledKey::Period(day), Group::Day(actual)) => day == actual,
             (
-                GroupKey::Bool(_)
-                | GroupKey::Number(_)
-                | GroupKey::Text(_)
-                | GroupKey::Period { .. },
+                CompiledKey::Bool(_)
+                | CompiledKey::Number(_)
+                | CompiledKey::Text(_)
+                | CompiledKey::Period(_),
                 Group::Null,
             ) => false,
             _ => return Err(refusal(UNSUPPORTED, "a bucket of another kind")),
@@ -472,9 +498,10 @@ pub(super) fn members(
     let tenant = &*tenant;
     scope.verify_rows(&request.source, true)?;
     let (rows, dims) = projection(engine, tenant, &scope, &request.query)?;
+    let wanted = compile_group(&request.group, dims)?;
     let mut members = Vec::new();
     for row in rows.into_iter().filter(Projected::contributes) {
-        if in_bucket(&row, &request.group, dims)?
+        if matches_bucket(&row, &wanted)?
             && request
                 .after
                 .as_ref()

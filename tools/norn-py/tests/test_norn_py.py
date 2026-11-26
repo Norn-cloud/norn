@@ -744,7 +744,7 @@ class TestCanonicalNorn1AndTsParity(unittest.TestCase):
 from enum import StrEnum
 from typing import Annotated
 
-from norn_py import Concept, Field, ref_type
+from norn_py import Concept, DependencyPin, Field, ref_type
 
 
 class AgentKind(StrEnum):
@@ -757,9 +757,16 @@ class Agent(
     Concept,
     name="core.Agent",
     title="Agent",
-    version="0.1.0",
+    version="0.2.0",
     interface=True,
     role="thing",
+    dependencies=(
+        DependencyPin(
+            artifact_id="core.value_types.entity",
+            version="0.2.0",
+            kind="entity",
+        ),
+    ),
     description=(
         "An actor that holds resources, takes part in economic events and "
         "makes commitments: a person, an organisation or a system (REA agent)."
@@ -773,7 +780,7 @@ class Agent(
             res_agent = verify_deterministic_elaboration(
                 agent_py,
                 scope={},
-                source_path="registry/core/src/physics.ts",
+                source_path="registry/core/src/rea.ts",
                 registry_package_path="registry/core",
             )
             expected_agent = CORE_AGENT_GOLDEN.read_text(encoding="utf-8")

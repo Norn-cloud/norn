@@ -81,7 +81,7 @@ export function bindingRead(binding: DataBinding, context: Readonly<Record<strin
   const query = binding.query
   if (query.kind === "object_list") return { kind: "list", objectType, size: query.page.size }
   if (query.kind === "object_runtime_detail") {
-    const id = context[query.parameterId]
+    const id = Object.hasOwn(context, query.parameterId) ? context[query.parameterId] : undefined
     return typeof id === "string" && id !== "" ? { kind: "object", objectType, id } : null
   }
   return null

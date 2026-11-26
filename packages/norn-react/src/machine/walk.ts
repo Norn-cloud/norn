@@ -72,6 +72,15 @@ function messageFor(event: MachineEvent, entry: number, payload: Fields | undefi
  */
 export function walks(machine: Machine, evaluate: Evaluate, payloadFor?: PayloadFor, maxDepth = 16): Walk[] {
   const eventOf = new Map(machine.events.map((event) => [event.eventId, event]))
+  const catchAllByState = new Map<string, (typeof CATEGORIES)[number]>()
+  const catchAllFor = (stateId: string): (typeof CATEGORIES)[number] => {
+    let cached = catchAllByState.get(stateId)
+    if (cached === undefined) {
+      cached = catchAllCategory(machine, stateId)
+      catchAllByState.set(stateId, cached)
+    }
+    return cached
+  }
   const found = new Map<string, WalkStep[]>()
   const key = (snapshot: Snapshot) => `${snapshot.stateId}\u0000${JSON.stringify(snapshot.fields)}`
   const seen = new Set<string>()
@@ -85,8 +94,9 @@ export function walks(machine: Machine, evaluate: Evaluate, payloadFor?: Payload
         if (transition.from !== snapshot.stateId) continue
         const event = eventOf.get(transition.on)
         if (!event) throw new Error(`transition ${transition.transitionId} names undeclared event ${transition.on}`)
+        const catchAll = catchAllFor(transition.from)
         for (const payload of payloadFor?.(transition, event, snapshot) ?? [undefined]) {
-          const msg = messageFor(event, snapshot.entry, payload, catchAllCategory(machine, transition.from))
+          const msg = messageFor(event, snapshot.entry, payload, catchAll)
           let step
           try {
             step = update(machine, evaluate, snapshot, msg)

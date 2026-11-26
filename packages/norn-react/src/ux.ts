@@ -126,22 +126,27 @@ export interface WidgetUx {
 /** The entry prefix that names a UI SDK primitive at the catalog's pinned version. */
 export const UI_SDK_PREFIX = "ui-sdk:"
 
-/** Whether `label` is a source message: a `msg` object holding a string `id` and `source`. */
+/** Whether `label` is a source message: an own `msg` object holding a string `id` and `source`. */
 function isMessage(label: Text): label is Message {
+  if (!Object.hasOwn(label, "msg")) return false
   const message = (label as { readonly msg?: unknown }).msg
   if (typeof message !== "object" || message === null || Array.isArray(message)) return false
+  if (!Object.hasOwn(message, "id") || !Object.hasOwn(message, "source")) return false
   const { id, source } = message as { readonly id?: unknown; readonly source?: unknown }
   return typeof id === "string" && typeof source === "string"
 }
 
 /**
  * The text of `label` in `locale`: a message through the host's translations (`translate`), else its
- * source text; locale-keyed text in `locale`, else English, else any locale's.
+ * source text; locale-keyed text in `locale`, else English, else any locale's. Only own keys are read,
+ * so a locale named like an `Object.prototype` member never resolves to it.
  */
 export function text(label: Text, locale: string, translate?: Translate): string {
   if (isMessage(label)) return translate?.(label.msg.id, locale) ?? label.msg.source
   const locales = label as LocaleText
-  return locales[locale] ?? locales.en ?? Object.values(locales)[0] ?? ""
+  if (Object.hasOwn(locales, locale) && locales[locale] !== undefined) return locales[locale]
+  if (Object.hasOwn(locales, "en") && locales.en !== undefined) return locales.en
+  return Object.values(locales)[0] ?? ""
 }
 
 /** Every node of a tree, parents before children. */
