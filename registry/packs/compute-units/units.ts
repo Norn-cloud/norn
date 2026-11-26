@@ -661,7 +661,7 @@ export const PlaceQuotaHold = Norn.action({
         slice: Schema.Struct({
           resource: Schema.Struct({
             unit: Schema.String,
-            available: Norn.decimal(0),
+            available: Norn.decimal(0, { unit: { system: "ucum", code: "{token}" } }),
           }),
         }),
       }),

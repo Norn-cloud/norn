@@ -715,3 +715,29 @@ fn metric_slice_laws_admit_exact_and_rounded_ratios_and_refuse_invalid() {
         Ok(Verdict::Violated)
     );
 }
+
+#[test]
+#[allow(clippy::expect_used, clippy::panic, reason = "integration test")]
+fn analytics_study_evaluate_pins_admitted_diagnostics_function_manifest() {
+    let manifest_path =
+        repo_root().join("registry/packs/analytics/diagnostics.function-manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", manifest_path.display()));
+    let manifest = norn_checker::function::decode_function_manifest(&manifest_text)
+        .unwrap_or_else(|findings| panic!("diagnostics manifest should decode: {findings:#?}"));
+    let admitted = norn_checker::function::admit_function_manifest(&manifest)
+        .unwrap_or_else(|findings| panic!("diagnostics manifest should admit: {findings:#?}"));
+
+    let evaluate_action = read_json(
+        &repo_root()
+            .join("registry/packs/analytics/artifacts/analytics.study.evaluate.action.json"),
+    );
+    let pinned_digest =
+        evaluate_action["payload"]["effectProgram"]["acceptReceipt"]["manifestDigest"]
+            .as_str()
+            .expect("analytics.study.evaluate must pin acceptReceipt.manifestDigest");
+    assert_eq!(
+        admitted.digest.0, pinned_digest,
+        "analytics.study.evaluate.action must pin the admitted diagnostics FunctionManifest digest"
+    );
+}

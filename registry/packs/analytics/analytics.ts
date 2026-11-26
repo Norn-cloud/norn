@@ -565,7 +565,7 @@ export const EvaluateStudy = Norn.action({
     transition: "evaluate",
     acceptReceipt: {
       referenceField: "receipt",
-      manifestDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+      manifestDigest: "sha256:6b688d7ccd5b5e58cf8fef4a682cc87ec4033f0d445d42214f648dbfc406bee4",
       digestProperty: "receipt_digest",
       resultBindings: { diagnostics_passed: "diagnostics_passed" },
     },
