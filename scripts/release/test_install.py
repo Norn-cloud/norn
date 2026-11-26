@@ -136,15 +136,26 @@ class InstallTest(unittest.TestCase):
         self.assertIn("regular file", result.stderr)
         self.assertFalse(self.installed)
 
-        env = {
-            "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "HOME": str(self.tmp / "home"),
-            "NORN_REPO": "evil/repo/../../x",
-            "NORN_INSTALL_DIR": str(self.tmp / "install"),
-        }
-        bad_repo = subprocess.run(["sh", str(INSTALL)], env=env, capture_output=True, text=True)
-        self.assertNotEqual(bad_repo.returncode, 0)
-        self.assertIn("invalid NORN_REPO", bad_repo.stderr)
+        for bad in ("evil/repo/../../x", "../evil", "owner/..", "./repo", "owner/."):
+            env = {
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "HOME": str(self.tmp / "home"),
+                "NORN_REPO": bad,
+                "NORN_INSTALL_DIR": str(self.tmp / "install"),
+            }
+            bad_repo = subprocess.run(["sh", str(INSTALL)], env=env, capture_output=True, text=True)
+            self.assertNotEqual(bad_repo.returncode, 0, bad)
+            self.assertIn("invalid NORN_REPO", bad_repo.stderr, bad)
+        for bad_ver in (".", "..", "v1..2"):
+            env = {
+                "PATH": f"{self.bin}:{os.environ['PATH']}",
+                "HOME": str(self.tmp / "home"),
+                "NORN_VERSION": bad_ver,
+                "NORN_INSTALL_DIR": str(self.tmp / "install"),
+            }
+            bad_version = subprocess.run(["sh", str(INSTALL)], env=env, capture_output=True, text=True)
+            self.assertNotEqual(bad_version.returncode, 0, bad_ver)
+            self.assertIn("invalid NORN_VERSION", bad_version.stderr, bad_ver)
 
 
 if __name__ == "__main__":

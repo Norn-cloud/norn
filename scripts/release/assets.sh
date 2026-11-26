@@ -350,6 +350,7 @@ TOML
       tmp=$(mktemp "$out/.SHA256SUMS.XXXXXX")
       trap 'rm -f "$tmp"' EXIT
       sha256sum -- "${files[@]}" > "$tmp"
+      chmod 644 "$tmp"
       mv -f "$tmp" SHA256SUMS
       trap - EXIT
       cat SHA256SUMS

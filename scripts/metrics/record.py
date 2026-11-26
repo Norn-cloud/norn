@@ -270,11 +270,30 @@ def _auth_env() -> dict[str, str]:
     if not token:
         return {}
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    raw_count = os.environ.get("GIT_CONFIG_COUNT", "0")
+    try:
+        index = max(0, int(raw_count))
+    except ValueError:
+        index = 0
     return {
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+        "GIT_CONFIG_COUNT": str(index + 1),
+        f"GIT_CONFIG_KEY_{index}": "http.https://github.com/.extraheader",
+        f"GIT_CONFIG_VALUE_{index}": f"AUTHORIZATION: basic {basic}",
     }
+
+
+def _git_command_label(args: tuple[str, ...]) -> str:
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ("-c", "-C"):
+            skip_next = True
+            continue
+        if not arg.startswith("-"):
+            return arg
+    return "git"
 
 
 def git(repo: Path, *args: str, data: bytes | None = None, env: dict | None = None,
@@ -282,8 +301,7 @@ def git(repo: Path, *args: str, data: bytes | None = None, env: dict | None = No
     result = subprocess.run(["git", "-C", str(repo), *args], input=data, capture_output=True,
                             env={**os.environ, **(env or {})}, timeout=timeout)
     if check and result.returncode != 0:
-        label = next((arg for arg in args if not arg.startswith("-")), "git")
-        raise RuntimeError(f"git {label} failed: {result.stderr.decode(errors='replace').strip()}")
+        raise RuntimeError(f"git {_git_command_label(args)} failed: {result.stderr.decode(errors='replace').strip()}")
     return result
 
 

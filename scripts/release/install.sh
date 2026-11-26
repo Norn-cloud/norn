@@ -45,14 +45,14 @@ main() {
   dir=${NORN_INSTALL_DIR:-${HOME:?HOME is not set}/.local/bin}
 
   case "$repo" in
-    *[!A-Za-z0-9._/-]* | /* | */ | */*/*)
+    *[!A-Za-z0-9._/-]* | /* | */ | */*/* | ../* | */.. | ./* | */.)
       die "invalid NORN_REPO: $repo"
       ;;
     */*) ;;
     *) die "invalid NORN_REPO: $repo" ;;
   esac
   case "$version" in
-    "" | *[!A-Za-z0-9._+-]* | *..*)
+    "" | . | *[!A-Za-z0-9._+-]* | *..*)
       die "invalid NORN_VERSION: $version"
       ;;
   esac

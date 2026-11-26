@@ -72,27 +72,32 @@ def _run_bash(script: str, root: Path, timeout: int, *, capture: bool) -> subpro
     command = ["bash", "-o", "pipefail", "-ec", script]
     stdout_target = subprocess.PIPE if capture else sys.stderr
     stderr_target = subprocess.PIPE if capture else sys.stderr
-    with subprocess.Popen(
+    proc = subprocess.Popen(
         command,
         cwd=root,
         stdout=stdout_target,
         stderr=stderr_target,
         text=capture,
         start_new_session=True,
-    ) as proc:
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+    except BaseException:
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-            return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
-        except BaseException:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-            raise
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
 
 
 def run_probe(probe: dict, root: Path) -> bool:

@@ -407,17 +407,23 @@ class Probes(unittest.TestCase):
             "[link](https://example.test/a%28b%29%7Cc)",
         )
         old = os.environ.get("METRICS_PUSH_TOKEN")
+        old_count = os.environ.get("GIT_CONFIG_COUNT")
         os.environ["METRICS_PUSH_TOKEN"] = "ghp_super_secret_test_token"
+        os.environ["GIT_CONFIG_COUNT"] = "2"
         try:
             env = record._auth_env()
-            self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
-            self.assertEqual(env["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader")
-            self.assertIn("AUTHORIZATION: basic ", env["GIT_CONFIG_VALUE_0"])
+            self.assertEqual(env["GIT_CONFIG_COUNT"], "3")
+            self.assertEqual(env["GIT_CONFIG_KEY_2"], "http.https://github.com/.extraheader")
+            self.assertIn("AUTHORIZATION: basic ", env["GIT_CONFIG_VALUE_2"])
         finally:
             if old is None:
                 os.environ.pop("METRICS_PUSH_TOKEN", None)
             else:
                 os.environ["METRICS_PUSH_TOKEN"] = old
+            if old_count is None:
+                os.environ.pop("GIT_CONFIG_COUNT", None)
+            else:
+                os.environ["GIT_CONFIG_COUNT"] = old_count
 
     def test_shipped_probes_are_well_formed(self):
         probes = json.loads((HERE / "probes.json").read_text())

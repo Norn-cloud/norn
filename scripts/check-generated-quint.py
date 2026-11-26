@@ -181,21 +181,25 @@ def compile_process(command, environment, work, deadline):
     """Process execution and group cleanup share the caller's wall-clock budget."""
     if deadline - time.monotonic() <= CLEANUP_RESERVE_SECONDS:
         raise subprocess.TimeoutExpired(command, 0)
-    with subprocess.Popen(command, env=environment, cwd=work, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, start_new_session=True) as process:
+    process = subprocess.Popen(command, env=environment, cwd=work, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        remaining = max(0, deadline - time.monotonic() - CLEANUP_RESERVE_SECONDS)
+        stdout, stderr = process.communicate(timeout=remaining)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    finally:
         try:
-            remaining = max(0, deadline - time.monotonic() - CLEANUP_RESERVE_SECONDS)
-            stdout, stderr = process.communicate(timeout=remaining)
-            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-        finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=max(0.1, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                pass
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
 
 
 def oracle_record(status, trace_raw):
