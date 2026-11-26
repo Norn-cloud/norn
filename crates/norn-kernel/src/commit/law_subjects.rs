@@ -212,32 +212,28 @@ fn law_subjects<E, C, T, V: CommitView + ?Sized>(
     subjects: &mut LawSubjects,
 ) -> Result<(), CommitError<V::Error>> {
     let model = post.model();
-    // A subject whose link changed is a changed subject.
+    // A subject whose link changed is a changed subject; for LAW-LINK-MANY-1,
+    // a source whose link is added or removed re-checks the subject it links.
     for write in &commit.links {
         let key = model.canonical_link(&write.key);
-        if subjects.direct.contains(&key.source) {
+        let need_forward = !subjects.direct.contains(&key.source);
+        let need_inverse = !subjects.direct.contains(&key.target);
+        if !need_forward && !need_inverse {
             continue;
         }
-        let Some(ty) = post.concrete(&key.source)? else {
-            continue;
-        };
-        let source = FactKey::new(ty.as_str(), &key.source.key);
-        if index
-            .forward
-            .iter()
-            .any(|(subject, link, _)| *link == key.link && model.is_a(&source.object_type, subject))
-        {
-            subjects.relinked.insert(source);
+        let post_source = post.concrete(&key.source)?;
+        if need_forward && let Some(ty) = post_source.as_ref() {
+            let source = FactKey::new(ty.as_str(), &key.source.key);
+            if index.forward.iter().any(|(subject, link, _)| {
+                *link == key.link && model.is_a(&source.object_type, subject)
+            }) {
+                subjects.relinked.insert(source);
+            }
         }
-    }
-    // LAW-LINK-MANY-1: a source whose link is added or removed (a line moved,
-    // added to or deleted from its document) re-checks the subject it links.
-    for write in &commit.links {
-        let key = model.canonical_link(&write.key);
-        if subjects.direct.contains(&key.target) {
+        if !need_inverse {
             continue;
         }
-        let source = if let Some(ty) = post.concrete(&key.source)? {
+        let source = if let Some(ty) = post_source {
             ty
         } else if let Some(old) = post
             .before()

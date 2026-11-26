@@ -647,6 +647,35 @@ fn snapshot_row<'a, X>(
         })
 }
 
+fn existing_row_state<'a, X>(
+    rows: &'a BTreeMap<(String, String), FactState>,
+    collection_id: &str,
+    child_type: &ObjectTypeName,
+    row_id: &str,
+    expected: FactVersion,
+) -> Result<&'a FactState, ActionRefusal<X>> {
+    let current = snapshot_row(rows, collection_id, row_id)?;
+    if current.version != expected {
+        return Err(stale_action(
+            FactKey::new(child_type.as_str(), row_id),
+            expected,
+            current.version,
+        ));
+    }
+    Ok(current)
+}
+
+fn existing_row_values<'a, X>(
+    current: &'a FactState,
+    row_id: &str,
+) -> Result<&'a JsonObject, ActionRefusal<X>> {
+    current.values.as_ref().ok_or_else(|| {
+        ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+            reason: format!("owned row {row_id:?} disappeared from the loaded snapshot"),
+        })
+    })
+}
+
 fn snapshot_config<'a, X>(
     configs: &'a BTreeMap<String, &OwnedCollectionAction>,
     collection_id: &str,
@@ -742,23 +771,14 @@ where
         meter,
         capture,
     } = envelope;
-    let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
-    else {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    };
-    if object_id.trim().is_empty() {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    }
+    let object_id =
+        super::required_object_id::<H::Error>(&preparation.effective_input, object_id_field)?;
 
     let object_type = call
         .object_type
         .clone()
         .unwrap_or_else(|| ObjectTypeName(object_kind.to_owned()));
-    let target = FactKey::new(object_type.as_str(), object_id.clone());
+    let target = FactKey::new(object_type.as_str(), object_id);
     crate::check_fact_key_identity(&target)
         .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
     let parent_state = host.load(&target).map_err(host_failure)?;
@@ -973,8 +993,6 @@ where
         let ids = snapshot_collection(&ordered_rows, collection_id)?;
         for (index, row_id) in ids.iter().enumerate() {
             let row_key = FactKey::new(collection.child_type.as_str(), row_id.clone());
-            crate::check_fact_key_identity(&row_key)
-                .map_err(|error| ActionRefusal::Decision(DecisionRefusal::from_commit(error)))?;
             if !row_facts.insert(row_key.clone()) {
                 return Err(ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
                     reason: format!("row {row_key} appears in more than one owned collection"),
@@ -1007,8 +1025,10 @@ where
                         .to_owned(),
                 }));
             }
-            if values.get(collection.row_id_property.as_str())
-                != Some(&JsonValue::String(row_id.clone()))
+            if values
+                .get(collection.row_id_property.as_str())
+                .and_then(JsonValue::as_str)
+                != Some(row_id.as_str())
                 || !integer_equals(
                     values.get(collection.ordering_key.as_str()),
                     index
@@ -1349,14 +1369,13 @@ where
                                 field: row_ops_field.to_owned(),
                             });
                         }
-                        let current = snapshot_row(&row_states, collection_id, row_id)?;
-                        if current.version != *expected {
-                            return Err(stale_action(
-                                FactKey::new(collection.child_type.as_str(), row_id.clone()),
-                                *expected,
-                                current.version,
-                            ));
-                        }
+                        let current = existing_row_state(
+                            &row_states,
+                            collection_id,
+                            &collection.child_type,
+                            row_id,
+                            *expected,
+                        )?;
                         let config = snapshot_config(&configs, collection_id)?;
                         validate_row_values::<H::Error>(
                             catalog,
@@ -1365,13 +1384,7 @@ where
                             config,
                             row_ops_field,
                         )?;
-                        let current_values = current.values.as_ref().ok_or_else(|| {
-                            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
-                                reason: format!(
-                                    "owned row {row_id:?} disappeared from the loaded snapshot"
-                                ),
-                            })
-                        })?;
+                        let current_values = existing_row_values(current, row_id)?;
                         let mut proposal = current_values.clone();
                         proposal.extend(values.clone());
                         replacements.insert(row_id.clone(), proposal);
@@ -1385,21 +1398,14 @@ where
                                 field: row_ops_field.to_owned(),
                             });
                         }
-                        let current = snapshot_row(&row_states, collection_id, row_id)?;
-                        if current.version != *expected {
-                            return Err(stale_action(
-                                FactKey::new(collection.child_type.as_str(), row_id.clone()),
-                                *expected,
-                                current.version,
-                            ));
-                        }
-                        let current_values = current.values.as_ref().ok_or_else(|| {
-                            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
-                                reason: format!(
-                                    "owned row {row_id:?} disappeared from the loaded snapshot"
-                                ),
-                            })
-                        })?;
+                        let current = existing_row_state(
+                            &row_states,
+                            collection_id,
+                            &collection.child_type,
+                            row_id,
+                            *expected,
+                        )?;
+                        let current_values = existing_row_values(current, row_id)?;
                         guarded_rows.insert(
                             (collection_id.clone(), row_id.clone()),
                             current_values.clone(),

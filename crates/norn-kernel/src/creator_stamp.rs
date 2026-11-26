@@ -108,35 +108,73 @@ impl CreatorStampProof {
         model: CommitModel<'_, '_>,
         view: &V,
     ) -> Result<bool, CommitError<V::Error>> {
-        if self.consumes != commit.consumes
-            || self.reads.iter().any(|read| !commit.reads.contains(read))
-            || self.link_reads != commit.link_reads
-            || self.predicate_reads != commit.predicate_reads
-            || self.writes.len() != commit.writes.len()
-            || self.links.len() != commit.links.len()
-        {
-            return Ok(false);
-        }
-        let links = self
-            .links
-            .iter()
-            .map(|write| {
-                let mutation = match &write.mutation {
-                    LinkMutation::Add { values } => LinkMutation::Add {
-                        values: model.effective_link_values(commit, view, &write.key, values)?,
-                    },
-                    LinkMutation::Remove => LinkMutation::Remove,
-                };
-                Ok(LinkWrite {
-                    key: write.key.clone(),
-                    expected: write.expected,
-                    mutation,
-                })
-            })
-            .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
-        Ok(links == commit.links
-            && canonical_writes::<V::Error>(model, &self.writes)? == commit.writes)
+        binds_prepared_commit(
+            PreparedCommitProof {
+                consumes: self.consumes.as_ref(),
+                reads: &self.reads,
+                link_reads: &self.link_reads,
+                predicate_reads: &self.predicate_reads,
+                writes: &self.writes,
+                links: &self.links,
+            },
+            commit,
+            model,
+            view,
+        )
     }
+}
+
+/// Borrowed view of the transaction components sealed by a kernel-prepared
+/// proof (`OwnedRowsCommitProof` or `CreatorStampProof`).
+pub(crate) struct PreparedCommitProof<'a> {
+    pub(crate) consumes: Option<&'a Consumed>,
+    pub(crate) reads: &'a [FactExpectation],
+    pub(crate) link_reads: &'a [LinkReadExpectation],
+    pub(crate) predicate_reads: &'a [PredicateReadExpectation],
+    pub(crate) writes: &'a [FactWrite],
+    pub(crate) links: &'a [LinkWrite],
+}
+
+/// Whether `commit` matches the kernel-prepared writes, links, consumed
+/// delivery, and read fences sealed in `proof`. Perimeter adapters may append
+/// extra visibility/tombstone CAS reads, never drop or alter a sealed one.
+pub(crate) fn binds_prepared_commit<E, C, T, V: CommitView + ?Sized>(
+    proof: PreparedCommitProof<'_>,
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+) -> Result<bool, CommitError<V::Error>> {
+    if proof.consumes != commit.consumes.as_ref()
+        || proof.reads.iter().any(|read| !commit.reads.contains(read))
+        || proof.link_reads != commit.link_reads.as_slice()
+        || proof.predicate_reads != commit.predicate_reads.as_slice()
+        || proof.writes.len() != commit.writes.len()
+        || proof.links.len() != commit.links.len()
+    {
+        return Ok(false);
+    }
+    let canonical_writes = canonical_writes::<V::Error>(model, proof.writes)?;
+    if canonical_writes != commit.writes {
+        return Ok(false);
+    }
+    let canonical_links = proof
+        .links
+        .iter()
+        .map(|write| {
+            let mutation = match &write.mutation {
+                LinkMutation::Add { values } => LinkMutation::Add {
+                    values: model.effective_link_values(commit, view, &write.key, values)?,
+                },
+                LinkMutation::Remove => LinkMutation::Remove,
+            };
+            Ok(LinkWrite {
+                key: write.key.clone(),
+                expected: write.expected,
+                mutation,
+            })
+        })
+        .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
+    Ok(canonical_links == commit.links)
 }
 
 /// Kernel-prepared writes as host admission sees them: each `Put` through

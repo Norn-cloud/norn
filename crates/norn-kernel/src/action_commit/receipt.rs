@@ -194,59 +194,29 @@ pub(super) fn precondition_read_refusal<X>(
     error: &CommitError<X>,
     precondition_reads: &BTreeSet<FactKey>,
 ) -> Option<ActionRefusal<X>> {
-    if let CommitError::PredicateReadConflict { object_type } = error {
-        return Some(ActionRefusal::StaleAggregateRead {
-            object_type: object_type.clone(),
-        });
-    }
-    let stale_fact = match error {
-        CommitError::Conflict { key, .. } if precondition_reads.contains(key) => Some(key.clone()),
-        CommitError::Conflict { key, .. } => precondition_reads
-            .iter()
-            .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
-            .cloned(),
-        CommitError::IdentityReuse
-        | CommitError::IdentityCollision { .. }
-        | CommitError::AtomicBoundary { .. }
-        | CommitError::AtomicDeliveryBoundary { .. }
-        | CommitError::ImmutableObject { .. }
-        | CommitError::LifecycleInitialization { .. }
-        | CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::ReceiptNotAccepted { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::LinkReadConflict { .. }
-        | CommitError::UnsupportedLinkRead { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::PredicateReadConflict { .. }
-        | CommitError::UnsupportedPredicateRead { .. }
-        | CommitError::InvalidPredicateRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantViolation { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::Law { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_) => None,
-    };
-    let stale_link = match error {
+    match error {
+        CommitError::PredicateReadConflict { object_type } => {
+            Some(ActionRefusal::StaleAggregateRead {
+                object_type: object_type.clone(),
+            })
+        }
+        CommitError::Conflict { key, .. } => {
+            let key = if precondition_reads.contains(key) {
+                Some(key.clone())
+            } else {
+                precondition_reads
+                    .iter()
+                    .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
+                    .cloned()
+            };
+            key.map(|key| ActionRefusal::StalePreconditionRead { key, link: None })
+        }
         CommitError::LinkReadConflict { source_key, link }
         | CommitError::UnsupportedLinkRead { source_key, link } => {
-            Some((source_key.clone(), link.clone()))
+            Some(ActionRefusal::StalePreconditionRead {
+                key: source_key.clone(),
+                link: Some(link.clone()),
+            })
         }
         CommitError::IdentityReuse
         | CommitError::IdentityCollision { .. }
@@ -258,14 +228,12 @@ pub(super) fn precondition_read_refusal<X>(
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
         | CommitError::ReceiptNotAccepted { .. }
-        | CommitError::Conflict { .. }
         | CommitError::DuplicateLink { .. }
         | CommitError::IdentifierTooLong { .. }
         | CommitError::LinkConflict { .. }
         | CommitError::DuplicateLinkRead { .. }
         | CommitError::LinkReadTooLarge { .. }
         | CommitError::InvalidLinkRead { .. }
-        | CommitError::PredicateReadConflict { .. }
         | CommitError::UnsupportedPredicateRead { .. }
         | CommitError::InvalidPredicateRead { .. }
         | CommitError::DanglingLink { .. }
@@ -284,14 +252,7 @@ pub(super) fn precondition_read_refusal<X>(
         | CommitError::EventLimitExceeded { .. }
         | CommitError::Overflow
         | CommitError::Host(_) => None,
-    };
-    if let Some(key) = stale_fact {
-        return Some(ActionRefusal::StalePreconditionRead { key, link: None });
     }
-    stale_link.map(|(key, link)| ActionRefusal::StalePreconditionRead {
-        key,
-        link: Some(link),
-    })
 }
 
 /// Kernel-owned attribution for direct reference validation. It cannot cross a

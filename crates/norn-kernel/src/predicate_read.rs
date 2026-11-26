@@ -14,7 +14,7 @@
 //! Matching is defined once, here ([`PredicateQuery::matches`]); hosts
 //! enumerate candidates and apply it, so every host agrees on membership.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -203,26 +203,28 @@ impl PredicateWindow {
     fn key(&self, value: &str) -> Option<WindowKey> {
         match self.kind {
             // A valid `YYYY-MM-DD` spelling orders lexically by day.
-            PredicateWindowKind::Date => {
-                norn_expr::temporal::validate_date(value)
-                    .ok()
-                    .and_then(|()| {
-                        let digits: String = value.chars().filter(char::is_ascii_digit).collect();
-                        digits.parse::<i64>().ok().map(|day| (day, 0))
-                    })
-            }
+            PredicateWindowKind::Date => norn_expr::temporal::validate_date(value).ok().map(|()| {
+                let day = value
+                    .bytes()
+                    .filter(u8::is_ascii_digit)
+                    .fold(0_i64, |acc, digit| {
+                        acc.saturating_mul(10)
+                            .saturating_add(i64::from(digit.saturating_sub(b'0')))
+                    });
+                (day, 0)
+            }),
             PredicateWindowKind::Timestamp => {
                 norn_expr::temporal::timestamp_ordering_key(value).ok()
             }
         }
     }
 
-    /// Whether `value` lies inside the window; an unreadable value never does.
-    #[must_use]
-    pub fn contains(&self, value: &str) -> bool {
-        let (Some(value), Some(start), Some(end)) =
-            (self.key(value), self.key(&self.start), self.key(&self.end))
-        else {
+    fn bounds(&self) -> Option<(WindowKey, WindowKey)> {
+        Some((self.key(&self.start)?, self.key(&self.end)?))
+    }
+
+    fn contains_with_bounds(&self, value: &str, start: WindowKey, end: WindowKey) -> bool {
+        let Some(value) = self.key(value) else {
             return false;
         };
         let after_start = if self.start_inclusive {
@@ -236,6 +238,15 @@ impl PredicateWindow {
             value < end
         };
         after_start && before_end
+    }
+
+    /// Whether `value` lies inside the window; an unreadable value never does.
+    #[must_use]
+    pub fn contains(&self, value: &str) -> bool {
+        let Some((start, end)) = self.bounds() else {
+            return false;
+        };
+        self.contains_with_bounds(value, start, end)
     }
 }
 
@@ -271,16 +282,13 @@ pub(crate) fn check_predicate_read_shapes<X>(
             return Err(invalid("member keys exceed the byte bound"));
         }
         let mut previous: Option<FactKey> = None;
-        let mut keys = BTreeSet::new();
         for member in &read.members {
             crate::commit_check::check_fact_key_identity(&member.key)?;
             if !model.is_a(&member.key.object_type, &predicate.object_type) {
                 return Err(invalid("a member is not of the predicate's type"));
             }
             let canonical = model.canonical(&member.key);
-            if previous.as_ref().is_some_and(|prior| prior >= &canonical)
-                || !keys.insert(canonical.clone())
-            {
+            if previous.as_ref().is_some_and(|prior| prior >= &canonical) {
                 return Err(invalid("members are not in strict canonical key order"));
             }
             previous = Some(canonical);
@@ -318,7 +326,7 @@ pub(crate) fn recheck_predicate_reads<V: CommitView + ?Sized>(
                 object_type: read.predicate.object_type.clone(),
             });
         };
-        if canonical(&current) != canonical(&read.members) {
+        if current.len() != read.members.len() || canonical(&current) != canonical(&read.members) {
             return Err(CommitError::PredicateReadConflict {
                 object_type: read.predicate.object_type.clone(),
             });
@@ -339,9 +347,27 @@ pub fn select_members<'a, I>(
 where
     I: IntoIterator<Item = (&'a FactKey, FactVersion, &'a JsonObject)>,
 {
+    let window_bounds = match &predicate.window {
+        Some(window) => match window.bounds() {
+            Some(bounds) => Some((window, bounds)),
+            None => return Vec::new(),
+        },
+        None => None,
+    };
     let mut members: Vec<PredicateObject> = candidates
         .into_iter()
-        .filter(|(_, _, values)| predicate.matches(values))
+        .filter(|(_, _, values)| {
+            predicate.filter.iter().all(|(property, expected)| {
+                values
+                    .get(property.as_str())
+                    .is_some_and(|actual| !actual.is_null() && actual == expected)
+            }) && window_bounds.is_none_or(|(window, (start, end))| {
+                values
+                    .get(window.property.as_str())
+                    .and_then(JsonValue::as_str)
+                    .is_some_and(|value| window.contains_with_bounds(value, start, end))
+            })
+        })
         .map(|(key, version, values)| PredicateObject {
             key: key.clone(),
             version,

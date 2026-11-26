@@ -23,7 +23,7 @@ use crate::cell_host::{
 pub(crate) use crate::commit::{CommitLinks, MAX_LINK_LAW_SUBJECTS};
 use crate::commit::{PostState, check_commit_local};
 pub use crate::commit::{check_commit_identifiers, check_fact_key_identity};
-use crate::creator_stamp::{KernelTrust as Trust, canonical_writes};
+use crate::creator_stamp::{KernelTrust as Trust, PreparedCommitProof, binds_prepared_commit};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
 use crate::snapshot_observe::ObservationAuthorization;
 use norn_checker::EffectiveKind;
@@ -433,37 +433,19 @@ pub fn check_commit_owned_rows<E: 'static, C, T, V: CommitView + ?Sized>(
             actual: commit.events.len(),
         });
     }
-    let trusted_owned_rows = if proof.consumes() != commit.consumes.as_ref()
-        // Perimeter adapters may append visibility/tombstone CAS reads, but
-        // cannot remove or alter any read sealed by kernel preparation.
-        || proof.reads().iter().any(|read| !commit.reads.contains(read))
-        || proof.link_reads() != commit.link_reads.as_slice()
-        || proof.predicate_reads() != commit.predicate_reads.as_slice()
-        || proof.writes().len() != commit.writes.len()
-        || proof.links().len() != commit.links.len()
-    {
-        false
-    } else {
-        let canonical_writes = canonical_writes::<V::Error>(*model, proof.writes())?;
-        let canonical_links = proof
-            .links()
-            .iter()
-            .map(|write| {
-                let mutation = match &write.mutation {
-                    LinkMutation::Add { values } => LinkMutation::Add {
-                        values: model.effective_link_values(commit, view, &write.key, values)?,
-                    },
-                    LinkMutation::Remove => LinkMutation::Remove,
-                };
-                Ok(LinkWrite {
-                    key: write.key.clone(),
-                    expected: write.expected,
-                    mutation,
-                })
-            })
-            .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
-        canonical_writes == commit.writes && canonical_links == commit.links
-    };
+    let trusted_owned_rows = binds_prepared_commit(
+        PreparedCommitProof {
+            consumes: proof.consumes(),
+            reads: proof.reads(),
+            link_reads: proof.link_reads(),
+            predicate_reads: proof.predicate_reads(),
+            writes: proof.writes(),
+            links: proof.links(),
+        },
+        commit,
+        *model,
+        view,
+    )?;
     check_commit_inner(commit, *model, view, None, Trust::owned(trusted_owned_rows))
 }
 

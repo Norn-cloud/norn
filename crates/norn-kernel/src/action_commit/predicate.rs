@@ -127,59 +127,54 @@ pub(super) fn load_aggregate_predicate_objects<H: CellHost + ?Sized>(
         aggregate: aggregate.name.clone(),
         reason,
     };
-    let fresh = !snapshots.iter().any(|(read, _)| *read == *predicate);
-    let objects = if fresh {
-        let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
-        let objects = match context
-            .host
-            .read_predicate_for_action(predicate, max_items, remaining, &mut |object| {
-                authorize_predicate_object(context, &aggregate.object_type, object)
-            })
-            .map_err(host_failure)?
-        {
-            PredicateActionRead::Admitted(objects) => objects,
-            PredicateActionRead::Concealed => return Err(ActionRefusal::TargetNotFound),
+    let objects =
+        if let Some((_, existing)) = snapshots.iter().find(|(read, _)| *read == *predicate) {
+            let objects = existing.clone();
+            authorize_predicate_matches(context, &aggregate.object_type, &objects)?;
+            if objects.len() > max_items {
+                return Err(ActionRefusal::AggregateBoundExceeded {
+                    aggregate: aggregate.name.clone(),
+                    max_items: aggregate.max_items,
+                });
+            }
+            objects
+        } else {
+            let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
+            let objects = match context
+                .host
+                .read_predicate_for_action(predicate, max_items, remaining, &mut |object| {
+                    authorize_predicate_object(context, &aggregate.object_type, object)
+                })
+                .map_err(host_failure)?
+            {
+                PredicateActionRead::Admitted(objects) => objects,
+                PredicateActionRead::Concealed => return Err(ActionRefusal::TargetNotFound),
+            };
+            if objects.len() > max_items {
+                return Err(ActionRefusal::AggregateBoundExceeded {
+                    aggregate: aggregate.name.clone(),
+                    max_items: aggregate.max_items,
+                });
+            }
+            for object in &objects {
+                let bytes = norn_ir::canonical::canonical_json_of(&object.values)
+                    .map_err(|error| unavailable(error.to_string()))?
+                    .len();
+                meter
+                    .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
+                    .map_err(|exceeded| match exceeded.kind {
+                        crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
+                            aggregate: aggregate.name.clone(),
+                            max_bytes: limits.max_canonical_bytes,
+                        },
+                        crate::IngressLimit::SliceRecords
+                        | crate::IngressLimit::SliceRelationDepth
+                        | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
+                    })?;
+            }
+            snapshots.push((predicate.clone(), objects.clone()));
+            objects
         };
-        if objects.len() > max_items {
-            return Err(ActionRefusal::AggregateBoundExceeded {
-                aggregate: aggregate.name.clone(),
-                max_items: aggregate.max_items,
-            });
-        }
-        for object in &objects {
-            let bytes = norn_ir::canonical::canonical_json_of(&object.values)
-                .map_err(|error| unavailable(error.to_string()))?
-                .len();
-            meter
-                .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
-                .map_err(|exceeded| match exceeded.kind {
-                    crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
-                        aggregate: aggregate.name.clone(),
-                        max_bytes: limits.max_canonical_bytes,
-                    },
-                    crate::IngressLimit::SliceRecords
-                    | crate::IngressLimit::SliceRelationDepth
-                    | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
-                })?;
-        }
-        snapshots.push((predicate.clone(), objects.clone()));
-        objects
-    } else {
-        let Some((_, existing)) = snapshots.iter().find(|(read, _)| *read == *predicate) else {
-            return Err(unavailable(
-                "the predicate snapshot was not retained".to_owned(),
-            ));
-        };
-        let objects = existing.clone();
-        authorize_predicate_matches(context, &aggregate.object_type, &objects)?;
-        if objects.len() > max_items {
-            return Err(ActionRefusal::AggregateBoundExceeded {
-                aggregate: aggregate.name.clone(),
-                max_items: aggregate.max_items,
-            });
-        }
-        objects
-    };
     Ok(objects)
 }
 
@@ -223,6 +218,12 @@ fn admit_predicate_matches<H: CellHost + ?Sized>(
 ) -> Result<(), ActionRefusal<H::Error>> {
     let ActionSliceContext { catalog, .. } = *context;
     let model = crate::CommitModel::new(catalog);
+    let mut canonical_to_concrete = std::collections::BTreeMap::new();
+    for key in state.facts.keys() {
+        canonical_to_concrete
+            .entry(model.canonical(key))
+            .or_insert_with(|| key.clone());
+    }
     let mut items = Vec::with_capacity(objects.len());
     let mut item_keys = Vec::with_capacity(objects.len());
     for object in objects {
@@ -246,13 +247,10 @@ fn admit_predicate_matches<H: CellHost + ?Sized>(
         )?;
 
         let canonical = model.canonical(&object.key);
-        let concrete_key = if let Some((existing_key, existing_state)) = state
-            .facts
-            .iter()
-            .find(|(key, _)| model.canonical(key) == canonical)
-        {
-            if existing_state.version != object.version
-                || existing_state.values.as_ref() != Some(&object.values)
+        let concrete_key = if let Some(existing_key) = canonical_to_concrete.get(&canonical) {
+            if let Some(existing_state) = state.facts.get(existing_key)
+                && (existing_state.version != object.version
+                    || existing_state.values.as_ref() != Some(&object.values))
             {
                 return Err(ActionRefusal::StalePreconditionRead {
                     key: object.key.clone(),
@@ -268,6 +266,7 @@ fn admit_predicate_matches<H: CellHost + ?Sized>(
                     values: Some(object.values.clone()),
                 },
             );
+            canonical_to_concrete.insert(canonical, object.key.clone());
             object.key.clone()
         };
         state.precondition_keys.insert(concrete_key.clone());

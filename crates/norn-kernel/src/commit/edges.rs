@@ -349,11 +349,9 @@ pub(super) fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
             .map(|collection| collection.id.as_str().to_owned())
             .collect::<BTreeSet<_>>();
         for link in required {
-            let declared = model.link(&concrete, &link);
-            if declared.is_some_and(|declaration| declaration.cardinality.required)
-                && !source_links
-                    .iter()
-                    .any(|live| live.source == *source && live.link == link)
+            if !source_links
+                .iter()
+                .any(|live| live.source == *source && live.link == link)
             {
                 return Err(CommitError::LinkRequired {
                     parent: source.clone(),

@@ -181,30 +181,30 @@ impl LinkRead {
     }
 }
 
-/// The declared forward links with inverse `role` whose target `subject`
-/// reaches and that many sources may share (`from: many`): the declarations
-/// an inverse read of `subject.role` resolves to. A to-one inverse role is
-/// not one; the checker refuses a law that reads it.
-fn inverse_declarations(
+type InverseIndex = std::collections::BTreeMap<String, Vec<(ObjectTypeName, String)>>;
+
+/// The declared forward links with inverse roles whose target `subject`
+/// reaches and that many sources may share (`from: many`), indexed by role.
+fn inverse_declarations_for_subject(
     catalog: &TypeCatalog<'_>,
     subject: &ObjectTypeName,
-    role: &str,
-) -> Vec<(ObjectTypeName, String)> {
-    let mut found = Vec::new();
+) -> InverseIndex {
+    let mut by_role = InverseIndex::new();
     for source in catalog.object_type_names() {
         for link in catalog.declared_links(&source) {
-            if link.inverse.as_ref().is_some_and(|id| id.as_str() == role)
+            if let Some(role) = link.inverse.as_ref()
                 && reaches(catalog, subject, &link.target)
                 && link.cardinality.from == norn_ir::Multiplicity::Many
             {
                 let entry = (source.clone(), link.id.as_str().to_owned());
+                let found = by_role.entry(role.as_str().to_owned()).or_default();
                 if !found.contains(&entry) {
                     found.push(entry);
                 }
             }
         }
     }
-    found
+    by_role
 }
 
 /// LAW-LINK-1 / LAW-LINK-MANY-1: the links of `subject` a law reads, in
@@ -219,6 +219,15 @@ pub fn law_link_reads(
     catalog: &TypeCatalog<'_>,
     subject: &ObjectTypeName,
     law: &LawIR,
+) -> Result<Vec<LinkRead>, LawEvaluationError> {
+    law_link_reads_with_inverses(catalog, subject, law, &mut None)
+}
+
+fn law_link_reads_with_inverses(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    law: &LawIR,
+    inverses: &mut Option<InverseIndex>,
 ) -> Result<Vec<LinkRead>, LawEvaluationError> {
     let declared = |owner: &ObjectTypeName, id: &str| {
         catalog.ancestry(owner).into_iter().find_map(|definition| {
@@ -244,6 +253,7 @@ pub fn law_link_reads(
     {
         let paths = norn_expr::expression_read_paths(text, "self")
             .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?;
+        let mut element_paths = None;
         for path in paths {
             let Some(first) = path.first() else {
                 continue;
@@ -261,8 +271,10 @@ pub fn law_link_reads(
                 reads.insert(LinkRead::Forward(link.id.as_str().to_owned()));
                 continue;
             }
-            let inverse = inverse_declarations(catalog, subject, first);
-            let [(source, link)] = inverse.as_slice() else {
+            let inverse_map =
+                inverses.get_or_insert_with(|| inverse_declarations_for_subject(catalog, subject));
+            let inverse = inverse_map.get(first).map_or(&[][..], Vec::as_slice);
+            let [(source, link)] = inverse else {
                 if inverse.is_empty() {
                     continue;
                 }
@@ -271,9 +283,14 @@ pub fn law_link_reads(
                     law.id
                 )));
             };
-            let hops = norn_expr::expression_element_paths(text, "self")
-                .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?
-                .get(std::slice::from_ref(first))
+            if element_paths.is_none() {
+                element_paths = Some(norn_expr::expression_element_paths(text, "self").map_err(
+                    |error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)),
+                )?);
+            }
+            let hops = element_paths
+                .as_ref()
+                .and_then(|map| map.get(std::slice::from_ref(first)))
                 .is_some_and(|reads| {
                     reads.iter().any(|read| {
                         read.first()
@@ -348,9 +365,10 @@ pub fn link_law_index(catalog: &TypeCatalog<'_>) -> Result<LinkLawIndex, LawEval
         return Ok(index);
     }
     for subject in &catalog.object_type_names() {
+        let mut inverses = None;
         for artifact in catalog.governing_laws(subject)? {
             let law = decode(catalog, artifact)?;
-            for read in law_link_reads(catalog, subject, law)? {
+            for read in law_link_reads_with_inverses(catalog, subject, law, &mut inverses)? {
                 match read {
                     LinkRead::Forward(link) => {
                         let declared =
@@ -542,11 +560,9 @@ impl TypeCatalog<'_> {
                 .invariants(object_type)
                 .map_err(|missing| LawEvaluationError::Invalid(missing.as_str().to_owned()))?;
         }
+        let lineage = self.lineage(object_type);
         let is_a = |name: &str| {
-            self.lineage(object_type)
-                .iter()
-                .any(|ty| ty.as_str() == name)
-                || self.implements(object_type, name)
+            lineage.iter().any(|ty| ty.as_str() == name) || self.implements(object_type, name)
         };
         let mut laws = Vec::new();
         for artifact in &self.law_artifacts {
@@ -728,11 +744,22 @@ pub(crate) fn classify(
     catalog: &TypeCatalog<'_>,
     rule_ref: &DataQualityRuleRef,
 ) -> DataQualityRuleClassification {
+    let DataQualityRuleRef::Law {
+        artifact_id,
+        law_id,
+        ..
+    } = rule_ref
+    else {
+        return DataQualityRuleClassification::Unverified;
+    };
     for artifact in &catalog.law_artifacts {
+        if artifact.artifact_id != *artifact_id {
+            continue;
+        }
         let Ok(law) = decode(catalog, artifact) else {
             continue;
         };
-        if !supported(law) || pin(artifact, law).as_ref() != Ok(rule_ref) {
+        if law.id != *law_id || !supported(law) || pin(artifact, law).as_ref() != Ok(rule_ref) {
             continue;
         }
         let governs = |subject: &ObjectTypeName| {
@@ -852,26 +879,37 @@ pub fn evaluate_linked(
     if artifacts.is_empty() {
         return Ok(Vec::new());
     }
-    let Value::Object(subject) = expr_object(values)? else {
+    let base_context = Value::object([("self", expr_object(values)?)]);
+    let Value::Object(base_map) = &base_context else {
         return Err(LawEvaluationError::Invalid("subject values".into()));
     };
+    let Some(Value::Object(subject)) = base_map.get("self") else {
+        return Err(LawEvaluationError::Invalid("subject values".into()));
+    };
+    let mut inverses = None;
     let mut failures = Vec::new();
     for artifact in artifacts {
         let law = decode(catalog, artifact)?;
         if !supported(law) {
             return Err(LawEvaluationError::Unsupported(law.id.clone()));
         }
-        let reads = law_link_reads(catalog, &key.object_type, law)?;
+        let reads = law_link_reads_with_inverses(catalog, &key.object_type, law, &mut inverses)?;
         if !reads.is_empty() && links.defers() {
             continue;
         }
-        let mut object = subject.clone();
-        let bound = bind_links(key, reads, links, &mut object)?;
-        let context = Value::object([("self", Value::Object(object))]);
+        let linked_context;
+        let (bound, context) = if reads.is_empty() {
+            (BoundLinks::default(), &base_context)
+        } else {
+            let mut object = subject.clone();
+            let bound = bind_links(key, reads, links, &mut object)?;
+            linked_context = Value::object([("self", Value::Object(object))]);
+            (bound, &linked_context)
+        };
         let invariant_id = invariant_binding(catalog, &key.object_type, law)?;
         let mut invariant_failure = None;
         let activation = match &law.condition {
-            Some(expr) => boolean(catalog, expr.as_str(), &context, remaining)?,
+            Some(expr) => boolean(catalog, expr.as_str(), context, remaining)?,
             None => Ok(true),
         };
         let result = match activation {
@@ -879,7 +917,7 @@ pub fn evaluate_linked(
             Err(outcome) => Err(outcome),
             Ok(true) => match &law.response {
                 LawResponse::Predicate { expression } => {
-                    boolean(catalog, expression.as_str(), &context, remaining)?.and_then(|value| {
+                    boolean(catalog, expression.as_str(), context, remaining)?.and_then(|value| {
                         if value == matches!(law.modality, LawModality::Always {}) {
                             Ok(())
                         } else {

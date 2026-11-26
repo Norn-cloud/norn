@@ -257,18 +257,25 @@ pub(super) fn validate_action_input<X>(
     input: &JsonObject,
 ) -> Result<(), ActionRefusal<X>> {
     let schema = norn_ir::JsonValue::Object(action.input_schema.clone());
-    let value = norn_expr::Value::try_from(&RuntimeValue::Object(input.clone())).map_err(
-        |_conversion| ActionRefusal::InvalidInput {
-            field: "$input".to_owned(),
-        },
-    )?;
     let parsed =
         norn_expr::schema::Schema::parse_action(&schema, "$input").map_err(|violation| {
             ActionRefusal::InvalidInput {
                 field: violation.path,
             }
         })?;
-    parsed
+    validate_action_input_with_schema(&parsed, input)
+}
+
+fn validate_action_input_with_schema<X>(
+    schema: &norn_expr::schema::Schema,
+    input: &JsonObject,
+) -> Result<(), ActionRefusal<X>> {
+    let value = norn_expr::Value::try_from(&RuntimeValue::Object(input.clone())).map_err(
+        |_conversion| ActionRefusal::InvalidInput {
+            field: "$input".to_owned(),
+        },
+    )?;
+    schema
         .check(&value, "$input")
         .map_err(|violation| ActionRefusal::InvalidInput {
             field: violation.path,
@@ -320,7 +327,7 @@ pub fn prepare_action_input_for_call<'a, X>(
 fn normalize_action_input<X>(
     action: &ActionRoot,
     raw_input: &JsonObject,
-) -> Result<JsonObject, ActionRefusal<X>> {
+) -> Result<(JsonObject, norn_expr::schema::Schema), ActionRefusal<X>> {
     let schema = norn_expr::schema::Schema::parse_action(
         &norn_ir::JsonValue::Object(action.input_schema.clone()),
         "$input",
@@ -353,7 +360,7 @@ fn normalize_action_input<X>(
             field: "$input".to_owned(),
         });
     };
-    Ok(normalized)
+    Ok((normalized, schema))
 }
 
 fn prepare_action_input_inner<'a, X>(
@@ -368,11 +375,11 @@ fn prepare_action_input_inner<'a, X>(
     // Rejects injected identity fields and, for prepared actions, refuses
     // oversized raw input by its canonical size before any clone, decode or
     // normalization work.
-    check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
-    let has_preparation = has_action_preparation_features(action);
-    let normalized = normalize_action_input::<X>(action, raw_input)?;
+    let measured_raw_bytes =
+        check_action_identity_input::<X>(action, raw_input, actor, max_input_bytes)?;
+    let (normalized, schema) = normalize_action_input::<X>(action, raw_input)?;
     if !receipt_input_bound_applies(action, raw_input, &normalized) {
-        validate_action_input(action, &normalized)?;
+        validate_action_input_with_schema(&schema, &normalized)?;
         return Ok(ActionInputPreparation {
             action,
             raw_input,
@@ -388,10 +395,17 @@ fn prepare_action_input_inner<'a, X>(
     }
     let max_receipt_bytes =
         usize::try_from(profile.envelope.max_output_bytes).unwrap_or(usize::MAX);
-    if !has_preparation {
-        check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?;
+    let raw_bytes = match measured_raw_bytes {
+        Some(bytes) => bytes,
+        None => check_canonical_object_bound::<X>("caller input", raw_input, max_input_bytes)?,
+    };
+    if raw_bytes > max_receipt_bytes {
+        return Err(ActionRefusal::InputBoundExceeded {
+            subject: "action call receipt input".to_owned(),
+            actual_bytes: raw_bytes,
+            max_bytes: max_receipt_bytes,
+        });
     }
-    let raw_bytes = check_receipt_input_bound::<X>(raw_input)?;
     let mut effective_input = normalized;
     for derivation in &action.derive {
         if derivation.input_required && !raw_input.contains_key(&derivation.field) {
@@ -403,11 +417,12 @@ fn prepare_action_input_inner<'a, X>(
             effective_input.insert(derivation.field.clone(), RuntimeValue::Null);
         }
     }
-    check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
+    let measured_effective_bytes =
+        check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
     let effective_bytes = if action.derive.is_empty() && effective_input == *raw_input {
         0 // Raw input already describes the exact execution value.
     } else {
-        canonical_object_bytes::<X>(&effective_input)?
+        measured_effective_bytes
     };
     let mut receipt_evidence_bytes = raw_bytes
         .saturating_add(effective_bytes)
@@ -448,7 +463,7 @@ fn prepare_action_input_inner<'a, X>(
         check_canonical_object_bound::<X>("effective input", &effective_input, max_input_bytes)?;
     }
 
-    validate_action_input(action, &effective_input)?;
+    validate_action_input_with_schema(&schema, &effective_input)?;
     Ok(ActionInputPreparation {
         action,
         raw_input,
@@ -469,7 +484,7 @@ pub(super) fn check_action_identity_input<X>(
     raw_input: &JsonObject,
     actor: Option<&str>,
     max_bytes: usize,
-) -> Result<(), ActionRefusal<X>> {
+) -> Result<Option<usize>, ActionRefusal<X>> {
     // Validate the principal before any traversal of caller input.
     if actor.is_some_and(|a| {
         a.len() > max_bytes || a.trim().is_empty() || norn_ir::canonical::nfc(a) != a
@@ -478,20 +493,25 @@ pub(super) fn check_action_identity_input<X>(
             field: "actor".into(),
         });
     }
-    if has_action_preparation_features(action)
+    let measured = if has_action_preparation_features(action)
         || matches!(
             action.effect_program,
             Some(ActionEffectProgram::MutateParentWithRows { .. })
-        )
-    {
-        check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
-    }
+        ) {
+        Some(check_canonical_object_bound::<X>(
+            "caller input",
+            raw_input,
+            max_bytes,
+        )?)
+    } else {
+        None
+    };
     if let Some((field, _)) = reserved_action_identity(raw_input) {
         return Err(ActionRefusal::InvalidInput {
             field: field.into(),
         });
     }
-    Ok(())
+    Ok(measured)
 }
 
 pub(super) fn rfc6901_token(segment: &str) -> String {
@@ -710,7 +730,7 @@ pub(super) fn check_canonical_object_bound<X>(
     subject: &str,
     object: &JsonObject,
     max_bytes: usize,
-) -> Result<(), ActionRefusal<X>> {
+) -> Result<usize, ActionRefusal<X>> {
     let actual_bytes = canonical_object_bytes::<X>(object)?;
     if actual_bytes > max_bytes {
         return Err(ActionRefusal::InputBoundExceeded {
@@ -719,7 +739,7 @@ pub(super) fn check_canonical_object_bound<X>(
             max_bytes,
         });
     }
-    Ok(())
+    Ok(actual_bytes)
 }
 
 pub(super) fn action_expression_context(
@@ -727,11 +747,12 @@ pub(super) fn action_expression_context(
     slice: &JsonObject,
     aggregates: Option<&JsonObject>,
 ) -> Result<ExprValue, String> {
-    let mut context = expression_object(input)?
-        .into_iter()
-        .filter(|(name, _)| name != "input" && name != "slice")
-        .collect::<BTreeMap<_, _>>();
     let input = expression_object(input)?;
+    let mut context = input
+        .iter()
+        .filter(|(name, _)| *name != "input" && *name != "slice")
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<BTreeMap<_, _>>();
     let slice = expression_object(slice)?;
     context.insert("input".to_owned(), ExprValue::Object(input));
     context.insert("slice".to_owned(), ExprValue::Object(slice));
@@ -794,7 +815,7 @@ pub(super) fn check_call_receipt_input<X>(
     raw_input: &JsonObject,
 ) -> Result<(), ActionRefusal<X>> {
     if !has_action_preparation_features(action) {
-        let normalized = normalize_action_input::<X>(action, raw_input)?;
+        let (normalized, _schema) = normalize_action_input::<X>(action, raw_input)?;
         if !receipt_input_bound_applies(action, raw_input, &normalized) {
             return Ok(());
         }

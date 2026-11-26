@@ -141,6 +141,7 @@ pub(super) fn commit_upsert<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
+    rule: Option<&crate::synchronous_rule::SynchronousRule>,
     mut preparation: ActionInputPreparation<'_>,
     authorizer: &dyn ActionAuthorizer,
     object_id_field: &str,
@@ -161,8 +162,6 @@ where
         .clone()
         .unwrap_or_else(|| ObjectTypeName(object_kind.to_owned()));
     check_kind(catalog, &object_type, object_kind)?;
-    // CREATE-WRITER-1: the writer's closure is resolved before any host read.
-    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     let naming_series = type_series(catalog, &object_type);
     if matches!(write_mode, UpsertWriteMode::CreateOnly)
         && let Some(series) = naming_series.as_ref()
@@ -215,21 +214,12 @@ where
             }
         });
     }
-    let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
-    else {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    };
-    if object_id.trim().is_empty() {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    }
+    let object_id =
+        super::required_object_id::<H::Error>(&preparation.effective_input, object_id_field)?;
 
     let target = FactKey {
         object_type: object_type.clone(),
-        key: object_id.clone(),
+        key: object_id.to_owned(),
     };
     let state = authorize_upsert_target(
         host,
@@ -331,22 +321,16 @@ where
         UpsertWriteMode::Upsert | UpsertWriteMode::CreateOnly if !state.exists() => {
             vec![FactChange::Create {
                 object_type: object_type.clone(),
-                key: object_id.clone(),
+                key: object_id.to_owned(),
                 values: business_input.clone(),
             }]
         }
         UpsertWriteMode::UpdateOnly if !state.exists() => {
             return Err(ActionRefusal::TargetNotFound);
         }
-        UpsertWriteMode::Upsert | UpsertWriteMode::UpdateOnly => business_input
-            .iter()
-            .map(|(property, value)| FactChange::Set {
-                object_type: object_type.clone(),
-                key: object_id.clone(),
-                property: norn_ir::PropertyId(property.clone()),
-                value: value.clone(),
-            })
-            .collect(),
+        UpsertWriteMode::Upsert | UpsertWriteMode::UpdateOnly => {
+            set_changes(&object_type, object_id, &business_input)
+        }
         UpsertWriteMode::CreateOnly => {
             return Err(ActionRefusal::WriteModeFailed {
                 mode: "create_only".to_owned(),
@@ -376,15 +360,7 @@ where
                     ),
                 });
             }
-            business_input
-                .iter()
-                .map(|(property, value)| FactChange::Set {
-                    object_type: object_type.clone(),
-                    key: object_id.clone(),
-                    property: norn_ir::PropertyId(property.clone()),
-                    value: value.clone(),
-                })
-                .collect()
+            set_changes(&object_type, object_id, &business_input)
         }
     };
     // PRINCIPAL-INPUT-1: resolved once, after replay and write-mode checks,
@@ -446,4 +422,20 @@ where
         },
         envelope,
     )
+}
+
+fn set_changes(
+    object_type: &ObjectTypeName,
+    object_id: &str,
+    business_input: &JsonObject,
+) -> Vec<FactChange> {
+    business_input
+        .iter()
+        .map(|(property, value)| FactChange::Set {
+            object_type: object_type.clone(),
+            key: object_id.to_owned(),
+            property: norn_ir::PropertyId(property.clone()),
+            value: value.clone(),
+        })
+        .collect()
 }

@@ -231,7 +231,7 @@ where
 {
     let action = call.action;
     // TXN-RULE-1: a declared closure never degrades to its primary effect.
-    crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
+    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     if !action.create_links.is_empty()
         && matches!(
             action.effect_program,
@@ -286,6 +286,7 @@ where
             host,
             catalog,
             call,
+            rule,
             prepared_input,
             authorizer,
             object_id_field,
@@ -304,6 +305,7 @@ where
             host,
             catalog,
             call,
+            rule,
             prepared_input,
             authorizer,
             object_id_field,
@@ -336,6 +338,19 @@ where
             envelope,
         ),
     }
+}
+
+fn required_object_id<'a, X>(
+    effective_input: &'a JsonObject,
+    field: &str,
+) -> Result<&'a str, ActionRefusal<X>> {
+    effective_input
+        .get(field)
+        .and_then(JsonValue::as_str)
+        .filter(|object_id| !object_id.trim().is_empty())
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: field.to_owned(),
+        })
 }
 
 fn check_kind<X>(

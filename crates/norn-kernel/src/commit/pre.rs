@@ -288,21 +288,14 @@ fn check_link_read_shapes<X>(
                 max_bytes: MAX_LINK_NAME_BYTES,
             });
         }
-        let identity = (model.canonical(&read.source), read.link.clone());
-        if !link_reads.insert(identity) {
+        let canonical_source = model.canonical(&read.source);
+        if !link_reads.insert((canonical_source.clone(), read.link.clone())) {
             return Err(CommitError::DuplicateLinkRead {
                 source_key: read.source.clone(),
                 link: read.link.clone(),
             });
         }
-        if read.targets.len() > MAX_LINK_READ_TARGETS {
-            return Err(CommitError::LinkReadTooLarge {
-                source_key: read.source.clone(),
-                link: read.link.clone(),
-                actual: read.targets.len(),
-                max: MAX_LINK_READ_TARGETS,
-            });
-        }
+        check_link_read_target_count(read)?;
         let Some(declared) = model.link(&read.source.object_type, &read.link) else {
             return Err(CommitError::InvalidLinkRead {
                 source_key: read.source.clone(),
@@ -313,7 +306,7 @@ fn check_link_read_shapes<X>(
         for target in &read.targets {
             check_link_key_identity(&target.key)?;
             let canonical = model.canonical_link(&target.key);
-            if canonical.source != model.canonical(&read.source)
+            if canonical.source != canonical_source
                 || canonical.link != read.link
                 || previous.as_ref().is_some_and(|prior| prior >= &canonical)
             {
@@ -330,17 +323,38 @@ fn check_link_read_shapes<X>(
             }
             previous = Some(canonical);
         }
-        let aggregate_bytes = read.targets.iter().fold(0_usize, |total, target| {
-            total.saturating_add(target.key.target.key.len())
+        check_link_read_target_bytes(read)?;
+    }
+    Ok(())
+}
+
+fn check_link_read_target_count<X>(
+    read: &crate::cell_host::LinkReadExpectation,
+) -> Result<(), CommitError<X>> {
+    if read.targets.len() > MAX_LINK_READ_TARGETS {
+        return Err(CommitError::LinkReadTooLarge {
+            source_key: read.source.clone(),
+            link: read.link.clone(),
+            actual: read.targets.len(),
+            max: MAX_LINK_READ_TARGETS,
         });
-        if aggregate_bytes > MAX_LINK_READ_BYTES {
-            return Err(CommitError::LinkReadTooLarge {
-                source_key: read.source.clone(),
-                link: read.link.clone(),
-                actual: aggregate_bytes,
-                max: MAX_LINK_READ_BYTES,
-            });
-        }
+    }
+    Ok(())
+}
+
+fn check_link_read_target_bytes<X>(
+    read: &crate::cell_host::LinkReadExpectation,
+) -> Result<(), CommitError<X>> {
+    let aggregate_bytes = read.targets.iter().fold(0_usize, |total, target| {
+        total.saturating_add(target.key.target.key.len())
+    });
+    if aggregate_bytes > MAX_LINK_READ_BYTES {
+        return Err(CommitError::LinkReadTooLarge {
+            source_key: read.source.clone(),
+            link: read.link.clone(),
+            actual: aggregate_bytes,
+            max: MAX_LINK_READ_BYTES,
+        });
     }
     Ok(())
 }
@@ -375,28 +389,11 @@ pub fn check_commit_identifiers<E, C, T, X>(
                 max_bytes: MAX_LINK_NAME_BYTES,
             });
         }
-        if read.targets.len() > MAX_LINK_READ_TARGETS {
-            return Err(CommitError::LinkReadTooLarge {
-                source_key: read.source.clone(),
-                link: read.link.clone(),
-                actual: read.targets.len(),
-                max: MAX_LINK_READ_TARGETS,
-            });
-        }
+        check_link_read_target_count(read)?;
         for target in &read.targets {
             check_link_key_identity(&target.key)?;
         }
-        let aggregate_bytes = read.targets.iter().fold(0_usize, |total, target| {
-            total.saturating_add(target.key.target.key.len())
-        });
-        if aggregate_bytes > MAX_LINK_READ_BYTES {
-            return Err(CommitError::LinkReadTooLarge {
-                source_key: read.source.clone(),
-                link: read.link.clone(),
-                actual: aggregate_bytes,
-                max: MAX_LINK_READ_BYTES,
-            });
-        }
+        check_link_read_target_bytes(read)?;
     }
     for read in &commit.predicate_reads {
         if read.members.len() > crate::predicate_read::MAX_PREDICATE_MEMBERS {

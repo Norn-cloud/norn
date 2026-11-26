@@ -1,6 +1,6 @@
 use norn_ir::{FactChange, ObjectTypeName, ResourceLimitProfile};
 
-use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
+use crate::cell_host::{CellHost, FactKey, JsonObject};
 use crate::decision_commit::{FactEvent, TypeCatalog};
 use crate::limits::{EnvelopeLimits, SliceMeter};
 
@@ -27,6 +27,7 @@ pub(super) fn commit_transition<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
+    rule: Option<&crate::synchronous_rule::SynchronousRule>,
     mut preparation: ActionInputPreparation<'_>,
     authorizer: &dyn ActionAuthorizer,
     object_id_field: &str,
@@ -53,17 +54,8 @@ where
             action_id: action.action_id.clone(),
         });
     }
-    let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
-    else {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    };
-    if object_id.trim().is_empty() {
-        return Err(ActionRefusal::InvalidInput {
-            field: object_id_field.to_owned(),
-        });
-    }
+    let object_id =
+        super::required_object_id::<H::Error>(&preparation.effective_input, object_id_field)?;
     let object_type = call
         .object_type
         .clone()
@@ -71,7 +63,7 @@ where
 
     let target = FactKey {
         object_type: object_type.clone(),
-        key: object_id.clone(),
+        key: object_id.to_owned(),
     };
     let state = authorize_target(
         host,
@@ -88,7 +80,6 @@ where
         ACTION_CALL_TYPE,
         format!("{}/{}", action.action_id, call.idempotency_key),
     );
-    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     let mut record = ActionCallRecord::for_transition(call, &preparation, &target, transition);
     record.rule_binding = rule.map(|rule| rule.binding(call)).transpose()?;
     let recorded = host.load(&record_key).map_err(host_failure)?;

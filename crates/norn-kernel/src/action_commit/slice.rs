@@ -26,7 +26,7 @@ fn reference_action(
     action: &ActionRoot,
     authorizer: &dyn ActionAuthorizer,
     target: &FactKey,
-) -> bool {
+) -> Option<Vec<String>> {
     // Closed creates use identity-only links. Patches preserve their complete
     // target while attributing exact expression operands. Unknown selectors,
     // optional references, commands and policy dependencies stay conservative.
@@ -37,7 +37,7 @@ fn reference_action(
         ..
     }) = &action.effect_program
     else {
-        return false;
+        return None;
     };
     let patch = matches!(write_mode, UpsertWriteMode::Upsert);
     if !authorizer.supports_action_reference_lineage(action)
@@ -54,8 +54,7 @@ fn reference_action(
             && (!action.create_links.is_empty()
                 || action.quantity_effect.is_some()
                 || !catalog.lifecycles(&target.object_type).is_empty()
-                || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
-                || patch_read_properties(catalog, action, target).is_none()))
+                || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())))
         || action.slice.iter().any(|entry| {
             entry.optional
                 || !matches!(&entry.key, SliceKey::Property { from, property } if from == "input" && if patch {
@@ -69,9 +68,13 @@ fn reference_action(
                 .is_ok_and(|reads| !reads.whole_root && reads.fields.is_empty())
         }))
     {
-        return false;
+        return None;
     }
-    true
+    if patch {
+        patch_read_properties(catalog, action, target)
+    } else {
+        Some(Vec::new())
+    }
 }
 
 fn patch_read_properties(
@@ -132,8 +135,10 @@ pub(super) fn reference_read_proof<E, C, I>(
     commit: &CellCommit<E, C, I>,
     target: &FactKey,
 ) -> Option<ActionReferenceReads> {
-    if !reference_action(catalog, action, authorizer, target)
-        || !commit.effects.is_empty()
+    let Some(patch_properties) = reference_action(catalog, action, authorizer, target) else {
+        return None;
+    };
+    if !commit.effects.is_empty()
         || commit.consumes.is_some()
         || !commit.link_reads.is_empty()
         || !commit.predicate_reads.is_empty()
@@ -168,7 +173,7 @@ pub(super) fn reference_read_proof<E, C, I>(
         })
     ) {
         let reference = references.iter().find(|read| read.key == *target)?.clone();
-        vec![(reference, patch_read_properties(catalog, action, target)?)]
+        vec![(reference, patch_properties)]
     } else {
         Vec::new()
     };
@@ -643,7 +648,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let reserved_bytes = meter.bytes();
     let reference_only = context.host.supports_reference_reads()
-        && reference_action(catalog, call.action, context.authorizer, action_target);
+        && reference_action(catalog, call.action, context.authorizer, action_target).is_some();
     // Keep the separately authorized target snapshot out of the slice cache
     // until declared entries have passed their read-type gates. If an entry
     // aliases the target, it must be loaded through the same bounded read and
