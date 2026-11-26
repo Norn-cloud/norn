@@ -160,6 +160,9 @@ pub(super) fn write_parquet(
 
 /// The largest row group a sink buffers before it is written out.
 const ROW_GROUP_BYTES: usize = 64 << 20;
+/// NB3: the most string bytes one written or read batch may hold: far under
+/// a `Utf8` array's `i32` offsets.
+pub(super) const MAX_BATCH_BYTES: usize = 1 << 30;
 
 /// A Parquet file written batch by batch, each row group bounded in rows and
 /// bytes, its footer finished and its bytes synced by [`Sink::finish`].
@@ -172,11 +175,36 @@ pub(super) struct Sink {
 impl Sink {
     /// A new file at `path` (which must not exist) of `schema`.
     pub(super) fn create(path: &Path, schema: &SchemaRef) -> Outcome<Self> {
+        Self::open(path, schema, true, ROW_GROUP_BYTES)
+    }
+
+    /// #1765: a new file at `path` of `schema` whose row groups are written
+    /// out once they buffer `bytes` (or [`ROW_GROUP_BYTES`], if less), so
+    /// the writer holds no more than a memory bound allows.
+    pub(super) fn bounded(path: &Path, schema: &SchemaRef, bytes: usize) -> Outcome<Self> {
+        Self::open(path, schema, true, bytes.clamp(1, ROW_GROUP_BYTES))
+    }
+
+    /// NB2 (#1765): a new staged part at `path` of `schema`, written without
+    /// dictionary encoding. A staged part is read back in batches sized by
+    /// its row groups' `total_byte_size / num_rows`; a dictionary would make
+    /// that average understate wide repeated strings, which decode in full.
+    pub(super) fn staged(path: &Path, schema: &SchemaRef) -> Outcome<Self> {
+        Self::open(path, schema, false, ROW_GROUP_BYTES)
+    }
+
+    fn open(
+        path: &Path,
+        schema: &SchemaRef,
+        dictionary: bool,
+        group_bytes: usize,
+    ) -> Outcome<Self> {
         let file = super::catalog::create_new(path)?;
         let properties = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::default()))
             .set_max_row_group_row_count(Some(ROW_GROUP_ROWS))
-            .set_max_row_group_bytes(Some(ROW_GROUP_BYTES))
+            .set_max_row_group_bytes(Some(group_bytes))
+            .set_dictionary_enabled(dictionary)
             .build();
         let writer = ArrowWriter::try_new(file, Arc::clone(schema), Some(properties))
             .map_err(|error| engine_error(error.to_string()))?;

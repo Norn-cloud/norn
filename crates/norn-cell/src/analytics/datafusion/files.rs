@@ -8,10 +8,12 @@
 //! (LAW-03): a nanosecond field a reader would narrow or zone refuses.
 //!
 //! B1: nothing here holds a whole file. Rows reach the caller [`CHUNK_ROWS`]
-//! (or half a chunk's bytes) at a time; a CSV is split incrementally
+//! (or [`Caps::flush`] bytes) at a time; a CSV is split incrementally
 //! ([`super::csv`]), never past a record's bound; a Parquet file decodes only
-//! its declared columns, strings as views of their dictionary; and every
-//! cell, chunk, file and footer is checked against the [`Caps`] the engine's
+//! its declared columns, strings as views of their dictionary, in batches
+//! whose bytes are bounded by its real page sizes ([`super::pages`]), after
+//! every declared field's type is known to be readable; and every cell,
+//! chunk, file and footer is checked against the [`Caps`] the engine's
 //! memory bound gives before more is read.
 
 use std::collections::BTreeSet;
@@ -28,8 +30,9 @@ use parquet::arrow::arrow_reader::{
 use parquet::basic::{LogicalType, Type as PhysicalType};
 
 use super::super::{Column, ColumnKind, FileFormat, LoadRequest};
-use super::csv::next_record;
-use super::parquet_text::{Encoding, is_temporal, parquet_text};
+use super::columnar::MAX_BATCH_BYTES;
+use super::csv::{next_header, next_record};
+use super::parquet_text::{Encoding, is_temporal, parquet_text, plain_readable};
 use super::{EXHAUSTED, Outcome, engine_error, refusal};
 
 /// Rows handed on at a time.
@@ -37,15 +40,22 @@ pub(super) const CHUNK_ROWS: usize = 1024;
 /// The most row groups a source file may declare.
 const MAX_ROW_GROUPS: usize = 100_000;
 /// The most top-level fields a source file may declare.
-const MAX_FIELDS: usize = 4096;
+pub(super) const MAX_FIELDS: usize = 4096;
+/// The refusal of a file declaring more structure than a load reads.
+pub(super) const STRUCTURE: &str = "the file declares too much structure";
 
 /// The bounds of one load, from the engine's memory bound.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Caps {
     /// The widest cell, in bytes.
     pub cell: usize,
-    /// The most bytes one chunk (or one decoded Parquet batch) may hold.
+    /// The most bytes one decoded Parquet batch may hold.
     pub chunk: usize,
+    /// NB3: the text bytes after which rows are handed on: half a chunk, and
+    /// never more than [`MAX_BATCH_BYTES`], so no column of a chunk's rows,
+    /// nor of their held-set findings written in slices, overflows a
+    /// `Utf8` array's `i32` offsets however large the memory bound.
+    pub flush: usize,
     /// The most text bytes a whole load may decode.
     pub total: u64,
     /// The largest Parquet footer read before its metadata is parsed.
@@ -61,6 +71,7 @@ impl Caps {
         Self {
             cell: quarter.min(64 << 20),
             chunk: quarter,
+            flush: quarter.div_euclid(2).clamp(1, MAX_BATCH_BYTES),
             total: u64::try_from(memory).unwrap_or(u64::MAX).saturating_mul(64),
             footer: u64::try_from(quarter.min(64 << 20)).unwrap_or(u64::MAX),
             deadline: Duration::from_mins(30),
@@ -138,8 +149,11 @@ impl Meter {
     }
 }
 
-/// Rows gathered for the caller: handed on at [`CHUNK_ROWS`] rows or half
-/// the chunk bound of text, whichever comes first.
+/// Rows gathered for the caller: handed on at [`CHUNK_ROWS`] rows or
+/// [`Caps::flush`] bytes of text, whichever comes first. NB3: a row that
+/// would take a chunk past [`Caps::flush`] starts a chunk of its own, and a
+/// row wider than [`MAX_BATCH_BYTES`] alone refuses, so a chunk's text
+/// never exceeds either bound.
 struct Chunker<'e> {
     rows: Vec<SourceRow>,
     bytes: usize,
@@ -153,9 +167,15 @@ impl Chunker<'_> {
             .iter()
             .flatten()
             .fold(0_usize, |total, text| total.saturating_add(text.len()));
+        if bytes > MAX_BATCH_BYTES {
+            return Err(refusal(EXHAUSTED, "a row is wider than the load's bound"));
+        }
+        if self.bytes.saturating_add(bytes) > meter.caps.flush {
+            self.flush()?;
+        }
         self.bytes = self.bytes.saturating_add(bytes);
         self.rows.push(row);
-        if self.rows.len() >= CHUNK_ROWS || self.bytes >= meter.caps.chunk.div_euclid(2) {
+        if self.rows.len() >= CHUNK_ROWS || self.bytes >= meter.caps.flush {
             self.flush()?;
         }
         Ok(())
@@ -205,7 +225,9 @@ fn read_csv(
         reader.consume(3);
     }
     let text = |bytes: Vec<u8>| String::from_utf8(bytes).map_err(unreadable);
-    let headers = next_record(&mut reader, meter, MAX_FIELDS)?
+    // NB5: a header of more than `MAX_FIELDS` fields is refused as a Parquet
+    // file of as many is, before another field is allocated.
+    let headers = next_header(&mut reader, meter, MAX_FIELDS)?
         .map_or_else(Vec::new, |record| record.fields)
         .into_iter()
         .map(text)
@@ -268,7 +290,9 @@ fn check_footer(file: &mut std::fs::File, caps: Caps) -> Outcome<()> {
 }
 
 /// LAW-03: how each declared column's field becomes text, refusing fields
-/// that hold instants this load cannot import exactly.
+/// that hold instants this load cannot import exactly. NB4: a declared
+/// field of a type no text cast reads (binary, nested, dictionary and other
+/// unsupported types) refuses here, before the first batch is decoded.
 fn parquet_plan(
     request: &LoadRequest,
     metadata: &ArrowReaderMetadata,
@@ -321,6 +345,12 @@ fn parquet_plan(
             }
             (ColumnKind::Timestamp, DataType::Timestamp(_, _)) => Encoding::Micros,
             (ColumnKind::Timestamp, kind) if is_temporal(kind) => return Err(lossy()),
+            (_, kind) if !plain_readable(kind) => {
+                return Err(refusal(
+                    "bulk.unsupported_encoding",
+                    format!("{name} is of a type this load does not read"),
+                ));
+            }
             _ => Encoding::Plain,
         };
         plan.push((index, encoding, column.kind));
@@ -364,10 +394,7 @@ fn read_parquet(
     if metadata.metadata().num_row_groups() > MAX_ROW_GROUPS
         || metadata.schema().fields().len() > MAX_FIELDS
     {
-        return Err(refusal(
-            "bulk.unsupported_encoding",
-            "the file declares too much structure",
-        ));
+        return Err(refusal("bulk.unsupported_encoding", STRUCTURE));
     }
     let plan = parquet_plan(request, &metadata)?;
     let options = options.with_schema(Arc::new(viewed(metadata.schema())));
@@ -381,6 +408,15 @@ fn read_parquet(
         .into_iter()
         .collect();
     let mask = ProjectionMask::roots(metadata.parquet_schema(), roots.iter().copied());
+    // NB1: the projected leaves, whose real pages bound every batch.
+    let schema = metadata.parquet_schema();
+    let leaves: Vec<usize> = (0..schema.num_columns())
+        .filter(|leaf| {
+            roots
+                .binary_search(&schema.get_column_root_idx(*leaf))
+                .is_ok()
+        })
+        .collect();
     let mut chunker = Chunker {
         rows: Vec::new(),
         bytes: 0,
@@ -388,9 +424,9 @@ fn read_parquet(
     };
     let mut number = 0_u64;
     for group in 0..metadata.metadata().num_row_groups() {
-        // B3: decode each row group in batches its projected columns' own
-        // sizes allow, so no batch decodes past half a chunk.
-        let rows = group_rows(&metadata, group, &roots, meter.caps)?;
+        // NB1: decode each row group in batches its projected columns' real
+        // page sizes allow, so no batch decodes past half a chunk.
+        let rows = super::pages::group_rows(&source, &metadata, group, &leaves, meter)?;
         let file = source.try_clone().map_err(unreadable)?;
         let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, metadata.clone())
             .with_row_groups(vec![group])
@@ -401,40 +437,6 @@ fn read_parquet(
         number = decode_group(reader, &plan, &roots, meter, &mut chunker, number)?;
     }
     chunker.flush()
-}
-
-/// The rows per batch of row group `group`: half a chunk over its projected
-/// columns' average uncompressed row size, at most [`CHUNK_ROWS`]; a row
-/// larger than a chunk refuses before anything is decoded.
-fn group_rows(
-    metadata: &ArrowReaderMetadata,
-    group: usize,
-    roots: &[usize],
-    caps: Caps,
-) -> Outcome<usize> {
-    let row_group = metadata.metadata().row_group(group);
-    let schema = metadata.parquet_schema();
-    let bytes = (0..row_group.num_columns())
-        .filter(|leaf| {
-            roots
-                .binary_search(&schema.get_column_root_idx(*leaf))
-                .is_ok()
-        })
-        .map(|leaf| row_group.column(leaf).uncompressed_size())
-        .fold(0_i64, i64::saturating_add);
-    let rows = row_group.num_rows().max(1);
-    let row_bytes = usize::try_from(bytes.div_euclid(rows).max(1)).unwrap_or(usize::MAX);
-    if row_bytes > caps.chunk {
-        return Err(refusal(
-            EXHAUSTED,
-            "a Parquet row is larger than the load's bound",
-        ));
-    }
-    Ok(caps
-        .chunk
-        .div_euclid(2)
-        .div_euclid(row_bytes)
-        .clamp(1, CHUNK_ROWS))
 }
 
 /// Decode one row group's batches into `chunker`; the last row number.
@@ -448,6 +450,7 @@ fn decode_group(
 ) -> Outcome<u64> {
     for batch in reader {
         let batch = batch.map_err(unreadable)?;
+        // Past the page bound already, and checked again as decoded.
         meter.batch(batch.get_array_memory_size())?;
         for row in 0..batch.num_rows() {
             number = number.saturating_add(1);

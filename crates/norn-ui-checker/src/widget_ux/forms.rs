@@ -66,8 +66,8 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn check_forms(&mut self) {
-        let forms = self.ux.forms.clone();
-        for (index, form) in forms.iter().enumerate() {
+        let ux = self.ux;
+        for (index, form) in ux.forms.iter().enumerate() {
             let path = format!("/payload/ux/forms/{index}");
             self.check_generated_transition_condition(&form.submit_binding_id, &path);
             if form.submit.label.0.is_empty()

@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
+use norn_ir::definition_catalog::{Member, MemberRef};
 use norn_ir::mapping::{LawInterpretationIr, MappingDocument, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
@@ -352,11 +353,31 @@ fn interpretation_contracts(
     document: &LawInterpretationIr,
     base: &[ArtifactEnvelope],
 ) -> bool {
-    use norn_ir::definition_catalog::Member;
     let catalog = ScopedView::of(owner, &[], base, &BTreeSet::new()).into_catalog();
+    let mut owner_pairs = BTreeSet::new();
+    let mut type_pairs = BTreeSet::new();
+    for b in &document.members {
+        owner_pairs.insert((&b.source, &b.target));
+        if let (Member::Type { type_name: a }, Member::Type { type_name: b }) =
+            (&b.source.member, &b.target.member)
+        {
+            type_pairs.insert((a.as_str(), b.as_str()));
+        }
+    }
+    let lifecycle = |ty: &str, name: &str| {
+        catalog
+            .object_type_named(ty)
+            .and_then(Result::ok)
+            .and_then(|o| o.lifecycle(name))
+    };
     document.members.iter().all(|binding| {
-        let (Some(source_owner), Some(target_owner)) = (member_owner(&binding.source), member_owner(&binding.target)) else { return false; };
-        if !document.members.iter().any(|b| b.source == source_owner && b.target == target_owner) { return false; }
+        let (Some(so), Some(to)) = (member_owner(&binding.source), member_owner(&binding.target))
+        else {
+            return false;
+        };
+        if !owner_pairs.contains(&(&so, &to)) {
+            return false;
+        }
         match (&binding.source.member, &binding.target.member) {
             (Member::Type { .. }, Member::Type { .. }) => true,
             (Member::Property { .. }, Member::Property { .. }) => {
@@ -364,26 +385,53 @@ fn interpretation_contracts(
                 source.is_some() && source == property_signature(&binding.target, &catalog, base)
             }
             (Member::Link { .. }, Member::Link { .. }) => {
-                let (Some((source, arity)), Some((target, target_arity))) = (link_signature(&binding.source, &catalog, base), link_signature(&binding.target, &catalog, base)) else { return false; };
-                let interpreted = document.members.iter().any(|b| matches!((&b.source.member, &b.target.member),
-                    (Member::Type { type_name: a }, Member::Type { type_name: b }) if a == &source && b == &target));
-                arity == target_arity && (interpreted || (source == target && catalog.target_types(&source).is_some()))
+                let (Some((src, arity)), Some((dst, dst_arity))) = (
+                    link_signature(&binding.source, &catalog, base),
+                    link_signature(&binding.target, &catalog, base),
+                ) else {
+                    return false;
+                };
+                arity == dst_arity
+                    && (type_pairs.contains(&(src.as_str(), dst.as_str()))
+                        || (src == dst && catalog.target_types(&src).is_some()))
             }
-            (Member::State { type_name: source_type, lifecycle: source_lifecycle, state: source_id }, Member::State { type_name: target_type, lifecycle: target_lifecycle, state: target_id })
-            | (Member::Transition { type_name: source_type, lifecycle: source_lifecycle, transition: source_id }, Member::Transition { type_name: target_type, lifecycle: target_lifecycle, transition: target_id }) => {
-                let source = catalog.object_type_named(source_type).and_then(Result::ok).and_then(|o| o.lifecycle(source_lifecycle));
-                let target = catalog.object_type_named(target_type).and_then(Result::ok).and_then(|o| o.lifecycle(target_lifecycle));
-                source_lifecycle == target_lifecycle && source_id == target_id && source.is_some() && source == target
+            _ => {
+                let (Some((sk, st, sl, si)), Some((tk, tt, tl, ti))) = (
+                    lifecycle_member(&binding.source.member),
+                    lifecycle_member(&binding.target.member),
+                ) else {
+                    return false;
+                };
+                sk == tk && sl == tl && si == ti && {
+                    let src = lifecycle(st, sl);
+                    src.is_some() && src == lifecycle(tt, tl)
+                }
             }
-            _ => false,
         }
     })
 }
 
-fn member_owner(
-    at: &norn_ir::definition_catalog::MemberRef,
-) -> Option<norn_ir::definition_catalog::MemberRef> {
-    use norn_ir::definition_catalog::Member;
+fn lifecycle_member(member: &Member) -> Option<(bool, &str, &str, &str)> {
+    if let Member::State {
+        type_name,
+        lifecycle,
+        state,
+    } = member
+    {
+        Some((false, type_name, lifecycle, state))
+    } else if let Member::Transition {
+        type_name,
+        lifecycle,
+        transition,
+    } = member
+    {
+        Some((true, type_name, lifecycle, transition))
+    } else {
+        None
+    }
+}
+
+fn member_owner(at: &MemberRef) -> Option<MemberRef> {
     let name = match &at.member {
         Member::Type { type_name }
         | Member::Property { type_name, .. }
@@ -392,7 +440,7 @@ fn member_owner(
         | Member::Transition { type_name, .. } => type_name,
         Member::Artifact {} | Member::ObjectMap { .. } | Member::Law { .. } => return None,
     };
-    Some(norn_ir::definition_catalog::MemberRef {
+    Some(MemberRef {
         member: Member::Type {
             type_name: name.clone(),
         },
@@ -400,12 +448,29 @@ fn member_owner(
     })
 }
 
+fn interface_root(
+    at: &MemberRef,
+    base: &[ArtifactEnvelope],
+) -> Option<norn_ir::EntityInterfaceRootV2> {
+    let definition = base
+        .iter()
+        .find(|a| a.artifact_id == at.artifact_id && a.version == at.version)?;
+    let crate::entity_artifacts::Decoded::Root(root) =
+        crate::entity_artifacts::decode_v2(definition)
+    else {
+        return None;
+    };
+    let norn_ir::EntityRoot::V2Interface(root) = *root else {
+        return None;
+    };
+    Some(root)
+}
+
 fn property_signature(
-    at: &norn_ir::definition_catalog::MemberRef,
+    at: &MemberRef,
     catalog: &crate::entity_instance::EffectiveCatalog,
     base: &[ArtifactEnvelope],
 ) -> Option<(norn_ir::PropertyType, bool)> {
-    use norn_ir::definition_catalog::Member;
     let Member::Property {
         type_name,
         property,
@@ -423,17 +488,7 @@ fn property_signature(
         };
         return Some((kind.clone(), p.nullable));
     }
-    let definition = base
-        .iter()
-        .find(|a| a.artifact_id == at.artifact_id && a.version == at.version)?;
-    let crate::entity_artifacts::Decoded::Root(root) =
-        crate::entity_artifacts::decode_v2(definition)
-    else {
-        return None;
-    };
-    let norn_ir::EntityRoot::V2Interface(root) = *root else {
-        return None;
-    };
+    let root = interface_root(at, base)?;
     let p = root
         .interface
         .properties
@@ -444,11 +499,10 @@ fn property_signature(
 }
 
 fn link_signature(
-    at: &norn_ir::definition_catalog::MemberRef,
+    at: &MemberRef,
     catalog: &crate::entity_instance::EffectiveCatalog,
     base: &[ArtifactEnvelope],
 ) -> Option<(String, norn_ir::LinkCardinality)> {
-    use norn_ir::definition_catalog::Member;
     let Member::Link { type_name, link } = &at.member else {
         return None;
     };
@@ -459,17 +513,7 @@ fn link_signature(
         }
         return Some((l.target.as_str().to_owned(), l.cardinality));
     }
-    let definition = base
-        .iter()
-        .find(|a| a.artifact_id == at.artifact_id && a.version == at.version)?;
-    let crate::entity_artifacts::Decoded::Root(root) =
-        crate::entity_artifacts::decode_v2(definition)
-    else {
-        return None;
-    };
-    let norn_ir::EntityRoot::V2Interface(root) = *root else {
-        return None;
-    };
+    let root = interface_root(at, base)?;
     let l = root
         .interface
         .links
@@ -481,7 +525,7 @@ fn link_signature(
 fn layer_members(
     pin: &norn_ir::mapping::InterpretationEndpoint,
     base: &[ArtifactEnvelope],
-) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
+) -> Option<BTreeSet<MemberRef>> {
     use norn_ir::{BusinessPackRoot, PackArtifactKind};
     let layers: Vec<_> = base
         .iter()
@@ -531,9 +575,8 @@ fn definition_members(
     reference: &norn_ir::PackArtifactRef,
     root: &norn_ir::EntityRoot,
     catalog: &crate::entity_instance::EffectiveCatalog,
-) -> Option<BTreeSet<norn_ir::definition_catalog::MemberRef>> {
+) -> Option<BTreeSet<MemberRef>> {
     use norn_ir::EntityRoot;
-    use norn_ir::definition_catalog::{Member, MemberRef};
     let mut members = BTreeSet::new();
     let mut add = |member| {
         members.insert(MemberRef {

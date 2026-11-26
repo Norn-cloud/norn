@@ -215,17 +215,10 @@ fn lifecycle_steps(
 fn guard_inputs(guards: &[ZenExpression]) -> BTreeSet<String> {
     let mut inputs = BTreeSet::new();
     for guard in guards {
-        let mut rest = guard.as_str();
-        while let Some(at) = rest.find("self.") {
-            let tail = rest.get(at.saturating_add(5)..).unwrap_or_default();
-            let name: String = tail
-                .chars()
-                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-                .collect();
-            if !name.is_empty() {
-                inputs.insert(name);
-            }
-            rest = tail;
+        if let Ok(paths) =
+            norn_kernel::pack_mbt_support::expression_read_paths(guard.as_str(), "self")
+        {
+            inputs.extend(paths.into_iter().filter_map(|path| path.into_iter().next()));
         }
     }
     inputs
@@ -335,7 +328,7 @@ fn check_law_runtime_outcome<H: PackHost>(
         coverage,
     } = ctx;
     match (checker_verdict, runtime_result) {
-        (Verdict::Holds, Ok(_)) => {
+        (verdict @ (Verdict::Holds | Verdict::NotApplicable), Ok(_)) => {
             let host_pin = host.governing_law_pin(law.subject.as_str(), expected_artifact_id);
             if host_pin.as_deref() != Some(expected_pin) {
                 return Err(format!(
@@ -344,27 +337,18 @@ fn check_law_runtime_outcome<H: PackHost>(
                 ));
             }
             if host.ledger_len() != ledger_before.saturating_add(1) {
+                let label = if *verdict == Verdict::Holds {
+                    "accepted"
+                } else {
+                    "NotApplicable"
+                };
                 return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': accepted commit did not advance ledger",
+                    "LAW-EXAMPLE-1 '{}': {label} commit did not advance ledger",
                     example.name
                 ));
             }
-            with_cov(coverage, |cov| cov.hit_law_hold(law.id.clone()));
-            host.verify_ledger()
-        }
-        (Verdict::NotApplicable, Ok(_)) => {
-            let host_pin = host.governing_law_pin(law.subject.as_str(), expected_artifact_id);
-            if host_pin.as_deref() != Some(expected_pin) {
-                return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach exact law pin for '{}' ({expected_artifact_id}): expected {expected_pin}, host has {host_pin:?}",
-                    example.name, law.id
-                ));
-            }
-            if host.ledger_len() != ledger_before.saturating_add(1) {
-                return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': NotApplicable commit did not advance ledger",
-                    example.name
-                ));
+            if *verdict == Verdict::Holds {
+                with_cov(coverage, |cov| cov.hit_law_hold(law.id.clone()));
             }
             host.verify_ledger()
         }
@@ -419,7 +403,7 @@ pub(crate) struct OracleGraph<'a> {
 }
 
 struct ShadowLinks<'a> {
-    pack: &'a AdmittedPack,
+    catalog: &'a TypeCatalog<'a>,
     facts: &'a BTreeMap<FactKey, (JsonObject, FactVersion)>,
     links: &'a BTreeSet<LinkKey>,
     subject: FactKey,
@@ -430,10 +414,10 @@ impl LinkTargets for ShadowLinks<'_> {
         let mut matches = self.links.iter().filter(|edge| {
             edge.link == link
                 && edge.source.key == self.subject.key
-                && oracle_is_a(
-                    self.pack,
-                    self.subject.object_type.as_str(),
-                    edge.source.object_type.as_str(),
+                && reaches(
+                    self.catalog,
+                    &self.subject.object_type,
+                    &edge.source.object_type,
                 )
         });
         let Some(edge) = matches.next() else {
@@ -467,15 +451,15 @@ impl LinkTargets for ShadowLinks<'_> {
         for edge in self.links {
             if edge.link != link
                 || edge.target.key != self.subject.key
-                || !oracle_is_a(
-                    self.pack,
-                    self.subject.object_type.as_str(),
-                    edge.target.object_type.as_str(),
+                || !reaches(
+                    self.catalog,
+                    &self.subject.object_type,
+                    &edge.target.object_type,
                 )
             {
                 continue;
             }
-            if !oracle_is_a(self.pack, edge.source.object_type.as_str(), source.as_str()) {
+            if !reaches(self.catalog, &edge.source.object_type, source) {
                 continue;
             }
             let Some((values, version)) = self.facts.get(&edge.source) else {
@@ -506,51 +490,6 @@ pub(crate) fn immutable_lifecycle_state(
                 .any(|s| s == current)
                 .then(|| (prop_id.as_str().to_owned(), current.to_owned()))
         })
-}
-
-fn oracle_is_a(pack: &AdmittedPack, concrete: &str, declared: &str) -> bool {
-    if concrete == declared {
-        return true;
-    }
-    let Some(start) = pack
-        .object_types
-        .iter()
-        .find(|ty| ty.name.as_str() == concrete)
-    else {
-        return false;
-    };
-    let mut visited = BTreeSet::new();
-    let mut walk: Option<&ObjectTypeDef> = Some(start);
-    while let Some(def) = walk {
-        if !visited.insert(def.name.as_str().to_owned()) {
-            break;
-        }
-        if def.name.as_str() == declared {
-            return true;
-        }
-        for iface_name in &def.implements {
-            if iface_name.as_str() == declared {
-                return true;
-            }
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-                && iface
-                    .contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
-                    .into_iter()
-                    .any(|owner| owner.name.as_str() == declared)
-            {
-                return true;
-            }
-        }
-        walk = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
-    }
-    false
 }
 
 fn entity_invariants_violated(pack: &AdmittedPack, ty_name: &str, proposed: &JsonObject) -> bool {
@@ -607,7 +546,7 @@ pub(crate) fn predict_oracle_law_violation(
         return true;
     };
     let mut linked_neighbors = BTreeSet::new();
-    let mut remaining = KERNEL_LAW_FUEL;
+    let mut remaining = norn_kernel::TurnFuel::new(KERNEL_LAW_FUEL);
     for key in touched_keys {
         let Some((proposed, _)) = graph.facts.get(key) else {
             continue;
@@ -616,7 +555,7 @@ pub(crate) fn predict_oracle_law_violation(
             return true;
         }
         let mut links = ShadowLinks {
-            pack: graph.pack,
+            catalog: graph.catalog,
             facts: graph.facts,
             links: graph.links,
             subject: key.clone(),
@@ -660,7 +599,7 @@ pub(crate) fn predict_oracle_law_violation(
             continue;
         };
         let mut links = ShadowLinks {
-            pack: graph.pack,
+            catalog: graph.catalog,
             facts: graph.facts,
             links: graph.links,
             subject: neighbor.clone(),

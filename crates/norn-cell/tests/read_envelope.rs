@@ -276,3 +276,27 @@ async fn cell_local_read_envelope_tokens_do_not_cross_cells_and_survive_restore(
             .is_err()
     );
 }
+
+/// P5 (#1698): a fork never issues a token labelled with the main world; the
+/// `Main` snapshot the read takes is refused on a fork store.
+#[test]
+fn a_fork_never_issues_a_main_read_token() {
+    let host = host();
+    let base = host.store().verified_head().expect("head");
+    let fork = host_over(host.store().fork("what-if", &base).expect("fork"));
+    let key = norn_testkit::cell_host::law_key(1);
+    let refused = fork
+        .read_envelope(&key, &binding_for(&key))
+        .expect_err("a fork store is refused");
+    assert!(
+        matches!(
+            refused,
+            norn_cell::CellError::SnapshotWorldMismatch {
+                expected: "main",
+                ..
+            }
+        ),
+        "{refused}"
+    );
+    assert!(host.read_envelope(&key, &binding_for(&key)).is_ok());
+}

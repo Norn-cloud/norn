@@ -453,7 +453,7 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             step.approved_at_ms.max(eligible)
         })
         .min();
-    Ok(min(min(timer, decision), step))
+    Ok([timer, decision, step].into_iter().flatten().min())
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.
@@ -463,14 +463,6 @@ fn why(refusal: &Refusal) -> &str {
         .as_ref()
         .and_then(|extra| extra.cause.as_deref())
         .unwrap_or(&refusal.code)
-}
-
-fn min(left: Option<u64>, right: Option<u64>) -> Option<u64> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (left, None) => left,
-        (None, right) => right,
-    }
 }
 
 /// Deliver one due timer: a flow run's timer goes to its run's timer turn

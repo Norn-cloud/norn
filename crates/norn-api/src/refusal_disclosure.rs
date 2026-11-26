@@ -101,15 +101,15 @@ pub fn pdp_discloses(
         workspace: None,
         business_unit: None,
     };
-    access.principal.subject_id == request.actor
-        && access.action_id == DISCLOSE_REFUSAL_DETAIL_ACTION
-        && access.capability == DISCLOSE_REFUSAL_DETAIL_ACTION
-        && access.resource.object_type == REFUSAL_DETAIL_RESOURCE
-        && access.resource.id == request.action_id
-        && access.context.get("governedAction")
+    access.principal().subject_id == request.actor
+        && access.action_id() == DISCLOSE_REFUSAL_DETAIL_ACTION
+        && access.capability() == DISCLOSE_REFUSAL_DETAIL_ACTION
+        && access.resource().object_type == REFUSAL_DETAIL_RESOURCE
+        && access.resource().id == request.action_id
+        && access.context().get("governedAction")
             == Some(&AttrValue::String(request.action_id.into()))
-        && access.scope.as_ref() == Some(&scope)
-        && access.resource.scope == scope
+        && access.scope() == Some(&scope)
+        && access.resource().scope == scope
         && matches!(pdp.decide(access), PdpDecision::Allow)
 }
 

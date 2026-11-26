@@ -405,6 +405,31 @@ fn cross_wired_outbox_or_idempotency_evidence_is_rejected() {
 }
 
 #[test]
+fn pack_identity_binds_every_field_including_funding() {
+    // P6: a hand-listed digest (v2) omitted `funding`, so a Gross and a Net
+    // pack shared one identity and one certificate.
+    let gross = pack();
+    let mut net = gross.clone();
+    net.accounts[0].funding = norn_ir::quantity_ledger::LedgerFundingPolicy::Net;
+    assert_ne!(ledger_pack_sha256(&gross), ledger_pack_sha256(&net));
+    let certificate = seal_ledger_pack(&gross)
+        .expect("valid pack must seal")
+        .certificates()[0]
+        .clone();
+    let errors = verify_conservation_certificate(&net, &certificate)
+        .expect_err("a certificate never transfers across funding policies");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.code == diagnostic_codes::CERTIFICATE_PACK_MISMATCH)
+    );
+    // Vector order stays significant.
+    let mut reordered = gross.clone();
+    reordered.accounts.reverse();
+    assert_ne!(ledger_pack_sha256(&gross), ledger_pack_sha256(&reordered));
+}
+
+#[test]
 fn boundary_hashes_are_versioned_golden_vectors() {
     let pack = pack();
     let seal = seal_ledger_pack(&pack).expect("valid pack must seal");
@@ -421,13 +446,13 @@ fn boundary_hashes_are_versioned_golden_vectors() {
             commitment.outbox_message_id.as_str(),
         ),
         (
-            "a74ca7f1eb0d7df566ce95d294079e0ff8bb54e805f9e22bd2c5811f00ebce75",
+            "2eba1c761fe085340a78ba9ff3876d5a3c3848ad8d6138549a9beb43b6e99d26",
             "86f638d1d4378e8df2e7d45b8671a25dfa83302669f391f293523c0a92689c1e",
-            "2cfdf3ba14ecd954871028bb3070ac063279d401b409a3da25a63955df90ab20",
+            "0f0adeef63c23c252a03076ef21012eece83bb452255f4f9e7079ca363711939",
             "61fae392a167a0d9e81fddab4e87ac576a43d91853c9114a39cc7589031478b2",
             "db1105f54612799979190bd12522dc62678aaaeb9eb41106752006541111f11f",
-            "ea5ac2362eb48facce6341c9fea3df98f57fd22590a1abfe7c6e400c95ee8cd3",
-            "546fac97af3bce80950dabab12e6f99a0845fb40879a4b22c1b2ad7d95d06288",
+            "48bdd476a198c6b5f4fbc4c6e22129636fe164f8a7e666bc6b14fad9ece433b1",
+            "9805e2a023da48317a590abd3c954a76e14c7a8989b7febb71d16a71172e439a",
         )
     );
 }

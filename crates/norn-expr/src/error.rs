@@ -55,6 +55,12 @@ pub enum ExprError {
         /// SHA-256 digest of the bundle supplied at evaluation.
         evaluated: String,
     },
+    /// An input object has two keys that are one key after NFC normalization
+    /// (P6): the bridge refuses rather than keep whichever sorts last.
+    KeyCollision {
+        /// The NFC form both keys normalize to.
+        key: String,
+    },
 }
 
 impl fmt::Display for ExprError {
@@ -80,6 +86,9 @@ impl fmt::Display for ExprError {
                 f,
                 "prepared expression was admitted for tzdb `{admitted}`, not `{evaluated}`"
             ),
+            Self::KeyCollision { key } => {
+                write!(f, "input keys collide after NFC normalization at `{key}`")
+            }
         }
     }
 }

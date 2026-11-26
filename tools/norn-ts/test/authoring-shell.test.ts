@@ -136,6 +136,195 @@ test("a mapping bound to a source schema by reference carries the schema's Norn1
   expect(artifacts.some((a) => a.payload?.source?.sha256 === PENDING_SOURCE_SHA256)).toBe(false)
 })
 
+test("Norn.law compiles optional-link when-narrowing and typed inverses (LAW-LINK-1 / LAW-LINK-MANY-1)", () => {
+  const source = `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const Parent = Norn.type({
+  name: "shell.Parent", title: "Parent", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, limit: Norn.decimal(2), closed: Schema.Boolean }),
+  identity: [{ name: "primary", properties: ["id"] }],
+})
+
+export const Child = Norn.type({
+  name: "shell.Child", title: "Child", version: "0.1.0",
+  properties: Schema.Struct({ id: Schema.String, amount: Norn.decimal(2) }),
+  identity: [{ name: "primary", properties: ["id"] }],
+  links: [{ id: "parent", target: Parent, cardinality: { to: "one", from: "many" }, inverse: "children" }],
+})
+
+export const ChildWithinParent = Norn.law("within_parent", {
+  on: Child,
+  when: (self): self is typeof self & { readonly parent: NonNullable<typeof self.parent> } => self.parent !== null,
+  must: (self) => self.amount <= self.parent.limit,
+  because: "A linked child stays within its parent's limit.",
+})
+
+export const ParentSumWithinLimit = Norn.law("children_within_limit", {
+  on: Parent,
+  inverses: { children: Child },
+  when: (self) => self.children.length > 0,
+  must: (self) => Norn.sum(self.children.map((c) => c.amount)) <= self.limit,
+  because: "Sum of linked children stays within the parent's limit.",
+})
+`
+  withModules({ "laws.ts": source }, (dir) => {
+    const { artifacts } = ok(compileDefinitions(join(dir, "laws.ts"), { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "laws.ts" }))
+    const forward = (artifacts as any[]).find((a) => a.artifactId === "shell.Child.within_parent.law")
+    expect(forward.payload.condition).toBe("self.parent != null")
+    expect(forward.payload.response.expression).toBe("self.amount <= self.parent.limit")
+
+    const inverse = (artifacts as any[]).find((a) => a.artifactId === "shell.Parent.children_within_limit.law")
+    expect(inverse.payload.condition).toBe("len(self.children) > 0")
+    expect(inverse.payload.response.expression).toBe("sum(map(self.children as b0, b0.amount)) <= self.limit")
+    expect(inverse.dependencies.map((d: any) => d.artifactId)).toEqual(["shell.Parent.entity", "shell.Child.entity"])
+  })
+
+  // Intra-expression narrowing (`or` / `and`) is outside Rust norn-expr; keep TS in parity.
+  const intraNarrow = `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const P = Norn.type({ name: "shell.P", title: "P", version: "0.1.0", properties: Schema.Struct({ id: Schema.String, limit: Norn.decimal(2) }), identity: [{ name: "primary", properties: ["id"] }] })
+export const C = Norn.type({ name: "shell.C", title: "C", version: "0.1.0", properties: Schema.Struct({ id: Schema.String, amount: Norn.decimal(2) }), identity: [{ name: "primary", properties: ["id"] }], links: [{ id: "p", target: P, cardinality: { to: "one", from: "many" } }] })
+export const Bad = Norn.law("bad", { on: C, must: (self) => self.p === null || self.amount <= self.p.limit, because: "bad" })
+`
+  withModules({ "intra.ts": intraNarrow }, (dir) => {
+    const result = compileDefinitions(join(dir, "intra.ts"), { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "intra.ts" })
+    expect(result.ok).toBe(false)
+  })
+
+  // Missing inverse, wrong-target inverse, and colliding inverse role all refuse.
+  const badInverse = `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const A = Norn.type({ name: "shell.A", title: "A", version: "0.1.0", properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }] })
+export const B = Norn.type({ name: "shell.B", title: "B", version: "0.1.0", properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }] })
+export const Bad = Norn.law("bad", { on: A, inverses: { missing: B }, must: (self) => self.missing.length === 0, because: "bad" })
+`
+  const wrongTargetInverse = `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const A = Norn.type({ name: "shell.A", title: "A", version: "0.1.0", properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }] })
+export const B = Norn.type({ name: "shell.B", title: "B", version: "0.1.0", properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }] })
+export const C = Norn.type({ name: "shell.C", title: "C", version: "0.1.0", properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }], links: [{ id: "a", target: A, cardinality: { to: "one", from: "many" }, inverse: "cs" }] })
+export const Bad = Norn.law("bad", { on: B, inverses: { cs: C }, must: (self) => self.cs.length === 0, because: "bad" })
+`
+  const collidingInverse = `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+export const A = Norn.type({ name: "shell.A", title: "A", version: "0.1.0", properties: Schema.Struct({ id: Schema.String, items: Schema.String }), identity: [{ name: "primary", properties: ["id"] }] })
+export const B = Norn.type({ name: "shell.B", title: "B", version: "0.1.0", properties: Schema.Struct({ id: Schema.String }), identity: [{ name: "primary", properties: ["id"] }], links: [{ id: "a", target: A, cardinality: { to: "one", from: "many" }, inverse: "items" }] })
+export const Bad = Norn.law("bad", { on: A, inverses: { items: B }, must: (self) => self.items.length === 0, because: "bad" })
+`
+  for (const [file, code] of [["bad.ts", badInverse], ["wrong-target.ts", wrongTargetInverse], ["colliding.ts", collidingInverse]] as const) {
+    withModules({ [file]: code }, (dir) => {
+      const result = compileDefinitions(join(dir, file), { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: file })
+      expect(result.ok).toBe(false)
+    })
+  }
+})
+
+test("Norn.action compiles quantityEffect reserve and post_reservation to ActionIR", () => {
+  const source = `
+import { Schema } from "effect"
+import { Norn } from "@norn/authoring"
+
+export const StockOrder = Norn.type({
+  name: "shell.StockOrder", title: "Stock order", version: "0.1.0",
+  properties: Schema.Struct({
+    id: Schema.String,
+    status: Schema.Literals(["draft", "reserved", "posted"]),
+    qty: Schema.String,
+  }),
+  identity: [{ name: "primary", properties: ["id"] }],
+  defaults: { status: "draft" },
+  lifecycles: [{
+    property: "status", initial: ["draft"], terminal: ["posted"],
+    transitions: [
+      { id: "reserve", from: ["draft"], to: "reserved" },
+      { id: "post", from: ["reserved"], to: "posted" },
+    ],
+  }],
+})
+
+const ReserveInput = Schema.Struct({
+  id: Schema.String,
+  reservation_id: Schema.String,
+  qty_units: Schema.String,
+  balance_versions: Schema.Array(Schema.String),
+})
+
+export const ReserveStock = Norn.action({
+  id: "shell.stock.reserve", title: "Reserve stock", version: "0.1.0",
+  input: ReserveInput, output: Schema.Struct({ id: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  writes: [{ type: StockOrder, change: "modified" }],
+  effect: { kind: "fire_transition", type: StockOrder, objectIdField: "id", lifecycle: "status", transition: "reserve" },
+  quantityEffect: {
+    ledgerId: "stock_main",
+    balanceVersionsField: "balance_versions",
+    operation: {
+      kind: "reserve",
+      reservationIdField: "reservation_id",
+      templateId: "transfer_out",
+      parameters: { qty: { field: "qty_units", scale: 6 } },
+      ttlMs: 60000,
+    },
+  },
+})
+
+const PostInput = Schema.Struct({
+  id: Schema.String,
+  reservation_id: Schema.String,
+  posting_id: Schema.String,
+  balance_versions: Schema.Array(Schema.String),
+})
+
+export const PostStock = Norn.action({
+  id: "shell.stock.post", title: "Post reserved stock", version: "0.1.0",
+  input: PostInput, output: Schema.Struct({ id: Schema.String }),
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  writes: [{ type: StockOrder, change: "modified" }],
+  effect: { kind: "fire_transition", type: StockOrder, objectIdField: "id", lifecycle: "status", transition: "post" },
+  quantityEffect: {
+    ledgerId: "stock_main",
+    balanceVersionsField: "balance_versions",
+    operation: {
+      kind: "post_reservation",
+      reservationIdField: "reservation_id",
+      postingIdField: "posting_id",
+    },
+  },
+})
+`
+  withModules({ "qty.ts": source }, (dir) => {
+    const { artifacts } = ok(compileDefinitions(join(dir, "qty.ts"), { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath: "qty.ts" }))
+    const reserve = (artifacts as any[]).find((a) => a.artifactId === "shell.stock.reserve.action")
+    expect(reserve.payload.quantityEffect).toEqual({
+      ledgerId: "stock_main",
+      balanceVersionsField: "balance_versions",
+      operation: {
+        kind: "reserve",
+        reservationIdField: "reservation_id",
+        templateId: "transfer_out",
+        parameters: { qty: { field: "qty_units", scale: 6 } },
+        ttlMs: 60000,
+      },
+    })
+    const post = (artifacts as any[]).find((a) => a.artifactId === "shell.stock.post.action")
+    expect(post.payload.quantityEffect).toEqual({
+      ledgerId: "stock_main",
+      balanceVersionsField: "balance_versions",
+      operation: {
+        kind: "post_reservation",
+        reservationIdField: "reservation_id",
+        postingIdField: "posting_id",
+      },
+    })
+  })
+})
+
 test("a cached checker a source checkout did not build is reported, never silently trusted", () => {
   const root = mkdtempSync(join(tmpdir(), "norn-stale-"))
   try {

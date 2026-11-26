@@ -13,7 +13,7 @@ use norn_ir::{
     RuntimeValue,
 };
 use norn_kernel::{
-    FactKey, InvariantEvaluationError, OWNED_ROWS_TYPE, TypeCatalog, evaluate_invariants,
+    FactKey, InvariantEvaluationError, OWNED_ROWS_TYPE, TurnFuel, TypeCatalog, evaluate_invariants,
     invariant_evaluation_budget,
 };
 use norn_projections::sqlite_ddl::{
@@ -542,7 +542,7 @@ fn validate_candidate_laws<E: SqlEngine>(
                     candidate,
                     catalog: candidate_catalog,
                 };
-                let mut fuel = LAW_FUEL;
+                let mut fuel = TurnFuel::new(LAW_FUEL);
                 match norn_kernel::governing_laws::evaluate_linked(
                     &catalog,
                     &key,
@@ -816,7 +816,7 @@ fn validate_candidate_invariants<E: SqlEngine>(
 
     let reader = StoreReader::new(engine, previous);
     let mut scanned = 0usize;
-    let mut remaining_fuel = invariant_evaluation_budget();
+    let mut remaining_fuel = TurnFuel::new(invariant_evaluation_budget());
     let mut violations = Vec::new();
 
     for (root_table, object_types) in affected {
@@ -884,7 +884,7 @@ fn validate_candidate_invariants<E: SqlEngine>(
                         Err(InvariantEvaluationError::BudgetExceeded) => {
                             return Err(CellError::DefinitionInvariantBudgetExceeded {
                                 resource: DefinitionInvariantBudget::Fuel,
-                                limit: invariant_evaluation_budget(),
+                                limit: remaining_fuel.limit(),
                                 scanned,
                                 object: Some(identity),
                             });

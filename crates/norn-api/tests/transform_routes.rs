@@ -10,9 +10,11 @@
     reason = "transform route correspondence"
 )]
 
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+use hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
-use norn_api::object_routes::ObjectAccess;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_api::transform_routes::{
@@ -24,12 +26,9 @@ use norn_cell::engine::NativeEngine;
 #[path = "../../norn-cell/tests/support/governed.rs"]
 mod governed;
 use governed::GovernedCommit as _;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD, ObjectRecord};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD};
 use norn_ir::{Decimal, ObjectTypeDef, RuntimeValue as V};
 use norn_kernel::LogicalTime;
-use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
-};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -61,8 +60,8 @@ impl Authorizer for Policy {
         Ok(())
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        let resource = request.access.resource.id.as_str();
-        let allowed = match request.access.principal.subject_id.as_str() {
+        let resource = request.access.resource().id.as_str();
+        let allowed = match request.access.principal().subject_id.as_str() {
             "full" => true,
             "pop" => request.capability == ReadCapability::Population || resource != "c-north",
             "noview" => resource != TRANSFORM,
@@ -74,49 +73,6 @@ impl Authorizer for Policy {
         } else {
             Err(Refusal::invalid("private policy diagnostic"))
         }
-    }
-}
-
-struct Mapping;
-impl ObjectAccess for Mapping {
-    fn access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        capability: ReadCapability,
-        object_type: &str,
-        row: Option<&ObjectRecord>,
-    ) -> Result<PdpRequest, Refusal> {
-        let key = ScopeKey {
-            org: scope.org_id.clone(),
-            environment: Some(scope.environment_id.clone()),
-            tenant: None,
-            workspace: None,
-            business_unit: None,
-        };
-        Ok(PdpRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: format!("fixture.{capability:?}"),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
-                object_type: row
-                    .map_or(object_type, |row| row.object_type.as_str())
-                    .into(),
-                id: row.map_or(object_type, |row| row.id.as_str()).into(),
-                scope: key,
-                attributes: BTreeMap::new(),
-            },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
     }
 }
 

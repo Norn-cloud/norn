@@ -200,6 +200,35 @@ pub(crate) fn attempt_of_run<E: SqlEngine>(
         .next())
 }
 
+/// A parked `norn.action@1` command payload's parsed coordinates.
+struct ParkedActionCommand<'a> {
+    payload: &'a RuntimeValue,
+    run_id: &'a str,
+    step: &'a str,
+    attempt: &'a RuntimeValue,
+    step_key: &'a str,
+}
+
+fn parse_action_command(command: &RuntimeValue) -> Option<ParkedActionCommand<'_>> {
+    let payload = command.get("payload")?;
+    let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
+    let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run_id), Some(step), Some(attempt)) = (
+        text("function"),
+        text("runId"),
+        text("step"),
+        payload.get("attempt"),
+    ) else {
+        return None;
+    };
+    Some(ParkedActionCommand {
+        payload,
+        run_id,
+        step,
+        attempt,
+        step_key: text("idempotencyKey").unwrap_or(step),
+    })
+}
+
 /// The pending action step attempts (of `run_id` only, when given) that
 /// make the call keyed `idempotency_key`: each one's run, and its parked
 /// command at that generation. Only a call parked before attempts were
@@ -218,24 +247,15 @@ fn waiting_attempts<E: SqlEngine>(
         return Ok(found);
     }
     for pending in store.read().parked_commands().map_err(Refusal::host)? {
-        let Some(payload) = pending.command.command.get("payload") else {
-            continue;
-        };
-        let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
-        let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run), Some(step), Some(attempt)) = (
-            text("function"),
-            text("runId"),
-            text("step"),
-            payload.get("attempt"),
-        ) else {
+        let Some(parsed) = parse_action_command(&pending.command.command) else {
             continue;
         };
         if pending.result.is_none()
-            && run_id.is_none_or(|wanted| wanted == run)
-            && step_call_key(text("idempotencyKey").unwrap_or(step), attempt)? == idempotency_key
+            && run_id.is_none_or(|wanted| wanted == parsed.run_id)
+            && step_call_key(parsed.step_key, parsed.attempt)? == idempotency_key
         {
             found.push(crate::approvals::StepAttempt {
-                run_id: run.to_owned(),
+                run_id: parsed.run_id.to_owned(),
                 command: pending.command.command_id.clone(),
                 generation: pending.command.generation,
             });
@@ -293,20 +313,11 @@ pub(crate) fn attempt_makes<E: SqlEngine>(
     if pending.command.generation != attempt.generation || pending.result.is_some() {
         return Ok(false);
     }
-    let Some(payload) = pending.command.command.get("payload") else {
+    let Some(parsed) = parse_action_command(&pending.command.command) else {
         return Ok(false);
     };
-    let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
-    let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run), Some(step), Some(number)) = (
-        text("function"),
-        text("runId"),
-        text("step"),
-        payload.get("attempt"),
-    ) else {
-        return Ok(false);
-    };
-    Ok(run == attempt.run_id
-        && step_call_key(text("idempotencyKey").unwrap_or(step), number)? == idempotency_key)
+    Ok(parsed.run_id == attempt.run_id
+        && step_call_key(parsed.step_key, parsed.attempt)? == idempotency_key)
 }
 
 /// A parked `norn.action@1` step: its delivery coordinates, its step
@@ -331,38 +342,30 @@ fn action_steps<E: SqlEngine>(
     let reader = cell.store().read();
     let mut found = Vec::new();
     for pending in reader.parked_commands().map_err(Refusal::host)? {
-        let Some(payload) = pending.command.command.get("payload") else {
+        let Some(parsed) = parse_action_command(&pending.command.command) else {
             continue;
         };
-        let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
-        let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run), Some(step), Some(attempt)) = (
-            text("function"),
-            text("runId"),
-            text("step"),
-            payload.get("attempt"),
-        ) else {
-            continue;
-        };
-        if run_id.is_some_and(|wanted| wanted != run) {
+        if run_id.is_some_and(|wanted| wanted != parsed.run_id) {
             continue;
         }
-        let input = payload
+        let input = parsed
+            .payload
             .get("input")
-            .and_then(|input| input.get(step))
+            .and_then(|input| input.get(parsed.step))
             .cloned()
             .unwrap_or(RuntimeValue::Null);
         let starter = reader
-            .run_start(MAIN_WORLD, run)
+            .run_start(MAIN_WORLD, parsed.run_id)
             .map_err(Refusal::host)?
             .and_then(|start| start.started_by);
         found.push((
             StepCall {
-                run_id: run.to_owned(),
+                run_id: parsed.run_id.to_owned(),
                 command: CommandId(pending.command.command_id.clone()),
                 generation: Generation(pending.command.generation),
-                step: step.to_owned(),
-                call_key: step_call_key(text("idempotencyKey").unwrap_or(step), attempt)?,
-                attempt: attempt.clone(),
+                step: parsed.step.to_owned(),
+                call_key: step_call_key(parsed.step_key, parsed.attempt)?,
+                attempt: parsed.attempt.clone(),
                 input,
                 starter,
             },
@@ -784,27 +787,28 @@ fn deliver_in<E: SqlEngine>(
     let result = match &delivery.outcome {
         StepOutcome::Output(object) | StepOutcome::Failure(object) => object.clone(),
     };
-    // The flow must accept the result before anything is recorded.
-    result_turn(cell, &flow, delivery.clone(), now)?;
-    if !recorded
-        && cell
-            .complete_parked(delivery.command, delivery.generation, result)
-            .map_err(Refusal::host)?
-            .is_none()
-    {
+    // The flow must accept the result; the commit records and consumes it
+    // in one transaction (P3), so a refused turn leaves nothing recorded.
+    let commit = result_turn(cell, &flow, delivery, now)?;
+    let settlement = if recorded {
+        norn_cell::Settlement::Recorded
+    } else {
+        norn_cell::Settlement::Record(result)
+    };
+    let Err(error) = cell.commit_settled(commit, settlement) else {
+        return Ok(());
+    };
+    // Settled already, by another drive.
+    if crate::decisions::settled_elsewhere(&error) {
         return Ok(());
     }
-    let commit = result_turn(cell, &flow, delivery, now)?;
-    norn_kernel::CellHost::commit(cell, commit).map_err(|error| {
-        let norn_kernel::CommitError::Host(host_error) = error else {
-            return Refusal::new(
-                StatusCode::CONFLICT,
-                "run.result_not_pending",
-                "the run changed while its step result was delivered",
-                "the step's result stays recorded and the next drive delivers it",
-            );
-        };
-        Refusal::host(host_error)
-    })?;
-    Ok(())
+    let norn_kernel::CommitError::Host(host_error) = error else {
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            "run.result_not_pending",
+            "the run changed while its step result was delivered",
+            "nothing was recorded; the next drive delivers the step's result again",
+        ));
+    };
+    Err(Refusal::host(host_error))
 }

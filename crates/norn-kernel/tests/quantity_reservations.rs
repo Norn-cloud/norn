@@ -264,6 +264,66 @@ fn identifier_limit_counts_utf8_bytes_in_otherwise_valid_packs() {
     );
 }
 
+#[test]
+fn a_reservation_never_outgrows_its_own_reader() {
+    use norn_ir::quantity_ledger::{LedgerAccountIr, LedgerLayerIr, LedgerUnitIr};
+    use norn_kernel::quantity::{MAX_QUANTITY_RECORD_BYTES, quantity_record_fits};
+    // Q1 witness: 121-byte identifiers that each escape to 721 canonical
+    // bytes. One 64-leg vector fits; Reserve stores it twice and does not.
+    let long = |first: char| format!("{first}{}", "\u{1}".repeat(120));
+    let (issuance, lot, unit, layer) = (long('a'), long('b'), long('u'), long('l'));
+    let mut wide = pack();
+    wide.units = vec![LedgerUnitIr {
+        unit_id: unit.clone(),
+        ..wide.units[0].clone()
+    }];
+    wide.layers = vec![LedgerLayerIr {
+        layer_id: layer.clone(),
+    }];
+    wide.accounts = [&issuance, &lot]
+        .into_iter()
+        .map(|account| LedgerAccountIr {
+            funding: norn_ir::quantity_ledger::LedgerFundingPolicy::Gross,
+            account_id: account.clone(),
+            allowed_unit_ids: vec![unit.clone()],
+        })
+        .collect();
+    let mut template = wide.templates[1].clone();
+    assert_eq!(template.template_id, "ship");
+    let (out, into) = (template.legs[0].clone(), template.legs[1].clone());
+    template.legs = (0..32)
+        .flat_map(|pair| {
+            [(&out, &issuance, 'o'), (&into, &lot, 'i')].map(|(leg, account, side)| {
+                let mut leg = leg.clone();
+                leg.leg_id = format!("{side}{pair:02}");
+                leg.account_id = account.clone();
+                leg.unit_id = unit.clone();
+                leg.layer = layer.clone();
+                leg
+            })
+        })
+        .collect();
+    wide.templates = vec![template];
+    let state = QuantityState {
+        version: 1,
+        pack: Some(wide),
+        unrestricted_accounts: vec![issuance],
+        ..QuantityState::default()
+    };
+    assert_eq!(
+        prepare_quantity(&reserve(2, "r", 1, 10), &state, 0).expect_err("doubled vector"),
+        QuantityError::InvalidContract
+    );
+    let posted = prepare_quantity(&post(2, "p", "ship", 1), &state, 0).expect("one vector");
+    let (_, posting) = posted.posting.expect("posting");
+    assert_eq!(posting.legs.len(), 64);
+    assert!(quantity_record_fits(&posting));
+    let bytes = norn_ir::canonical::canonical_json_of(&posting)
+        .expect("canonical")
+        .len();
+    assert!(bytes.saturating_mul(2) > MAX_QUANTITY_RECORD_BYTES);
+}
+
 fn prepare_quantity(
     request: &norn_ir::quantity_ledger::QuantityRequest,
     state: &QuantityState,

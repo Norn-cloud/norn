@@ -169,28 +169,23 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
             }
         }
     }
-    if let Some(JsonValue::Array(required)) = input_schema.get_mut("required") {
-        required.retain(|field| {
-            !action.derive.iter().any(|derivation| {
-                !derivation.input_required && field.as_string() == Some(derivation.field.as_str())
-            })
-        });
-    }
     // A field the server fills from its own context (the actor, the clock) is
     // not the caller's to send: it leaves the schema, so an agent never offers
     // a value the call would refuse.
     let filled = server_filled(action);
-    if let Some(JsonValue::Object(properties)) = input_schema.get_mut("properties") {
-        properties.retain(|field, _| !filled.contains(field.as_str()));
-    }
     if let Some(JsonValue::Array(required)) = input_schema.get_mut("required") {
         required.retain(|field| {
-            field
-                .as_string()
-                .is_none_or(|field| !filled.contains(field))
+            field.as_string().is_none_or(|field| {
+                !filled.contains(field)
+                    && !action
+                        .derive
+                        .iter()
+                        .any(|derivation| !derivation.input_required && derivation.field == field)
+            })
         });
     }
     if let Some(JsonValue::Object(properties)) = input_schema.get_mut("properties") {
+        properties.retain(|field, _| !filled.contains(field.as_str()));
         let mut projected = std::collections::BTreeSet::new();
         for derivation in action.derive.iter().filter(|step| !step.input_required) {
             // Repeated steps for a field share one caller requirement.

@@ -6,7 +6,8 @@
 //!
 //! - **commit** runs the kernel's own admission check ([`Proposed`] →
 //!   [`Checked`], [`norn_kernel::check_commit`]) *inside* the store's commit transaction
-//!   (`CellStore::commit_guarded_unchecked`), then writes the consumed delivery, the
+//!   (`CellStore::commit_guarded_submitted`, which demands the check's
+//!   [`norn_kernel::CommitSeal`]), then writes the consumed delivery, the
 //!   whole-object writes, the ledger events, and the command/timer enqueues
 //!   in that one SQLite transaction: commit and enqueue are atomic, and a
 //!   refused commit writes nothing.
@@ -22,6 +23,8 @@
 //! Time is the driver's logical clock ([`SqliteCell::advance_to`]); external
 //! observations arrive through [`SqliteCell::inject`]. The default engine is
 //! the native SQLite test driver; portable hosts supply their own engine.
+
+mod claim;
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -50,48 +53,59 @@ use crate::model::Model;
 use crate::predicate_scan::{self, predicate_objects};
 use crate::reactive::{BudgetedRead, DecodeBudget, ReactiveLimits};
 use crate::read::{PendingTimer, StoreReader};
+use crate::store::At;
 #[cfg(feature = "native")]
 use crate::store::StoreOptions;
 use crate::store::{
     CellStore, CommitBatch, CommitOutcome, Consumption, EffectRow, FactWriteRow, GuardedError,
     InstalledDefinitionInput, InstalledDefinitionSet, LinkChange, MAIN_WORLD,
-    MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
+    MarkingDeclassification, MarkingReveal, OutboxCommand, SystemWrite, TimerEntry,
 };
 
-/// The admission inputs beyond the commit, its authorization and quantity:
-/// derived properties, reference and property reads, mapping bundles, a
-/// bookkeeping event, the receipt mode, and an ACTOR-STAMP-1 creator stamp.
-pub(crate) type AdmissionArgs<'a> = (
-    &'a [(FactKey, Vec<String>)],
-    &'a [norn_kernel::FactExpectation],
-    &'a [(norn_kernel::FactExpectation, Vec<String>)],
-    &'a [crate::mapping_bundle::MappingBundle],
-    Option<norn_ir::RuntimeValue>,
-    crate::function_receipt::ReceiptCommitMode,
-    Option<norn_kernel::CreatorStampProof>,
-);
+/// Where a system write of a host bound to `scope` lands.
+const fn at<'a>(scope: &'a str, world: &'a str, logical_time: u64) -> At<'a> {
+    At {
+        world,
+        scope,
+        logical_time,
+    }
+}
+
+/// PARKED-1 (P3): how a commit consuming a parked command's result settles it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Settlement<I> {
+    /// The result is already durable (an engine before P3 recorded it apart);
+    /// consume only.
+    #[default]
+    Recorded,
+    /// Record this result and consume it in the same transaction. Refused
+    /// with `NotPending` when the command is not parked and pending at that
+    /// generation, or already has a result: a parked command completes once.
+    Record(I),
+}
+
+/// Explicit per-commit admission options beyond the kernel [`CellCommit`].
+#[derive(Default)]
+pub(crate) struct CommitOptions<'a> {
+    pub(crate) authorization: Option<&'a ObservationAuthorization>,
+    pub(crate) owned_rows: Option<OwnedRowsCommitProof>,
+    pub(crate) quantity: Option<(&'a [norn_ir::quantity_ledger::QuantityRequest], &'a str)>,
+    pub(crate) derived: &'a [(FactKey, Vec<String>)],
+    pub(crate) references: &'a [norn_kernel::FactExpectation],
+    pub(crate) property_reads: &'a [(norn_kernel::FactExpectation, Vec<String>)],
+    pub(crate) mapped: &'a [crate::mapping_bundle::MappingBundle],
+    pub(crate) bookkeeping: Option<norn_ir::RuntimeValue>,
+    pub(crate) mode: crate::function_receipt::ReceiptCommitMode,
+    pub(crate) stamp: Option<norn_kernel::CreatorStampProof>,
+    pub(crate) settling: Option<crate::store::ParkedSettlement>,
+}
 
 /// The simulated outside world: maps a performed command to the kernel input
 /// its result becomes. `Send`, so a driver can be shared behind a mutex by a
 /// server host.
 pub type Responder<C, I> = Box<dyn FnMut(&Command<C>) -> I + Send>;
 
-/// Durable state of the outbox head before an external `perform` dispatch.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PerformClaim<C, I> {
-    /// This generation was durably claimed by this call and may be dispatched.
-    Fresh(Command<C>),
-    /// A result was already recorded and must be redelivered without dispatch.
-    Recorded {
-        /// The command whose result was recorded.
-        command: Command<C>,
-        /// The recorded result delivery.
-        performed: Performed<I>,
-    },
-    /// A prior process durably claimed this generation, but no result was
-    /// recorded before it stopped. The external outcome must be reconciled.
-    OutcomeUnknown(Command<C>),
-}
+pub use claim::ClaimOutcome;
 
 /// A `CellHost` over a [`CellStore`], using its selected SQL engine.
 pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
@@ -273,14 +287,12 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .into_iter()
             .map(|event| to_runtime(&event))
             .collect::<Result<Vec<_>, _>>()?;
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            idempotency_key: Some(idempotency_key.to_owned()),
+        let write = SystemWrite::HostEvents {
+            idempotency_key: idempotency_key.to_owned(),
             events,
-            ..CommitBatch::default()
-        })?;
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, self.now.as_millis()), write)?;
         Ok(())
     }
 
@@ -309,15 +321,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
-            events: vec![change.ledger_event()?],
-            marking_declassifications: vec![change],
-            ..CommitBatch::default()
-        })
+        let write = SystemWrite::Privacy {
+            idempotency_key: idempotency_key.to_owned(),
+            event: change.ledger_event()?,
+            declassification: Some(Box::new(change)),
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, logical_time), write)
     }
 
     /// Append the receipt of one reveal to the ledger, at this host's clock.
@@ -350,14 +360,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
-            events: vec![event],
-            ..CommitBatch::default()
-        })
+        let write = SystemWrite::Privacy {
+            idempotency_key: idempotency_key.to_owned(),
+            event,
+            declassification: None,
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, logical_time), write)
     }
 
     /// MANIFEST-COMMIT-1: commit `manifest` as the current dataset of its
@@ -395,14 +404,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?;
         let logical_time =
             previous.map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
-            quantity: Some(request.clone().into()),
-            ..CommitBatch::default()
-        })
+        let write = SystemWrite::Quantity {
+            idempotency_key: idempotency_key.to_owned(),
+            request: Box::new(request.clone()),
+            timer: None,
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, logical_time), write)
     }
 
     /// Submit one due quantity Expire through the ordinary atomic commit path.
@@ -469,18 +477,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .store
             .read()
             .quantity_balance_versions(&deadline.world, &request)?;
-        self.store.commit_unchecked(&CommitBatch {
-            world: deadline.world,
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            idempotency_key: Some(format!("{}:{}", id, pending.commit_seq)),
-            consumes: Some(crate::Consumption::Timer {
-                timer_id: id,
-                incarnation: pending.commit_seq,
-            }),
-            quantity: Some(request.into()),
-            ..CommitBatch::default()
-        })?;
+        let write = SystemWrite::Quantity {
+            idempotency_key: format!("{}:{}", id, pending.commit_seq),
+            request: Box::new(request),
+            timer: Some((id, pending.commit_seq)),
+        };
+        let place = at(&self.scope, &deadline.world, self.now.as_millis());
+        self.store.apply_system(&place, write)?;
         Ok(())
     }
 
@@ -880,14 +883,41 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
                 key,
             });
         }
-        reads.sort_by(|left, right| {
-            let left_target_type = self.0.canonical_type(left.key.target.object_type.as_str());
-            let right_target_type = self.0.canonical_type(right.key.target.object_type.as_str());
-            (&left_target_type, &left.key.target.key)
-                .cmp(&(&right_target_type, &right.key.target.key))
-        });
+        sort_link_read_targets(self.0, &mut reads);
         Ok(Some(reads))
     }
+}
+
+fn sort_link_read_targets<S: SqlEngine>(reader: &StoreReader<'_, S>, reads: &mut [LinkReadTarget]) {
+    reads.sort_by(|left, right| {
+        let left_target_type = reader.canonical_type(left.key.target.object_type.as_str());
+        let right_target_type = reader.canonical_type(right.key.target.object_type.as_str());
+        (&left_target_type, &left.key.target.key).cmp(&(&right_target_type, &right.key.target.key))
+    });
+}
+
+fn written_versions(body: &crate::store::ReceiptBody) -> Vec<WrittenVersion> {
+    body.written
+        .iter()
+        .map(|row| WrittenVersion {
+            key: FactKey::new(row.object_type.clone(), row.key.clone()),
+            version: FactVersion(row.version),
+        })
+        .collect()
+}
+
+fn written_link_versions(body: &crate::store::ReceiptBody) -> Vec<WrittenLinkVersion> {
+    body.linked
+        .iter()
+        .map(|row| WrittenLinkVersion {
+            key: LinkKey::new(
+                FactKey::new(row.object_type.clone(), row.source.clone()),
+                row.link.clone(),
+                FactKey::new(row.target_type.clone(), row.target.clone()),
+            ),
+            version: FactVersion(row.version),
+        })
+        .collect()
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
@@ -1237,6 +1267,28 @@ where
     }
 }
 
+fn build_settlement<E, C, I: Serialize>(
+    commit: &CellCommit<E, C, I>,
+    settlement: Settlement<I>,
+) -> Result<Option<crate::store::ParkedSettlement>, CommitError<CellError>> {
+    let Settlement::Record(input) = settlement else {
+        return Ok(None);
+    };
+    let Some(Consumed::Result {
+        command,
+        generation,
+    }) = &commit.consumes
+    else {
+        let reason = "a settlement needs a consumed result".to_owned();
+        return Err(CommitError::Host(CellError::Encoding(reason)));
+    };
+    Ok(Some(crate::store::ParkedSettlement {
+        command_id: command.0.clone(),
+        generation: generation.0,
+        outcome: to_runtime(&input).map_err(CommitError::Host)?,
+    }))
+}
+
 fn due_timer<I: DeserializeOwned>(pending: &PendingTimer) -> Result<DueTimer<I>, CellError> {
     Ok(DueTimer {
         timer: from_runtime(&pending.timer.timer)?,
@@ -1250,31 +1302,6 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
-    /// PARKED-1: redeliver the recorded, unconsumed results of parked
-    /// commands, oldest first, decoded from the store (never from memory).
-    /// After a crash between [`Self::complete_parked`] and the consuming
-    /// commit, this is how the result is delivered again; `perform` never
-    /// returns a parked command.
-    ///
-    /// # Errors
-    ///
-    /// Engine or decode errors.
-    pub fn parked_results(&self) -> Result<Vec<Performed<I>>, CellError> {
-        self.store
-            .read()
-            .parked_commands()?
-            .into_iter()
-            .filter_map(|pending| {
-                let result = pending.result?;
-                Some(from_runtime(&result).map(|input| Performed {
-                    command: CommandId(pending.command.command_id.clone()),
-                    generation: Generation(pending.command.generation),
-                    input,
-                }))
-            })
-            .collect()
-    }
-
     /// The pending commands, oldest first.
     ///
     /// # Errors
@@ -1346,116 +1373,12 @@ where
                 Ok(CommitRecord {
                     seq: LedgerSeq(body.commit_seq),
                     consumed: body.consumed.as_ref().map(consumed),
-                    written: body
-                        .written
-                        .iter()
-                        .map(|row| WrittenVersion {
-                            key: FactKey::new(row.object_type.clone(), row.key.clone()),
-                            version: FactVersion(row.version),
-                        })
-                        .collect(),
-                    linked: body
-                        .linked
-                        .iter()
-                        .map(|row| WrittenLinkVersion {
-                            key: LinkKey::new(
-                                FactKey::new(row.object_type.clone(), row.source.clone()),
-                                row.link.clone(),
-                                FactKey::new(row.target_type.clone(), row.target.clone()),
-                            ),
-                            version: FactVersion(row.version),
-                        })
-                        .collect(),
+                    written: written_versions(&body),
+                    linked: written_link_versions(&body),
                     events: events.remove(&body.commit_seq).unwrap_or_default(),
                 })
             })
             .collect()
-    }
-}
-
-impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
-where
-    C: DeserializeOwned,
-    I: DeserializeOwned,
-{
-    /// Inspect and durably claim the outbox head before external dispatch.
-    ///
-    /// A restored perform fence takes precedence over both a saved result and
-    /// a saved claim. A fresh command is returned only after the claim's
-    /// zero-event commit and export-journal record are durable.
-    ///
-    /// # Errors
-    ///
-    /// SQLite or decode errors, or an outbox race that invalidates the claim
-    /// before its commit.
-    pub fn claim_perform(&mut self) -> Result<Option<PerformClaim<C, I>>, CellError> {
-        self.claim_perform_with_reconciliation(None)
-    }
-
-    /// Claim the exact later generation authorized by the host's ledgered
-    /// reconciliation policy. The restore fence itself remains intact; a new
-    /// restore fences this generation again. Callers must atomically ledger
-    /// the authorization and enqueue before invoking this method.
-    ///
-    /// # Errors
-    /// Store or decode errors, as for [`Self::claim_perform`].
-    pub fn claim_reconciled_perform(
-        &mut self,
-        command_id: &CommandId,
-        generation: Generation,
-    ) -> Result<Option<PerformClaim<C, I>>, CellError> {
-        self.claim_perform_with_reconciliation(Some((command_id, generation)))
-    }
-
-    fn claim_perform_with_reconciliation(
-        &mut self,
-        authorized: Option<(&CommandId, Generation)>,
-    ) -> Result<Option<PerformClaim<C, I>>, CellError> {
-        let Some(head) = self.store.read().head_command()? else {
-            return Ok(None);
-        };
-        let fence = self
-            .store
-            .perform_fence_generation(&head.command.command_id)?;
-        let admitted = authorized.is_some_and(|(id, generation)| {
-            id.0 == head.command.command_id
-                && generation.0 == head.command.generation
-                && fence.is_some_and(|fenced| generation.0 > fenced)
-        });
-        if fence.is_some() && !admitted {
-            tracing::warn!(command_id = %head.command.command_id, "restored command fenced pending external-effect reconciliation");
-            return Ok(None);
-        }
-        let command: Command<C> = from_runtime(&head.command.command)?;
-        if let Some(result) = head.result {
-            let performed = Performed {
-                command: command.id.clone(),
-                generation: command.generation,
-                input: from_runtime(&result)?,
-            };
-            return Ok(Some(PerformClaim::Recorded { command, performed }));
-        }
-        if self
-            .store
-            .read()
-            .perform_claimed(&head.command.command_id, head.command.generation)?
-        {
-            // WORLD-ISOLATE-1 (Fable S9): a fork inherits main's claim but can
-            // never learn or settle its real outcome.
-            self.store.refuse_perform_in_fork()?;
-            return Ok(Some(PerformClaim::OutcomeUnknown(command)));
-        }
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            effects: vec![EffectRow::ClaimPerform {
-                command_id: head.command.command_id,
-                generation: head.command.generation,
-            }],
-            ..CommitBatch::default()
-        })?;
-        Ok(Some(PerformClaim::Fresh(command)))
     }
 }
 
@@ -1487,35 +1410,6 @@ where
         Ok(Some(Performed {
             command: command.id.clone(),
             generation: command.generation,
-            input,
-        }))
-    }
-
-    /// PARKED-1: record the result the cell itself produced for a parked
-    /// command (for `norn.decision@1`, the receipt it issued), out of FIFO
-    /// order. Returns `None` without writing when the command is not a
-    /// pending parked command at `generation`, or already has a result, so a
-    /// parked command completes at most once. A commit consuming the returned
-    /// delivery applies it, exactly once, under the ordinary delivery fence.
-    ///
-    /// # Errors
-    ///
-    /// Serialization or SQLite errors.
-    pub fn complete_parked(
-        &mut self,
-        command: &CommandId,
-        generation: Generation,
-        input: I,
-    ) -> Result<Option<Performed<I>>, CellError> {
-        if !self
-            .store
-            .record_parked(&command.0, generation.0, &to_runtime(&input)?)?
-        {
-            return Ok(None);
-        }
-        Ok(Some(Performed {
-            command: command.clone(),
-            generation,
             input,
         }))
     }
@@ -1577,16 +1471,12 @@ where
         requests: &[norn_ir::quantity_ledger::QuantityRequest],
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            None,
-            None,
-            Some((requests, idempotency_key)),
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
+            CommitOptions {
+                quantity: Some((requests, idempotency_key)),
+                ..Default::default()
+            },
         )
     }
 
@@ -1603,7 +1493,13 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None)
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                derived,
+                ..Default::default()
+            },
+        )
     }
 
     /// Commit a kernel-prepared turn that creates a flow's run object, and
@@ -1621,7 +1517,13 @@ where
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = start.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                bookkeeping: Some(event),
+                ..Default::default()
+            },
+        )
     }
 
     /// Commit a kernel-prepared turn that consumes a parked decision's
@@ -1637,9 +1539,41 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
         resolved: &crate::decision_ledger::DecisionResolved,
+        settlement: Settlement<I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+        let settling = build_settlement(&commit, settlement)?;
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                bookkeeping: Some(event),
+                settling,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// PARKED-1 (P3): commit a turn consuming a parked command's result,
+    /// recording that result in the same transaction when `settlement` is
+    /// [`Settlement::Record`]: no result is ever durable without the commit
+    /// that consumes it.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied. `CommitError::Host` of
+    /// `CellError::NotPending` when the parked result cannot be recorded.
+    pub fn commit_settled(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        settlement: Settlement<I>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let settling = build_settlement(&commit, settlement)?;
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                settling,
+                ..Default::default()
+            },
+        )
     }
 
     /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
@@ -1669,16 +1603,12 @@ where
         refused: &crate::decision_ledger::ApprovalRefused,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = refused.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(
+        self.commit_admitted(
             CellCommit::empty(),
-            None,
-            None,
-            None,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(event),
+            CommitOptions {
+                bookkeeping: Some(event),
+                ..Default::default()
+            },
         )
     }
 
@@ -1696,49 +1626,18 @@ where
         }
         let references = authorization.reference_reads(&commit).to_vec();
         authorization.append_findings(&mut commit);
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            Some(authorization),
-            None,
-            None,
-            &[],
-            &references,
-            &[],
-            mapped,
-            None,
+            CommitOptions {
+                authorization: Some(authorization),
+                references: &references,
+                mapped,
+                ..Default::default()
+            },
         )
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "every ordinary commit is a normal receipt-mode admission"
-    )]
-    fn commit_with_authorization(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        authorization: Option<&ObservationAuthorization>,
-        owned_rows: Option<OwnedRowsCommitProof>,
-        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
-        derived: &[(FactKey, Vec<String>)],
-        references: &[norn_kernel::FactExpectation],
-        property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
-        mapped: &[crate::mapping_bundle::MappingBundle],
-        bookkeeping: Option<norn_ir::RuntimeValue>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
-        let args = (
-            derived,
-            references,
-            property_reads,
-            mapped,
-            bookkeeping,
-            mode,
-            None,
-        );
-        self.commit_admitted(commit, authorization, owned_rows, quantity, args)
-    }
-
-    /// Admit one commit in `mode`: [`crate::function_receipt::ReceiptCommitMode`]
+    /// Admit one commit in `options.mode`: [`crate::function_receipt::ReceiptCommitMode`]
     /// decides how a consumed Function delivery is rechecked.
     #[allow(
         clippy::too_many_lines,
@@ -1747,11 +1646,21 @@ where
     pub(crate) fn commit_admitted(
         &mut self,
         mut commit: CellCommit<E, C, I>,
-        authorization: Option<&ObservationAuthorization>,
-        owned_rows: Option<OwnedRowsCommitProof>,
-        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
-        (derived, references, property_reads, mapped, bookkeeping, mode, stamp): AdmissionArgs<'_>,
+        options: CommitOptions<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let CommitOptions {
+            authorization,
+            owned_rows,
+            quantity,
+            derived,
+            references,
+            property_reads,
+            mapped,
+            bookkeeping,
+            mode,
+            stamp,
+            settling,
+        } = options;
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
         // before defaults. The host's injected logical time is not retry input.
@@ -1855,12 +1764,7 @@ where
         if let Some((request, key)) = quantity {
             batch.quantity = Some(crate::store::QuantityBatch(request.to_vec()));
             batch.idempotency_key = Some(key.to_owned());
-            if let Some(receipt) = self
-                .store
-                .read()
-                .receipt_by_idempotency_key(MAIN_WORLD, key)
-                .map_err(CommitError::Host)?
-            {
+            if let Some(receipt) = prior {
                 batch.logical_time = receipt.body.logical_time;
             }
         }
@@ -1916,57 +1820,41 @@ where
                 .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
             // ACTOR-STAMP-1: a creator stamp is its own kernel admission.
-            let versions = Proposed::new(&commit)
+            // P3: the store writes only with the seal this check mints.
+            let (seal, versions) = Proposed::new(&commit)
                 .authorize_with(authorization, owned_rows, stamp)?
                 .check(&model, &GuardView(reader))
-                .map(Checked::into_versions)?;
+                .map(Checked::seal)?;
             // RECEIPT-CONSUME-1: command authority and the deadline are
             // rechecked at the commit's own clock, under its write lock.
             let receipts = (&self.receipts, self.scope.as_str(), self.now, mode);
             crate::function_receipt::check_consumption(reader, &commit, &batch, receipts)?;
-            Ok((versions, mapping_proof))
+            Ok((seal, versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(
             &batch,
             submitted.as_ref(),
+            settling.as_ref(),
             guard,
             &mut |_point| Ok(()),
         ) {
-            Ok((CommitVersions { written, linked }, outcome)) => Ok(CommitReceipt {
-                seq: LedgerSeq(outcome.receipt().body.commit_seq),
-                written: if matches!(outcome, crate::store::CommitOutcome::Replayed(_)) {
-                    outcome
-                        .receipt()
-                        .body
-                        .written
-                        .iter()
-                        .map(|row| WrittenVersion {
-                            key: FactKey::new(row.object_type.clone(), row.key.clone()),
-                            version: FactVersion(row.version),
-                        })
-                        .collect()
-                } else {
-                    written
-                },
-                linked: if matches!(outcome, crate::store::CommitOutcome::Replayed(_)) {
-                    outcome
-                        .receipt()
-                        .body
-                        .linked
-                        .iter()
-                        .map(|row| WrittenLinkVersion {
-                            key: LinkKey::new(
-                                FactKey::new(row.object_type.clone(), row.source.clone()),
-                                row.link.clone(),
-                                FactKey::new(row.target_type.clone(), row.target.clone()),
-                            ),
-                            version: FactVersion(row.version),
-                        })
-                        .collect()
-                } else {
-                    linked
-                },
-            }),
+            Ok((CommitVersions { written, linked }, outcome)) => {
+                let replayed = matches!(outcome, crate::store::CommitOutcome::Replayed(_));
+                let body = &outcome.receipt().body;
+                Ok(CommitReceipt {
+                    seq: LedgerSeq(body.commit_seq),
+                    written: if replayed {
+                        written_versions(body)
+                    } else {
+                        written
+                    },
+                    linked: if replayed {
+                        written_link_versions(body)
+                    } else {
+                        linked
+                    },
+                })
+            }
             Err(GuardedError::Guard(refusal)) => Err(refusal),
             Err(GuardedError::Store(CellError::IdentityReuse)) => Err(CommitError::IdentityReuse),
             Err(GuardedError::Store(CellError::IdentityCollision {
@@ -2168,12 +2056,7 @@ where
                 key,
             });
         }
-        reads.sort_by(|left, right| {
-            let left_target_type = reader.canonical_type(left.key.target.object_type.as_str());
-            let right_target_type = reader.canonical_type(right.key.target.object_type.as_str());
-            (&left_target_type, &left.key.target.key)
-                .cmp(&(&right_target_type, &right.key.target.key))
-        });
+        sort_link_read_targets(&reader, &mut reads);
         Ok(Some(reads))
     }
 
@@ -2181,7 +2064,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None)
+        self.commit_admitted(commit, CommitOptions::default())
     }
 
     fn commit_action_references(
@@ -2193,16 +2076,14 @@ where
         if !proof.validates(&commit) {
             return Err(CommitError::ObservationAuthorization);
         }
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            None,
-            None,
-            quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-            &[],
-            proof.reference_reads(),
-            proof.property_reads(),
-            &[],
-            None,
+            CommitOptions {
+                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
+                references: proof.reference_reads(),
+                property_reads: proof.property_reads(),
+                ..Default::default()
+            },
         )
     }
 
@@ -2221,11 +2102,14 @@ where
         proof: norn_kernel::CreatorStampProof,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        // An ordinary (Normal receipt-mode) admission carrying the stamp proof.
-        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
-        let args: AdmissionArgs<'_> = (&[], &[], &[], &[], None, mode, Some(proof));
-        let quantity = quantity.map(|(request, key)| (std::slice::from_ref(request), key));
-        self.commit_admitted(commit, None, None, quantity, args)
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
+                stamp: Some(proof),
+                ..Default::default()
+            },
+        )
     }
 
     fn commit_owned_rows(
@@ -2236,18 +2120,15 @@ where
         let quantity = proof
             .quantity()
             .map(|(request, key)| (request.clone(), key.to_owned()));
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            None,
-            Some(proof),
-            quantity
-                .as_ref()
-                .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
+            CommitOptions {
+                owned_rows: Some(proof),
+                quantity: quantity
+                    .as_ref()
+                    .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
+                ..Default::default()
+            },
         )
     }
 
@@ -2264,13 +2145,13 @@ where
 
     fn perform(&mut self) -> Result<Option<Performed<I>>, CellError> {
         match self.claim_perform()? {
-            None => Ok(None),
-            Some(PerformClaim::Recorded { performed, .. }) => Ok(Some(performed)),
-            Some(PerformClaim::Fresh(command)) => {
+            ClaimOutcome::Empty | ClaimOutcome::HeadFenced { .. } => Ok(None),
+            ClaimOutcome::Recorded { performed, .. } => Ok(Some(performed)),
+            ClaimOutcome::Fresh(command) => {
                 let input = (self.responder)(&command);
                 self.complete_perform(&command, input)
             }
-            Some(PerformClaim::OutcomeUnknown(command)) => Err(CellError::PerformOutcomeUnknown {
+            ClaimOutcome::OutcomeUnknown(command) => Err(CellError::PerformOutcomeUnknown {
                 command_id: command.id.0,
                 generation: command.generation.0,
             }),

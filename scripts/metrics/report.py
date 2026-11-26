@@ -93,8 +93,15 @@ def _cell(text: str) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def markdown(records: list[dict]) -> str:
-    groups = series(records)
+def _grouped_series(groups: dict[str, list[dict]]) -> list[tuple[str, list[str]]]:
+    by_family: dict[str, list[str]] = defaultdict(list)
+    for metric in groups:
+        by_family[family(metric)].append(metric)
+    return [(name, by_family[name]) for name in sorted(by_family, key=lambda f: (f == "ci", f))]
+
+
+def markdown(records: list[dict], groups: dict[str, list[dict]] | None = None) -> str:
+    groups = series(records) if groups is None else groups
     lines = [
         "# Norn metrics",
         "",
@@ -108,14 +115,11 @@ def markdown(records: list[dict]) -> str:
         "estimate; runner `boat` series are the only ones the nightly ratchet gates.",
         "",
     ]
-    by_family: dict[str, list[str]] = defaultdict(list)
-    for metric in groups:
-        by_family[family(metric)].append(metric)
-    for name in sorted(by_family, key=lambda f: (f == "ci", f)):
+    for name, metrics in _grouped_series(groups):
         lines += [f"## {FAMILIES.get(name, name)}", "",
                   "| Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |",
                   "|---|---:|---|---|---:|---|---|---|---|"]
-        for metric in by_family[name]:
+        for metric in metrics:
             rows = groups[metric]
             last = rows[-1]
             values = [r["value"] for r in rows]
@@ -152,15 +156,12 @@ def _svg(values: list[float], width: int = 160, height: int = 32) -> str:
             f'stroke-width="1.5"/></svg>')
 
 
-def html_page(records: list[dict]) -> str:
-    groups = series(records)
+def html_page(records: list[dict], groups: dict[str, list[dict]] | None = None) -> str:
+    groups = series(records) if groups is None else groups
     sections = []
-    by_family: dict[str, list[str]] = defaultdict(list)
-    for metric in groups:
-        by_family[family(metric)].append(metric)
-    for name in sorted(by_family, key=lambda f: (f == "ci", f)):
+    for name, metrics in _grouped_series(groups):
         rows_html = []
-        for metric in by_family[name]:
+        for metric in metrics:
             rows = groups[metric]
             last = rows[-1]
             values = [r["value"] for r in rows[-60:]]
@@ -209,8 +210,9 @@ Only <code>boat</code> series are ratcheted; GitHub-hosted CI times are recorded
 """
 
 
-def render_files(records: list[dict]) -> dict[str, bytes]:
-    return {"README.md": markdown(records).encode(), "index.html": html_page(records).encode()}
+def render_files(records: list[dict], groups: dict[str, list[dict]] | None = None) -> dict[str, bytes]:
+    groups = series(records) if groups is None else groups
+    return {"README.md": markdown(records, groups).encode(), "index.html": html_page(records, groups).encode()}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,11 +223,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     record = _sibling("record")
     records = record.all_records(record.read_store(Path(args.repo), args.rev))
+    groups = series(records)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for name, data in render_files(records).items():
+    for name, data in render_files(records, groups).items():
         (out / name).write_bytes(data)
-    print(json.dumps({"records": len(records), "metrics": len(series(records)), "out": str(out)}))
+    print(json.dumps({"records": len(records), "metrics": len(groups), "out": str(out)}))
     return 0
 
 

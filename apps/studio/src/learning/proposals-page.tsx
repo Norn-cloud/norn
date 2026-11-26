@@ -43,7 +43,7 @@ const REPLAY_OUTCOME_STYLE: Readonly<Record<ReplayOutcome, { readonly label: str
 }
 
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const selectClass = "h-8 max-sm:min-h-[44px] rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
 
 /**
  * `/learning/proposals`: server-driven list of `learning.GapProposal` records (#1220 L-5).
@@ -337,7 +337,7 @@ function ProposalReview({ proposal: p, record, onOpen }: {
             <Chip tone="gray" mono={technical}>{p.target.label ?? p.target.artifactId}</Chip>
           </>
         }
-        actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/proposals"><ArrowLeft /> All proposals</Link></Button>}
+        actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/proposals"><ArrowLeft aria-hidden className="rtl:rotate-180" /> All proposals</Link></Button>}
       />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">

@@ -2,13 +2,10 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
 
-use norn_ir::ResourceLimitProfile;
-use zen_expression::intellisense::IntelliSense;
 use zen_expression::parser::Node;
 
-use crate::{ExprError, validate_evaluation_source};
+use crate::ExprError;
 
 /// The value of one object-literal field, as far as the expression fixes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,30 +38,15 @@ pub struct ObjectLiteral {
 /// [`ExprError::Compile`] when the source is malformed or exceeds the checked
 /// expression source bounds.
 pub fn object_literals(source: &str) -> Result<Vec<ObjectLiteral>, ExprError> {
-    validate_evaluation_source(source, &ResourceLimitProfile::norn_limits_v1()).map_err(
-        |diagnostics| ExprError::Compile {
-            message: diagnostics
-                .into_iter()
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>()
-                .join("; "),
-        },
-    )?;
-    IntelliSense::new()
-        .with_strict(true)
-        .with_ast(source, false, |ast, _metadata| {
-            let found = Rc::new(RefCell::new(Vec::new()));
-            let sink = Rc::clone(&found);
-            ast.walk(move |node| {
-                if let Node::Object(entries) = node {
-                    sink.borrow_mut().push(literal(entries));
-                }
-            });
-            found.take()
-        })
-        .ok_or_else(|| ExprError::Compile {
-            message: "expression does not parse".to_owned(),
-        })
+    crate::reads::with_validated_ast(source, false, |ast| {
+        let found = RefCell::new(Vec::new());
+        ast.walk(|node| {
+            if let Node::Object(entries) = node {
+                found.borrow_mut().push(literal(entries));
+            }
+        });
+        found.into_inner()
+    })
 }
 
 /// The records a command-producing expression yields, when its shape fixes
@@ -76,24 +58,10 @@ pub fn object_literals(source: &str) -> Result<Vec<ObjectLiteral>, ExprError> {
 /// # Errors
 /// [`ExprError::Compile`] when the source is malformed or over its bounds.
 pub fn command_records(source: &str) -> Result<Option<Vec<ObjectLiteral>>, ExprError> {
-    validate_evaluation_source(source, &ResourceLimitProfile::norn_limits_v1()).map_err(
-        |diagnostics| ExprError::Compile {
-            message: diagnostics
-                .into_iter()
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>()
-                .join("; "),
-        },
-    )?;
-    IntelliSense::new()
-        .with_strict(true)
-        .with_ast(source, false, |ast, _metadata| {
-            let mut records = Vec::new();
-            records_of(ast, &mut records).then_some(records)
-        })
-        .ok_or_else(|| ExprError::Compile {
-            message: "expression does not parse".to_owned(),
-        })
+    crate::reads::with_validated_ast(source, false, |ast| {
+        let mut records = Vec::new();
+        records_of(ast, &mut records).then_some(records)
+    })
 }
 
 /// Whether `node` has the fixed record shape, collecting its records.

@@ -98,7 +98,7 @@ export function Inbox() {
                     <RouteLink key={decision.id} to={target} className={rowLink}>
                       <span className="min-w-0 flex-1 truncate">{decision.question}</span>
                       <span className="shrink-0 text-meta text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
-                      <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                      <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" />
                     </RouteLink>
                   ))}
                 </div>
@@ -112,7 +112,7 @@ export function Inbox() {
                     <RouteLink key={source.id} to={source.target} className={rowLink}>
                       <span className="min-w-0 flex-1 truncate">{text(source.values.label) ?? source.id}</span>
                       <span className="min-w-0 max-w-[50%] truncate text-meta text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
-                      <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                      <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" />
                     </RouteLink>
                   ))}
                 </div>

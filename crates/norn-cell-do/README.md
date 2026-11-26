@@ -37,31 +37,39 @@ authorized read services and `norn-cell`'s portable store on
 - `norn-olapd` (native, `duckdb` feature): the tenant analytics engine as a
   sidecar next to the cell host. It serves `norn_cell::analytics`' typed
   operations over HTTP to the cells. OLAP-CRED-1 (#1493): each call carries
-  the calling cell's own credential, an Ed25519-signed `nolap1.<kid>.<tenant>.
-  <expires_ms>.<sig>` the cell mints for its own tenant only, living two
-  minutes (`norn_api::olap_credential`). The signature also covers the
-  call's operation and the SHA-256 of its exact body, which the daemon
-  recomputes, so a credential is good for that one request only (OLAP-03).
-  The same request can still be replayed byte for byte until it expires, so
-  the transport between the cell host and the daemon must be protected: TLS,
-  or a private network nothing else can join. The daemon holds public keys
-  only, in the keyring file `NORN_OLAP_KEYS_FILE` (one `<kid>:<base64url
-  public key>` per line), read on every call.
+  the calling cell's own credential, an Ed25519-signed `nolap2.<kid>.<tenant>.
+  <expires_ms>.<body sha256>.<sig>` the cell mints for its own tenant only,
+  living two minutes (`norn_api::olap_credential`). The signature also covers
+  the call's operation and the SHA-256 of its exact body, so a credential is
+  good for that one request only (OLAP-03). The same request can still be
+  replayed byte for byte until it expires, so the transport between the cell
+  host and the daemon must be protected: TLS, or a private network nothing
+  else can join. The daemon holds public keys only, in the keyring file
+  `NORN_OLAP_KEYS_FILE` (one `<kid>:<base64url public key>` per line), read on
+  every call. A cell host and a daemon must run the same credential format:
+  deploy them together.
 
   The daemon authorizes each request completely before it routes or parses it
-  (OLAP-04): the credential must verify for the operation the path names and
-  the body received, and the body's `tenant` must be the credential's. Every
-  refusal up to there (missing, malformed, unknown or rotated-out key, bad
-  signature, expired, longer-lived than ten minutes, minted for another
-  request, another tenant's, a body naming no tenant, a method other than
-  `POST`, an unknown path) gets one identical `401`, before any tenant
-  database is opened. A `400` or `404` needs a credential the cell minted for
-  that exact request. Residual timing difference: only a well-formed
-  credential naming a key id in the keyring pays the signature check, so
-  response time can tell it from garbage; key ids are not secret, and no
-  tenant's existence or data changes the time of a refusal. Beyond that the
-  daemon decides no access; the cell authorizes every request and checks
-  every answer.
+  (OLAP-04). #1747: the credential is verified from the request's head, for
+  the operation the path names and the body digest it carries, before any
+  body byte is read; the body then read must have that digest, and its
+  `tenant` must be the credential's. Every refusal up to there (missing,
+  malformed, unknown or rotated-out key, bad signature, expired, longer-lived
+  than ten minutes, minted for another request, another tenant's, a body
+  naming no tenant, a method other than `POST`, an unknown path) gets one
+  identical `401`, before any tenant database is opened. A `400` or `404`
+  needs a credential the cell minted for that exact request. Residual timing
+  difference: only a well-formed credential naming a key id in the keyring
+  pays the signature check, so response time can tell it from garbage; key
+  ids are not secret, and no tenant's existence or data changes the time of
+  a refusal. Beyond that the daemon decides no access; the cell authorizes
+  every request and checks every answer.
+
+  Connections are read and authenticated in a bounded pre-admission stage
+  (64 at once, 16 from one peer address), apart from the 8 engine workers;
+  only a fully authenticated, digest-checked request is queued for a worker
+  (8 may wait). A full stage or queue is answered `503` at once, so idle,
+  slow or forged connections never hold an engine worker.
 
   Each tenant has its own scratch directory, `<NORN_OLAP_DATA>/tmp/<tenant>/`,
   for its load downloads, its exports and its `DuckDB` spill, and its database

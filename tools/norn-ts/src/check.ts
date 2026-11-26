@@ -61,7 +61,6 @@ export interface CheckOptions {
 const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", "map"])
 /** `Norn.law(name, spec)` members whose values are predicates over the subject. */
 const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually", "may"])
-/** Element names that would shadow a Norn expression binding or a zen keyword. */
 
 interface Ctx {
   /**
@@ -335,7 +334,6 @@ export class ProfileChecker {
 class FileWalk {
   private readonly diagnostics: Diagnostic[] = []
   private readonly uses: SymbolUse[] = []
-  /** Element names of the enclosing array closures, innermost last. */
   private readonly jsonData = new Map<ts.VariableDeclaration, boolean>()
   private readonly boundedJsonData = new Set<ts.VariableDeclaration>()
   private jsonDataDepthExceeded = false
@@ -498,6 +496,15 @@ class FileWalk {
       ts.TypeFlags.EnumLike |
       ts.TypeFlags.Null
     return this.every(this.typeOf(node), (t) => (t.flags & scalar) !== 0)
+  }
+
+  private isNullableNullCheck(left: ts.Expression, right: ts.Expression): boolean {
+    const check = (a: ts.Expression, b: ts.Expression): boolean => {
+      if (a.kind !== ts.SyntaxKind.NullKeyword) return false
+      const t = this.typeOf(b)
+      return t.isUnion() && t.types.some((member) => (member.flags & ts.TypeFlags.Null) !== 0)
+    }
+    return check(left, right) || check(right, left)
   }
 
   // --------------------------------------------------------------- top level
@@ -1043,7 +1050,7 @@ class FileWalk {
     switch (op) {
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-        if (operands() && !(this.isScalar(b.left) && this.isScalar(b.right))) {
+        if (operands() && !(this.isScalar(b.left) && this.isScalar(b.right)) && !this.isNullableNullCheck(b.left, b.right)) {
           this.report(b, "NORN-FLOW-EXPRESSION", "===/!== compares scalars only (no object equality)")
         }
         return

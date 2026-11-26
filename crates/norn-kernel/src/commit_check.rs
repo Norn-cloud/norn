@@ -27,7 +27,7 @@ use crate::creator_stamp::{KernelTrust as Trust, canonical_writes};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
 use crate::snapshot_observe::ObservationAuthorization;
 use norn_checker::EffectiveKind;
-use norn_expr::{EvaluationBudget, ExprError, Value as ExprValue};
+use norn_expr::{EvaluationBudget, ExprError, TurnFuel, Value as ExprValue};
 use norn_ir::posting::AccountingError;
 use norn_ir::{
     ConstraintClass, DataQualityOutcome, InvariantId, InvariantOwner, Link, ObjectTypeName,
@@ -570,7 +570,7 @@ pub fn evaluate_invariants(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     evaluate_invariants_for_class(catalog, key, values, remaining, None, None)
 }
@@ -581,7 +581,7 @@ pub(crate) fn evaluate_named_invariant(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
     id: &str,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     evaluate_invariants_for_class(catalog, key, values, remaining, None, Some(id))
@@ -596,7 +596,7 @@ fn evaluate_integrity_invariants(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     evaluate_invariants_for_class(
         catalog,
@@ -616,7 +616,7 @@ fn evaluate_invariants_for_class(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
     class: Option<ConstraintClass>,
     selected: Option<&str>,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
@@ -642,7 +642,7 @@ fn evaluate_invariants_for_class(
         return Ok(failures);
     }
     let dispatch_units = u64::try_from(invariants.len()).unwrap_or(u64::MAX);
-    if dispatch_units > *remaining {
+    if dispatch_units > remaining.remaining() {
         return Err(InvariantEvaluationError::BudgetExceeded);
     }
 
@@ -655,7 +655,7 @@ fn evaluate_invariants_for_class(
     let object = match object {
         Ok(object) => object,
         Err(reason) => {
-            *remaining = (*remaining).saturating_sub(dispatch_units);
+            remaining.burn(dispatch_units);
             failures.extend(invariants.into_iter().map(|effective| InvariantFailure {
                 owner: effective.owner,
                 id: effective.id,
@@ -675,10 +675,9 @@ fn evaluate_invariants_for_class(
     for effective in invariants {
         // Charge one deterministic unit to dispatch each declaration. This
         // also bounds a catalog with many zero-cost/invalid expressions.
-        if *remaining == 0 {
+        if remaining.charge(1).is_err() {
             return Err(InvariantEvaluationError::BudgetExceeded);
         }
-        *remaining = (*remaining).saturating_sub(1);
         let expression = match catalog.compiled_expression(effective.invariant.expression.as_str())
         {
             Ok(expression) => expression,
@@ -694,11 +693,11 @@ fn evaluate_invariants_for_class(
                 continue;
             }
         };
-        let attempt = match &environment {
+        let attempt = remaining.spend(|budget| match &environment {
             Ok(env) => expression.evaluate_prepared(
                 &catalog.prepared_invariant(&key.object_type, &expression, env),
                 &context,
-                EvaluationBudget::new(*remaining),
+                budget,
                 env,
                 &norn_expr::Type::Bool,
             ),
@@ -708,8 +707,7 @@ fn evaluate_invariants_for_class(
                 }),
                 units_used: 0,
             },
-        };
-        *remaining = (*remaining).saturating_sub(attempt.units_used);
+        });
         match attempt.result {
             Err(ExprError::BudgetExhausted { .. }) => {
                 return Err(InvariantEvaluationError::BudgetExceeded);
@@ -794,7 +792,7 @@ fn evaluate_typed_properties(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Vec<InvariantFailure>, InvariantEvaluationError> {
     if catalog.effective_view_refused(&key.object_type) {
         return Err(InvariantEvaluationError::InvalidEffectiveValues(
@@ -806,10 +804,9 @@ fn evaluate_typed_properties(
     }
     let properties = typed_properties(catalog, &key.object_type);
     let units = u64::try_from(properties.len()).unwrap_or(u64::MAX);
-    if units > *remaining {
+    if remaining.charge(units).is_err() {
         return Err(InvariantEvaluationError::BudgetExceeded);
     }
-    *remaining = (*remaining).saturating_sub(units);
 
     properties
         .into_iter()
@@ -951,7 +948,7 @@ pub(crate) fn observed_invariant_failures(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Option<Vec<InvariantFailure>> {
     evaluate_commit_invariants(catalog, key, values, remaining, true).ok()
 }
@@ -960,7 +957,7 @@ fn evaluate_commit_invariants(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
     include_quality: bool,
 ) -> Result<Vec<InvariantFailure>, InvariantAdmissionError> {
     let result = if include_quality {
@@ -977,7 +974,7 @@ fn evaluate_commit_invariants(
         }
         InvariantEvaluationError::BudgetExceeded => InvariantAdmissionError::BudgetExceeded {
             key: key.clone(),
-            limit: EvaluationBudget::default().units(),
+            limit: remaining.limit(),
         },
         InvariantEvaluationError::MissingInterface(interface) => {
             InvariantAdmissionError::MissingInterface {
@@ -995,7 +992,7 @@ pub(crate) fn check_invariants<E, C, T, V: CommitView + ?Sized>(
 ) -> Result<(), InvariantAdmissionError> {
     let model = post.model();
     let catalog = model.catalog;
-    let mut remaining = EvaluationBudget::default().units();
+    let mut remaining = TurnFuel::default();
     let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
         let crate::cell_host::FactMutation::Put { values } = &write.mutation else {
@@ -1074,7 +1071,7 @@ pub(crate) fn check_invariants<E, C, T, V: CommitView + ?Sized>(
 fn check_read_findings<V: CommitView + ?Sized>(
     post: &PostState<'_, '_, V>,
     authorization: &ObservationAuthorization,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<(), InvariantAdmissionError> {
     type CachedReadInvariantStates = Vec<(crate::cell_host::JsonObject, Vec<InvariantFailure>)>;
     let model = post.model();

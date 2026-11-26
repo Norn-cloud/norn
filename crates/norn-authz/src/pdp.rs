@@ -244,7 +244,7 @@ impl Pdp {
             agent_session_id: principal.agent_session_id.as_deref(),
             scope,
             capability: &request.capability,
-            binding: request.binding.as_ref(),
+            binding: request.binding(),
         };
         if !self.grants.allows(&capability) {
             explanation.capability = ConjunctOutcome::Deny;
@@ -317,7 +317,8 @@ impl Pdp {
             )]),
         };
         marking_request.context.clear();
-        marking_request.binding = None;
+        marking_request.binding =
+            crate::request::Binding::Unbound(crate::request::UnboundProfile::MarkingDecision);
         self.explain(&marking_request)
     }
 
@@ -515,7 +516,7 @@ fn is_well_formed(request: &AccessRequest) -> bool {
         && !principal.attributes.contains_key("entitlement_kinds")
         && !request.resource.attributes.contains_key(SCOPE_ATTRIBUTE)
         && !request.context.contains_key(SCOPE_ATTRIBUTE)
-        && request.binding.as_ref().is_none_or(|binding| {
+        && request.binding().is_none_or(|binding| {
             binding.action_id == request.action_id
                 && binding.resource_kind == request.resource.object_type
                 && binding.resource_id == request.resource.id

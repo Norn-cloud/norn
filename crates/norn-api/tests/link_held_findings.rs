@@ -16,6 +16,9 @@
 #[path = "../../norn-cell/tests/support/mapped_cell.rs"]
 mod mapped_cell;
 
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+use hosted_read::Mapping;
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::inbox::{InboxQuery, NornInboxItem, get_inbox};
@@ -27,9 +30,7 @@ use norn_cell::engine::NativeEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::{LINK_HELD_RULE, ObjectRecord, SqliteCell};
 use norn_ir::{DataQualityRuleRef, RuntimeObject, RuntimeValue};
-use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
-};
+use norn_kernel::authz::AccessRequest as PdpRequest;
 use norn_kernel::{ObservationEvent, ObservationId, Observed};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -46,9 +47,9 @@ impl Authorizer for Policy {
         Ok(())
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        let allowed = match request.access.principal.subject_id.as_str() {
+        let allowed = match request.access.principal().subject_id.as_str() {
             "full" => true,
-            "limited" => request.access.resource.id != OWNER,
+            "limited" => request.access.resource().id != OWNER,
             "reviewer" => request.capability != ReadCapability::Sources,
             _ => false,
         };
@@ -57,49 +58,6 @@ impl Authorizer for Policy {
         } else {
             Err(Refusal::invalid("private policy diagnostic"))
         }
-    }
-}
-
-struct Mapping;
-impl ObjectAccess for Mapping {
-    fn access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        capability: ReadCapability,
-        object_type: &str,
-        row: Option<&ObjectRecord>,
-    ) -> Result<PdpRequest, Refusal> {
-        let key = ScopeKey {
-            org: scope.org_id.clone(),
-            environment: Some(scope.environment_id.clone()),
-            tenant: None,
-            workspace: None,
-            business_unit: None,
-        };
-        Ok(PdpRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: format!("fixture.{capability:?}"),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
-                object_type: row
-                    .map_or(object_type, |row| row.object_type.as_str())
-                    .into(),
-                id: row.map_or(object_type, |row| row.id.as_str()).into(),
-                scope: key,
-                attributes: BTreeMap::new(),
-            },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
     }
 }
 

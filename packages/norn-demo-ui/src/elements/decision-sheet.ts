@@ -149,7 +149,7 @@ const WORDS = {
 type WordKey = keyof (typeof WORDS)["en"]
 
 const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-const fill = (template: string, ...values: readonly string[]) => values.reduce((text, value, index) => text.replace(`{${index}}`, value), template)
+const fill = (template: string, ...values: readonly string[]) => values.reduce((text, value, index) => text.replace(`{${index}}`, () => value), template)
 
 function nodes(root: WidgetNodeDoc): Map<string, WidgetNodeDoc> {
   const out = new Map<string, WidgetNodeDoc>()
@@ -438,11 +438,20 @@ export function refusalPanelMarkup(
   return { html, variant }
 }
 
+export interface MountedDecisionSheet {
+  readonly driver: Driver
+  readonly raise: (nodeId: string, extra?: Record<string, unknown>) => boolean
+  readonly choose: (optionId: string) => boolean
+  readonly setNow: (ms: number) => void
+  readonly setContext: (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => void
+  readonly dispose: () => void
+}
+
 /**
- * Mount one decision into `root` and run its machine. Returns the driver so a host can dispose it.
+ * Mount one decision into `root` and run its machine. Returns the handle so a host can drive or dispose it.
  * Every control's presence and enabled state comes from the machine via `enabled`.
  */
-export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Driver {
+export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): MountedDecisionSheet {
   const { document, decision } = options
   // The engine evaluates guards and assignments only; until it arrives the sheet shows its first
   // state read-only and raises nothing, so no event is ever decided without it.
@@ -693,6 +702,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     }
     return false
   }
+  const listeners = new AbortController()
+  const { signal } = listeners
   root.addEventListener("click", (event) => {
     const target = event.target as Element | null
     const link = target?.closest<HTMLAnchorElement>("a[data-link]")
@@ -712,53 +723,58 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     }
     const button = target?.closest<HTMLButtonElement>("button[data-node]")
     if (button && !button.disabled) raise(button.dataset.node ?? "")
-  })
+  }, { signal })
   root.addEventListener("submit", (event) => {
     event.preventDefault()
     if (!raise("confirm-button")) raise("decide-button")
-  })
+  }, { signal })
   // UI SDK reports a change on the group itself (`valuechange`, not bubbling); its `value` is the checked radio.
   const group = q<HTMLElement & { value?: unknown }>('[data-node="option-choice"]')
   group?.addEventListener("valuechange", (event) => {
     const detail = (event as CustomEvent<{ value?: unknown }>).detail
     const value = typeof detail?.value === "string" ? detail.value : typeof group.value === "string" ? group.value : ""
     if (value !== "") raise("option-choice", { value, confirm: needsConfirm(decision, value) })
-  })
+  }, { signal })
   // The native textarea reports every edit, upgraded or not.
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLTextAreaElement | null
     if (target?.tagName === "TEXTAREA" && String(driver.snapshot().fields.note ?? "") !== target.value) raise("note-input", { value: target.value })
-  })
+  }, { signal })
   /** Pick an option exactly as a click on its radio does: a disabled or unknown option is not picked. */
   const choose = (optionId: string) => {
     const radio = [...root.querySelectorAll<HTMLElement>("ui-radio")].find((candidate) => candidate.getAttribute("value") === optionId)
     if (!radio || radio.hasAttribute("disabled") || radio.closest("[hidden]")) return false
     return raise("option-choice", { value: optionId, confirm: needsConfirm(decision, optionId) })
   }
-  // Named apart from the element's own `choose`, which forwards here once mounted.
-  ;(root as HTMLElement & { raise?: typeof raise; pick?: typeof choose; setNow?: (ms: number) => void }).raise = raise
-  ;(root as HTMLElement & { pick?: typeof choose }).pick = choose
-  ;(root as HTMLElement & { setNow?: (ms: number) => void }).setNow = (ms: number) => {
+  const setNow = (ms: number) => {
     now = ms
     paint(driver.snapshot())
   }
-  ;(root as HTMLElement & { setContext?: (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => void }).setContext = (next) => {
+  const setContext = (next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }) => {
     technical = next.technical === true
     caller = next.caller
     laws = next.laws
     paint(driver.snapshot())
   }
+  const dispose = () => {
+    listeners.abort()
+    driver.dispose()
+  }
   paint(driver.snapshot())
   if (engine === null) {
     void Promise.resolve(options.evaluate).then(
       (loaded) => {
+        if (signal.aborted) return
         engine = loaded
         paint(driver.snapshot())
       },
-      () => q(".norn-sheet")?.setAttribute("data-engine", "unavailable"),
+      () => {
+        if (signal.aborted) return
+        q(".norn-sheet")?.setAttribute("data-engine", "unavailable")
+      },
     )
   }
-  return driver
+  return { driver, raise, choose, setNow, setContext, dispose }
 }
 
 /** `<norn-decision-sheet>`: set `options` to mount; removing the element disposes the machine. */
@@ -788,7 +804,7 @@ export interface NornDecisionSheet extends HTMLElement {
 export function defineDecisionSheet(name = "norn-decision-sheet"): void {
   if (customElements.get(name)) return
   class Element extends HTMLElement implements NornDecisionSheet {
-    #driver: Driver | null = null
+    #mounted: MountedDecisionSheet | null = null
     #options: SheetOptions | null = null
     set options(options: SheetOptions) {
       this.#options = options
@@ -799,27 +815,33 @@ export function defineDecisionSheet(name = "norn-decision-sheet"): void {
       return this.#options
     }
     connectedCallback() {
-      if (this.#options && !this.#driver) this.#mount()
+      if (this.#options && !this.#mounted) this.#mount()
     }
     disconnectedCallback() {
-      this.#driver?.dispose()
-      this.#driver = null
+      this.#mounted?.dispose()
+      this.#mounted = null
     }
     get snapshot(): Snapshot | null {
-      return this.#driver?.snapshot() ?? null
+      return this.#mounted?.driver.snapshot() ?? null
     }
     get ready(): boolean {
       return this.querySelector(".norn-sheet")?.getAttribute("data-engine") === "ready"
     }
     request(nodeId: string): boolean {
-      return (this as unknown as { raise?: (node: string) => boolean }).raise?.(nodeId) ?? false
+      return this.#mounted?.raise(nodeId) ?? false
     }
     choose(optionId: string): boolean {
-      return (this as unknown as { pick?: (option: string) => boolean }).pick?.(optionId) ?? false
+      return this.#mounted?.choose(optionId) ?? false
+    }
+    setNow(ms: number): void {
+      this.#mounted?.setNow(ms)
+    }
+    setContext(next: { readonly technical?: boolean; readonly caller?: string; readonly laws?: Readonly<Record<string, SheetLawInfo>> }): void {
+      this.#mounted?.setContext(next)
     }
     #mount() {
-      this.#driver?.dispose()
-      this.#driver = this.#options ? mountDecisionSheet(this, this.#options) : null
+      this.#mounted?.dispose()
+      this.#mounted = this.#options ? mountDecisionSheet(this, this.#options) : null
     }
   }
   customElements.define(name, Element)

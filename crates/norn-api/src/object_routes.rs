@@ -84,9 +84,9 @@ pub(crate) fn mapped(
     let (expected_type, expected_id) = row.map_or((object_type, object_type), |row| {
         (row.object_type.as_str(), row.id.as_str())
     });
-    if request.principal.subject_id != actor
-        || request.resource.object_type != expected_type
-        || request.resource.id != expected_id
+    if request.principal().subject_id != actor
+        || request.resource().object_type != expected_type
+        || request.resource().id != expected_id
         || row.is_some_and(|row| row.scope != host_scope.key())
     {
         return Err(read_denied());
@@ -101,31 +101,30 @@ pub(crate) fn row_readable<E: SqlEngine>(
     actor: &str,
     row: &ObjectRecord,
 ) -> bool {
-    row_visible(host, access, actor, row)
+    [Population, Values]
+        .into_iter()
+        .all(|capability| permitted(host, access, actor, row, capability))
 }
 
-fn row_visible<E: SqlEngine>(
+/// Declared property names and resolved base types of an object type.
+pub(crate) type EffectiveProperties = Vec<(String, Option<norn_ir::PropertyType>)>;
+
+/// The effective property types of `object_type`, or `None` when the model
+/// does not declare `object_type`.
+pub(crate) fn effective_properties<E: SqlEngine>(
     host: &DevHost<E>,
-    access: &dyn ObjectAccess,
-    actor: &str,
-    row: &ObjectRecord,
-) -> bool {
-    [Population, Values].into_iter().all(|capability| {
-        mapped(
-            host.scope(),
-            access,
-            actor,
-            capability,
-            &row.object_type,
-            Some(row),
-        )
-        .is_ok_and(|request| {
-            host.read_permitted(&ReadRequest {
-                capability,
-                access: &request,
-            })
-        })
-    })
+    object_type: &str,
+) -> Result<Option<EffectiveProperties>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    if !reader.model().has_type(object_type) {
+        return Ok(None);
+    }
+    reader
+        .model()
+        .effective_property_types(object_type)
+        .map(Some)
+        .map_err(Refusal::host)
 }
 
 /// The collection gate: scope and Population on the collection, under the epoch.
@@ -148,6 +147,24 @@ pub(crate) fn collection<'h, E: SqlEngine>(
     Ok((epoch, actor.to_owned()))
 }
 
+fn uniform_row<'h, E: SqlEngine>(
+    host: &'h DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    object_type: &str,
+    access: &dyn ObjectAccess,
+) -> Result<(std::sync::RwLockReadGuard<'h, ()>, String, ObjectRecord), Refusal> {
+    let (epoch, actor) = collection(host, scope, actor, object_type, access)?;
+    let every = ObjectRecord {
+        object_type: object_type.to_owned(),
+        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
+        scope: host.scope().key(),
+        version: 0,
+        values: std::collections::BTreeMap::new(),
+    };
+    Ok((epoch, actor, every))
+}
+
 /// D102: the collection gate, then the row gate asked once for every row of
 /// `object_type`, for a host whose read policy decides rows by their type
 /// alone (it is asked for [`norn_cell::compute::ALL_MEMBERS`]). The answer is
@@ -162,14 +179,7 @@ pub fn uniform_gate<E: SqlEngine>(
     object_type: &str,
     access: &dyn ObjectAccess,
 ) -> Result<bool, Refusal> {
-    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
-    let every = ObjectRecord {
-        object_type: object_type.to_owned(),
-        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
-        scope: host.scope().key(),
-        version: 0,
-        values: std::collections::BTreeMap::new(),
-    };
+    let (_epoch, actor, every) = uniform_row(host, scope, actor, object_type, access)?;
     if !permitted(host, access, &actor, &every, Population) {
         return Err(read_denied());
     }
@@ -191,14 +201,7 @@ pub(crate) fn uniform_sources_gate<E: SqlEngine>(
     object_type: &str,
     access: &dyn ObjectAccess,
 ) -> Result<(), Refusal> {
-    let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
-    let every = ObjectRecord {
-        object_type: object_type.to_owned(),
-        id: norn_cell::compute::ALL_MEMBERS.to_owned(),
-        scope: host.scope().key(),
-        version: 0,
-        values: std::collections::BTreeMap::new(),
-    };
+    let (_epoch, actor, every) = uniform_row(host, scope, actor, object_type, access)?;
     let allowed = [Population, Values, ReadCapability::Sources]
         .into_iter()
         .all(|capability| permitted(host, access, &actor, &every, capability));
@@ -216,15 +219,15 @@ type HeldAndMarked = (
     Vec<Option<std::collections::BTreeMap<String, Vec<String>>>>,
 );
 
-fn held_and_marked<E: SqlEngine>(
+fn held_and_marked<'a, E: SqlEngine>(
     host: &DevHost<E>,
     reader: &StoreReader<'_, E>,
-    visible: &[(bool, ObjectRecord)],
+    rows: impl Iterator<Item = (bool, &'a ObjectRecord)> + Clone,
 ) -> Result<HeldAndMarked, Refusal> {
-    let held = visible
-        .iter()
+    let held = rows
+        .clone()
         .map(|(seen, row)| {
-            if *seen {
+            if seen {
                 reader.observation_is_quarantined(MAIN_WORLD, row)
             } else {
                 Ok(false)
@@ -233,10 +236,9 @@ fn held_and_marked<E: SqlEngine>(
         .collect::<Result<Vec<bool>, _>>()
         .map_err(Refusal::host)?;
     let catalog = host.marking_catalog(reader)?;
-    let marked = visible
-        .iter()
+    let marked = rows
         .map(|(seen, row)| {
-            if *seen {
+            if seen {
                 privacy::row_markings(reader, &catalog, row)
             } else {
                 Ok(None)
@@ -284,52 +286,24 @@ pub fn get_object_page<E: SqlEngine>(
     // the only connection to its storage, serving each page in one synchronous
     // call) may go without a revision; any other engine without one refuses.
     let mut snapshot = None;
-    let mut within = |read: &mut dyn FnMut(&StoreReader<'_, E>) -> Result<(), Refusal>| {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        let version = || cell_version(&reader);
-        let start = match snapshot {
-            Some(start) => start,
-            None => *snapshot.insert(version()?),
-        };
-        if version()? != start {
-            return Err(snapshot_moved());
-        }
-        access.within_snapshot();
-        read(&reader)?;
-        if version()? != start {
-            return Err(snapshot_moved());
-        }
-        Ok(())
-    };
     let mut cursor = after.map(str::to_owned);
-    let mut marked_catalog = None;
     loop {
-        let mut batch = Vec::new();
-        within(&mut |reader| {
+        let batch = locked(host, access, &mut snapshot, |reader| {
             if !reader.model().has_type(object_type) {
                 return Err(not_found());
             }
-            batch = reader
+            reader
                 .list_after(MAIN_WORLD, object_type, cursor.as_deref(), SCAN_BATCH)
-                .map_err(Refusal::host)?;
-            Ok(())
+                .map_err(Refusal::host)
         })?;
         let exhausted = batch.len() < SCAN_BATCH;
         let visible: Vec<(bool, ObjectRecord)> = batch
             .into_iter()
-            .map(|row| (row_visible(host, access, &actor, &row), row))
+            .map(|row| (row_readable(host, access, &actor, &row), row))
             .collect();
-        let mut quarantined = Vec::with_capacity(visible.len());
-        let mut marked = Vec::with_capacity(visible.len());
-        within(&mut |reader| {
-            let (held, catalog, markings) = held_and_marked(host, reader, &visible)?;
-            quarantined = held;
-            marked = markings;
-            marked_catalog = Some(catalog);
-            Ok(())
+        let (quarantined, catalog, marked) = locked(host, access, &mut snapshot, |reader| {
+            held_and_marked(host, reader, visible.iter().map(|(seen, row)| (*seen, row)))
         })?;
-        let catalog = marked_catalog.take().unwrap_or_default();
         for (((seen, mut row), quarantined), markings) in
             visible.into_iter().zip(quarantined).zip(marked)
         {
@@ -356,28 +330,6 @@ pub fn get_object_page<E: SqlEngine>(
             return Ok(page);
         }
     }
-}
-
-/// The version of the cell `reader` sees: its head commit and, on an engine
-/// whose reads are not exclusive, the database revision, which moves on any
-/// commit by another connection. Two equal versions bracket one snapshot.
-///
-/// # Errors
-/// `object.snapshot_unavailable` when a revisioned engine offers no revision,
-/// or a host failure.
-pub(crate) fn cell_version<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-) -> Result<(u64, Option<(u64, u64)>), Refusal> {
-    let revision = match reader.read_isolation() {
-        ReadIsolation::Revisioned => Some(
-            reader
-                .database_revision()
-                .map_err(Refusal::host)?
-                .ok_or_else(snapshot_unavailable)?,
-        ),
-        ReadIsolation::ExclusiveSynchronous => None,
-    };
-    Ok((reader.head_commit_seq().map_err(Refusal::host)?, revision))
 }
 
 fn snapshot_unavailable() -> Refusal {
@@ -423,7 +375,7 @@ pub fn get_object<E: SqlEngine>(
         .object(MAIN_WORLD, object_type, id)
         .map_err(Refusal::host)?
         .ok_or_else(not_found)?;
-    if !row_visible(host, access, &actor, &row)
+    if !row_readable(host, access, &actor, &row)
         || reader
             .observation_is_quarantined(MAIN_WORLD, &row)
             .map_err(Refusal::host)?
@@ -566,29 +518,11 @@ pub(crate) fn scan_listed<E: SqlEngine>(
             })
             .collect();
         let (held, catalog, marked) = locked(host, access, &mut start, |reader| {
-            let held = seen
-                .iter()
-                .map(|listed| {
-                    if listed.readable {
-                        reader.observation_is_quarantined(MAIN_WORLD, &listed.row)
-                    } else {
-                        Ok(false)
-                    }
-                })
-                .collect::<Result<Vec<bool>, _>>()
-                .map_err(Refusal::host)?;
-            let catalog = host.marking_catalog(reader)?;
-            let marked = seen
-                .iter()
-                .map(|listed| {
-                    if listed.readable {
-                        privacy::row_markings(reader, &catalog, &listed.row)
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok((held, catalog, marked))
+            held_and_marked(
+                host,
+                reader,
+                seen.iter().map(|listed| (listed.readable, &listed.row)),
+            )
         })?;
         for ((mut listed, quarantined), markings) in seen.into_iter().zip(held).zip(marked) {
             if quarantined {
@@ -704,17 +638,7 @@ pub fn get_object_query_within<E: SqlEngine>(
     max_scan: usize,
 ) -> Result<NornObjectQueryPage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
-    let properties = {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        if !reader.model().has_type(object_type) {
-            return Err(not_found());
-        }
-        reader
-            .model()
-            .effective_property_types(object_type)
-            .map_err(Refusal::host)?
-    };
+    let properties = effective_properties(host, object_type)?.ok_or_else(not_found)?;
     let query = object_query::parse(params, &properties)?;
     let digest = query.digest(object_type);
     let cursor = continued(

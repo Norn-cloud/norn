@@ -25,6 +25,7 @@
             "to": "one"
           },
           "id": "order",
+          "inverse": "lines",
           "target": "supply.PurchaseOrder"
         },
         {

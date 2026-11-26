@@ -43,7 +43,7 @@ const VERDICT_TONE: Readonly<Record<Verdict, Tone>> = {
   gap: "amber",
 }
 
-const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:ring-2 focus-visible:ring-ring"
+const selectClass = "h-8 max-sm:min-h-[44px] rounded-md border border-input bg-background px-2.5 text-body outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
 const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 
 function rulesSummary(episode: Episode): { readonly text: string; readonly tone: Tone } {

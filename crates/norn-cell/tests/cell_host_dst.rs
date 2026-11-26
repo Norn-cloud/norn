@@ -19,8 +19,8 @@ use norn_cell::engine::{
     NativeEngine, SqlEngine,
 };
 use norn_cell::{
-    CellError, CellStore, CommitOutcome, LedgerHead, MAIN_WORLD, MarkingDeclassification, Model,
-    PerformClaim, SqliteCell, StoreOptions,
+    CellError, CellStore, ClaimOutcome, CommitOutcome, LedgerHead, MAIN_WORLD,
+    MarkingDeclassification, Model, SqliteCell, StoreOptions,
 };
 use norn_ir::{ActionRoot, ObjectTypeDef};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
@@ -1114,7 +1114,7 @@ impl NativeDstHarness {
             step,
             "fresh perform claim",
             &claimed,
-            &Some(PerformClaim::Fresh(head.command.clone())),
+            &ClaimOutcome::Fresh(head.command.clone()),
         )?;
         self.model.head = head_of(&self.cell, self.seed, step)?;
         if let Some(slot) = self.model.outbox.first_mut() {
@@ -1131,7 +1131,7 @@ impl NativeDstHarness {
                 step,
                 "crash after claim surfaces OutcomeUnknown",
                 &after,
-                &Some(PerformClaim::OutcomeUnknown(head.command.clone())),
+                &ClaimOutcome::OutcomeUnknown(head.command.clone()),
             )?;
             let err = self.cell.perform();
             ensure(

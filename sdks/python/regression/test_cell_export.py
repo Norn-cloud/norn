@@ -28,11 +28,9 @@ TABLE = pa.table({
 
 
 class Handler(BaseHTTPRequestHandler):
-    seen: list = []
-
     def do_GET(self):  # noqa: N802
         url = urlparse(self.path)
-        Handler.seen.append((url.path, parse_qs(url.query), self.headers.get("x-api-key")))
+        self.server.seen.append((url.path, parse_qs(url.query), self.headers.get("x-api-key")))
         if url.path == "/v1/objects/lab.Sample:export":
             sink = io.BytesIO()
             pq.write_table(TABLE, sink)
@@ -65,15 +63,17 @@ class Handler(BaseHTTPRequestHandler):
 class Export(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.server.seen = []
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
         url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.cell = Cell(AuthenticatedClient(base_url=url, token="key-1", prefix="", auth_header_name="x-api-key"), "o1", "e1")
-        Handler.seen.clear()
 
     def tearDown(self):
-        self.cell.client.get_httpx_client().close()
+        self.cell.close()
         self.server.shutdown()
         self.server.server_close()
+        self.thread.join(timeout=5)
 
     def test_parquet_rows_keep_nulls_and_carry_the_snapshot(self):
         frame = self.cell.export("lab.Sample", ["x", "y"])
@@ -81,7 +81,7 @@ class Export(unittest.TestCase):
         self.assertTrue(pd.isna(frame.loc[1, "x"]) and pd.isna(frame.loc[2, "y"]))
         self.assertEqual(pd.to_numeric(frame["x"]).dropna().tolist(), [1.5, 2.25])
         self.assertEqual((frame.attrs["snapshot"], frame.attrs["withheld"]), ("c42", 1))
-        path, query, key = Handler.seen[0]
+        path, query, key = self.server.seen[0]
         self.assertEqual((path, query["columns"], query["format"], query["orgId"], key), ("/v1/objects/lab.Sample:export", ["x,y"], ["parquet"], ["o1"], "key-1"))
 
     def test_no_engine_means_fall_back(self):
@@ -97,6 +97,14 @@ class Export(unittest.TestCase):
 
     def test_the_read_path_is_recorded(self):
         self.assertEqual(self.cell.export("lab.Sample", ["x"]).attrs["read_path"], "export")
+
+    def test_invalid_object_type_is_refused_before_request(self):
+        for bad in ("", "   ", ".", "..", "../admin", "lab.Sample?x=1", "lab.Sample#frag", "lab/Sample", "lab%2fSample", "lab.Sample:export", " lab.Sample ", "lab.Sample\n"):
+            with self.assertRaises(ValueError):
+                self.cell.export(bad, ["x"])
+            with self.assertRaises(ValueError):
+                self.cell.rows(bad)
+        self.assertEqual(self.server.seen, [])
 
 
 if __name__ == "__main__":

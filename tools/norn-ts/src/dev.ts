@@ -35,6 +35,7 @@ import {
   releasePlatformFor,
   type ActiveRuntimeRoot,
 } from "./runtime-cache.ts"
+import { fetchBounded, isFetchableUrl } from "./setup.ts"
 
 /** What finding the host depends on; a test replaces parts of it. */
 export interface HostLookup {
@@ -53,40 +54,10 @@ function installedPackage(name: string): string | undefined {
   catch { return undefined }
 }
 
-/** How long a host download may take before it is abandoned. */
 export const DOWNLOAD_TIMEOUT_MS = 600_000
 
-/**
- * Fetch at most `limit` bytes from `url`, within `timeoutMs`. The body is
- * streamed and abandoned as soon as it grows past the limit, so a server that
- * sends more than the release recorded, or stalls, cannot fill memory or hang
- * `norn dev`.
- */
-export async function download(url: string, limit: number, timeoutMs: number = DOWNLOAD_TIMEOUT_MS): Promise<Uint8Array> {
-  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(timeoutMs) })
-  if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`)
-  const declared = Number(response.headers.get("content-length") ?? "NaN")
-  if (Number.isFinite(declared) && declared > limit) {
-    await response.body.cancel()
-    throw new Error(`the server offers ${declared} bytes; the release records ${limit}`)
-  }
-  const chunks: Uint8Array[] = []
-  let size = 0
-  const reader = response.body.getReader()
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    size += value.byteLength
-    if (size > limit) {
-      await reader.cancel()
-      throw new Error(`the server sent more than the ${limit} bytes the release records`)
-    }
-    chunks.push(value)
-  }
-  const bytes = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-  return bytes
+export function download(url: string, limit: number, timeoutMs: number = DOWNLOAD_TIMEOUT_MS): Promise<Uint8Array> {
+  return fetchBounded(url, limit, timeoutMs)
 }
 
 export function hostLookup(env: Readonly<Record<string, string | undefined>> = process.env): HostLookup {
@@ -118,12 +89,6 @@ function unavailable(detail: string, build: BuildInfo | undefined): ProjectError
   return new ProjectError("cli.setup.host_unavailable", `No native Norn host: ${detail} ${how}`, 3)
 }
 
-/** A release asset is fetched over https; plain http only from this machine (a local dry run). */
-function fetchable(url: string): boolean {
-  return url.startsWith("https://") || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url)
-}
-
-/** Normalize a release tag (`drop-28` -> `0.0.28`, `drop-test` -> `0.0.0-test`) to compare with semver. */
 function normalizeReleaseVersion(version: string): string {
   const numericDrop = /^drop-([0-9]+)$/.exec(version)
   if (numericDrop) return `0.0.${numericDrop[1]}`
@@ -270,7 +235,7 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")
   if (existsSync(cached) && sha256(readFileSync(cached)) === asset.sha256) return cached
   if (!asset.url) throw unavailable(`${packageName} is not installed; reinstall @norn/cli for this platform.`, build)
-  if (!fetchable(asset.url)) throw unavailable(`the release records ${asset.url}, which is not an https address.`, build)
+  if (!isFetchableUrl(asset.url)) throw unavailable(`the release records ${asset.url}, which is not an https address.`, build)
   let bytes: Uint8Array
   process.stderr.write(`norn dev: fetching the dev host for ${lookup.platform} (${(asset.size / 1_000_000).toFixed(0)} MB), once\n`)
   try { bytes = await lookup.download(asset.url, asset.size) }

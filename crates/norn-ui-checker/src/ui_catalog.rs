@@ -134,18 +134,18 @@ pub(crate) fn placed_entry_findings(
     index: usize,
     composed: &ComposedUx<'_>,
 ) -> Vec<Diagnostic> {
-    let mut placed = BTreeSet::new();
+    let mut placed: BTreeMap<Option<(String, String)>, BTreeSet<String>> = BTreeMap::new();
     if let Some(page) = ux.pages.get(index) {
         collect_entries(&page.root, &mut placed);
     }
     let mut findings = Vec::new();
-    for (widget, entry_id) in placed {
+    for (widget, entry_ids) in placed {
         match widget {
-            None => findings.extend(entry_findings(owner, ux, &entry_id)),
+            None => findings.extend(entries_findings(owner, ux, &entry_ids)),
             Some((id, version)) => {
                 let reference = norn_ir::WidgetArtifactRef { id, version };
                 if let Some(declaring) = composed(&reference) {
-                    findings.extend(entry_findings(owner, &declaring, &entry_id));
+                    findings.extend(entries_findings(owner, &declaring, &entry_ids));
                 }
             }
         }
@@ -153,15 +153,19 @@ pub(crate) fn placed_entry_findings(
     findings
 }
 
-type PlacedEntry = (Option<(String, String)>, String);
-
-fn collect_entries(node: &WidgetNode, placed: &mut BTreeSet<PlacedEntry>) {
+fn collect_entries(
+    node: &WidgetNode,
+    placed: &mut BTreeMap<Option<(String, String)>, BTreeSet<String>>,
+) {
     if let WidgetComponent::Catalog { entry, .. } = &node.component {
         let widget = entry
             .widget
             .as_ref()
             .map(|widget| (widget.id.clone(), widget.version.clone()));
-        placed.insert((widget, entry.entry_id.clone()));
+        placed
+            .entry(widget)
+            .or_default()
+            .insert(entry.entry_id.clone());
     }
     for child in &node.children {
         collect_entries(child, placed);
@@ -169,8 +173,12 @@ fn collect_entries(node: &WidgetNode, placed: &mut BTreeSet<PlacedEntry>) {
 }
 
 /// The declaration and machine error findings of the catalog entries of
-/// `ux` named `entry_id`, and every renderer conflict one of them is in.
-fn entry_findings(owner: &ArtifactEnvelope, ux: &WidgetUx, entry_id: &str) -> Vec<Diagnostic> {
+/// `ux` named in `entry_ids`, and every renderer conflict any of them is in.
+fn entries_findings(
+    owner: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    entry_ids: &BTreeSet<String>,
+) -> Vec<Diagnostic> {
     let at = |pointer: &str| {
         let index = pointer
             .strip_prefix("/payload/ux/catalog/")?
@@ -180,7 +188,7 @@ fn entry_findings(owner: &ArtifactEnvelope, ux: &WidgetUx, entry_id: &str) -> Ve
             .ok()?;
         ux.catalog.get(index)
     };
-    let placed = |entry: &WidgetCatalogEntry| entry.entry_id == entry_id;
+    let placed = |entry: &WidgetCatalogEntry| entry_ids.contains(&entry.entry_id);
     let renders = |entry: &WidgetCatalogEntry| {
         entry.renders.is_some()
             && ux

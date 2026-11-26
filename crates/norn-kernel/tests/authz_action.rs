@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 
 use norn_authz::access::AccessIr;
 use norn_authz::{
-    AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, DenyReason, Pdp,
-    PrincipalInput, ResourceInput, ScopeKey, compile,
+    AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, DenyReason, Pdp,
+    ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal, compile,
 };
 use norn_ir::ActionRoot;
 use norn_kernel::authz::PdpActionAuthorizer;
@@ -109,7 +109,41 @@ fn action_request<'a>(
     }
 }
 
+/// The trusted mapper's claims, before they are sealed into a request; the
+/// mismatch mutants edit one claim each.
+struct Mapped {
+    subject: String,
+    scope: ScopeKey,
+    capability: String,
+    action_id: String,
+    resource: ResourceInput,
+}
+
+impl Mapped {
+    fn build(self) -> AccessRequest {
+        AccessRequest::new(
+            &VerifiedPrincipal::new(
+                self.subject,
+                ActorKind::User,
+                None,
+                Vec::new(),
+                BTreeMap::new(),
+            ),
+            Some(self.scope),
+            self.capability,
+            self.action_id,
+            self.resource,
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedAction),
+        )
+    }
+}
+
 fn mapped_request(request: &ActionAuthzRequest<'_>, capability: &str) -> AccessRequest {
+    mapper_claims(request, capability).build()
+}
+
+fn mapper_claims(request: &ActionAuthzRequest<'_>, capability: &str) -> Mapped {
     let request_scope = ScopeKey {
         org: request.scope.get("orgId").expect("org scope").clone(),
         tenant: request.scope.get("tenantId").cloned(),
@@ -117,15 +151,9 @@ fn mapped_request(request: &ActionAuthzRequest<'_>, capability: &str) -> AccessR
         environment: request.scope.get("environmentId").cloned(),
         business_unit: request.scope.get("businessUnitId").cloned(),
     };
-    AccessRequest {
-        principal: PrincipalInput {
-            subject_id: request.actor.to_owned(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: Vec::new(),
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(request_scope.clone()),
+    Mapped {
+        subject: request.actor.to_owned(),
+        scope: request_scope.clone(),
         capability: capability.to_owned(),
         action_id: request.action.action_id.clone(),
         resource: ResourceInput {
@@ -134,9 +162,6 @@ fn mapped_request(request: &ActionAuthzRequest<'_>, capability: &str) -> AccessR
             scope: request_scope,
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
     }
 }
 
@@ -210,17 +235,17 @@ fn action_authorizer_rejects_mapper_target_and_scope_mismatches() {
         Some(&call.values),
     );
 
-    let mismatches: [fn(&mut AccessRequest); 4] = [
-        |mapped| mapped.principal.subject_id = "mallory".to_owned(),
+    let mismatches: [fn(&mut Mapped); 4] = [
+        |mapped| mapped.subject = "mallory".to_owned(),
         |mapped| mapped.action_id = "doc.read".to_owned(),
         |mapped| mapped.resource.object_type = "app.Other".to_owned(),
         |mapped| mapped.resource.id = "other-doc".to_owned(),
     ];
     for change in mismatches {
         let authorizer = PdpActionAuthorizer::new(pdp(&["doc.approve"]), move |request| {
-            let mut mapped = mapped_request(request, "doc.approve");
+            let mut mapped = mapper_claims(request, "doc.approve");
             change(&mut mapped);
-            Ok(mapped)
+            Ok(mapped.build())
         });
         assert_eq!(
             authorizer.authorize(&request),
@@ -231,9 +256,9 @@ fn action_authorizer_rejects_mapper_target_and_scope_mismatches() {
     }
 
     let wrong_scope = PdpActionAuthorizer::new(pdp(&["doc.approve"]), |request| {
-        let mut mapped = mapped_request(request, "doc.approve");
-        mapped.scope.as_mut().expect("scope").org = "other-org".to_owned();
-        Ok(mapped)
+        let mut mapped = mapper_claims(request, "doc.approve");
+        mapped.scope.org = "other-org".to_owned();
+        Ok(mapped.build())
     });
     assert_eq!(
         wrong_scope.authorize(&request),

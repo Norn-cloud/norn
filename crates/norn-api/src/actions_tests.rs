@@ -15,7 +15,7 @@ use norn_cell::{CellStore, ObjectRecord, engine::NativeEngine};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-    authz::{ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey},
+    authz::{ActorKind, ResourceInput, ScopeKey},
 };
 
 #[path = "../tests/support/action_cell.rs"]
@@ -52,7 +52,7 @@ impl Authorizer for Policy {
         }
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        if request.access.principal.subject_id == AUDITOR {
+        if request.access.principal().subject_id == AUDITOR {
             Ok(())
         } else {
             Err(read_denied())
@@ -135,27 +135,26 @@ impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for Disclosure {
             workspace: None,
             business_unit: None,
         };
-        Ok(norn_kernel::authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: "norn.read.values".into(),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
+        Ok(norn_kernel::authz::AccessRequest::new(
+            &norn_kernel::authz::VerifiedPrincipal::new(
+                actor,
+                ActorKind::User,
+                None,
+                vec![],
+                BTreeMap::new(),
+            ),
+            Some(key.clone()),
+            "norn.read.values",
+            "norn.read",
+            ResourceInput {
                 object_type: object_type.into(),
                 id: object_type.into(),
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            norn_kernel::authz::Binding::Unbound(norn_kernel::authz::UnboundProfile::HostedRead),
+        ))
     }
 }
 
@@ -684,23 +683,18 @@ fn a_call_that_leaves_its_target_unwritten_reports_its_current_version() {
     let host = rows_host();
     let query = scoped("org_demo");
     let operator = Some(OPERATOR);
-    let body = |values: &str, version: &str, key: &str| {
-        format!(
-            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
-        )
-    };
     let created = call(
         &host,
         &query,
         operator,
         ORDER_EDIT,
-        &body(r#"{"title":"first"}"#, "0", "create"),
+        &order_edit_body("order-1", r#"{"title":"first"}"#, 0, "create"),
     )
     .unwrap();
     assert_eq!(created.outcome, ActionCallOutcome::Committed);
     // An empty parent patch and no row operations: the kernel commits the call
     // record without rewriting the order.
-    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let unchanged = order_edit_body("order-1", "{}", created.version, "noop");
     let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
     assert_eq!(committed.outcome, ActionCallOutcome::Committed);
     assert_eq!(
@@ -724,20 +718,15 @@ fn a_replay_reports_the_version_as_of_its_commit_after_a_later_write() {
     let host = rows_host();
     let query = scoped("org_demo");
     let operator = Some(OPERATOR);
-    let body = |values: &str, version: &str, key: &str| {
-        format!(
-            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
-        )
-    };
     let created = call(
         &host,
         &query,
         operator,
         ORDER_EDIT,
-        &body(r#"{"title":"first"}"#, "0", "create"),
+        &order_edit_body("order-1", r#"{"title":"first"}"#, 0, "create"),
     )
     .unwrap();
-    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let unchanged = order_edit_body("order-1", "{}", created.version, "noop");
     let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
     assert_eq!(committed.version, created.version);
     let later = call(
@@ -745,11 +734,7 @@ fn a_replay_reports_the_version_as_of_its_commit_after_a_later_write() {
         &query,
         operator,
         ORDER_EDIT,
-        &body(
-            r#"{"title":"second"}"#,
-            &created.version.to_string(),
-            "later",
-        ),
+        &order_edit_body("order-1", r#"{"title":"second"}"#, created.version, "later"),
     )
     .unwrap();
     assert!(later.version > created.version);

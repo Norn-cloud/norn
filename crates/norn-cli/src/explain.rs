@@ -164,8 +164,7 @@ fn render(report: &ExplainReport) -> String {
     }
     lines.push(format!(
         "Scope: {}",
-        serde_json::to_value(&report.scope)
-            .map_or_else(|error| error.to_string(), |value| value.to_string())
+        serde_json::to_string(&report.scope).unwrap_or_else(|error| error.to_string())
     ));
     for writer in &report.writers {
         lines.push(format!("Writer: {}", writer.to_json()));
@@ -173,8 +172,7 @@ fn render(report: &ExplainReport) -> String {
     for read in &report.reads {
         lines.push(format!(
             "Read: {}",
-            serde_json::to_value(read)
-                .map_or_else(|error| error.to_string(), |value| value.to_string())
+            serde_json::to_string(read).unwrap_or_else(|error| error.to_string())
         ));
     }
     lines.push(format!(

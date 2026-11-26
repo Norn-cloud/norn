@@ -945,6 +945,7 @@ mod tests {
         reason = "test assertions"
     )]
     use super::*;
+    use crate::test_door::TestCommit as _;
     use crate::{CellStore, CommitBatch, Consumption, EffectRow, MAIN_WORLD, Model, OutboxCommand};
 
     fn batch(key: &str) -> CommitBatch {
@@ -972,7 +973,7 @@ mod tests {
                 command: norn_ir::runtime_object! { "kind" => "read" },
             },
         });
-        store.commit_unchecked(&enqueue).expect("enqueue");
+        store.commit(&enqueue).expect("enqueue");
         let outcome =
             norn_ir::runtime_object! { "body" => "payload-marker".repeat(10_000), "ok" => true };
         assert!(
@@ -997,7 +998,7 @@ mod tests {
         consume.events.push(
             norn_ir::runtime_object! { "type" => "command.result", "result" => outcome.clone() },
         );
-        store.commit_unchecked(&consume).expect("consume");
+        store.commit(&consume).expect("consume");
         (store, outcome)
     }
 
@@ -1205,9 +1206,7 @@ mod tests {
         input
             .events
             .push(norn_ir::runtime_object! { "type" => "nested", "body" => nested });
-        store
-            .commit_unchecked(&input)
-            .expect("nested event commits");
+        store.commit(&input).expect("nested event commits");
         let record = store
             .export_record(1)
             .expect("nested journal decodes")
@@ -1265,9 +1264,7 @@ mod tests {
         input
             .events
             .push(norn_ir::runtime_object! { "type" => "unicode.scope" });
-        store
-            .commit_unchecked(&input)
-            .expect("existing scope commits");
+        store.commit(&input).expect("existing scope commits");
         let record = store
             .export_record(1)
             .expect("normalized journal decodes")
@@ -1293,7 +1290,7 @@ mod tests {
                 .expect("store");
         let mut input = batch("literal-marker");
         input.events.push(norn_ir::runtime_object! { "type" => "command.result", "result" => norn_ir::runtime_object! { "$nornPayload" => "literal-user-data" } });
-        legacy.commit_unchecked(&input).expect("literal event");
+        legacy.commit(&input).expect("literal event");
         assert_eq!(
             legacy
                 .read()
@@ -1312,7 +1309,7 @@ mod tests {
         let mut input = batch("foreign-scope");
         input.scope = "org_other/dev".to_owned();
         input.events.push(norn_ir::runtime_object! { "type" => "command.result", "result" => norn_ir::runtime_object! { "body" => "x".repeat(2_000) } });
-        assert!(store.commit_unchecked(&input).is_err());
+        assert!(store.commit(&input).is_err());
         assert_eq!(
             store.read().verify_ledger().expect("unchanged ledger").seq,
             0

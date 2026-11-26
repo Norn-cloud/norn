@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use norn_kernel::authz::{
-    AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, DenyReason, Pdp,
-    PdpDecision, PrincipalInput, ResourceInput, ScopeKey, compile_all_projected,
+    AccessRequest, ActorKind, AttrValue, AuthzSchema, Binding, CapabilityGrant, DenyReason, Pdp,
+    PdpDecision, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal, compile_all_projected,
     infer_principal_attributes,
 };
 use norn_kernel::cell_host::{JsonObject, JsonValue};
@@ -319,27 +319,26 @@ where
                 project_resource_attrs_from_values(auth_req.target_values, &res_attrs_schema);
             let prin_attrs =
                 build_principal_attrs_for_actor(auth_req.actor, &rule_clone, &prin_schema);
-            Ok(AccessRequest {
-                principal: PrincipalInput {
-                    subject_id: auth_req.actor.to_owned(),
-                    actor_kind: ActorKind::User,
-                    agent_session_id: None,
-                    roles: roles.clone(),
-                    attributes: prin_attrs,
-                },
-                scope: Some(caller_scope.clone()),
-                capability: auth_req.action.action_id.clone(),
-                action_id: auth_req.action.action_id.clone(),
-                resource: ResourceInput {
+            Ok(AccessRequest::new(
+                &VerifiedPrincipal::new(
+                    auth_req.actor,
+                    ActorKind::User,
+                    None,
+                    roles.clone(),
+                    prin_attrs,
+                ),
+                Some(caller_scope.clone()),
+                &auth_req.action.action_id,
+                &auth_req.action.action_id,
+                ResourceInput {
                     object_type: auth_req.target.object_type.as_str().to_owned(),
                     id: auth_req.target.key.clone(),
                     scope: resource_scope.clone(),
                     attributes: res_attrs,
                 },
-                context: BTreeMap::new(),
-                binding: None,
-                delegation: Delegation::Direct,
-            })
+                BTreeMap::new(),
+                Binding::Unbound(UnboundProfile::HostedAction),
+            ))
         },
     );
 

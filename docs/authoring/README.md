@@ -2,7 +2,7 @@
 
 Read the [thesis](../architecture/norn-thesis.md), [2026-11-01 decisions](../architecture/decisions/2026-11-01.md), and [core specification index](../spec/core/README.md) before designing definitions or engine features. The decision record governs conflicts with earlier designs. Acceptance contracts: [completeness](../spec/acceptance/completeness-gate.md), [jewelry](../spec/acceptance/jewelry-demo.md), [master ontology MVP](../spec/acceptance/master-ontology-mvp.md).
 
-**CURRENT** means supported authoring syntax in [`tools/norn-ts`](../../tools/norn-ts/README.md), inspected at `b532b4f4da` (2026-11-19). It does not imply every runtime or proof guarantee is qualified. **TARGET** means the intended authoring model; target examples below are illustrative contracts, not compilable SDK examples. `@norn/dsl` and its helpers are target notation, not today's package API. Never translate a missing construct into domain code in the kernel.
+**CURRENT** means supported authoring syntax in [`tools/norn-ts`](../../tools/norn-ts/README.md), inspected at `591b091` (2026-11-25). It does not imply every runtime or proof guarantee is qualified. **TARGET** means the intended authoring model; target examples below are illustrative contracts, not compilable SDK examples. `@norn/dsl` and its helpers are target notation, not today's package API. Never translate a missing construct into domain code in the kernel.
 
 ## The model (TARGET)
 
@@ -10,21 +10,21 @@ Everything is a concept. **Things** include resources and agents; **happenings**
 
 The core business ontology is itself authored in Norn: Agent, Resource, EconomicEvent, Commitment, Claim, Hold, LedgerEffect, Process, Conversion and Exchange, with constitutional laws. Inventory, accounting and sales build on it; jewelry composes them and adds metal concepts and laws; an app binds those packs into an operating context. None of the business physics is trusted kernel code.
 
-One concept bundles `is`, stored/derived properties, links, states, actions, laws, policies, access and sources. Packs and apps contain definitions. Admitted definitions also have a queryable, read-only meta-ontology projection: states, transitions, laws, policies and parameters are inspectable objects. Editing that projection does not activate executable authority.
+One concept bundles `is`, stored and derived properties, links, states, actions, laws, policies, access and sources. Packs and apps contain definitions. Admitted definitions also have a queryable, read-only meta-ontology projection: states, transitions, laws, policies and parameters are inspectable objects. Editing that projection does not activate executable authority.
 
-| Construct | CURRENT authoring equivalent | TARGET contract |
+| Construct | CURRENT authoring equivalent (`origin/main` `591b091`) | TARGET contract |
 | --- | --- | --- |
-| Things and happenings | `Norn.type`, `Norn.interfaceType`, `extends`, `implements`, inline `lifecycles` | `concept({ is, props, derived, links, states, actions, laws, policies, access, sources })` |
-| Links | `Norn.type({ links: [...] })`; action `createLinks` | Named typed links and owned drafts with explicit identity/creation |
-| Actions and decisions | `Norn.action`, `Norn.decision`, `Norn.expression`; declared slices/writes; a create-only `upsert_input_object` with a `synchronousRule` writer (governed create); `fromCaller` stamps a type's `protected` creator property from the verified principal; `independentOf` names protected actors an action's caller must not be | Composable actions with a complete checked synchronous effect closure |
-| Durable execution | `Norn.flow` + bounded Effect syntax lowers to lifecycle data | Happenings/commitments/receipts; no second runtime as business authority |
-| Laws and policies | `Norn.law` exposes LawIR; `Norn.obligation`, `Norn.prohibition` and `Norn.permission` declare cited norms (a permission is a defeater and grants nothing); `Norn.example` declares a checked case of a law or norm; `Norn.access` declares access; `Norn.markings` declares a marking catalog | Typed structured requirements and deontic policies; access remains separate |
-| Packs/apps/overlays | File/pack-directory compilation; semantic-only `Norn.ontologyPack`/`Norn.packLink`; no app/overlay constructors | Pinned pack instances, explicit exports, app bindings, conjunctive overlays |
-| Parameters | No typed `param`/`settings` constructor in this profile | Typed, scoped, effective-dated governed values |
+| Things and happenings | `Norn.type`, `Norn.interfaceType`, `extends`, `implements`, `protected`, `ownedCollections`, `pathEquations`, `Norn.boundDecimal`, and inline `lifecycles` (flat `transitions` or XState-shaped `MachineSpec` with `states`, `after`, `final`, `resting`, `events`) | `concept({ is, props, derived, links, states, actions, laws, policies, access, sources })` |
+| Links | `Norn.type({ links: [...] })`; action `createLinks` | Named typed links and owned drafts with explicit identity and creation |
+| Actions, decisions and approvals | `Norn.action` (`fire_transition`, `upsert_input_object` with `writeMode: { kind: "upsert" \| "create_only" \| "update_only" } \| { kind: "draft_only", lifecycle, state }`, `mutate_parent_with_rows`, `fromCaller`, `independentOf`, `aggregates`, `synchronousRule`, `inputLabels`, `inputGroups`), `Norn.callerId()`, `Norn.approval`, `Norn.decision` (callbacks, `hit: "unique"` tables, `principalInputs`), `Norn.orderedFold`, `Norn.expression` (`norn-zen/7` with closures and `Norn.sum`) | Composable actions with a complete checked synchronous effect closure |
+| Durable execution | `Norn.flow` + bounded Effect syntax lowers to lifecycle data | Happenings, commitments and receipts; no second runtime as business authority |
+| Laws and policies | Typed `Norn.law(name, { on, when?, must \| never \| eventually, within?, severity?, unless?, because })` (plus legacy raw `LawIR` overload for `#58`); `Norn.obligation`, `Norn.prohibition`, `Norn.permission` (a defeater that grants nothing); `Norn.example`; `Norn.access`; `Norn.markings` | Typed structured requirements and deontic policies; access remains separate |
+| Packs, apps and overlays | File and pack-directory compilation; semantic-only `Norn.ontologyPack` and `Norn.packLink`; no app or overlay constructors | Pinned pack instances, explicit exports, app bindings, conjunctive overlays |
+| Parameters | `Norn.setting` (effective-dated `SettingRoot` with exact `DecimalLiteral` strings for `"number"`, `PARAM-EXACT-1`) and `parameter` slice entries | Typed, scoped, effective-dated governed values |
 | Defined concepts | No general `.where` classifier constructor | First-class pure classification over existing identities |
-| Integrations | `Norn.sourceSchema`, `Norn.mapping`, `Norn.connector`; action `commands` | Integration packs with external ontology, canonical links and governed write-back |
-| Functions | `Norn.fn`, `Norn.perform` inside `Norn.flow` | Canonical FunctionManifest; typed, capability-scoped performers and recorded receipts |
-| Metrics/views/explanations | `Norn.question` (candidate QuestionIR over a measure, grouping and as-of basis), `Norn.dashboard` (tiles over questions declared in the same module), `Norn.transform` (a derived dataset plan), `Norn.model` (ModelIR: a typed predictive model's inputs, outputs and output contracts); `norn explain` is a CLI command. No `metric`, `view` or `expects` constructors in this profile | Reactive questions/views, typed measures, evidence and refusals |
+| Integrations | `Norn.sourceSchema`, `Norn.mapping` (reference-bound source pin, `MAP-ENUM-TEXT-1`), `Norn.connector` (`poll` / `pull`); action `commands` | Integration packs with external ontology, canonical links and governed write-back |
+| Functions and receipts | `Norn.fn`, `Norn.perform` inside `Norn.flow`; production receipt intake and atomic consumption via `SqliteCell::{set_result_authorizer, retain_function_receipt, commit_result_refusal}` (`ResultAuthority`, `#1688`, fail-closed until host wires authorizer) | Canonical FunctionManifest; typed, capability-scoped performers and recorded receipts |
+| Metrics, views, widgets and SDK | `Norn.question` (`link`/`links` paths, `asOf: "effective" \| "knowledge"`), `Norn.metricId`, `Norn.dashboard`, `Norn.transform`, `Norn.model`, `Norn.labels`; `W.widget` / `W.uiSdk` / `W.fromUiSdk` / `W.outcome` (`tools/norn-ts/src/builder/widget.ts`), Ring-1 `norn-ui-checker`, `<NornAppRenderer>` (`@norn/react`, `#1763`); `@norn/sdk` (`createNornClient`, `LiveClient`, `parseExactJson`) + `norn codegen --ts` (`#1684`); `norn explain` CLI. No `metric`, `view` or `expects` constructors in this profile | Reactive questions and views, typed measures, evidence and refusals |
 
 Route changes to the relevant core contract:
 
@@ -203,15 +203,15 @@ Laws use structured scope, condition, component, timing and response, plus deont
 
 TARGET parameters are typed, scoped, effective-dated and governed by actions. `lossThreshold: "0.004"` is a setting; it is stricter than `"0.005"` only under the declared order “lower threshold requires approval more often.” Arbitrary parameter changes are not monotonic. Parameter-local `shall` lowers to the common law representation with identity/subject/evidence; cross-setting laws stay on the pack/app. Declare scope precedence and refuse ambiguous intervals. Record valid time, commit time and exact selected setting version; do not apply today's tax rate to historical sales.
 
-CURRENT: effective-dated [SettingIR](../../crates/norn-ir/src/setting.rs) exists outside the profile, but its numeric variant does not establish exact tax/money semantics. Existing customization and additive migration support does not qualify the full target overlay contract. Keep in-flight happenings/effects pinned until an explicit validated migration rechecks data, laws and progress.
+CURRENT: `Norn.setting` compiles effective-dated [SettingIR](../../crates/norn-ir/src/setting.rs) definitions in the authoring profile, and `SettingValue::Number(DecimalLiteral)` enforces exact decimal strings (`PARAM-EXACT-1`, refusing binary floats). Existing customization and additive migration support does not qualify the full target overlay contract. Keep in-flight happenings and effects pinned until an explicit validated migration rechecks data, laws and progress.
 
 ## Integrations and observed behavior (TARGET unless marked CURRENT)
 
-An integration pack contains the external system's ontology, connector, pinned mappings into canonical concepts and governed write-back actions. Map ERPNext Item → catalog Item, and stock ledger/lot records → Holdings/Movements separately. A holding's accepted material classification controls the jewelry overlay.
+An integration pack contains the external system's ontology, connector, pinned mappings into canonical concepts and governed write-back actions. Map ERPNext Item to catalog Item, and stock ledger or lot records to Holdings and Movements separately. A holding's accepted material classification controls the jewelry overlay.
 
-POS logs, agent traces and ERP history are ordinary mapped data. One event can link to a lot, customer, exchange and assessor with typed roles; retain source event identity, event/recorded time, source authority, coverage and pinned mapping/definition versions. Deduplicate and reconcile before promotion to authoritative posted facts. Nonconforming observations remain evidence; do not discard them or silently execute a canonical action to manufacture conformance.
+POS logs, agent traces and ERP history are ordinary mapped data. One event can link to a lot, customer, exchange and assessor with typed roles; retain source event identity, event and recorded time, source authority, coverage and pinned mapping and definition versions. Deduplicate and reconcile before promotion to authoritative posted facts. Nonconforming observations remain evidence; do not discard them or silently execute a canonical action to manufacture conformance.
 
-Discovery and conformance are questions over that data and the admitted definition catalog, shown in ordinary views. There is no `observe()`, `observed/` convention, or special mining definition kind. CURRENT source/mapping/connector declarations are footholds, not certification of complete temporal many-object analysis. Existing `on: "observed"` trigger vocabulary does not change this model.
+Discovery and conformance are questions over that data and the admitted definition catalog, shown in ordinary views. There is no `observe()`, `observed/` convention, or special mining definition kind. CURRENT source, mapping and connector declarations cover intake and mapping admission, not complete temporal many-object analysis. Existing `on: "observed"` trigger vocabulary does not change this model.
 
 ## Functions, effects and guarantees (TARGET unless marked CURRENT)
 
@@ -237,25 +237,30 @@ This inspection is not an end-to-end qualification. “Partial” means an exist
 
 | Area | IR | Admission | Evaluator | Commit enforcement | Authoring | Proof |
 | --- | --- | --- | --- | --- | --- | --- |
-| Objects/actions/links | Exists | Existing checks | Partial action programs | Declared program/CAS mechanisms | CURRENT types/actions | No automatic general theorem claim |
-| Laws/composition | LawIR/structured wrapper | Partial scope/writer checks | Supported fragments only | Full target closure unqualified | CURRENT raw TS law/Rust safety wrapper | Limited induction; no complete compiler |
-| Settings/migration | Exists | Partial review/preflight | Existing scoped mechanisms | Full temporal/upgrade contract unqualified | Target helpers absent | Unqualified |
-| Integration/effects | Exists | Mapping/connector contracts | Existing poll/outbox mechanisms | Target uncertainty contract unqualified | CURRENT constructors/perform | Source evidence is not proof |
-| Metrics/views/catalog | Exists | Metric checks exist | Metric runtime not established by IR | Query/permission guarantees unqualified | Target helpers absent | Unqualified |
+| Objects, actions and links | Exists | Existing checks | Action programs (`upsert_input_object` incl. `update_only`, `fire_transition`, `mutate_parent_with_rows`) | Declared program and CAS mechanisms (`AdmittedDefinitions` binds guards) | CURRENT types, machines, actions, approvals | No automatic general theorem claim |
+| Laws and composition | LawIR and structured wrapper | Scope, writer, exception-tree and norm-precedence checks | Supported fragments (`unless` evaluation open) | Full target closure unqualified | CURRENT typed `Norn.law`, norms, examples, Rust safety wrapper | Limited induction; no complete compiler |
+| Settings and migration | Exists (`DecimalLiteral`) | Review and preflight checks | Scoped parameter resolution | Full temporal and upgrade contract unqualified | CURRENT `Norn.setting` | Unqualified |
+| Integration and effects | Exists | Mapping and connector contracts (`MAP-ENUM-TEXT-1`) | Poll, pull, outbox and `SqliteCell` `FunctionReceipt` resolution (`#1688`) | Full uncertainty contract unqualified; hosts fail closed until authorizer is wired | CURRENT constructors and `perform` | Source evidence is not proof |
+| Metrics, views, widgets and catalog | Exists (`QuestionIR`, `ViewIR`, `ModelIR`, `WidgetUx`) | Metric, transform, model and Ring-1 `norn-ui-checker` checks | Exact cell, IVM, DuckDB/DataFusion transforms, as-of-knowledge and restatement | Full three-engine equivalence and permission guarantees unqualified | CURRENT questions, `metricId`, dashboards, transforms, models, `W.widget` + `<NornAppRenderer>` | Unqualified |
 
 ## Metrics and views (TARGET)
 
-TARGET types/interfaces generate candidate measures with declared additivity; business ratios remain explicit. Define `ScrapYield = sum(posted output fine g) / sum(posted input fine g)` at Conversion grain, with zero-input behavior and a declared period. Do not average batch ratios blindly. Holding balances are snapshots, not additive over time. Grain, set/bag semantics and fan-out-aware aggregation prevent double counting; link cardinality alone does not.
+TARGET types and interfaces generate candidate measures with declared additivity; business ratios remain explicit. Define `ScrapYield = sum(posted output fine g) / sum(posted input fine g)` at Conversion grain, with zero-input behavior and a declared period. Do not average batch ratios blindly. Holding balances are snapshots, not additive over time. Grain, set and bag semantics and fan-out-aware aggregation prevent double counting; link cardinality alone does not.
 
-A board is a view/screen, reactive by default, with authorized queries and drill-through. Declare revision tokens, freshness/completeness and reconnect/permission invalidation. A paginated UI subset cannot discharge a universal law. Do not turn the current MetricIR/checker into a claim of a working metric runtime.
+A board is a view or screen, reactive by default, with authorized queries and drill-through. Declare revision tokens, freshness, completeness and reconnect or permission invalidation. A paginated UI subset cannot discharge a universal law.
 
 ## Data engineering (TARGET unless marked CURRENT)
 
 Read the [data-engineering acceptance contract](../spec/acceptance/data-engineering.md)
 and the [data-engineering decision](../architecture/decisions/2026-11-01.md#owner-addition-data-engineering-and-demo-beat-6).
-This section describes required semantics, not executable SDK syntax or a qualified
-pipeline. No capability in this section is marked CURRENT. IR types, admission,
-evaluation, runtime enforcement, authoring and proof need separate evidence.
+This section describes required semantics, not a fully qualified end-to-end pipeline.
+CURRENT runtime pieces include `Norn.question`, `Norn.metricId`, `Norn.dashboard`,
+`Norn.transform`, `Norn.model`, receipt-driven IVM (`compute::ivm`, including as-of and
+linked-time plans), embedded DuckDB and DataFusion transforms, as-of-knowledge questions,
+restatement staging and `norn-olapd`; full three-engine equivalence across the profile,
+complete freshness and frontier semantics, CDC quarantine and statistical publication
+remain TARGET. IR types, admission, evaluation, runtime enforcement, authoring and proof
+each require separate evidence.
 
 ### One definition, three engines
 
@@ -358,9 +363,9 @@ runs behind the controlled Function boundary with pinned input version, split,
 model/code digest, parameters and receipt; authorized publication checks complete,
 fresh, non-quarantined inputs, temporal validity and the declared holdout threshold.
 
-### Synthetic orders/payments: before and after
+### Synthetic orders and payments: before and after
 
-**Before — pandas-style sketch:** the join grain and temporal assumptions live in
+**Before (pandas-style sketch).** The join grain and temporal assumptions live in
 notebook code. An order with several payments repeats its order amount below.
 
 ```python
@@ -369,8 +374,8 @@ joined = orders.merge(payments, on="order_id")
 by_region = joined.groupby("region")["order_amount"].sum()
 ```
 
-**After — Norn authoring contract (TARGET, not SDK code):** declare an Order key
-and a Payment key, a typed Payment → Order link, and a question at Order grain.
+**After (Norn authoring contract, TARGET, not SDK code).** Declare an Order key
+and a Payment key, a typed Payment to Order link, and a question at Order grain.
 Declare whether the measure is ordered amount or paid amount. Ordered amount
 contributes once per Order; paid amount aggregates Payment identities explicitly
 before combining at Order grain. Pin currency, rounding, region mapping, source
@@ -396,39 +401,42 @@ claimed behavior with named correspondence scenarios before calling it CURRENT.
 | Preserve costs, source allocations and immutable history | Rewrite posted purity, quantities, payment results or old settings |
 | Keep synchronous laws within one cell; expose cross-cell commitments | Hide balancing work in later triggers or claim distributed atomicity |
 
-[`norn#58`](https://github.com/Norn-cloud/norn/issues/58) is an open compatibility gap: today's profile admits raw LawIR through `Norn.law` and warns on `Norn.unsafeZen`. Their existence is not approval to copy them into new normal-profile apps. Use `Norn.expression`/typed decisions where supported; for missing typed law syntax, identify the SDK gap rather than inventing a replacement API or pretending the target compiles.
+[`norn#58`](https://github.com/Norn-cloud/norn/issues/58) is an open compatibility gap: the profile still keeps the legacy raw-LawIR overload of `Norn.law` and warns on `Norn.unsafeZen`. Prefer the typed shorthand `Norn.law(name, { on, when?, must | never | eventually, because })`, `Norn.expression`, and typed decisions; where typed law syntax is missing (such as `severity: { override }`), report the gap rather than copying raw LawIR into new apps.
 
 ## Common refusals and fixes
 
-CURRENT codes come from the profile/corpus; semantic rows describe TARGET refusal classes, not invented stable diagnostic IDs. For named codes and scenarios, use the relevant core spec.
+CURRENT codes come from the profile and corpus; semantic rows describe TARGET refusal classes, not invented stable diagnostic IDs. For named codes and scenarios, use the relevant core spec.
 
 | Refusal | Fix |
 | --- | --- |
-| `NORN-FLOW-AMBIENT`, `NORN-FLOW-UNSUPPORTED-CALL` | Remove clock/random/network/helper execution; use recorded inputs, supported expressions or a Function behind perform |
-| `NORN-FLOW-CAPTURE`, `NORN-FLOW-EXPRESSION` | Remove mutable captures/truthiness/arbitrary predicates; use explicit typed Boolean expressions and declared inputs |
-| `NORN-FLOW-SLICE` | Declare the read/path/link in the bounded slice; do not fetch undeclared state |
-| `NORN-FLOW-UNBOUNDED`, `NORN-FLOW-CONCURRENCY` | Use supported bounded retries/sequential steps; handle business concurrency through checked actions/read sets |
+| `NORN-FLOW-AMBIENT`, `NORN-FLOW-UNSUPPORTED-CALL` | Remove clock, random, network, or helper execution; use recorded inputs, supported expressions, or a Function behind perform |
+| `NORN-FLOW-CAPTURE`, `NORN-FLOW-EXPRESSION` | Remove mutable captures, truthiness, or arbitrary predicates; use explicit typed Boolean expressions and declared inputs |
+| `NORN-FLOW-SLICE` | Declare the read, path, or link in the bounded slice; do not fetch undeclared state |
+| `NORN-FLOW-UNBOUNDED`, `NORN-FLOW-CONCURRENCY` | Use supported bounded retries and sequential steps; handle business concurrency through checked actions and read sets |
 | `NORN-FLOW-SCHEMA-PROJECTION`, `NORN-FLOW-RESULT` | Use projectable structural schemas and explicit serializable results on every path |
-| Inherited-law weakening / unmapped required semantics | Retain law origins; complete the pinned interpretation and its obligations |
-| Unbalanced closure / stale allocation / missing partition read | Include every synchronous counterpart and full read dependencies; reevaluate eligible contention or return stale-intent conflict |
-| Assay changes a posted measure / approval evidence stale | Append observation and reconciliation; bind fresh approvals to the exact revision |
-| Missing payment side / uncertain external outcome | Create the linked claim/commitment; reconcile the recorded result before settlement |
-| Mixed units / ambiguous book or parameter / classification cycle | Bind exact units, instances and effective versions; break cyclic predicates |
-| Unsupported or stale proof evidence | Show unknown; implement the generic semantics or regenerate/check evidence; never lower the required assurance |
+| Inherited-law weakening or unmapped required semantics | Retain law origins; complete the pinned interpretation and its obligations |
+| Unbalanced closure, stale allocation, or missing partition read | Include every synchronous counterpart and full read dependencies; reevaluate eligible contention or return stale-intent conflict |
+| Assay changes a posted measure or approval evidence is stale | Append observation and reconciliation; bind fresh approvals to the exact revision |
+| Missing payment side or uncertain external outcome | Create the linked claim or commitment; reconcile the recorded result before settlement |
+| Mixed units, ambiguous book or parameter, or classification cycle | Bind exact units, instances, and effective versions; break cyclic predicates |
+| Unsupported or stale proof evidence | Show unknown; implement the generic semantics or regenerate and check evidence; never lower the required assurance |
 
-CURRENT commands, from `tools/norn-ts`: run `bun src/cli.ts setup` (or `scripts/dev/fetch-local-runtime.sh` from the repository root) once to cache the verified prebuilt checker WASM and dev host into `~/.cache/norn/runtime/` (or set `NORN_CHECKER_WASM_PKG` / `NORN_DEV_HOST_BIN` to a local build), then `bun src/cli.ts profile <file.ts>`, `bun src/cli.ts check <pack-dir|file.ts> --org ID --env ID`, and `bun src/cli.ts dev`. Profile recognition is not admission. Run SDK `bun run typecheck` and `bun test` there, then `bash scripts/ci/core.sh cheap` from the repository root and the required full CI gates in the prescribed test environment; target examples require implementation and correspondence scenarios before they can pass these checks.
+## CURRENT CLI, runtime and authoring notes (`origin/main` `591b091`)
 
-`Norn.rate(scale, { currency: "currency", perUnit: { system: "ucum", code: "g" }, rounding: "refuse" })` is CURRENT declaration syntax for the bounded Rate refinement. It emits Decimal `currencySource` plus `perUnit` at one scale; omitted rounding means Refuse. The bounded typed profile admits Rate<C,U> × Quantity<U> → Money<C>, Money<C> ÷ Quantity<U> → Rate<C,U>, and same-type +/−/comparisons. General compound units remain TARGET.
+**CLI commands (`tools/norn-ts`).** Run `bun src/cli.ts setup` (or `scripts/dev/fetch-local-runtime.sh` from the repository root) once to cache the verified prebuilt checker WASM, dev host, and Rust `norn` into `~/.cache/norn/runtime/` (or set `NORN_CHECKER_WASM_PKG` and `NORN_DEV_HOST_BIN` to local builds). Then use `bun src/cli.ts init`, `profile <file.ts>`, `check <pack-dir|project-dir|file.ts> --org ID --env ID`, `compile`, `explain`, `codegen --ts`, `plan`, `apply`, and `dev`. Profile recognition is not admission. Run `bun run typecheck` and `bun test` in `tools/norn-ts`, then `bash scripts/ci/core.sh cheap` from the repository root and the required full CI gates in the test environment.
 
+**Typed SDK and codegen (`#1684`).** `bun src/cli.ts codegen --ts <artifacts|dir|pack|project> [--base <path>]... [--out file.d.ts] [--check]` emits a deterministic types-only `.d.ts` file containing `ActionMap`, `ObjectMap`, `DefinitionsDigest`, `NornDefinitions`, and (when catalog islands exist) `WidgetIslands` and `RequiredCatalogRegistry`. Pair `ActionMap` with `createNornClient<ActionMap>` from `@norn/sdk` (`packages/norn-sdk`), which exposes `call`, `callEncoded`, `intent`, `pinned`, `listActions`, `LiveClient`, and `parseExactJson` over the 3-arm `CallResult` (`receipt | pending | refused`).
 
-CURRENT exact action/rule schemas use the same `Norn.decimal` / `Norn.rate` declarations: the compiler emits `{type: "number", nornType: <the existing Decimal>}`. Declare a fixed singleton currency sibling with `Schema.Literal("USD")`; a bare `Schema.Number` keeps legacy arithmetic and cannot enter an exact computation. Decimal options accept explicit `rounding` (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`), defaulting to Refuse. Direct decision callbacks lower each declared numeric destination to the shared rescale site; exact callbacks with sub-decisions or loop/table transforms currently refuse. Keep gram/rate working scales within the exact profile maximum of 18. Returned quantities/money retain their destination bindings; mixed currencies, denominator codes and Rate × Rate refuse.
+**Declarative UI, Ring-1 checking and `<NornAppRenderer>` (`#1763`).** Author `WidgetUx` declarations with `W.widget`, `W.uiSdk`, `W.fromUiSdk`, `W.outcome`, and `W.lowerWidget` (`tools/norn-ts/src/builder/widget.ts`, re-exported from `tools/norn-ts/src/builder/index.ts`; not yet in `@norn/authoring`). Ring-1 `norn-ui-checker` (`check_artifact_set`, `check_widget_ux_set`) validates widget laws, state machines, catalog contracts, and UI SDK capabilities. `@norn/react` renders admitted `WidgetUx` documents with `<NornAppRenderer>` and `useWidgetMachine`.
 
-CURRENT principal inputs (PRINCIPAL-INPUT-1, [Core 05](../spec/core/05-laws-authority.md#principal-input-1-declared-principal-attributes-as-typed-decision-inputs-1091)): a `decide` rule that needs to know who is acting declares it. `Norn.access({ principalCatalog: [{ name: "approver", type: "bool", source: { kind: "role" } }, { name: "finance", type: "stringSet", source: { kind: "roleProfile", roles: ["approver", "auditor"] } }] })` declares the catalog; `Norn.decision({ principalInputs: [{ name: "isApprover", kind: { holdsRole: { role: "approver", at: "resource" } } }], input: Schema.Struct({ slice, event, principal: Schema.Struct({ isApprover: Schema.Boolean }) }) }, input => ...)` declares the input and reads it as `input.principal.isApprover`. The host resolves it from the verified principal and the PDP; a request that submits `principal` refuses, and an input that cannot be resolved refuses `decision.principal_input_unavailable`. Reading an undeclared `principal.*` name is refused at admission.
+**Overnight `time.WorkingWindow` (`#1683`).** `time.WorkingWindow` v0.2.0 and `time.window.materialize_interval` v0.2.0 (`registry/packs/time/calendars.ts`) add `end_day_offset` in `{0, 1}` (default `0`). `weekday` names the start date; `end_day_offset = 1` anchors `end_local` on the following civil date so overnight windows and 23 h / 25 h DST civil days resolve under the calendar's pinned tzdb and DST policy.
 
-Path equation declarations on `Norn.type` use `pathEquations: [{ id: "provider",
-left: ["fulfils", "provider"], right: ["provider"] }]`. These compile to typed
-EntityIR extension data and lower to the existing chase EGDs (PATH-EQ-1 in Core
-05). Both endpoints must have the same concrete type and every link must be
-functional. Optional paths assert equality only when both exist. Declaration
-validation is structural evidence; mapping-preservation admission and #712's
-four schema-level mutation scenarios remain TARGET until their bridge qualifies.
+**Production `FunctionReceipt` (`#1688`).** `SqliteCell::retain_function_receipt`, `set_result_authorizer` (`norn_cell::ResultAuthority`), and `commit_result_refusal` reconcile, retain, and atomically consume `norn.function/v1` receipts. Hosts fail closed (`action.receipt_effect_unsupported`) until they install an authorizer.
+
+**`AdmittedDefinitions`, `update_only` and MBT seeding (`#1769`).** `norn_cell::AdmittedDefinitions::from_envelopes` constructs one model, decoded action list, and `TransitionGuard` set whose `catalog()` binds guards by construction. `upsert_input_object` supports `writeMode: { kind: "update_only" }` (target must already exist; patches only, declares only a `modified` write). `norn-testkit`'s `AdmittedPack`, `pack_mbt::dst`, and the pack MBT driver bind transition guards and seed `protected` (`ACTOR-STAMP-1`) types through their `create_only` stamping actions.
+
+**Exact decimals and rates.** `Norn.rate(scale, { currency: "currency", perUnit: { system: "ucum", code: "g" }, rounding: "refuse" })` emits Decimal `currencySource` plus `perUnit` at one scale; omitted rounding defaults to `refuse`. The bounded typed profile admits `Rate<C,U> * Quantity<U> -> Money<C>`, `Money<C> / Quantity<U> -> Rate<C,U>`, and same-type `+`, `-`, and comparisons; general compound units remain TARGET. Exact action and rule schemas use the same `Norn.decimal` and `Norn.rate` declarations (`{type: "number", nornType: <Decimal>}`). Declare a fixed singleton currency sibling with `Schema.Literal("USD")`; a bare `Schema.Number` keeps legacy arithmetic and cannot enter an exact computation. Decimal options accept explicit `rounding` (`refuse`, `toward_zero`, `half_even`, `half_away_from_zero`), defaulting to `refuse`. Direct decision callbacks lower each declared numeric destination to the shared rescale site; exact callbacks with sub-decisions or loop or table transforms currently refuse. Keep gram and rate working scales within the profile maximum of 18. Returned quantities and money retain their destination bindings; mixed currencies, denominator codes, and `Rate * Rate` refuse.
+
+**Principal inputs (`PRINCIPAL-INPUT-1`).** See [Core 05](../spec/core/05-laws-authority.md#principal-input-1-declared-principal-attributes-as-typed-decision-inputs-1091). A `decide` rule that reads who is acting declares it: `Norn.access({ principalCatalog: [{ name: "approver", type: "bool", source: { kind: "role" } }, { name: "finance", type: "stringSet", source: { kind: "roleProfile", roles: ["approver", "auditor"] } }] })` declares the catalog; `Norn.decision({ principalInputs: [{ name: "isApprover", kind: { holdsRole: { role: "approver", at: "resource" } } }], input: Schema.Struct({ slice, event, principal: Schema.Struct({ isApprover: Schema.Boolean }) }) }, input => ...)` declares the input and reads `input.principal.isApprover`. The host resolves it from the verified principal and the PDP; a request that submits `principal` refuses, an unresolvable input refuses `decision.principal_input_unavailable`, and reading an undeclared `principal.*` name refuses at admission.
+
+**Path equations (`PATH-EQ-1`).** `Norn.type` accepts `pathEquations: [{ id: "provider", left: ["fulfils", "provider"], right: ["provider"] }]`. These compile to typed EntityIR extension data and lower to chase EGDs (Core 05). Both endpoints must have the same concrete type and every link must be functional; optional paths assert equality only when both exist. Declaration validation is structural evidence; mapping-preservation admission and #712's four schema-level mutation scenarios remain TARGET until implemented and qualified.

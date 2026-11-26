@@ -82,8 +82,9 @@ test("payload types follow the declaration exactly", () => {
 })
 
 test("the frame allows no network and no same-origin access; the module cannot close its script early", () => {
-  const html = frameDocument('import x from "y"; document.body.textContent = "</script><img src=x>"')
+  const html = frameDocument('import x from "y"; document.body.textContent = "</script></SCRIPT><img src=x>"')
   expect(html).toContain("default-src 'none'")
   expect(html).not.toContain("connect-src")
-  expect(html.match(/<\/script>/g)?.length).toBe(2)
+  expect(html.match(/<\/script>/gi)?.length).toBe(2)
+  expect(html).not.toContain("{ once: true }")
 })

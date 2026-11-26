@@ -35,7 +35,7 @@ use serde_json::Value;
 use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange, dataset_cache_id};
 use crate::engine::{SqlEngine, params};
 use crate::system::LEDGER;
-use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt, StoreReader};
+use crate::{CellError, CellStore, Receipt, StoreReader};
 
 /// The ledger event type of a committed manifest.
 pub const MANIFEST_EVENT: &str = "dataset.manifest";
@@ -223,6 +223,38 @@ fn refused(code: &'static str, detail: impl Into<String>) -> CellError {
     }
 }
 
+fn checked_sum<'a>(values: impl IntoIterator<Item = &'a u64>) -> Option<u64> {
+    values
+        .into_iter()
+        .try_fold(0_u64, |acc, &value| acc.checked_add(value))
+}
+
+/// LAW-02: row counts must reconcile without overflow or saturation.
+fn counts_reconcile(manifest: &DatasetManifest) -> bool {
+    let Some(held_total) = checked_sum(manifest.counts.held.values()) else {
+        return false;
+    };
+    let Some(findings_total) =
+        checked_sum(manifest.counts.findings.values().map(|count| &count.rows))
+    else {
+        return false;
+    };
+    let Some(held_and_findings) = held_total.checked_add(findings_total) else {
+        return false;
+    };
+    let Some(source_total) = manifest
+        .counts
+        .admitted
+        .checked_add(manifest.counts.held_by_rules)
+        .and_then(|total| total.checked_add(held_total))
+    else {
+        return false;
+    };
+    manifest.counts.admitted == manifest.data.rows
+        && held_and_findings == manifest.held.rows
+        && source_total == manifest.counts.source
+}
+
 impl<E: SqlEngine> CellStore<E> {
     /// MANIFEST-PIN-1: the pin of every law and invariant that governs
     /// `object_type` under the current definitions.
@@ -295,22 +327,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<(String, Receipt), CellError> {
         if manifest.version != MANIFEST_VERSION
             || manifest.table.name != manifest.object_type
-            || manifest.counts.admitted != manifest.data.rows
-            || manifest
-                .counts
-                .held
-                .values()
-                .chain(manifest.counts.findings.values().map(|count| &count.rows))
-                .sum::<u64>()
-                != manifest.held.rows
-            // LAW-02: the data file holds exactly the typed rows no rule
-            // holds back; every source row is in it or held.
-            || manifest.counts.source
-                != manifest
-                    .counts
-                    .admitted
-                    .saturating_add(manifest.counts.held_by_rules)
-                    .saturating_add(manifest.counts.held.values().sum::<u64>())
+            || !counts_reconcile(manifest)
             || manifest.load
                 != dataset_cache_id(
                     &manifest.table,
@@ -350,19 +367,21 @@ impl<E: SqlEngine> CellStore<E> {
             request,
         })
         .map_err(CellError::Encoding)?;
-        let batch = CommitBatch {
-            world: world.to_owned(),
-            scope: scope.to_owned(),
+        let at = crate::store::At {
+            world,
+            scope,
             logical_time,
+        };
+        let write = crate::store::SystemWrite::DatasetManifest {
             idempotency_key: request.map(DatasetRequest::idempotency_key),
-            events: vec![event],
-            ..CommitBatch::default()
+            event,
         };
         let pinned = manifest.pins.definitions_version;
         // The definitions version is re-read inside the commit transaction:
         // an install between the landing's first step and this commit refuses.
-        let guarded = self.commit_guarded_unchecked(
-            &batch,
+        let outcome = self.apply_system_guarded(
+            &at,
+            write,
             |reader| {
                 if reader.active_definitions_version()?.unwrap_or(0) == pinned {
                     Ok(())
@@ -374,11 +393,8 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             },
             &mut |_point| Ok(()),
-        );
-        match guarded {
-            Ok(((), outcome)) => Ok((hash, outcome.receipt().clone())),
-            Err(GuardedError::Guard(error) | GuardedError::Store(error)) => Err(error),
-        }
+        )?;
+        Ok((hash, outcome.receipt().clone()))
     }
 
     /// MANIFEST-04: the manifest a request key committed, with the
@@ -550,4 +566,102 @@ fn decode_event(
         });
     }
     Ok((manifest, hash, event))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{
+        DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestPins,
+        ManifestSource, counts_reconcile,
+    };
+    use crate::analytics::{FileFormat, RuleCount, TableSchema};
+
+    fn sample_manifest() -> DatasetManifest {
+        DatasetManifest {
+            version: MANIFEST_VERSION.to_owned(),
+            object_type: "shop.Sale".to_owned(),
+            load: "load".to_owned(),
+            source: ManifestSource {
+                uri: "s3://src".to_owned(),
+                sha256: "a".repeat(64),
+                format: FileFormat::Csv,
+                bytes: 10,
+            },
+            binding: BTreeMap::new(),
+            table: TableSchema {
+                name: "shop.Sale".to_owned(),
+                columns: Vec::new(),
+                pin: "p".to_owned(),
+            },
+            pins: ManifestPins {
+                definitions_version: 1,
+                model_hash: "m".to_owned(),
+                binding: "b".to_owned(),
+                mapping: "map@sha".to_owned(),
+                laws: "l".to_owned(),
+            },
+            data: ManifestFile {
+                uri: "s3://data".to_owned(),
+                sha256: "b".repeat(64),
+                rows: 3,
+                bytes: 10,
+            },
+            held: ManifestFile {
+                uri: "s3://held".to_owned(),
+                sha256: "c".repeat(64),
+                rows: 2,
+                bytes: 10,
+            },
+            counts: ManifestCounts {
+                source: 5,
+                admitted: 3,
+                held: BTreeMap::from([("type".to_owned(), 2)]),
+                findings: BTreeMap::new(),
+                held_by_rules: 0,
+            },
+            valid_time: Vec::new(),
+            markings: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn counts_reconcile_rejects_overflow_and_u64_max_saturation() {
+        assert!(counts_reconcile(&sample_manifest()));
+
+        let mut saturation = sample_manifest();
+        saturation.counts.admitted = u64::MAX;
+        saturation.data.rows = u64::MAX;
+        saturation.counts.held_by_rules = 1;
+        saturation.counts.held = BTreeMap::new();
+        saturation.held.rows = 0;
+        saturation.counts.source = u64::MAX;
+        assert!(!counts_reconcile(&saturation));
+
+        let mut held_overflow = sample_manifest();
+        held_overflow.counts.admitted = 0;
+        held_overflow.data.rows = 0;
+        held_overflow.counts.held =
+            BTreeMap::from([("a".to_owned(), u64::MAX), ("b".to_owned(), 1)]);
+        held_overflow.held.rows = 0;
+        held_overflow.counts.source = 0;
+        assert!(!counts_reconcile(&held_overflow));
+
+        let mut findings_overflow = sample_manifest();
+        findings_overflow.counts.held = BTreeMap::from([("a".to_owned(), u64::MAX)]);
+        findings_overflow.counts.findings = BTreeMap::from([(
+            "r1".to_owned(),
+            RuleCount {
+                label: "r1".to_owned(),
+                rows: 1,
+                holds: true,
+            },
+        )]);
+        findings_overflow.held.rows = 0;
+        findings_overflow.counts.admitted = 0;
+        findings_overflow.data.rows = 0;
+        findings_overflow.counts.source = u64::MAX;
+        assert!(!counts_reconcile(&findings_overflow));
+    }
 }

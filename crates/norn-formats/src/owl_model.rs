@@ -619,15 +619,16 @@ impl Model {
         Ok(format!("[{}]", parts.join("; ")))
     }
 
+    fn render_all(&self, items: &[Expr]) -> String {
+        items
+            .iter()
+            .map(|item| self.render(item))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// Functional-syntax rendering of an expression.
     pub(crate) fn render(&self, expr: &Expr) -> String {
-        let join = |items: &[Expr]| {
-            items
-                .iter()
-                .map(|item| self.render(item))
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
         match expr {
             Expr::Named(iri) => self.compact(iri),
             Expr::Restriction {
@@ -663,8 +664,10 @@ impl Model {
                     }
                 }
             }
-            Expr::Union(items) => format!("ObjectUnionOf({})", join(items)),
-            Expr::Intersection(items) => format!("ObjectIntersectionOf({})", join(items)),
+            Expr::Union(items) => format!("ObjectUnionOf({})", self.render_all(items)),
+            Expr::Intersection(items) => {
+                format!("ObjectIntersectionOf({})", self.render_all(items))
+            }
             Expr::Complement(inner) => format!("ObjectComplementOf({})", self.render(inner)),
             Expr::OneOf(terms) => format!(
                 "ObjectOneOf({})",
@@ -683,13 +686,6 @@ impl Model {
 
     /// Functional-syntax rendering of an axiom: its stable identity.
     pub(crate) fn render_axiom(&self, axiom: &Axiom) -> String {
-        let all = |items: &[Expr]| {
-            items
-                .iter()
-                .map(|item| self.render(item))
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
         match axiom {
             Axiom::SubClassOf { sub, sup } => {
                 format!("SubClassOf({} {})", self.compact(sub), self.render(sup))
@@ -699,9 +695,15 @@ impl Model {
                 self.compact(class),
                 self.render(other)
             ),
-            Axiom::DisjointClasses(members) => format!("DisjointClasses({})", all(members)),
+            Axiom::DisjointClasses(members) => {
+                format!("DisjointClasses({})", self.render_all(members))
+            }
             Axiom::DisjointUnion { class, members } => {
-                format!("DisjointUnion({} {})", self.compact(class), all(members))
+                format!(
+                    "DisjointUnion({} {})",
+                    self.compact(class),
+                    self.render_all(members)
+                )
             }
             Axiom::Domain { property, domain } => format!(
                 "PropertyDomain({} {})",

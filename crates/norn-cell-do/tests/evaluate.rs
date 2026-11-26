@@ -60,19 +60,21 @@ impl QuestionRuntime<NativeEngine> for Bounded {
         capability: ReadCapability,
         row: Option<&ObjectRecord>,
     ) -> Result<AccessRequest, Refusal> {
-        let mut access = QuestionRuntime::<NativeEngine>::access(
+        // The PDP request for an ungranted metric names no grant the caller
+        // holds.
+        let actor = if row.is_none() && self.ungranted == Some(question) {
+            "nobody"
+        } else {
+            actor
+        };
+        QuestionRuntime::<NativeEngine>::access(
             &self.inner,
             scope,
             actor,
             question,
             capability,
             row,
-        )?;
-        if row.is_none() && self.ungranted == Some(question) {
-            // The PDP request for this metric names no grant the caller holds.
-            access.principal.subject_id = "nobody".into();
-        }
-        Ok(access)
+        )
     }
     fn min_disclosed_bucket(&self) -> usize {
         QuestionRuntime::<NativeEngine>::min_disclosed_bucket(&self.inner)

@@ -10,7 +10,10 @@
 //! and a landing attempt is the daemon's to name and has one owner at a
 //! time, so no store removes another landing's files or a running download
 //! (OLAP-02); and the retired token refuses startup whatever its value
-//! (OLAP-05).
+//! (OLAP-05). #1747: a credential is verified from the request's head,
+//! before any body byte is read, and the body must then be the one it
+//! signed; idle, trickling or forged connections wait in a bounded
+//! pre-admission stage, never on an engine worker.
 #![cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 #![allow(
     clippy::unwrap_used,
@@ -27,7 +30,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::analytics_backend::ENGINE_ID as ENGINE;
 use base64::Engine as _;
@@ -44,7 +47,7 @@ use norn_cell::analytics::{
 };
 use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell_do::olap::Exchange;
-use norn_cell_do::olapd::{Config, NoSeam, Seam, serve_with};
+use norn_cell_do::olapd::{Config, ENGINE_WORKERS, MAX_PENDING_PER_PEER, NoSeam, Seam, serve_with};
 use serde_json::json;
 
 const NOW: u64 = 1_800_000_000_000;
@@ -60,7 +63,7 @@ fn tenant(scope: &str) -> TenantId {
 
 /// What the cell mints for the one call `op` with `body`, for `of`, at `NOW`.
 fn mint(issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> String {
-    issuer.mint(of, op, &body_digest(body.as_bytes()), NOW)
+    issuer.mint(of, op, body.as_bytes(), NOW)
 }
 
 /// Replace the keyring as an operator does: write a copy, rename it over.
@@ -304,7 +307,7 @@ fn an_expired_or_overlong_credential_is_refused() {
     let overlong = host.mint_until(
         &a,
         "frontier",
-        &body_digest(frontier(&a).as_bytes()),
+        frontier(&a).as_bytes(),
         NOW + MAX_CREDENTIAL_LIFETIME_MS + 1,
     );
     assert_eq!(daemon.call("frontier", &overlong, &frontier(&a)), uniform);
@@ -413,7 +416,7 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
         wire["credential"]
             .as_str()
             .unwrap()
-            .starts_with("nolap1.k1.")
+            .starts_with("nolap2.k1.")
     );
 }
 
@@ -499,37 +502,143 @@ fn malformed_bodies_and_unknown_routes_are_refused_before_routing() {
     assert!(!daemon.database_exists(&b));
 }
 
-/// #1710: a caller without a credential that could verify is refused on
+/// #1710 / #1747: a caller whose credential does not verify is refused on
 /// its head alone: the daemon answers without waiting for (or allocating)
 /// the body it declares, so such a caller cannot hold a worker for a body.
+/// That includes a forged signature under a key id the keyring holds (key
+/// ids are not secret): the signature covers the declared body digest, so
+/// it is checked before the body.
 #[test]
 fn a_caller_without_a_credential_is_refused_before_its_body() {
     let host = issuer("k1", 7);
     let daemon = daemon(&[&host]);
     let uniform = refused(&daemon);
-    let expired = host.mint_until(&tenant("a"), "frontier", &body_digest(b""), NOW);
+    let expired = host.mint_until(&tenant("a"), "frontier", b"", NOW);
+    let a = tenant("a");
     for authorization in [
         String::new(),
         "authorization: Bearer nonsense\r\n".to_owned(),
         format!("authorization: Bearer {expired}\r\n"),
         format!(
             "authorization: Bearer {}\r\n",
-            issuer("k9", 7).mint(&tenant("a"), "frontier", "", NOW)
+            issuer("k9", 7).mint(&a, "frontier", b"", NOW)
+        ),
+        format!(
+            "authorization: Bearer {}\r\n",
+            issuer("k1", 9).mint(&a, "frontier", frontier(&a).as_bytes(), NOW)
+        ),
+        format!(
+            "authorization: Bearer {}\r\n",
+            host.mint(&a, "sync", frontier(&a).as_bytes(), NOW)
         ),
     ] {
+        let started = Instant::now();
+        let response = declare_huge_body(&daemon, &authorization);
+        assert_eq!(response, uniform, "{authorization}");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{authorization}"
+        );
+    }
+}
+
+/// `POST /v1/frontier` declaring the largest body, sending none of it, and
+/// the whole answer (a refusal must come without the body).
+fn declare_huge_body(daemon: &Daemon, authorization: &str) -> Vec<u8> {
+    let mut stream = TcpStream::connect(daemon.addr).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "POST /v1/frontier HTTP/1.1\r\nhost: olapd\r\n{authorization}content-length: 67108864\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    response
+}
+
+/// #1747: a credential whose signed digest is not the body's is refused
+/// with the uniform answer, whatever the body's length, and writes nothing.
+#[test]
+fn a_body_other_than_the_one_signed_is_refused() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let a = tenant("org_a/prod");
+    let uniform = refused(&daemon);
+    let signed = sync(&a, 0, 3);
+    let credential = mint(&host, &a, "sync", &signed);
+    let same_length = signed.replacen("\"through\":3", "\"through\":4", 1);
+    assert_eq!(same_length.len(), signed.len());
+    for body in [same_length, sync(&a, 0, 30), String::new()] {
+        assert_eq!(daemon.call("sync", &credential, &body), uniform, "{body}");
+    }
+    assert_eq!(
+        body(&daemon.by(&host, &a, "frontier", &frontier(&a))),
+        r#"{"frontier":0}"#,
+        "nothing was synced"
+    );
+    assert_eq!(status(&daemon.call("sync", &credential, &signed)), "200");
+}
+
+/// A connection that sends a partial head and then nothing.
+fn idle(daemon: &Daemon) -> TcpStream {
+    let mut stream = TcpStream::connect(daemon.addr).unwrap();
+    stream.write_all(b"POST /v1/fron").unwrap();
+    stream
+}
+
+/// #1747: connections that never finish their head, and forged ones whose
+/// answers are never read, more of them than there are engine workers, do
+/// not keep an authenticated call from an engine worker: they wait in the
+/// pre-admission stage, not on a worker.
+#[test]
+fn idle_and_forged_connections_never_hold_an_engine_worker() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let a = tenant("org_a/prod");
+    let forged = format!(
+        "authorization: Bearer {}\r\n",
+        issuer("k1", 9).mint(&a, "frontier", frontier(&a).as_bytes(), NOW)
+    );
+    let mut held: Vec<TcpStream> = (0..=ENGINE_WORKERS).map(|_| idle(&daemon)).collect();
+    for _ in 0..4 {
         let mut stream = TcpStream::connect(daemon.addr).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
         write!(
             stream,
-            "POST /v1/frontier HTTP/1.1\r\nhost: olapd\r\n{authorization}content-length: 67108864\r\n\r\n"
+            "POST /v1/frontier HTTP/1.1\r\n{forged}content-length: 67108864\r\n\r\n"
         )
         .unwrap();
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).unwrap();
-        assert_eq!(response, uniform, "{authorization}");
+        held.push(stream);
     }
+    assert!(held.len() > ENGINE_WORKERS && held.len() < MAX_PENDING_PER_PEER);
+    let started = Instant::now();
+    let answer = daemon.by(&host, &a, "frontier", &frontier(&a));
+    assert_eq!(body(&answer), r#"{"frontier":0}"#, "{}", status(&answer));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    drop(held);
+}
+
+/// #1747: one peer opening more connections than its share of the
+/// pre-admission stage is answered busy at once for the rest; the daemon
+/// spawns nothing for them and keeps serving.
+#[test]
+fn a_flood_from_one_peer_is_answered_busy_past_its_share() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let flood: Vec<TcpStream> = (0..MAX_PENDING_PER_PEER).map(|_| idle(&daemon)).collect();
+    let started = Instant::now();
+    let mut extra = TcpStream::connect(daemon.addr).unwrap();
+    extra
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut answer = Vec::new();
+    extra.read_to_end(&mut answer).unwrap();
+    assert_eq!(status(&answer), "503");
+    assert_eq!(body(&answer), r#"{"code":"analytics.busy"}"#);
+    assert!(started.elapsed() < Duration::from_secs(5));
+    drop(flood);
 }
 
 /// An object store serving `objects` by path, each response held half-sent

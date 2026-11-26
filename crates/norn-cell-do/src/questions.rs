@@ -27,7 +27,7 @@ use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::metric::derive::{MetricSpace, derive_metric_space};
 use norn_ir::{ArtifactEnvelope, LawRoot, MetricDefinition};
-use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput};
+use norn_kernel::authz::{ActorKind, Binding, ResourceInput, UnboundProfile, VerifiedPrincipal};
 
 /// Metric definitions derived from one installed definitions revision.
 struct Derived {
@@ -248,18 +248,12 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         row: Option<&ObjectRecord>,
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         let key = crate::policy::scope_key(scope);
-        Ok(norn_kernel::authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: crate::policy::capability_name(capability).into(),
-            action_id: crate::policy::READ_ACTION.into(),
-            resource: ResourceInput {
+        Ok(norn_kernel::authz::AccessRequest::new(
+            &VerifiedPrincipal::new(actor, ActorKind::User, None, vec![], BTreeMap::new()),
+            Some(key.clone()),
+            crate::policy::capability_name(capability),
+            crate::policy::READ_ACTION,
+            ResourceInput {
                 object_type: row
                     .map_or_else(
                         || governed(&self.derived.definitions, question),
@@ -270,10 +264,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedRead),
+        ))
     }
     fn collection_access(
         &self,

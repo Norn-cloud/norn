@@ -66,6 +66,7 @@ mod convert;
 pub mod env;
 mod error;
 mod expression;
+mod fuel;
 pub mod graph;
 mod literals;
 mod reads;
@@ -96,6 +97,7 @@ pub use expression::{
     Evaluation, EvaluationAttempt, EvaluationBudget, Expression, PreparedAdmission, UnaryTest,
     check_unary_syntax,
 };
+pub use fuel::{TurnFuel, sort_cost};
 pub use literals::{FieldValue, ObjectLiteral, command_records, object_literals};
 pub use reads::{
     ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,

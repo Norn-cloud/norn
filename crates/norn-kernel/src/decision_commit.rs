@@ -3591,7 +3591,7 @@ mod field_authority_tests {
             &refused,
             &key,
             &JsonObject::default(),
-            &mut 1_000,
+            &mut norn_expr::TurnFuel::new(1_000),
         )
         .unwrap_err();
         assert!(matches!(

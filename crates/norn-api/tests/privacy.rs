@@ -22,21 +22,21 @@ mod governed;
 use governed::GovernedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
+#[path = "support/hosted_read.rs"]
+mod hosted_read;
+use hosted_read::Mapping;
+use norn_api::authz::{AccessRequest, Authorizer, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;
 use norn_api::object_review::get_object_history;
-use norn_api::object_routes::{ObjectAccess, get_object_query, get_queried_object};
+use norn_api::object_routes::{get_object_query, get_queried_object};
 use norn_api::privacy::{NornMaskMode, NornRevealRequest, reveal};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
+use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_checker::entity_scopes::ScopedView;
 use norn_ir::RuntimeValue as V;
-use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
-};
 use serde_json::{Value as Json, json};
 
 const TYPE: &str = "shop.Customer";
@@ -67,49 +67,6 @@ impl Authorizer for Policy {
     }
     fn reveal(&self, actor: &str, marking: &str) -> bool {
         actor == "auditor" && marking == "pii.contact"
-    }
-}
-
-struct Mapping;
-impl ObjectAccess for Mapping {
-    fn access(
-        &self,
-        scope: &CellScope,
-        actor: &str,
-        capability: ReadCapability,
-        object_type: &str,
-        row: Option<&ObjectRecord>,
-    ) -> Result<PdpRequest, Refusal> {
-        let key = ScopeKey {
-            org: scope.org_id.clone(),
-            environment: Some(scope.environment_id.clone()),
-            tenant: None,
-            workspace: None,
-            business_unit: None,
-        };
-        Ok(PdpRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: format!("fixture.{capability:?}"),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
-                object_type: row
-                    .map_or(object_type, |row| row.object_type.as_str())
-                    .into(),
-                id: row.map_or(object_type, |row| row.id.as_str()).into(),
-                scope: key,
-                attributes: BTreeMap::new(),
-            },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
     }
 }
 

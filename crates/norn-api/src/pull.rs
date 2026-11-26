@@ -801,25 +801,30 @@ fn form_urlencoded_pairs(query: &BTreeMap<String, String>, tokens: &Tokens<'_>) 
         if !out.is_empty() {
             out.push('&');
         }
-        encode_component(key, &mut out);
+        out.push_str(&crate::uploads::encode(key, false));
         out.push('=');
-        encode_component(&tokens.splice(template), &mut out);
+        out.push_str(&crate::uploads::encode(&tokens.splice(template), false));
     }
     out
 }
 
-fn encode_component(text: &str, out: &mut String) {
-    const HEX: [char; 16] = [
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
-    ];
-    let digit = |nibble: u8| HEX.get(usize::from(nibble)).copied().unwrap_or('0');
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(char::from(byte));
-        } else {
-            out.push('%');
-            out.push(digit(byte >> 4));
-            out.push(digit(byte & 0x0F));
+/// Accumulate one mapping outcome into landed / quarantined / reason counts.
+pub(crate) fn tally_outcome(
+    outcome: &norn_cell::MappingOutcome,
+    landed: &mut u64,
+    quarantined: &mut u64,
+    reasons: &mut BTreeMap<String, u64>,
+) {
+    match outcome {
+        norn_cell::MappingOutcome::Landed | norn_cell::MappingOutcome::AlreadyLanded => {
+            *landed = landed.saturating_add(1);
+        }
+        held @ norn_cell::MappingOutcome::Quarantined(_) => {
+            *quarantined = quarantined.saturating_add(1);
+            for code in held.codes() {
+                let count = reasons.entry(code).or_insert(0);
+                *count = count.saturating_add(1);
+            }
         }
     }
 }

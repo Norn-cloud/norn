@@ -25,6 +25,7 @@ use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::{MetricDefinition, QuestionIR};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::sync::RwLockReadGuard;
 use utoipa::IntoParams;
 
 /// S2 (#1547): a question that reads history (a knowledge cutoff, a
@@ -191,6 +192,32 @@ fn answered_at(
     }
 }
 
+type AdmittedQuestion<'h, 'a, 'r> = (RwLockReadGuard<'h, ()>, &'a str, &'r [u8], QuestionPlan);
+
+fn admit_named_question<'h, 'a, 'r, E: SqlEngine>(
+    host: &'h DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&'a str>,
+    question: &str,
+    runtime: &'r dyn QuestionRuntime<E>,
+) -> Result<AdmittedQuestion<'h, 'a, 'r>, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    let access = mapped(host, runtime, actor, question, Population, None)?;
+    let key = handle_key(runtime)?;
+    let epoch = host.read_access(
+        scope,
+        &ReadRequest {
+            capability: Population,
+            access: &access,
+        },
+    )?;
+    let plan = runtime.plan(question)?;
+    if access.resource().object_type != plan.grain().as_str() {
+        return Err(read_denied());
+    }
+    Ok((epoch, actor, key, plan))
+}
+
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
 /// # Errors
 /// Denied scope/authority, unavailable trusted inputs, or typed compute refusal.
@@ -202,20 +229,7 @@ pub fn get_answer<E: SqlEngine>(
     question: &str,
     runtime: &dyn QuestionRuntime<E>,
 ) -> Result<QuestionAnswer, Refusal> {
-    let actor = actor.ok_or_else(read_denied)?;
-    let access = mapped(host, runtime, actor, question, Population, None)?;
-    let key = handle_key(runtime)?;
-    let _epoch = host.read_access(
-        scope,
-        &ReadRequest {
-            capability: Population,
-            access: &access,
-        },
-    )?;
-    let plan = runtime.plan(question)?;
-    if access.resource.object_type != plan.grain().as_str() {
-        return Err(read_denied());
-    }
+    let (_epoch, actor, key, plan) = admit_named_question(host, scope, actor, question, runtime)?;
     answer_plan(host, runtime, actor, question, &plan, key)
 }
 
@@ -325,9 +339,9 @@ pub(crate) fn world_values<E: SqlEngine>(
             runtime
                 .collection_access(host.scope(), actor, Values, name)
                 .is_ok_and(|access| {
-                    access.principal.subject_id == actor
-                        && access.resource.object_type == name
-                        && access.resource.id == name
+                    access.principal().subject_id == actor
+                        && access.resource().object_type == name
+                        && access.resource().id == name
                         && host.read_permitted(&ReadRequest {
                             capability: Values,
                             access: &access,
@@ -416,24 +430,11 @@ pub fn get_numeric_trace<E: SqlEngine>(
     question: &str,
     runtime: &dyn QuestionRuntime<E>,
 ) -> Result<NumericTrace, Refusal> {
-    let actor = actor.ok_or_else(read_denied)?;
-    let access = mapped(host, runtime, actor, question, Population, None)?;
-    let key = handle_key(runtime)?;
     let scope = ScopeQuery {
         org_id: query.org_id.clone(),
         environment_id: query.environment_id.clone(),
     };
-    let _epoch = host.read_access(
-        &scope,
-        &ReadRequest {
-            capability: Population,
-            access: &access,
-        },
-    )?;
-    let plan = runtime.plan(question)?;
-    if access.resource.object_type != plan.grain().as_str() {
-        return Err(read_denied());
-    }
+    let (_epoch, actor, key, plan) = admit_named_question(host, &scope, actor, question, runtime)?;
     let lineage = query
         .lineage_ref
         .as_deref()
@@ -647,10 +648,10 @@ fn mapped<E: SqlEngine>(
         .access(host.scope(), actor, question, capability, row)
         .map_err(|_denial| read_denied())?;
     let id = row.map_or(question, |row| row.id.as_str());
-    if access.principal.subject_id != actor
-        || access.resource.id != id
+    if access.principal().subject_id != actor
+        || access.resource().id != id
         || row.is_some_and(|row| {
-            access.resource.object_type != row.object_type || row.scope != host.scope().key()
+            access.resource().object_type != row.object_type || row.scope != host.scope().key()
         })
     {
         return Err(read_denied());
@@ -905,7 +906,7 @@ pub fn check_ad_hoc<E: SqlEngine>(
         }));
     for (resource, over) in resources {
         let access = mapped(host, named, actor, resource, Population, None)?;
-        let governed = access.resource.object_type.as_str();
+        let governed = access.resource().object_type.as_str();
         let expected = match over {
             None => governed == resource,
             Some(Some(semantic_model)) => governed == semantic_model,
@@ -1243,7 +1244,7 @@ pub fn question_catalog<E: SqlEngine>(
     // Whether `actor` may read `resource`'s population, governed by `over`.
     let readable = |resource: &str, over: &dyn Fn(&str) -> bool| {
         mapped(host, named, actor, resource, Population, None).is_ok_and(|access| {
-            over(access.resource.object_type.as_str())
+            over(access.resource().object_type.as_str())
                 && host.read_permitted(&ReadRequest {
                     capability: Population,
                     access: &access,

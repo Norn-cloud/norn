@@ -112,3 +112,24 @@ kani verification/query-compute-v1/arithmetic_kani.rs --harness full_width_opera
 kani verification/query-compute-v1/arithmetic_kani.rs --harness sum_never_wraps
 kani verification/query-compute-v1/arithmetic_kani.rs --harness retracting_an_admitted_add_restores_the_original_total
 ```
+
+## Commit overlay
+
+`crates/norn-kernel/src/commit/overlay_core.rs` is the pure core of the sealed `PostState` overlay: `resolve` picks the row a canonical identity has after the commit, and `edge_delta` turns a link write into a change of membership. Its inline Verus contracts are equalities, not one-way implications:
+
+- `resolve` returns exactly `row_after`: a put returns its own proposed row and successor version, a delete returns its tombstone, and an unwritten identity returns the snapshot row (`Before`). An out-of-range slot returns `None`, which `PostState` reports as an error.
+- `edge_delta` returns exactly the canonical delta: `Insert` or `Remove` only when membership changes, `Keep` for a redundant add or remove.
+
+Lemmas over those contracts: `overlay_frame` (an unwritten identity keeps its snapshot row), `written_never_before` (a written identity is never answered from the pre-state, witness 1), `deletion_excludes` (a deleted identity has no live row, K8 and witness 2), `row_after_functional` (two reads of one sealed overlay agree), `edge_apply_exact` and `edge_idempotent` (applying a delta gives the requested membership, and applying it again is `Keep`), and `edge_fold_exact` (folding a link's changes in input order leaves the last requested membership whatever the before-image, or the before-image when there are none).
+
+What this does not cover: canonical identity and CAS are established earlier, by the Shape and Versions stages; `PostState` (`post_state.rs`) indexes writes by canonical key and asks the host for unwritten rows; a deleted link endpoint is refused by `law_links.rs` (`LAW-LINK-1`) on the `Deleted` row this core returns. Those are not proved here. The host seam (`CommitView` answering from one snapshot) remains the DST obligation.
+
+`bash scripts/verify-kernel-overlay-verus.sh all` runs the module as a standalone Verus crate with the same pinned bundle and flags as `version_check`, then:
+
+1. requires both executable functions and every lemma to verify, with each function's named postcondition (`resolve`, `edge_delta`) discharged;
+2. compares the Verus VIR with the THIR of the release `norn-kernel` library built by Cargo (D107), for all four executable bodies, the two derived `clone`s included: typed expression spans, typed bindings, call targets and literal patterns. A shared reborrow (`&*place`), which Verus logs as `&&T` and rustc as `&T` plus `T`, is the one normalization;
+3. applies each patch in `verification/mutants/overlay_core/`, which may change only its own function, and requires exactly that function's named postcondition to fail: `put_from_before` (a written slot answered from the pre-state) and `delete_reads_before` (a deleted row read from the pre-state) at `resolve`, `remove_kept` (a remove dropped) at `edge_delta`.
+
+The runner is not enrolled in `guards` or `verify-promoted-subsystems.sh`, which are gate files; it is run by hand on Boat.
+
+Boat checked tree `d5e1157bd8` (this change before its README results were added) with Verus `0.2026.11.22.1ce6a59` and rustc `1.100.0`. The overlay source SHA-256 was `5c6cfc5535668374433b84103e212da0fe2bee30f6f4f02312a331e40641536e`. Verus reported 12 verified and 0 errors, covering both executable functions, the two derived clones and all seven lemmas. D107 matched all four executable bodies: 31 distinct expression-span/type pairs, 10 typed bindings (including parameters), 1 call target (`core::slice::{impl#0}::get`) and 8 literal patterns. All three mutants failed at their own postcondition and nowhere else. The same batch passed `cargo fmt --all --check`, workspace and wasm32 `norn-kernel` Clippy with `-D warnings`, `cargo test -p norn-kernel` (454 passed) and the skeleton-guard tests.

@@ -6,9 +6,7 @@
  *   `checkerPackageDir` / `loadChecker` / `hostBinary` discover it.
  * - Redirect hops reject userinfo, reject ANY `https:` -> `http:` downgrade
  *   (including to loopback), and re-validate every hop.
- * - Archive entries (`.tar.gz` and `.zip`) are inspected BEFORE extraction
- *   (including non-Unix-origin ZIP symlinks and bounded raw inflation against
- *   lying ZIP headers / zip bombs).
+ * - Archive entries (`.tar.gz`) are inspected BEFORE extraction.
  * - Checker precedence strictly preserves override -> bundled -> cache with
  *   all three genuinely installed simultaneously.
  * - Interrupted/failed replacements and concurrent generation cleanup preserve
@@ -37,7 +35,7 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
-import { deflateRawSync, gzipSync } from "node:zlib"
+import { gzipSync } from "node:zlib"
 import type { BuildInfo } from "../src/build-info.ts"
 import { CHECKER_PKG_ENV, checkerPackageDir, loadChecker } from "../src/checker-abi.ts"
 import { hostBinary, hostLookup } from "../src/dev.ts"
@@ -45,18 +43,15 @@ import { TOOL_ROOT } from "../src/profile.ts"
 import { ProjectError } from "../src/project.ts"
 import {
   RUNTIME_MANIFEST_FORMAT,
+  activeRuntimeDir,
   cachedCheckerWasmDir,
-  cachedCliPath,
-  cachedDevHostPath,
   detectPlatform,
   readActiveGenerationId,
 } from "../src/runtime-cache.ts"
 import {
-  crc32,
   extractArchive,
   fetchBounded,
   inspectTarGzArchive,
-  inspectZipArchive,
   isFetchableUrl,
   parseSha256Sums,
   resolveReleaseBaseUrl,
@@ -158,80 +153,6 @@ function makeRawTarGz(
     offset += block.length
   }
   return gzipSync(tar)
-}
-
-/** Build a minimal stored or deflated ZIP archive for pre-extraction inspection & extraction tests. */
-function makeRawZip(
-  entries: ReadonlyArray<{
-    readonly name: string
-    readonly content?: Uint8Array
-    readonly deflate?: boolean
-    readonly declaredUncompressedSize?: number
-    readonly unixMode?: number
-    readonly hostOs?: number
-  }>,
-): Uint8Array {
-  const encoder = new TextEncoder()
-  const localParts: Uint8Array[] = []
-  const cdParts: Uint8Array[] = []
-  let localOffset = 0
-
-  for (const entry of entries) {
-    const nameBytes = encoder.encode(entry.name)
-    const rawContent = entry.content ?? new Uint8Array(0)
-    const payload = entry.deflate ? deflateRawSync(rawContent) : rawContent
-    const method = entry.deflate ? 8 : 0
-    const uncompressedSize = entry.declaredUncompressedSize ?? rawContent.length
-    const checksum = crc32(rawContent)
-    const hostOs = entry.hostOs ?? 3
-
-    const lfh = new Uint8Array(30 + nameBytes.length)
-    const lfhView = new DataView(lfh.buffer)
-    lfhView.setUint32(0, 0x04034b50, true)
-    lfhView.setUint16(4, 20, true)
-    lfhView.setUint16(8, method, true)
-    lfhView.setUint32(14, checksum, true)
-    lfhView.setUint32(18, payload.length, true)
-    lfhView.setUint32(22, uncompressedSize, true)
-    lfhView.setUint16(26, nameBytes.length, true)
-    lfh.set(nameBytes, 30)
-
-    const cdh = new Uint8Array(46 + nameBytes.length)
-    const cdhView = new DataView(cdh.buffer)
-    cdhView.setUint32(0, 0x02014b50, true)
-    cdhView.setUint16(4, (hostOs << 8) | 20, true)
-    cdhView.setUint16(6, 20, true)
-    cdhView.setUint16(10, method, true)
-    cdhView.setUint32(16, checksum, true)
-    cdhView.setUint32(20, payload.length, true)
-    cdhView.setUint32(24, uncompressedSize, true)
-    cdhView.setUint16(28, nameBytes.length, true)
-    cdhView.setUint32(38, ((entry.unixMode ?? 0o100644) << 16) >>> 0, true)
-    cdhView.setUint32(42, localOffset, true)
-    cdh.set(nameBytes, 46)
-
-    localParts.push(lfh, payload)
-    cdParts.push(cdh)
-    localOffset += lfh.length + payload.length
-  }
-
-  const cdSize = cdParts.reduce((acc, b) => acc + b.length, 0)
-  const eocd = new Uint8Array(22)
-  const eocdView = new DataView(eocd.buffer)
-  eocdView.setUint32(0, 0x06054b50, true)
-  eocdView.setUint16(8, entries.length, true)
-  eocdView.setUint16(10, entries.length, true)
-  eocdView.setUint32(12, cdSize, true)
-  eocdView.setUint32(16, localOffset, true)
-
-  const all = [...localParts, ...cdParts, eocd]
-  const out = new Uint8Array(all.reduce((acc, b) => acc + b.length, 0))
-  let offset = 0
-  for (const part of all) {
-    out.set(part, offset)
-    offset += part.length
-  }
-  return out
 }
 
 interface FixtureRelease {
@@ -354,8 +275,8 @@ test("norn setup downloads, verifies SHA-256, publishes atomic generation, and c
     const genId = readActiveGenerationId(cacheRoot)
     expect(genId).toBeDefined()
     const expectedWasmDir = cachedCheckerWasmDir({ XDG_CACHE_HOME: xdgCache })!
-    const expectedDevHost = cachedDevHostPath(cacheRoot)
-    const expectedCli = cachedCliPath(cacheRoot)
+    const expectedDevHost = join(activeRuntimeDir(cacheRoot).dir, "bin", "norn-dev-host")
+    const expectedCli = join(activeRuntimeDir(cacheRoot).dir, "bin", "norn")
     expect(expectedWasmDir).toBe(join(cacheRoot, "runtime", "generations", genId!, "checker-wasm"))
     expect(existsSync(join(expectedWasmDir, "norn_checker_wasm.js"))).toBe(true)
     expect(existsSync(join(expectedWasmDir, "norn_checker_wasm_bg.wasm"))).toBe(true)
@@ -550,7 +471,7 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
   }
 })
 
-test("unsafe tar.gz and zip archives (including non-Unix ZIP symlinks & lying ZIP bombs) are refused BEFORE extraction", () => {
+test("unsafe tar.gz archives are refused BEFORE extraction", () => {
   const root = scratch()
   try {
     const cases: ReadonlyArray<{
@@ -611,60 +532,6 @@ test("unsafe tar.gz and zip archives (including non-Unix ZIP symlinks & lying ZI
         pattern: "exceeds maximum uncompressed size",
         maxExtractedBytes: 1024,
       },
-      {
-        label: "zip-unix-symlink.zip",
-        archive: makeRawZip([{ name: "link", content: new TextEncoder().encode("/etc/passwd"), unixMode: 0o120777, hostOs: 3 }]),
-        pattern: "refusing symlink",
-      },
-      {
-        // Non-Unix origin (hostOs = 0 DOS / 19 macOS) carrying Unix symlink mode bits must STILL be refused.
-        label: "zip-non-unix-origin-symlink.zip",
-        archive: makeRawZip([{ name: "sneaky-link", content: new TextEncoder().encode("/etc/passwd"), unixMode: 0o120777, hostOs: 0 }]),
-        pattern: "refusing symlink",
-      },
-      {
-        label: "zip-non-unix-origin-fifo.zip",
-        archive: makeRawZip([{ name: "sneaky-fifo", content: new Uint8Array(0), unixMode: 0o010644, hostOs: 19 }]),
-        pattern: "refusing special file",
-      },
-      {
-        label: "zip-traversal.zip",
-        archive: makeRawZip([{ name: "../escape.txt", content: new TextEncoder().encode("x") }]),
-        pattern: "refusing unsafe archive entry",
-      },
-      {
-        label: "zip-oversized-declared.zip",
-        archive: makeRawZip([{ name: "declared-bomb.bin", declaredUncompressedSize: 300 * 1024 * 1024 }]),
-        pattern: "exceeds maximum uncompressed size",
-      },
-      {
-        // Lying ZIP bomb: central directory claims 16 bytes, but the deflate stream actually expands to 64 KiB!
-        label: "zip-lying-deflate-bomb.zip",
-        archive: makeRawZip([
-          {
-            name: "bomb.bin",
-            content: new Uint8Array(64 * 1024),
-            deflate: true,
-            declaredUncompressedSize: 16,
-          },
-        ]),
-        pattern: "exceeds maximum uncompressed size",
-        maxExtractedBytes: 1024,
-      },
-      {
-        // Lying ZIP size within budget: expands to 256 bytes while declaring 16 bytes -> refused on size mismatch!
-        label: "zip-lying-size-mismatch.zip",
-        archive: makeRawZip([
-          {
-            name: "lie.bin",
-            content: new Uint8Array(256),
-            deflate: true,
-            declaredUncompressedSize: 16,
-          },
-        ]),
-        pattern: "does not match declared size",
-        maxExtractedBytes: 4096,
-      },
     ]
 
     for (const c of cases) {
@@ -679,28 +546,12 @@ test("unsafe tar.gz and zip archives (including non-Unix ZIP symlinks & lying ZI
           c.maxExtractedBytes !== undefined ? { maxExtractedBytes: c.maxExtractedBytes } : {},
         ),
       ).toThrow(c.pattern)
-      // Must fail BEFORE creating destDir or extracting any member!
       expect(existsSync(destDir)).toBe(false)
     }
 
-    // Valid tar.gz and deflated zip pass preflight inspection and extract cleanly without external `unzip`.
     const validTar = join(root, "valid.tar.gz")
     writeFileSync(validTar, makeTarGz({ "hello.txt": "world" }))
     expect(inspectTarGzArchive(validTar, "valid.tar.gz")).toEqual({ entries: 1, totalBytes: 5 })
-
-    const validZip = join(root, "valid.zip")
-    const validZipDest = join(root, "out-valid-zip")
-    writeFileSync(
-      validZip,
-      makeRawZip([
-        { name: "bin/", unixMode: 0o040755 },
-        { name: "bin/tool", content: new TextEncoder().encode("#!/bin/sh\necho ok\n"), deflate: true, unixMode: 0o100755 },
-      ]),
-    )
-    expect(inspectZipArchive(validZip, "valid.zip")).toEqual({ entries: 2, totalBytes: 18 })
-    extractArchive(validZip, validZipDest, "valid.zip")
-    expect(readFileSync(join(validZipDest, "bin/tool"), "utf8")).toBe("#!/bin/sh\necho ok\n")
-    expect(statSync(join(validZipDest, "bin/tool")).mode & 0o111).toBeGreaterThan(0)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -978,7 +829,7 @@ test("kernel flock publish lock serializes across real OS processes, releases on
     const activeGen = readActiveGenerationId(cacheDir)
     expect(activeGen).toBeDefined()
     expect([resA.generationId, resB.generationId]).toContain(activeGen!)
-    expect(existsSync(cachedDevHostPath(cacheDir))).toBe(true)
+    expect(existsSync(join(activeRuntimeDir(cacheDir).dir, "bin", "norn-dev-host"))).toBe(true)
     expect(existsSync(lockPath)).toBe(true)
   } finally {
     releaseA.close()
@@ -1203,8 +1054,8 @@ test("scripts/dev/fetch-local-runtime.sh wraps norn setup against a local mirror
     expect(genId).toBeDefined()
     const wasmDir = cachedCheckerWasmDir({ NORN_CACHE_DIR: cacheDir })!
     expect(existsSync(join(wasmDir, "norn_checker_wasm.js"))).toBe(true)
-    expect(existsSync(cachedDevHostPath(cacheDir))).toBe(true)
-    expect(existsSync(cachedCliPath(cacheDir))).toBe(true)
+    expect(existsSync(join(activeRuntimeDir(cacheDir).dir, "bin", "norn-dev-host"))).toBe(true)
+    expect(existsSync(join(activeRuntimeDir(cacheDir).dir, "bin", "norn"))).toBe(true)
   } finally {
     release.close()
     rmSync(root, { recursive: true, force: true })

@@ -9,9 +9,10 @@
 
 pub use crate::authz_action::PdpActionAuthorizer;
 pub use norn_authz::{
-    AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, CommitBinding, Delegation,
-    DenyReason, DeterminingPolicy, EntityRef, Pdp, PdpDecision, PdpExplanation, PrincipalInput,
-    ResourceInput, ScopeKey, compile, compile_all_projected, infer_principal_attributes,
+    AccessRequest, ActorKind, AttrValue, AuthzSchema, Binding, CapabilityGrant, CommitBinding,
+    Delegation, DenyReason, DeterminingPolicy, EntityRef, Pdp, PdpDecision, PdpExplanation,
+    PrincipalInput, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal, compile,
+    compile_all_projected, infer_principal_attributes,
 };
 // PRINCIPAL-INPUT-1 (#1091): the shared catalog and the trusted resolver.
 pub use norn_authz::{

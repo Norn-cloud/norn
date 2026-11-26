@@ -398,7 +398,7 @@ impl HoldsRolePdp {
                     AttrValue::String(held_at(&dimensions)),
                 ),
             ]),
-            binding: None,
+            binding: crate::Binding::Unbound(crate::UnboundProfile::HostedRead),
             delegation: context.delegation.clone(),
         };
         match pdp.decide(&request) {

@@ -238,10 +238,7 @@ fn never_visible(condition: Option<&norn_ir::ZenCondition>) -> bool {
 }
 
 struct Context<'a> {
-    placements: &'a BTreeMap<&'a str, &'a norn_ir::WidgetActionPlacement>,
-    items: &'a BTreeMap<&'a str, &'a norn_ir::WidgetNavigationItem>,
-    fields: &'a BTreeMap<&'a str, &'a norn_ir::WidgetFieldPresentation>,
-    forms: &'a BTreeMap<&'a str, &'a norn_ir::WidgetForm>,
+    index: &'a UxIndex<'a>,
     nullable: &'a BTreeSet<Pair>,
     /// Label overrides by semantic id: the effective label of a node is the override when present.
     label_overrides: BTreeMap<&'a str, &'a LocaleText>,
@@ -275,38 +272,50 @@ impl Context<'_> {
     }
 }
 
+struct UxIndex<'u> {
+    placements: BTreeMap<&'u str, &'u norn_ir::WidgetActionPlacement>,
+    items: BTreeMap<&'u str, &'u norn_ir::WidgetNavigationItem>,
+    fields: BTreeMap<&'u str, &'u norn_ir::WidgetFieldPresentation>,
+    forms: BTreeMap<&'u str, &'u norn_ir::WidgetForm>,
+}
+
+impl<'u> UxIndex<'u> {
+    fn from_ux(ux: &'u WidgetUx) -> Self {
+        Self {
+            placements: ux
+                .action_placements
+                .iter()
+                .map(|placement| (placement.placement_id.as_str(), placement))
+                .collect(),
+            items: ux
+                .navigation_items
+                .iter()
+                .map(|item| (item.item_id.as_str(), item))
+                .collect(),
+            fields: ux
+                .fields
+                .iter()
+                .map(|field| (field.field_id.as_str(), field))
+                .collect(),
+            forms: ux
+                .forms
+                .iter()
+                .map(|form| (form.form_id.as_str(), form))
+                .collect(),
+        }
+    }
+}
+
 impl Facts {
     fn extract(ux: &WidgetUx, nullable_inputs: &BTreeSet<Pair>, composed: &ComposedUx<'_>) -> Self {
         let mut facts = Self::default();
-        let placements: BTreeMap<&str, &norn_ir::WidgetActionPlacement> = ux
-            .action_placements
-            .iter()
-            .map(|placement| (placement.placement_id.as_str(), placement))
-            .collect();
-        let items: BTreeMap<&str, &norn_ir::WidgetNavigationItem> = ux
-            .navigation_items
-            .iter()
-            .map(|item| (item.item_id.as_str(), item))
-            .collect();
-        let fields: BTreeMap<&str, &norn_ir::WidgetFieldPresentation> = ux
-            .fields
-            .iter()
-            .map(|field| (field.field_id.as_str(), field))
-            .collect();
-        let forms: BTreeMap<&str, &norn_ir::WidgetForm> = ux
-            .forms
-            .iter()
-            .map(|form| (form.form_id.as_str(), form))
-            .collect();
+        let index = UxIndex::from_ux(ux);
         let label_overrides = label_overrides(ux);
         let control_overrides = control_overrides(ux);
 
-        facts.declare(ux, &items);
+        facts.declare(ux, &index.items);
         let context = Context {
-            placements: &placements,
-            items: &items,
-            fields: &fields,
-            forms: &forms,
+            index: &index,
             nullable: nullable_inputs,
             label_overrides,
             control_overrides,
@@ -452,26 +461,7 @@ impl Facts {
         let Some(selected) = baseline.pages.iter().find(|page| page.page_id == page_id) else {
             return;
         };
-        let placements: BTreeMap<&str, &norn_ir::WidgetActionPlacement> = baseline
-            .action_placements
-            .iter()
-            .map(|placement| (placement.placement_id.as_str(), placement))
-            .collect();
-        let items: BTreeMap<&str, &norn_ir::WidgetNavigationItem> = baseline
-            .navigation_items
-            .iter()
-            .map(|item| (item.item_id.as_str(), item))
-            .collect();
-        let fields: BTreeMap<&str, &norn_ir::WidgetFieldPresentation> = baseline
-            .fields
-            .iter()
-            .map(|field| (field.field_id.as_str(), field))
-            .collect();
-        let forms: BTreeMap<&str, &norn_ir::WidgetForm> = baseline
-            .forms
-            .iter()
-            .map(|form| (form.form_id.as_str(), form))
-            .collect();
+        let index = UxIndex::from_ux(&baseline);
         // The baseline's own overrides apply first; the host's overrides replace them.
         let mut overrides = label_overrides(&baseline);
         overrides.extend(context.label_overrides.iter().map(|(k, v)| (*k, *v)));
@@ -481,10 +471,7 @@ impl Facts {
         let mut stack = context.stack.clone();
         stack.push(identity);
         let nested = Context {
-            placements: &placements,
-            items: &items,
-            fields: &fields,
-            forms: &forms,
+            index: &index,
             nullable: &no_nullable,
             label_overrides: overrides,
             control_overrides: controls,
@@ -527,7 +514,7 @@ impl Facts {
                 }
             }
             WidgetComponent::Form { form_id } => {
-                if let Some(form) = context.forms.get(form_id.as_str()) {
+                if let Some(form) = context.index.forms.get(form_id.as_str()) {
                     self.interactive.insert(id.to_owned());
                     self.add_label(id, context.effective(node, &form.submit.label));
                 }
@@ -537,14 +524,14 @@ impl Facts {
             } => self.classify_grid(context, node, id, label, field_ids),
             WidgetComponent::Field { field_id } => self.classify_field(context, node, id, field_id),
             WidgetComponent::Action { placement_id } => {
-                if let Some(placement) = context.placements.get(placement_id.as_str()) {
+                if let Some(placement) = context.index.placements.get(placement_id.as_str()) {
                     self.interactive.insert(id.to_owned());
                     self.action_node.insert(id.to_owned());
                     self.add_label(id, context.effective(node, &placement.label));
                 }
             }
             WidgetComponent::Navigation { item_id } => {
-                if let Some(item) = context.items.get(item_id.as_str()) {
+                if let Some(item) = context.index.items.get(item_id.as_str()) {
                     self.interactive.insert(id.to_owned());
                     self.add_label(id, context.effective(node, &item.label));
                     if context.host.is_none() {
@@ -581,7 +568,7 @@ impl Facts {
             self.named_container.insert(id.to_owned());
         }
         for field_id in field_ids {
-            if let Some(field) = context.fields.get(field_id.as_str())
+            if let Some(field) = context.index.fields.get(field_id.as_str())
                 && !matches!(
                     context.effective_control(Some(field_id.as_str()), field.control),
                     WidgetFieldControl::Display
@@ -616,7 +603,7 @@ impl Facts {
         id: &str,
         field_id: &str,
     ) {
-        let Some(field) = context.fields.get(field_id) else {
+        let Some(field) = context.index.fields.get(field_id) else {
             return;
         };
         let control = context.effective_control(node.semantic_id.as_deref(), field.control);
@@ -670,18 +657,25 @@ fn ancestors(parent: &BTreeMap<String, String>) -> BTreeMap<String, Vec<String>>
 
 /// Least set containing `seed` and closed under `edge(P, Q)`.
 fn reachable(seed: &BTreeSet<String>, edges: &BTreeSet<Pair>) -> BTreeSet<String> {
+    let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (from, to) in edges {
+        adjacency
+            .entry(from.as_str())
+            .or_default()
+            .push(to.as_str());
+    }
     let mut reached = seed.clone();
-    loop {
-        let before = reached.len();
-        for (from, to) in edges {
-            if reached.contains(from) {
-                reached.insert(to.clone());
+    let mut worklist: Vec<&str> = seed.iter().map(String::as_str).collect();
+    while let Some(node) = worklist.pop() {
+        if let Some(nexts) = adjacency.get(node) {
+            for &next in nexts {
+                if reached.insert(next.to_owned()) {
+                    worklist.push(next);
+                }
             }
         }
-        if reached.len() == before {
-            return reached;
-        }
     }
+    reached
 }
 
 fn pointer_of(map: &BTreeMap<String, String>, id: &str) -> String {
@@ -723,12 +717,22 @@ fn derive(facts: &Facts) -> Vec<Finding> {
     // rule: reach(P) :- seed(P).  reach(Q) :- reach(P), control_edge(P, Q).
     let reach = reachable(&seed, &edges);
 
+    let mut has_dismissal: BTreeSet<&String> = BTreeSet::new();
+    let mut keyboard_close: BTreeSet<&String> = BTreeSet::new();
+    for (node, method) in &facts.dismissal {
+        has_dismissal.insert(node);
+        if method == "visible_close" || method == "escape" {
+            keyboard_close.insert(node);
+        }
+    }
+    let dismissals = (&has_dismissal, &keyboard_close);
+
     let mut findings = Vec::new();
     unnamed_controls(facts, &mut findings);
-    dialog_rules(facts, &ancestor, &mut findings);
+    dialog_rules(facts, &ancestor, dismissals, &mut findings);
     transition_rules(facts, &reach, &mut findings);
     nullable_rules(facts, &mut findings);
-    keyboard_rules(facts, &ancestor, &reach, &mut findings);
+    keyboard_rules(facts, &ancestor, &reach, dismissals, &mut findings);
     findings
 }
 
@@ -770,6 +774,7 @@ fn unnamed_controls(facts: &Facts, findings: &mut Vec<Finding>) {
 fn dialog_rules(
     facts: &Facts,
     ancestor: &BTreeMap<String, Vec<String>>,
+    (has_dismissal, keyboard_close): (&BTreeSet<&String>, &BTreeSet<&String>),
     findings: &mut Vec<Finding>,
 ) {
     // has_invoker(D): every action node marks the dialogs above it.
@@ -779,14 +784,6 @@ fn dialog_rules(
             if facts.dialog.contains(outer) {
                 has_invoker.insert(outer);
             }
-        }
-    }
-    let mut has_dismissal: BTreeSet<&String> = BTreeSet::new();
-    let mut keyboard_close: BTreeSet<&String> = BTreeSet::new();
-    for (node, method) in &facts.dismissal {
-        has_dismissal.insert(node);
-        if method == "visible_close" || method == "escape" {
-            keyboard_close.insert(node);
         }
     }
     for dialog in &facts.dialog {
@@ -954,16 +951,9 @@ fn keyboard_rules(
     facts: &Facts,
     ancestor: &BTreeMap<String, Vec<String>>,
     reach: &BTreeSet<String>,
+    (dismissable, keyboard_close): (&BTreeSet<&String>, &BTreeSet<&String>),
     findings: &mut Vec<Finding>,
 ) {
-    let mut keyboard_close: BTreeSet<&String> = BTreeSet::new();
-    let mut dismissable: BTreeSet<&String> = BTreeSet::new();
-    for (node, method) in &facts.dismissal {
-        dismissable.insert(node);
-        if method == "visible_close" || method == "escape" {
-            keyboard_close.insert(node);
-        }
-    }
     for element in &facts.interactive {
         let trapped = ancestor.get(element).into_iter().flatten().any(|outer| {
             facts.dialog.contains(outer)
