@@ -17,7 +17,7 @@
  * unavailable and offers a person's Retry (`retryEngine`). The waiting messages are kept, in order,
  * and replayed once a Retry loads it: nothing that needed the engine has run until then.
  */
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createDriver, DEFAULT_CLOCK, type Clock, type Driver, type Transport } from "./machine/driver.ts"
 import { type EngineLoader, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
 import { init, type Machine, type Msg, type Snapshot } from "./machine/machine.ts"
@@ -88,8 +88,6 @@ function valuesOf(document: unknown): unknown {
   return values ?? document
 }
 
-const GLOBAL_CLOCK: Clock = DEFAULT_CLOCK
-
 /** `work`, unless `signal` aborts first: a pending state's deadline or Cancel never waits on the engine. */
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason)
@@ -115,10 +113,10 @@ export function initialView(machine: Machine, engine: LazyEngine): RuntimeView {
  */
 export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: RuntimeView) => void): PageRuntime {
   const { ux, machine, reader, calls, engine } = options
-  const clock = options.clock ?? GLOBAL_CLOCK
+  const clock = options.clock ?? DEFAULT_CLOCK
   let live = true
   let view = initialView(machine, engine)
-  const feeds = new Map<string, () => void>()
+  const feeds = new Map<string, { readonly key: string; readonly stop: () => void }>()
   let wait: unknown = null
 
   const change = (next: Partial<RuntimeView>) => {
@@ -197,21 +195,53 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
 
   const follow = (bindingId: string, read: NonNullable<ReturnType<typeof bindingRead>>) => {
     const feed = options.host().live
-    if (feed === undefined || feeds.has(bindingId)) return
-    feeds.set(bindingId, feed.subscribe(read, {
-      snapshot: (document) => {
-        setRead(bindingId, { kind: "ok", document, freshness: "live" })
-        driver.dispatch({ kind: "subscription", bindingId })
+    if (feed === undefined) return
+    const key = JSON.stringify(read)
+    const existing = feeds.get(bindingId)
+    if (existing !== undefined) {
+      if (existing.key === key) return
+      existing.stop()
+      feeds.delete(bindingId)
+    }
+    let active = true
+    const entry: { readonly key: string; stop: () => void } = {
+      key,
+      stop: () => {
+        active = false
       },
-      lapsed: () => {
-        const before = view.reads.get(bindingId)
-        if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "stale" })
-      },
-      refused: () => {
-        const before = view.reads.get(bindingId)
-        if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "snapshot" })
-      },
-    }))
+    }
+    feeds.set(bindingId, entry)
+    try {
+      const unsubscribe = feed.subscribe(read, {
+        snapshot: (document) => {
+          if (!live || !active) return
+          setRead(bindingId, { kind: "ok", document, freshness: "live" })
+          driver.dispatch({ kind: "subscription", bindingId })
+        },
+        lapsed: () => {
+          if (!live || !active) return
+          const before = view.reads.get(bindingId)
+          if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "stale" })
+        },
+        refused: () => {
+          if (!live || !active) return
+          const before = view.reads.get(bindingId)
+          if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "snapshot" })
+        },
+      })
+      if (!live || !active) {
+        unsubscribe()
+        return
+      }
+      entry.stop = () => {
+        active = false
+        unsubscribe()
+      }
+    } catch (error) {
+      active = false
+      if (feeds.get(bindingId) === entry) feeds.delete(bindingId)
+      throw error
+    }
   }
 
   const transport: Transport = {
@@ -284,7 +314,8 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     dispose: () => {
       live = false
       stopWaiting()
-      for (const stop of feeds.values()) stop()
+      for (const feed of feeds.values()) feed.stop()
+      feeds.clear()
       driver.dispose()
     },
   }
@@ -292,7 +323,7 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
 
 /** Runs one page machine for as long as the component is mounted. */
 export function useWidgetMachine(options: MachineOptions): MachineRuntime {
-  const { ux, machine, reader } = options
+  const { ux, machine, reader, calls } = options
   const latest = useRef(options)
   latest.current = options
   const engine = useMemo(() => lazyEngine((attempt) => latest.current.engine(attempt)), [])
@@ -301,7 +332,7 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
 
   useEffect(() => {
     // The reader and calls this runtime is given are the ones it uses for its whole life.
-    const { calls, clock } = latest.current
+    const { clock } = latest.current
     const runtime = createPageRuntime({ ux, machine, reader, calls, engine, host: () => latest.current, ...(clock === undefined ? {} : { clock }) }, setView)
     runtimeRef.current = runtime
     // A rebuilt runtime starts from nothing read and nothing called.
@@ -313,12 +344,15 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
       runtime.dispose()
       runtimeRef.current = null
     }
-  }, [ux, machine, reader, engine])
+  }, [ux, machine, reader, calls, engine])
+
+  const send = useCallback((msg: Msg) => runtimeRef.current?.send(msg), [])
+  const retryEngine = useCallback(() => runtimeRef.current?.retryEngine(), [])
 
   return {
     ...view,
     evaluate: engine.evaluate,
-    send: (msg) => runtimeRef.current?.send(msg),
-    retryEngine: () => runtimeRef.current?.retryEngine(),
+    send,
+    retryEngine,
   }
 }

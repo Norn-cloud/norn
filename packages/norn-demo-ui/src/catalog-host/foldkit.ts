@@ -117,7 +117,10 @@ export function machineFromFoldkit(machine: FoldkitMachine, options: CompileOpti
       const payload = payloadOf(options.messages, tag)
       return { eventId: tag, source: { kind: "user", nodeId: "self" }, ...(payload.length > 0 ? { payload } : {}) }
     }),
-    states: machine.stateTags.map((stateId) => ({ stateId, role: options.roles?.[stateId] ?? "idle" })),
+    states: machine.stateTags.map((stateId) => ({
+      stateId,
+      role: options.roles && Object.hasOwn(options.roles, stateId) ? options.roles[stateId]! : "idle",
+    })),
     transitions,
   }
 }
