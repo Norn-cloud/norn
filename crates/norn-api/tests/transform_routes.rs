@@ -662,14 +662,14 @@ fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
     );
 }
 
-fn remove_north_customer(writer: &mut CellStore<NativeEngine>, base_time: u64) {
+fn remove_north_customer(writer: &mut CellStore<NativeEngine>) {
     // Unlink first in a writes-free commit so live link IFC does not see the
     // marked customer's write lineage, then delete the unreferenced customer.
     writer
         .commit(&CommitBatch {
             world: MAIN_WORLD.into(),
             scope: physical().key(),
-            logical_time: base_time,
+            logical_time: CLOCK + 900,
             links: vec![LinkChange::Remove {
                 object_type: "shop.Order".into(),
                 link: "customer".into(),
@@ -684,7 +684,7 @@ fn remove_north_customer(writer: &mut CellStore<NativeEngine>, base_time: u64) {
         .commit(&CommitBatch {
             world: MAIN_WORLD.into(),
             scope: physical().key(),
-            logical_time: base_time + 100,
+            logical_time: CLOCK + 1_000,
             writes: vec![FactWriteRow::Delete {
                 object_type: "shop.Customer".into(),
                 key: "c-north".into(),
@@ -737,7 +737,7 @@ fn stale_materialization_fixture() -> (
     assert!(!state.stale);
     // Delete c-north so live `property_marking_summary` is empty while the
     // cached `STORED` materialization is stale and still holds the old value.
-    remove_north_customer(&mut writer, CLOCK + 900);
+    remove_north_customer(&mut writer);
     (host, writer, directory)
 }
 
@@ -877,7 +877,7 @@ fn stale_materialization_reauthorizes_deleted_row_after_multi_event_commit() {
     // of commit 3). `pop` is denied Values on `c-north`, so `pop` must not
     // reuse the stale cache containing `c-north` and must fall back to live
     // evaluation instead.
-    remove_north_customer(&mut writer, CLOCK + 900);
+    remove_north_customer(&mut writer);
     let pop_page = get_transform_rows(
         &host,
         &scope(),
