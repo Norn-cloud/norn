@@ -556,6 +556,35 @@ pub(crate) fn expression_columns<'a>(
 }
 
 impl crate::transform::TransformPlan {
+    fn push_column_origins(
+        &self,
+        out: &mut Vec<(String, String, String)>,
+        pointer: &str,
+        column: &crate::transform::Column,
+    ) {
+        for origin in &column.origins {
+            if let Some(scan) = self.inputs.get(&origin.alias) {
+                out.push((
+                    pointer.to_owned(),
+                    scan.object_type.clone(),
+                    origin.property.clone(),
+                ));
+            }
+        }
+    }
+
+    fn push_named_origin(
+        &self,
+        out: &mut Vec<(String, String, String)>,
+        pointer: &str,
+        schema: &crate::transform::NodeSchema,
+        col_name: &str,
+    ) {
+        if let Some(column) = schema.column(col_name) {
+            self.push_column_origins(out, pointer, column);
+        }
+    }
+
     /// Every `(pointer, object_type, property)` origin read by a `Filter`
     /// predicate or `Window`/`Dedupe` `partitionBy`/`key`/`orderBy` key, used
     /// at runtime to refuse dynamic `_norn_markings` on filter, partition,
@@ -563,23 +592,6 @@ impl crate::transform::TransformPlan {
     #[must_use]
     pub fn filter_and_order_origins(&self) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
-        let mut push_origins = |pointer: &str, column: &crate::transform::Column| {
-            for origin in &column.origins {
-                if let Some(scan) = self.inputs.get(&origin.alias) {
-                    out.push((
-                        pointer.to_owned(),
-                        scan.object_type.clone(),
-                        origin.property.clone(),
-                    ));
-                }
-            }
-        };
-        let mut push_col =
-            |pointer: &str, schema: &crate::transform::NodeSchema, col_name: &str| {
-                if let Some(column) = schema.column(col_name) {
-                    push_origins(pointer, column);
-                }
-            };
         for (node_id, node) in &self.nodes {
             match &node.step {
                 crate::transform::Step::Filter { input, predicate } => {
@@ -589,7 +601,7 @@ impl crate::transform::TransformPlan {
                             expression_columns(&input_node.schema, predicate.expression.source())
                                 .unwrap_or_else(|_| input_node.schema.columns.iter().collect());
                         for col in cols {
-                            push_origins(&pointer, col);
+                            self.push_column_origins(&mut out, &pointer, col);
                         }
                     }
                 }
@@ -601,14 +613,16 @@ impl crate::transform::TransformPlan {
                 } => {
                     if let Some(input_node) = self.nodes.get(input) {
                         for (index, col_name) in partition_by.iter().enumerate() {
-                            push_col(
+                            self.push_named_origin(
+                                &mut out,
                                 &format!("/nodes/{node_id}/partitionBy/{index}"),
                                 &input_node.schema,
                                 col_name,
                             );
                         }
                         for (index, (col_name, _, _)) in order_by.iter().enumerate() {
-                            push_col(
+                            self.push_named_origin(
+                                &mut out,
                                 &format!("/nodes/{node_id}/orderBy/{index}"),
                                 &input_node.schema,
                                 col_name,
@@ -624,14 +638,16 @@ impl crate::transform::TransformPlan {
                 } => {
                     if let Some(input_node) = self.nodes.get(input) {
                         for (index, col_name) in key.iter().enumerate() {
-                            push_col(
+                            self.push_named_origin(
+                                &mut out,
                                 &format!("/nodes/{node_id}/key/{index}"),
                                 &input_node.schema,
                                 col_name,
                             );
                         }
                         for (index, (col_name, _, _)) in order_by.iter().enumerate() {
-                            push_col(
+                            self.push_named_origin(
+                                &mut out,
                                 &format!("/nodes/{node_id}/orderBy/{index}"),
                                 &input_node.schema,
                                 col_name,

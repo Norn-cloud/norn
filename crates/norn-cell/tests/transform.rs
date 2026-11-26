@@ -484,3 +484,21 @@ fn a_partial_reader_gets_a_live_evaluation_and_cannot_refresh() {
         Some(1_000)
     );
 }
+
+#[test]
+fn a_materialization_is_scoped_to_its_world() {
+    let plan = plan_with(json!({"maintenance": "materialized", "refresh": {"policy": "manual"}}));
+    let mut store = store();
+    load(&mut store);
+    let refreshed = store
+        .refresh_transform(&plan, (WORLD, SCOPE), whole, 2_000)
+        .expect("refreshed")
+        .expect("a whole reader refreshes");
+    assert!(!refreshed.stale);
+    // Reading in another world with no rows must not reuse WORLD's cached rows.
+    let other = store
+        .serve_transform(&plan, ("other-world", SCOPE), whole, 3_000)
+        .expect("live other world");
+    assert_eq!(other.materialization, None);
+    assert!(other.result.rows.is_empty());
+}
