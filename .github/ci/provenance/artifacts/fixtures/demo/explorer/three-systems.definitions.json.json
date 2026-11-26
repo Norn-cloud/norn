@@ -6,7 +6,7 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "crates/norn-cell/tests/explorer_documents.rs",
+    "crates/norn-api/tests/explorer_objects.rs",
     "registry/core/artifacts/core.Agent.interface.json",
     "registry/core/artifacts/core.AgentRole.interface.json",
     "registry/core/artifacts/core.Claim.interface.json",
