@@ -560,7 +560,7 @@ const hasWitness = (finding: LifecycleFinding): finding is LifecycleFinding & { 
 
 let markerSeq = 0
 const escapeAttr = (value: string) =>
-  typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&")
+  typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value.replace(/["\\\n\r]/g, "\\$&")
 
 /** Mount the view into `root`. Returns the disposer (it ends the live read). */
 export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOptions): () => void {

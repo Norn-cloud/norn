@@ -219,6 +219,10 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
         if (before?.kind === "ok") setRead(bindingId, { ...before, freshness: "snapshot" })
       },
     })
+    if (!live) {
+      stop()
+      return
+    }
     feeds.set(bindingId, { target, stop })
   }
 

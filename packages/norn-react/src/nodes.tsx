@@ -203,7 +203,7 @@ function Control({ scope, node, label, placementId }: { readonly scope: PageScop
       <label className="grid gap-1" data-node={node.nodeId}>
         <span className={MUTED}>{label}</span>
         <Input {...mark} className="h-9 rounded-[var(--radius)] border border-input bg-background px-3 text-body text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:min-h-[44px]" disabled={!on} data-engine={waiting ? "waiting" : undefined}
-          value={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
+          defaultValue={typeof value === "string" ? value : ""} onValueChange={(next) => raise(scope, node, { value: next })} />
       </label>
     )
   }

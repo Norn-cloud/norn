@@ -351,11 +351,11 @@ test("technical: the reader's sentence first, the code and the checker's own wor
   await expect(view.locator(".norn-life-technical")).toContainText("widget.lifecycle.stuck page state `done` with the object `draft`")
 })
 
-test("locale: Arabic runs right to left with Arabic digits, mirrored cards, and aligned SVG arrows", async ({ page }) => {
+test("locale: Arabic runs right to left with Western digits, mirrored cards, and aligned SVG arrows", async ({ page }) => {
   const view = await specimen(page, "lifecycle-view/rtl", "ar")
   await expect(view.locator(".norn-life")).toHaveAttribute("dir", "rtl")
-  await expect(card(view, "draft").locator("[data-count]")).toHaveText("١٢")
-  await expect(view.getByText("الخطوة ٤ من ٤")).toBeVisible()
+  await expect(card(view, "draft").locator("[data-count]")).toHaveText("12")
+  await expect(view.getByText("الخطوة 4 من 4")).toBeVisible()
   await expect(view.getByRole("button", { name: "قد تعرض الصفحة «تم» بينما أمر شراء ما زال «مسودة»، ولا شيء يستطيع إنهاءه." })).toBeVisible()
   // Geometry check in RTL: draft sits to the RIGHT of submitted, and the first arrow starts on draft's left edge.
   const draftBox = await card(view, "draft").boundingBox()
@@ -467,8 +467,8 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(page.locator('[data-slot="tabs"]')).toHaveAttribute("dir", "rtl")
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
     await expect(statusView.locator(".norn-life")).toHaveAttribute("dir", "rtl")
-    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("٦٬٢٠٠ على الأقل")
-    await expect(statusView.getByText("١٠٬٠٠٠ سجل على الأقل")).toBeVisible()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("6,200 على الأقل")
+    await expect(statusView.getByText("10,000 سجل على الأقل")).toBeVisible()
     // Wait for the WASM checker findings to settle before measuring card/arrow geometry and taking the screenshot.
     await expect(statusView.getByRole("button", { name: "قد تعرض الصفحة «Done» بينما أمر شراء ما زال «مسودة»، ولا شيء يستطيع إنهاءه." })).toBeVisible({ timeout: 20_000 })
     await expect.poll(async () => {

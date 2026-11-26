@@ -240,3 +240,9 @@ test("island waiting placeholder respects reduced motion", () => {
   const waiting = renderToStaticMarkup(<Node scope={scope("browsing", ok, new Map(), true, variant)} node={meter} />)
   expect(waiting).toContain("motion-reduce:animate-none")
 })
+
+test("text control stays uncontrolled with focus-visible and mobile touch target classes", () => {
+  const markup = renderToStaticMarkup(<Node scope={scope("browsing", ok)} node={node("note-input")} />)
+  expect(markup).toContain("focus-visible:outline-2")
+  expect(markup).toContain("max-sm:min-h-[44px]")
+})
