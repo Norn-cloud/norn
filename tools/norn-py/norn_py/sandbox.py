@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import ast
 import builtins
-import dataclasses
 import decimal
 import enum
 import json
@@ -69,9 +68,10 @@ from .expr import (
 from .schema import Concept, collect_artifacts, is_annotation_parse_active
 
 # Closed per-module symbol allowlist: prevents transitive escapes like `typing.sys` or `enum.sys`.
+# Note: `dataclasses` is intentionally excluded because `@dataclass` calls `exec()` to
+# synthesize methods, which Layer 2's audit hook blocks; authored modules use `Concept`.
 ALLOWED_IMPORT_SYMBOLS: Mapping[str, frozenset[str]] = {
     "__future__": frozenset({"annotations"}),
-    "dataclasses": frozenset({"dataclass", "field"}),
     "decimal": frozenset({"Decimal"}),
     "enum": frozenset({"Enum", "StrEnum", "auto"}),
     "typing": frozenset(
@@ -376,7 +376,6 @@ def _build_closed_module_proxies() -> dict[str, types.SimpleNamespace]:
 
     source_modules: dict[str, object] = {
         "__future__": future_mod,
-        "dataclasses": dataclasses,
         "decimal": decimal,
         "enum": enum,
         "typing": typing,

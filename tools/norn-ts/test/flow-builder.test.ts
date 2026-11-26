@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { X, flow, lowerFlow, perform, retry, succeed } from "../src/builder/index.ts"
+import { typeOf } from "../src/builder/expr.ts"
 import type { FlowDef } from "../src/builder/index.ts"
 import { NonJsonValue, canonicalJson, toJson } from "../src/canonical.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
@@ -222,5 +223,85 @@ describe("canonical JSON", () => {
 
   test("sorts keys, so insertion order never changes the bytes", () => {
     expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe(canonicalJson({ a: { c: 3, d: 2 }, b: 1 }))
+  })
+})
+
+describe("expression record inference", () => {
+  test("accepts Object.prototype property names and still rejects genuine duplicate keys", () => {
+    const scope = new Map()
+    const inferred = typeOf(
+      {
+        _tag: "Record",
+        fields: [
+          ["toString", { _tag: "Literal", value: "ok" }],
+          ["valueOf", { _tag: "Literal", value: 1 }],
+          ["constructor", { _tag: "Literal", value: true }],
+          ["hasOwnProperty", { _tag: "Literal", value: "yes" }],
+        ],
+      },
+      scope,
+    )
+    expect(inferred).toEqual({
+      type: "object",
+      properties: {
+        toString: { type: "string" },
+        valueOf: { type: "integer" },
+        constructor: { type: "boolean" },
+        hasOwnProperty: { type: "string" },
+      },
+      required: ["toString", "valueOf", "constructor", "hasOwnProperty"],
+      additionalProperties: false,
+    } as const)
+    expect(() =>
+      typeOf(
+        {
+          _tag: "Record",
+          fields: [
+            ["toString", { _tag: "Literal", value: "a" }],
+            ["toString", { _tag: "Literal", value: "b" }],
+          ],
+        },
+        scope,
+      ),
+    ).toThrow("record key toString is repeated")
+
+    // Merging records across List / Conditional with Object.prototype keys must use own properties.
+    const mergedList = typeOf(
+      {
+        _tag: "List",
+        items: [
+          { _tag: "Record", fields: [["toString", { _tag: "Literal", value: "ok" }]] },
+          { _tag: "Record", fields: [["other", { _tag: "Literal", value: 1 }]] },
+        ],
+      },
+      scope,
+    )
+    expect(mergedList).toEqual({
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          toString: { type: "string" },
+          other: { type: "integer" },
+        },
+        additionalProperties: false,
+      },
+    } as const)
+
+    const mergedCond = typeOf(
+      {
+        _tag: "Conditional",
+        condition: { _tag: "Literal", value: true },
+        yes: { _tag: "Record", fields: [["__proto__", { _tag: "Literal", value: "a" }]] },
+        no: { _tag: "Record", fields: [["__proto__", { _tag: "Literal", value: "b" }]] },
+      },
+      scope,
+    )
+    expect(mergedCond.type).toBe("object")
+    if (mergedCond.type === "object") {
+      expect(Object.hasOwn(mergedCond.properties, "__proto__")).toBe(true)
+      expect(mergedCond.properties["__proto__"]).toEqual({ type: "string" })
+      expect(mergedCond.required).toEqual(["__proto__"])
+    }
   })
 })
