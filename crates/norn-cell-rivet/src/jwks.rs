@@ -2,6 +2,7 @@
 //! shared by every cell actor and the router's gate in this process, so a
 //! runner fetches it at most once a minute however many cells open.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -23,18 +24,26 @@ pub(crate) struct Jwks {
     pub(crate) text: String,
     /// When it was fetched (Unix ms).
     pub(crate) at: u64,
+    /// Monotonic fetch generation for singleflight coalescing.
+    seq: u64,
 }
 
 static LAST_JWKS: std::sync::Mutex<Option<Jwks>> = std::sync::Mutex::new(None);
+/// Monotonic fetch generation incremented under `JWKS_FETCH_LOCK` before each
+/// outbound HTTP request so coalescing never depends on wall-clock time.
+static JWKS_FETCH_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Coalesces concurrent JWKS fetches within one runner process.
 static JWKS_FETCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-fn cached_jwks(url: &str) -> Result<Option<Jwks>> {
-    let last = LAST_JWKS
+fn last_jwks() -> Result<Option<Jwks>> {
+    Ok(LAST_JWKS
         .lock()
         .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))?
-        .clone();
-    Ok(last.filter(|entry| {
+        .clone())
+}
+
+fn cached_jwks(url: &str) -> Result<Option<Jwks>> {
+    Ok(last_jwks()?.filter(|entry| {
         entry.url == url
             && now_ms()
                 .checked_sub(entry.at)
@@ -42,31 +51,31 @@ fn cached_jwks(url: &str) -> Result<Option<Jwks>> {
     }))
 }
 
-fn cached_jwks_since(url: &str, min_at: u64) -> Result<Option<Jwks>> {
-    let last = LAST_JWKS
-        .lock()
-        .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))?
-        .clone();
-    Ok(last.filter(|entry| entry.url == url && entry.at >= min_at))
+fn cached_jwks_after(url: &str, ticket: u64) -> Result<Option<Jwks>> {
+    Ok(last_jwks()?.filter(|entry| entry.url == url && entry.seq > ticket))
 }
 
 /// The pinned JWKS document at `url` and when it was fetched; `reuse` accepts
 /// this process's last one while it is younger than `OPEN_RETRY_MS`. The
 /// actors and the router's gate share it, so a runner fetches the issuer's
 /// keys at most once a minute for both. Concurrent `reuse = false` refreshes
-/// coalesce on any fetch completed at or after the caller started waiting.
+/// coalesce only onto a fetch that started after the caller began waiting
+/// (tracked by a monotonic generation counter, never wall-clock time).
 pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool) -> Result<Jwks> {
     if reuse && let Some(last) = cached_jwks(&url)? {
         return Ok(last);
     }
-    let started = now_ms();
+    let ticket = JWKS_FETCH_SEQ.load(Ordering::Acquire);
     let _singleflight = JWKS_FETCH_LOCK.lock().await;
     if reuse && let Some(last) = cached_jwks(&url)? {
         return Ok(last);
     }
-    if let Some(fresh) = cached_jwks_since(&url, started)? {
+    if let Some(fresh) = cached_jwks_after(&url, ticket)? {
         return Ok(fresh);
     }
+    let seq = JWKS_FETCH_SEQ
+        .fetch_add(1, Ordering::AcqRel)
+        .saturating_add(1);
     let response = http
         .get(&url)
         .timeout(JWKS_TIMEOUT)
@@ -84,9 +93,186 @@ pub(crate) async fn fetch_jwks(http: &reqwest::Client, url: String, reuse: bool)
         url,
         text,
         at: now_ms(),
+        seq,
     };
     *LAST_JWKS
         .lock()
         .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(fetched.clone());
     Ok(fetched)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+
+    use axum::response::IntoResponse as _;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use ed25519_dalek::{Signer as _, SigningKey};
+    use http::StatusCode;
+    use norn_api::scope::CellScope;
+    use norn_cell_do::principal::IssuerKeys;
+    use serde_json::json;
+    use tokio::sync::Notify;
+
+    use super::*;
+    use crate::egress::outbound_client;
+
+    const ISSUER: &str = "https://studio.test";
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn now_secs() -> u64 {
+        now_ms() / 1000
+    }
+
+    fn jwks_doc(signer: &SigningKey, kid: &str) -> String {
+        json!({
+            "keys": [{
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "alg": "EdDSA",
+                "kid": kid,
+                "x": URL_SAFE_NO_PAD.encode(signer.verifying_key().as_bytes())
+            }]
+        })
+        .to_string()
+    }
+
+    fn signed_token(signer: &SigningKey, kid: &str, org: &str) -> String {
+        let issued = now_secs().saturating_sub(10);
+        let claims = json!({
+            "iss": ISSUER,
+            "aud": "norn-host",
+            "sub": "u1",
+            "iat": issued,
+            "exp": issued.saturating_add(290),
+            "norn": { "kind": "user", "org": org, "role": "owner", "amr": "password" }
+        });
+        let head = URL_SAFE_NO_PAD.encode(json!({ "alg": "EdDSA", "kid": kid }).to_string());
+        let body = URL_SAFE_NO_PAD.encode(claims.to_string());
+        let signature = signer.sign(format!("{head}.{body}").as_bytes());
+        format!(
+            "{head}.{body}.{}",
+            URL_SAFE_NO_PAD.encode(signature.to_bytes())
+        )
+    }
+
+    #[tokio::test]
+    async fn fetch_jwks_recovers_after_backward_clock_step() -> Result<()> {
+        let _serial = TEST_LOCK.lock().await;
+        let signer = SigningKey::from_bytes(&[7; 32]);
+        let document = jwks_doc(&signer, "k1");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&fetches);
+        let served = document.clone();
+        let app = axum::Router::new().fallback(move || {
+            let counted = Arc::clone(&counted);
+            let served = served.clone();
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::OK, served).into_response()
+            }
+        });
+        let server = tokio::spawn(async move {
+            let _result = axum::serve(listener, app).await;
+        });
+
+        let url = format!("http://{addr}/jwks");
+        let future_ms = now_ms().saturating_add(600_000);
+        let future_seq = JWKS_FETCH_SEQ
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        *LAST_JWKS
+            .lock()
+            .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(Jwks {
+            url: url.clone(),
+            text: document.clone(),
+            at: future_ms,
+            seq: future_seq,
+        });
+
+        let keys = IssuerKeys::new(ISSUER, &document, future_ms / 1000)
+            .map_err(|refused| anyhow!(refused.message))?;
+        let token = signed_token(&signer, "k1", "org-1");
+        let scope = CellScope {
+            org_id: "org-1".to_owned(),
+            environment_id: "prod".to_owned(),
+        };
+        assert!(keys.principal_with(&token, &scope, now_secs).is_none());
+        assert!(keys.refresh_due_with(now_secs));
+
+        let http = outbound_client()?;
+        let fetched = fetch_jwks(&http, url, false).await?;
+        assert_eq!(fetches.load(Ordering::SeqCst), 1);
+        assert!(fetched.at < future_ms);
+
+        keys.replace_jwks_at(&fetched.text, fetched.at / 1000, now_secs)
+            .map_err(|refused| anyhow!(refused.message))?;
+        assert!(keys.principal_with(&token, &scope, now_secs).is_some());
+        assert!(keys.principal_with(&token, &scope, now_secs).is_some());
+
+        server.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_jwks_does_not_reuse_pre_arrival_inflight_fetch() -> Result<()> {
+        let _serial = TEST_LOCK.lock().await;
+        let old_doc = jwks_doc(&SigningKey::from_bytes(&[1; 32]), "old");
+        let new_doc = jwks_doc(&SigningKey::from_bytes(&[2; 32]), "new");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let first_started = Arc::new(Notify::new());
+        let release_first = Arc::new(Notify::new());
+
+        let counted = Arc::clone(&fetches);
+        let started = Arc::clone(&first_started);
+        let release = Arc::clone(&release_first);
+        let first_body = old_doc.clone();
+        let second_body = new_doc.clone();
+        let app = axum::Router::new().fallback(move || {
+            let counted = Arc::clone(&counted);
+            let started = Arc::clone(&started);
+            let release = Arc::clone(&release);
+            let first_body = first_body.clone();
+            let second_body = second_body.clone();
+            async move {
+                let n = counted.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    started.notify_one();
+                    release.notified().await;
+                    (StatusCode::OK, first_body).into_response()
+                } else {
+                    (StatusCode::OK, second_body).into_response()
+                }
+            }
+        });
+        let server = tokio::spawn(async move {
+            let _result = axum::serve(listener, app).await;
+        });
+
+        let url = format!("http://{addr}/jwks");
+        let http = outbound_client()?;
+        let first_http = http.clone();
+        let first_url = url.clone();
+        let first = tokio::spawn(async move { fetch_jwks(&first_http, first_url, false).await });
+        first_started.notified().await;
+
+        let second = tokio::spawn(async move { fetch_jwks(&http, url, false).await });
+        release_first.notify_one();
+
+        let first_res = first.await??;
+        let second_res = second.await??;
+        assert_eq!(first_res.text, old_doc);
+        assert_eq!(second_res.text, new_doc);
+        assert_eq!(fetches.load(Ordering::SeqCst), 2);
+
+        server.abort();
+        Ok(())
+    }
 }
