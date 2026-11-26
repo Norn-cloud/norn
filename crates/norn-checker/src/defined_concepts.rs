@@ -128,12 +128,16 @@ fn required_target<'a>(
     }
     Ok(target)
 }
-fn has_member(
+fn has_member<'a>(
     owner: &ArtifactEnvelope,
-    target: &ArtifactEnvelope,
+    target: &'a ArtifactEnvelope,
     reference: &norn_ir::definition_catalog::MemberRef,
     pool: &[&ArtifactEnvelope],
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
+    catalogs: &mut std::collections::BTreeMap<
+        (&'a str, &'a str),
+        Option<norn_ir::definition_catalog::DefinitionCatalog>,
+    >,
 ) -> bool {
     use norn_ir::definition_catalog::Member;
     if target.kind() == ArtifactKind::DefinedConcept {
@@ -141,19 +145,22 @@ fn has_member(
             || matches!(&reference.member, Member::Type { type_name }
                 if decode(&target.payload).is_ok_and(|root| root.id == *type_name));
     }
-    let Ok(closure) = entity_closure(owner, target, pool) else {
+    if target.kind() != ArtifactKind::Entity {
+        return false;
+    }
+    let key = (target.artifact_id.as_str(), target.version.as_str());
+    let Some(catalog) = catalogs.entry(key).or_insert_with(|| {
+        let closure = entity_closure(owner, target, pool).ok()?;
+        crate::definition_catalog::project(&[], &closure, registry).ok()
+    }) else {
         return false;
     };
-    let Ok(catalog) = crate::definition_catalog::project(&[], &closure, registry) else {
-        return false;
-    };
-    target.kind() == ArtifactKind::Entity
-        && (matches!(reference.member, Member::Artifact {})
-            || catalog.types.iter().any(|r| r.at == *reference)
-            || catalog.properties.iter().any(|r| r.at == *reference)
-            || catalog.links.iter().any(|r| r.at == *reference)
-            || catalog.transitions.iter().any(|r| r.at == *reference)
-            || catalog.states.contains(reference))
+    matches!(reference.member, Member::Artifact {})
+        || catalog.types.iter().any(|r| r.at == *reference)
+        || catalog.properties.iter().any(|r| r.at == *reference)
+        || catalog.links.iter().any(|r| r.at == *reference)
+        || catalog.transitions.iter().any(|r| r.at == *reference)
+        || catalog.states.contains(reference)
 }
 fn entity_closure(
     owner: &ArtifactEnvelope,
@@ -163,7 +170,15 @@ fn entity_closure(
     if !crate::entity_scopes::scope_visible(&owner.scope, &target.scope) {
         return Err("the pinned base type closure contains an out-of-scope dependency");
     }
+    let mut pool_counts = std::collections::BTreeMap::<(&str, &str), usize>::new();
+    for artifact in pool {
+        let count = pool_counts
+            .entry((artifact.artifact_id.as_str(), artifact.version.as_str()))
+            .or_insert(0);
+        *count = count.saturating_add(1);
+    }
     let mut closure = vec![target.clone()];
+    let mut seen = BTreeSet::from([(target.artifact_id.clone(), target.version.clone())]);
     let mut cursor = 0;
     while let Some(current) = closure.get(cursor).cloned() {
         let others: Vec<_> = pool
@@ -179,20 +194,12 @@ fn entity_closure(
             {
                 return Err("the pinned base type closure contains an out-of-scope dependency");
             }
-            if pool
-                .iter()
-                .filter(|a| {
-                    a.artifact_id == dependency.artifact_id && a.version == dependency.version
-                })
-                .count()
-                != 1
+            if pool_counts.get(&(dependency.artifact_id.as_str(), dependency.version.as_str()))
+                != Some(&1)
             {
                 return Err("the pinned base closure contains an ambiguous identity");
             }
-            if !closure
-                .iter()
-                .any(|a| a.artifact_id == dependency.artifact_id && a.version == dependency.version)
-            {
+            if seen.insert((dependency.artifact_id.clone(), dependency.version.clone())) {
                 closure.push(dependency.clone());
             }
         }
@@ -262,9 +269,17 @@ pub(crate) fn qualify(
     if target.kind() != ArtifactKind::Entity || declared != type_name {
         return Err("base member must be declared by its exact pinned entity artifact");
     }
+    let mut catalogs = std::collections::BTreeMap::new();
     for reference in &root.dependencies {
         let dependency = required_target(artifact, reference, pool)?;
-        if !has_member(artifact, dependency, reference, pool, registry) {
+        if !has_member(
+            artifact,
+            dependency,
+            reference,
+            pool,
+            registry,
+            &mut catalogs,
+        ) {
             return Err("a declared dependency member is unavailable");
         }
     }

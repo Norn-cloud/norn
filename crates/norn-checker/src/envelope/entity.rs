@@ -11,10 +11,6 @@ use super::helpers::{
     require_non_empty_field, validate_string_array,
 };
 
-// ---------------------------------------------------------------------------
-// Entity / Relation payload validation
-// ---------------------------------------------------------------------------
-
 pub(super) fn validate_entity_payload(
     value: &JsonValue,
     diagnostics: &mut Vec<Diagnostic>,

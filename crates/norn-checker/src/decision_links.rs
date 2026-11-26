@@ -32,63 +32,16 @@ use crate::entity_instance::{EffectiveKind, EffectiveProperty};
 use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::jdm_profile::codes as jdm_codes;
-use crate::lifecycle_writes::codes as lifecycle_codes;
+use crate::lifecycle_writes::{
+    FactSchema as LinkSchema, codes as lifecycle_codes, member, string_enum, type_of,
+};
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 const ITEMS: &str = "payload.outputSchema.properties.links.items";
 const ITEMS_POINTER: &str = "/payload/outputSchema/properties/links/items";
 
-struct LinkSchema<'s> {
-    properties: &'s BTreeMap<String, JsonValue>,
-    required: Vec<&'s str>,
-}
-
-impl<'s> LinkSchema<'s> {
-    fn of(output_schema: &'s JsonValue) -> Option<Self> {
-        let links = member(Some(output_schema), "properties")
-            .and_then(|properties| member(Some(properties), "links"))?;
-        if type_of(Some(links)) != Some("array") {
-            return None;
-        }
-        let items = member(Some(links), "items")?;
-        if type_of(Some(items)) != Some("object") {
-            return None;
-        }
-        Some(Self {
-            properties: member(Some(items), "properties")?.as_object()?,
-            required: member(Some(items), "required")
-                .and_then(JsonValue::as_array)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(JsonValue::as_string)
-                .collect(),
-        })
-    }
-
-    fn get(&self, name: &str) -> Option<&'s JsonValue> {
-        self.properties.get(name)
-    }
-
-    fn values(&self, name: &str) -> Option<Vec<&'s str>> {
-        string_enum(self.get(name))
-    }
-}
-
-fn member<'s>(schema: Option<&'s JsonValue>, name: &str) -> Option<&'s JsonValue> {
-    schema?.as_object()?.get(name)
-}
-
-fn type_of(schema: Option<&JsonValue>) -> Option<&str> {
-    member(schema, "type")?.as_string()
-}
-
-fn string_enum(schema: Option<&JsonValue>) -> Option<Vec<&str>> {
-    if type_of(schema) != Some("string") {
-        return None;
-    }
-    let values = member(schema, "enum")?.as_array()?;
-    let strings: Vec<&str> = values.iter().filter_map(JsonValue::as_string).collect();
-    (!strings.is_empty() && strings.len() == values.len()).then_some(strings)
+fn link_schema(output_schema: &JsonValue) -> Option<LinkSchema<'_>> {
+    LinkSchema::of_array_member(output_schema, "links")
 }
 
 /// T2: check a decide graph's optional `links` item schema against the
@@ -98,7 +51,7 @@ pub(crate) fn validate_link_change_schema(
     diagnostics: &mut Vec<norn_ir::Diagnostic>,
     artifact_id: Option<&str>,
 ) {
-    let Some(schema) = output_schema.and_then(LinkSchema::of) else {
+    let Some(schema) = output_schema.and_then(link_schema) else {
         return;
     };
     let mut push = |message: String, path: String| {
@@ -200,7 +153,7 @@ pub fn check_decision_links_set(
                 return None;
             }
             let output = object.get("outputSchema")?.clone();
-            LinkSchema::of(&output)?;
+            link_schema(&output)?;
             Some((artifact, output))
         })
         .collect();
@@ -210,7 +163,7 @@ pub fn check_decision_links_set(
     let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut findings = Vec::new();
     for (artifact, output) in &decisions {
-        if let Some(schema) = LinkSchema::of(output) {
+        if let Some(schema) = link_schema(output) {
             let model = views.of(artifact).model();
             findings.extend(decision_links_findings(artifact, &schema, model));
         }
