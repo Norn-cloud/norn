@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
 import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics, staleCheckerWarning } from "./checker-abi.ts"
-import { admit, compilePack } from "./pack.ts"
+import { admit } from "./pack.ts"
 
 if (process.argv[2] === "--version" || process.argv[2] === "-V") {
   const { versionLine } = await import("./build-info.ts")
@@ -73,11 +73,16 @@ if (process.argv[2] === "init") {
 const [command, input, ...flags] = process.argv.slice(2)
 function option(name: string): string | undefined {
   const index = flags.indexOf(name)
-  return index < 0 ? undefined : flags[index + 1]
+  const value = index < 0 ? undefined : flags[index + 1]
+  return value === undefined || value.startsWith("--") ? undefined : value
 }
 const hasFlag = (name: string): boolean => flags.includes(name)
 if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question" && command !== "dashboard")) {
   process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--forbid-unsafe-zen] [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn codegen --ts <artifacts.json|dir|pack-dir> [--base SET]... [--out FILE.d.ts] [--check]\n       norn setup [--version TAG] [--base-url URL]\n       norn init <dir> | norn dev [--port N] [--json] | norn seed [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
+  process.exit(2)
+}
+if (!existsSync(input)) {
+  process.stderr.write(`${command}: ${input} does not exist\n`)
   process.exit(2)
 }
 if (command === "profile") {
@@ -85,21 +90,11 @@ if (command === "profile") {
   process.stdout.write(`${JSON.stringify(reports)}\n`)
   process.exit(reports.every((report) => report.diagnostics.length === 0) ? 0 : 1)
 }
-if (command === "question") {
-  if (!statSync(input).isFile()) { process.stderr.write("question expects one TypeScript module\n"); process.exit(2) }
-  const result = compileQuestions(resolve(input))
+if (command === "question" || command === "dashboard") {
+  if (!statSync(input).isFile()) { process.stderr.write(`${command} expects one TypeScript module\n`); process.exit(2) }
+  const result = command === "question" ? compileQuestions(resolve(input)) : compileDashboards(resolve(input))
   if (!result.ok) { process.stdout.write(`${JSON.stringify(result)}\n`); process.exit(1) }
-  const document = `${JSON.stringify(result.questions)}\n`
-  const output = option("--out")
-  if (output) writeFileSync(output, document)
-  else process.stdout.write(document)
-  process.exit(0)
-}
-if (command === "dashboard") {
-  if (!statSync(input).isFile()) { process.stderr.write("dashboard expects one TypeScript module\n"); process.exit(2) }
-  const result = compileDashboards(resolve(input))
-  if (!result.ok) { process.stdout.write(`${JSON.stringify(result)}\n`); process.exit(1) }
-  const document = `${JSON.stringify(result.dashboards)}\n`
+  const document = `${JSON.stringify("questions" in result ? result.questions : result.dashboards)}\n`
   const output = option("--out")
   if (output) writeFileSync(output, document)
   else process.stdout.write(document)
@@ -123,22 +118,11 @@ if (command === "check") {
 const forbidUnsafeZen = hasFlag("--forbid-unsafe-zen") ? true : undefined
 // A project's source questions and dashboards are `norn dev`'s to install; a
 // check names each one it leaves out (DEV-READ-DEFINITIONS-1).
-let omitted: ReadonlyArray<import("./worker.ts").OmittedDefinition> = []
-const pack = project
-  ? await (async () => {
-      const { readProject } = await import("./project.ts")
-      const { loadProjectPack } = await import("./worker.ts")
-      const { root, manifest } = readProject(resolve(input))
-      const loaded = loadProjectPack(root, manifest, { ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}) })
-      omitted = loaded.omitted
-      return loaded.pack
-    })()
-  : compilePack(resolve(input), {
-      scope: { orgId: orgId!, environmentId: environmentId! },
-      root: process.cwd(),
-      ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}),
-      ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}),
-    })
+const { loadInputPack } = await import("./worker.ts")
+const { pack, omitted } = loadInputPack(input, {
+  ...(orgId && environmentId ? { scope: { orgId, environmentId } } : {}),
+  ...(forbidUnsafeZen !== undefined ? { forbidUnsafeZen } : {}),
+})
 if (!pack.ok) {
   process.stdout.write(`${JSON.stringify(pack)}\n`)
   process.exit(1)

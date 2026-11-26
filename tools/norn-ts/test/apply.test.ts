@@ -205,3 +205,43 @@ test("plan, apply and check name each source question and dashboard they leave o
     rmSync(base, { recursive: true, force: true })
   }
 })
+
+test("apply CLI rejects non-integer --expected-version and worker rejects escaping JSON symlinks before reading", async () => {
+  const { main } = await import("../src/apply.ts")
+  const { compileProjectPack } = await import("../src/worker.ts")
+  const { readProject } = await import("../src/project.ts")
+  const { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } = await import("node:fs")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+
+  const root = mkdtempSync(join(tmpdir(), "norn-apply-hardening-"))
+  try {
+    const projectDir = join(root, "proj")
+    mkdirSync(join(projectDir, "src"), { recursive: true })
+    writeFileSync(join(projectDir, "norn.json"), JSON.stringify({
+      format: "norn-project/1", name: "proj", sources: ["src"],
+      scope: { orgId: "o1", environmentId: "e1" }, dev: { port: 4174, actor: "local:developer" }, cell: ".norn/cell.sqlite",
+    }))
+
+    for (const bad of [["--expected-version", "abc"], ["--expected-version", "--json"], ["--expected-version", "-1"]]) {
+      const code = await main("apply", [projectDir, "--url", "http://127.0.0.1:1", "--org", "o1", "--env", "e1", ...bad])
+      expect(code).toBe(2)
+    }
+
+    // Symlink pointing outside project to non-JSON content must fail confinement before JSON.parse.
+    const outsideSecret = join(root, "secret.txt")
+    writeFileSync(outsideSecret, "NOT JSON SECRET CONTENT")
+    symlinkSync(outsideSecret, join(projectDir, "src/leak.json"))
+    const { root: pRoot, manifest } = readProject(projectDir)
+    expect(() => compileProjectPack(pRoot, manifest)).toThrow("does not resolve inside the project")
+
+    // Symlink pointing outside project to non-artifact JSON must also fail confinement.
+    rmSync(join(projectDir, "src/leak.json"))
+    const outsideJson = join(root, "plain.json")
+    writeFileSync(outsideJson, JSON.stringify({ hello: "world" }))
+    symlinkSync(outsideJson, join(projectDir, "src/plain.json"))
+    expect(() => compileProjectPack(pRoot, manifest)).toThrow("does not resolve inside the project")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
