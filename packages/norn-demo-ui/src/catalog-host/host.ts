@@ -144,7 +144,7 @@ export function frameDocument(moduleSource: string): string {
   const bridge = `
     const ready = new Promise((resolve) => {
       const onPort = (event) => {
-        if (event.data !== "norn.port") return;
+        if (event.source !== parent || event.data !== "norn.port" || !event.ports[0]) return;
         removeEventListener("message", onPort);
         resolve(event.ports[0]);
       };

@@ -138,10 +138,14 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
   const title = typeof question === "string" ? question : typeof (question as { name?: unknown } | undefined)?.name === "string" ? String((question as { name: string }).name) : "Answer"
   const fetchTrace = traceThrough(bridge, input)
   const trace = async (bucket: string) => {
-    const result = await fetchTrace(answer.lineageRef, bucket)
-    if (result.kind === "read") setTraced({ bucket, read: result.read })
-    else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
-    else setTraced({ bucket, unavailable: true })
+    try {
+      const result = await fetchTrace(answer.lineageRef, bucket)
+      if (result.kind === "read") setTraced({ bucket, read: result.read })
+      else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
+      else setTraced({ bucket, unavailable: true })
+    } catch {
+      setTraced({ bucket, unavailable: true })
+    }
   }
   // One bucket: its members are the breakdown. Several (a series): the buckets are.
   const rows = buckets.length === 1 && latest

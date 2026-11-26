@@ -31,7 +31,7 @@ function useCellClock(serverNowMs: number | undefined, receivedAt: number | unde
     const timer = setInterval(() => setTick(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [serverNowMs, active])
-  return serverNowMs === undefined || receivedAt === undefined ? undefined : cellNow(serverNowMs, receivedAt, tick)
+  return serverNowMs === undefined || receivedAt === undefined ? undefined : cellNow(serverNowMs, receivedAt, Math.max(tick, receivedAt))
 }
 
 export { useDecisionBadge } from "../lib/nav-menus.ts"
