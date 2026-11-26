@@ -1208,6 +1208,29 @@ test("inspectTarGzArchive refuses tar header precedence differentials and ambigu
     expect(() => inspectTarGzArchive(zeroGapArchive, "zero-gap.tar.gz")).toThrow(
       "unexpected archive header after zero block",
     )
+
+    // Leading-NUL octal size ("\00000001000\0"): GNU tar skips one leading NUL and reads 512,
+    // which would hide a trailing symlink header if the inspector stopped at byte 0.
+    const smuggledTar = new Uint8Array(512 * 5)
+    const decoyHeader = Bun.gunzipSync(
+      new Uint8Array(makeRawTarGz([{ name: "decoy.txt", typeflag: "0", content: new Uint8Array(0) }])),
+    ).subarray(0, 512)
+    const nulSizeBytes = enc.encode("\0" + "0000001000\0")
+    decoyHeader.set(nulSizeBytes, 124)
+    decoyHeader.fill(0x20, 148, 156)
+    let decoySum = 0
+    for (let i = 0; i < 512; i++) decoySum += decoyHeader[i]!
+    decoyHeader.set(enc.encode(`${decoySum.toString(8).padStart(6, "0")}\0 `), 148)
+    smuggledTar.set(decoyHeader, 0)
+    const hiddenSymlink = Bun.gunzipSync(
+      new Uint8Array(makeRawTarGz([{ name: "evil", typeflag: "2", linkname: "/etc" }])),
+    ).subarray(0, 512)
+    smuggledTar.set(hiddenSymlink, 1024)
+    const nulSizeArchive = join(root, "leading-nul-size.tar.gz")
+    writeFileSync(nulSizeArchive, Bun.gzipSync(smuggledTar))
+    expect(() => inspectTarGzArchive(nulSizeArchive, "leading-nul-size.tar.gz")).toThrow(
+      "invalid tar entry size",
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

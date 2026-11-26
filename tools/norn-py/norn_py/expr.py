@@ -19,6 +19,7 @@ Soundness guardrails:
 from __future__ import annotations
 
 import ast
+import enum
 import inspect
 import linecache
 import os
@@ -1462,9 +1463,25 @@ def _is_safe_receiver_subexpr(
     if isinstance(node, ast.Constant):
         return node.value is None or type(node.value) in (bool, int, str)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Decimal":
-        return True
+        return (
+            not node.keywords
+            and len(node.args) == 1
+            and _is_safe_receiver_subexpr(node.args[0], param_name, closure_map, fn_globals)
+        )
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
         return _is_safe_receiver_subexpr(node.operand, param_name, closure_map, fn_globals)
+    if isinstance(node, ast.BinOp):
+        return _is_safe_receiver_subexpr(
+            node.left, param_name, closure_map, fn_globals
+        ) and _is_safe_receiver_subexpr(node.right, param_name, closure_map, fn_globals)
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        found, value = _resolve_callback_name(node.value.id, closure_map, fn_globals)
+        return (
+            found
+            and isinstance(value, type)
+            and issubclass(value, enum.Enum)
+            and node.attr in value.__members__
+        )
     if isinstance(node, ast.Name):
         found, value = _resolve_callback_name(node.id, closure_map, fn_globals)
         return found and (value is None or type(value) in (bool, int, str, Decimal))
@@ -1479,7 +1496,10 @@ def _is_symbolic_receiver(
 ) -> bool:
     """Return True iff `node` is statically guaranteed to evaluate to a symbolic Norn expression."""
     if isinstance(node, ast.Name):
-        return node.id == param_name
+        if node.id == param_name:
+            return True
+        found, value = _resolve_callback_name(node.id, closure_map, fn_globals)
+        return found and type(value) is Expr
     if isinstance(node, ast.Attribute):
         return _is_symbolic_receiver(node.value, param_name, closure_map, fn_globals)
     if isinstance(node, ast.Call):
@@ -1497,6 +1517,17 @@ def _is_symbolic_receiver(
             (left_sym or right_sym)
             and _is_safe_receiver_subexpr(node.left, param_name, closure_map, fn_globals)
             and _is_safe_receiver_subexpr(node.right, param_name, closure_map, fn_globals)
+        )
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            return False
+        right = node.comparators[0]
+        left_sym = _is_symbolic_receiver(node.left, param_name, closure_map, fn_globals)
+        right_sym = _is_symbolic_receiver(right, param_name, closure_map, fn_globals)
+        return (
+            (left_sym or right_sym)
+            and _is_safe_receiver_subexpr(node.left, param_name, closure_map, fn_globals)
+            and _is_safe_receiver_subexpr(right, param_name, closure_map, fn_globals)
         )
     return False
 

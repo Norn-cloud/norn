@@ -1865,9 +1865,9 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
                 self.called = True
                 return None
 
-            def __add__(self, _other: object) -> object:
+            def __add__(self, _other: object) -> str:
                 self.called = True
-                return self
+                return "1"
 
         trap = _Trap()
         holder = types.SimpleNamespace(trap=trap)
@@ -1875,6 +1875,8 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
             lambda s: trap.eq(s.hours),  # noqa: E731
             lambda s: holder.trap.is_null(),  # noqa: E731
             lambda s: (trap + s.hours).eq(Decimal("1")),  # noqa: E731
+            lambda s: (Decimal(trap + 1) + s.hours).eq(Decimal("1")),  # noqa: E731
+            lambda s: (trap == s.hours).eq(True),  # noqa: E731
         ]
         for cb in bad_callbacks:
             with self.assertRaises(NornTracingError) as c_attr:
@@ -1882,10 +1884,16 @@ class TestSecurityBoundsAndEdgeCases(unittest.TestCase):
             self.assertEqual(c_attr.exception.code, "NORN-PY-FORBIDDEN-CALL")
         self.assertFalse(trap.called)
 
-        # Symbolic receivers (parameter attributes, arithmetic with Decimal/literals, lit()) still pass.
+        # Symbolic receivers (parameter attributes, comparisons, arithmetic, lit(), module Expr) still pass.
+        thresh = lit(5)
         good_callbacks = [
             lambda s: s.hours.eq(Decimal("8")),  # noqa: E731
             lambda s: (s.hours + Decimal("1")).eq(Decimal("9")),  # noqa: E731
+            lambda s: (1 + 2 + s.hours).eq(10),  # noqa: E731
+            lambda s: (s.hours > Decimal("0")).eq(True),  # noqa: E731
+            lambda s: (s.hours > 0).is_not_null(),  # noqa: E731
+            lambda s: (s.hours + thresh).eq(10),  # noqa: E731
+            lambda s: thresh.eq(s.hours),  # noqa: E731
             lambda s: lit("ok").eq(s.status),  # noqa: E731
         ]
         for cb in good_callbacks:

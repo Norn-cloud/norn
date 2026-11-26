@@ -334,7 +334,24 @@ function readTarString(buf: Uint8Array, start: number, length: number): string {
 }
 
 function parseTarOctal(buf: Uint8Array, start: number, length: number): number | undefined {
-  const raw = readTarString(buf, start, length).trim()
+  const end = start + length
+  if (buf[start] === 0) {
+    // GNU tar's `from_header` skips a single leading NUL (`where += !*where`), so
+    // "\0" + "0000001000\0" parses as 0 under C-string reads but 512 under GNU tar.
+    // Admit a leading NUL only when the entire field is NUL.
+    for (let i = start + 1; i < end; i++) {
+      if (buf[i] !== 0) return undefined
+    }
+    return 0
+  }
+  let nul = start
+  while (nul < end && buf[nul] !== 0) nul++
+  for (let i = nul + 1; i < end; i++) {
+    const b = buf[i]!
+    // Allow trailing NUL padding and the POSIX checksum "\0 " terminator only.
+    if (b !== 0 && b !== 0x20) return undefined
+  }
+  const raw = UTF8_DECODER.decode(buf.subarray(start, nul)).trim()
   if (!raw) return 0
   if (!/^[0-7]+$/.test(raw)) return undefined
   const value = Number.parseInt(raw, 8)

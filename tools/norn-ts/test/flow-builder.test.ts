@@ -264,5 +264,44 @@ describe("expression record inference", () => {
         scope,
       ),
     ).toThrow("record key toString is repeated")
+
+    // Merging records across List / Conditional with Object.prototype keys must use own properties.
+    const mergedList = typeOf(
+      {
+        _tag: "List",
+        items: [
+          { _tag: "Record", fields: [["toString", { _tag: "Literal", value: "ok" }]] },
+          { _tag: "Record", fields: [["other", { _tag: "Literal", value: 1 }]] },
+        ],
+      },
+      scope,
+    )
+    expect(mergedList).toEqual({
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          toString: { type: "string" },
+          other: { type: "integer" },
+        },
+        additionalProperties: false,
+      },
+    } as const)
+
+    const mergedCond = typeOf(
+      {
+        _tag: "Conditional",
+        condition: { _tag: "Literal", value: true },
+        yes: { _tag: "Record", fields: [["__proto__", { _tag: "Literal", value: "a" }]] },
+        no: { _tag: "Record", fields: [["__proto__", { _tag: "Literal", value: "b" }]] },
+      },
+      scope,
+    )
+    expect(mergedCond.type).toBe("object")
+    if (mergedCond.type === "object") {
+      expect(Object.hasOwn(mergedCond.properties, "__proto__")).toBe(true)
+      expect(mergedCond.properties["__proto__"]).toEqual({ type: "string" })
+      expect(mergedCond.required).toEqual(["__proto__"])
+    }
   })
 })
