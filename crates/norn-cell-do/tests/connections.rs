@@ -1710,13 +1710,12 @@ fn a_transient_vault_open_failure_is_not_cached_forever() {
     let server = token_server(Arc::clone(&calls), Duration::ZERO);
     let attempts = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&attempts);
-    let vault_path = path.clone();
     let port = server.port;
     let flaky = Routes::with_opener(move |_scope| {
         if counter.fetch_add(1, Ordering::SeqCst) == 0 {
             Err("sqlite busy".to_owned())
         } else {
-            Ok(connections(&vault_path, port))
+            Ok(connections(&path, port))
         }
     });
     let req = request(
