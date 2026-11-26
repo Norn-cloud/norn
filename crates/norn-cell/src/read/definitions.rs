@@ -430,3 +430,134 @@ fn decode_definition_rows(
     }
     Ok(out)
 }
+
+impl<E: SqlEngine> StoreReader<'_, E> {
+    /// PRIVACY-4 / S2 (#1547, #1559): verify that no grouped, filtered, measure
+    /// or time path of `plan` (including every lowered sum's metric default
+    /// filters) reads marked or unclassified values in `world`. When
+    /// `historical` is true, any current, past or deleted version of a
+    /// referenced property that holds a label or lacks immutable classification
+    /// evidence is refused.
+    ///
+    /// Pass `has_marking_catalog = true` when the caller already knows the
+    /// active definition catalog declares markings; when `false`, the guard
+    /// still resolves the retained definition catalog, model property markings,
+    /// and stored markings (`Self::stores_markings`) before taking the fast
+    /// path.
+    ///
+    /// # Errors
+    /// Unknown type, malformed retained definitions, or a SQL-engine error.
+    pub fn check_question_markings(
+        &self,
+        plan: &norn_checker::metric::compute::QuestionPlan,
+        world: &str,
+        historical: bool,
+        has_marking_catalog: bool,
+    ) -> Result<Option<super::objects::MarkedQuestionPath>, CellError> {
+        self.check_live()?;
+        if !has_marking_catalog
+            && !self.model_declares_markings()
+            && !self.stores_markings()?
+            && !self.has_retained_marking_catalog()?
+        {
+            return Ok(None);
+        }
+        let question = plan.question();
+        let grain = plan.grain().as_str();
+        for sum in plan.sums() {
+            let measure_ptr = format!("/metric/{}/measure", sum.name);
+            if let Some(hit) = self.check_property_marking(
+                world,
+                grain,
+                sum.property.id.as_str(),
+                &measure_ptr,
+                historical,
+            )? {
+                return Ok(Some(hit));
+            }
+            let (time_type, time_prop) = match &sum.time_link {
+                Some(link) => (link.target_type.as_str(), link.property.id.as_str()),
+                None => (grain, sum.time_property.as_str()),
+            };
+            let time_ptr = format!("/metric/{}/time", sum.name);
+            if let Some(hit) =
+                self.check_property_marking(world, time_type, time_prop, &time_ptr, historical)?
+            {
+                return Ok(Some(hit));
+            }
+        }
+        let paths = question
+            .dimensions
+            .iter()
+            .enumerate()
+            .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
+            .chain(
+                question
+                    .filters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
+            )
+            .chain(plan.sums().iter().flat_map(|sum| {
+                sum.filters.iter().enumerate().map(move |(index, filter)| {
+                    (
+                        format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
+                        &filter.path,
+                    )
+                })
+            }));
+        for (pointer, path) in paths {
+            let property = path.property.as_str();
+            let types: Vec<String> = if path.links.is_empty() {
+                vec![grain.to_owned()]
+            } else {
+                self.model
+                    .object_types()
+                    .map(|definition| definition.name.as_str().to_owned())
+                    .filter(|name| {
+                        self.model
+                            .effective_property_types(name)
+                            .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
+                    })
+                    .collect()
+            };
+            for object_type in types {
+                if let Some(hit) = self.check_property_marking(
+                    world,
+                    &object_type,
+                    property,
+                    &pointer,
+                    historical,
+                )? {
+                    return Ok(Some(hit));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn check_property_marking(
+        &self,
+        world: &str,
+        object_type: &str,
+        property: &str,
+        pointer: &str,
+        historical: bool,
+    ) -> Result<Option<super::objects::MarkedQuestionPath>, CellError> {
+        if historical
+            && (self.property_history_marked(world, object_type, property)?
+                || self.property_history_unclassified(world, object_type, property)?)
+        {
+            return Ok(Some(super::objects::MarkedQuestionPath::History {
+                pointer: pointer.to_owned(),
+            }));
+        }
+        let labels = self.property_marking_summary(world, object_type, property)?;
+        if !labels.is_some_and(|labels| labels.is_empty()) {
+            return Ok(Some(super::objects::MarkedQuestionPath::Live {
+                pointer: pointer.to_owned(),
+            }));
+        }
+        Ok(None)
+    }
+}

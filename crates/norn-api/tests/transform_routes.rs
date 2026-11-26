@@ -662,17 +662,14 @@ fn dynamic_row_markings_are_projected_in_transform_rows_and_refuse_filters() {
     );
 }
 
-#[test]
-fn stale_materialization_withholds_deleted_marked_column() {
+fn stale_materialization_fixture() -> (
+    DevHost<NativeEngine>,
+    CellStore<NativeEngine>,
+    tempfile::TempDir,
+) {
     const FILTERED: &str = "shop.filtered_by_region";
     let secret = [9_u8; 32];
     let (host, directory) = host_with_dynamic_region_marking(FILTERED, &secret);
-    // Refresh manual materialized view while c-north carries dynamic `pii.region`.
-    let state =
-        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
-    assert!(!state.stale);
-    // Delete c-north on a second handle so live `property_marking_summary` sees
-    // zero live rows, making the cached `STORED` materialization stale.
     let objects: Vec<ObjectTypeDef> = types()
         .into_iter()
         .map(|value| serde_json::from_value(value).unwrap())
@@ -684,6 +681,30 @@ fn stale_materialization_withholds_deleted_marked_column() {
         norn_cell::StoreOptions::default(),
     )
     .unwrap();
+    // Add a second unmarked region so the materialized transform paginates and
+    // mints a real route cursor.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 500,
+            writes: vec![
+                put("shop.Customer", "c-south", &[("region", V::from("south"))]),
+                put(
+                    "shop.Order",
+                    "o2",
+                    &[("amount", V::from(Decimal::parse("20.00").unwrap()))],
+                ),
+            ],
+            links: vec![link("o2", "c-south")],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let state =
+        refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW).expect("refresh");
+    assert!(!state.stale);
+    // Delete c-north so live `property_marking_summary` is empty while the
+    // cached `STORED` materialization is stale and still holds the old value.
     writer
         .commit(&CommitBatch {
             world: MAIN_WORLD.into(),
@@ -696,12 +717,18 @@ fn stale_materialization_withholds_deleted_marked_column() {
             ..CommitBatch::default()
         })
         .unwrap();
+    (host, writer, directory)
+}
+
+#[test]
+fn stale_materialization_withholds_deleted_marked_column() {
+    let (host, mut writer, _directory) = stale_materialization_fixture();
     let stale_page = get_transform_rows(
         &host,
         &scope(),
         Some("full"),
         STORED,
-        &params(None, None),
+        &params(Some("1"), None),
         &Mapping,
         NOW,
     )
@@ -712,13 +739,23 @@ fn stale_materialization_withholds_deleted_marked_column() {
         "stale cached marked column must fail closed and be withheld: {:?}",
         stale_page.rows[0].values
     );
-    // A cursor minted on the stale snapshot must return 409 after manual refresh.
-    let stale_cursor = format!(
-        "{}@{}:{}",
-        stale_page.commits,
-        stale_page.commits + 1,
-        stale_page.rows[0].row_id
-    );
+    let stale_cursor = stale_page
+        .next_after
+        .clone()
+        .expect("route-issued stale cursor");
+    let stale_second = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(Some("1"), Some(&stale_cursor)),
+        &Mapping,
+        NOW,
+    )
+    .expect("second stale page before refresh");
+    assert!(!stale_second.rows[0].values.contains_key("region"));
+    // Refresh replaces the stored result without advancing head commits; the
+    // route-issued stale cursor must be rejected with 409.
     let _ = refresh_transform(&host, &scope(), Some("full"), STORED, &Mapping, NOW)
         .expect("refresh after delete");
     let moved = get_transform_rows(
@@ -726,7 +763,7 @@ fn stale_materialization_withholds_deleted_marked_column() {
         &scope(),
         Some("full"),
         STORED,
-        &params(None, Some(&stale_cursor)),
+        &params(Some("1"), Some(&stale_cursor)),
         &Mapping,
         NOW,
     )
@@ -734,5 +771,40 @@ fn stale_materialization_withholds_deleted_marked_column() {
     assert_eq!(
         (moved.status, moved.code.as_str()),
         (409, "transform.snapshot_moved")
+    );
+    // An unrelated commit advances the head while the refreshed cache stays
+    // exact (same input digest); it must not trigger historical withholding.
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: physical().key(),
+            logical_time: CLOCK + 2_000,
+            events: vec![V::from_json(json!({"type": "note.recorded"})).unwrap()],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let exact_page = get_transform_rows(
+        &host,
+        &scope(),
+        Some("full"),
+        STORED,
+        &params(None, None),
+        &Mapping,
+        NOW,
+    )
+    .expect("exact materialized read after unrelated commit");
+    assert!(
+        exact_page
+            .materialization
+            .as_ref()
+            .is_some_and(|m| !m.stale)
+    );
+    assert!(
+        exact_page
+            .rows
+            .iter()
+            .all(|row| row.values.contains_key("region")),
+        "exact cache after unrelated commit must not withhold unmarked rows: {:?}",
+        exact_page.rows
     );
 }

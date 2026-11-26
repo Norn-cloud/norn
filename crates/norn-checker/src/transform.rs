@@ -389,72 +389,6 @@ impl TransformPlan {
     pub const fn output_schema(&self) -> &NodeSchema {
         &self.schema
     }
-
-    /// Every `(pointer, object_type, property)` origin read by a `Filter`
-    /// predicate or `Window`/`Dedupe` `orderBy` key, used at runtime to refuse
-    /// dynamic `_norn_markings` on filter or order columns.
-    #[must_use]
-    pub fn filter_and_order_origins(&self) -> Vec<(String, String, String)> {
-        let mut out = Vec::new();
-        let mut push_col = |pointer: String, schema: &NodeSchema, col_name: &str| {
-            let Some(column) = schema.column(col_name) else {
-                return;
-            };
-            for origin in &column.origins {
-                if let Some(scan) = self.inputs.get(&origin.alias) {
-                    out.push((
-                        pointer.clone(),
-                        scan.object_type.clone(),
-                        origin.property.clone(),
-                    ));
-                }
-            }
-        };
-        for (node_id, node) in &self.nodes {
-            match &node.step {
-                Step::Filter { input, predicate } => {
-                    if let Some(input_node) = self.nodes.get(input)
-                        && let Ok(paths) = norn_expr::expression_read_paths(
-                            predicate.expression.source(),
-                            ROW_ROOT,
-                        )
-                    {
-                        for path in paths {
-                            if let Some(col_name) = path.first() {
-                                push_col(
-                                    format!("/nodes/{node_id}/predicate"),
-                                    &input_node.schema,
-                                    col_name,
-                                );
-                            }
-                        }
-                    }
-                }
-                Step::Window {
-                    input, order_by, ..
-                }
-                | Step::Dedupe {
-                    input, order_by, ..
-                } => {
-                    if let Some(input_node) = self.nodes.get(input) {
-                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
-                            push_col(
-                                format!("/nodes/{node_id}/orderBy/{index}"),
-                                &input_node.schema,
-                                col_name,
-                            );
-                        }
-                    }
-                }
-                Step::Scan { .. }
-                | Step::Project { .. }
-                | Step::Join { .. }
-                | Step::Aggregate { .. }
-                | Step::Union { .. } => {}
-            }
-        }
-        out
-    }
 }
 
 fn finding(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> Diagnostic {
@@ -2280,28 +2214,4 @@ fn passthrough(source: &str) -> Option<&str> {
     valid_name(name).then_some(name)
 }
 
-/// The column type of a computed scalar.
-fn column_type(inferred: &InferredType) -> Option<Type> {
-    if let InferredType::Optional(inner) = inferred {
-        return Some(Type::Optional(Box::new(column_type(inner)?)));
-    }
-    if let InferredType::Enum(values) = inferred {
-        return Some(Type::enumeration(values.iter().cloned()));
-    }
-    if matches!(inferred, InferredType::Bool) {
-        Some(Type::Bool)
-    } else if matches!(inferred, InferredType::String | InferredType::Const(_)) {
-        Some(Type::text())
-    } else if matches!(inferred, InferredType::Date) {
-        Some(Type::Date)
-    } else if matches!(inferred, InferredType::Timestamp) {
-        Some(Type::Timestamp {
-            timezone: norn_ir::TimezonePolicy::Utc,
-        })
-    } else if matches!(inferred, InferredType::Number) {
-        Some(Type::Number)
-    } else {
-        // Null, lists and records are not column values.
-        None
-    }
-}
+use crate::model_privacy::transform_column_type as column_type;

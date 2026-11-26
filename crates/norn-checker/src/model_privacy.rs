@@ -536,6 +536,102 @@ pub(crate) fn check(
     findings
 }
 
+impl crate::transform::TransformPlan {
+    /// Every `(pointer, object_type, property)` origin read by a `Filter`
+    /// predicate or `Window`/`Dedupe` `orderBy` key, used at runtime to refuse
+    /// dynamic `_norn_markings` on filter or order columns.
+    #[must_use]
+    pub fn filter_and_order_origins(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        let mut push_col =
+            |pointer: String, schema: &crate::transform::NodeSchema, col_name: &str| {
+                let Some(column) = schema.column(col_name) else {
+                    return;
+                };
+                for origin in &column.origins {
+                    if let Some(scan) = self.inputs.get(&origin.alias) {
+                        out.push((
+                            pointer.clone(),
+                            scan.object_type.clone(),
+                            origin.property.clone(),
+                        ));
+                    }
+                }
+            };
+        for (node_id, node) in &self.nodes {
+            match &node.step {
+                crate::transform::Step::Filter { input, predicate } => {
+                    if let Some(input_node) = self.nodes.get(input)
+                        && let Ok(paths) = norn_expr::expression_read_paths(
+                            predicate.expression.source(),
+                            crate::transform::ROW_ROOT,
+                        )
+                    {
+                        for path in paths {
+                            if let Some(col_name) = path.first() {
+                                push_col(
+                                    format!("/nodes/{node_id}/predicate"),
+                                    &input_node.schema,
+                                    col_name,
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::transform::Step::Window {
+                    input, order_by, ..
+                }
+                | crate::transform::Step::Dedupe {
+                    input, order_by, ..
+                } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
+                            push_col(
+                                format!("/nodes/{node_id}/orderBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                    }
+                }
+                crate::transform::Step::Scan { .. }
+                | crate::transform::Step::Project { .. }
+                | crate::transform::Step::Join { .. }
+                | crate::transform::Step::Aggregate { .. }
+                | crate::transform::Step::Union { .. } => {}
+            }
+        }
+        out
+    }
+}
+
+/// The column type of a computed scalar in `ViewIR` transforms.
+pub(crate) fn transform_column_type(inferred: &norn_expr::InferredType) -> Option<norn_expr::Type> {
+    use norn_expr::{InferredType, Type};
+    if let InferredType::Optional(inner) = inferred {
+        return Some(Type::Optional(Box::new(transform_column_type(inner)?)));
+    }
+    if let InferredType::Enum(values) = inferred {
+        return Some(Type::enumeration(values.iter().cloned()));
+    }
+    if matches!(inferred, InferredType::Bool) {
+        Some(Type::Bool)
+    } else if matches!(inferred, InferredType::String | InferredType::Const(_)) {
+        Some(Type::text())
+    } else if matches!(inferred, InferredType::Date) {
+        Some(Type::Date)
+    } else if matches!(inferred, InferredType::Timestamp) {
+        Some(Type::Timestamp {
+            timezone: norn_ir::TimezonePolicy::Utc,
+        })
+    } else if matches!(inferred, InferredType::Number) {
+        Some(Type::Number)
+    } else {
+        // Null, lists and records are not column values.
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::input_reads;

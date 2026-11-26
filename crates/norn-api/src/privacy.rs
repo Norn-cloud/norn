@@ -141,19 +141,13 @@ impl PseudonymKey {
 /// markings but no pseudonym key serves no such rows.
 ///
 /// # Errors
-/// The cell cannot be read, or the ids would need a key the host lacks (403).
+/// The ids would need a key the host lacks (403).
 pub(crate) fn row_ids<E: SqlEngine>(
     host: &DevHost<E>,
+    catalog: &MarkingCatalog,
     grain_marked: bool,
 ) -> Result<Option<PseudonymKey>, Refusal> {
-    if !grain_marked {
-        return Ok(None);
-    }
-    let catalog = {
-        let cell = host.cell()?;
-        host.marking_catalog(&cell.store().read())?
-    };
-    if catalog.is_empty() {
+    if !grain_marked || catalog.is_empty() {
         return Ok(None);
     }
     host.pseudonym_key()
@@ -431,26 +425,17 @@ pub(crate) fn project<E: SqlEngine>(
 /// Project the marked columns of one derived row (a transform's) in place:
 /// each column holds the strongest projection of its lineage markings, and a
 /// refused column is left out. A derived row is never revealable.
-///
-/// # Errors
-/// The cell or its definitions cannot be read.
 pub(crate) fn project_columns<E: SqlEngine>(
     host: &DevHost<E>,
+    catalog: &MarkingCatalog,
     columns: &[(String, Vec<String>)],
     rows: &mut [&mut BTreeMap<String, RuntimeValue>],
-) -> Result<(), Refusal> {
-    if columns.iter().all(|(_, markings)| markings.is_empty()) {
-        return Ok(());
-    }
-    let catalog = {
-        let cell = host.cell()?;
-        host.marking_catalog(&cell.store().read())?
-    };
-    if catalog.is_empty() {
-        return Ok(());
+) {
+    if catalog.is_empty() || columns.iter().all(|(_, markings)| markings.is_empty()) {
+        return;
     }
     for (column, markings) in columns.iter().filter(|(_, markings)| !markings.is_empty()) {
-        let mask = strongest(&catalog, markings).unwrap_or(MaskPolicy::Refuse {});
+        let mask = strongest(catalog, markings).unwrap_or(MaskPolicy::Refuse {});
         for values in rows.iter_mut() {
             if let Some(value) = values.get_mut(column)
                 && apply(&mask, host.pseudonym_key(), value) == NornMaskMode::Refuse
@@ -459,7 +444,6 @@ pub(crate) fn project_columns<E: SqlEngine>(
             }
         }
     }
-    Ok(())
 }
 
 /// `POST /v1/objects/{type}/{id}:reveal` request body.
@@ -674,6 +658,248 @@ pub(crate) fn record_reveal<E: SqlEngine>(
         purpose: receipt.purpose,
         replayed,
     })
+}
+
+/// Population decides membership; a member without Values is recorded so its
+/// bucket's amounts are withheld (DATA-VALUES-1).
+pub(crate) fn withhold_values(
+    result: &mut norn_cell::QueryResult,
+    withheld: &std::collections::BTreeSet<String>,
+    min_disclosed: usize,
+) {
+    for row in result.rows.values_mut() {
+        row.withhold(|id| withheld.contains(id), min_disclosed.max(1));
+    }
+}
+
+/// PRIVACY-1: trace contributions never disclose raw marked property values,
+/// raw snapshot digests of marked versions, or source provenance for marked
+/// versions. Returns `true` if any contribution carried markings (or lacked a
+/// marking snapshot) so raw ledger and receipt hashes are also withheld.
+pub(crate) fn redact_trace_contributions<E: SqlEngine>(
+    host: &DevHost<E>,
+    (actor, world, historical_answer): (&str, &str, bool),
+    reader: &StoreReader<'_, E>,
+    contributions: &mut [norn_cell::compute::lineage::NumericContribution],
+) -> Result<bool, Refusal> {
+    let catalog = host.marking_catalog(reader)?;
+    if catalog.is_empty() {
+        return Ok(false);
+    }
+    let scope = host.scope().key();
+    let mut any_marked = false;
+    for contribution in contributions {
+        let mut record = ObjectRecord {
+            object_type: contribution.fact.object_type.0.clone(),
+            id: contribution.fact.key.clone(),
+            scope: scope.clone(),
+            version: contribution.fact.version,
+            values: contribution.values.clone().unwrap_or_default(),
+        };
+        let version_arg = if historical_answer {
+            Some(record.version)
+        } else {
+            let current = reader
+                .version(world, &record.object_type, &record.id)
+                .map_err(Refusal::host)?
+                == record.version;
+            (!current).then_some(record.version)
+        };
+        let markings = reader
+            .effective_markings(world, &record.object_type, &record.id, version_arg)
+            .map_err(Refusal::host)?;
+        let marked = markings
+            .as_ref()
+            .is_none_or(|m| m.values().any(|ids| !ids.is_empty()));
+        if !marked {
+            continue;
+        }
+        any_marked = true;
+        contribution.fact_digest = None;
+        contribution.source = norn_cell::compute::lineage::ContributionSource::Restricted;
+        if contribution.values.is_some() {
+            let _ = project(host, actor, &catalog, markings.as_ref(), &mut record);
+            contribution.values = Some(record.values);
+        }
+    }
+    Ok(any_marked)
+}
+
+/// Effective transform markings, validated head commit and catalog checked on
+/// the same cell guard as transform evaluation.
+pub(crate) struct ClassifiedSnapshot {
+    pub(crate) marked: Vec<(String, Vec<String>)>,
+    pub(crate) head_commits: u64,
+    pub(crate) catalog: MarkingCatalog,
+}
+
+pub(crate) fn transform_snapshot_moved() -> Refusal {
+    let mut moved = Refusal::new(
+        http::StatusCode::CONFLICT,
+        "transform.snapshot_moved",
+        "the cell committed since the cursor was issued",
+        "read the transform again from its first page",
+    );
+    moved.retryable = true;
+    moved
+}
+
+fn is_implicit_id(model: &norn_cell::Model, object_type: &str, property: &str) -> bool {
+    property == "id"
+        && !model
+            .effective_property_markings(object_type)
+            .is_ok_and(|props| props.contains_key("id"))
+}
+
+/// PRIVACY-4: refuse a transform whose `Filter` predicate or `orderBy` reads a
+/// property carrying live (or, for stale materializations, historical)
+/// `_norn_markings` or lacking a marking snapshot.
+pub(crate) fn refuse_dynamic_filter_order_markings<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    model: &norn_cell::Model,
+    catalog: &MarkingCatalog,
+    plan: &norn_checker::transform::TransformPlan,
+    include_history: bool,
+) -> Result<(), Refusal> {
+    if catalog.is_empty() {
+        return Ok(());
+    }
+    for (pointer, object_type, property) in plan.filter_and_order_origins() {
+        if is_implicit_id(model, &object_type, &property) {
+            continue;
+        }
+        let live_marked = !reader
+            .property_marking_summary(MAIN_WORLD, &object_type, &property)
+            .map_err(Refusal::host)?
+            .is_some_and(|labels| labels.is_empty());
+        let history_marked = include_history
+            && (reader
+                .property_history_marked(MAIN_WORLD, &object_type, &property)
+                .map_err(Refusal::host)?
+                || reader
+                    .property_history_unclassified(MAIN_WORLD, &object_type, &property)
+                    .map_err(Refusal::host)?);
+        if live_marked || history_marked {
+            let mut refusal = Refusal::new(
+                http::StatusCode::UNPROCESSABLE_ENTITY,
+                "privacy.marked_column",
+                "the transform filters or orders by a marked property",
+                "remove the filter or order over marked properties",
+            );
+            refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
+                norn_checker::metric::codes::MARKED_FIELD,
+                "this transform filters or orders by a property whose values are marked",
+                pointer,
+            )];
+            return Err(refusal);
+        }
+    }
+    Ok(())
+}
+
+/// Whether any grain column carries static or dynamic effective markings.
+pub(crate) fn grain_marked(marked: &[(String, Vec<String>)], grain: &[String]) -> bool {
+    marked
+        .iter()
+        .any(|(name, markings)| !markings.is_empty() && grain.contains(name))
+}
+
+/// Each output column with its effective markings: static lineage markings
+/// unioned with live dynamic `_norn_markings` across all column origins
+/// (failing closed to `norn.unknown-lineage` if any row lacks a snapshot, or if
+/// a stale materialized result reads a property with historical markings).
+pub(crate) fn effective_marked_columns<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    model: &norn_cell::Model,
+    catalog: &MarkingCatalog,
+    plan: &norn_checker::transform::TransformPlan,
+    stale: bool,
+) -> Result<Vec<(String, Vec<String>)>, Refusal> {
+    let mut out = Vec::with_capacity(plan.output_schema().columns.len());
+    for column in &plan.output_schema().columns {
+        let mut markings = column.markings.clone();
+        if !catalog.is_empty() {
+            for origin in &column.origins {
+                let Some(scan) = plan.inputs.get(&origin.alias) else {
+                    continue;
+                };
+                if is_implicit_id(model, &scan.object_type, &origin.property) {
+                    continue;
+                }
+                match reader
+                    .property_marking_summary(MAIN_WORLD, &scan.object_type, &origin.property)
+                    .map_err(Refusal::host)?
+                {
+                    Some(labels) => markings.extend(labels),
+                    None => {
+                        markings.insert("norn.unknown-lineage".to_owned());
+                    }
+                }
+                if stale
+                    && (reader
+                        .property_history_marked(MAIN_WORLD, &scan.object_type, &origin.property)
+                        .map_err(Refusal::host)?
+                        || reader
+                            .property_history_unclassified(
+                                MAIN_WORLD,
+                                &scan.object_type,
+                                &origin.property,
+                            )
+                            .map_err(Refusal::host)?)
+                {
+                    markings.insert("norn.unknown-lineage".to_owned());
+                }
+            }
+        }
+        out.push((column.name.clone(), markings.into_iter().collect()));
+    }
+    Ok(out)
+}
+
+/// Classify a served transform against one checked head and definition set.
+pub(crate) fn classify_transform_snapshot<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &norn_cell::CellStore<E>,
+    plan: &norn_checker::transform::TransformPlan,
+    served: &norn_cell::compute::materialize::Served,
+    eval_defs: Option<&(u64, String)>,
+) -> Result<ClassifiedSnapshot, Refusal> {
+    let mut stale = served.materialization.as_ref().is_some_and(|m| m.stale);
+    let mut expected_head = served.snapshot_head.commits;
+    for _ in 0..2 {
+        let reader = store.read();
+        let current_head = store
+            .verified_head()
+            .map_err(Refusal::from_compute)?
+            .commits;
+        if current_head != expected_head {
+            stale = true;
+            expected_head = current_head;
+        }
+        let catalog = host.marking_catalog(&reader)?;
+        refuse_dynamic_filter_order_markings(&reader, store.model(), &catalog, plan, stale)?;
+        let marked = effective_marked_columns(&reader, store.model(), &catalog, plan, stale)?;
+        let after_head = store
+            .verified_head()
+            .map_err(Refusal::from_compute)?
+            .commits;
+        let after_defs = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?;
+        if after_defs.as_ref() != eval_defs {
+            return Err(transform_snapshot_moved());
+        }
+        if after_head == expected_head {
+            return Ok(ClassifiedSnapshot {
+                marked,
+                head_commits: after_head,
+                catalog,
+            });
+        }
+        stale = true;
+        expected_head = after_head;
+    }
+    Err(transform_snapshot_moved())
 }
 
 #[cfg(test)]

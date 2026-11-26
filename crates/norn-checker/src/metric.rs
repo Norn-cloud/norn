@@ -1217,20 +1217,11 @@ impl<'a> Checker<'a> {
                         self.reject(codes::GRAIN_MISMATCH, &format!("{at}/objectSet"));
                     }
                     self.question_paths(question, symmetric, object_type.as_str(), at);
-                    if let Some(prop) = property {
-                        self.unmarked(
-                            object_type.as_str(),
-                            &DimensionPath {
-                                links: Vec::new(),
-                                property: prop.clone(),
-                            },
-                            &format!("{at}/aggregate"),
-                        );
-                    }
-                    self.unmarked(
+                    self.check_measure_markings(
                         object_type.as_str(),
+                        property.as_ref(),
                         &source.time_dimension,
-                        &format!("{at}/window"),
+                        at,
                     );
                 }
             }
@@ -1343,16 +1334,6 @@ impl<'a> Checker<'a> {
     /// PRIVACY-4: a question filter on a property with a declared marking is
     /// refused, since an answer's count would confirm a guessed value. The path
     /// was already resolved by `filter`, which reported its errors.
-    fn unmarked(&mut self, root: &str, path: &DimensionPath, at: &str) {
-        let before = self.out.len();
-        let resolved = self.path(root, path, &format!("{at}/path"));
-        // `filter` already reported any path error; report none twice.
-        self.out.truncate(before);
-        if resolved.is_some_and(|path| path.properties.iter().any(|p| !p.markings.is_empty())) {
-            self.reject(codes::MARKED_FIELD, at);
-        }
-    }
-
     fn rollup(
         &mut self,
         question: &QuestionIR,

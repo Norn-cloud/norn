@@ -151,3 +151,35 @@ pub fn render_question(
         slots,
     })
 }
+
+impl super::Checker<'_> {
+    pub(super) fn unmarked(&mut self, root: &str, path: &norn_ir::metric::DimensionPath, at: &str) {
+        let before = self.out.len();
+        let resolved = self.path(root, path, &format!("{at}/path"));
+        // `filter` already reported any path error; report none twice.
+        self.out.truncate(before);
+        if resolved.is_some_and(|path| path.properties.iter().any(|p| !p.markings.is_empty())) {
+            self.reject(super::codes::MARKED_FIELD, at);
+        }
+    }
+
+    pub(super) fn check_measure_markings(
+        &mut self,
+        object_type: &str,
+        property: Option<&norn_ir::PropertyId>,
+        time_dimension: &norn_ir::metric::DimensionPath,
+        at: &str,
+    ) {
+        if let Some(prop) = property {
+            self.unmarked(
+                object_type,
+                &norn_ir::metric::DimensionPath {
+                    links: Vec::new(),
+                    property: prop.clone(),
+                },
+                &format!("{at}/aggregate"),
+            );
+        }
+        self.unmarked(object_type, time_dimension, &format!("{at}/window"));
+    }
+}

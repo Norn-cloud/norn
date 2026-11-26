@@ -57,6 +57,9 @@ pub struct Served {
     pub result: TransformResult,
     /// The stored result they came from, or `None` for a live evaluation.
     pub materialization: Option<MaterializationState>,
+    /// The verified ledger head of the current input snapshot checked during
+    /// this read.
+    pub snapshot_head: LedgerHead,
 }
 
 /// One stored result, verified against its digest.
@@ -121,10 +124,12 @@ impl<E: SqlEngine> CellStore<E> {
         self.read().check_live()?;
         self.conn.transaction(|| {
             let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
+            let snapshot_head = snapshot.revision.clone();
             let Some(policy) = plan.materialization else {
                 return Ok(Served {
                     result: self.evaluate_snapshot(plan, snapshot)?,
                     materialization: None,
+                    snapshot_head,
                 });
             };
             let digest = input_digest(&snapshot)?;
@@ -150,6 +155,7 @@ impl<E: SqlEngine> CellStore<E> {
                             stale: !exact,
                         }),
                         result: stored.result,
+                        snapshot_head,
                     });
                 }
             }
@@ -164,11 +170,13 @@ impl<E: SqlEngine> CellStore<E> {
                         stale: false,
                     }),
                     result,
+                    snapshot_head,
                 });
             }
             Ok(Served {
                 result,
                 materialization: None,
+                snapshot_head,
             })
         })
     }

@@ -289,7 +289,7 @@ fn answer_plan<E: SqlEngine>(
     };
     withhold_ledger_head(result, key, world);
     withhold_exclusions(result, key, world);
-    withhold_values(result, &withheld, runtime.min_disclosed_bucket());
+    crate::privacy::withhold_values(result, &withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(answer)
 }
@@ -408,15 +408,6 @@ fn visible_recording(
         withheld.insert(row.id.clone());
     }
     Ok(member)
-}
-
-/// DATA-VALUES-1 (D52/D53): per-member amounts are row values. A bucket with
-/// any member the reader may not see the values of withholds every amount, and
-/// discloses its aggregate only at `min_disclosed` members or more.
-fn withhold_values(result: &mut QueryResult, withheld: &BTreeSet<String>, min_disclosed: usize) {
-    for row in result.rows.values_mut() {
-        row.withhold(|id| withheld.contains(id), min_disclosed.max(1));
-    }
 }
 
 /// LINEAGE-SUM-1: revalidate one exact result with separate value/source grants.
@@ -619,11 +610,9 @@ fn trace_plan<E: SqlEngine>(
         },
     )?;
     let mut trace = outcome.map_err(Refusal::from_compute)?;
-    let any_marked = redact_trace_contributions(
+    let any_marked = crate::privacy::redact_trace_contributions(
         host,
-        actor,
-        &world_name,
-        answered.is_some(),
+        (actor, &world_name, answered.is_some()),
         &cell.store().read(),
         &mut trace.contributions,
     )?;
@@ -640,64 +629,9 @@ fn trace_plan<E: SqlEngine>(
             *receipt = keyed_receipt_handle(key, receipt);
         }
     }
-    withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
+    crate::privacy::withhold_values(&mut trace.result, &withheld, runtime.min_disclosed_bucket());
     lineage.clone_into(&mut trace.result.lineage_ref);
     Ok(trace)
-}
-
-/// PRIVACY-1: trace contributions never disclose raw marked property values,
-/// raw snapshot digests of marked versions, or source provenance for marked
-/// versions. Returns `true` if any contribution carried markings (or lacked a
-/// marking snapshot) so raw ledger and receipt hashes are also withheld.
-fn redact_trace_contributions<E: SqlEngine>(
-    host: &DevHost<E>,
-    actor: &str,
-    world: &str,
-    historical_answer: bool,
-    reader: &norn_cell::StoreReader<'_, E>,
-    contributions: &mut [norn_cell::compute::lineage::NumericContribution],
-) -> Result<bool, Refusal> {
-    let catalog = host.marking_catalog(reader)?;
-    if catalog.is_empty() {
-        return Ok(false);
-    }
-    let scope = host.scope().key();
-    let mut any_marked = false;
-    for contribution in contributions {
-        let mut record = ObjectRecord {
-            object_type: contribution.fact.object_type.0.clone(),
-            id: contribution.fact.key.clone(),
-            scope: scope.clone(),
-            version: contribution.fact.version,
-            values: contribution.values.clone().unwrap_or_default(),
-        };
-        let version_arg = if historical_answer {
-            Some(record.version)
-        } else {
-            let current = reader
-                .version(world, &record.object_type, &record.id)
-                .map_err(Refusal::host)?
-                == record.version;
-            (!current).then_some(record.version)
-        };
-        let markings = reader
-            .effective_markings(world, &record.object_type, &record.id, version_arg)
-            .map_err(Refusal::host)?;
-        let marked = markings
-            .as_ref()
-            .is_none_or(|m| m.values().any(|ids| !ids.is_empty()));
-        if !marked {
-            continue;
-        }
-        any_marked = true;
-        contribution.fact_digest = None;
-        contribution.source = norn_cell::compute::lineage::ContributionSource::Restricted;
-        if contribution.values.is_some() {
-            let _ = crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
-            contribution.values = Some(record.values);
-        }
-    }
-    Ok(any_marked)
 }
 
 fn mapped<E: SqlEngine>(
