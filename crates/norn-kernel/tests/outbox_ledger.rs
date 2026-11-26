@@ -11,6 +11,7 @@ use norn_kernel::world::outbox_ledger::{
     ProviderDedupContract, ReconciliationDecision, RecordedOutcome, ReissueAuthorization,
 };
 
+#[allow(clippy::unwrap_used, reason = "constant valid test fixture key")]
 fn op_key(name: &str) -> OperationKey {
     let cell = CellId::try_from("0123456789abcdef0123456789abcdef".to_owned()).unwrap();
     OperationKey::derive(&cell, &CommandId(name.to_owned())).unwrap()
@@ -120,7 +121,7 @@ fn old_result_never_settles_new_generation_and_attaches_to_original_via_dispatch
     assert_eq!(head_before.generation, 2);
     assert_eq!(head_before.state, OutboxState::Requested);
     assert_eq!(head_before.outcome, None);
-    assert!(ledger.prior_confirmed_successes().is_empty());
+    assert_eq!(ledger.prior_confirmed_successes(), [] as [u64; 0]);
 
     let gen1_proof = DispatchProof {
         operation: op,
@@ -610,17 +611,20 @@ fn assert_step_invariants(
     assert!(next.active_generation() >= current.active_generation());
     for g in 0..=2_u64 {
         if let Some(old_rec) = current.generation(g) {
-            let new_rec = next.generation(g).expect("generations never vanish");
-            assert_eq!(new_rec.payload_digest, old_rec.payload_digest);
-            assert_eq!(new_rec.dedup_contract, old_rec.dedup_contract);
-            if let Some(proof) = old_rec.dispatch {
-                assert_eq!(new_rec.dispatch, Some(proof));
-            }
-            if let Some(outcome) = old_rec.outcome {
-                assert_eq!(new_rec.outcome, Some(outcome));
-            }
-            if let Some(seq) = old_rec.consumed_commit_seq {
-                assert_eq!(new_rec.consumed_commit_seq, Some(seq));
+            let new_rec = next.generation(g);
+            assert!(new_rec.is_some(), "generations never vanish");
+            if let Some(new_rec) = new_rec {
+                assert_eq!(new_rec.payload_digest, old_rec.payload_digest);
+                assert_eq!(new_rec.dedup_contract, old_rec.dedup_contract);
+                if let Some(proof) = old_rec.dispatch {
+                    assert_eq!(new_rec.dispatch, Some(proof));
+                }
+                if let Some(outcome) = old_rec.outcome {
+                    assert_eq!(new_rec.outcome, Some(outcome));
+                }
+                if let Some(seq) = old_rec.consumed_commit_seq {
+                    assert_eq!(new_rec.consumed_commit_seq, Some(seq));
+                }
             }
         }
     }
@@ -629,9 +633,7 @@ fn assert_step_invariants(
         assert!(
             current
                 .generation(record.generation)
-                .unwrap()
-                .dispatch
-                .is_none()
+                .is_some_and(|rec| rec.dispatch.is_none())
         );
     }
     if matches!(record.kind, OutboxRecordKind::Requested { .. })
