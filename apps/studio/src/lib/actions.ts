@@ -596,9 +596,6 @@ export function itemNoun(itemTitle: string | null, listLabel: string): string {
 /** "e.g. 12.500" for an exact decimal of scale 3: an example, never a value. */
 export const decimalExample = (scale: number | null) => scale === null || scale === 0 ? "e.g. 12" : `e.g. 12.${"5".padEnd(scale, "0")}`
 
-const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made", pay: "paid", set: "set", put: "put", run: "ran", take: "taken", give: "given", get: "got", hold: "held", sell: "sold", buy: "bought", split: "split", write: "written", begin: "begun", shut: "shut", cut: "cut", reset: "reset" }
-
-/** The past tense of an action's leading verb ("Open a holding" → "opened"), for the business sentence; null when it isn't a plain verb. */
 /**
  * What the record is after a committed call, from the cell's own answer: a transition's target
  * state ("is now submitted"), a first version ("created") or a later one ("updated"). Never a
@@ -607,15 +604,6 @@ const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made"
 export function receiptVerb(action: ActionSummary, version: number): string {
   if (action.effect === "fire_transition") return action.toState == null ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
   return version === 1 ? "created" : "updated"
-}
-
-export function pastTense(title: string): string | null {
-  const verb = title.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
-  if (!/^[a-z]{2,}$/.test(verb)) return null
-  if (IRREGULAR[verb]) return IRREGULAR[verb]
-  if (verb.endsWith("e")) return `${verb}d`
-  if (/[^aeiou]y$/.test(verb)) return `${verb.slice(0, -1)}ied`
-  return `${verb}ed`
 }
 
 // ---- Sections (and wizard steps) from x-norn.groups ------------------------------------------

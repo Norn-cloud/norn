@@ -61,11 +61,6 @@ async function rows<T>(db: BillingDb, sql: string, ...params: unknown[]): Promis
   if (statement.bind) return (await statement.bind(...params).all<T>()).results
   return (statement.all?.(...params) ?? []) as T[]
 }
-async function run(db: BillingDb, sql: string, ...params: unknown[]): Promise<void> {
-  const statement = db.prepare(sql)
-  if (statement.bind) await statement.bind(...params).run()
-  else statement.run?.(...params)
-}
 export type WriteOutcome = "written" | "superseded" | "ignored"
 
 /** A payer's whole current state at the provider: their plan's label, its status, and its limits. */

@@ -19,6 +19,20 @@ export interface Cell {
   post(path: string, body: unknown): Promise<CellAnswer>
 }
 
+export interface Finding {
+  readonly code: string
+  readonly message: string
+  readonly pointer: string | null
+}
+
+/** Decode checker diagnostics from a cell refusal/admission payload into typed findings. */
+export const findingsOf = (diagnostics: unknown): Finding[] =>
+  (Array.isArray(diagnostics) ? diagnostics : []).map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) => ({
+    code: String(d.code ?? ""),
+    message: String(d.message ?? ""),
+    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null,
+  }))
+
 export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedScope?: ValidatedWriteScope): Cell {
   const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<CellAnswer> => {
     const scope = validatedScope ?? await cellScope(auth, actor.orgId)
