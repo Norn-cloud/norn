@@ -42,12 +42,37 @@ class TestCheckTestWiring(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("scripts/test_orphan.py", errors[0])
 
-    def test_accepts_unittest_discover_directory(self) -> None:
+    def test_rejects_commented_out_or_non_runner_python_mention(self) -> None:
         errors = ctw.check_py_test_wiring(
-            ["tools/norn-py/tests/test_norn_py.py"],
-            'PYTHONPATH="$PWD/tools/norn-py" python3 -m unittest discover -s tools/norn-py/tests -t tools/norn-py/tests\n',
+            ["scripts/test_commented.py", "scripts/test_echoed.py"],
+            "# python3 scripts/test_commented.py\necho scripts/test_echoed.py\n",
         )
-        self.assertEqual(errors, [])
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(any("scripts/test_commented.py" in e for e in errors))
+        self.assertTrue(any("scripts/test_echoed.py" in e for e in errors))
+
+    def test_unittest_discover_honors_default_and_explicit_pattern(self) -> None:
+        ci = 'PYTHONPATH="$PWD/tools/norn-py" python3 -m unittest discover -s tools/norn-py/tests -t tools/norn-py/tests\n'
+        errors = ctw.check_py_test_wiring(
+            ["tools/norn-py/tests/test_norn_py.py", "tools/norn-py/tests/example_test.py"],
+            ci,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("tools/norn-py/tests/example_test.py", errors[0])
+
+        ci_explicit = 'python3 -m unittest discover -s tools/norn-py/tests -p "*_test.py"\n'
+        self.assertEqual(
+            ctw.check_py_test_wiring(["tools/norn-py/tests/example_test.py"], ci_explicit),
+            [],
+        )
+
+    def test_rejects_install_only_js_package_without_test_runner(self) -> None:
+        errors = ctw.check_js_test_wiring(
+            ["apps/sidekick-bridge/relay.test.ts"],
+            "(cd apps/sidekick-bridge && bun install --frozen-lockfile --ignore-scripts --backend copyfile)\n",
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("apps/sidekick-bridge", errors[0])
 
     def test_detects_unwired_js_package_and_standalone_mjs(self) -> None:
         errors = ctw.check_js_test_wiring(

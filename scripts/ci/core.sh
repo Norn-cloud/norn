@@ -480,8 +480,19 @@ PY
       if [[ ${CI:-} == true || ${GITHUB_ACTIONS:-} == true ]]; then
         : "${NORN_CI_BASE:?guards: NORN_CI_BASE must be set in CI}"
       fi
-      crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-origin/main}"
-      crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-origin/main}"
+      local base_ref="${NORN_CI_BASE:-origin/main}"
+      local base_sha head_sha
+      base_sha="$(git rev-parse --verify "${base_ref}^{commit}")" || {
+        printf 'guards: cannot resolve comparison base %s\n' "$base_ref" >&2
+        exit 1
+      }
+      head_sha="$(git rev-parse --verify HEAD^{commit})"
+      if [[ $base_sha == "$head_sha" ]]; then
+        printf 'guards: comparison base %s resolves to HEAD (%s); refusing self-comparison\n' "$base_ref" "$head_sha" >&2
+        exit 1
+      fi
+      crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "$base_sha"
+      crates/norn-checker/scripts/non-code-literals-shrink-only.sh "$base_sha"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
       ensure_tool cargo-public-api 0.52.0 cargo-public-api
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
@@ -626,10 +637,13 @@ PY
     formal)
       export CI=true
       use_jsonschema
+      local tool_root
+      tool_root="$(realpath -m "${NORN_VERIFICATION_TOOL_ROOT:-$PWD/target/verification-tools}")"
+      export NORN_VERIFICATION_TOOL_ROOT="$tool_root"
       scripts/bootstrap-verification-tools.sh
       scripts/bootstrap-ontology-tools.sh
       scripts/bootstrap-rust-extraction-tools.sh
-      (cd tools/norn-proofs && bun install --frozen-lockfile --ignore-scripts --backend copyfile && NORN_VERIFICATION_TOOL_ROOT="$PWD/../../target/verification-tools" bun test)
+      (cd tools/norn-proofs && bun install --frozen-lockfile --ignore-scripts --backend copyfile && NORN_VERIFICATION_TOOL_ROOT="$tool_root" bun test)
       scripts/verify-promoted-subsystems.sh full
       ;;
     rivet-conformance)
