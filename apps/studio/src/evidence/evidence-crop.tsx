@@ -170,7 +170,7 @@ export function EvidenceCrop({ evidence, record, className, actionFor }: { reado
           <span className="sr-only">Read as</span>
           <span className="font-mono text-heading font-medium text-foreground tabular-nums">{evidence.text}</span>
           <Chip tone="blue" icon={ScanText}>{evidence.subjectProperty.replaceAll("_", " ")}</Chip>
-          {scan.data && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
+          {imageUrl !== null && validBox && <button type="button" className="ms-auto underline underline-offset-4" onClick={() => setWhole((value) => !value)}>{whole ? "Show the region" : "Show the whole page"}</button>}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Chip tone={evidence.confidenceBp === null ? "gray" : evidence.confidenceBp >= 9000 ? "green" : "amber"} dot title="The extractor's own confidence in this read">{confidence}</Chip>
@@ -220,7 +220,7 @@ export function EvidenceList({ refs, record, filter, actionFor }: { readonly ref
   const scopeKey = studioScopeKey(scope.data ?? null)
   const evidence = useQuery({ queryKey: ["evidence", scopeKey, refs.map((ref) => `${ref.objectType}/${ref.id}`)], queryFn: () => Promise.all(refs.map(readEvidence)), enabled: refs.length > 0 })
   // The first page decides: a cell that serves scanned pages serves them all.
-  const first = evidence.data?.find((item) => !/^https?:\/\//i.test(item.documentUri.trim()))
+  const first = evidence.data?.find((item) => safeDirectEvidenceUri(item.documentUri) === null)
   const page = useQuery({ queryKey: ["scan", scopeKey, first?.documentUri], queryFn: () => readScan(first!.documentUri), retry: false, staleTime: 4 * 60_000, enabled: first !== undefined })
   if (refs.length === 0) return null
   if (evidence.isPending) return <p className="text-meta text-muted-foreground">Reading the evidence…</p>

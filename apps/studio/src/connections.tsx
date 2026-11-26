@@ -20,6 +20,7 @@ const Note = ({ children }: { children: ReactNode }) => <p className="px-4 py-3 
 
 /** Allow only https: redirects, or http: strictly on loopback / same-origin. */
 export function safeConnectorUrl(raw: string, origin = typeof window !== "undefined" ? window.location.origin : "https://studio.invalid"): string | null {
+  if (raw.trim() === "") return null
   try {
     const parsed = new URL(raw, origin)
     if (parsed.protocol === "https:") return parsed.href
@@ -51,7 +52,7 @@ export function ConnectorProblem({ error, scope }: { readonly error: unknown; re
     <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-body">
       <TriangleAlert aria-hidden className="size-4 text-destructive-text" />
       <span className="min-w-0 flex-1">{typed ? <CodedMessage code={typed.code} message={typed.message} showCode /> : error instanceof Error ? error.message : String(error)}</span>
-      {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => startFix(action, undefined, effectiveScope).then((url) => redirectTo(url), (e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
+      {action !== null && offersButton(action) && <Button size="sm" variant="outline" onClick={() => void startFix(action, undefined, effectiveScope).then((url) => redirectTo(url)).catch((e: unknown) => setFailed(e instanceof Error ? e.message : String(e)))}>{fixLabel(action)}</Button>}
       {action !== null && !offersButton(action) && <span className="text-muted-foreground">{fixLabel(action)}.</span>}
       {failed && <span className="w-full text-destructive-text">{failed}</span>}
     </div>

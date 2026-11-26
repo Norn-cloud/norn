@@ -113,7 +113,9 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
     const call = scopedHostFetch(defaultFetch, "/api/host", async () => {
       if (lockedScope.current.scope !== undefined) return lockedScope.current.scope
       const resolved = await readStudioScope(defaultFetch)
-      lockedScope.current = { decisionId: decision.id, scope: resolved }
+      if (lockedScope.current.decisionId === decision.id && lockedScope.current.scope === undefined) {
+        lockedScope.current = { decisionId: decision.id, scope: resolved }
+      }
       return resolved
     })
     sheet.options = {

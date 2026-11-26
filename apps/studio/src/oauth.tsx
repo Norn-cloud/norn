@@ -27,7 +27,7 @@ export function signedQuery(search: string): string | undefined {
 /** Where to go next: a relative path on this origin, or the assistant's https (or loopback http) callback. */
 export function nextUrl(body: unknown, origin: string): string | null {
   const url = (body as { url?: unknown } | null)?.url
-  if (typeof url !== "string") return null
+  if (typeof url !== "string" || url.trim() === "") return null
   try {
     const next = new URL(url, origin)
     if (next.protocol === "https:") return next.href
@@ -139,7 +139,10 @@ export function OAuthConsent() {
     setClient(undefined)
     setWorkspace({ kind: "loading" })
     void fetch(`/api/auth/oauth2/public-client?${new URLSearchParams({ client_id: clientId })}`, { headers: { accept: "application/json" }, signal })
-      .then(async (response) => { if (!signal.aborted) setClient(response.ok ? await response.json() : null) })
+      .then(async (response) => {
+        const parsed = response.ok ? await response.json() as { client_name?: unknown; client_uri?: unknown } : null
+        if (!signal.aborted) setClient(parsed)
+      })
       .catch(() => { if (!signal.aborted) setClient(null) })
     if (query === undefined) { setWorkspace({ kind: "ready", value: null }); return () => controller.abort() }
     void fetch("/api/oauth/consent-context", {
@@ -153,6 +156,7 @@ export function OAuthConsent() {
         if (signal.aborted) return
         if (!response.ok) {
           const body = await response.json().catch(() => null) as { message?: unknown } | null
+          if (signal.aborted) return
           const message = typeof body?.message === "string" && body.message !== "" ? body.message : `Could not check your active workspace (${response.status}).`
           setWorkspace({ kind: "error", message })
           return
@@ -215,10 +219,11 @@ export function OAuthConsent() {
       <Frame title={`Allow ${requester.name} to use Norn?`} description="Your active workspace could not be verified right now.">
         <CardContent className="grid gap-3 text-body">
           <Failure text={workspace.message} />
+          <Failure text={failure} />
         </CardContent>
         <CardFooter className="flex gap-2 pt-4">
           <Button variant="outline" className="flex-1" disabled={pending} onClick={() => void decide(false)}>Deny</Button>
-          <Button className="flex-1" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>
+          <Button className="flex-1" disabled={pending} onClick={() => { setFailure(null); setReloadKey((k) => k + 1) }}>Retry</Button>
         </CardFooter>
       </Frame>
     )

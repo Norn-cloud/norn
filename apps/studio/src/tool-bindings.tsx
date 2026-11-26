@@ -245,13 +245,23 @@ export function ToolBindings() {
     if (lastReconcileKey.current === reconcileKey) return
     lastReconcileKey.current = reconcileKey
     let cancelled = false
+    let settled = false
     const targetKey = `${targetScope.orgId}:${targetScope.environmentId ?? ""}`
     void api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings:reconcile", { method: "POST", scope: targetScope })
       .then(
-        (reconciled) => { if (!cancelled) client.setQueryData(["connectors", "bindings", targetKey], reconciled) },
-        () => undefined,
+        (reconciled) => {
+          settled = true
+          if (!cancelled) client.setQueryData(["connectors", "bindings", targetKey], reconciled)
+        },
+        () => {
+          settled = true
+          if (!cancelled && lastReconcileKey.current === reconcileKey) lastReconcileKey.current = null
+        },
       )
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      if (!settled && lastReconcileKey.current === reconcileKey) lastReconcileKey.current = null
+    }
   }, [pendingKey, canManage, pinnedScopeKey, client])
   return (
     <Panel icon={Link2} label="Tool bindings">

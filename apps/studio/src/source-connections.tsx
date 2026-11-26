@@ -96,24 +96,30 @@ export function SourceConnections() {
     refetchInterval: (query) => query.state.data?.document.records.some(({ values }) => values.status === "syncing") ? 3000 : false,
   })
   const notInstalled = connections.error instanceof CellRefusal && connections.error.status === 404
-  const refused = connections.error instanceof CellRefusal
+  const nonRetryableRefusal = connections.error instanceof CellRefusal && connections.error.retryable !== true
   return (
     <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
       {installed === false && <Well><EmptyState icon={Cable} title="No connections yet" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>}
-      {catalog.isError && (
+      {scope.isError && (
+        <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 text-body"><span>Couldn't check the workspace scope.</span> <span className="text-muted-foreground">{failure(scope.error)}</span></p>
+          <Button type="button" size="sm" variant="outline" disabled={scope.isFetching} onClick={() => void scope.refetch()}><RefreshCw />Read again</Button>
+        </div>
+      )}
+      {!scope.isError && catalog.isError && (
         <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
           <p className="min-w-0 text-body"><span>Couldn't check the cell's catalog.</span> <span className="text-muted-foreground">{failure(catalog.error)}</span></p>
           <Button type="button" size="sm" variant="outline" disabled={catalog.isFetching} onClick={() => void catalog.refetch()}><RefreshCw />Read again</Button>
         </div>
       )}
-      {!catalog.isError && (scope.isPending || installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-body text-muted-foreground">Reading connections…</p>}
+      {!scope.isError && !catalog.isError && (scope.isPending || installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-body text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well className="flex items-center gap-3 px-4 py-3 text-body"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
         : (
-          // Refusals are never retried (DESIGN.md 12.3); transient failures offer Read again.
+          // Non-retryable refusals are never retried (DESIGN.md 12.3); transient failures offer Read again.
           <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p className="min-w-0 text-body"><span>{refused ? "The cell refused to read the connections." : "Couldn't read the connections."}</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
-            {!refused && <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>}
+            <p className="min-w-0 text-body"><span>{nonRetryableRefusal ? "The cell refused to read the connections." : "Couldn't read the connections."}</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
+            {!nonRetryableRefusal && <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>}
           </div>
         ))}
       {connections.data && (connections.data.document.records.length === 0

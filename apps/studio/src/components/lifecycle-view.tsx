@@ -15,6 +15,7 @@ import { useMode } from "../lib/live-transport.ts"
 import { useLocale } from "../lib/locale.tsx"
 import { declaredLifecycleStates } from "../lib/objects.ts"
 import type { Predicate } from "../lib/records-query.ts"
+import { useReaderKey } from "../lib/session.ts"
 import { transport } from "../lib/transport.ts"
 import { useView } from "../lib/view.tsx"
 
@@ -47,6 +48,7 @@ export function LifecycleView({ concept, lifecycle, filter = null, scope: boundS
   const { view: mode } = useView()
   const modeRead = useMode()
   const scopeRead = useStudioScope()
+  const reader = useReaderKey()
   const live = modeRead.data?.kind === "live"
   const scope = live ? (boundScope ?? scopeRead.data ?? null) : null
   const orgId = scope?.orgId
@@ -104,7 +106,7 @@ export function LifecycleView({ concept, lifecycle, filter = null, scope: boundS
           },
           signal,
         ),
-        changes: (listener, onRefused) => liveAnswer(path, activeScope, listener, onRefused),
+        changes: (listener, onRefused) => liveAnswer(path, activeScope, listener, onRefused, reader),
       } : {}),
       locale: locale === "ar" ? "ar" : "en",
       technical: mode === "technical",
@@ -113,7 +115,7 @@ export function LifecycleView({ concept, lifecycle, filter = null, scope: boundS
     }
     host.replaceChildren(view)
     return () => view.remove()
-  }, [host, waitingForScope, presentation, path, orgId, environmentId, locale, mode])
+  }, [host, waitingForScope, presentation, path, orgId, environmentId, reader, locale, mode])
 
   return (
     <Panel icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${propertyLabel}`}

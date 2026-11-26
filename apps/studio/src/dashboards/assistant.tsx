@@ -44,20 +44,18 @@ async function call<T>(path: string, init?: RequestInit, boundScope?: StudioScop
   const method = (init?.method ?? "GET").toUpperCase()
   const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
   const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
-  const response = await fetchWithTimeout(
-    defaultFetch,
-    `${BASE}${path}`,
-    {
-      ...init,
-      credentials: "same-origin",
-      headers: {
-        accept: "application/json",
-        ...init?.body ? { "content-type": "application/json" } : {},
-        ...scopeHeaders(write ? scope : scope),
-      },
+  const requestInit: RequestInit = {
+    ...init,
+    credentials: "same-origin",
+    headers: {
+      accept: "application/json",
+      ...init?.body ? { "content-type": "application/json" } : {},
+      ...scopeHeaders(scope),
     },
-    CELL_FETCH_TIMEOUT_MS,
-  )
+  }
+  const response = write
+    ? await defaultFetch(`${BASE}${path}`, requestInit)
+    : await fetchWithTimeout(defaultFetch, `${BASE}${path}`, requestInit, CELL_FETCH_TIMEOUT_MS)
   const body = await response.json().catch(() => null) as (T & { error?: string; message?: string }) | null
   if (!response.ok || body === null) throw new Error(body?.error ?? body?.message ?? (response.status === 401 ? "Sign in again." : response.status === 404 ? "The assistant isn't served here." : `The server did not answer (${response.status}).`))
   return body

@@ -35,6 +35,8 @@ export function UploadCsv() {
   const [typeName, setTypeName] = useState("")
   const [choices, setChoices] = useState<Readonly<Record<string, Choice>>>({})
   const [outcome, setOutcome] = useState<Outcome | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const client = useQueryClient()
   const attempt = useRef(0)
   // Pin the workspace scope when the upload dialog opens and carry it through upload -> define -> load.
@@ -42,11 +44,18 @@ export function UploadCsv() {
   const sent = useMutation({
     mutationFn: async (chosen: File) => {
       const seq = attempt.current
-      const uploaded = await upload(chosen, undefined, pinnedScope)
-      return { seq, uploaded }
+      setUploadError(null)
+      try {
+        const uploaded = await upload(chosen, undefined, pinnedScope)
+        return { seq, uploaded }
+      } catch (error) {
+        if (seq === attempt.current) setUploadError(error instanceof Error ? error.message : String(error))
+        throw error
+      }
     },
     onSuccess: ({ seq, uploaded: { completed } }) => {
       if (seq !== attempt.current) return
+      setUploadError(null)
       setChoices(Object.fromEntries(completed.columns.map((column, index) => {
         const type = kindOf(column.inferred)
         return [columnId(column), { include: true, key: index === 0, type, measure: type === "decimal" && index !== 0 }]
@@ -69,11 +78,17 @@ export function UploadCsv() {
     mutationFn: async () => {
       if (!uploaded || !completed) throw new Error("Upload a file first.")
       const seq = attempt.current
-      const workflowScope = uploaded.scope
-      const { objectType } = await define(uploaded.uploadId, typeName.trim(), key(), columns(), completed.sha256, workflowScope)
-      const loaded = await loadDataset(uploaded.uploadId, objectType, workflowScope)
-      const outcomeValue: Outcome = loaded === "no-engine" ? { kind: "no-engine", objectType } : { kind: "dataset", objectType, loaded }
-      return { seq, outcome: outcomeValue }
+      setLoadError(null)
+      try {
+        const workflowScope = uploaded.scope
+        const { objectType } = await define(uploaded.uploadId, typeName.trim(), key(), columns(), completed.sha256, workflowScope)
+        const loaded = await loadDataset(uploaded.uploadId, objectType, workflowScope)
+        const outcomeValue: Outcome = loaded === "no-engine" ? { kind: "no-engine", objectType } : { kind: "dataset", objectType, loaded }
+        return { seq, outcome: outcomeValue }
+      } catch (error) {
+        if (seq === attempt.current) setLoadError(error instanceof Error ? error.message : String(error))
+        throw error
+      }
     },
     onSuccess: async ({ seq, outcome: result }) => {
       await settle()
@@ -84,8 +99,14 @@ export function UploadCsv() {
     mutationFn: async () => {
       if (!uploaded || !completed) throw new Error("Upload a file first.")
       const seq = attempt.current
-      const { objectType } = await loadRecords(uploaded.uploadId, typeName.trim(), key(), columns(), completed.sha256, uploaded.scope)
-      return { seq, outcome: { kind: "records", objectType } as Outcome }
+      setLoadError(null)
+      try {
+        const { objectType } = await loadRecords(uploaded.uploadId, typeName.trim(), key(), columns(), completed.sha256, uploaded.scope)
+        return { seq, outcome: { kind: "records", objectType } as Outcome }
+      } catch (error) {
+        if (seq === attempt.current) setLoadError(error instanceof Error ? error.message : String(error))
+        throw error
+      }
     },
     onSuccess: async ({ seq, outcome: result }) => {
       await settle()
@@ -93,9 +114,9 @@ export function UploadCsv() {
     },
   })
   const choose = (id: string, change: Partial<Choice>) => setChoices((current) => ({ ...current, [id]: { ...current[id] ?? { include: true, key: false, type: "text", measure: false }, ...change } }))
-  const reset = () => { attempt.current += 1; setFile(null); setTypeName(""); setChoices({}); setOutcome(null); sent.reset(); asDataset.reset(); asRecords.reset() }
+  const reset = () => { attempt.current += 1; setFile(null); setTypeName(""); setChoices({}); setOutcome(null); setUploadError(null); setLoadError(null); sent.reset(); asDataset.reset(); asRecords.reset() }
   const busy = asDataset.isPending || asRecords.isPending
-  const problem = asDataset.error ?? asRecords.error
+  const problem = loadError
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) reset() }}>
       <DialogTrigger asChild><Button type="button" size="sm" variant="outline"><Upload />Upload a CSV</Button></DialogTrigger>
@@ -108,7 +129,7 @@ export function UploadCsv() {
           <div className="space-y-3">
             <Input type="file" accept=".csv,text/csv" aria-label="CSV file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             <Button type="button" disabled={file === null || sent.isPending} onClick={() => file && sent.mutate(file)}><FileUp />{sent.isPending ? "Uploading…" : "Upload"}</Button>
-            {sent.isError && <p role="alert" className="text-body text-destructive-text">{sent.error.message}</p>}
+            {uploadError !== null && <p role="alert" className="text-body text-destructive-text">{uploadError}</p>}
           </div>
         )}
         {completed && outcome === null && (
@@ -147,7 +168,7 @@ export function UploadCsv() {
                 })}
               </TableBody>
             </Table></TableCard>
-            {problem && <p role="alert" className="text-body text-destructive-text">{problem.message}</p>}
+            {problem !== null && <p role="alert" className="text-body text-destructive-text">{problem}</p>}
             <DialogFooter className="flex-wrap gap-2">
               <Button type="button" variant="outline" onClick={reset} disabled={busy}>Start over</Button>
               <Button type="button" variant="outline" disabled={busy} onClick={() => asRecords.mutate()} title="Each row is written through the cell and checked against its laws, one at a time.">

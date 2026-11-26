@@ -17,6 +17,7 @@ let activeReader: string | undefined
 export function closeLiveClients(): void {
   for (const client of clients.values()) client.close()
   clients.clear()
+  activeReader = undefined
 }
 
 /**
@@ -80,9 +81,10 @@ export function liveAnswer(
   scope: StudioScope,
   listener: (answer: { readonly status: number; readonly body: unknown; readonly digest?: string }) => void,
   onRefused?: (refusal: LiveRefusal) => void,
+  reader?: string,
 ): () => void {
   if (typeof WebSocket === "undefined") return () => {}
-  return live(scope).subscribe(
+  return live(scope, reader).subscribe(
     scopedPath(path, scope),
     (snapshot) => listener({ status: snapshot.status, body: snapshot.body, digest: snapshot.digest }),
     onRefused ? { onRefused } : undefined,

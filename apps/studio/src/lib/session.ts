@@ -15,6 +15,7 @@ import {
   type StudioScope,
   type WorkspaceScope,
 } from "./definitions.ts"
+import { closeLiveClients } from "./live-reads.ts"
 import { refreshMode } from "./live-transport.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
@@ -67,6 +68,7 @@ const isReadQuery = (query: { readonly queryKey: readonly unknown[] }) =>
 
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
 export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean; readonly deferActiveRefetch?: boolean } = {}): void {
+  closeLiveClients()
   refreshMode()
   void client.cancelQueries({ predicate: isReadQuery })
   if (options.refetchActive) {

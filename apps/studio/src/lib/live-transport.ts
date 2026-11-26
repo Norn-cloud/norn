@@ -321,6 +321,7 @@ export function currentMode(
   knownScope?: StudioScope | null,
   signal?: AbortSignal,
 ): Promise<Mode> {
+  if (signal?.aborted) return Promise.reject(abortErrorOf(signal))
   if (knownScope !== undefined) {
     const key = studioScopeKey(knownScope)
     if (activeModeScopeKey !== null && activeModeScopeKey !== key) {

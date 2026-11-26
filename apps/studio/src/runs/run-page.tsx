@@ -79,7 +79,7 @@ export function RunPage() {
     queryFn: async ({ signal }) => {
       const currentEtag = cached.current.key === runKey ? cached.current.etag : null
       const result = await getRun(id, currentEtag, undefined, boundScope, signal)
-      if (result.kind === "ok") cached.current = { key: runKey, etag: result.etag, run: result.value }
+      if (result.kind === "ok" && !signal.aborted) cached.current = { key: runKey, etag: result.etag, run: result.value }
       return { result, at: Date.now() }
     },
     retry: false,
@@ -94,6 +94,12 @@ export function RunPage() {
   // While the run works or waits, each commit that changes it is read once (UI-LIVE-1); an ended run is not watched.
   useLiveRefresh(run !== null && refreshEvery(phaseOf(run)) !== false ? `/v1/runs/${encodeURIComponent(id)}` : null, queryKey)
 
+  if (scope.isError) return (
+    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive-text">
+      <span>{scope.error instanceof Error ? scope.error.message : "The workspace scope could not be read."}</span><span className="flex-1" />
+      <Button variant="outline" size="sm" onClick={() => void scope.refetch()}>Retry</Button>
+    </div>
+  )
   if (scope.isPending || read.isPending) return <div className="grid max-w-4xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
   if (read.isError) return (
     <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-body text-destructive-text">
