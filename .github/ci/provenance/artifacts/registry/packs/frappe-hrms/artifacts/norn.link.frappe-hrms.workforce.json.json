@@ -1,0 +1,20 @@
+{
+  "sha256": "2e8e7617d70adb91c7456efc63165dd501cb5d7970045d7aeec2d6029c60760c",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "registry/packs/frappe-hrms/frappe-hrms.link.ts",
+    "registry/packs/frappe-hrms/frappe-hrms.pack.ts"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
