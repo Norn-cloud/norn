@@ -210,6 +210,8 @@ test("extractCookieHeader deduplicates cookies last-write-wins and honors Max-Ag
   expect(parseCookieDate("0")).toBeUndefined()
   expect(parseCookieDate("not-a-date")).toBeUndefined()
   expect(parseCookieDate("Feb 30 2027 00:00:00 GMT")).toBeUndefined()
+  expect(parseCookieDate("01 Jan☃ 2027 00:00:00 GMT")).toBeUndefined()
+  expect(parseCookieDate("01x\ny Jan 2027 00:00:00 GMT")).toBe(Date.UTC(2027, 0, 1, 0, 0, 0))
   expect(parseCookieDate("Thu, 01 Jan 1970 00:00:00 GMT")).toBe(0)
   expect(
     extractCookieHeader(

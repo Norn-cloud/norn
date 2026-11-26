@@ -119,6 +119,8 @@ const COOKIE_MONTHS: Readonly<Record<string, number>> = {
  * the RFC 6265 grammar (for example `"0"` or `"not-a-date"`).
  */
 export function parseCookieDate(input: string): number | undefined {
+  // RFC 6265 §5.1.1 defines delimiter and non-delimiter strictly over OCTET (%x00-FF).
+  if (/[^\x00-\xff]/.test(input)) return undefined
   const tokens = input.split(/[\x09\x20-\x2f\x3b-\x40\x5b-\x60\x7b-\x7e]+/).filter(Boolean)
   let hour: number | undefined
   let minute: number | undefined
@@ -129,7 +131,7 @@ export function parseCookieDate(input: string): number | undefined {
 
   for (const token of tokens) {
     if (hour === undefined) {
-      const m = /^(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[^\d].*)?$/.exec(token)
+      const m = /^(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[^\d][\x00-\xff]*)?$/.exec(token)
       if (m) {
         hour = Number(m[1])
         minute = Number(m[2])
@@ -138,7 +140,7 @@ export function parseCookieDate(input: string): number | undefined {
       }
     }
     if (dayOfMonth === undefined) {
-      const m = /^(\d{1,2})(?:[^\d].*)?$/.exec(token)
+      const m = /^(\d{1,2})(?:[^\d][\x00-\xff]*)?$/.exec(token)
       if (m) {
         dayOfMonth = Number(m[1])
         continue
@@ -153,7 +155,7 @@ export function parseCookieDate(input: string): number | undefined {
       }
     }
     if (year === undefined) {
-      const m = /^(\d{2,4})(?:[^\d].*)?$/.exec(token)
+      const m = /^(\d{2,4})(?:[^\d][\x00-\xff]*)?$/.exec(token)
       if (m) {
         year = Number(m[1])
         continue
