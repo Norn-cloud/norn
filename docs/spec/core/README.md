@@ -14,22 +14,22 @@ Normative target, 2026-11-01. Read the [decisions](../../architecture/decisions/
 
 ## Status against main
 
-Inspected public `origin/main` at **b532b4f4da** (2026-11-19). `P` = inspected partial substrate, `M` = target capability not established. No row is end-to-end complete. Proof `P` means narrow generated or reference evidence exists, never full implementation proof. Each linked spec identifies source paths and missing behavior.
+Inspected public `origin/main` at **591b091** (2026-11-25). `P` = inspected partial implementation, `M` = target capability not established. No row is end-to-end complete. Proof `P` means narrow generated or reference evidence exists, never full implementation proof. Each linked spec identifies source paths and missing behavior.
 
 | Primitive | IR | Admission | Evaluator | Commit enforcement | Authoring | Proof |
 |---|---|---|---|---|---|---|
 | [01 Values/identity](01-values-identity.md) | P: values, keys | P: codecs | P: exact runtime values | P: exact storage | P: typed properties | P: narrow arithmetic |
-| [02 Concept graph](02-concept-graph.md) | P: entities/catalog | P: interface/lifecycle checks | P: effective graph | P: lifecycle/links | P: entity builders | P: reference models |
-| [03 Query/compute](03-query-compute.md) | P: RuleIR/slices/transforms | P: bounded profiles | P: expressions/reactive; exact transforms; IVM question maintenance; DuckDB transform and analytics engine (opt-in) | P: point reads | P: rules; bounded ordered folds; questions/transforms | P: narrow induction |
-| [04 Transactions](04-transactions-effects.md) | P: DecisionOutput/CellCommit | P: writer checks | P: decision preparation | P: atomic CAS/outbox | P: actions/rules | P: reference CAS/atomicity |
-| [05 Laws/authority](05-laws-authority.md) | P: LawIR/structured | P: deontic/obligations | P: narrow safety | P: authz/invariants | P: structured Rust | P: limited induction; no complete dispatch |
-| [06 Composition/config](06-composition-config.md) | P: packs/settings | P: dependencies/migration | P: effective definitions | P: install/preflight | P: packs/settings | M: retained law transport |
-| [07 World boundary](07-world-boundary.md) | P: Functions/connectors | P: contracts/mappings | P: outbox/result handling | P: freshness/generations | P: connector/mapping | M: full uncertainty contract |
-| [08 Worlds/projections](08-worlds-projections.md) | P: worlds/views/metrics | P: view/metric checks | P: replay/subscriptions; as-of-knowledge questions; restatement | P: world/scope checks | P: view/widget; questions/dashboards | M: full projection correspondence |
+| [02 Concept graph](02-concept-graph.md) | P: entities/catalog | P: interface/lifecycle checks | P: effective graph | P: lifecycle/links | P: entity builders, machines | P: reference models |
+| [03 Query/compute](03-query-compute.md) | P: RuleIR/slices/transforms | P: bounded profiles | P: expressions/reactive; exact transforms; IVM question maintenance; DuckDB and DataFusion analytics (opt-in) | P: point reads | P: rules; bounded ordered folds; questions/transforms | P: narrow induction |
+| [04 Transactions](04-transactions-effects.md) | P: DecisionOutput/CellCommit | P: writer checks | P: decision preparation | P: atomic CAS/outbox, `update_only`, `AdmittedDefinitions` | P: actions/rules/approvals | P: reference CAS/atomicity |
+| [05 Laws/authority](05-laws-authority.md) | P: LawIR/structured | P: deontic/exceptions/obligations | P: narrow safety | P: authz/invariants | P: typed TS laws/norms/examples, structured Rust | P: limited induction; no complete dispatch |
+| [06 Composition/config](06-composition-config.md) | P: packs/settings (`DecimalLiteral`) | P: dependencies/migration | P: effective definitions | P: install/preflight | P: packs, `Norn.setting` | M: retained law transport |
+| [07 World boundary](07-world-boundary.md) | P: Functions/connectors | P: contracts/mappings (`MAP-ENUM-TEXT-1`) | P: outbox, `SqliteCell` `FunctionReceipt` resolution | P: freshness/generations | P: connector/mapping | M: full uncertainty contract |
+| [08 Worlds/projections](08-worlds-projections.md) | P: worlds/views/metrics/widgets | P: view/metric and Ring-1 `norn-ui-checker` | P: replay/subscriptions; as-of-knowledge questions; restatement | P: world/scope checks | P: `W.widget`/`<NornAppRenderer>`; questions/dashboards; `@norn/sdk` + `codegen --ts` | M: full projection correspondence |
 
 Lane state at inspection: #316, #322, #323, #324, #227, #270, #308 and #309 merged; #310–#312 and #317 closed unmerged. B1–B3 on #213 are design, not implemented coverage. Neither a PR body nor a passing branch fixture changes this main matrix.
 
-Data engineering is first-class [Owner]: 03 owns declared pipelines and exact/IVM/OLAP equivalence; 07 owns CDC/provenance/findings/quarantine and ML receipts; 08 owns bitemporal questions, lineage, restatement and guarded analytical publication. At this baseline, metric IR/checking lives in `norn-checker` (`metric`); there is no separate `norn-metrics` crate. Shipped runtime substrate: receipt-driven incremental maintenance of question answers (`norn-cell` `compute::ivm`, QUERY-ENGINE-1), transforms lowered to embedded DuckDB over the same authorized snapshot (`compute::olap_transform`, `duckdb` feature, VIEW-ENGINE-1), materialized transform results (`compute::materialize`), as-of-knowledge questions and restatement staging (`compute::historical`, `compute::restatement`), and the tenant analytics engine (`norn-cell` `analytics`, served by `norn-olapd` in `norn-cell-do`) whose answers the cell verifies. Exact/IVM/OLAP equivalence across the full profile, complete freshness/frontier semantics, CDC quarantine and statistical publication remain target coverage.
+Data engineering is first-class [Owner]: 03 owns declared pipelines and exact/IVM/OLAP equivalence; 07 owns CDC/provenance/findings/quarantine and ML receipts; 08 owns bitemporal questions, lineage, restatement and guarded analytical publication. At this baseline, metric IR and checking live in `norn-checker` (`metric`); there is no separate `norn-metrics` crate. Shipped runtime code includes receipt-driven incremental maintenance of question answers (`norn-cell` `compute::ivm`, QUERY-ENGINE-1), transforms lowered to embedded DuckDB and DataFusion over the same authorized snapshot (`compute::olap_transform`, `duckdb` feature; `compute::df_transform`, `datafusion` feature; VIEW-ENGINE-1), materialized transform results (`compute::materialize`), as-of-knowledge questions and restatement staging (`compute::historical`, `compute::restatement`), and the tenant analytics engine (`norn-cell` `analytics`, served by `norn-olapd` in `norn-cell-do`) whose answers the cell verifies. Exact/IVM/OLAP equivalence across the full profile, complete freshness/frontier semantics, CDC quarantine and statistical publication remain target coverage.
 
 ## Dependency and ownership map
 
@@ -39,7 +39,7 @@ Data engineering is first-class [Owner]: 03 owns declared pipelines and exact/IV
 4. 01 + 04 + 05 + 06 → 07 performer/integration boundary.
 5. 03 + 04 + 05 + 06 + 07 → 08 worlds/projections and acceptance.
 
-These are delivery dependencies, not permission to bypass a later authority check: intermediate releases refuse operations whose necessary layer is missing. Lane A owns generic evaluation/effects; B owns laws/composition; C authors core/domain/demo packs. Host/surfaces consume the shared authority paths. Cross-lane changes coordinate on #213.
+These are delivery dependencies, not permission to bypass a later authority check: intermediate releases refuse operations whose necessary layer is missing. Lane A owns generic evaluation/effects; B owns laws/composition; C authors core/domain/demo packs. Hosts and user interfaces consume the shared authority paths. Cross-lane changes coordinate on #213.
 
 ## Acceptance and evidence
 

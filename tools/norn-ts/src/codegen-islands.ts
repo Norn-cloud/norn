@@ -14,7 +14,12 @@
  * A set with no islands emits nothing here, so its file is unchanged. Generation fails closed like
  * the rest of codegen: a value type outside the closed set stops the run.
  */
-import { CodegenError } from "./codegen.ts"
+export class CodegenError extends Error {
+  constructor(readonly at: string, message: string) {
+    super(`${at}: ${message}`)
+    this.name = "CodegenError"
+  }
+}
 
 type Node = { readonly [key: string]: unknown }
 const record = (value: unknown): value is Node => typeof value === "object" && value !== null && !Array.isArray(value)

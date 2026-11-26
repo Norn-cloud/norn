@@ -42,7 +42,6 @@ export function authoringVersionWarning(start: string, cli: string | undefined =
     `The project's installed @norn/authoring is ${installed}, but this CLI is ${cli}. Admission uses the CLI's own authoring types; the editor shows the installed ones. Install @norn/authoring ${cli} to make them agree.`)
 }
 
-/** Print the warning to stderr, if there is one. */
 export function warnAuthoringVersion(start: string): void {
   const warning = authoringVersionWarning(start)
   if (warning) process.stderr.write(`warning[${warning.code}] ${warning.message}\n`)

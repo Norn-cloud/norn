@@ -61,7 +61,6 @@ export interface CheckOptions {
 const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", "map"])
 /** `Norn.law(name, spec)` members whose values are predicates over the subject. */
 const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually", "may"])
-/** Element names that would shadow a Norn expression binding or a zen keyword. */
 
 interface Ctx {
   /**
@@ -335,7 +334,6 @@ export class ProfileChecker {
 class FileWalk {
   private readonly diagnostics: Diagnostic[] = []
   private readonly uses: SymbolUse[] = []
-  /** Element names of the enclosing array closures, innermost last. */
   private readonly jsonData = new Map<ts.VariableDeclaration, boolean>()
   private readonly boundedJsonData = new Set<ts.VariableDeclaration>()
   private jsonDataDepthExceeded = false
