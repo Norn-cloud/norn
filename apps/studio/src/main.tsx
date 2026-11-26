@@ -4,13 +4,13 @@ import { Activity, BarChart3, Blend, Blocks, Bookmark, BookMarked, ChartLine, Ch
 import { StrictMode, Suspense, lazy, useEffect, useMemo, useState } from "react"
 import { useAssistant } from "@/assistant-slot"
 import { LoadState } from "@/components/load-state"
+import { WorkspaceThemeFeed } from "@/components/workspace-theme"
 import { Button } from "@/components/ui/button"
 import { CellUnavailable, scopeFromAccount, type StudioScope } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
 import { WorkspaceProvider } from "@/lib/workspace"
 import { applyAppearance, applyScheme, storedScheme, storedShellChrome, storedSkin } from "@/lib/appearance"
-import { storedCustomTheme } from "@/lib/studio-theme"
 import "./bones/registry.ts"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import {
@@ -99,6 +99,7 @@ function SignedInShell({ account, sidekick }: { readonly account: Account; reado
   // The workspace is decided once, here, from the server's mode answer; every page reads in it (#1762).
   return (
     <WorkspaceProvider>
+      <WorkspaceThemeFeed />
       <Shell
         sections={sections}
         assistant={sidekick ? { title: "Sidekick", content: <DeferredSidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
@@ -170,9 +171,10 @@ const router = createRouter({
   defaultPendingMinMs: 0,
 })
 
-// Dark and light are peers: the reader's pinned scheme, else the system's, unless a custom theme pins an appearance.
+// Dark and light are peers: the reader's pinned scheme, else the system's. The workspace's served
+// theme (which may pin an appearance) paints once the shell has read it.
 applyScheme(storedScheme())
-applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
+applyAppearance(storedSkin(), storedShellChrome())
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyScheme(storedScheme()))
 
 // An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.

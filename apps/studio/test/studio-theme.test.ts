@@ -201,18 +201,30 @@ test("shorthand accent and canvas expand with auto-contrasting foreground ink an
     baseSkin: "polar",
     appearance: "light",
     canvas: "#f5f5f5",
-    accent: "#1d4ed8",
+    accent: "#27272a",
   })
-  expect(result.ok).toBe(true)
+  expect(result.ok, JSON.stringify(!result.ok && result.issues)).toBe(true)
   if (!result.ok) return
   const tokens = resolveCustomThemeTokens(result.theme, "light")
   expect(tokens.canvas).toBe("#f5f5f5")
   expect(tokens.shell).toBe("#f5f5f5")
-  expect(tokens.primary).toBe("#1d4ed8")
+  expect(tokens.primary).toBe("#27272a")
   expect(tokens["primary-foreground"]).toBe("#fafafa")
-  expect(tokens.action).toBe("#1d4ed8")
-  expect(tokens["action-hover"]).toBe("#1d4ed8")
-  expect(tokens.ring).toBe("#1d4ed8")
+  expect(tokens.action).toBe("#27272a")
+  expect(tokens["action-hover"]).toBe("#27272a")
+  expect(tokens.ring).toBe("#27272a")
+})
+
+// DESIGN.md 19.6: chrome is monochrome, so a hued accent (it paints the CTA, ring and links) is refused,
+// while colour on a chart, a status dot or an avatar is not.
+test("a hued accent is refused by the monochrome gate with each chrome token named; data colours pass", () => {
+  const blue = parseStudioTheme({ version: 1, name: "Blue", baseSkin: "polar", appearance: "light", accent: "#1d4ed8" })
+  expect(blue.ok).toBe(false)
+  if (!blue.ok) {
+    expect(new Set(blue.issues.map((issue) => issue.code))).toEqual(new Set(["theme.validation.monochrome"]))
+    expect(blue.issues.map((issue) => issue.path)).toEqual(["primary", "action", "action-hover", "ring", "link"].map((token) => `monochrome.light.${token}`))
+  }
+  expect(parseStudioTheme({ version: 1, name: "Data", colors: { "chart-1": "oklch(0.6 0.2 250)", "dot-live": "#16a34a" } }).ok).toBe(true)
 })
 
 test("applyCustomTheme writes variant tokens for light/dark and removes every inline property cleanly on reset", () => {

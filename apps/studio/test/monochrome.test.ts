@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { colorsNamed, converter, parse } from "culori"
 import { INDEX_CSS, SKINS, skinVars } from "../scripts/theme-palettes.ts"
+import { MAX_CHROME_CHROMA, THEME_DATA_TOKEN } from "../src/lib/studio-theme.ts"
 
 /**
  * DESIGN.md 19.6, the monochrome rule (owner, 2026-11-25; measured against Polar's dashboard and the
@@ -22,9 +23,10 @@ import { INDEX_CSS, SKINS, skinVars } from "../scripts/theme-palettes.ts"
  *   arbitrary utility with a coloured literal. A data colour is a data token's utility (`text-success`,
  *   `bg-tone-blue`, `ring-warning`), so the exemption is the token's name, never a file list.
  */
-const DATA = /^(chart-\d|dot-(live|held|bad)|success|warning|destructive(-foreground|-text)?|avatar-\d-(bg|fg)|mascot-body|tone-[a-z]+|tint-[a-z]+|edge(-active)?|node-[a-z]+|canvas-[a-z]+)$/
+// The exemptions and the limit are the theme contract's, so a served theme is held to the same rule.
+const DATA = THEME_DATA_TOKEN
 const WHY = "chart and canvas visualisation, status beside a word, avatar, the mascot, or a data highlight"
-const MAX_CHROMA = 0.02
+const MAX_CHROMA = MAX_CHROME_CHROMA
 const oklch = converter("oklch")
 const rgb = converter("rgb")
 const css = readFileSync(INDEX_CSS, "utf8")
