@@ -20,7 +20,7 @@ mod routes;
 mod tree;
 mod types;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::Type;
@@ -66,6 +66,14 @@ pub fn check_widget_ux_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
+    if !artifacts.iter().any(|artifact| {
+        matches!(
+            &artifact.payload,
+            ArtifactPayload::Widget(payload) if payload.ux.as_value().is_some()
+        )
+    }) {
+        return Vec::new();
+    }
     let combined: Vec<ArtifactEnvelope> = context.base.iter().chain(artifacts).cloned().collect();
     let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut diagnostics = Vec::new();
@@ -136,6 +144,7 @@ pub fn check_widget_ux_set(
 struct UxChecker<'a, 'u, 'd> {
     owner: &'a ArtifactEnvelope,
     all: &'a [ArtifactEnvelope],
+    exact_index: BTreeMap<(&'a str, &'a str, ArtifactKind), &'a ArtifactEnvelope>,
     catalog: &'a EffectiveCatalog,
     registry: &'a BTreeSet<PropertyTypeName>,
     ux: &'u WidgetUx,
@@ -167,7 +176,7 @@ struct UxChecker<'a, 'u, 'd> {
     form_owned_semantics: BTreeSet<String>,
     form_input_initialization: BTreeMap<String, FormInputInitialization>,
     composition_stack: BTreeSet<(String, String, String)>,
-    next_record: usize,
+    next_record: Cell<usize>,
     enforce_effect_root: bool,
 }
 
@@ -228,9 +237,20 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         ux: &'u WidgetUx,
         diagnostics: &'d mut Vec<Diagnostic>,
     ) -> Self {
+        let mut exact_index = BTreeMap::new();
+        for artifact in all {
+            exact_index
+                .entry((
+                    artifact.artifact_id.as_str(),
+                    artifact.version.as_str(),
+                    artifact.kind(),
+                ))
+                .or_insert(artifact);
+        }
         Self {
             owner,
             all,
+            exact_index,
             catalog,
             registry,
             ux,
@@ -286,7 +306,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             form_owned_semantics: BTreeSet::new(),
             form_input_initialization: BTreeMap::new(),
             composition_stack: BTreeSet::new(),
-            next_record: 0,
+            next_record: Cell::new(0),
             enforce_effect_root: true,
         }
     }
@@ -344,7 +364,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
     }
 
     fn resolve_property(
-        &mut self,
+        &self,
         property: &norn_ir::PropertyRef,
         path: &str,
     ) -> Option<&'a EffectiveProperty> {
@@ -378,7 +398,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
     }
 
     fn entity_object_name(
-        &mut self,
+        &self,
         object: &norn_ir::widget_ux::ArtifactRef,
         path: &str,
     ) -> Option<String> {
@@ -404,7 +424,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
     }
 
     fn resolve_ref(
-        &mut self,
+        &self,
         id: &str,
         version: &str,
         kind: &ArtifactKind,
@@ -444,9 +464,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         version: &str,
         kind: &ArtifactKind,
     ) -> Option<&'a ArtifactEnvelope> {
-        self.all.iter().find(|artifact| {
-            artifact.artifact_id == id && artifact.version == version && artifact.kind() == *kind
-        })
+        self.exact_index.get(&(id, version, kind.clone())).copied()
     }
 
     fn is_bounded_list_binding(&self, id: &str) -> bool {

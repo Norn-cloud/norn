@@ -85,9 +85,13 @@ fn send(ws: &WebSocket, message: &LiveServerMessage) {
     }
 }
 
-fn digest(text: &str) -> String {
+fn digest(status: u16, body: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(status.to_string().as_bytes());
+    hasher.update(b"\n");
+    hasher.update(body.as_bytes());
     let mut out = String::with_capacity(24);
-    for byte in Sha256::digest(text.as_bytes()).iter().take(12) {
+    for byte in hasher.finalize().iter().take(12) {
         for nibble in [byte >> 4, byte & 0x0f] {
             out.push(char::from_digit(u32::from(nibble), 16).unwrap_or('0'));
         }
@@ -181,6 +185,14 @@ async fn handle(
             .await;
         return false;
     };
+    let hello = socket.state.lock().await.hello.clone();
+    if hello.is_some() && raw.len() > MAX_MESSAGE {
+        socket
+            .ws
+            .close(Some(1009), Some("message too large".to_owned()))
+            .await;
+        return false;
+    }
     let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
         socket
             .ws
@@ -188,17 +200,9 @@ async fn handle(
             .await;
         return false;
     };
-    let hello = socket.state.lock().await.hello.clone();
     let Some((scope, _authorization)) = hello else {
         return greet(actor, ctx, socket, &parsed).await;
     };
-    if raw.len() > MAX_MESSAGE {
-        socket
-            .ws
-            .close(Some(1009), Some("message too large".to_owned()))
-            .await;
-        return false;
-    }
     if actor.ready(ctx, &scope).await.is_err() {
         socket
             .ws
@@ -300,19 +304,14 @@ async fn greet(
 /// whether the socket stays open. A refused token closes it (4401).
 async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option<&str>) -> bool {
     let mut state = socket.state.lock().await;
-    let Some((_, authorization)) = state.hello.clone() else {
+    let Attachment { hello, subs } = &mut *state;
+    let Some((_, authorization)) = hello.as_ref() else {
         return false;
     };
-    let ids: Vec<String> = state
-        .subs
-        .keys()
-        .filter(|id| only.is_none_or(|only| only == id.as_str()))
-        .cloned()
-        .collect();
-    for id in ids {
-        let Some(sub) = state.subs.get(&id) else {
+    for (id, sub) in subs.iter_mut() {
+        if only.is_some_and(|only| only != id.as_str()) {
             continue;
-        };
+        }
         let call = Call {
             method: "GET".to_owned(),
             path: sub.pathname.clone(),
@@ -335,10 +334,7 @@ async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option
                 .await;
             return false;
         }
-        let value = digest(&format!("{}\n{}", reply.status, reply.body));
-        let Some(sub) = state.subs.get_mut(&id) else {
-            continue;
-        };
+        let value = digest(reply.status, &reply.body);
         if sub.digest == value {
             continue;
         }
@@ -346,7 +342,7 @@ async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option
         // The GET's own bytes: exact decimals stay the number tokens it sent.
         send(
             &socket.ws,
-            &LiveServerMessage::snapshot(&id, reply.status, &value, reply.body),
+            &LiveServerMessage::snapshot(id, reply.status, &value, reply.body),
         );
     }
     true

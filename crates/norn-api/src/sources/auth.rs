@@ -12,7 +12,6 @@
 //! never starts ([`owns`]). Every other case fails closed.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 use super::{ConnectionConfig, Failure, HttpRequest, fail};
 use crate::scope::CellScope;
@@ -138,18 +137,6 @@ pub(super) fn client_credentials(
             format!("the server has no {name} (<client id>:<client secret>)"),
         )
     })?;
-    let form = |text: &str| -> String {
-        let mut out = String::with_capacity(text.len());
-        for b in text.bytes() {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-                out.push(char::from(b));
-            } else {
-                // Writing to a String cannot fail.
-                let _written = write!(out, "%{b:02X}");
-            }
-        }
-        out
-    };
     Ok(Some(HttpRequest {
         method: "POST",
         url: format!("{}{path}", config.base_url.trim_end_matches('/')),
@@ -159,8 +146,8 @@ pub(super) fn client_credentials(
         )],
         body: Some(format!(
             "grant_type=client_credentials&client_id={}&client_secret={}",
-            form(id),
-            form(secret)
+            crate::uploads::encode(id, false),
+            crate::uploads::encode(secret, false)
         )),
     }))
 }

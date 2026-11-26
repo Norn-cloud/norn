@@ -1125,7 +1125,7 @@ pub(super) fn check_guarded(
         diagnostics.extend(validate_lowered_source(&runtime_source, span));
     }
     // Cross-check: zen's strict analysis must not report an error either.
-    let root = ZenEnv::new(env).root(None);
+    let root = narrow_zen_assumed(&ZenEnv::new(env).root(None), options.assumed);
     let analysis = intellisense.analyze(source, &root);
     diagnostics.extend(upstream_errors(&analysis.diagnostics));
     if !diagnostics.is_empty() {
@@ -1486,6 +1486,48 @@ impl<'a> ZenEnv<'a> {
         self.memo.insert(key, object.clone());
         object
     }
+}
+
+/// Apply `condition_null_guards` assumed non-null paths to the zen upstream
+/// root type so `check_expression_under` narrows both Norn's checker and zen's
+/// strict cross-check consistently.
+fn narrow_zen_assumed(root: &VariableType, assumed: &[Vec<String>]) -> VariableType {
+    if assumed.is_empty() {
+        return root.clone();
+    }
+    let mut paths: Vec<&[String]> = assumed.iter().map(Vec::as_slice).collect();
+    paths.sort_by_key(|path| path.len());
+    let mut current = root.clone();
+    for path in paths {
+        current = narrow_zen_path(&current, path);
+    }
+    current
+}
+
+fn narrow_zen_path(ty: &VariableType, path: &[String]) -> VariableType {
+    let Some((head, tail)) = path.split_first() else {
+        return if let VariableType::Nullable(inner) = ty {
+            inner.as_ref().clone()
+        } else {
+            ty.clone()
+        };
+    };
+    let VariableType::Object(members) = ty else {
+        return ty.clone();
+    };
+    let cloned = VariableType::empty_object();
+    if let VariableType::Object(target) = &cloned {
+        let mut out = target.borrow_mut();
+        for (name, field) in members.borrow().iter() {
+            let next = if name.as_ref() == head.as_str() {
+                narrow_zen_path(field, tail)
+            } else {
+                field.clone()
+            };
+            out.insert(Rc::clone(name), next);
+        }
+    }
+    cloned
 }
 
 // ---------------------------------------------------------------------------
@@ -2521,7 +2563,10 @@ impl<'a> Checker<'a> {
         }
         let Node::String(key) = property else {
             return match base {
-                T::Record(_) => self.report(
+                T::Record(Rec::Literal(fields)) => {
+                    self.table_lookup(node, target, property, &fields)
+                }
+                T::Record(Rec::Env { .. }) => self.report(
                     node,
                     codes::DYNAMIC_READ,
                     "a record member must be read by a literal name, not a computed key".to_owned(),
@@ -2547,63 +2592,7 @@ impl<'a> Checker<'a> {
                     format!("`{key}` is not a member of the record"),
                 ),
             },
-            T::Record(Rec::Env { name, depth }) => {
-                let Some(field) = self.env.record(&name).and_then(|r| r.fields.get(*key)) else {
-                    return self.report(
-                        node,
-                        codes::UNKNOWN_MEMBER,
-                        format!("`{key}` is not a member of `{name}`"),
-                    );
-                };
-                let depth = match field.source {
-                    FieldSource::Link { .. } | FieldSource::Inverse { .. } => {
-                        let Some(next) = depth.checked_sub(1) else {
-                            return self.report(
-                                node,
-                                codes::UNKNOWN_MEMBER,
-                                format!("`{key}` is a link beyond the link depth"),
-                            );
-                        };
-                        next
-                    }
-                    FieldSource::Property { .. } | FieldSource::Builtin => depth,
-                };
-                self.exact |= exact_type(&field.ty);
-                match lower(&field.ty, depth, self.env, Some(&name), self.exact_math) {
-                    Some(mut ty) => {
-                        if self.exact_math
-                            && let Some(group) = units::decimal_binding_group(&field.ty)
-                        {
-                            let owner = self.env.decimal_binding_owner(&name, key);
-                            let instance = units::instance_path(
-                                target,
-                                &|alias| {
-                                    self.scopes
-                                        .iter()
-                                        .rev()
-                                        .find(|scope| scope.alias.as_deref() == Some(alias))
-                                        .map(|scope| scope.id)
-                                },
-                                self.scopes.last().map(|scope| scope.id),
-                            );
-                            let op = units::bound_operand(owner, instance, group);
-                            if let T::Number(slot) = &mut ty {
-                                *slot = op;
-                            } else if let T::Optional(inner) = &mut ty
-                                && let T::Number(slot) = inner.as_mut()
-                            {
-                                *slot = op;
-                            }
-                        }
-                        Some(ty)
-                    }
-                    None => self.report(
-                        node,
-                        codes::OPAQUE_READ,
-                        format!("`{key}` is an opaque json-ext property and cannot be read"),
-                    ),
-                }
-            }
+            T::Record(Rec::Env { name, depth }) => self.env_member(node, target, &name, depth, key),
             other @ (T::Null
             | T::Bool
             | T::Number(_)
@@ -2615,6 +2604,125 @@ impl<'a> Checker<'a> {
             | T::List(_)
             | T::Optional(_)) => self.unsupported(node, &format!("a member read on `{other}`")),
         }
+    }
+
+    fn env_member(
+        &mut self,
+        node: &Node<'_>,
+        target: &Node<'_>,
+        name: &str,
+        depth: u32,
+        key: &str,
+    ) -> Option<T> {
+        let Some(field) = self.env.record(name).and_then(|r| r.fields.get(key)) else {
+            return self.report(
+                node,
+                codes::UNKNOWN_MEMBER,
+                format!("`{key}` is not a member of `{name}`"),
+            );
+        };
+        let depth = match field.source {
+            FieldSource::Link { .. } | FieldSource::Inverse { .. } => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return self.report(
+                        node,
+                        codes::UNKNOWN_MEMBER,
+                        format!("`{key}` is a link beyond the link depth"),
+                    );
+                };
+                next
+            }
+            FieldSource::Property { .. } | FieldSource::Builtin => depth,
+        };
+        self.exact |= exact_type(&field.ty);
+        match lower(&field.ty, depth, self.env, Some(name), self.exact_math) {
+            Some(mut ty) => {
+                if self.exact_math
+                    && let Some(group) = units::decimal_binding_group(&field.ty)
+                {
+                    let owner = self.env.decimal_binding_owner(name, key);
+                    let instance = units::instance_path(
+                        target,
+                        &|alias| {
+                            self.scopes
+                                .iter()
+                                .rev()
+                                .find(|scope| scope.alias.as_deref() == Some(alias))
+                                .map(|scope| scope.id)
+                        },
+                        self.scopes.last().map(|scope| scope.id),
+                    );
+                    let op = units::bound_operand(owner, instance, group);
+                    if let T::Number(slot) = &mut ty {
+                        *slot = op;
+                    } else if let T::Optional(inner) = &mut ty
+                        && let T::Number(slot) = inner.as_mut()
+                    {
+                        *slot = op;
+                    }
+                }
+                Some(ty)
+            }
+            None => self.report(
+                node,
+                codes::OPAQUE_READ,
+                format!("`{key}` is an opaque json-ext property and cannot be read"),
+            ),
+        }
+    }
+
+    /// `({k1: v1, k2: v2, ...})[key]`: bounded lookup in a non-empty literal
+    /// table by a non-null string key. Yields `V?` (the common value type, or
+    /// `null` on miss), paying only one key-length scan regardless of table
+    /// size. Environment records stay closed to computed keys.
+    fn table_lookup(
+        &mut self,
+        node: &Node<'_>,
+        target: &Node<'_>,
+        property: &Node<'_>,
+        fields: &BTreeMap<String, T>,
+    ) -> Option<T> {
+        if !matches!(unparenthesized(target), Node::Object(_)) || fields.is_empty() {
+            return self.report(
+                node,
+                codes::DYNAMIC_READ,
+                "a record member must be read by a literal name, not a computed key".to_owned(),
+            );
+        }
+        let key_ty = self.value(property, None)?;
+        if !matches!(key_ty, T::Str(_)) {
+            return self.report(
+                property,
+                codes::TYPE_ERROR,
+                format!("a lookup table key must be a non-null string, not `{key_ty}`"),
+            );
+        }
+        let mut value_ty: Option<T> = None;
+        for entry_ty in fields.values() {
+            if matches!(entry_ty, T::Null | T::Optional(_)) {
+                return self.report(
+                    node,
+                    codes::TYPE_ERROR,
+                    "lookup table values must share one non-null type".to_owned(),
+                );
+            }
+            value_ty = match value_ty {
+                None => Some(entry_ty.clone()),
+                Some(acc) => match join(&acc, entry_ty) {
+                    Some(joined) => Some(joined),
+                    None => {
+                        return self.report(
+                            node,
+                            codes::TYPE_ERROR,
+                            format!(
+                                "lookup table values have incompatible types: `{acc}` and `{entry_ty}`"
+                            ),
+                        );
+                    }
+                },
+            };
+        }
+        value_ty.map(optional)
     }
 
     /// `[a, b, c][i]`: an integer literal index into a list literal, in

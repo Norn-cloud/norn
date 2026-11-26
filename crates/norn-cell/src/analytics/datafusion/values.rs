@@ -223,14 +223,16 @@ impl Dec {
 /// The bulk domain (S4): a canonical decimal with at most 28 fractional
 /// digits and a mantissa of at most `2^96 - 1`.
 pub(super) fn in_bulk_domain(value: Dec) -> bool {
-    let canonical = value.canonical();
-    let fraction = canonical.split_once('.').map_or(0, |(_, f)| f.len());
-    let digits: String = canonical.chars().filter(char::is_ascii_digit).collect();
-    let digits = digits.trim_start_matches('0');
-    fraction <= 28
-        && digits
-            .parse::<i128>()
-            .map_or(digits.is_empty(), |m| m <= EXACT_MANTISSA)
+    let mut mag = value.m.unsigned_abs();
+    if mag == 0 {
+        return true;
+    }
+    let mut scale = value.s;
+    while scale > 0 && mag.rem_euclid(10) == 0 {
+        mag = mag.div_euclid(10);
+        scale = scale.saturating_sub(1);
+    }
+    scale <= 28 && mag <= EXACT_MANTISSA.unsigned_abs()
 }
 
 /// One stored value of a column.

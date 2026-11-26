@@ -128,15 +128,6 @@ export async function readEvidence(ref: EvidenceRef): Promise<Evidence> {
 export const readScan = (uri: string): Promise<Read<{ readonly getUrl: string; readonly expiresAt: string }>> =>
   cellRead<{ readonly getUrl: string; readonly expiresAt: string }>("/v1/uploads:read", "Scanned pages", { method: "POST", body: JSON.stringify({ uri }) })
 
-/**
- * The evidence for one fact: rows whose source field is one the fact was read
- * from (`total`), or a row of a child table it was computed from (`lines` →
- * `lines.2.amount`).
- */
-export function evidenceForFields(evidence: readonly Evidence[], sourceFields: readonly string[]): Evidence[] {
-  return evidence.filter((item) => sourceFields.some((field) => item.subjectProperty === field || item.subjectProperty.startsWith(`${field}.`)))
-}
-
 /** A version's value of one property as its exact text, `—` when absent. */
 export function versionValue(read: Read<ObjectHistory>, index: number, property: string): string {
   const version = read.document.versions[index]

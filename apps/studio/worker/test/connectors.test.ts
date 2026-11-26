@@ -9,12 +9,21 @@ import { adoptCell, abandonSave, canonicalJson, connectorVersion, getBinding, ma
 import { Gateway } from "../gateway.ts"
 import { cellScope, scopeQuery } from "../scope.ts"
 import worker, { type Env } from "../index.ts"
+import { BASE_MIGRATIONS, DEFAULT_PASSWORD, cookieOf, createWorkerClient, createWorkerEnv, readMigration as migration } from "./harness.ts"
 
 const ORIGIN = "https://studio-next.norn.cloud"
 const GATEWAY = "https://gateway.example"
 const TOKEN = "gateway-grant-never-in-a-response"
 const ISSUES = { type: "object", properties: { repo: { type: "string" }, state: { enum: ["open", "closed"] }, limit: { type: "integer" } }, required: ["repo"] }
-const migration = (name: string): string => readFileSync(join(import.meta.dir, "../migrations", name), "utf8")
+const CONNECTOR_MIGRATIONS = [
+  ...BASE_MIGRATIONS,
+  "0003_connector_binding.sql",
+  "0004_connector_binding_manifest.sql",
+  "0005_connector_binding_definition.sql",
+  "0006_connector_binding_state.sql",
+  "0014_connector_binding_attempt.sql",
+] as const
+const client = createWorkerClient(ORIGIN)
 
 /** The D1 calls the policy table makes, over bun:sqlite. */
 /** Set to make the next matching write fail once, as a D1 outage between two steps would. */
@@ -38,23 +47,8 @@ function d1(db: Database): D1Database {
   return { prepare: (sql: string) => statement(sql), batch } as unknown as D1Database
 }
 
-let address = 0
 function stage(gatewayClient = false) {
-  const db = new Database(":memory:")
-  db.exec(migration("0001_better_auth.sql"))
-  db.exec(migration("0002_workspace_provisioning.sql"))
-  db.exec(migration("0003_connector_binding.sql"))
-  db.exec(migration("0004_connector_binding_manifest.sql"))
-  db.exec(migration("0005_connector_binding_definition.sql"))
-  db.exec(migration("0006_connector_binding_state.sql"))
-  db.exec(migration("0014_connector_binding_attempt.sql"))
-  const env: Env = {
-    ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
-    AUTH_DB: db as unknown as D1Database,
-    BETTER_AUTH_SECRET: "t".repeat(40),
-    BETTER_AUTH_URL: ORIGIN,
-    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
-  }
+  const { db, env } = createWorkerEnv({ migrations: CONNECTOR_MIGRATIONS, origin: ORIGIN, assetsHtml: "studio" })
   const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, ...gatewayClient ? { gateway: { url: GATEWAY, clientId: "studio", clientSecret: "s".repeat(32) } } : {} })
   const calls: Request[] = []
   let answer: (request: Request) => Response = () => Response.json({})
@@ -97,16 +91,14 @@ function stage(gatewayClient = false) {
   }
   /** A new person; with `colleagueOf`, a member of that person's organization instead of their own. */
   const signUp = async (email: string, role = "owner", colleagueOf?: string, environment = true) => {
-    const init = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${++address % 250}` }, body: JSON.stringify(body) })
-    const call = (path: string, body: unknown) => worker.fetch(new Request(`${ORIGIN}${path}`, init(body)) as Parameters<typeof worker.fetch>[0], env)
-    await call("/api/auth/sign-up/email", { email, password: "correct horse battery", name: "Ada" })
+    await client.post(env, "/api/auth/sign-up/email", { email, password: DEFAULT_PASSWORD, name: "Ada" })
     const member = "(SELECT id FROM user WHERE email = ?)"
     if (colleagueOf !== undefined) db.query(`UPDATE member SET organizationId = (SELECT organizationId FROM member WHERE userId = ${member}) WHERE userId = ${member}`).run(colleagueOf, email)
-    const response = await call("/api/auth/sign-in/email", { email, password: "correct horse battery" })
+    const response = await client.post(env, "/api/auth/sign-in/email", { email, password: DEFAULT_PASSWORD })
     db.query(`UPDATE member SET role = ? WHERE userId = (SELECT id FROM user WHERE email = ?)`).run(role, email)
     // The organization's cell environment, as the demo organization's metadata declares it.
     if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', 'analytics') WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND json_extract(coalesce(metadata, '{}'), '$.environmentId') IS NULL`).run(email)
-    return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
+    return cookieOf(response)
   }
   return { send, signUp, calls, cell, clock, db, d1Db: deps.db, answer: (next: (request: Request) => Response) => { answer = next } }
 }
@@ -322,8 +314,12 @@ test("an unreachable gateway, a malformed path and a third-party sign-in are typ
   db.exec(migration("0001_better_auth.sql"))
   db.exec(migration("0002_workspace_provisioning.sql"))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32) }
-  for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/oauth2"]) {
+  for (const path of ["/api/auth/sign-in/social", "/api/auth/sign-in/social/", "/api/auth/SIGN-IN/SOCIAL/", "/api/auth/sign-in/oauth2", "/api/auth/sign-in/oauth2/"]) {
     const response = await worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { "content-type": "application/json", origin: ORIGIN }, body: JSON.stringify({ provider: "executor", providerId: "executor" }) }) as Parameters<typeof worker.fetch>[0], env)
+    expect(response.status).toBe(403)
+  }
+  for (const path of ["/api/auth/magic-link/verify/", "/api/auth/MAGIC-LINK/VERIFY/"]) {
+    const response = await worker.fetch(new Request(`${ORIGIN}${path}?token=abc`, { method: "GET" }) as Parameters<typeof worker.fetch>[0], env)
     expect(response.status).toBe(403)
   }
 })

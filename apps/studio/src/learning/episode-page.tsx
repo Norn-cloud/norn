@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/panel"
 import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatTimestamp as when } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
@@ -97,8 +98,6 @@ function TintChip({ tone, children, className }: { readonly tone: string; readon
   )
 }
 
-const when = (ms: number) => new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-
 function Timeline({ episode: e, record }: { readonly episode: Episode; readonly record: ObjectRecord }) {
   const { view } = useView()
   const client = useQueryClient()
@@ -118,7 +117,7 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
           description={e.standing === "measured"
             ? "Its outcome is recorded, so it can become a curated case."
             : "Its outcome isn't recorded yet, so it stays context: it can't become a curated case or a score."}
-          actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/episodes"><ArrowLeft /> All episodes</Link></Button>}
+          actions={<Button asChild variant="ghost" size="sm"><Link to="/learning/episodes"><ArrowLeft aria-hidden className="rtl:rotate-180" /> All episodes</Link></Button>}
         />
       </div>
 

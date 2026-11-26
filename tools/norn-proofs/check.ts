@@ -1,14 +1,16 @@
+import { join } from "node:path"
 import { check } from "tla-ts"
 
-const [sourcePath, destination, moduleDirectory, seedText] = process.argv.slice(2)
-if (!sourcePath || !destination || !moduleDirectory || !seedText || !/^\d+$/.test(seedText)) {
+const args = process.argv.slice(2)
+const [sourcePath, destination, moduleDirectory, seedText] = args
+if (args.length !== 4 || !sourcePath || !destination || !moduleDirectory || !seedText || !/^\d+$/.test(seedText)) {
   throw new Error("usage: check.ts SOURCE RESULT MODULE_DIRECTORY SEED")
 }
-const libraries = new Map<string, string>()
-for (const name of ["Apalache", "Variants"]) {
-  libraries.set(name, await Bun.file(`${moduleDirectory}/${name}.tla`).text())
-}
 try {
+  const libraries = new Map<string, string>()
+  for (const name of ["Apalache", "Variants"]) {
+    libraries.set(name, await Bun.file(join(moduleDirectory, `${name}.tla`)).text())
+  }
   const result = await check({
     source: await Bun.file(sourcePath).text(),
     config: "INIT q_init NEXT q_step INVARIANT q_inv",
@@ -23,7 +25,14 @@ try {
     generatedStates: result.generatedStates, distinctStates: result.distinctStates,
     queuedStates: result.queuedStates, initialStates: result.initialStates,
     violation: result.violation, failure: result.failure,
-  }, (_key, value: unknown) => typeof value === "bigint" ? value.toString() : value))
+  }, (_key, value: unknown) => {
+    if (typeof value !== "bigint") return value
+    const number = Number(value)
+    if (!Number.isSafeInteger(number)) {
+      throw new RangeError(`bigint value out of safe JSON integer range: ${value}`)
+    }
+    return number
+  }))
 } catch (error) {
   await Bun.write(destination, JSON.stringify({status: "unknown", reason: String(error)}))
 }

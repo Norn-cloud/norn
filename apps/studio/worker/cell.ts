@@ -19,13 +19,28 @@ export interface Cell {
   post(path: string, body: unknown): Promise<CellAnswer>
 }
 
+export interface Finding {
+  readonly code: string
+  readonly message: string
+  readonly pointer: string | null
+}
+
+/** Decode checker diagnostics from a cell refusal/admission payload into typed findings. */
+export const findingsOf = (diagnostics: unknown): Finding[] =>
+  (Array.isArray(diagnostics) ? diagnostics : []).map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) => ({
+    code: String(d.code ?? ""),
+    message: String(d.message ?? ""),
+    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null,
+  }))
+
 export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedScope?: ValidatedWriteScope): Cell {
   const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<CellAnswer> => {
     const scope = validatedScope ?? await cellScope(auth, actor.orgId)
     if (scope.environmentId === null) return { kind: "no-cell" }
     const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}`, accept: "application/json" })
     if (body !== undefined) headers.set("content-type", "application/json")
-    const response = await host.fetch(new Request(`https://norn-host${path}?${scopeQuery({ orgId: scope.orgId, environmentId: scope.environmentId })}`, { method, headers, body: body === undefined ? null : JSON.stringify(body) }))
+    const sep = path.includes("?") ? "&" : "?"
+    const response = await host.fetch(new Request(`https://norn-host${path}${sep}${scopeQuery({ orgId: scope.orgId, environmentId: scope.environmentId })}`, { method, headers, body: body === undefined ? null : JSON.stringify(body) }))
     const text = await response.text()
     let parsed: unknown = null
     try { parsed = JSON.parse(text) } catch { parsed = null }

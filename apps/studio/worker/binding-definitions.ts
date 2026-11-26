@@ -1,7 +1,9 @@
 import { hostToken, type NornActor } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import type { ConnectorRef, InputMapping, RunRole } from "./bindings.ts"
+import { findingsOf, type Finding } from "./cell.ts"
 import { scopeQuery } from "./scope.ts"
+export type { Finding }
 
 /**
  * Tool bindings as cell definitions (coordinator decision, 2026-11-06): Studio saves each binding
@@ -46,8 +48,6 @@ export function refusedOnlyForNewerFields(findings: readonly Finding[]): boolean
   })
 }
 
-export interface Finding { readonly code: string; readonly message: string; readonly pointer: string | null }
-
 export type Install =
   | { readonly kind: "installed"; readonly id: string; readonly version: number }
   | { readonly kind: "refused"; readonly findings: readonly Finding[] }
@@ -59,13 +59,6 @@ export type Install =
 
 /** The definition id of a binding: stable for the binding's life. */
 export const bindingDefinitionId = (bindingId: string) => `studio.binding.${bindingId}`
-
-const findingsOf = (body: unknown): readonly Finding[] => {
-  const diagnostics = (body as { diagnostics?: unknown } | null)?.diagnostics
-  return Array.isArray(diagnostics)
-    ? diagnostics.map((d: { code?: unknown; message?: unknown; span?: { pointer?: unknown } | null }) => ({ code: String(d.code ?? ""), message: String(d.message ?? ""), pointer: typeof d.span?.pointer === "string" ? d.span.pointer : null }))
-    : []
-}
 
 /** Hard time limit for a single DEFS cell call (strictly below the 2-minute pending-save lease). */
 export const CELL_CALL_TIMEOUT_MS = 30_000
@@ -80,7 +73,8 @@ export class BindingDefinitions {
 
   /** DEFS's scope query: the actor's server-resolved organization and its environment. */
   private scoped(path: string): string {
-    return `${path}?${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
+    const sep = path.includes("?") ? "&" : "?"
+    return `${path}${sep}${scopeQuery({ orgId: this.actor.orgId, environmentId: this.environmentId })}`
   }
 
   private async call(method: "GET" | "POST", path: string, body?: unknown): Promise<{ readonly status: number; readonly body: unknown } | null> {
@@ -132,7 +126,7 @@ export class BindingDefinitions {
     // The cell does not serve the binding kind yet: keep the local record, like a missing route.
     if (status === 422 && b?.code === "definition.kind_unknown") return { kind: "local" }
     if (status === 422 && b?.code === "definition.refused") {
-      const findings = findingsOf(b)
+      const findings = findingsOf((b as { diagnostics?: unknown }).diagnostics)
       // Until DEFS takes label, inputMapping and runRole, that refusal keeps the local record, like a 404.
       return refusedOnlyForNewerFields(findings) ? { kind: "local" } : { kind: "refused", findings }
     }

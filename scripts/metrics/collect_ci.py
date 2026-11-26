@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 REPOSITORY = "Norn-cloud/norn"
 WORKFLOW = "ci-policy.yml"
@@ -33,22 +34,44 @@ CAVEATS = (
     "and tool installs. Recorded for trends only, never ratcheted.")
 
 
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
 def gh_lines(path: str, jq: str) -> list[dict]:
     out = subprocess.run(["gh", "api", "--paginate", path, "--jq", jq],
-                         capture_output=True, text=True, check=True).stdout
+                         capture_output=True, text=True, check=True, timeout=120).stdout
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
 def toolchain(repo: Path, sha: str) -> dict:
-    shown = subprocess.run(["git", "-C", str(repo), "show", f"{sha}:.github/workflows/ci-policy.yml"],
-                           capture_output=True, text=True)
-    match = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", shown.stdout, re.M)
-    return {"rust": match.group(1)} if shown.returncode == 0 and match else {}
+    rust = _sibling("record").pinned_rust_toolchain(repo, sha)
+    return {"rust": rust} if rust else {}
 
 
 def run_records(run: dict, jobs: list[dict], notices: dict[int, list[str]], repo: Path) -> list[dict]:
     sha, attempt = run["head_sha"], run["run_attempt"]
-    commit = {"sha": sha, "date": run["head_commit"]["timestamp"], "ref": "main"}
+    head_commit = run.get("head_commit") or {}
+    commit = {"sha": sha, "date": head_commit.get("timestamp") or run.get("created_at"), "ref": "main"}
     env = {"runner": "github-hosted", "vm_type": "ubuntu-24.04", "vcpu": 4, "ram_gib": 16, "os": "Ubuntu 24.04"}
     tools = toolchain(repo, sha)
     if tools:
@@ -86,10 +109,11 @@ def run_records(run: dict, jobs: list[dict], notices: dict[int, list[str]], repo
 
 
 def collect(since: str, repo: Path, limit: int | None = None) -> list[dict]:
+    encoded_since = quote(since, safe="")
     runs = gh_lines(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW}/runs?branch=main&event=push"
-                    f"&status=completed&per_page=100&created=%3E%3D{since}", ".workflow_runs[]")
+                    f"&status=completed&per_page=100&created=%3E%3D{encoded_since}", ".workflow_runs[]")
     records = []
-    for run in runs[:limit] if limit else runs:
+    for run in runs[:limit] if limit is not None else runs:
         jobs = gh_lines(f"repos/{REPOSITORY}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100", ".jobs[]")
         notices = {}
         for job in jobs:
@@ -110,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".", help="checkout used to read each run's pinned toolchain")
     parser.add_argument("--limit", type=int)
     args = parser.parse_args(argv)
-    since = args.since or (dt.date.today() - dt.timedelta(days=args.days)).isoformat()
+    since = args.since or (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=args.days)).isoformat()
     for record in collect(since, Path(args.repo), args.limit):
         print(json.dumps(record, sort_keys=True))
     return 0

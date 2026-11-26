@@ -167,7 +167,7 @@ fn error(code: &str, message: impl Into<String>, pointer: impl Into<String>) -> 
     RefusalDiagnostic::error(code, message, pointer)
 }
 
-fn pointer_token(key: &str) -> String {
+pub(crate) fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
@@ -357,10 +357,7 @@ fn mapping(
     };
     let properties = input_schema.get("properties").and_then(Value::as_object);
     for (field, entry) in entries {
-        let at = format!(
-            "/inputMapping/{}",
-            field.replace('~', "~0").replace('/', "~1")
-        );
+        let at = format!("/inputMapping/{}", pointer_token(field));
         let Some(property) = properties.and_then(|properties| properties.get(field)) else {
             findings.push(error(
                 codes::MAPPING_UNKNOWN_FIELD,

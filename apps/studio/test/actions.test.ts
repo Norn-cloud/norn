@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { instantText, isDiagnosticPlaced, offsetSuffix, offsetText, pickerDateTime, resolveDateTime, runtimeWallOffsets, selectedAlternative, type LocalWallOffsets } from "../src/lib/actions.ts"
 import { BOOK_EQUIPMENT } from "../e2e/interval-fixtures.ts"
-import { CALL_OUTCOME_UNKNOWN, callAction, decimalExample, itemNoun, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { CALL_OUTCOME_UNKNOWN, callAction, decimalExample, itemNoun, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { createIntentKey, NO_HOST_ERROR } from "../../../packages/norn-sdk/src/index.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
@@ -257,10 +257,7 @@ test("idempotency keys are ASCII UUIDs, far inside the cell's 256-byte bound, an
   expect(a).not.toBe(b)
 })
 
-test("the business sentence's verb and the decimal example", () => {
-  expect(["Open a holding", "Adjust quantity", "Retire holding", "Restock holding", "Send invoice", "Copy lines", "Recount"].map(pastTense))
-    .toEqual(["opened", "adjusted", "retired", "restocked", "sent", "copied", "recounted"])
-  expect(pastTense("3-way match")).toBeNull()
+test("the decimal example matches the declared scale", () => {
   expect([decimalExample(3), decimalExample(0), decimalExample(null)]).toEqual(["e.g. 12.500", "e.g. 12", "e.g. 12"])
 })
 

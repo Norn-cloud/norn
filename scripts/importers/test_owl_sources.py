@@ -97,6 +97,25 @@ class PinnedFetch(unittest.TestCase):
         with self.assertRaises(SystemExit):
             owl_sources.fetch_url(PINNED, attempts=1, follow=True)
 
+    def test_local_path_refuses_non_https_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            with self.assertRaises(SystemExit):
+                owl_sources.local_path(root, "relative/foo.rdf")
+            with self.assertRaises(SystemExit):
+                owl_sources.local_path(root, "https://example.test/./foo.rdf")
+            outside = Path(tempfile.mkdtemp())
+            self.addCleanup(lambda: outside.rmdir() if outside.exists() else None)
+            (root / "example.test").symlink_to(outside)
+            with self.assertRaises(SystemExit):
+                owl_sources.local_path(root, PINNED)
+
+    def test_declares_licence_requires_ontology_closing_tag(self):
+        raw = b"<dct:license>https://opensource.org/licenses/MIT</dct:license>"
+        self.assertFalse(owl_sources.declares_licence(raw, "MIT"))
+        valid = b"<owl:Ontology><dct:license>https://opensource.org/licenses/MIT</dct:license></owl:Ontology>"
+        self.assertTrue(owl_sources.declares_licence(valid, "MIT"))
+
 
 if __name__ == "__main__":
     unittest.main()

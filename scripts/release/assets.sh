@@ -23,8 +23,28 @@ ZIG_VERSION=0.13.0
 ZIG_SHA256=d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea # zig-linux-x86_64-0.13.0.tar.xz
 CARGO_ZIGBUILD=0.24.1
 
+caller_pwd=$PWD
 root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
+
+resolve_caller_path() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$caller_pwd" "$1" ;;
+  esac
+}
+
+CLEANUP=()
+cleanup() {
+  if ((${#CLEANUP[@]})); then
+    rm -rf "${CLEANUP[@]}"
+  fi
+}
+trap cleanup EXIT
+
+track_tmp() {
+  CLEANUP+=("$1")
+}
 
 target_of() {
   case "$1" in
@@ -90,18 +110,24 @@ check_macho() {
   python3 -I - "$platform" "$binary" "$require_cf" << 'PY'
 import struct, sys
 platform, path, require_cf = sys.argv[1:]
-data = open(path, "rb").read()
+with open(path, "rb") as handle:
+    data = handle.read()
 magic, cpu, _sub, _type, ncmds, _size, _flags, _reserved = struct.unpack_from("<IiiIIIII", data)
 expected = {"macos-arm64": 0x0100000C, "macos-x64": 0x01000007}[platform]
 assert magic == 0xFEEDFACF, f"not a 64-bit Mach-O: {magic:#x}"
 assert cpu == expected, f"cpu {cpu:#x}, expected {expected:#x}"
 offset, commands, dylibs = 32, [], []
 for _ in range(ncmds):
+    assert offset + 8 <= len(data), f"truncated load command at {offset}"
     cmd, size = struct.unpack_from("<II", data, offset)
+    assert size >= 8 and offset + size <= len(data), f"invalid load command size {size} at {offset}"
     commands.append(cmd)
     if cmd in (0xC, 0x80000018):  # LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB
-        name_at = offset + struct.unpack_from("<I", data, offset + 8)[0]
-        dylibs.append(data[name_at : data.index(b"\0", name_at)].decode())
+        assert size >= 12, f"truncated dylib load command at {offset}"
+        name_offset = struct.unpack_from("<I", data, offset + 8)[0]
+        name_at = offset + name_offset
+        assert offset <= name_at < offset + size, f"invalid dylib name offset {name_offset}"
+        dylibs.append(data[name_at : data.index(b"\0", name_at, offset + size)].decode())
     offset += size
 signed = 0x1D in commands
 assert signed or platform == "macos-x64", "arm64 binary has no LC_CODE_SIGNATURE"
@@ -120,11 +146,59 @@ archive() {
     -C "$dir" -cf - "$@" | gzip -n > "$out"
 }
 
+build_rust_asset() {
+  local platform=$1 out=$2 binary=$3
+  shift 3
+  local target sdk="" stage
+  target=$(target_of "$platform")
+  export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
+  if [[ $platform == macos-* ]]; then
+    sdk=$(mktemp -d)
+    track_tmp "$sdk"
+    macos_sdk "$sdk"
+    export SDKROOT=$sdk
+  fi
+  cargo zigbuild --locked --release "$@" --target "$target"
+  stage=$(mktemp -d)
+  track_tmp "$stage"
+  cp "${CARGO_TARGET_DIR:-target}/$target/release/$binary" LICENSE NOTICE "$stage/"
+  mkdir -p "$out"
+  archive "$out/$binary-$platform.tar.gz" "$stage" "$binary" LICENSE NOTICE
+}
+
+smoke_binary_asset() {
+  local platform=$1 out=$2 binary=$3 require_cf=$4
+  local stage
+  stage=$(mktemp -d)
+  track_tmp "$stage"
+  tar -xzf "$out/$binary-$platform.tar.gz" -C "$stage"
+  local -a run
+  case "$platform" in
+    linux-x64) run=("$stage/$binary") ;;
+    linux-arm64) run=(qemu-aarch64-static "$stage/$binary") ;;
+    macos-*)
+      check_macho "$platform" "$stage/$binary" "$require_cf"
+      return 0
+      ;;
+  esac
+  if [[ $binary == norn ]]; then
+    "${run[@]}" --version
+    "${run[@]}" openapi > "$stage/openapi.json"
+    python3 -I -c 'import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    json.load(handle)' "$stage/openapi.json"
+    echo "$platform: norn --version and norn openapi ran"
+  else
+    "${run[@]}" --help > /dev/null
+    echo "$platform: $binary --help ran"
+  fi
+}
+
 cmd=${1:?usage: assets.sh COMMAND ...}
 shift
 case "$cmd" in
   tools)
-    prefix=${1:-$HOME/.norn-release-tools}
+    prefix=$(resolve_caller_path "${1:-$HOME/.norn-release-tools}")
     mkdir -p "$prefix/bin"
     [[ $(uname -sm) == "Linux x86_64" ]] || { echo "assets.sh: builds run on Linux x86_64" >&2; exit 1; }
     rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update >&2
@@ -132,11 +206,11 @@ case "$cmd" in
       x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin >&2
     if [[ ! -x $prefix/zig/zig ]] || [[ $("$prefix/zig/zig" version) != "$ZIG_VERSION" ]]; then
       archive_file=$(mktemp)
+      track_tmp "$archive_file"
       curl -fsSL --retry 3 "https://ziglang.org/download/$ZIG_VERSION/zig-linux-x86_64-$ZIG_VERSION.tar.xz" -o "$archive_file"
       echo "$ZIG_SHA256  $archive_file" | sha256sum -c - >&2
       rm -rf "$prefix/zig" && mkdir -p "$prefix/zig"
       tar -xJf "$archive_file" -C "$prefix/zig" --strip-components 1
-      rm -f "$archive_file"
     fi
     ln -sfn "$prefix/zig/zig" "$prefix/bin/zig"
     if [[ $("$prefix/bin/cargo-zigbuild" --version 2> /dev/null) != *"$CARGO_ZIGBUILD"* ]]; then
@@ -151,85 +225,34 @@ case "$cmd" in
 
   cli)
     platform=${1:?usage: assets.sh cli PLATFORM OUT}
-    out=${2:?usage: assets.sh cli PLATFORM OUT}
-    target=$(target_of "$platform")
-    export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
-    if [[ $platform == macos-* ]]; then
-      sdk=$(mktemp -d)
-      macos_sdk "$sdk"
-      export SDKROOT=$sdk
-    fi
-    cargo zigbuild --locked --release -p norn-cli --target "$target"
-    stage=$(mktemp -d)
-    cp "${CARGO_TARGET_DIR:-target}/$target/release/norn" LICENSE NOTICE "$stage/"
-    mkdir -p "$out"
-    archive "$out/norn-$platform.tar.gz" "$stage" norn LICENSE NOTICE
-    rm -rf "$stage" "${sdk:-}"
+    out=$(resolve_caller_path "${2:?usage: assets.sh cli PLATFORM OUT}")
+    build_rust_asset "$platform" "$out" norn -p norn-cli
     ;;
 
   smoke)
     platform=${1:?usage: assets.sh smoke PLATFORM OUT}
-    out=${2:?usage: assets.sh smoke PLATFORM OUT}
-    stage=$(mktemp -d)
-    tar -xzf "$out/norn-$platform.tar.gz" -C "$stage"
-    case "$platform" in
-      linux-x64) run=("$stage/norn") ;;
-      linux-arm64) run=(qemu-aarch64-static "$stage/norn") ;;
-      macos-*)
-        check_macho "$platform" "$stage/norn" 1
-        rm -rf "$stage"
-        exit 0
-        ;;
-    esac
-    "${run[@]}" --version
-    "${run[@]}" openapi > "$stage/openapi.json"
-    python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' "$stage/openapi.json"
-    echo "$platform: norn --version and norn openapi ran"
-    rm -rf "$stage"
+    out=$(resolve_caller_path "${2:?usage: assets.sh smoke PLATFORM OUT}")
+    smoke_binary_asset "$platform" "$out" norn 1
     ;;
 
   dev-host)
     platform=${1:?usage: assets.sh dev-host PLATFORM OUT}
-    out=${2:?usage: assets.sh dev-host PLATFORM OUT}
-    target=$(target_of "$platform")
-    export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
-    if [[ $platform == macos-* ]]; then
-      sdk=$(mktemp -d)
-      macos_sdk "$sdk"
-      export SDKROOT=$sdk
-    fi
-    cargo zigbuild --locked --release -p norn-cell-do --bin norn-dev-host --target "$target"
-    stage=$(mktemp -d)
-    cp "${CARGO_TARGET_DIR:-target}/$target/release/norn-dev-host" LICENSE NOTICE "$stage/"
-    mkdir -p "$out"
-    archive "$out/norn-dev-host-$platform.tar.gz" "$stage" norn-dev-host LICENSE NOTICE
-    rm -rf "$stage" "${sdk:-}"
+    out=$(resolve_caller_path "${2:?usage: assets.sh dev-host PLATFORM OUT}")
+    build_rust_asset "$platform" "$out" norn-dev-host -p norn-cell-do --bin norn-dev-host
     ;;
 
   smoke-dev-host)
     platform=${1:?usage: assets.sh smoke-dev-host PLATFORM OUT}
-    out=${2:?usage: assets.sh smoke-dev-host PLATFORM OUT}
-    stage=$(mktemp -d)
-    tar -xzf "$out/norn-dev-host-$platform.tar.gz" -C "$stage"
-    case "$platform" in
-      linux-x64) run=("$stage/norn-dev-host") ;;
-      linux-arm64) run=(qemu-aarch64-static "$stage/norn-dev-host") ;;
-      macos-*)
-        check_macho "$platform" "$stage/norn-dev-host" 0
-        rm -rf "$stage"
-        exit 0
-        ;;
-    esac
-    "${run[@]}" --help > /dev/null
-    echo "$platform: norn-dev-host --help ran"
-    rm -rf "$stage"
+    out=$(resolve_caller_path "${2:?usage: assets.sh smoke-dev-host PLATFORM OUT}")
+    smoke_binary_asset "$platform" "$out" norn-dev-host 0
     ;;
 
   wasm)
-    out=${1:?usage: assets.sh wasm OUT}
+    out=$(resolve_caller_path "${1:?usage: assets.sh wasm OUT}")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
     stage=$(mktemp -d)
+    track_tmp "$stage"
     crates/norn-checker-wasm/scripts/build-pkg.sh "$stage/pkg"
     cp LICENSE NOTICE "$stage/pkg/"
     archive "$out/norn-checker-wasm.tar.gz" "$stage/pkg" \
@@ -241,44 +264,49 @@ case "$cmd" in
       SIZE.txt \
       LICENSE \
       NOTICE
-    rm -rf "$stage"
     ;;
 
   sdk)
     tag=${1:?usage: assets.sh sdk TAG OUT}
-    out=${2:?usage: assets.sh sdk TAG OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh sdk TAG OUT}")
     version=$(version_of "$tag")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     stage=$(mktemp -d)
+    track_tmp "$stage"
     git archive HEAD packages/norn-sdk LICENSE NOTICE | tar -x -C "$stage"
     package="$stage/packages/norn-sdk"
     cp "$stage/LICENSE" "$stage/NOTICE" "$package/"
     python3 -I - "$package/package.json" "$version" << 'PY'
 import json, sys
 path, version = sys.argv[1:]
-manifest = json.load(open(path))
+with open(path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
 manifest["version"] = version
 manifest["files"] = ["src", "LICENSE", "NOTICE"]
-open(path, "w").write(json.dumps(manifest, indent=2) + "\n")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(manifest, indent=2) + "\n")
 PY
     mkdir -p "$out"
     (cd "$package" && npm pack --ignore-scripts --pack-destination "$out" > /dev/null)
-    rm -rf "$stage"
     ;;
 
   pyclient)
     tag=${1:?usage: assets.sh pyclient TAG OUT}
-    out=${2:?usage: assets.sh pyclient TAG OUT}
+    out=$(resolve_caller_path "${2:?usage: assets.sh pyclient TAG OUT}")
     version=$(python_version_of "$tag")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     work=$(mktemp -d)
+    track_tmp "$work"
     python3 -m venv "$work/venv"
     "$work/venv/bin/python" -m pip install --disable-pip-version-check --no-input -q --require-hashes \
       -r sdks/python/requirements.txt -r sdks/python/package-requirements.txt
     python3 -I sdks/python/prepare.py sdks/openapi/norn-api.openapi.json "$work/client-input.json"
     mkdir -p "$work/project"
-    PATH="$work/venv/bin:$PATH" "$work/venv/bin/openapi-python-client" generate \
-      --path "$work/client-input.json" --output-path "$work/project/norn_client" --meta none > "$work/generate.log" 2>&1
+    if ! PATH="$work/venv/bin:$PATH" "$work/venv/bin/openapi-python-client" generate \
+      --path "$work/client-input.json" --output-path "$work/project/norn_client" --meta none > "$work/generate.log" 2>&1; then
+      cat "$work/generate.log" >&2
+      exit 1
+    fi
     if grep -Eq "Warning|WARNING|Unable to process" "$work/generate.log"; then
       cat "$work/generate.log"
       echo "assets.sh: the generator reported warnings; the client would be missing pieces" >&2
@@ -305,12 +333,28 @@ TOML
     mkdir -p "$out"
     epoch=$(commit_time)
     (cd "$work/project" && SOURCE_DATE_EPOCH=$epoch "$work/venv/bin/python" -m build --no-isolation --sdist --wheel --outdir "$out")
-    rm -rf "$work"
     ;;
 
   sums)
-    out=${1:?usage: assets.sh sums OUT}
-    (cd "$out" && rm -f SHA256SUMS && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+    out=$(resolve_caller_path "${1:?usage: assets.sh sums OUT}")
+    (
+      cd "$out"
+      shopt -s nullglob
+      files=()
+      for f in *; do
+        [[ $f == SHA256SUMS ]] && continue
+        [[ -f $f && ! -L $f ]] || { echo "assets.sh: sums refuses non-regular entry '$f'" >&2; exit 1; }
+        files+=("$f")
+      done
+      ((${#files[@]})) || { echo "assets.sh: no release files in $out" >&2; exit 1; }
+      tmp=$(mktemp "$out/.SHA256SUMS.XXXXXX")
+      trap 'rm -f "$tmp"' EXIT
+      sha256sum -- "${files[@]}" > "$tmp"
+      chmod 644 "$tmp"
+      mv -f "$tmp" SHA256SUMS
+      trap - EXIT
+      cat SHA256SUMS
+    )
     ;;
 
   *)

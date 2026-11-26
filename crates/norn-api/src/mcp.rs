@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use utoipa::ToSchema;
 use utoipa::openapi::Type;
-use utoipa::openapi::schema::{AdditionalProperties, Object, ObjectBuilder, SchemaType};
+use utoipa::openapi::schema::{Object, ObjectBuilder, SchemaType};
 
 /// The backend's unchanged payload and failure classification.
 pub struct CallOutput {
@@ -409,22 +409,18 @@ fn request_id_schema() -> Object {
         .build()
 }
 
-fn free_form(description: &str) -> Object {
-    ObjectBuilder::new()
-        .schema_type(SchemaType::Type(Type::Object))
-        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(description))
-        .build()
-}
-
 fn params_schema() -> Object {
-    free_form("The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.")
+    crate::objects::free_form(
+        "The method's parameters; `tools/call` takes `name`, `arguments` and `_meta`.",
+        false,
+    )
 }
 
 fn result_schema() -> Object {
-    free_form(
+    crate::objects::free_form(
         "The method's result. A tool's refusal is a result with `isError: true` whose \
          `structuredContent` is the route's own refusal.",
+        false,
     )
 }
 

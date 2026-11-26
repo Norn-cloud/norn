@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
-import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defaultFetch, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type StudioScope, type Tile } from "@/lib/definitions"
+import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defaultFetch, duplicateDashboard, saveDashboard, studioScopeKey, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
 import { DashboardAssistant } from "./dashboards/assistant.tsx"
@@ -90,7 +90,7 @@ export function DashboardsPage() {
     },
     onSuccess: refresh,
   })
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const scopeKey = scope.data ? studioScopeKey(scope.data) : ""
   const [removed, setRemoved] = useState<Removed>()
   useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({
@@ -168,10 +168,10 @@ function TileCard({ tile, index, count, invalid, catalog, scope, onChange, onEdi
         <RowActions index={index} count={count} label={`tile ${index + 1}`} onDuplicate={onDuplicate} onMove={onMove} onRemove={onRemove} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-body">
-        <select aria-label={`Tile ${index + 1} view`} className="h-8 rounded-3xl bg-input/50 px-3" value={viewKey(tile.view)} onChange={(event) => onChange({ ...tile, view: viewOf(event.target.value) })}>
+        <select aria-label={`Tile ${index + 1} view`} className="h-8 max-sm:min-h-[44px] rounded-3xl bg-input/50 px-3 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" value={viewKey(tile.view)} onChange={(event) => onChange({ ...tile, view: viewOf(event.target.value) })}>
           {VIEWS.map(([key, text]) => <option key={key} value={key}>{text}</option>)}
         </select>
-        <select aria-label={`Tile ${index + 1} width`} className="h-8 rounded-3xl bg-input/50 px-3" value={String(tile.layout.w)} onChange={(event) => onChange({ ...tile, layout: { ...tile.layout, w: Number(event.target.value) } })}>
+        <select aria-label={`Tile ${index + 1} width`} className="h-8 max-sm:min-h-[44px] rounded-3xl bg-input/50 px-3 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" value={String(tile.layout.w)} onChange={(event) => onChange({ ...tile, layout: { ...tile.layout, w: Number(event.target.value) } })}>
           <option value="1">Half width</option>
           <option value="2">Full width</option>
         </select>
@@ -205,7 +205,6 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       if ("saved" in result) { setAt(result.saved); editor.markSaved(dashboard); onSaved?.(result.saved) }
     },
   })
-  // While the question sheet is open, its builder owns undo and redo.
   // One save at a time, from the shortcut or the toolbar; an ordinary save of an unchanged dashboard does nothing.
   const saving = useRef(false)
   const requestSave = (next: Dashboard, overwrite = false) => {
@@ -357,7 +356,7 @@ export function DashboardBoardPage() {
     },
     onSuccess: (copied) => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards/$id", params: { id: copied } }) },
   })
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const scopeKey = scope.data ? studioScopeKey(scope.data) : ""
   const [removed, setRemoved] = useState<Removed>()
   useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({

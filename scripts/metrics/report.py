@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -50,13 +51,11 @@ FAMILIES = {
 }
 
 
-def _key(record: dict) -> tuple:
-    store = _sibling("record")
-    return store.series_key(record)
-
-
 def _source_md(url: str) -> str:
-    return f"[link]({url})" if url.startswith(("https://", "http://")) else "thread"
+    if not url.startswith(("https://", "http://")):
+        return "thread"
+    safe = url.replace("(", "%28").replace(")", "%29").replace("|", "%7C")
+    return f"[link]({safe})"
 
 
 def _source_html(url: str) -> str:
@@ -68,21 +67,22 @@ def series(records: list[dict]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = defaultdict(list)
     for record in store.fold(records):
         out[record["metric"]].append(record)
-    return {metric: sorted(rows, key=_key) for metric, rows in sorted(out.items())}
+    return {metric: sorted(rows, key=store.series_key) for metric, rows in sorted(out.items())}
 
 
 def number(value: float) -> str:
-    if isinstance(value, int) or float(value).is_integer():
+    if isinstance(value, int) or (math.isfinite(value) and float(value).is_integer()):
         return f"{int(value):,}"
     return f"{value:.4g}"
 
 
 def sparkline(values: list[float]) -> str:
-    if not values:
+    finite = [v for v in values if math.isfinite(v)]
+    if not finite:
         return ""
-    low, high = min(values), max(values)
+    low, high = min(finite), max(finite)
     span = high - low
-    return "".join(SPARK[0 if span == 0 else round((v - low) / span * (len(SPARK) - 1))] for v in values[-40:])
+    return "".join(SPARK[0 if span == 0 else round((v - low) / span * (len(SPARK) - 1))] for v in finite[-40:])
 
 
 def family(metric: str) -> str:
@@ -93,8 +93,15 @@ def _cell(text: str) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def markdown(records: list[dict]) -> str:
-    groups = series(records)
+def _grouped_series(groups: dict[str, list[dict]]) -> list[tuple[str, list[str]]]:
+    by_family: dict[str, list[str]] = defaultdict(list)
+    for metric in groups:
+        by_family[family(metric)].append(metric)
+    return [(name, by_family[name]) for name in sorted(by_family, key=lambda f: (f == "ci", f))]
+
+
+def markdown(records: list[dict], groups: dict[str, list[dict]] | None = None) -> str:
+    groups = series(records) if groups is None else groups
     lines = [
         "# Norn metrics",
         "",
@@ -108,14 +115,11 @@ def markdown(records: list[dict]) -> str:
         "estimate; runner `boat` series are the only ones the nightly ratchet gates.",
         "",
     ]
-    by_family: dict[str, list[str]] = defaultdict(list)
-    for metric in groups:
-        by_family[family(metric)].append(metric)
-    for name in sorted(by_family, key=lambda f: (f == "ci", f)):
+    for name, metrics in _grouped_series(groups):
         lines += [f"## {FAMILIES.get(name, name)}", "",
                   "| Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |",
                   "|---|---:|---|---|---:|---|---|---|---|"]
-        for metric in by_family[name]:
+        for metric in metrics:
             rows = groups[metric]
             last = rows[-1]
             values = [r["value"] for r in rows]
@@ -140,27 +144,25 @@ def markdown(records: list[dict]) -> str:
 
 
 def _svg(values: list[float], width: int = 160, height: int = 32) -> str:
-    if len(values) < 2:
+    finite = [v for v in values if math.isfinite(v)]
+    if len(finite) < 2:
         return ""
-    low, high = min(values), max(values)
+    low, high = min(finite), max(finite)
     span = (high - low) or 1
-    step = width / (len(values) - 1)
+    step = width / (len(finite) - 1)
     points = " ".join(f"{i * step:.1f},{height - 2 - (v - low) / span * (height - 4):.1f}"
-                      for i, v in enumerate(values))
+                      for i, v in enumerate(finite))
     return (f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" '
             f'aria-label="trend"><polyline points="{points}" fill="none" stroke="var(--line)" '
             f'stroke-width="1.5"/></svg>')
 
 
-def html_page(records: list[dict]) -> str:
-    groups = series(records)
+def html_page(records: list[dict], groups: dict[str, list[dict]] | None = None) -> str:
+    groups = series(records) if groups is None else groups
     sections = []
-    by_family: dict[str, list[str]] = defaultdict(list)
-    for metric in groups:
-        by_family[family(metric)].append(metric)
-    for name in sorted(by_family, key=lambda f: (f == "ci", f)):
+    for name, metrics in _grouped_series(groups):
         rows_html = []
-        for metric in by_family[name]:
+        for metric in metrics:
             rows = groups[metric]
             last = rows[-1]
             values = [r["value"] for r in rows[-60:]]
@@ -209,8 +211,9 @@ Only <code>boat</code> series are ratcheted; GitHub-hosted CI times are recorded
 """
 
 
-def render_files(records: list[dict]) -> dict[str, bytes]:
-    return {"README.md": markdown(records).encode(), "index.html": html_page(records).encode()}
+def render_files(records: list[dict], groups: dict[str, list[dict]] | None = None) -> dict[str, bytes]:
+    groups = series(records) if groups is None else groups
+    return {"README.md": markdown(records, groups).encode(), "index.html": html_page(records, groups).encode()}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,11 +224,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     record = _sibling("record")
     records = record.all_records(record.read_store(Path(args.repo), args.rev))
+    groups = series(records)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for name, data in render_files(records).items():
+    for name, data in render_files(records, groups).items():
         (out / name).write_bytes(data)
-    print(json.dumps({"records": len(records), "metrics": len(series(records)), "out": str(out)}))
+    print(json.dumps({"records": len(records), "metrics": len(groups), "out": str(out)}))
     return 0
 
 

@@ -744,7 +744,7 @@ class TestCanonicalNorn1AndTsParity(unittest.TestCase):
 from enum import StrEnum
 from typing import Annotated
 
-from norn_py import Concept, Field, ref_type
+from norn_py import Concept, DependencyPin, Field, ref_type
 
 
 class AgentKind(StrEnum):
@@ -757,9 +757,16 @@ class Agent(
     Concept,
     name="core.Agent",
     title="Agent",
-    version="0.1.0",
+    version="0.2.0",
     interface=True,
     role="thing",
+    dependencies=(
+        DependencyPin(
+            artifact_id="core.value_types.entity",
+            version="0.2.0",
+            kind="entity",
+        ),
+    ),
     description=(
         "An actor that holds resources, takes part in economic events and "
         "makes commitments: a person, an organisation or a system (REA agent)."
@@ -773,7 +780,7 @@ class Agent(
             res_agent = verify_deterministic_elaboration(
                 agent_py,
                 scope={},
-                source_path="registry/core/src/physics.ts",
+                source_path="registry/core/src/rea.ts",
                 registry_package_path="registry/core",
             )
             expected_agent = CORE_AGENT_GOLDEN.read_text(encoding="utf-8")
@@ -1564,6 +1571,33 @@ class TestPackAndDeploymentPrototypes(unittest.TestCase):
                 packs=(base,),
                 initial_settings={"budget": 12.5},  # type: ignore[dict-item]
             )
+
+        for bad_url in (
+            "http://localhost.evil.example/solve",
+            "http://127.0.0.1.evil.example/solve",
+            "http://evil.example\\@localhost/solve",
+            "http://evil.example\\@127.0.0.1/solve",
+            "https://user:secret@example.com/solve",
+            "http://user:pass@localhost/solve",
+            "http://[::1/solve",
+            "https://example.com:notaport/solve",
+            "https://example.com:99999/solve",
+            "https://foo bar/solve",
+            "https:///no-host",
+            "http://example.com/solve",
+        ):
+            with self.assertRaises(NornTracingError) as url_ctx:
+                DeploymentSpec(
+                    id="dep_bad_url",
+                    org_id="org_demo",
+                    environment_id="dev",
+                    packs=(base,),
+                    worker_endpoints={"norn.solver.rostering@0.1.0": bad_url},
+                )
+            self.assertEqual(url_ctx.exception.code, "NORN-PY-DEPLOYMENT-ENDPOINT")
+
+        with self.assertRaises(NonJsonValueError):
+            canonical_json({1: "a"})
 
 
 if __name__ == "__main__":

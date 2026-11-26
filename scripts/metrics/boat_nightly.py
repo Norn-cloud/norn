@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -71,8 +72,8 @@ REPOSITORY = "Norn-cloud/norn"
 SANDBOX = re.compile(r"\bbx_[a-z0-9]{6,}\b")
 
 
-def boat(args: argparse.Namespace, *rest: str, **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run([*args.boat.split(), *rest], text=True, **kwargs)
+def boat(args: argparse.Namespace, *rest: str, timeout: int = 60, **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run([*shlex.split(args.boat), *rest], text=True, timeout=timeout, **kwargs)
 
 
 def export(repo: Path, sha: str, into: Path) -> Path:
@@ -98,9 +99,21 @@ def records_from(output: str, sha: str, date: str, sandbox: str | None, snapshot
     for line in output.splitlines():
         kind, _, payload = line.partition(" ")
         if kind == "ENV":
-            env = json.loads(payload)
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                notes.append(f"FAIL {snapshot} malformed ENV line")
+                continue
+            if isinstance(parsed, dict):
+                env = parsed
         elif kind == "METRIC":
-            rows.append(json.loads(payload))
+            try:
+                parsed = json.loads(payload)
+            except json.JSONDecodeError:
+                notes.append(f"FAIL {snapshot} malformed METRIC line")
+                continue
+            if isinstance(parsed, dict):
+                rows.append(parsed)
         elif kind in ("SKIP", "FAIL"):
             notes.append(line)
     records = []
@@ -147,18 +160,27 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
         # checkout decides what is measured whatever ref is exported.
         tools = tree / "scripts" / "metrics"
         tools.mkdir(parents=True, exist_ok=True)
-        for name in ("run_probes.py", "record.py", "record.schema.json"):
+        for name in ("run_probes.py", "record.py", "record.schema.json",
+                     "probe_binary_sizes.py", "probe_studio_bundle.py"):
             shutil.copyfile(HERE / name, tools / name)
         shutil.copyfile(args.probes, tools / "probes.json")
         command = ["python3", "scripts/metrics/run_probes.py"]
         for name in names:
             command += ["--only", name]
-        ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
-                   "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
-                   "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
-                   capture_output=True)
-    sys.stderr.write(ran.stderr[-4000:])
-    sandbox = next(iter(SANDBOX.findall(ran.stdout + ran.stderr)), None)
+        try:
+            ran = boat(args, "run", "--from", snapshot, "--type", args.type, "--timeout", str(args.timeout),
+                       "--no-env", "--push", str(tree), "-e", "CARGO_INCREMENTAL=0",
+                       "-e", f"RUSTUP_TOOLCHAIN={rust}", "--", *command,
+                       timeout=args.timeout + 300, capture_output=True)
+            stdout, stderr, returncode = ran.stdout, ran.stderr, ran.returncode
+            timed_out = False
+        except subprocess.TimeoutExpired as error:
+            stdout = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
+            stderr = error.stderr.decode(errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
+            returncode = 124
+            timed_out = True
+    sys.stderr.write(stderr[-4000:])
+    sandbox = next(iter(SANDBOX.findall(stderr)), None)
     if sandbox:
         info = boat(args, "info", sandbox, "--json", capture_output=True)
         gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
@@ -168,8 +190,10 @@ def measure(args, repo: Path, sha: str, date: str, rust: str, snapshot: str,
             gone = info.returncode != 0 and "not_found" in (info.stdout + info.stderr).replace(" ", "_").lower()
         print(f"sandbox {sandbox} ({snapshot}): {'deleted (boat info: not_found)' if gone else 'STILL PRESENT'}",
               file=sys.stderr)
-    records, notes = records_from(ran.stdout, sha, date, sandbox, snapshot, args.type)
-    return records, notes, ran.returncode
+    records, notes = records_from(stdout, sha, date, sandbox, snapshot, args.type)
+    if timed_out:
+        notes.append(f"FAIL {snapshot} boat run timed out after {args.timeout + 300} s")
+    return records, notes, returncode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -192,8 +216,9 @@ def main(argv: list[str] | None = None) -> int:
     sha = record.git(repo, "rev-parse", "FETCH_HEAD^{commit}").stdout.decode().strip()
     date = record.git(repo, "show", "-s", "--format=%cI", sha).stdout.decode().strip()
     # The toolchain CI pins at this commit; the snapshot's default rustc may differ.
-    workflow = record.git(repo, "show", f"{sha}:.github/workflows/ci-policy.yml").stdout.decode()
-    rust = re.search(r"^\s*toolchain:\s*([0-9][0-9.]*)\s*$", workflow, re.M).group(1)
+    rust = record.pinned_rust_toolchain(repo, sha)
+    if not rust:
+        raise SystemExit(f"could not find pinned rust toolchain in {sha}:.github/workflows/ci-policy.yml")
     limits = json.loads(boat(args, "limits", "--json", capture_output=True, check=True).stdout)
     starts_at = record.now_utc()
     if not limits.get("canStart") or limits["starts"]["day"]["remaining"] < 1:

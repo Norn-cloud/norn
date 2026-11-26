@@ -71,12 +71,23 @@ fn column(scope: &Scope, population: &[&Row], id: &str, rows: u64) -> Outcome<Co
         })
         .collect();
     let count = u64::try_from(present.len()).unwrap_or(u64::MAX);
-    let mut distinct: Vec<&Cell> = present.iter().map(|(_, cell)| *cell).collect();
-    distinct.sort_by(|a, b| profile_order(a, b));
-    distinct.dedup_by(|a, b| profile_order(a, b).is_eq());
+    present.sort_by(|(_, a), (_, b)| profile_order(a, b));
+    let distinct = if present.is_empty() {
+        0_u64
+    } else {
+        let transitions = present
+            .windows(2)
+            .filter(|pair| match pair {
+                [(_, a), (_, b)] => !profile_order(a, b).is_eq(),
+                _ => false,
+            })
+            .count();
+        u64::try_from(transitions)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1)
+    };
     let mut ranks = BTreeMap::new();
     if (numeric || temporal) && count > 0 {
-        present.sort_by(|(_, a), (_, b)| profile_order(a, b));
         for rank in profile_ranks(count) {
             let at = usize::try_from(rank.saturating_sub(1)).unwrap_or(usize::MAX);
             if let Some(value) = present.get(at).and_then(|(_, cell)| cell.present(kind)) {
@@ -100,7 +111,7 @@ fn column(scope: &Scope, population: &[&Row], id: &str, rows: u64) -> Outcome<Co
         column: id.to_owned(),
         count,
         nulls: rows.saturating_sub(count),
-        distinct: u64::try_from(distinct.len()).unwrap_or(u64::MAX),
+        distinct,
         ranks,
         labels,
         outliers,
@@ -149,25 +160,20 @@ fn outliers(
     let (q1, q3) = (quartile(25)?, quartile(75)?);
     let iqr = q3.checked_sub(q1)?;
     let span = (1..PROFILE_OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
-    let (lower, upper) = (
-        q1.checked_sub(span)?.canonical(),
-        q3.checked_add(span)?.canonical(),
-    );
-    if [&lower, &upper]
-        .iter()
-        .any(|fence| norn_ir::Decimal::parse(fence).map_or(true, |d| d.scale() > scale))
-    {
+    let (low_dec, high_dec) = (q1.checked_sub(span)?, q3.checked_add(span)?);
+    if low_dec.scale() > scale || high_dec.scale() > scale {
         return None;
     }
+    let (lower, upper) = (low_dec.canonical(), high_dec.canonical());
     let (low, high) = (Dec::cast(&lower, scale)?, Dec::cast(&upper, scale)?);
-    let mut far: Vec<(Dec, &Row, Dec)> = present
+    let mut far: Vec<(u128, &Row, Dec)> = present
         .iter()
         .filter_map(|(row, cell)| match cell {
             Cell::Dec(value) if value.compare(low).is_lt() => {
-                Some((distance(low, *value)?, *row, *value))
+                Some((distance_at_scale(low, *value, scale)?, *row, *value))
             }
             Cell::Dec(value) if value.compare(high).is_gt() => {
-                Some((distance(*value, high)?, *row, *value))
+                Some((distance_at_scale(high, *value, scale)?, *row, *value))
             }
             Cell::Dec(_) | Cell::Null | Cell::Text(_) | Cell::Bool(_) | Cell::Instant { .. } => {
                 None
@@ -176,7 +182,7 @@ fn outliers(
         .collect();
     let total = u64::try_from(far.len()).unwrap_or(u64::MAX);
     far.sort_by(|a, b| {
-        b.0.compare(a.0)
+        b.0.cmp(&a.0)
             .then_with(|| a.1.id.as_bytes().cmp(b.1.id.as_bytes()))
     });
     let examples = far
@@ -192,10 +198,10 @@ fn outliers(
     })
 }
 
-/// `a - b`, exactly.
-fn distance(a: Dec, b: Dec) -> Option<Dec> {
-    a.checked_add(Dec {
-        m: b.m.checked_neg()?,
-        s: b.s,
-    })
+/// Exact unsigned distance `|fence - value|` in mantissa units at `scale`
+/// (never overflows even when `|fence - value| >= 10^38`).
+fn distance_at_scale(fence: Dec, value: Dec, scale: u32) -> Option<u128> {
+    let fence = fence.rescale(scale)?;
+    let value = value.rescale(scale)?;
+    Some(fence.m.abs_diff(value.m))
 }

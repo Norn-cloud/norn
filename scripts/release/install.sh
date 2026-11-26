@@ -44,6 +44,19 @@ main() {
   version=${NORN_VERSION:-latest}
   dir=${NORN_INSTALL_DIR:-${HOME:?HOME is not set}/.local/bin}
 
+  case "$repo" in
+    *[!A-Za-z0-9._/-]* | /* | */ | */*/* | ../* | */.. | ./* | */.)
+      die "invalid NORN_REPO: $repo"
+      ;;
+    */*) ;;
+    *) die "invalid NORN_REPO: $repo" ;;
+  esac
+  case "$version" in
+    "" | . | *[!A-Za-z0-9._+-]* | *..*)
+      die "invalid NORN_VERSION: $version"
+      ;;
+  esac
+
   case "$(uname -s)" in
     Linux) os=linux ;;
     Darwin) os=macos ;;
@@ -70,7 +83,17 @@ main() {
   fi
 
   work=$(mktemp -d)
-  trap 'rm -rf "$work"' EXIT HUP INT TERM
+  staged=""
+  cleanup() {
+    rm -rf "$work"
+    if [ -n "$staged" ]; then
+      rm -f "$staged"
+    fi
+  }
+  trap cleanup EXIT
+  trap 'cleanup; exit 129' HUP
+  trap 'cleanup; exit 130' INT
+  trap 'cleanup; exit 143' TERM
 
   fetch "$base/SHA256SUMS" "$work/SHA256SUMS" \
     || die "cannot download $base/SHA256SUMS; this release may predate prebuilt binaries"
@@ -87,11 +110,15 @@ main() {
 
   mkdir "$work/extract"
   tar -xzf "$work/$asset" -C "$work/extract" norn || die "$asset does not contain norn"
+  [ -f "$work/extract/norn" ] && [ ! -L "$work/extract/norn" ] \
+    || die "$asset norn entry must be a regular file"
   mkdir -p "$dir"
   # Copy beside the target and rename, so a running norn is replaced atomically.
-  cp "$work/extract/norn" "$dir/.norn.$$"
-  chmod 755 "$dir/.norn.$$"
-  mv -f "$dir/.norn.$$" "$dir/norn"
+  staged=$(mktemp "$dir/.norn.XXXXXX")
+  cp "$work/extract/norn" "$staged"
+  chmod 755 "$staged"
+  mv -f "$staged" "$dir/norn"
+  staged=""
 
   printf 'installed %s\n' "$("$dir/norn" --version)"
   printf 'at %s/norn\n' "$dir"

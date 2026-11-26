@@ -1,27 +1,13 @@
-import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements, waitForWorker, seedWhenReady, withWrangler, SeedFailure, SEED_EXIT, discoverD1 } from "../../scripts/seed-demo-org.ts"
 import { hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
-import worker, { type Env } from "../index.ts"
-
-const ORIGIN = "https://studio-preview.norn.cloud"
-const MIGRATION: string = readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8")
+import type { Env } from "../index.ts"
+import { DEFAULT_ORIGIN as ORIGIN, DEFAULT_PASSWORD, claimsOf, cookieOf, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 function stage() {
-  const db = new Database(":memory:")
-  db.exec(MIGRATION)
-  db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
-  const env: Env = {
-    ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
-    AUTH_DB: db as unknown as D1Database,
-    BETTER_AUTH_SECRET: "t".repeat(40),
-    BETTER_AUTH_URL: ORIGIN,
-    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
-    STUDIO_DEFAULT_ORG: DEMO_ORG.id,
-  }
+  const { db, env } = createWorkerEnv({ origin: ORIGIN, assetsHtml: "studio", overrides: { STUDIO_DEFAULT_ORG: DEMO_ORG.id } })
   const binding = {
     prepare: (sql: string) => ({ bind: (...params: string[]) => ({ sql, params }) }),
     batch: async (statements: { sql: string; params: string[] }[]) => db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run(...params) })(),
@@ -31,18 +17,12 @@ function stage() {
   return { db, env, seed, verify, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
 }
 
-let address = 0
-const call = (env: Env, path: string, init: RequestInit = {}) => {
-  const headers = new Headers(init.headers)
-  headers.set("cf-connecting-ip", `198.51.100.${++address % 250}`)
-  return worker.fetch(new Request(`${ORIGIN}${path}`, { ...init, headers }) as Parameters<typeof worker.fetch>[0], env)
-}
+const { call, post: postJson } = createWorkerClient(ORIGIN)
 const post = (env: Env, path: string, body: unknown, cookie?: string) =>
-  call(env, path, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", origin: ORIGIN, ...cookie === undefined ? {} : { cookie } } })
-const cookieOf = (response: Response) => response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
-const signUp = (env: Env, email: string) => post(env, "/api/auth/sign-up/email", { email, password: "correct horse battery", name: email.split("@")[0] })
-const signIn = async (env: Env, email: string) => cookieOf(await post(env, "/api/auth/sign-in/email", { email, password: "correct horse battery" }))
-const claims = (token: string) => JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { norn: Record<string, unknown> }
+  postJson(env, path, body, cookie === undefined ? {} : { cookie })
+const signUp = (env: Env, email: string) => post(env, "/api/auth/sign-up/email", { email, password: DEFAULT_PASSWORD, name: email.split("@")[0] })
+const signIn = async (env: Env, email: string) => cookieOf(await post(env, "/api/auth/sign-in/email", { email, password: DEFAULT_PASSWORD }))
+const claims = (token: string) => claimsOf<{ norn: Record<string, unknown> }>(token)
 
 test("seeding twice makes one Norn demo organization with each demo member once, in its role", async () => {
   const { db, env, seed, verify } = stage()
