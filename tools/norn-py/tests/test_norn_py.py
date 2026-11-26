@@ -774,7 +774,6 @@ class Agent(
         "An actor that holds resources, takes part in economic events and "
         "makes commitments: a person, an organisation or a system (REA agent)."
     ),
-    dependencies=(DependencyPin("core.value_types.entity", "0.2.0", kind="entity"),),
 ):
     display_name: Annotated[Field[str], ref_type("core.display_name")]
     kind: Field[AgentKind]
