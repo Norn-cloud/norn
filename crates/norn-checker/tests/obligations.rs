@@ -1183,7 +1183,11 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
         .expect("reuse");
     assert_eq!(reused.reused.len(), 1);
     assert_eq!(
-        reused.recheck.len() + 1,
+        reused.reused[0].rule,
+        norn_checker::obligations::specialisation::RULE
+    );
+    assert_eq!(
+        reused.recheck.len().saturating_add(1),
         reused.challenge.body()["obligations"]
             .as_array()
             .expect("goals")
@@ -1196,32 +1200,21 @@ fn conjunctive_layer_reuses_only_current_safety_records() {
         record: &record,
     }];
     assert_eq!(run(&extension, &stale).reused, []);
-    // A new writer declaration, including opaque writers, never qualifies.
-    let mut writer = documents[2].clone();
-    writer["artifactId"] = json!("jewelry.writer.entity");
-    writer["payload"]["objectType"]["name"] = json!("jewelry.Writer");
-    let changed = make(&[extra.clone(), writer]);
-    if let Ok(contract) = ApprovedContract::approve(
-        &changed,
-        &BTreeSet::new(),
-        base.body()["semantics"].clone(),
-        base.body()["assumptions"].clone(),
-        base.body()["assurance"].clone(),
-    ) {
-        assert_eq!(
-            contract
-                .challenge_under_specialisation(
-                    &changed,
-                    &BTreeSet::new(),
-                    &base_contract,
-                    &base_source,
-                    &prior
-                )
-                .expect("fallback")
-                .reused,
-            []
-        );
-    }
+    // An opaque writer declaration never qualifies for reuse under either rule.
+    let changed = make(&[extra, rule("jewelry.opaque_writer")]);
+    assert_eq!(
+        approve(&changed)
+            .challenge_under_specialisation(
+                &changed,
+                &BTreeSet::new(),
+                &base_contract,
+                &base_source,
+                &prior
+            )
+            .expect("fallback")
+            .reused,
+        []
+    );
 }
 
 #[test]
@@ -1244,6 +1237,455 @@ fn conjunctive_layer_cannot_weaken_a_protected_base_law() {
         )
         .is_err()
     );
+}
+
+fn fire_transition_action(
+    artifact_id: &str,
+    action_id: &str,
+    entity_artifact_id: &str,
+    object_kind: &str,
+    lifecycle: &str,
+    transition: &str,
+) -> Value {
+    json!({
+        "irVersion": "0.1",
+        "artifactId": artifact_id,
+        "kind": "action",
+        "namespace": "jewelry",
+        "name": action_id,
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {"orgId": "org_demo", "environmentId": "dev"},
+        "dependencies": [],
+        "provenance": {
+            "source": "authoring_sdk",
+            "sourcePath": "tests/obligations.rs"
+        },
+        "payload": {
+            "actionId": action_id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": false,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "properties": {"targetId": {"type": "string"}},
+                "required": ["targetId"],
+                "additionalProperties": false
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {"targetId": {"type": "string"}},
+                "required": ["targetId"],
+                "additionalProperties": false
+            },
+            "writes": [{"entityKind": object_kind, "change": "modified"}],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectIdField": "targetId",
+                "objectKind": object_kind,
+                "entityArtifactId": entity_artifact_id,
+                "entityArtifactVersion": "0.1.0",
+                "lifecycle": lifecycle,
+                "transition": transition
+            }
+        }
+    })
+}
+
+fn record_goal_evidence(
+    challenge: &Challenge,
+    goal_index: usize,
+) -> (
+    norn_checker::obligations::evidence::EvidencePins,
+    norn_checker::obligations::evidence::EvidenceRecord,
+) {
+    use norn_checker::obligations::evidence::EvidenceTool;
+    let pins = challenge
+        .evidence_pins(
+            u32::try_from(goal_index).expect("goal index fits u32"),
+            EvidenceTool {
+                id: "projected-test-driver".into(),
+                version: "1".into(),
+                implementation_sha256: "a".repeat(64),
+            },
+            "{\"steps\":1}",
+            0,
+        )
+        .expect("pins");
+    let record = challenge
+        .record_evidence(&pins, "{\"status\":\"unknown\"}")
+        .expect("record");
+    (pins, record)
+}
+
+fn goal_index(challenge: &Challenge, law: &str, kind: &str, writer: Option<&LawWriter>) -> usize {
+    let target = goal(challenge, law, kind, writer);
+    challenge.body()["obligations"]
+        .as_array()
+        .expect("goals")
+        .iter()
+        .position(|entry| entry == target)
+        .expect("goal index")
+}
+
+fn multilayer_projected_base() -> (
+    Vec<Value>,
+    DefinitionSource,
+    ApprovedContract,
+    Vec<(
+        norn_checker::obligations::evidence::EvidencePins,
+        norn_checker::obligations::evidence::EvidenceRecord,
+    )>,
+) {
+    let documents = pool();
+    let layer1 = documents[..3].to_vec();
+    let layer2 = documents[3..].to_vec();
+    let base_source = DefinitionSource::parse(
+        &serde_json::to_string(&layer2).expect("layer2"),
+        &serde_json::to_string(&layer1).expect("layer1"),
+    )
+    .expect("multi-layer base source");
+    let base_contract = approve(&base_source);
+    let base = base_contract
+        .challenge(&base_source, &BTreeSet::new())
+        .expect("base challenge");
+    let indices = [
+        goal_index(&base, "erpnext.no_unpaid_ship.law", "initialization", None),
+        goal_index(
+            &base,
+            "erpnext.no_unpaid_ship.law",
+            "preservation",
+            Some(&sales_transition()),
+        ),
+        goal_index(&base, "erpnext.approved_amount.law", "initialization", None),
+    ];
+    let records = indices
+        .into_iter()
+        .map(|idx| record_goal_evidence(&base, idx))
+        .collect();
+    let flattened: Vec<Value> = layer1.into_iter().chain(layer2).collect();
+    (flattened, base_source, base_contract, records)
+}
+
+fn disjoint_lot_artifacts() -> (Value, Value) {
+    let mut lot = pool()[2].clone();
+    lot["artifactId"] = json!("jewelry.Lot.entity");
+    lot["namespace"] = json!("jewelry");
+    lot["payload"]["objectType"]["name"] = json!("jewelry.Lot");
+    let lot_action = fire_transition_action(
+        "jewelry.accept_lot.action",
+        "jewelry.accept_lot",
+        "jewelry.Lot.entity",
+        "jewelry.Lot",
+        "status",
+        "accepted",
+    );
+    (lot, lot_action)
+}
+
+#[test]
+fn projected_safety_reuses_disjoint_entity_and_action_across_multilayer_base() {
+    use norn_checker::obligations::specialisation::{PROJECTED_RULE, PriorEvidence};
+
+    let (flattened_base, base_source, base_contract, records) = multilayer_projected_base();
+    let prior: Vec<PriorEvidence<'_>> = records
+        .iter()
+        .map(|(pins, record)| PriorEvidence {
+            pins,
+            result_sha256: &record.result_sha256,
+            record,
+        })
+        .collect();
+
+    // (a) Unrelated new entity + action on that new entity preserves base safety
+    //     reuse under specialisation-projected/1, even with shifted writer indices.
+    let (lot, lot_action) = disjoint_lot_artifacts();
+    let disjoint_source = DefinitionSource::parse(
+        &serde_json::to_string(&[lot, lot_action]).expect("disjoint ext"),
+        &serde_json::to_string(&flattened_base).expect("flattened base"),
+    )
+    .expect("disjoint source");
+    let disjoint_result = approve(&disjoint_source)
+        .challenge_under_specialisation(
+            &disjoint_source,
+            &BTreeSet::new(),
+            &base_contract,
+            &base_source,
+            &prior,
+        )
+        .expect("disjoint projected specialisation");
+    assert_eq!(disjoint_result.reused.len(), 3);
+    assert!(
+        disjoint_result
+            .reused
+            .iter()
+            .all(|entry| entry.rule == PROJECTED_RULE)
+    );
+    let expected_sales_pres = goal_index(
+        &disjoint_result.challenge,
+        "erpnext.no_unpaid_ship.law",
+        "preservation",
+        Some(&sales_transition()),
+    );
+    assert!(
+        disjoint_result
+            .reused
+            .iter()
+            .any(|entry| entry.goal_index == expected_sales_pres)
+    );
+    assert_eq!(
+        disjoint_result
+            .reused
+            .len()
+            .saturating_add(disjoint_result.recheck.len()),
+        disjoint_result.challenge.body()["obligations"]
+            .as_array()
+            .expect("goals")
+            .len()
+    );
+}
+
+#[test]
+fn projected_safety_forces_recheck_when_new_writer_touches_base_law_subject() {
+    use norn_checker::obligations::specialisation::{PROJECTED_RULE, PriorEvidence};
+
+    let (flattened_base, base_source, base_contract, records) = multilayer_projected_base();
+    let prior: Vec<PriorEvidence<'_>> = records
+        .iter()
+        .map(|(pins, record)| PriorEvidence {
+            pins,
+            result_sha256: &record.result_sha256,
+            record,
+        })
+        .collect();
+
+    // (b) Adding a new writer targeting a base law's subject forces recheck for
+    //     that law while leaving untouched sibling base laws reusable.
+    let (lot, lot_action) = disjoint_lot_artifacts();
+    let sales_action = fire_transition_action(
+        "jewelry.ship_sales_order.action",
+        "jewelry.ship_sales_order",
+        "erpnext.SalesOrder.entity",
+        "erpnext.SalesOrder",
+        "status",
+        "shipped",
+    );
+    let touching_source = DefinitionSource::parse(
+        &serde_json::to_string(&[lot, lot_action, sales_action]).expect("touching ext"),
+        &serde_json::to_string(&flattened_base).expect("flattened base"),
+    )
+    .expect("touching source");
+    let touching_result = approve(&touching_source)
+        .challenge_under_specialisation(
+            &touching_source,
+            &BTreeSet::new(),
+            &base_contract,
+            &base_source,
+            &prior,
+        )
+        .expect("touching projected specialisation");
+    let expected_po_init = goal_index(
+        &touching_result.challenge,
+        "erpnext.approved_amount.law",
+        "initialization",
+        None,
+    );
+    assert_eq!(touching_result.reused.len(), 1);
+    assert_eq!(touching_result.reused[0].rule, PROJECTED_RULE);
+    assert_eq!(touching_result.reused[0].goal_index, expected_po_init);
+    let touched_sales_init = goal_index(
+        &touching_result.challenge,
+        "erpnext.no_unpaid_ship.law",
+        "initialization",
+        None,
+    );
+    assert!(touching_result.recheck.contains(&touched_sales_init));
+}
+
+fn interface_projected_base() -> (Vec<Value>, Value, Value) {
+    let order_iface: Value = serde_json::from_str(include_str!(
+        "fixtures/mapping/model/core.order.interface.json"
+    ))
+    .expect("order interface");
+    let party_iface: Value = serde_json::from_str(include_str!(
+        "fixtures/mapping/model/core.party.interface.json"
+    ))
+    .expect("party interface");
+    let customer: Value = serde_json::from_str(include_str!(
+        "fixtures/mapping/model/party.customer.entity.json"
+    ))
+    .expect("customer");
+    let sales_order: Value = serde_json::from_str(include_str!(
+        "fixtures/mapping/model/commerce.sales-order.entity.json"
+    ))
+    .expect("sales order");
+    let mut iface_law = pool()[3].clone();
+    iface_law["artifactId"] = json!("core.order_nonnegative.law");
+    iface_law["dependencies"] = json!([{
+        "artifactId": "core.Order.interface",
+        "kind": "entity",
+        "version": "0.1.0",
+        "required": true
+    }]);
+    iface_law["payload"]["id"] = json!("core.order_nonnegative");
+    iface_law["payload"]["subject"] = json!("core.Order");
+    iface_law["payload"]["modality"] = json!({"kind": "always"});
+    iface_law["payload"]["response"] =
+        json!({"kind": "predicate", "expression": "self.total_amount >= 0"});
+    iface_law["payload"]["scope"] = json!({
+        "root": {"kind": "company", "id": "org_demo"},
+        "objectTypes": ["core.Order"]
+    });
+    let base_docs = vec![
+        order_iface,
+        party_iface,
+        customer,
+        sales_order.clone(),
+        iface_law.clone(),
+    ];
+    (base_docs, sales_order, iface_law)
+}
+
+#[test]
+fn projected_safety_forces_recheck_on_new_interface_implementer_and_refuses_weakening() {
+    use norn_checker::obligations::specialisation::{PROJECTED_RULE, PriorEvidence};
+
+    let (base_docs, sales_order, iface_law) = interface_projected_base();
+    let base_source = source(&base_docs);
+    let base_contract = approve(&base_source);
+    let base = base_contract
+        .challenge(&base_source, &BTreeSet::new())
+        .expect("interface base challenge");
+    let init_idx = goal_index(&base, "core.order_nonnegative.law", "initialization", None);
+    let (pins, rec) = record_goal_evidence(&base, init_idx);
+    let prior = [PriorEvidence {
+        pins: &pins,
+        result_sha256: &rec.result_sha256,
+        record: &rec,
+    }];
+
+    // Control: adding an unrelated entity reuses under PROJECTED_RULE.
+    let mut unrelated = pool()[2].clone();
+    unrelated["artifactId"] = json!("jewelry.Assay.entity");
+    unrelated["namespace"] = json!("jewelry");
+    unrelated["payload"]["objectType"]["name"] = json!("jewelry.Assay");
+    let control_source = DefinitionSource::parse(
+        &serde_json::to_string(&[unrelated]).expect("unrelated"),
+        &serde_json::to_string(&base_docs).expect("base"),
+    )
+    .expect("control source");
+    let control_result = approve(&control_source)
+        .challenge_under_specialisation(
+            &control_source,
+            &BTreeSet::new(),
+            &base_contract,
+            &base_source,
+            &prior,
+        )
+        .expect("control projected reuse");
+    assert_eq!(control_result.reused.len(), 1);
+    assert_eq!(control_result.reused[0].rule, PROJECTED_RULE);
+
+    // (c) Adding a new concrete implementer of base interface core.Order with a
+    //     writer (lifecycle transitions + action) MUST force recheck!
+    let mut gold_order = sales_order;
+    gold_order["artifactId"] = json!("jewelry.GoldOrder.entity");
+    gold_order["namespace"] = json!("jewelry");
+    gold_order["payload"]["objectType"]["name"] = json!("jewelry.GoldOrder");
+    let gold_action = fire_transition_action(
+        "jewelry.submit_gold_order.action",
+        "jewelry.submit_gold_order",
+        "jewelry.GoldOrder.entity",
+        "jewelry.GoldOrder",
+        "status",
+        "submit",
+    );
+    let impl_source = DefinitionSource::parse(
+        &serde_json::to_string(&[gold_order, gold_action]).expect("implementer ext"),
+        &serde_json::to_string(&base_docs).expect("base"),
+    )
+    .expect("implementer source");
+    let impl_result = approve(&impl_source)
+        .challenge_under_specialisation(
+            &impl_source,
+            &BTreeSet::new(),
+            &base_contract,
+            &base_source,
+            &prior,
+        )
+        .expect("implementer projected check");
+    assert_eq!(impl_result.reused, []);
+
+    // (d) Weakening a protected base law still fails admission.
+    let mut weakened = iface_law;
+    weakened["payload"]["response"]["expression"] = json!("true");
+    let weak_source = DefinitionSource::parse(
+        &serde_json::to_string(&[weakened]).expect("weakened"),
+        &serde_json::to_string(&base_docs).expect("base"),
+    )
+    .expect("weak source");
+    assert!(
+        ApprovedContract::approve(
+            &weak_source,
+            &BTreeSet::new(),
+            json!({"expression":"norn-zen/6"}),
+            json!({"axioms":[]}),
+            json!({"required":"checked-proof"}),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn projected_safety_forces_recheck_on_v2_extension_targeting_base_law_subject() {
+    use norn_checker::obligations::specialisation::{PROJECTED_RULE, PriorEvidence};
+
+    let (flattened_base, base_source, base_contract, records) = multilayer_projected_base();
+    let prior: Vec<PriorEvidence<'_>> = records
+        .iter()
+        .map(|(pins, record)| PriorEvidence {
+            pins,
+            result_sha256: &record.result_sha256,
+            record,
+        })
+        .collect();
+
+    // Adding a V2Extension targeting erpnext.SalesOrder widens SalesOrder, so
+    // SalesOrder base laws must recheck while PurchaseOrder base law still reuses.
+    let mut ext = pool()[0].clone();
+    ext["artifactId"] = json!("jewelry.SalesOrder.extension");
+    ext["namespace"] = json!("jewelry");
+    ext["payload"] = json!({
+        "entityVersion": "2.0",
+        "objectTypeExtension": {
+            "namespace": "jewelry",
+            "target": "erpnext.SalesOrder",
+            "properties": [{"id": "jewelry__tag", "type": {"kind": "boolean"}}]
+        }
+    });
+    let ext_source = DefinitionSource::parse(
+        &serde_json::to_string(&[ext]).expect("v2 ext"),
+        &serde_json::to_string(&flattened_base).expect("flattened base"),
+    )
+    .expect("v2 ext source");
+    let result = approve(&ext_source)
+        .challenge_under_specialisation(
+            &ext_source,
+            &BTreeSet::new(),
+            &base_contract,
+            &base_source,
+            &prior,
+        )
+        .expect("v2 ext projected check");
+    let expected_po_init = goal_index(
+        &result.challenge,
+        "erpnext.approved_amount.law",
+        "initialization",
+        None,
+    );
+    assert_eq!(result.reused.len(), 1);
+    assert_eq!(result.reused[0].rule, PROJECTED_RULE);
+    assert_eq!(result.reused[0].goal_index, expected_po_init);
 }
 
 struct LayerFixture {
