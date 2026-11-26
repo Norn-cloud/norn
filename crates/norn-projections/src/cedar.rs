@@ -38,6 +38,7 @@ pub const HOST_ATTRIBUTES: &str = "acted_by?: Set<Norn::Actor>";
 pub fn project_host_access_schema(object_types: &[ObjectTypeDef]) -> String {
     let mut resources: BTreeSet<String> = object_types
         .iter()
+        .filter(|object_type| !is_reserved_host_type(object_type.name.as_str()))
         .filter_map(|object_type| cedar_entity_name(object_type.name.as_str()))
         .collect();
     resources.insert("norn::Ledger".to_owned());

@@ -227,14 +227,13 @@ impl<'c> ChainIndex<'c> {
         &'s self,
         id: &str,
         kind: LineageEdgeKind,
-    ) -> impl Iterator<Item = &'c LineageNode> + 's {
+    ) -> impl Iterator<Item = &'c LineageNode> + use<'c, 's> {
         self.outgoing
             .get(id)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or_default(Vec::as_slice)
             .iter()
             .filter(move |edge| edge.kind == kind)
-            .filter_map(|edge| self.node(&edge.to))
+            .filter_map(move |edge| self.node(&edge.to))
     }
 }
 
@@ -367,8 +366,7 @@ fn run_event(
     for fact_id in index
         .written_by
         .get(commit.id.as_str())
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or_default(Vec::as_slice)
     {
         if let Some(object_type) = index
             .node(fact_id)
