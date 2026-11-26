@@ -13,6 +13,8 @@ use std::fmt;
 pub const MAX_TRIPLES: usize = 2_000_000;
 /// The longest admitted line, in bytes.
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
+/// The largest admitted document, in bytes.
+pub const MAX_INPUT_BYTES: usize = 256 * 1024 * 1024;
 
 /// One RDF term.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -94,6 +96,9 @@ pub struct Triple {
 ///
 /// A message naming the 1-based line of the first defect.
 pub fn parse(bytes: &[u8]) -> Result<Vec<Triple>, String> {
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(format!("document exceeds {MAX_INPUT_BYTES} bytes"));
+    }
     let text = std::str::from_utf8(bytes).map_err(|error| format!("not UTF-8: {error}"))?;
     let mut triples = Vec::new();
     for (index, line) in text.lines().enumerate() {
@@ -117,6 +122,10 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Triple>, String> {
     triples.sort();
     triples.dedup();
     Ok(triples)
+}
+
+fn is_disallowed_iri_char(c: char) -> bool {
+    c <= ' ' || matches!(c, '<' | '>' | '"' | '{' | '}' | '|' | '^' | '`' | '\\')
 }
 
 struct Cursor<'a> {
@@ -189,8 +198,14 @@ impl<'a> Cursor<'a> {
         loop {
             match self.chars.next() {
                 Some('>') => break,
-                Some('\\') => iri.push(self.unicode_escape()?),
-                Some(c) if c <= ' ' || matches!(c, '<' | '"' | '{' | '}' | '|' | '^' | '`') => {
+                Some('\\') => {
+                    let c = self.unicode_escape()?;
+                    if is_disallowed_iri_char(c) {
+                        return Err(format!("character {c:?} is not allowed in an IRI"));
+                    }
+                    iri.push(c);
+                }
+                Some(c) if is_disallowed_iri_char(c) => {
                     return Err(format!("character {c:?} is not allowed in an IRI"));
                 }
                 Some(c) => iri.push(c),
@@ -368,6 +383,22 @@ mod tests {
             (
                 "<https://e.x/s> <https://e.x/p> \"\\q\" .\n",
                 "unknown escape",
+            ),
+            (
+                "<https://e.x/a\\u003Eb> <https://e.x/p> <https://e.x/o> .\n",
+                "not allowed in an IRI",
+            ),
+            (
+                "<https://e.x/a\\u0000b> <https://e.x/p> <https://e.x/o> .\n",
+                "not allowed in an IRI",
+            ),
+            (
+                "<https://e.x/a\\u000Ab> <https://e.x/p> <https://e.x/o> .\n",
+                "not allowed in an IRI",
+            ),
+            (
+                "<https://e.x/a\\u005Cb> <https://e.x/p> <https://e.x/o> .\n",
+                "not allowed in an IRI",
             ),
         ] {
             let error = parse(text.as_bytes()).expect_err(text);

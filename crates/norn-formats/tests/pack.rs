@@ -238,3 +238,45 @@ fn a_section_that_is_not_an_array_is_refused() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn duplicate_dataset_selection_is_refused() {
+    let schema = schema();
+    let mut s = spec(vec![]);
+    s.select.push(s.select[0].clone());
+    let err = project(&schema, &s, &repeating_fields(&schema)).unwrap_err();
+    assert!(err.contains("more than once"), "{err}");
+}
+
+#[test]
+fn contract_rejects_malformed_constraint_fields_and_missing_projection_hash() {
+    let problems = mutated(|c| {
+        if let Some(arr) = c["constraints"].as_array_mut()
+            && let Some(first) = arr.first_mut()
+        {
+            first["fields"] = json!([123]);
+        }
+    });
+    assert!(
+        problems.iter().any(|p| p.contains("malformed fields")),
+        "{problems:?}"
+    );
+    let missing_hash = check_contract(&json!({}), &json!({}));
+    assert!(
+        missing_hash
+            .iter()
+            .any(|p| p.contains("rawMetadata does not pin")),
+        "{missing_hash:?}"
+    );
+}
+
+#[test]
+fn sorted_keys_handles_deep_nesting_without_stack_overflow() {
+    let mut value = json!({"b": 1, "a": 2});
+    for _ in 0..400 {
+        value = json!({"z": 0, "a": value});
+    }
+    let sorted = norn_formats::contract::sorted_keys(value);
+    let text = serde_json::to_string(&sorted).unwrap();
+    assert!(text.starts_with(r#"{"a":{"a":"#));
+}

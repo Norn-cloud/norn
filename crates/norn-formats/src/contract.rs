@@ -604,10 +604,12 @@ impl LossReport {
         let registered: BTreeSet<&str> = codes::ALL.iter().map(|code| code.code).collect();
         let members = emitted_members(layers);
 
+        let mut sorted = true;
         for pair in self.entries.windows(2) {
             if let [left, right] = pair
                 && left.element >= right.element
             {
+                sorted = false;
                 findings.push(format!(
                     "entries are not strictly sorted at {:?}",
                     right.element
@@ -669,26 +671,30 @@ impl LossReport {
                         findings.push(format!("{element:?} has no detail"));
                     }
                 }
-                Disposition::Dropped { reason, detail } => {
-                    if !DropReason::ALL.contains(reason) {
-                        findings.push(format!("{element:?} drop reason {reason:?} not allowed"));
-                    }
+                Disposition::Dropped { detail, .. } => {
                     if detail.trim().is_empty() {
                         findings.push(format!("{element:?} has no detail"));
                     }
                 }
             }
         }
+        let has_entry = |element: &SourceElement| {
+            if sorted {
+                self.entry(element).is_some()
+            } else {
+                self.entries.iter().any(|entry| entry.element == *element)
+            }
+        };
         if let Some(schema) = source_schema {
             for dataset in &schema.datasets {
                 let element = SourceElement::dataset(&dataset.id);
-                if self.entry(&element).is_none() {
+                if !has_entry(&element) {
                     findings.push(format!("source schema {element:?} has no loss entry"));
                 }
             }
             for field in &schema.fields {
                 let element = SourceElement::field(&field.dataset, &field.name);
-                if self.entry(&element).is_none() {
+                if !has_entry(&element) {
                     findings.push(format!("source schema {element:?} has no loss entry"));
                 }
             }
@@ -896,21 +902,87 @@ pub fn source_schema_envelope(
 }
 
 /// Rebuild every object with its keys in sorted order (independent of
-/// `serde_json`'s `preserve_order` feature).
+/// `serde_json`'s `preserve_order` feature) without recursion.
 #[must_use]
 pub fn sorted_keys(value: Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(key, value)| (key, sorted_keys(value)))
-                    .collect(),
-            )
+    enum Frame {
+        Array {
+            remaining: std::vec::IntoIter<Value>,
+            built: Vec<Value>,
+        },
+        Object {
+            remaining: std::vec::IntoIter<(String, Value)>,
+            built: serde_json::Map<String, Value>,
+            current_key: String,
+        },
+    }
+
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut current = value;
+    loop {
+        match current {
+            Value::Array(items) => {
+                let mut remaining = items.into_iter();
+                if let Some(first) = remaining.next() {
+                    stack.push(Frame::Array {
+                        remaining,
+                        built: Vec::new(),
+                    });
+                    current = first;
+                    continue;
+                }
+                current = Value::Array(Vec::new());
+            }
+            Value::Object(map) => {
+                let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+                entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+                let mut remaining = entries.into_iter();
+                if let Some((first_key, first_value)) = remaining.next() {
+                    stack.push(Frame::Object {
+                        remaining,
+                        built: serde_json::Map::new(),
+                        current_key: first_key,
+                    });
+                    current = first_value;
+                    continue;
+                }
+                current = Value::Object(serde_json::Map::new());
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
-        Value::Array(items) => Value::Array(items.into_iter().map(sorted_keys).collect()),
-        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
+        loop {
+            match stack.pop() {
+                None => return current,
+                Some(Frame::Array {
+                    mut remaining,
+                    mut built,
+                }) => {
+                    built.push(current);
+                    if let Some(next) = remaining.next() {
+                        stack.push(Frame::Array { remaining, built });
+                        current = next;
+                        break;
+                    }
+                    current = Value::Array(built);
+                }
+                Some(Frame::Object {
+                    mut remaining,
+                    mut built,
+                    current_key,
+                }) => {
+                    built.insert(current_key, current);
+                    if let Some((next_key, next_value)) = remaining.next() {
+                        stack.push(Frame::Object {
+                            remaining,
+                            built,
+                            current_key: next_key,
+                        });
+                        current = next_value;
+                        break;
+                    }
+                    current = Value::Object(built);
+                }
+            }
+        }
     }
 }

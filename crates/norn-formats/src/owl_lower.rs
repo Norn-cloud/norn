@@ -181,17 +181,11 @@ pub(crate) fn snake(local: &str) -> String {
             out.push(c.to_ascii_lowercase());
         } else if c.is_ascii_alphanumeric() {
             out.push(c);
-        } else {
+        } else if !out.ends_with('_') {
             out.push('_');
         }
     }
-    let mut collapsed = String::new();
-    for c in out.chars() {
-        if !(c == '_' && collapsed.ends_with('_')) {
-            collapsed.push(c);
-        }
-    }
-    let trimmed = collapsed.trim_matches('_');
+    let trimmed = out.trim_matches('_');
     match trimmed.chars().next() {
         None => "p".to_owned(),
         Some(c) if c.is_ascii_digit() => format!("p_{trimmed}"),
@@ -285,7 +279,6 @@ pub(crate) fn lower(
     let owned = |iri: &str| lowered.names.contains_key(iri);
     let placeable = |iri: &str| lowered.members.contains_key(iri);
 
-    // Characteristics and global targets.
     let mut functional = BTreeSet::new();
     let mut inverse_functional = BTreeSet::new();
     let mut ranges: BTreeMap<&str, Vec<(usize, &Expr)>> = BTreeMap::new();
@@ -490,14 +483,9 @@ pub(crate) fn lower(
             }
             Ask::Vacuous => {
                 let artifact = artifact_id(lowered.names.get(&class).map_or("", String::as_str));
-                lowered.dispositions.insert(
-                    index,
-                    Disposition::Mapped {
-                        target: Target::artifact(&artifact),
-                        degraded: None,
-                        decision: None,
-                    },
-                );
+                lowered
+                    .dispositions
+                    .insert(index, mapped(Target::artifact(&artifact)));
             }
             Ask::Deferred(disposition) => {
                 lowered.dispositions.insert(index, disposition);
@@ -514,12 +502,19 @@ pub(crate) fn lower(
         }
         if let Shape::Value { kind, .. } = &ask.shape
             && let Some(detail) = &kind.degraded
-            && ask.degraded.is_none()
         {
-            ask.degraded = Some(Degradation {
-                code: codes::OWL_DEGRADED.code.to_owned(),
-                detail: detail.clone(),
-            });
+            match &mut ask.degraded {
+                Some(existing) => {
+                    existing.detail.push_str("; ");
+                    existing.detail.push_str(detail);
+                }
+                None => {
+                    ask.degraded = Some(Degradation {
+                        code: codes::OWL_DEGRADED.code.to_owned(),
+                        detail: detail.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -569,7 +564,6 @@ pub(crate) fn lower(
         }
     }
 
-    // Resolve inherited requirements until stable.
     let (declared, rejected) = loop {
         match resolve(model, &lowered.names, &edges, &own) {
             Resolution::Stable { declared, rejected } => break (declared, rejected),
@@ -809,58 +803,54 @@ fn restriction_shape(
             ),
         );
     };
-    if !context.members.contains_key(property) || property_kind == PropertyKind::Annotation {
-        return defer(
-            &codes::OWL_EXTERNAL_REFERENCE,
-            NornHome::MappingIr,
-            format!(
-                "{} is not an owned object or datatype property",
-                model.compact(property)
-            ),
-        );
-    }
+    let is_object = match property_kind {
+        PropertyKind::Object if context.members.contains_key(property) => true,
+        PropertyKind::Datatype if context.members.contains_key(property) => false,
+        PropertyKind::Object | PropertyKind::Datatype | PropertyKind::Annotation => {
+            return defer(
+                &codes::OWL_EXTERNAL_REFERENCE,
+                NornHome::MappingIr,
+                format!(
+                    "{} is not an owned object or datatype property",
+                    model.compact(property)
+                ),
+            );
+        }
+    };
     let filler = read_filler(filler);
     let range = context.range_of.get(property).copied();
     // (at least, at most) values the restriction counts.
     let (least, most) = match kind {
         Restriction::All => {
             // Every value is a filler: the whole link targets it.
-            return match property_kind {
-                PropertyKind::Object => {
-                    let (target, uses_range) = match filler {
-                        Filler::Unqualified => (range, true),
-                        Filler::Named(iri) => (Some(iri), false),
-                        Filler::Expression => {
-                            return defer(
-                                &codes::OWL_CLASS_EXPRESSION,
-                                NornHome::EntityIr,
-                                "the filler is a class expression; a link target is one named type"
-                                    .into(),
-                            );
-                        }
-                    };
-                    Ok(link(context, target, false, false, None, uses_range))
-                }
-                PropertyKind::Datatype => {
-                    let (datatype, uses_range) = match filler {
-                        Filler::Unqualified => (range.unwrap_or(""), range.is_some()),
-                        Filler::Named(iri) => (iri, false),
-                        Filler::Expression => ("", false),
-                    };
-                    Ok(Ask::Member {
-                        shape: Shape::Value {
-                            kind: value_type(table, datatype)?,
-                            required: false,
-                        },
-                        degraded: None,
-                        uses_range,
-                    })
-                }
-                PropertyKind::Annotation => defer(
-                    &codes::OWL_CLASS_EXPRESSION,
-                    NornHome::EntityIr,
-                    "annotation property".into(),
-                ),
+            return if is_object {
+                let (target, uses_range) = match filler {
+                    Filler::Unqualified => (range, true),
+                    Filler::Named(iri) => (Some(iri), false),
+                    Filler::Expression => {
+                        return defer(
+                            &codes::OWL_CLASS_EXPRESSION,
+                            NornHome::EntityIr,
+                            "the filler is a class expression; a link target is one named type"
+                                .into(),
+                        );
+                    }
+                };
+                Ok(link(context, target, false, false, None, uses_range))
+            } else {
+                let (datatype, uses_range) = match filler {
+                    Filler::Unqualified => (range.unwrap_or(""), range.is_some()),
+                    Filler::Named(iri) => (iri, false),
+                    Filler::Expression => ("", false),
+                };
+                Ok(Ask::Member {
+                    shape: Shape::Value {
+                        kind: value_type(table, datatype)?,
+                        required: false,
+                    },
+                    degraded: None,
+                    uses_range,
+                })
             };
         }
         Restriction::Min(0) => return Ok(Ask::Vacuous),
@@ -887,13 +877,11 @@ fn restriction_shape(
     let closed = context.witnesses == WitnessPolicy::Closed;
     // Does the restriction speak of every value? Only when its filler
     // covers the property's established range.
-    let covered = match (&filler, property_kind) {
+    let covered = match (&filler, is_object) {
         (Filler::Unqualified, _) => true,
-        (Filler::Named(iri), PropertyKind::Object) => {
-            range.is_some_and(|range| context.subsumed(range, iri))
-        }
-        (Filler::Named(iri), PropertyKind::Datatype) => range == Some(*iri),
-        (Filler::Expression, _) | (Filler::Named(_), PropertyKind::Annotation) => false,
+        (Filler::Named(iri), true) => range.is_some_and(|range| context.subsumed(range, iri)),
+        (Filler::Named(iri), false) => range == Some(*iri),
+        (Filler::Expression, _) => false,
     };
     if !covered {
         let filler_text = match filler {
@@ -921,32 +909,26 @@ fn restriction_shape(
                     "only the existence of a value is lowered (witnesses: closed); {scope}"
                 ),
             });
-            return match property_kind {
-                PropertyKind::Object => Ok(link(context, range, false, true, degraded, true)),
-                // A data member holds one value: required, it would also cap
-                // the property at one, which OWL states only by a functional
-                // property or a `max 1` over every value.
-                PropertyKind::Datatype if !context.at_most_one(class, property) => defer(
+            return if is_object {
+                Ok(link(context, range, false, true, degraded, true))
+            } else if !context.at_most_one(class, property) {
+                defer(
                     &codes::OWL_FILLER_SCOPED,
                     NornHome::EntityIr,
                     format!(
                         "{scope}; under witnesses: closed only its existence could be lowered, but a data member holds one value and nothing bounds {} to one value here (no FunctionalProperty and no max 1 over every value), so a required member would add a bound OWL does not state",
                         model.compact(property)
                     ),
-                ),
-                PropertyKind::Datatype => Ok(Ask::Member {
+                )
+            } else {
+                Ok(Ask::Member {
                     shape: Shape::Value {
                         kind: value_type(table, range.unwrap_or(""))?,
                         required: true,
                     },
                     degraded,
                     uses_range: true,
-                }),
-                PropertyKind::Annotation => defer(
-                    &codes::OWL_CLASS_EXPRESSION,
-                    NornHome::EntityIr,
-                    "annotation property".into(),
-                ),
+                })
             };
         }
         let open = if least >= 1 && !closed {
@@ -960,6 +942,22 @@ fn restriction_shape(
             format!("{scope}{open}"),
         );
     }
+    let required = least >= 1 && closed;
+    if !is_object && required && !context.at_most_one(class, property) && most != Some(1) {
+        return defer(
+            &codes::OWL_CARDINALITY_BOUND,
+            NornHome::EntityIr,
+            format!(
+                "a data member holds one value and nothing bounds {} to one value here (no FunctionalProperty and no max 1 over every value), so a required member would add a bound OWL does not state",
+                model.compact(property)
+            ),
+        );
+    }
+    let shape_word = if is_object {
+        "many-member"
+    } else {
+        "single-valued member"
+    };
     let mut notes: Vec<(&codes::Code, String)> = Vec::new();
     if least >= 1 && !closed {
         notes.push((
@@ -973,7 +971,7 @@ fn restriction_shape(
         notes.push((
             &codes::OWL_CARDINALITY_BOUND,
             format!(
-                "at least {least} values: kept as a required many-member; the count bound needs a counting law"
+                "at least {least} values: kept as a required {shape_word}; the count bound needs a counting law"
             ),
         ));
     }
@@ -983,7 +981,7 @@ fn restriction_shape(
         notes.push((
             &codes::OWL_CARDINALITY_BOUND,
             format!(
-                "at most {most} values: kept as a many-member; the count bound needs a counting law"
+                "at most {most} values: kept as a {shape_word}; the count bound needs a counting law"
             ),
         ));
     }
@@ -995,23 +993,18 @@ fn restriction_shape(
             .collect::<Vec<_>>()
             .join("; "),
     });
-    let required = least >= 1 && closed;
     let to_one = most == Some(1);
-    match property_kind {
-        PropertyKind::Object => Ok(link(context, range, to_one, required, degraded, true)),
-        PropertyKind::Datatype => Ok(Ask::Member {
+    if is_object {
+        Ok(link(context, range, to_one, required, degraded, true))
+    } else {
+        Ok(Ask::Member {
             shape: Shape::Value {
                 kind: value_type(table, range.unwrap_or(""))?,
                 required,
             },
             degraded,
             uses_range: range.is_some(),
-        }),
-        PropertyKind::Annotation => defer(
-            &codes::OWL_CLASS_EXPRESSION,
-            NornHome::EntityIr,
-            "annotation property".into(),
-        ),
+        })
     }
 }
 
@@ -1065,19 +1058,19 @@ fn link(
 }
 
 fn reaches(edges: &BTreeMap<String, BTreeMap<String, usize>>, from: &str, to: &str) -> bool {
-    let mut stack = vec![from.to_owned()];
+    let mut stack = vec![from];
     let mut seen = BTreeSet::new();
     while let Some(node) = stack.pop() {
         if node == to {
             return true;
         }
-        if seen.insert(node.clone()) {
+        if seen.insert(node) {
             stack.extend(
                 edges
-                    .get(&node)
+                    .get(node)
                     .into_iter()
                     .flat_map(BTreeMap::keys)
-                    .cloned(),
+                    .map(String::as_str),
             );
         }
     }
@@ -1160,30 +1153,28 @@ fn resolve(
     edges: &BTreeMap<String, BTreeMap<String, usize>>,
     own: &[(String, Own)],
 ) -> Resolution {
-    // Ancestors over the current edges.
     let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for class in names.keys() {
-        let mut seen = BTreeSet::new();
-        let mut stack: Vec<String> = edges
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut stack: Vec<&str> = edges
             .get(class)
             .into_iter()
             .flat_map(BTreeMap::keys)
-            .cloned()
+            .map(String::as_str)
             .collect();
         while let Some(node) = stack.pop() {
-            if seen.insert(node.clone()) {
+            if seen.insert(node) {
                 stack.extend(
                     edges
-                        .get(&node)
+                        .get(node)
                         .into_iter()
                         .flat_map(BTreeMap::keys)
-                        .cloned(),
+                        .map(String::as_str),
                 );
             }
         }
-        ancestors.insert(class.clone(), seen);
+        ancestors.insert(class.clone(), seen.into_iter().map(str::to_owned).collect());
     }
-    // Parents before children.
     let mut order: Vec<&String> = names.keys().collect();
     order.sort_by_key(|class| (ancestors.get(*class).map_or(0, BTreeSet::len), *class));
     let mut by_class: BTreeMap<&str, Vec<&Own>> = BTreeMap::new();
@@ -1203,7 +1194,12 @@ fn resolve(
                     }
                     Some((current, from)) => match meet(current, shape, &ancestors) {
                         Some(narrower) => {
-                            members.insert(property.clone(), (narrower, from.clone()));
+                            let source = if narrower != *current && narrower == *shape {
+                                parent.clone()
+                            } else {
+                                from.clone()
+                            };
+                            members.insert(property.clone(), (narrower, source));
                         }
                         None => {
                             return Resolution::DropEdge {
@@ -1257,6 +1253,14 @@ fn resolve(
         declared.insert(class.clone(), mine);
     }
     Resolution::Stable { declared, rejected }
+}
+
+fn mapped(target: Target) -> Disposition {
+    Disposition::Mapped {
+        target,
+        degraded: None,
+        decision: None,
+    }
 }
 
 /// The disposition of every item.
@@ -1324,21 +1328,17 @@ fn dispose(
             },
         );
     }
-    let mapped_property = |property: &str| {
-        placed.get(property).map(|class| Disposition::Mapped {
-            target: target_of(class, lowered.members.get(property).map(String::as_str)),
-            degraded: None,
-            decision: None,
+    let mapped_in = |map: &BTreeMap<&str, &str>, property: &str| {
+        map.get(property).map(|class| {
+            mapped(target_of(
+                class,
+                lowered.members.get(property).map(String::as_str),
+            ))
         })
     };
+    let mapped_property = |property: &str| mapped_in(&placed, property);
     // A range axiom is mapped only where it typed a lowered member.
-    let mapped_range = |property: &str| {
-        ranged.get(property).map(|class| Disposition::Mapped {
-            target: target_of(class, lowered.members.get(property).map(String::as_str)),
-            degraded: None,
-            decision: None,
-        })
-    };
+    let mapped_range = |property: &str| mapped_in(&ranged, property);
     let unplaced = || {
         deferred(
             &codes::OWL_UNPLACED_PROPERTY,
@@ -1352,11 +1352,7 @@ fn dispose(
             continue;
         }
         let disposition = match item {
-            Item::Class(iri) if lowered.names.contains_key(iri) => Disposition::Mapped {
-                target: target_of(iri, None),
-                degraded: None,
-                decision: None,
-            },
+            Item::Class(iri) if lowered.names.contains_key(iri) => mapped(target_of(iri, None)),
             Item::Class(iri) | Item::ExternalClass(iri) => deferred(
                 &codes::OWL_EXTERNAL_REFERENCE,
                 NornHome::MappingIr,
@@ -1387,12 +1383,9 @@ fn dispose(
                 let documented = predicate == crate::owl_model::RDFS_LABEL
                     || predicate == crate::owl_model::SKOS_DEFINITION;
                 match described.get(subject) {
-                    // The description carries this annotation.
-                    Some((selected, target)) if documented && selected == predicate => Disposition::Mapped {
-                        target: target.clone(),
-                        degraded: None,
-                        decision: None,
-                    },
+                    Some((selected, target)) if documented && selected == predicate => {
+                        mapped(target.clone())
+                    }
                     Some((selected, _)) if documented => deferred(
                         &codes::OWL_ANNOTATION,
                         NornHome::WidgetIr,
@@ -1469,22 +1462,21 @@ fn axiom_disposition(
     } = *placement;
     let owned = |iri: &str| lowered.names.contains_key(iri);
     match axiom {
-        Axiom::SubClassOf { sub, sup: Expr::Named(sup) } if owned(sub) && sup == OWL_THING => {
-            Disposition::Mapped {
-                target: target_of(sub, None),
-                degraded: None,
-                decision: None,
-            }
+        Axiom::SubClassOf { sub, sup: Expr::Named(sup) }
+            if owned(sub) && (sup == OWL_THING || sub == sup) =>
+        {
+            mapped(target_of(sub, None))
         }
         Axiom::SubClassOf { sub, sup: Expr::Named(sup) }
             if owned(sub) && edges.get(sub).is_some_and(|sups| sups.contains_key(sup)) =>
         {
-            Disposition::Mapped {
-                target: target_of(sub, None),
-                degraded: None,
-                decision: None,
-            }
+            mapped(target_of(sub, None))
         }
+        Axiom::SubClassOf { sub, sup: Expr::Named(_) } if !owned(sub) => deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!("the subclass {} is not an owned class", model.compact(sub)),
+        ),
         Axiom::SubClassOf { sup: Expr::Named(sup), .. } => deferred(
             &codes::OWL_EXTERNAL_REFERENCE,
             NornHome::MappingIr,

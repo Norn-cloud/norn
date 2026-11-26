@@ -297,40 +297,74 @@ fn members_of(interface: &Value) -> Vec<Member> {
 }
 
 /// The closed promotion shape of a class: its source IRI, then every
-/// single-valued member it declares or inherits (the nearest declaration
-/// wins, as interfaces only narrow). A shape field's `maxCount` is a number,
-/// so many-valued members stay on the interface and out of the shape.
+/// single-valued member it declares or inherits (merging across ancestors so a
+/// narrowed single-valued declaration is kept even if another parent declared
+/// the member many-valued). A shape field's `maxCount` is a number, so
+/// many-valued members stay on the interface and out of the shape.
 fn shape_of(name: &str, by_name: &BTreeMap<String, Class>) -> Value {
+    struct Merged<'a> {
+        value_type: &'static str,
+        target: Option<&'a str>,
+        required: bool,
+        to_one: bool,
+    }
     let mut fields = vec![json!({
         "fieldId": "source_iri", "valueType": "iri", "minCount": 1, "maxCount": 1,
     })];
-    let mut seen = BTreeSet::from(["source_iri".to_owned()]);
+    let mut order: Vec<&str> = Vec::new();
+    let mut merged: BTreeMap<&str, Merged<'_>> = BTreeMap::new();
     let mut visited = BTreeSet::new();
-    let mut queue = std::collections::VecDeque::from([name.to_owned()]);
+    let mut queue = std::collections::VecDeque::from([name]);
     while let Some(node) = queue.pop_front() {
-        if !visited.insert(node.clone()) {
+        if !visited.insert(node) {
             continue;
         }
-        let Some(class) = by_name.get(&node) else {
+        let Some(class) = by_name.get(node) else {
             continue;
         };
         for member in &class.members {
-            if !seen.insert(member.id.clone()) {
+            if member.id == "source_iri" {
                 continue;
             }
-            if !member.to_one {
-                continue;
+            if let Some(existing) = merged.get_mut(member.id.as_str()) {
+                existing.required |= member.required;
+                if !existing.to_one && member.to_one {
+                    existing.to_one = true;
+                    existing.value_type = member.value_type;
+                    if member.target.is_some() {
+                        existing.target = member.target.as_deref();
+                    }
+                }
+            } else {
+                order.push(member.id.as_str());
+                merged.insert(
+                    member.id.as_str(),
+                    Merged {
+                        value_type: member.value_type,
+                        target: member.target.as_deref(),
+                        required: member.required,
+                        to_one: member.to_one,
+                    },
+                );
             }
-            let mut field = json!({
-                "fieldId": member.id, "valueType": member.value_type,
-                "minCount": u8::from(member.required), "maxCount": 1,
-            });
-            if let (Some(target), Some(object)) = (&member.target, field.as_object_mut()) {
-                object.insert("targetTermId".into(), json!(term_of(target)));
-            }
-            fields.push(field);
         }
-        queue.extend(class.extends.iter().cloned());
+        queue.extend(class.extends.iter().map(String::as_str));
+    }
+    for id in order {
+        let Some(member) = merged.get(id) else {
+            continue;
+        };
+        if !member.to_one {
+            continue;
+        }
+        let mut field = json!({
+            "fieldId": id, "valueType": member.value_type,
+            "minCount": u8::from(member.required), "maxCount": 1,
+        });
+        if let (Some(target), Some(object)) = (member.target, field.as_object_mut()) {
+            object.insert("targetTermId".into(), json!(term_of(target)));
+        }
+        fields.push(field);
     }
     let term = term_of(name);
     json!({
@@ -387,30 +421,93 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
     Ok(by_name)
 }
 
-/// The anchor classes (by interface name) each class's lineage reaches.
-fn lineages<'a, T>(
+/// The anchor and held classes each class's lineage reaches, computed in one
+/// pass over the class graph.
+fn lineages<'a, A, H>(
     by_name: &'a BTreeMap<String, Class>,
-    anchored: &BTreeMap<&'a str, T>,
-) -> BTreeMap<&'a str, BTreeSet<&'a str>> {
+    anchored: &BTreeMap<&'a str, A>,
+    held: &BTreeMap<&'a str, H>,
+) -> (
+    BTreeMap<&'a str, BTreeSet<&'a str>>,
+    BTreeMap<&'a str, BTreeSet<&'a str>>,
+) {
     let mut reached = BTreeMap::new();
+    let mut held_by = BTreeMap::new();
     for name in by_name.keys() {
         let mut seen = BTreeSet::new();
         let mut stack = vec![name.as_str()];
-        let mut found = BTreeSet::new();
+        let mut found_anchors = BTreeSet::new();
+        let mut found_held = BTreeSet::new();
         while let Some(node) = stack.pop() {
             if !seen.insert(node) {
                 continue;
             }
             if anchored.contains_key(node) {
-                found.insert(node);
+                found_anchors.insert(node);
+            }
+            if held.contains_key(node) {
+                found_held.insert(node);
             }
             if let Some(class) = by_name.get(node) {
                 stack.extend(class.extends.iter().map(String::as_str));
             }
         }
-        reached.insert(name.as_str(), found);
+        reached.insert(name.as_str(), found_anchors);
+        held_by.insert(name.as_str(), found_held);
     }
-    reached
+    (reached, held_by)
+}
+
+fn validate_supersedes(anchors: &[OwlAnchor]) -> Result<(), String> {
+    let by_class: BTreeMap<&str, &[String]> = anchors
+        .iter()
+        .map(|row| (row.class.as_str(), row.supersedes.as_slice()))
+        .collect();
+    for anchor in anchors {
+        for superseded in &anchor.supersedes {
+            if superseded == &anchor.class {
+                return Err(format!("anchor <{}> cannot supersede itself", anchor.class));
+            }
+            if !by_class.contains_key(superseded.as_str()) {
+                return Err(format!(
+                    "anchor <{}> supersedes <{superseded}>, which is not an anchor",
+                    anchor.class
+                ));
+            }
+        }
+    }
+    // Reject supersedes cycles so two mutually superseding anchors can never
+    // cancel each other out into a spurious canon_gap.
+    let mut state: BTreeMap<&str, u8> = BTreeMap::new();
+    for start in by_class.keys().copied() {
+        if state.get(start).copied().unwrap_or(0) != 0 {
+            continue;
+        }
+        let mut stack: Vec<(&str, usize)> = vec![(start, 0)];
+        state.insert(start, 1);
+        while let Some((node, next_idx)) = stack.last_mut() {
+            let edges = by_class.get(*node).copied().unwrap_or(&[]);
+            if let Some(target) = edges.get(*next_idx) {
+                *next_idx = next_idx.saturating_add(1);
+                match state.get(target.as_str()).copied().unwrap_or(0) {
+                    1 => {
+                        return Err(format!(
+                            "anchor supersedes cycle involving <{node}> and <{target}>"
+                        ));
+                    }
+                    0 => {
+                        state.insert(target.as_str(), 1);
+                        stack.push((target.as_str(), 0));
+                    }
+                    _ => {}
+                }
+            } else {
+                state.insert(*node, 2);
+                stack.pop();
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Align `interfaces` (the OWL reader's vocabulary layer) with `alignment`.
@@ -443,16 +540,7 @@ pub fn align(
             return Err(format!("anchor <{}> is listed twice", anchor.class));
         }
     }
-    for anchor in &alignment.anchors {
-        for superseded in &anchor.supersedes {
-            if !alignment.anchors.iter().any(|row| &row.class == superseded) {
-                return Err(format!(
-                    "anchor <{}> supersedes <{superseded}>, which is not an anchor",
-                    anchor.class
-                ));
-            }
-        }
-    }
+    validate_supersedes(&alignment.anchors)?;
     let mut held: BTreeMap<&str, &OwlHeld> = BTreeMap::new();
     for row in &alignment.held {
         let name = by_iri
@@ -465,8 +553,7 @@ pub fn align(
             ));
         }
     }
-    let reached = lineages(&by_name, &anchored);
-    let held_by = lineages(&by_name, &held);
+    let (reached, held_by) = lineages(&by_name, &anchored, &held);
     // An anchor at or below a held class would be held without a word.
     for (name, anchor) in &anchored {
         if let Some(via) = held_by.get(name).and_then(|set| set.first()) {

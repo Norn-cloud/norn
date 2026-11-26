@@ -23,12 +23,64 @@ const RDF_FIRST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first";
 const RDF_REST: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest";
 const RDF_NIL: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil";
 pub(crate) const RDFS_LABEL: &str = "http://www.w3.org/2000/01/rdf-schema#label";
+const RDFS_CLASS: &str = "http://www.w3.org/2000/01/rdf-schema#Class";
+const RDFS_DATATYPE: &str = "http://www.w3.org/2000/01/rdf-schema#Datatype";
 pub(crate) const SKOS_DEFINITION: &str = "http://www.w3.org/2004/02/skos/core#definition";
 pub(crate) const OWL_THING: &str = "http://www.w3.org/2002/07/owl#Thing";
+const OWL_CLASS: &str = "http://www.w3.org/2002/07/owl#Class";
+const OWL_OBJECT_PROPERTY: &str = "http://www.w3.org/2002/07/owl#ObjectProperty";
+const OWL_DATATYPE_PROPERTY: &str = "http://www.w3.org/2002/07/owl#DatatypeProperty";
+const OWL_ANNOTATION_PROPERTY: &str = "http://www.w3.org/2002/07/owl#AnnotationProperty";
+const OWL_ONTOLOGY: &str = "http://www.w3.org/2002/07/owl#Ontology";
+const OWL_ALL_DISJOINT_CLASSES: &str = "http://www.w3.org/2002/07/owl#AllDisjointClasses";
+const OWL_MEMBERS: &str = "http://www.w3.org/2002/07/owl#members";
+const OWL_AXIOM: &str = "http://www.w3.org/2002/07/owl#Axiom";
+const OWL_ALL_DIFFERENT: &str = "http://www.w3.org/2002/07/owl#AllDifferent";
+const OWL_ON_PROPERTY: &str = "http://www.w3.org/2002/07/owl#onProperty";
+const OWL_SOME_VALUES_FROM: &str = "http://www.w3.org/2002/07/owl#someValuesFrom";
+const OWL_ALL_VALUES_FROM: &str = "http://www.w3.org/2002/07/owl#allValuesFrom";
+const OWL_HAS_VALUE: &str = "http://www.w3.org/2002/07/owl#hasValue";
+const OWL_HAS_SELF: &str = "http://www.w3.org/2002/07/owl#hasSelf";
+const OWL_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#cardinality";
+const OWL_MIN_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#minCardinality";
+const OWL_MAX_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#maxCardinality";
+const OWL_QUALIFIED_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#qualifiedCardinality";
+const OWL_MIN_QUALIFIED_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#minQualifiedCardinality";
+const OWL_MAX_QUALIFIED_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#maxQualifiedCardinality";
+const OWL_ON_CLASS: &str = "http://www.w3.org/2002/07/owl#onClass";
+const OWL_ON_DATA_RANGE: &str = "http://www.w3.org/2002/07/owl#onDataRange";
+const OWL_UNION_OF: &str = "http://www.w3.org/2002/07/owl#unionOf";
+const OWL_INTERSECTION_OF: &str = "http://www.w3.org/2002/07/owl#intersectionOf";
+const OWL_COMPLEMENT_OF: &str = "http://www.w3.org/2002/07/owl#complementOf";
+const OWL_ONE_OF: &str = "http://www.w3.org/2002/07/owl#oneOf";
 
 /// The deepest class expression rendered; deeper (or cyclic) blank-node
 /// structure is refused.
 const MAX_EXPRESSION_DEPTH: usize = 32;
+/// Most members in one RDF list.
+const MAX_LIST_MEMBERS: usize = 4096;
+/// Most expression nodes expanded for a single axiom (prevents DAG blowup).
+const MAX_EXPRESSION_NODES: usize = 4096;
+/// Most bytes rendered for one blank-node structure (prevents DAG blowup).
+const MAX_RENDER_BYTES: usize = 65_536;
+
+fn is_restriction_constructor(predicate: &str) -> bool {
+    matches!(
+        predicate,
+        OWL_SOME_VALUES_FROM
+            | OWL_ALL_VALUES_FROM
+            | OWL_HAS_VALUE
+            | OWL_HAS_SELF
+            | OWL_CARDINALITY
+            | OWL_MIN_CARDINALITY
+            | OWL_MAX_CARDINALITY
+            | OWL_QUALIFIED_CARDINALITY
+            | OWL_MIN_QUALIFIED_CARDINALITY
+            | OWL_MAX_QUALIFIED_CARDINALITY
+            | OWL_ON_CLASS
+            | OWL_ON_DATA_RANGE
+    )
+}
 
 /// What an IRI is declared as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -151,6 +203,7 @@ pub(crate) struct Model {
     pub classes: BTreeSet<String>,
     pub properties: BTreeMap<String, PropertyKind>,
     pub datatypes: BTreeSet<String>,
+    ontologies: BTreeSet<String>,
     pub items: Vec<Item>,
     /// Labels and definitions per IRI (`rdfs:label`, `skos:definition`).
     pub labels: BTreeMap<String, String>,
@@ -173,6 +226,7 @@ impl Model {
             classes: BTreeSet::new(),
             properties: BTreeMap::new(),
             datatypes: BTreeSet::new(),
+            ontologies: BTreeSet::new(),
             items: Vec::new(),
             labels: BTreeMap::new(),
             definitions: BTreeMap::new(),
@@ -209,24 +263,22 @@ impl Model {
         format!("<{iri}>")
     }
 
-    fn objects<'a>(
+    fn objects<'a, 'p>(
         &'a self,
         subject: &Term,
-        predicate: &str,
-    ) -> impl Iterator<Item = &'a Term> + use<'a> {
-        let predicate = predicate.to_owned();
+        predicate: &'p str,
+    ) -> impl Iterator<Item = &'a Term> + use<'a, 'p> {
         self.subjects
             .get(subject)
             .into_iter()
             .flatten()
-            .filter(move |(p, _)| *p == predicate)
+            .filter(move |(p, _)| p.as_str() == predicate)
             .map(|(_, object)| object)
     }
 
-    fn types(&self, subject: &Term) -> BTreeSet<String> {
+    fn types<'a>(&'a self, subject: &Term) -> BTreeSet<&'a str> {
         self.objects(subject, RDF_TYPE)
             .filter_map(Term::iri)
-            .map(str::to_owned)
             .collect()
     }
 
@@ -235,20 +287,24 @@ impl Model {
         let mut classes = BTreeSet::new();
         let mut properties = BTreeMap::new();
         let mut datatypes = BTreeSet::new();
+        let mut ontologies = BTreeSet::new();
         for subject in self.subjects.keys() {
             let Term::Iri(iri) = subject else { continue };
             let types = self.types(subject);
-            if types.contains(&format!("{OWL}Class")) || types.contains(&format!("{RDFS}Class")) {
+            if types.contains(OWL_CLASS) || types.contains(RDFS_CLASS) {
                 classes.insert(iri.clone());
             }
-            if types.contains(&format!("{RDFS}Datatype")) {
+            if types.contains(RDFS_DATATYPE) {
                 datatypes.insert(iri.clone());
             }
-            let kind = if types.contains(&format!("{OWL}ObjectProperty")) {
+            if types.contains(OWL_ONTOLOGY) {
+                ontologies.insert(iri.clone());
+            }
+            let kind = if types.contains(OWL_OBJECT_PROPERTY) {
                 Some(PropertyKind::Object)
-            } else if types.contains(&format!("{OWL}DatatypeProperty")) {
+            } else if types.contains(OWL_DATATYPE_PROPERTY) {
                 Some(PropertyKind::Datatype)
-            } else if types.contains(&format!("{OWL}AnnotationProperty")) {
+            } else if types.contains(OWL_ANNOTATION_PROPERTY) {
                 Some(PropertyKind::Annotation)
             } else {
                 None
@@ -260,15 +316,14 @@ impl Model {
         self.classes = classes;
         self.properties = properties;
         self.datatypes = datatypes;
+        self.ontologies = ontologies;
     }
 
     fn is_declared(&self, iri: &str) -> bool {
         self.classes.contains(iri)
             || self.properties.contains_key(iri)
             || self.datatypes.contains(iri)
-            || self
-                .types(&Term::Iri(iri.to_owned()))
-                .contains(&format!("{OWL}Ontology"))
+            || self.ontologies.contains(iri)
     }
 
     fn partition(&mut self) -> Result<(), String> {
@@ -288,8 +343,35 @@ impl Model {
                 items.push(self.classify(iri, predicate, object)?);
             }
         }
+        let blank_objects: BTreeSet<&Term> = self
+            .subjects
+            .iter()
+            .filter(|(subject, _)| subject.is_blank())
+            .flat_map(|(_, statements)| {
+                statements
+                    .iter()
+                    .map(|(_, object)| object)
+                    .filter(|object| object.is_blank())
+            })
+            .collect();
+        let mut top_level_emitted = BTreeSet::new();
+        for (subject, statements) in &self.subjects {
+            if subject.is_blank()
+                && !referenced.contains(subject)
+                && !blank_objects.contains(subject)
+            {
+                for (_, object) in statements {
+                    self.reach(object, &mut referenced, 0)?;
+                }
+                items.push(self.top_level_blank(subject)?);
+                top_level_emitted.insert(subject.clone());
+            }
+        }
         for subject in self.subjects.keys() {
-            if subject.is_blank() && !referenced.contains(subject) {
+            if subject.is_blank()
+                && !referenced.contains(subject)
+                && !top_level_emitted.contains(subject)
+            {
                 items.push(self.top_level_blank(subject)?);
             }
         }
@@ -339,16 +421,35 @@ impl Model {
         referenced: &mut BTreeSet<Term>,
         depth: usize,
     ) -> Result<(), String> {
-        if !term.is_blank() || !referenced.insert(term.clone()) {
+        if !term.is_blank() {
             return Ok(());
         }
         if depth > MAX_EXPRESSION_DEPTH {
             return Err("blank-node structure deeper than 32 levels".into());
         }
-        for (_, object) in self.subjects.get(term).into_iter().flatten() {
-            self.reach(object, referenced, depth.saturating_add(1))?;
+        let mut current = term;
+        let mut list_steps = 0_usize;
+        loop {
+            if !referenced.insert(current.clone()) {
+                return Ok(());
+            }
+            let mut next_rest = None;
+            for (predicate, object) in self.subjects.get(current).into_iter().flatten() {
+                if predicate == RDF_REST && object.is_blank() && next_rest.is_none() {
+                    next_rest = Some(object);
+                } else {
+                    self.reach(object, referenced, depth.saturating_add(1))?;
+                }
+            }
+            let Some(rest) = next_rest else {
+                return Ok(());
+            };
+            list_steps = list_steps.saturating_add(1);
+            if list_steps > MAX_LIST_MEMBERS {
+                return Err("an RDF list longer than 4,096 members, or cyclic".into());
+            }
+            current = rest;
         }
-        Ok(())
     }
 
     fn classify(&self, iri: &str, predicate: &str, object: &Term) -> Result<Item, String> {
@@ -447,9 +548,9 @@ impl Model {
 
     fn top_level_blank(&self, subject: &Term) -> Result<Item, String> {
         let types = self.types(subject);
-        if types.contains(&format!("{OWL}AllDisjointClasses")) {
+        if types.contains(OWL_ALL_DISJOINT_CLASSES) {
             let members = self
-                .objects(subject, &format!("{OWL}members"))
+                .objects(subject, OWL_MEMBERS)
                 .next()
                 .map(|list| self.list(list, 0))
                 .transpose()?
@@ -457,7 +558,7 @@ impl Model {
             return Ok(Item::Axiom(Axiom::DisjointClasses(members)));
         }
         let rendering = self.render_blank(subject, 0)?;
-        if types.contains(&format!("{OWL}Axiom")) || types.contains(&format!("{OWL}AllDifferent")) {
+        if types.contains(OWL_AXIOM) || types.contains(OWL_ALL_DIFFERENT) {
             Ok(Item::AxiomAnnotation(rendering))
         } else {
             Ok(Item::Statement(rendering))
@@ -466,26 +567,40 @@ impl Model {
 
     /// The members of an RDF list, in list order.
     fn list(&self, head: &Term, depth: usize) -> Result<Vec<Expr>, String> {
+        let mut budget = MAX_EXPRESSION_NODES;
+        self.list_bounded(head, depth, &mut budget)
+    }
+
+    fn list_bounded(
+        &self,
+        head: &Term,
+        depth: usize,
+        budget: &mut usize,
+    ) -> Result<Vec<Expr>, String> {
         let mut members = Vec::new();
-        let mut node = head.clone();
+        let mut node = head;
         let mut steps = 0_usize;
-        while node != Term::Iri(RDF_NIL.to_owned()) {
+        while node.iri() != Some(RDF_NIL) {
             steps = steps.saturating_add(1);
-            if steps > 4096 {
+            if steps > MAX_LIST_MEMBERS {
                 return Err("an RDF list longer than 4,096 members, or cyclic".into());
             }
             let first = self
-                .objects(&node, RDF_FIRST)
+                .objects(node, RDF_FIRST)
                 .next()
                 .ok_or("an RDF list node without rdf:first")?;
-            members.push(self.expr(first, depth.saturating_add(1))?);
+            members.push(self.expr_bounded(first, depth.saturating_add(1), budget)?);
             node = self
-                .objects(&node, RDF_REST)
+                .objects(node, RDF_REST)
                 .next()
-                .cloned()
                 .ok_or("an RDF list node without rdf:rest")?;
         }
         Ok(members)
+    }
+
+    pub(crate) fn expr(&self, term: &Term, depth: usize) -> Result<Expr, String> {
+        let mut budget = MAX_EXPRESSION_NODES;
+        self.expr_bounded(term, depth, &mut budget)
     }
 
     /// The class expression (or data range) `term` denotes.
@@ -493,89 +608,103 @@ impl Model {
         clippy::too_many_lines,
         reason = "one arm per OWL class-expression form"
     )]
-    pub(crate) fn expr(&self, term: &Term, depth: usize) -> Result<Expr, String> {
+    fn expr_bounded(&self, term: &Term, depth: usize, budget: &mut usize) -> Result<Expr, String> {
         if depth > MAX_EXPRESSION_DEPTH {
             return Err("a class expression deeper than 32 levels, or cyclic".into());
         }
+        let Some(remaining) = budget.checked_sub(1) else {
+            return Err("a class expression exceeds the node budget".into());
+        };
+        *budget = remaining;
         let blank = match term {
             Term::Iri(iri) => return Ok(Expr::Named(iri.clone())),
             Term::Literal { .. } => return Ok(Expr::OneOf(vec![term.clone()])),
             Term::Blank(_) => term,
         };
         let next = depth.saturating_add(1);
-        let one = |name: &str| self.objects(blank, &format!("{OWL}{name}")).next();
-        if let Some(property) = one("onProperty").and_then(Term::iri) {
-            let filler = ["someValuesFrom", "allValuesFrom", "onClass", "onDataRange"]
-                .into_iter()
-                .find_map(&one)
-                .map(|filler| self.expr(filler, next).map(Box::new))
-                .transpose()?;
-            let number = |name: &str| -> Option<Result<u64, String>> {
-                one(name).map(|value| match value {
+        let one = |predicate: &str| self.objects(blank, predicate).next();
+        if let Some(property) = one(OWL_ON_PROPERTY).and_then(Term::iri) {
+            let number = |predicate: &str| -> Option<Result<u64, String>> {
+                one(predicate).map(|value| match value {
                     Term::Literal { value, .. } => value
                         .parse::<u64>()
                         .map_err(|_parse| format!("cardinality {value:?} is not a whole number")),
                     Term::Iri(_) | Term::Blank(_) => Err("a cardinality is a literal".into()),
                 })
             };
-            let kind = if one("someValuesFrom").is_some() {
-                Restriction::Some
-            } else if one("allValuesFrom").is_some() {
-                Restriction::All
-            } else if let Some(value) = one("hasValue") {
-                Restriction::HasValue(value.clone())
-            } else if one("hasSelf").is_some() {
-                Restriction::HasSelf
-            } else if let Some(n) = number("qualifiedCardinality").or_else(|| number("cardinality"))
-            {
-                Restriction::Exact(n?)
-            } else if let Some(n) =
-                number("minQualifiedCardinality").or_else(|| number("minCardinality"))
-            {
-                Restriction::Min(n?)
-            } else if let Some(n) =
-                number("maxQualifiedCardinality").or_else(|| number("maxCardinality"))
-            {
-                Restriction::Max(n?)
+            let (kind, qualified, filler_term) = if let Some(term) = one(OWL_SOME_VALUES_FROM) {
+                (Restriction::Some, false, Some(term))
+            } else if let Some(term) = one(OWL_ALL_VALUES_FROM) {
+                (Restriction::All, false, Some(term))
+            } else if let Some(value) = one(OWL_HAS_VALUE) {
+                (Restriction::HasValue(value.clone()), false, None)
+            } else if one(OWL_HAS_SELF).is_some() {
+                (Restriction::HasSelf, false, None)
+            } else if let Some(n) = number(OWL_QUALIFIED_CARDINALITY) {
+                (
+                    Restriction::Exact(n?),
+                    true,
+                    one(OWL_ON_CLASS).or_else(|| one(OWL_ON_DATA_RANGE)),
+                )
+            } else if let Some(n) = number(OWL_CARDINALITY) {
+                (Restriction::Exact(n?), false, None)
+            } else if let Some(n) = number(OWL_MIN_QUALIFIED_CARDINALITY) {
+                (
+                    Restriction::Min(n?),
+                    true,
+                    one(OWL_ON_CLASS).or_else(|| one(OWL_ON_DATA_RANGE)),
+                )
+            } else if let Some(n) = number(OWL_MIN_CARDINALITY) {
+                (Restriction::Min(n?), false, None)
+            } else if let Some(n) = number(OWL_MAX_QUALIFIED_CARDINALITY) {
+                (
+                    Restriction::Max(n?),
+                    true,
+                    one(OWL_ON_CLASS).or_else(|| one(OWL_ON_DATA_RANGE)),
+                )
+            } else if let Some(n) = number(OWL_MAX_CARDINALITY) {
+                (Restriction::Max(n?), false, None)
             } else {
                 return Ok(Expr::Other(self.render_blank(blank, depth)?));
             };
-            // A restriction with more than one constructor is not one OWL
-            // restriction; keep it whole rather than pick one reading.
+            let has_qualifier = one(OWL_ON_CLASS).is_some() || one(OWL_ON_DATA_RANGE).is_some();
+            // A restriction with more than one constructor (or mismatched
+            // qualifier) is not one OWL restriction; keep it whole rather than
+            // pick one reading.
             let constructors = self
                 .subjects
                 .get(blank)
                 .into_iter()
                 .flatten()
-                .filter(|(p, _)| p.starts_with(OWL) && p.as_str() != format!("{OWL}onProperty"))
+                .filter(|(p, _)| is_restriction_constructor(p.as_str()))
                 .count();
-            let expected =
-                if filler.is_some() && !matches!(kind, Restriction::Some | Restriction::All) {
-                    2
-                } else {
-                    1
-                };
-            if constructors != expected {
+            let expected = if qualified { 2 } else { 1 };
+            if constructors != expected || qualified != has_qualifier {
                 return Ok(Expr::Other(self.render_blank(blank, depth)?));
             }
+            let filler = filler_term
+                .map(|filler| self.expr_bounded(filler, next, budget).map(Box::new))
+                .transpose()?;
             return Ok(Expr::Restriction {
                 property: property.to_owned(),
                 kind,
                 filler,
             });
         }
-        if let Some(list) = one("unionOf") {
-            return Ok(Expr::Union(self.list(list, next)?));
+        if let Some(list) = one(OWL_UNION_OF) {
+            return Ok(Expr::Union(self.list_bounded(list, next, budget)?));
         }
-        if let Some(list) = one("intersectionOf") {
-            return Ok(Expr::Intersection(self.list(list, next)?));
+        if let Some(list) = one(OWL_INTERSECTION_OF) {
+            return Ok(Expr::Intersection(self.list_bounded(list, next, budget)?));
         }
-        if let Some(inner) = one("complementOf") {
-            return Ok(Expr::Complement(Box::new(self.expr(inner, next)?)));
+        if let Some(inner) = one(OWL_COMPLEMENT_OF) {
+            return Ok(Expr::Complement(Box::new(
+                self.expr_bounded(inner, next, budget)?,
+            )));
         }
-        if let Some(list) = one("oneOf") {
+        if let Some(list) = one(OWL_ONE_OF) {
             let members = self
-                .list(list, next)?
+                .list_bounded(list, next, budget)?
                 .into_iter()
                 .map(|member| match member {
                     Expr::Named(iri) => Term::Iri(iri),
@@ -603,20 +732,64 @@ impl Model {
     /// `[p o; p2 [..]]`. Labels never appear, so the rendering depends only
     /// on the graph's structure.
     fn render_blank(&self, blank: &Term, depth: usize) -> Result<String, String> {
+        let mut active = BTreeSet::new();
+        let mut memo = BTreeMap::new();
+        let mut total_bytes = 0_usize;
+        self.render_blank_bounded(blank, depth, &mut active, &mut memo, &mut total_bytes)
+    }
+
+    fn render_blank_bounded<'a>(
+        &'a self,
+        blank: &'a Term,
+        depth: usize,
+        active: &mut BTreeSet<&'a Term>,
+        memo: &mut BTreeMap<&'a Term, String>,
+        total_bytes: &mut usize,
+    ) -> Result<String, String> {
         if depth > MAX_EXPRESSION_DEPTH {
             return Err("blank-node structure deeper than 32 levels, or cyclic".into());
         }
+        if let Some(cached) = memo.get(blank) {
+            *total_bytes = total_bytes.saturating_add(cached.len());
+            if *total_bytes > MAX_RENDER_BYTES {
+                return Err("blank-node structure exceeds rendering size limit".into());
+            }
+            return Ok(cached.clone());
+        }
+        if !active.insert(blank) {
+            return Err("cyclic blank-node structure".into());
+        }
         let mut parts = Vec::new();
+        let mut own_bytes = 2_usize;
         for (predicate, object) in self.subjects.get(blank).into_iter().flatten() {
             let object = match object {
-                Term::Blank(_) => self.render_blank(object, depth.saturating_add(1))?,
+                Term::Blank(_) => self.render_blank_bounded(
+                    object,
+                    depth.saturating_add(1),
+                    active,
+                    memo,
+                    total_bytes,
+                )?,
                 Term::Iri(iri) => self.compact(iri),
                 Term::Literal { .. } => object.to_string(),
             };
-            parts.push(format!("{} {object}", self.compact(predicate)));
+            let part = format!("{} {object}", self.compact(predicate));
+            own_bytes = own_bytes.saturating_add(part.len()).saturating_add(2);
+            if *total_bytes > MAX_RENDER_BYTES || own_bytes > MAX_RENDER_BYTES {
+                active.remove(blank);
+                return Err("blank-node structure exceeds rendering size limit".into());
+            }
+            parts.push(part);
         }
+        active.remove(blank);
         parts.sort();
-        Ok(format!("[{}]", parts.join("; ")))
+        let rendered = format!("[{}]", parts.join("; "));
+        *total_bytes = total_bytes.saturating_add(rendered.len());
+        if *total_bytes > MAX_RENDER_BYTES {
+            return Err("blank-node structure exceeds rendering size limit".into());
+        }
+        memo.insert(blank, rendered.clone());
+        Ok(rendered)
     }
 
     fn render_all(&self, items: &[Expr]) -> String {

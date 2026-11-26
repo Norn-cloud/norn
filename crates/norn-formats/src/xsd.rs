@@ -175,6 +175,12 @@ fn expanded(
 struct Bindings {
     scopes: usize,
     bytes: usize,
+}
+
+/// Bundle-wide totals bounding element count and expanded Clark names across all files.
+#[derive(Default)]
+struct BundleBudget {
+    nodes: usize,
     expanded: usize,
 }
 
@@ -184,6 +190,7 @@ fn parse_node(
     stack: &[usize],
     path: &str,
     bindings: &mut Bindings,
+    budget: &mut BundleBudget,
 ) -> Result<XsdNode, String> {
     let parent = stack.last().and_then(|i| nodes.get(*i));
     let mut attrs = Vec::new();
@@ -250,10 +257,10 @@ fn parse_node(
             bound,
         })
     };
-    let name = expanded(start.name().as_ref(), &scope, false, &mut bindings.expanded)?;
+    let name = expanded(start.name().as_ref(), &scope, false, &mut budget.expanded)?;
     let mut attributes = BTreeMap::new();
     for (key, value) in attrs {
-        let key = expanded(&key, &scope, true, &mut bindings.expanded)?;
+        let key = expanded(&key, &scope, true, &mut budget.expanded)?;
         if attributes.insert(key, value).is_some() {
             return Err("duplicate expanded attribute".into());
         }
@@ -270,7 +277,7 @@ fn parse_node(
     })
 }
 
-fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
+fn parse(file: XsdFile<'_>, budget: &mut BundleBudget) -> Result<Vec<XsdNode>, String> {
     if file.bytes.len() > MAX_FILE_BYTES {
         return Err("schema exceeds 16 MiB".into());
     }
@@ -294,11 +301,12 @@ fn parse(file: XsdFile<'_>) -> Result<Vec<XsdNode>, String> {
                 if stack.len() >= MAX_DEPTH {
                     return Err("XML depth limit".into());
                 }
-                if nodes.len() >= MAX_NODES {
+                if budget.nodes >= MAX_NODES {
                     return Err("XML node limit".into());
                 }
+                budget.nodes = budget.nodes.saturating_add(1);
                 let index = nodes.len();
-                let node = parse_node(&start, &nodes, &stack, file.path, &mut bindings)?;
+                let node = parse_node(&start, &nodes, &stack, file.path, &mut bindings, budget)?;
                 nodes.push(node);
                 if !empty {
                     stack.push(index);
@@ -432,9 +440,13 @@ impl SchemaImporter for XsdReader {
         }
     }
     fn inventory(&self, source: Self::Source<'_>, config: &Self::Config) -> Vec<SourceElement> {
-        let parsed = admit(source, config)
-            .is_ok()
-            .then(|| source.iter().map(|file| parse(*file)).collect::<Parsed>());
+        let parsed = admit(source, config, None).is_ok().then(|| {
+            let mut budget = BundleBudget::default();
+            source
+                .iter()
+                .map(|file| parse(*file, &mut budget))
+                .collect::<Parsed>()
+        });
         inventory_of(source, parsed.as_ref())
     }
     fn import(&self, files: Self::Source<'_>, config: &Self::Config) -> SchemaImport {
@@ -459,13 +471,14 @@ impl SchemaImporter for XsdReader {
             loss_report: LossLedger::new().finish(),
         };
         // Pins and sizes first: unadmitted bytes never reach the XML parser.
-        let result = if let Err(error) = admit(files, config) {
+        let result = if let Err(error) = admit(files, config, Some(&output.provenance.inputs)) {
             for element in inventory_of(files, None) {
                 ledger.declare(element);
             }
             Err(error)
         } else {
-            let parsed: Parsed = files.iter().map(|file| parse(*file)).collect();
+            let mut budget = BundleBudget::default();
+            let parsed: Parsed = files.iter().map(|file| parse(*file, &mut budget)).collect();
             for element in inventory_of(files, Some(&parsed)) {
                 ledger.declare(element);
             }
@@ -746,7 +759,11 @@ fn discover_file(
     }
     Ok(())
 }
-fn admit(files: &[XsdFile<'_>], config: &XsdConfig) -> Result<(), String> {
+fn admit(
+    files: &[XsdFile<'_>],
+    config: &XsdConfig,
+    computed_pins: Option<&[InputPin]>,
+) -> Result<(), String> {
     let source = &config.admission;
     if files.is_empty()
         || !source.source_id.starts_with("source.")
@@ -770,13 +787,20 @@ fn admit(files: &[XsdFile<'_>], config: &XsdConfig) -> Result<(), String> {
         return Err("schema bundle exceeds 64 MiB".into());
     }
     let mut paths = BTreeSet::new();
-    for file in files {
+    for (index, file) in files.iter().enumerate() {
         if !paths.insert(file.path) {
             return Err("duplicate input path".into());
         }
+        let digest = computed_pins
+            .and_then(|pins| pins.get(index))
+            .filter(|pin| pin.path == file.path)
+            .map_or_else(
+                || std::borrow::Cow::Owned(sha256_hex(file.bytes)),
+                |pin| std::borrow::Cow::Borrowed(pin.sha256.as_str()),
+            );
         if !source.files.as_ref().is_some_and(|pins| {
             pins.iter()
-                .any(|p| p.path == file.path && p.sha256 == sha256_hex(file.bytes))
+                .any(|p| p.path == file.path && p.sha256 == digest.as_ref())
         }) {
             return Err(format!("unadmitted bytes: {}", file.path));
         }
@@ -830,7 +854,10 @@ fn repeats(node: &XsdNode, index: &BTreeMap<&str, &XsdNode>) -> Result<bool, Str
         if particle.is("complexType") {
             return Ok(false);
         }
-        if crate::xsd_profile::occurrences(particle)?.1 != Some(1) {
+        if crate::xsd_profile::occurrences(particle)?
+            .1
+            .is_none_or(|max| max > 1)
+        {
             return Ok(true);
         }
         current = particle
