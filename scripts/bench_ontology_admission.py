@@ -88,12 +88,12 @@ def main() -> None:
     for scale_set in sets:
         records = [run(emit_dir, scale_set) for _ in range(args.repeat)]
         if scale_set.startswith("lending:"):
-            best = min(records, key=lambda record: record["commit"]["p50_us"])
+            best = min(records, key=lambda record: record.get("commit", {}).get("p50_us", float("inf")))
         else:
             best = min(records, key=lambda record: record.get("admitMillis", 0))
         best["admitMillisRuns"] = [record.get("admitMillis") for record in records]
         if "commit" in best:
-            best["commitP50UsRuns"] = [record["commit"]["p50_us"] for record in records]
+            best["commitP50UsRuns"] = [record.get("commit", {}).get("p50_us") for record in records]
         runs.append(best)
     owl = [(r["artifacts"], r["admitMillis"]) for r in runs if r["set"].startswith("owl:")]
     print(json.dumps({"runs": runs, "owlTimeExponent": exponent(owl), "cpus": os.cpu_count()}, indent=2))

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Discovery-only scripted checker task; no live-LLM or governed-call claim."""
 import json
+import os
 import selectors
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 READ_TIMEOUT_S = 30.0
@@ -15,15 +17,24 @@ def _require(condition, detail="assertion failed"):
         raise SystemExit(f"mcp-check-task: {detail}")
 
 
-def _readline(stream, timeout=READ_TIMEOUT_S):
+def _readline(stream, buf, timeout=READ_TIMEOUT_S):
+    fd = stream.fileno()
+    deadline = time.monotonic() + timeout
     with selectors.DefaultSelector() as selector:
-        selector.register(stream, selectors.EVENT_READ)
-        if not selector.select(timeout):
-            raise SystemExit(f"mcp-check-task: timed out waiting {timeout}s for MCP response")
-    line = stream.readline()
-    if not line:
-        raise SystemExit("mcp-check-task: MCP server closed stdout unexpectedly")
-    return line
+        selector.register(fd, selectors.EVENT_READ)
+        while True:
+            newline = buf.find(b"\n")
+            if newline != -1:
+                line = bytes(buf[: newline + 1])
+                del buf[: newline + 1]
+                return line.decode("utf-8")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise SystemExit(f"mcp-check-task: timed out waiting {timeout}s for MCP response")
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                raise SystemExit("mcp-check-task: MCP server closed stdout unexpectedly")
+            buf.extend(chunk)
 
 
 if len(sys.argv) != 3:
@@ -32,15 +43,17 @@ with tempfile.TemporaryDirectory() as temporary:
     context = Path(temporary) / "context.json"
     context.write_text("{}")
     process = subprocess.Popen([sys.argv[1], "mcp"], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, text=True)
+                               stdout=subprocess.PIPE, bufsize=0)
+    read_buf = bytearray()
     sequence = 0
     def request(method, params):
         global sequence
         sequence += 1
-        process.stdin.write(json.dumps(dict(jsonrpc="2.0", id=sequence,
-                                           method=method, params=params)) + "\n")
+        payload = (json.dumps(dict(jsonrpc="2.0", id=sequence,
+                                   method=method, params=params)) + "\n").encode("utf-8")
+        process.stdin.write(payload)
         process.stdin.flush()
-        response = json.loads(_readline(process.stdout))
+        response = json.loads(_readline(process.stdout, read_buf))
         _require(response["id"] == sequence, response)
         return response["result"]
     try:
@@ -98,6 +111,8 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         if process.stdin and not process.stdin.closed:
             process.stdin.close()
+        if process.stdout and not process.stdout.closed:
+            process.stdout.close()
         if process.poll() is None:
             process.terminate()
             try:

@@ -265,6 +265,9 @@ def edit_manifest(crate: Crate, folded: list[dict]) -> tuple[str, dict[str, list
             end = index + 1
             while end < len(lines) and not lines[end].lstrip().startswith("["):
                 end += 1
+            if end < len(lines):
+                while end > index + 1 and lines[end - 1].lstrip().startswith("#"):
+                    end -= 1
             block = tomllib.loads("\n".join(lines[index + 1:end]))
             if block.get("name") in names or block.get("name") == SUITE:
                 above = []
@@ -273,8 +276,6 @@ def edit_manifest(crate: Crate, folded: list[dict]) -> tuple[str, dict[str, list
                 comments[block["name"]] = ["// " + c.lstrip("#").strip() for c in above]
                 if insert_at is None:
                     insert_at = len(out)
-                while end < len(lines) and not lines[end].strip():
-                    end += 1
                 index = end
                 continue
         out.append(line)

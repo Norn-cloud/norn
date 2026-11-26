@@ -189,6 +189,13 @@ class Budget:
         return cost, spent
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"refused non-HTTPS redirect from gateway")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _validate_gateway_url(url):
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme == "https" and parsed.netloc:
@@ -200,6 +207,7 @@ def _validate_gateway_url(url):
 
 def ask(url, token, model, messages, budget, log):
     _validate_gateway_url(url)
+    opener = urllib.request.build_opener(_HttpsOnlyRedirects()) if url.startswith("https://") else None
     limit = "max_completion_tokens" if model.startswith("openai/") else "max_tokens"
     body = json.dumps({"model": model, "messages": messages, limit: MAX_COMPLETION}).encode()
     request = urllib.request.Request(url + "/chat/completions", data=body, method="POST", headers={
@@ -209,7 +217,8 @@ def ask(url, token, model, messages, budget, log):
         if reservation is None:
             return None, "budget"
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
+            response_ctx = opener.open(request, timeout=180) if opener else urllib.request.urlopen(request, timeout=180)
+            with response_ctx as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise ValueError("gateway response exceeds size budget")

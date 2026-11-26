@@ -88,18 +88,17 @@ class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-        try:
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
             tmp.write(data)
             tmp.flush()
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
-    try:
+        os.chmod(tmp_path, 0o644)
         os.replace(tmp_path, path)
     except BaseException:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         raise
 
 
