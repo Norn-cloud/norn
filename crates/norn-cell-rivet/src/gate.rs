@@ -136,18 +136,17 @@ impl Gate {
         let Some(keys) = cold_keys(tokens).await else {
             return Admission::Unavailable;
         };
-        let now = now_ms() / 1000;
-        if keys.refresh_due(now) {
+        if keys.refresh_due_with(now_secs) {
             refresh(keys, &tokens.http, &tokens.jwks_url).await;
         }
-        if keys.principal(token, scope, now).is_some() {
+        if keys.principal_with(token, scope, now_secs).is_some() {
             return Admission::Admit;
         }
         // A key the issuer rotated in since the last fetch: refetch once (at
         // most once a minute), then check again.
-        if keys.take_unknown_kid(now)
+        if keys.take_unknown_kid_with(now_secs)
             && refresh(keys, &tokens.http, &tokens.jwks_url).await
-            && keys.principal(token, scope, now_ms() / 1000).is_some()
+            && keys.principal_with(token, scope, now_secs).is_some()
         {
             return Admission::Admit;
         }
@@ -217,10 +216,15 @@ async fn cold_keys(tokens: &Tokens) -> Option<&IssuerKeys> {
     tokens.keys.get()
 }
 
+/// Host wall clock in Unix seconds, sampled under the keys lock.
+fn now_secs() -> u64 {
+    now_ms() / 1000
+}
+
 /// Refetch the pinned JWKS into `keys`; whether new keys were installed.
 async fn refresh(keys: &IssuerKeys, http: &reqwest::Client, url: &str) -> bool {
     match Box::pin(fetch_jwks(http, url.to_owned(), false)).await {
-        Ok(jwks) => match keys.replace_jwks(&jwks.text, jwks.at / 1000) {
+        Ok(jwks) => match keys.replace_jwks_at(&jwks.text, jwks.at / 1000, now_secs) {
             Ok(()) => true,
             Err(refused) => {
                 tracing::error!(error = %refused.message, "the refetched JWKS is unusable");

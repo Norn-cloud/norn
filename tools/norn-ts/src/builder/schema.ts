@@ -159,17 +159,24 @@ export function mergeSchemas(a: ValueSchema, b: ValueSchema, path = "$"): ValueS
     const requiredA = new Set(a.required ?? [])
     const requiredB = new Set(b.required ?? [])
     for (const name of names) {
-      const left = a.properties[name]
-      const right = b.properties[name]
+      const left = Object.hasOwn(a.properties, name) ? a.properties[name] : undefined
+      const right = Object.hasOwn(b.properties, name) ? b.properties[name] : undefined
+      let value: ValueSchema
       if (left && right) {
         const merged = mergeSchemas(left, right, `${path}.${name}`)
         if (typeof merged === "string") return merged
-        fields[name] = merged
+        value = merged
         if (!requiredA.has(name) || !requiredB.has(name)) optional.push(name)
       } else {
-        fields[name] = (left ?? right)!
+        value = (left ?? right)!
         optional.push(name)
       }
+      Object.defineProperty(fields, name, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
     }
     return record(fields, optional)
   }

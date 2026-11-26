@@ -245,10 +245,13 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     let state = private_dir(&root)?;
     let _lock = lock(&state)?;
     let token = token()?;
-    write_private(&state.join("dev.token"), &format!("{}\n", token.bearer))?;
+    write_private(
+        &state.join("dev.token"),
+        &zeroize::Zeroizing::new(format!("{}\n", token.bearer)),
+    )?;
     write_private(
         &state.join("dev.reviewer.token"),
-        &format!("{}\n", token.reviewer),
+        &zeroize::Zeroizing::new(format!("{}\n", token.reviewer)),
     )?;
     let scope = CellScope {
         org_id: manifest.scope.org_id.clone(),
@@ -406,12 +409,12 @@ fn newest(lines: &Receiver<Value>, pending: &mut VecDeque<Value>) -> Option<Valu
         pending.push_back(next);
     }
     if let Some(last) = pending.iter().rposition(is_compiled) {
-        *pending = std::mem::take(pending)
-            .into_iter()
-            .enumerate()
-            .filter(|(index, event)| *index == last || !is_compiled(event))
-            .map(|(_, event)| event)
-            .collect();
+        let mut index = 0_usize;
+        pending.retain(|event| {
+            let keep = index == last || !is_compiled(event);
+            index = index.saturating_add(1);
+            keep
+        });
     }
     let first = pending
         .iter()
@@ -683,7 +686,7 @@ impl Session<'_> {
                 definitions::commit(
                     host,
                     &self.manifest.dev.actor,
-                    &policy::dev_kinds(),
+                    policy::dev_kinds(),
                     &definitions,
                     admitted,
                     &set,
@@ -824,7 +827,7 @@ impl Session<'_> {
             definitions::prepare(
                 &scratch,
                 &self.manifest.dev.actor,
-                &policy::dev_kinds(),
+                policy::dev_kinds(),
                 definitions,
                 &admitted.input.canonical_set,
                 now_ms(),
@@ -948,7 +951,7 @@ fn lock(state: &Path) -> Result<File, Failure> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(_held) => {
-            let running = std::fs::read_to_string(state.join("dev.json"))
+            let running = checkpoint_key::read_private(&state.join("dev.json"), 64 * 1024)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&text).ok())
                 .map_or_default(|session| {
@@ -973,9 +976,17 @@ struct Token {
     handle_key: [u8; 32],
 }
 
+impl Drop for Token {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.bearer);
+        zeroize::Zeroize::zeroize(&mut self.reviewer);
+        zeroize::Zeroize::zeroize(&mut self.handle_key);
+    }
+}
+
 fn token() -> Result<Token, Failure> {
-    let mut bytes = [0_u8; 96];
-    getrandom::fill(&mut bytes)
+    let mut bytes = zeroize::Zeroizing::new([0_u8; 96]);
+    getrandom::fill(&mut *bytes)
         .map_err(|error| Failure::setup("norn.dev.io", format!("no randomness: {error}")))?;
     let (bearers, key) = bytes.split_at(64);
     let (bearer, reviewer) = bearers.split_at(32);
@@ -1013,7 +1024,15 @@ fn private_dir(root: &Path) -> Result<PathBuf, Failure> {
             ),
         ));
     }
-    std::fs::create_dir_all(&state)
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&state)
         .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", state.display())))?;
     #[cfg(unix)]
     {
@@ -1038,11 +1057,12 @@ fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
         )
     };
     let relative = Path::new(cell);
-    if relative.as_os_str().is_empty()
-        || !relative
-            .components()
-            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
-    {
+    let mut parts = relative.components();
+    let valid_parts = !relative.as_os_str().is_empty()
+        && !matches!(cell.rsplit(['/', '\\']).next(), Some("" | "." | ".."))
+        && matches!(parts.next_back(), Some(Component::Normal(_)))
+        && parts.all(|part| matches!(part, Component::Normal(_) | Component::CurDir));
+    if !valid_parts {
         return Err(outside());
     }
     let path = root.join(relative);
@@ -1072,15 +1092,10 @@ fn cell_path(root: &Path, cell: &str) -> Result<PathBuf, Failure> {
     Ok(path)
 }
 
-/// Write a session file readable by the owner only. The file is always a
-/// new one: an existing file is unlinked first, so a descriptor someone opened
-/// on an older, wider file never sees the new contents, and the file is
-/// created exclusively (`O_EXCL`, `O_NOFOLLOW`, mode 0600), never through a
-/// symlink.
+/// Write a session file readable by the owner only. Atomically replaces via
+/// a sibling `O_EXCL`/`O_NOFOLLOW` mode-0600 file so concurrent readers never
+/// observe `ENOENT`/partial JSON and older descriptors keep the old inode.
 fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
-    let failed = |error: std::io::Error| {
-        Failure::setup("norn.dev.io", format!("{}: {error}", path.display()))
-    };
     if is_symlink(path) {
         return Err(Failure::setup(
             "norn.dev.unsafe_state",
@@ -1090,22 +1105,8 @@ fn write_private(path: &Path, text: &str) -> Result<(), Failure> {
             ),
         ));
     }
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(failed(error)),
-    }
-    let mut options = OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    options
-        .open(path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .map_err(failed)
+    checkpoint_key::write_atomic_private(path, text)
+        .map_err(|error| Failure::setup("norn.dev.io", format!("{}: {error}", path.display())))
 }
 
 #[cfg(all(test, unix))]
@@ -1166,6 +1167,8 @@ mod tests {
             "/tmp/other.sqlite",
             "../other.sqlite",
             ".norn/../../other.sqlite",
+            ".",
+            ".norn/.",
             "",
         ] {
             let refused = cell_path(&root, cell).err().unwrap();

@@ -66,13 +66,13 @@ pub mod service;
 pub mod vault;
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 
 use norn_api::authz::Operation;
 use norn_api::definition_routes::authorize;
 use norn_api::host::DevHost;
 use norn_api::scope::ScopeQuery;
-use norn_cell::engine::SqlEngine;
+use norn_cell::engine::{SqlEngine, SqlValue};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -193,6 +193,28 @@ impl Config {
                 })
             })
             .collect();
+        let redirect_url = match vars
+            .get(REDIRECT_URL_VAR)
+            .filter(|url| !url.trim().is_empty())
+        {
+            Some(raw) => {
+                let trimmed = raw.trim();
+                let parsed = url::Url::parse(trimmed)
+                    .map_err(|_error| format!("{REDIRECT_URL_VAR} is not a valid URL"))?;
+                if !matches!(parsed.scheme(), "https" | "http")
+                    || parsed.host().is_none()
+                    || !parsed.username().is_empty()
+                    || parsed.password().is_some()
+                    || parsed.fragment().is_some()
+                {
+                    return Err(format!(
+                        "{REDIRECT_URL_VAR} must be an http(s) URL with a host and no credentials or fragment"
+                    ));
+                }
+                Some(trimmed.to_owned())
+            }
+            None => None,
+        };
         Ok(Some(Self {
             keys: Arc::new(keys),
             egress_allowed: norn_api::sources::allowed_host_list(
@@ -200,10 +222,7 @@ impl Config {
                     .map_or("", String::as_str),
             )?,
             clients,
-            redirect_url: vars
-                .get(REDIRECT_URL_VAR)
-                .cloned()
-                .filter(|url| !url.is_empty()),
+            redirect_url,
             providers,
         }))
     }
@@ -223,24 +242,11 @@ impl Config {
             Vault::open(engine, scope, Arc::clone(&self.keys)).map_err(|e| e.to_string())?;
         vault.rewrap().map_err(|e| e.to_string())?;
         let egress = Egress::new(self.egress_allowed.clone(), lookup);
-        let clients = self
-            .clients
-            .iter()
-            .map(|(id, client)| {
-                (
-                    id.clone(),
-                    ClientCredentials {
-                        client_id: client.client_id.clone(),
-                        client_secret: client.client_secret.clone(),
-                    },
-                )
-            })
-            .collect();
         Connections::new(
             vault,
             egress,
             self.providers.clone(),
-            clients,
+            self.clients.clone(),
             self.redirect_url.clone(),
         )
         .map_err(|e| e.to_string())
@@ -269,22 +275,27 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     rest.strip_suffix("/oauth:start").map(Route::Start)
 }
 
-fn query(query: &str) -> (ScopeQuery, BTreeMap<String, String>) {
+fn query(query: &str) -> (ScopeQuery, BTreeMap<String, String>, bool) {
     let mut scope = ScopeQuery {
         org_id: None,
         environment_id: None,
     };
     let mut rest = BTreeMap::new();
+    let mut duplicate_callback = false;
     for (key, value) in form_urlencoded::parse(query.as_bytes()) {
         match key.as_ref() {
             "orgId" => scope.org_id = Some(value.into_owned()),
             "environmentId" => scope.environment_id = Some(value.into_owned()),
             other => {
-                rest.insert(other.to_owned(), value.into_owned());
+                if rest.insert(other.to_owned(), value.into_owned()).is_some()
+                    && matches!(other, "state" | "code")
+                {
+                    duplicate_callback = true;
+                }
             }
         }
     }
-    (scope, rest)
+    (scope, rest, duplicate_callback)
 }
 
 fn reply(status: u16, body: &serde_json::Value) -> Response {
@@ -405,12 +416,15 @@ struct Parked {
 /// or it is dropped.
 pub struct Admission<'a> {
     handoffs: &'a Handoffs,
+    armed: bool,
 }
 
 impl Drop for Admission<'_> {
     fn drop(&mut self) {
-        let mut parked = self.handoffs.lock();
-        parked.admitted = parked.admitted.saturating_sub(1);
+        if self.armed {
+            let mut parked = self.handoffs.lock();
+            parked.admitted = parked.admitted.saturating_sub(1);
+        }
     }
 }
 
@@ -420,7 +434,7 @@ impl Admission<'_> {
     /// digests are returned so their stored records are deleted too.
     #[must_use]
     pub fn reserve(
-        self,
+        mut self,
         state: &str,
         binding: &Binding<'_>,
         expires_ms: u64,
@@ -453,6 +467,8 @@ impl Admission<'_> {
                 code: None,
             },
         );
+        parked.admitted = parked.admitted.saturating_sub(1);
+        self.armed = false;
         evicted
     }
 }
@@ -508,7 +524,10 @@ impl Handoffs {
             return None;
         }
         parked.admitted = parked.admitted.saturating_add(1);
-        Some(Admission { handoffs: self })
+        Some(Admission {
+            handoffs: self,
+            armed: true,
+        })
     }
 
     /// Park `code` for `state`: `true` only for a live reservation (the
@@ -640,9 +659,9 @@ impl<E: SqlEngine> Routes<E> {
         {
             let _ignored = connections.forget_pending(&[], now_ms);
         }
-        let (scope, params) = query(request.query);
+        let (scope, params, duplicate_callback) = query(request.query);
         if let Route::Callback = route {
-            return Some(self.callback(request, &params, now_ms));
+            return Some(self.callback(request, &params, duplicate_callback, now_ms));
         }
         let (Route::Credentials(id) | Route::Start(id) | Route::Complete(id)) = route else {
             return Some(server::outside::<H>(request));
@@ -696,23 +715,9 @@ impl<E: SqlEngine> Routes<E> {
                 "revoking the grant at the provider needs authority over every connection of the cell; disconnect without revokeGrant",
             ));
         }
-        if let Err(error) = &self.serving {
-            return Some(coded(
-                503,
-                "connection.unavailable",
-                &format!("the connection configuration is malformed: {error}"),
-            ));
-        }
-        let opened = self.opened.get_or_init(|| (self.open)(&host.scope().key()));
-        let connections = match opened {
+        let connections = match self.open_connections(&host.scope().key(), now_ms) {
             Ok(connections) => connections,
-            Err(error) => {
-                return Some(coded(
-                    503,
-                    "connection.unavailable",
-                    &format!("the connection vault did not open: {error}"),
-                ));
-            }
+            Err(response) => return Some(response),
         };
         let result = match (route, request.method) {
             (Route::Credentials(_), "GET") => connections.status(id).map(|status| json!(status)),
@@ -733,6 +738,32 @@ impl<E: SqlEngine> Routes<E> {
         Some(match result {
             Ok(body) => reply(200, &body),
             Err(error) => refused(&error),
+        })
+    }
+
+    /// Open the cell's connections on first authorized request, sweeping any
+    /// expired pending OAuth states left from before a restart.
+    fn open_connections(&self, scope: &str, now_ms: u64) -> Result<&Connections<E>, Response> {
+        if let Err(error) = &self.serving {
+            return Err(coded(
+                503,
+                "connection.unavailable",
+                &format!("the connection configuration is malformed: {error}"),
+            ));
+        }
+        let opened = self.opened.get_or_init(|| {
+            let opened = (self.open)(scope);
+            if let Ok(connections) = &opened {
+                let _ignored = connections.forget_pending(&[], now_ms);
+            }
+            opened
+        });
+        opened.as_ref().map_err(|error| {
+            coded(
+                503,
+                "connection.unavailable",
+                &format!("the connection vault did not open: {error}"),
+            )
         })
     }
 
@@ -824,6 +855,7 @@ impl<E: SqlEngine> Routes<E> {
         &self,
         request: &Request<'_>,
         params: &BTreeMap<String, String>,
+        duplicate_callback: bool,
         now_ms: u64,
     ) -> Response {
         if request.method != "GET" {
@@ -837,7 +869,7 @@ impl<E: SqlEngine> Routes<E> {
                 "the provider did not return an authorization code",
             );
         };
-        if !state_shaped(state) || !code_shaped(code) {
+        if duplicate_callback || !state_shaped(state) || !code_shaped(code) {
             return coded(
                 400,
                 "connection.oauth_callback",
@@ -858,6 +890,77 @@ impl<E: SqlEngine> Routes<E> {
             )
         }
     }
+}
+
+#[derive(Default)]
+pub(super) struct Flight {
+    pub(super) done: Mutex<Option<Result<(), ConnError>>>,
+    pub(super) ready: Condvar,
+}
+
+pub(super) struct FlightGuard<'a> {
+    pub(super) flights: &'a Mutex<BTreeMap<String, Arc<Flight>>>,
+    pub(super) id: &'a str,
+    pub(super) flight: &'a Arc<Flight>,
+    pub(super) settled: bool,
+}
+
+impl FlightGuard<'_> {
+    pub(super) fn finish(&mut self, result: &Result<(), ConnError>) {
+        self.flights
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(self.id);
+        *self
+            .flight
+            .done
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(result.clone());
+        self.flight.ready.notify_all();
+        self.settled = true;
+    }
+}
+
+impl Drop for FlightGuard<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.finish(&Err(ConnError::Unavailable("refresh aborted".to_owned())));
+        }
+    }
+}
+
+pub(super) fn sql_ms(value: u64) -> SqlValue {
+    SqlValue::Integer(i64::try_from(value).unwrap_or(i64::MAX))
+}
+
+pub(super) fn sql_opt_ms(value: Option<u64>) -> SqlValue {
+    value.map_or(SqlValue::Null, sql_ms)
+}
+
+pub(super) fn sql_opt_text(value: Option<&str>) -> SqlValue {
+    value.map_or(SqlValue::Null, |text| SqlValue::Text(text.to_owned()))
+}
+
+pub(super) fn sql_text(value: &str) -> SqlValue {
+    SqlValue::Text(value.to_owned())
+}
+
+pub(super) fn sql_get_text(row: &[SqlValue], index: usize) -> Option<String> {
+    match row.get(index) {
+        Some(SqlValue::Text(text)) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+pub(super) fn sql_get_int(row: &[SqlValue], index: usize) -> Option<i64> {
+    match row.get(index) {
+        Some(SqlValue::Integer(value)) => Some(*value),
+        _ => None,
+    }
+}
+
+pub(super) fn sql_get_ms(row: &[SqlValue], index: usize) -> Option<u64> {
+    sql_get_int(row, index).and_then(|value| u64::try_from(value).ok())
 }
 
 #[cfg(test)]

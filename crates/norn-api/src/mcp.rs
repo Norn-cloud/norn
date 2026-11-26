@@ -43,10 +43,19 @@ pub struct Session {
 #[derive(Deserialize)]
 struct Request {
     jsonrpc: String,
+    /// Absent for notifications (`None`); present `"id": null` decodes as `Some(RuntimeValue::Null)`
+    /// so `Session::handle` rejects it with `-32600` instead of silently treating it as a notification.
+    #[serde(default, deserialize_with = "deserialize_present_id")]
     id: Option<RuntimeValue>,
     method: String,
     #[serde(default = "empty_parameters")]
     params: RuntimeValue,
+}
+fn deserialize_present_id<'de, D>(deserializer: D) -> Result<Option<RuntimeValue>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    RuntimeValue::deserialize(deserializer).map(Some)
 }
 fn empty_parameters() -> RuntimeValue {
     RuntimeValue::Object(RuntimeObject::new())
