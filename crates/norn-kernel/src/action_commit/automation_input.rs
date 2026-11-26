@@ -11,8 +11,9 @@ use crate::cell_host::JsonObject;
 use super::ActionRefusal;
 use super::input::{
     action_link_key, actor_derived_fields, check_call_receipt_input, check_canonical_object_bound,
-    clock_derived_fields, reserved_action_identity, rfc6901_token,
+    reserved_action_identity, rfc6901_token,
 };
+use super::post_slice::clock_derived_fields;
 
 /// The shortest target id the runtime can inject when the target id schema
 /// leaves it unconstrained (an object key is nonblank). See

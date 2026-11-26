@@ -42,6 +42,22 @@ fn input_property_finding(
 
 /// The per-action findings: caller-writable protected properties, a writer
 /// on a generated-key create, and each `independentOf` property.
+fn descendant_views<'a>(
+    model: &'a Model<'_>,
+    kind: &str,
+) -> Vec<&'a crate::entity_instance::EffectiveObjectType> {
+    model
+        .by_name
+        .values()
+        .flatten()
+        .filter_map(|defined| defined.effective_object_type.as_ref()?.as_ref().ok())
+        .filter(|effective| {
+            effective.name.as_str() == kind
+                || effective.lineage.iter().any(|anc| anc.as_str() == kind)
+        })
+        .collect()
+}
+
 pub(super) fn actor_binding_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
@@ -51,6 +67,9 @@ pub(super) fn actor_binding_findings(
     let program = root.effect_program.as_ref();
     let kind = program.map(|program| program.target().object_kind);
     let view = kind.and_then(|kind| model.effective_object_type_named(kind));
+    let target_views = kind
+        .map(|kind| descendant_views(model, kind))
+        .unwrap_or_default();
     if let (Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }), Some(kind)) =
         (program, kind)
     {
@@ -65,7 +84,7 @@ pub(super) fn actor_binding_findings(
                 "/payload/synchronousRule",
             ));
         }
-        upsert_origin_findings(artifact, root, kind, write_mode, view, &mut findings);
+        upsert_origin_findings(artifact, root, write_mode, &target_views, &mut findings);
     }
     if let (
         Some(ActionEffectProgram::FireTransition {
@@ -73,16 +92,15 @@ pub(super) fn actor_binding_findings(
             set_fields,
             ..
         }),
-        Some(kind),
+        Some(_),
     ) = (program, kind)
     {
         transition_origin_findings(
             artifact,
             root,
-            kind,
             accept_receipt.as_ref(),
             set_fields,
-            view,
+            &target_views,
             &mut findings,
         );
     }
@@ -91,15 +109,14 @@ pub(super) fn actor_binding_findings(
             parent_values_field,
             ..
         }),
-        Some(kind),
+        Some(_),
     ) = (program, kind)
     {
         parent_rows_origin_findings(
             artifact,
             root,
-            kind,
             parent_values_field,
-            view,
+            &target_views,
             &mut findings,
         );
     }
@@ -124,14 +141,13 @@ pub(super) fn actor_binding_findings(
 fn parent_rows_origin_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
-    kind: &str,
     parent_values_field: &str,
-    view: Option<&crate::entity_instance::EffectiveObjectType>,
+    views: &[&crate::entity_instance::EffectiveObjectType],
     findings: &mut Vec<Diagnostic>,
 ) {
-    let Some(view) = view else {
+    if views.is_empty() {
         return;
-    };
+    }
     let Some(parent_fields) = root
         .input_schema
         .get("properties")
@@ -141,55 +157,59 @@ fn parent_rows_origin_findings(
         .and_then(|schema| schema.get("properties"))
         .and_then(JsonValue::as_object)
     else {
-        // Fail closed when parentValuesField uses an open JSON object union
-        // on a parent entity declaring origin-restricted or immutableAfterCreate properties.
-        for prop in &view.properties {
-            if prop.computed {
-                continue;
-            }
-            if prop.immutable_after_create()
-                || prop
-                    .origin()
-                    .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
-            {
-                findings.push(finding(
-                    codes::TARGET_NOT_WRITABLE,
-                    format!(
-                        "mutate_parent_with_rows with open {parent_values_field:?} schema cannot target {kind:?}, which declares restricted property {:?}",
-                        prop.id.as_str()
-                    ),
-                    artifact,
-                    &format!("/payload/inputSchema/properties/{parent_values_field}"),
-                ));
+        for view in views {
+            let kind = view.name.as_str();
+            for prop in &view.properties {
+                if prop.computed {
+                    continue;
+                }
+                if prop.immutable_after_create()
+                    || prop
+                        .origin()
+                        .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+                {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "mutate_parent_with_rows with open {parent_values_field:?} schema cannot target {kind:?}, which declares restricted property {:?}",
+                            prop.id.as_str()
+                        ),
+                        artifact,
+                        &format!("/payload/inputSchema/properties/{parent_values_field}"),
+                    ));
+                }
             }
         }
         return;
     };
-    for field in parent_fields.keys() {
-        let Some(prop) = view.property(field.as_str()) else {
-            continue;
-        };
-        if prop.immutable_after_create() {
-            findings.push(finding(
-                codes::TARGET_NOT_WRITABLE,
-                format!(
-                    "property {field:?} of {kind:?} is immutableAfterCreate and cannot be written by mutate_parent_with_rows"
-                ),
-                artifact,
-                &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
-            ));
-        }
-        if let Some(origin) = prop.origin()
-            && origin != norn_ir::PropertyOrigin::Caller
-        {
-            findings.push(finding(
-                codes::TARGET_NOT_WRITABLE,
-                format!(
-                    "property {field:?} of {kind:?} has non-caller origin `{origin:?}` and cannot be written from mutate_parent_with_rows parentValues"
-                ),
-                artifact,
-                &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
-            ));
+    for view in views {
+        let kind = view.name.as_str();
+        for field in parent_fields.keys() {
+            let Some(prop) = view.property(field.as_str()) else {
+                continue;
+            };
+            if prop.immutable_after_create() {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} is immutableAfterCreate and cannot be written by mutate_parent_with_rows"
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
+                ));
+            }
+            if let Some(origin) = prop.origin()
+                && origin != norn_ir::PropertyOrigin::Caller
+            {
+                findings.push(finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} has non-caller origin `{origin:?}` and cannot be written from mutate_parent_with_rows parentValues"
+                    ),
+                    artifact,
+                    &format!("/payload/inputSchema/properties/{parent_values_field}/properties/{field}"),
+                ));
+            }
         }
     }
 }
@@ -197,9 +217,8 @@ fn parent_rows_origin_findings(
 fn upsert_origin_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
-    kind: &str,
     write_mode: &UpsertWriteMode,
-    view: Option<&crate::entity_instance::EffectiveObjectType>,
+    views: &[&crate::entity_instance::EffectiveObjectType],
     findings: &mut Vec<Diagnostic>,
 ) {
     let Some(JsonValue::Object(properties)) = root.input_schema.get("properties") else {
@@ -208,27 +227,57 @@ fn upsert_origin_findings(
     let stamped = root.actor_stamped_fields();
     let clock_stamped = root.clock_stamped_fields();
     let server_derived = norn_expr::schema::trusted_server_derived_fields(root);
-    for field in properties.keys() {
-        let Some(prop) = view.and_then(|view| view.property(field.as_str())) else {
-            continue;
-        };
-        if prop.protected() {
-            let message = match (stamped.contains(field), write_mode) {
-                (true, UpsertWriteMode::CreateOnly) => None,
-                (
-                    true,
-                    UpsertWriteMode::Upsert
-                    | UpsertWriteMode::DraftOnly { .. }
-                    | UpsertWriteMode::UpdateOnly,
-                ) => Some(format!(
-                    "the stamp of protected property {field:?} of {kind:?} requires writeMode create_only; an update would overwrite the recorded principal"
-                )),
-                (false, _) => Some(format!(
-                    "the upsert writes input property {field:?}, a protected actor property of {kind:?}, from caller input; stamp it from the verified principal instead (derive {:?} with inputRequired false, `fromCaller`)",
-                    norn_ir::ACTOR_SUBJECT_STAMP
-                )),
+    for view in views {
+        let kind = view.name.as_str();
+        for field in properties.keys() {
+            let Some(prop) = view.property(field.as_str()) else {
+                continue;
             };
-            if let Some(message) = message {
+            if prop.protected() {
+                let message = match (stamped.contains(field), write_mode) {
+                    (true, UpsertWriteMode::CreateOnly) => None,
+                    (
+                        true,
+                        UpsertWriteMode::Upsert
+                        | UpsertWriteMode::DraftOnly { .. }
+                        | UpsertWriteMode::UpdateOnly,
+                    ) => Some(format!(
+                        "the stamp of protected property {field:?} of {kind:?} requires writeMode create_only; an update would overwrite the recorded principal"
+                    )),
+                    (false, _) => Some(format!(
+                        "the upsert writes input property {field:?}, a protected actor property of {kind:?}, from caller input; stamp it from the verified principal instead (derive {:?} with inputRequired false, `fromCaller`)",
+                        norn_ir::ACTOR_SUBJECT_STAMP
+                    )),
+                };
+                if let Some(message) = message {
+                    findings.push(input_property_finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        message,
+                        artifact,
+                        field,
+                    ));
+                }
+            }
+            if prop.immutable_after_create() && !matches!(write_mode, UpsertWriteMode::CreateOnly) {
+                findings.push(input_property_finding(
+                    codes::TARGET_NOT_WRITABLE,
+                    format!(
+                        "property {field:?} of {kind:?} is immutableAfterCreate and may only be written by a create_only upsert"
+                    ),
+                    artifact,
+                    field,
+                ));
+            }
+            if let Some(origin) = prop.origin()
+                && let Some(message) = origin_write_violation(
+                    origin,
+                    field,
+                    kind,
+                    &stamped,
+                    &clock_stamped,
+                    &server_derived,
+                )
+            {
                 findings.push(input_property_finding(
                     codes::TARGET_NOT_WRITABLE,
                     message,
@@ -236,33 +285,6 @@ fn upsert_origin_findings(
                     field,
                 ));
             }
-        }
-        if prop.immutable_after_create() && !matches!(write_mode, UpsertWriteMode::CreateOnly) {
-            findings.push(input_property_finding(
-                codes::TARGET_NOT_WRITABLE,
-                format!(
-                    "property {field:?} of {kind:?} is immutableAfterCreate and may only be written by a create_only upsert"
-                ),
-                artifact,
-                field,
-            ));
-        }
-        if let Some(origin) = prop.origin()
-            && let Some(message) = origin_write_violation(
-                origin,
-                field,
-                kind,
-                &stamped,
-                &clock_stamped,
-                &server_derived,
-            )
-        {
-            findings.push(input_property_finding(
-                codes::TARGET_NOT_WRITABLE,
-                message,
-                artifact,
-                field,
-            ));
         }
     }
 }
@@ -305,81 +327,83 @@ fn origin_write_violation(
 fn transition_origin_findings(
     artifact: &ArtifactEnvelope,
     root: &ActionRoot,
-    kind: &str,
     accept_receipt: Option<&norn_ir::ReceiptAcceptance>,
     set_fields: &std::collections::BTreeMap<PropertyId, String>,
-    view: Option<&crate::entity_instance::EffectiveObjectType>,
+    views: &[&crate::entity_instance::EffectiveObjectType],
     findings: &mut Vec<Diagnostic>,
 ) {
     let stamped = root.actor_stamped_fields();
     let clock_stamped = root.clock_stamped_fields();
     let server_derived = norn_expr::schema::trusted_server_derived_fields(root);
-    for (target_prop, source_field) in set_fields {
-        let Some(prop) = view.and_then(|view| view.property(target_prop.as_str())) else {
-            continue;
-        };
-        if prop.immutable_after_create() {
-            findings.push(finding(
-                codes::TARGET_NOT_WRITABLE,
-                format!(
-                    "fire_transition setFields cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
-                    target_prop.as_str()
-                ),
-                artifact,
-                "/payload/effectProgram/setFields",
-            ));
-        }
-        if let Some(origin) = prop.origin()
-            && let Some(message) = origin_write_violation(
-                origin,
-                source_field,
-                kind,
-                &stamped,
-                &clock_stamped,
-                &server_derived,
-            )
-        {
-            findings.push(finding(
-                codes::TARGET_NOT_WRITABLE,
-                message,
-                artifact,
-                "/payload/effectProgram/setFields",
-            ));
-        }
-    }
-    if let Some(binding) = accept_receipt {
-        for target_prop in
-            std::iter::once(&binding.digest_property).chain(binding.result_bindings.keys())
-        {
-            let Some(prop) = view.and_then(|view| view.property(target_prop.as_str())) else {
+    for view in views {
+        let kind = view.name.as_str();
+        for (target_prop, source_field) in set_fields {
+            let Some(prop) = view.property(target_prop.as_str()) else {
                 continue;
             };
             if prop.immutable_after_create() {
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,
                     format!(
-                        "acceptReceipt cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
+                        "fire_transition setFields cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
                         target_prop.as_str()
                     ),
                     artifact,
-                    "/payload/effectProgram/acceptReceipt",
+                    "/payload/effectProgram/setFields",
                 ));
             }
             if let Some(origin) = prop.origin()
-                && !matches!(
+                && let Some(message) = origin_write_violation(
                     origin,
-                    norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Receipt
+                    source_field,
+                    kind,
+                    &stamped,
+                    &clock_stamped,
+                    &server_derived,
                 )
             {
                 findings.push(finding(
                     codes::TARGET_NOT_WRITABLE,
-                    format!(
-                        "acceptReceipt cannot write property {:?} of {kind:?} whose declared origin is not `receipt`",
-                        target_prop.as_str()
-                    ),
+                    message,
                     artifact,
-                    "/payload/effectProgram/acceptReceipt",
+                    "/payload/effectProgram/setFields",
                 ));
+            }
+        }
+        if let Some(binding) = accept_receipt {
+            for target_prop in
+                std::iter::once(&binding.digest_property).chain(binding.result_bindings.keys())
+            {
+                let Some(prop) = view.property(target_prop.as_str()) else {
+                    continue;
+                };
+                if prop.immutable_after_create() {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "acceptReceipt cannot overwrite immutableAfterCreate property {:?} of {kind:?}",
+                            target_prop.as_str()
+                        ),
+                        artifact,
+                        "/payload/effectProgram/acceptReceipt",
+                    ));
+                }
+                if let Some(origin) = prop.origin()
+                    && !matches!(
+                        origin,
+                        norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Receipt
+                    )
+                {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "acceptReceipt cannot write property {:?} of {kind:?} whose declared origin is not `receipt`",
+                            target_prop.as_str()
+                        ),
+                        artifact,
+                        "/payload/effectProgram/acceptReceipt",
+                    ));
+                }
             }
         }
     }

@@ -35,6 +35,7 @@ mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
+mod post_slice;
 mod predicate;
 mod receipt;
 mod series;
@@ -66,9 +67,8 @@ pub use approval::{
     retained_person_matches, validate_accountable_person,
 };
 pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
-pub use input::{
-    actor_derived_fields, clock_derived_fields, prepare_action_input, prepare_action_input_for_call,
-};
+pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
+pub use post_slice::clock_derived_fields;
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
@@ -130,7 +130,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    if !input::clock_derived_fields(call.action).is_empty() {
+    if post_slice::action_reads_clock(call.action) {
         return Err(ActionRefusal::InvalidInput {
             field: "clock".to_owned(),
         });

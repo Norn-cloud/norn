@@ -6,7 +6,8 @@ use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::decision_commit::{FactEvent, TypeCatalog};
 use crate::limits::{EnvelopeLimits, SliceMeter};
 
-use super::input::{apply_post_slice_derivations, check_action_record_size};
+use super::input::check_action_record_size;
+use super::post_slice::apply_post_slice_derivations;
 use super::receipt::resolve_receipt_effect;
 use super::slice::{
     ActionSliceContext, LoadedActionSlice, check_action_preconditions, load_action_slice,

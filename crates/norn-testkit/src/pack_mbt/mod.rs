@@ -34,6 +34,7 @@ pub(crate) mod law_parity;
 pub(crate) mod seed;
 pub mod static_gaps;
 pub mod synth;
+mod witness_seed;
 
 use std::collections::{BTreeMap, BTreeSet};
 

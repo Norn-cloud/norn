@@ -370,11 +370,7 @@ fn validate_stored_patch<X>(
                 field: field.to_owned(),
             });
         };
-        if declared.computed
-            || declared.protected()
-            || declared
-                .origin()
-                .is_some_and(|origin| origin != norn_ir::PropertyOrigin::Caller)
+        if super::post_slice::is_stored_patch_origin_restricted(declared)
             || type_series(catalog, object_type)
                 .is_some_and(|series| series.key_properties.contains(&declared.id))
         {
@@ -888,18 +884,7 @@ where
                             .properties
                             .iter()
                             .find(|candidate| candidate.id == *property)
-                            .is_none_or(|candidate| {
-                                candidate.computed
-                                    || candidate.protected()
-                                    || candidate.immutable_after_create()
-                                    || candidate.origin().is_some_and(|origin| {
-                                        !matches!(
-                                            origin,
-                                            norn_ir::PropertyOrigin::Caller
-                                                | norn_ir::PropertyOrigin::Derived
-                                        )
-                                    })
-                            })
+                            .is_none_or(super::post_slice::is_owned_row_property_restricted)
                 })
             })
         })

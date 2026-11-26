@@ -79,10 +79,7 @@ pub const INPUT_VARIABLE: &str = "input";
 pub const ACTOR_VARIABLE: &str = "actor";
 /// Record name of the authenticated action principal.
 pub const ACTION_PRINCIPAL_RECORD: &str = "norn:ActionPrincipal";
-/// The closed server commit clock operand (`ACTION-CLOCK-1`).
-pub const CLOCK_VARIABLE: &str = "clock";
-/// Record name of the server commit clock bound during action derivation.
-pub const ACTION_CLOCK_RECORD: &str = "norn:ActionClock";
+pub use crate::{ACTION_CLOCK_RECORD, CLOCK_VARIABLE};
 
 /// Record name of a bound `input` (outside the object type name grammar, so
 /// it never collides with a model type).
@@ -676,10 +673,7 @@ impl ZenTypeEnv {
         );
         records.insert(
             ACTION_CLOCK_RECORD.to_owned(),
-            BTreeMap::from([
-                ("nowMillis".to_owned(), Type::Integer),
-                ("nowIso".to_owned(), Type::text()),
-            ]),
+            crate::action_clock_record_fields(),
         );
         Self::input_only_with_records(records, fields, options)?
             .bind_operand(

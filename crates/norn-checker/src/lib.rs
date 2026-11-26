@@ -42,6 +42,7 @@ pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
 pub mod entity_model;
+mod entity_model_origin;
 pub mod entity_scopes;
 pub mod envelope;
 pub mod exact_rational;
@@ -103,6 +104,7 @@ pub mod source_schema;
 pub mod tool_ports;
 pub mod transform;
 pub mod typed_roots;
+mod typed_roots_post_slice;
 pub mod verification;
 
 pub use action_set::{check_action_firing, check_action_set};

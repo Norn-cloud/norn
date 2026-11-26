@@ -9,7 +9,8 @@ use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
 use crate::limits::SliceMeter;
 use crate::naming_series::type_series;
 
-use super::input::{apply_post_slice_derivations, check_action_record_size};
+use super::input::check_action_record_size;
+use super::post_slice::apply_post_slice_derivations;
 use super::series::commit_upsert_series;
 use super::slice::{ActionSliceContext, check_action_preconditions, load_action_slice};
 use super::transition::{WriterTarget, writer_output};

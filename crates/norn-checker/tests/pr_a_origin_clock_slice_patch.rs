@@ -1,17 +1,8 @@
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::too_many_lines,
-    missing_docs,
-    reason = "focused PR-A admission tests"
-)]
-
 //! PR-A structural admission proofs:
 //! - ACTION-CLOCK-1 (`clock.nowIso` / `clock.nowMillis` in `derive`)
 //! - ACTION-SLICE-DERIVE-1 (post-slice `derive` + no-cycle refusal into slice keys)
 //! - TRANSITION-PATCH-1 (`fire_transition` `setFields`)
-//! - ORIGIN-DATAFLOW-1 (`origin` and `immutableAfterCreate`)
+//! - ORIGIN-DATAFLOW-1 (`origin` and `immutableAfterCreate`, including subtype tightening)
 
 use std::collections::BTreeSet;
 
@@ -86,9 +77,8 @@ fn check(artifacts: &[ArtifactEnvelope]) -> Vec<String> {
     .collect()
 }
 
-#[test]
-fn admits_clock_origin_post_slice_derive_and_transition_set_fields() {
-    let create = envelope(
+fn create_payout_action() -> ArtifactEnvelope {
+    envelope(
         "action",
         "test.payout.create.action",
         "Create payout",
@@ -125,8 +115,11 @@ fn admits_clock_origin_post_slice_derive_and_transition_set_fields() {
                 "writeMode": { "kind": "create_only" }
             }
         }),
-    );
-    let retry = envelope(
+    )
+}
+
+fn retry_payout_action() -> ArtifactEnvelope {
+    envelope(
         "action",
         "test.payout.retry.action",
         "Retry failed payout",
@@ -166,8 +159,11 @@ fn admits_clock_origin_post_slice_derive_and_transition_set_fields() {
                 "setFields": { "generation": "next_generation" }
             }
         }),
-    );
-    let confirm = envelope(
+    )
+}
+
+fn confirm_payout_action() -> ArtifactEnvelope {
+    envelope(
         "action",
         "test.payout.confirm.action",
         "Confirm payout",
@@ -203,17 +199,24 @@ fn admits_clock_origin_post_slice_derive_and_transition_set_fields() {
                 }
             }
         }),
-    );
+    )
+}
 
+#[test]
+fn admits_clock_origin_post_slice_derive_and_transition_set_fields() {
     assert_eq!(
-        check(&[payout_entity(), create, retry, confirm]),
+        check(&[
+            payout_entity(),
+            create_payout_action(),
+            retry_payout_action(),
+            confirm_payout_action(),
+        ]),
         Vec::<String>::new()
     );
 }
 
 #[test]
-fn refuses_origin_violations_immutable_updates_and_slice_key_cycles() {
-    // 1. Caller writing `clock`, `derived`, and `receipt` properties directly + updating `immutableAfterCreate`
+fn refuses_origin_violations_and_immutable_updates() {
     let bad_upsert = envelope(
         "action",
         "test.payout.bad_update.action",
@@ -264,8 +267,10 @@ fn refuses_origin_violations_immutable_updates_and_slice_key_cycles() {
         errs.iter().any(|e| e.contains("origin `receipt`")),
         "{errs:?}"
     );
+}
 
-    // 2. Post-slice derivation trying to overwrite slice key `id` (cycle)
+#[test]
+fn refuses_slice_key_cycles_in_post_slice_derive() {
     let cyclic = envelope(
         "action",
         "test.payout.cyclic.action",
@@ -312,8 +317,7 @@ fn refuses_origin_violations_immutable_updates_and_slice_key_cycles() {
 }
 
 #[test]
-fn enforces_subtype_origin_inheritance_caller_taint_reserved_clock_and_set_fields_types() {
-    // 1. Subtype override without repeating `origin` or `immutableAfterCreate` must inherit both.
+fn enforces_subtype_origin_inheritance_and_caller_taint() {
     let wire_subtype = envelope(
         "entity",
         "test.WirePayout.entity",
@@ -372,8 +376,10 @@ fn enforces_subtype_origin_inheritance_caller_taint_reserved_clock_and_set_field
         subtype_errs.iter().any(|e| e.contains("origin `clock`")),
         "{subtype_errs:?}"
     );
+}
 
-    // 2. Caller-reading derivation cannot satisfy `origin: derived`.
+#[test]
+fn refuses_caller_passthrough_reserved_clock_and_bad_set_fields_type() {
     let passthrough_derived = envelope(
         "action",
         "test.payout.passthrough.action",
@@ -416,7 +422,6 @@ fn enforces_subtype_origin_inheritance_caller_taint_reserved_clock_and_set_field
         "{passthrough_errs:?}"
     );
 
-    // 3. Reserved `clock` input field and mismatched `setFields` type are refused at admission.
     let bad_clock_and_patch = envelope(
         "action",
         "test.payout.bad_patch.action",
@@ -462,5 +467,81 @@ fn enforces_subtype_origin_inheritance_caller_taint_reserved_clock_and_set_field
             .iter()
             .any(|e| e.contains("incompatible with the target property")),
         "{patch_errs:?}"
+    );
+}
+
+#[test]
+fn refuses_base_action_writing_subtype_tightened_origin() {
+    let base = envelope(
+        "entity",
+        "test.BaseDoc.entity",
+        "BaseDoc",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.BaseDoc",
+                "properties": [
+                    { "id": "id", "type": { "kind": "text" } },
+                    { "id": "stamped_at", "type": { "kind": "timestamp", "timezone": "utc" } },
+                    { "id": "state", "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "closed" }] }, "default": "open" }
+                ],
+                "identity": [{ "name": "primary", "properties": ["id"] }],
+                "lifecycles": [{
+                    "property": "state",
+                    "initial": ["open"],
+                    "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
+                }]
+            }
+        }),
+    );
+    let sub = envelope(
+        "entity",
+        "test.AuditedDoc.entity",
+        "AuditedDoc",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.AuditedDoc",
+                "extends": "test.BaseDoc",
+                "properties": [
+                    { "id": "stamped_at", "type": { "kind": "timestamp", "timezone": "utc" }, "origin": "clock" }
+                ]
+            }
+        }),
+    );
+    let base_close = envelope(
+        "action",
+        "test.base_doc.close.action",
+        "Close base doc",
+        &json!({
+            "actionId": "test.base_doc.close",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "id": { "type": "string" }, "caller_ts": { "type": "string" } },
+                "required": ["id", "caller_ts"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [{ "entityKind": "test.BaseDoc", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectKind": "test.BaseDoc",
+                "objectIdField": "id",
+                "entityArtifactId": "test.BaseDoc.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "state",
+                "transition": "close",
+                "setFields": { "stamped_at": "caller_ts" }
+            }
+        }),
+    );
+    let errs = check(&[base, sub, base_close]);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("origin `clock`") && e.contains("test.AuditedDoc")),
+        "base action writing subtype-tightened clock property must fail closed: {errs:?}"
     );
 }

@@ -1,11 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::too_many_lines,
-    reason = "focused PR-A runtime tests"
-)]
-
 //! Runtime tests for PR-A:
 //! - ACTION-CLOCK-1 (`clock.nowIso` / `clock.nowMillis`, spoofed clock refusal)
 //! - ACTION-SLICE-DERIVE-1 (post-slice `derive` on upsert and transition)
@@ -101,13 +93,8 @@ fn call<'a>(
     }
 }
 
-#[test]
-fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
-    let types = payout_types();
-    let catalog = TypeCatalog::new(&types).with_transition_guards(&[]);
-    let mut cell = Cell::new(|_| JsonObject::new());
-
-    let create_action: ActionRoot = serde_json::from_value(json!({
+fn create_payout_action() -> ActionRoot {
+    serde_json::from_value(json!({
         "actionId": "test.payout.create",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": true,
@@ -140,64 +127,11 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
             "writeMode": { "kind": "create_only" }
         }
     }))
-    .unwrap();
+    .unwrap()
+}
 
-    // Spoofing a clock-derived field in raw caller input must refuse fail-closed.
-    let spoofed: JsonObject = serde_json::from_value(json!({
-        "id": "po_1",
-        "stamped_at": "2020-01-01T00:00:00Z"
-    }))
-    .unwrap();
-    let err = commit_action(
-        &mut cell,
-        &catalog,
-        &call(
-            &create_action,
-            "test.payout.create.action",
-            spoofed,
-            "k-spoof",
-            1_764_115_200_000,
-        ),
-        &Allow,
-    )
-    .unwrap_err();
-    assert!(
-        matches!(err, ActionRefusal::InvalidInput { ref field } if field == "stamped_at"),
-        "{err:?}"
-    );
-
-    // Honest create stamps `clock.nowIso` from `call.turn.now` (2025-11-26T00:00:00Z).
-    let raw_create: JsonObject =
-        serde_json::from_value(json!({ "id": "po_1", "payslip_id": "ps_1" })).unwrap();
-    let outcome = commit_action(
-        &mut cell,
-        &catalog,
-        &call(
-            &create_action,
-            "test.payout.create.action",
-            raw_create,
-            "k-create",
-            1_764_115_200_000,
-        ),
-        &Allow,
-    )
-    .unwrap();
-    assert!(matches!(outcome, ActionOutcome::Committed { .. }));
-
-    let key = FactKey::new("test.Payout", "po_1");
-    let created = cell.load(&key).unwrap();
-    let created_vals = created.values.as_ref().unwrap();
-    assert_eq!(
-        created_vals.get("stamped_at"),
-        Some(&RuntimeValue::String("2025-11-26T00:00:00Z".to_owned()))
-    );
-    assert_eq!(
-        created_vals.get("generation"),
-        Some(&RuntimeValue::from(1_i64))
-    );
-
-    // Fail the payout, then retry with post-slice `generation + 1` via `setFields`.
-    let fail_action: ActionRoot = serde_json::from_value(json!({
+fn fail_payout_action() -> ActionRoot {
+    serde_json::from_value(json!({
         "actionId": "test.payout.fail",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": true,
@@ -220,22 +154,11 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
             "transition": "fail"
         }
     }))
-    .unwrap();
-    commit_action(
-        &mut cell,
-        &catalog,
-        &call(
-            &fail_action,
-            "test.payout.fail.action",
-            serde_json::from_value(json!({ "id": "po_1" })).unwrap(),
-            "k-fail",
-            1_764_115_260_000,
-        ),
-        &Allow,
-    )
-    .unwrap();
+    .unwrap()
+}
 
-    let retry_action: ActionRoot = serde_json::from_value(json!({
+fn retry_payout_action() -> ActionRoot {
+    serde_json::from_value(json!({
         "actionId": "test.payout.retry",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": true,
@@ -271,36 +194,11 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
             "setFields": { "generation": "next_generation" }
         }
     }))
-    .unwrap();
+    .unwrap()
+}
 
-    commit_action(
-        &mut cell,
-        &catalog,
-        &call(
-            &retry_action,
-            "test.payout.retry.action",
-            serde_json::from_value(json!({ "id": "po_1" })).unwrap(),
-            "k-retry",
-            1_764_115_320_000,
-        ),
-        &Allow,
-    )
-    .unwrap();
-
-    let retried = cell.load(&key).unwrap();
-    let retried_vals = retried.values.as_ref().unwrap();
-    assert_eq!(
-        retried_vals.get("state"),
-        Some(&RuntimeValue::String("requested".to_owned()))
-    );
-    assert_eq!(
-        retried_vals.get("generation"),
-        Some(&RuntimeValue::from(2_i64))
-    );
-
-    // ORIGIN-DATAFLOW-1 runtime enforcement: mutating an `immutableAfterCreate`
-    // property via an update action must fail closed in `norn-kernel`.
-    let mutate_immutable: ActionRoot = serde_json::from_value(json!({
+fn tamper_payslip_action() -> ActionRoot {
+    serde_json::from_value(json!({
         "actionId": "test.payout.tamper_payslip",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": true,
@@ -325,12 +223,121 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
             "writeMode": { "kind": "update_only" }
         }
     }))
+    .unwrap()
+}
+
+fn seed_payout(cell: &mut Cell, catalog: &TypeCatalog<'_>, create_action: &ActionRoot) {
+    let raw_create: JsonObject =
+        serde_json::from_value(json!({ "id": "po_1", "payslip_id": "ps_1" })).unwrap();
+    let outcome = commit_action(
+        cell,
+        catalog,
+        &call(
+            create_action,
+            "test.payout.create.action",
+            raw_create,
+            "k-create",
+            1_764_115_200_000,
+        ),
+        &Allow,
+    )
     .unwrap();
+    assert!(matches!(outcome, ActionOutcome::Committed { .. }));
+}
+
+#[test]
+fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
+    let types = payout_types();
+    let catalog = TypeCatalog::new(&types).with_transition_guards(&[]);
+    let mut cell = Cell::new(|_| JsonObject::new());
+    let create_action = create_payout_action();
+
+    let spoofed: JsonObject =
+        serde_json::from_value(json!({ "id": "po_1", "stamped_at": "2020-01-01T00:00:00Z" }))
+            .unwrap();
     let err = commit_action(
         &mut cell,
         &catalog,
         &call(
-            &mutate_immutable,
+            &create_action,
+            "test.payout.create.action",
+            spoofed,
+            "k-spoof",
+            1_764_115_200_000,
+        ),
+        &Allow,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ActionRefusal::InvalidInput { ref field } if field == "stamped_at"),
+        "{err:?}"
+    );
+
+    seed_payout(&mut cell, &catalog, &create_action);
+    let key = FactKey::new("test.Payout", "po_1");
+    let created = cell.load(&key).unwrap();
+    let created_vals = created.values.as_ref().unwrap();
+    assert_eq!(
+        created_vals.get("stamped_at"),
+        Some(&RuntimeValue::String("2025-11-26T00:00:00Z".to_owned()))
+    );
+    assert_eq!(
+        created_vals.get("generation"),
+        Some(&RuntimeValue::from(1_i64))
+    );
+
+    commit_action(
+        &mut cell,
+        &catalog,
+        &call(
+            &fail_payout_action(),
+            "test.payout.fail.action",
+            serde_json::from_value(json!({ "id": "po_1" })).unwrap(),
+            "k-fail",
+            1_764_115_260_000,
+        ),
+        &Allow,
+    )
+    .unwrap();
+
+    let retry_action = retry_payout_action();
+    commit_action(
+        &mut cell,
+        &catalog,
+        &call(
+            &retry_action,
+            "test.payout.retry.action",
+            serde_json::from_value(json!({ "id": "po_1" })).unwrap(),
+            "k-retry",
+            1_764_115_320_000,
+        ),
+        &Allow,
+    )
+    .unwrap();
+    let retried = cell.load(&key).unwrap();
+    let retried_vals = retried.values.as_ref().unwrap();
+    assert_eq!(
+        retried_vals.get("state"),
+        Some(&RuntimeValue::String("requested".to_owned()))
+    );
+    assert_eq!(
+        retried_vals.get("generation"),
+        Some(&RuntimeValue::from(2_i64))
+    );
+}
+
+#[test]
+fn refuses_immutable_updates_malformed_pre_slice_and_spoofed_server_derived() {
+    let types = payout_types();
+    let catalog = TypeCatalog::new(&types).with_transition_guards(&[]);
+    let mut cell = Cell::new(|_| JsonObject::new());
+    seed_payout(&mut cell, &catalog, &create_payout_action());
+
+    let err = commit_action(
+        &mut cell,
+        &catalog,
+        &call(
+            &tamper_payslip_action(),
             "test.payout.tamper_payslip.action",
             serde_json::from_value(json!({ "id": "po_1", "payslip_id": "ps_tampered" })).unwrap(),
             "k-tamper",
@@ -344,13 +351,9 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
         "expected immutableAfterCreate refusal, got: {err:?}"
     );
 
-    // Pre-slice validation must refuse malformed caller payloads on post-slice actions
-    // immediately inside `prepare_action_input_for_call` before slice loading.
-    let malformed: JsonObject = serde_json::from_value(json!({
-        "id": "po_1",
-        "unexpected_extra": "boom"
-    }))
-    .unwrap();
+    let retry_action = retry_payout_action();
+    let malformed: JsonObject =
+        serde_json::from_value(json!({ "id": "po_1", "unexpected_extra": "boom" })).unwrap();
     let prep_err = norn_kernel::prepare_action_input_for_call::<std::convert::Infallible>(
         &retry_action,
         &malformed,
@@ -364,13 +367,8 @@ fn clock_stamp_and_post_slice_generation_bump_commit_atomically() {
         "expected pre-slice InvalidInput refusal, got: {prep_err:?}"
     );
 
-    // Caller overriding a purely server-derived field (`next_generation`) with a non-null
-    // value must refuse fail-closed.
-    let spoof_derived: JsonObject = serde_json::from_value(json!({
-        "id": "po_1",
-        "next_generation": 999
-    }))
-    .unwrap();
+    let spoof_derived: JsonObject =
+        serde_json::from_value(json!({ "id": "po_1", "next_generation": 999 })).unwrap();
     let derived_err = commit_action(
         &mut cell,
         &catalog,

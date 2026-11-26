@@ -7,14 +7,15 @@ use norn_ir::{
 };
 
 use crate::cell_host::JsonObject;
-use crate::decision_commit::{DecisionRefusal, TypeCatalog, expr_value};
+use crate::decision_commit::{DecisionRefusal, expr_value};
 use crate::limits::EnvelopeLimits;
 use crate::observations::LogicalTime;
 
+use super::post_slice::{clock_derived_fields, validate_pre_slice_partial};
 use super::slice::LoadedActionSlice;
 use super::types::{
-    ActionCall, ActionCallRecord, ActionDerivedValue, ActionDerivedValueRef,
-    ActionInputPreparation, ActionRefusal,
+    ActionCallRecord, ActionDerivedValue, ActionDerivedValueRef, ActionInputPreparation,
+    ActionRefusal,
 };
 
 /// Evaluates the declared outbound commands over the action input. The
@@ -346,25 +347,6 @@ pub(super) fn prepare_action_input_for_call_at<'a, X>(
     )
 }
 
-/// ACTION-CLOCK-1: the input fields an action derives from the server commit
-/// clock without the caller: a derivation with `inputRequired: false` that
-/// reads `clock`. A caller never supplies them (a supplied value refuses with
-/// `action.invalid_input`), and a published caller input schema omits them.
-/// A derivation that does not parse counts as one (fail closed).
-#[must_use]
-pub fn clock_derived_fields(action: &ActionRoot) -> std::collections::BTreeSet<String> {
-    action
-        .derive
-        .iter()
-        .filter(|step| !step.input_required)
-        .filter(|step| {
-            norn_expr::expression_reads(step.expression.as_str(), norn_expr::CLOCK_VARIABLE)
-                .map_or(true, |reads| reads.whole_root || !reads.fields.is_empty())
-        })
-        .map(|step| step.field.clone())
-        .collect()
-}
-
 fn normalize_action_input<X>(
     action: &ActionRoot,
     raw_input: &JsonObject,
@@ -411,46 +393,6 @@ fn normalize_action_input<X>(
         });
     };
     Ok(normalized)
-}
-
-fn validate_action_input_excluding<X>(
-    action: &ActionRoot,
-    input: &JsonObject,
-    deferred_fields: &std::collections::BTreeSet<String>,
-) -> Result<(), ActionRefusal<X>> {
-    if deferred_fields.is_empty() {
-        return validate_action_input(action, input);
-    }
-    let mut schema_obj = action.input_schema.clone();
-    if let Some(norn_ir::JsonValue::Array(required)) = schema_obj.get_mut("required") {
-        required.retain(|value| {
-            value
-                .as_string()
-                .is_none_or(|name| !deferred_fields.contains(name))
-        });
-    }
-    let mut filtered = input.clone();
-    for field in deferred_fields {
-        filtered.remove(field);
-    }
-    let schema = norn_ir::JsonValue::Object(schema_obj);
-    let value =
-        norn_expr::Value::try_from(&RuntimeValue::Object(filtered)).map_err(|_conversion| {
-            ActionRefusal::InvalidInput {
-                field: "$input".to_owned(),
-            }
-        })?;
-    let parsed =
-        norn_expr::schema::Schema::parse_action(&schema, "$input").map_err(|violation| {
-            ActionRefusal::InvalidInput {
-                field: violation.path,
-            }
-        })?;
-    parsed
-        .check(&value, "$input")
-        .map_err(|violation| ActionRefusal::InvalidInput {
-            field: violation.path,
-        })
 }
 
 fn prepare_action_input_inner<'a, X>(
@@ -554,38 +496,7 @@ fn prepare_action_input_inner<'a, X>(
     if pre_slice_limit == action.derive.len() {
         validate_action_input(action, &effective_input)?;
     } else {
-        // Validate every non-deferred caller/pre-slice field immediately so
-        // malformed inputs fail closed before authorization or slice loads,
-        // and strip uncomputed post-slice `Null` placeholders before returning.
-        let pre_slice_produced: std::collections::BTreeSet<&str> = action
-            .derive
-            .iter()
-            .take(pre_slice_limit)
-            .map(|step| step.field.as_str())
-            .collect();
-        let deferred: std::collections::BTreeSet<String> = action
-            .derive
-            .get(pre_slice_limit..)
-            .unwrap_or_default()
-            .iter()
-            .filter(|step| {
-                !step.input_required
-                    && !pre_slice_produced.contains(step.field.as_str())
-                    && effective_input
-                        .get(&step.field)
-                        .is_none_or(RuntimeValue::is_null)
-            })
-            .map(|step| step.field.clone())
-            .collect();
-        for field in &deferred {
-            if effective_input
-                .get(field)
-                .is_some_and(RuntimeValue::is_null)
-            {
-                effective_input.remove(field);
-            }
-        }
-        validate_action_input_excluding(action, &effective_input, &deferred)?;
+        validate_pre_slice_partial(action, pre_slice_limit, &mut effective_input)?;
     }
     Ok(ActionInputPreparation {
         action,
@@ -599,96 +510,6 @@ fn prepare_action_input_inner<'a, X>(
         receipt_evidence_bytes,
         precondition_outcomes: Vec::new(),
     })
-}
-
-/// ACTION-SLICE-DERIVE-1: runs deferred post-slice derivations right after
-/// `load_action_slice` and validates the final effective input before
-/// preconditions and writes.
-pub(super) fn apply_post_slice_derivations<X>(
-    catalog: &TypeCatalog<'_>,
-    call: &ActionCall<'_>,
-    preparation: &mut ActionInputPreparation<'_>,
-    slice: &LoadedActionSlice,
-    max_receipt_bytes: usize,
-) -> Result<(), ActionRefusal<X>> {
-    let action = call.action;
-    let Some(split) = norn_expr::schema::first_slice_derivation_index(action) else {
-        return Ok(());
-    };
-    let profile = ResourceLimitProfile::norn_limits_v1();
-    let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
-    let Some(first_step) = action.derive.get(split) else {
-        return Ok(());
-    };
-    // Restore optional `Null` bindings for deferred post-slice targets during
-    // expression evaluation so `input.<field>` matches the derivation env.
-    for step in action.derive.get(split..).unwrap_or_default() {
-        if !step.input_required && !preparation.effective_input.contains_key(&step.field) {
-            preparation
-                .effective_input
-                .insert(step.field.clone(), RuntimeValue::Null);
-        }
-    }
-    let catalog_env = action
-        .slice
-        .first()
-        .map(|entry| &entry.object_type)
-        .or_else(|| {
-            action
-                .aggregates
-                .first()
-                .map(|aggregate| &aggregate.object_type)
-        })
-        .map(|object_type| catalog.expression_environment(object_type))
-        .transpose()
-        .map_err(|reason| ActionRefusal::DerivationFailed {
-            field: first_step.field.clone(),
-            expression: first_step.expression.as_str().to_owned(),
-            reason,
-        })?;
-    for (offset, derivation) in action
-        .derive
-        .get(split..)
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-    {
-        let index = split.saturating_add(offset);
-        let (value, next_receipt_bytes) = prepare_action_derivation(
-            action,
-            index,
-            derivation,
-            &preparation.effective_input,
-            Some(call.actor.as_str()),
-            Some(call.turn.now),
-            Some(slice),
-            catalog_env.as_ref(),
-            &mut preparation.remaining_fuel,
-            preparation.receipt_evidence_bytes,
-        )?;
-        preparation.receipt_evidence_bytes = next_receipt_bytes;
-        if preparation.receipt_evidence_bytes > max_receipt_bytes {
-            return Err(ActionRefusal::InputBoundExceeded {
-                subject: "action call receipt evidence".to_owned(),
-                actual_bytes: preparation.receipt_evidence_bytes,
-                max_bytes: max_receipt_bytes,
-            });
-        }
-        preparation
-            .effective_input
-            .insert(derivation.field.clone(), value.clone());
-        preparation.derived_values.push(ActionDerivedValue {
-            field: derivation.field.clone(),
-            value,
-        });
-        check_canonical_object_bound::<X>(
-            "effective input",
-            &preparation.effective_input,
-            max_input_bytes,
-        )?;
-    }
-    validate_action_input(action, &preparation.effective_input)?;
-    Ok(())
 }
 
 /// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
@@ -868,7 +689,7 @@ fn action_derivation_context<X>(
     clippy::too_many_arguments,
     reason = "pre-slice and post-slice derivations share one metered evaluator"
 )]
-fn prepare_action_derivation<X>(
+pub(super) fn prepare_action_derivation<X>(
     action: &ActionRoot,
     completed: usize,
     derivation: &norn_ir::ActionInputDerivation,

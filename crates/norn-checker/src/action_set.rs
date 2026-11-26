@@ -96,6 +96,7 @@ use crate::typed_roots::{
 use crate::{Diagnostic, DiagnosticCode, Span};
 
 mod actor_binding;
+mod set_fields;
 
 use actor_binding::{actor_binding_findings, transition_guard_findings, writer_protected_findings};
 
@@ -586,32 +587,9 @@ fn action_slice_findings(
         let aggregates = action_aggregate_types(artifact, root, model);
         findings.extend(aggregates.findings);
         if slice.typed_slice && aggregates.typed {
-            let has_post_slice_derive =
-                norn_expr::schema::first_slice_derivation_index(root).is_some();
-            if has_post_slice_derive {
-                let unsupported_post_slice =
-                    match &root.effect_program {
-                        Some(ActionEffectProgram::MutateParentWithRows { .. }) => {
-                            Some("mutate_parent_with_rows does not support post-slice derive steps")
-                        }
-                        Some(ActionEffectProgram::UpsertInputObject { object_kind, .. })
-                            if model.effective_object_type_named(object_kind).is_some_and(
-                                |v| v.keys.iter().any(|key| key.naming_series.is_some()),
-                            ) =>
-                        {
-                            Some("naming-series upserts do not support post-slice derive steps")
-                        }
-                        _ => None,
-                    };
-                if let Some(reason) = unsupported_post_slice {
-                    findings.push(finding(
-                        codes::TARGET_NOT_WRITABLE,
-                        reason.to_owned(),
-                        artifact,
-                        "/payload/derive",
-                    ));
-                }
-            }
+            findings.extend(set_fields::post_slice_effect_findings(
+                artifact, root, model,
+            ));
             findings.extend(
                 check_action_slice_derivations(
                     root,
@@ -1520,103 +1498,20 @@ impl Defined<'_> {
             set_fields,
             ..
         } = program
-            && !set_fields.is_empty()
         {
             let view = self
                 .effective_object_type
                 .as_ref()
-                .and_then(|view| view.as_ref().ok());
-            let input_properties = root
-                .input_schema
-                .get("properties")
-                .and_then(JsonValue::as_object);
-            let guarded_fields: BTreeSet<String> = view
-                .and_then(|view| view.lifecycle(lifecycle.as_str()))
-                .and_then(|lc| {
-                    lc.lifecycle
-                        .transitions
-                        .iter()
-                        .find(|tr| tr.id == *transition)
-                })
-                .into_iter()
-                .flat_map(|tr| tr.guards.iter())
-                .filter_map(|guard| norn_expr::expression_reads(guard.as_str(), "self").ok())
-                .flat_map(|reads| reads.fields)
-                .collect();
-            let trusted_sources: BTreeSet<String> = root
-                .actor_stamped_fields()
-                .into_iter()
-                .chain(root.clock_stamped_fields())
-                .chain(norn_expr::schema::trusted_server_derived_fields(root))
-                .collect();
-            let writable = |id: &norn_ir::PropertyId| {
-                !id.as_str().starts_with("_norn")
-                    && view.is_some_and(|view| {
-                        view.property(id.as_str())
-                            .is_some_and(|property| !property.computed && !property.protected())
-                            && view.lifecycle(id.as_str()).is_none()
-                            && !view.keys.iter().any(|key| key.components.contains(id))
-                    })
-            };
-            for (target_prop, source_field) in set_fields {
-                let receipt_overlap = accept_receipt.as_ref().is_some_and(|receipt| {
-                    &receipt.digest_property == target_prop
-                        || receipt.result_bindings.contains_key(target_prop)
-                });
-                let source_schema =
-                    input_properties.and_then(|props| props.get(source_field.as_str()));
-                let target_effective = view.and_then(|view| view.property(target_prop.as_str()));
-                let type_compatible =
-                    source_schema
-                        .zip(target_effective)
-                        .is_some_and(|(schema, target)| {
-                            let source_required =
-                                input_schema_field_required(&root.input_schema, source_field)
-                                    || root.derive.iter().any(|step| step.field == *source_field);
-                            crate::typed_roots::action_schema_type(schema).is_some_and(
-                                |source_ty| {
-                                    set_field_type_compatible(&source_ty, source_required, target)
-                                },
-                            )
-                        });
-                if !writable(target_prop) || receipt_overlap || source_schema.is_none() {
-                    findings.push(finding(
-                        codes::TARGET_NOT_WRITABLE,
-                        format!(
-                            "fire_transition setFields {:?} -> {:?} requires a writable non-lifecycle, non-identity target property and a declared input field",
-                            target_prop.as_str(),
-                            source_field
-                        ),
-                        action,
-                        "/payload/effectProgram/setFields",
-                    ));
-                } else if !type_compatible {
-                    findings.push(finding(
-                        codes::TARGET_NOT_WRITABLE,
-                        format!(
-                            "fire_transition setFields {:?} -> {:?} has an input schema type or optionality incompatible with the target property",
-                            target_prop.as_str(),
-                            source_field
-                        ),
-                        action,
-                        "/payload/effectProgram/setFields",
-                    ));
-                } else if guarded_fields.contains(target_prop.as_str())
-                    && !trusted_sources.contains(source_field)
-                {
-                    findings.push(finding(
-                        codes::TARGET_NOT_WRITABLE,
-                        format!(
-                            "fire_transition setFields {:?} -> {:?} cannot feed a caller-controlled input into a property read by transition {:?}'s guard",
-                            target_prop.as_str(),
-                            source_field,
-                            transition.as_str()
-                        ),
-                        action,
-                        "/payload/effectProgram/setFields",
-                    ));
-                }
-            }
+                .and_then(|v| v.as_ref().ok());
+            findings.extend(set_fields::fire_transition_set_fields_findings(
+                action,
+                root,
+                view,
+                lifecycle,
+                transition,
+                accept_receipt.as_ref(),
+                set_fields,
+            ));
         }
         findings.extend(self.naming_series_findings(action, root, program));
         findings.extend(self.input_enum_findings(action, root, program));
@@ -1670,68 +1565,9 @@ impl Defined<'_> {
             .effective_object_type
             .as_ref()
             .and_then(|view| view.as_ref().ok());
-        let mut findings = Vec::new();
         let mut enums = Vec::new();
         collect_input_enums(properties, "/payload/inputSchema", true, &mut enums);
-        for (field, top_level, values, at) in enums {
-            let target_props: Vec<String> = match program {
-                ActionEffectProgram::UpsertInputObject { .. } if top_level => vec![field.clone()],
-                ActionEffectProgram::FireTransition { set_fields, .. } if top_level => set_fields
-                    .iter()
-                    .filter_map(|(target_prop, source_field)| {
-                        (source_field == &field).then(|| target_prop.as_str().to_owned())
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
-            if target_props.is_empty() {
-                findings.push(finding(
-                    codes::INPUT_ENUM_UNBOUND,
-                    format!("input {field:?} declares an enum but writes no enum property"),
-                    action,
-                    &at,
-                ));
-                continue;
-            }
-            for target_prop in target_props {
-                let target =
-                    view.and_then(|view| view.property(&target_prop))
-                        .and_then(|property| {
-                            if let crate::EffectiveKind::Base(norn_ir::PropertyType::Enum {
-                                values,
-                            }) = &property.kind
-                            {
-                                Some(values)
-                            } else {
-                                None
-                            }
-                        });
-                let Some(declared) = target else {
-                    findings.push(finding(
-                        codes::INPUT_ENUM_UNBOUND,
-                        format!("input {field:?} declares an enum but writes no enum property"),
-                        action,
-                        &at,
-                    ));
-                    continue;
-                };
-                let missing: Vec<&String> = values
-                    .iter()
-                    .filter(|value| !declared.iter().any(|declared| &declared.value == *value))
-                    .collect();
-                if !missing.is_empty() {
-                    findings.push(finding(
-                        codes::INPUT_ENUM_NOT_SUBSET,
-                        format!(
-                            "input {field:?} admits {missing:?}, which property {target_prop:?} does not declare"
-                        ),
-                        action,
-                        &at,
-                    ));
-                }
-            }
-        }
-        findings
+        set_fields::check_input_enums(action, program, view, enums)
     }
 
     #[allow(
@@ -2076,21 +1912,9 @@ fn owned_rows_effect_findings(
             let child_effective = declared.get(id).and_then(|collection| {
                 model.effective_object_type_named(collection.child_type.as_str())
             });
-            // ACTOR-STAMP-1 & ORIGIN-DATAFLOW-1 parity with runtime owned rows:
-            // never a protected, immutableAfterCreate, or non-caller/non-derived origin property.
             let computed = child_effective
                 .and_then(|child| child.property(property.as_str()))
-                .is_none_or(|property| {
-                    property.computed
-                        || property.protected()
-                        || property.immutable_after_create()
-                        || property.origin().is_some_and(|origin| {
-                            !matches!(
-                                origin,
-                                norn_ir::PropertyOrigin::Caller | norn_ir::PropertyOrigin::Derived
-                            )
-                        })
-                });
+                .is_none_or(set_fields::is_owned_row_property_restricted);
             let lifecycle =
                 child_effective.is_some_and(|child| child.lifecycle(property.as_str()).is_some());
             if lifecycle {
@@ -2366,54 +2190,6 @@ fn owned_row_derivation_findings(
         }
     }
     findings
-}
-
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "norn_expr::Type is non-exhaustive; unknown variants fail closed"
-)]
-fn set_field_type_compatible(
-    source_ty: &Type,
-    source_required: bool,
-    target: &crate::entity_instance::EffectiveProperty,
-) -> bool {
-    let source_nullable = matches!(source_ty, Type::Optional(_));
-    if (!source_required || source_nullable) && !target.nullable {
-        return false;
-    }
-    let unwrapped = match source_ty {
-        Type::Optional(inner) => inner.as_ref(),
-        other => other,
-    };
-    let crate::EffectiveKind::Base(property_type) = &target.kind else {
-        return false;
-    };
-    match property_type {
-        norn_ir::PropertyType::Text { .. } => {
-            matches!(unwrapped, Type::Text { .. } | Type::Enum { .. })
-        }
-        norn_ir::PropertyType::Timestamp { .. } => {
-            matches!(unwrapped, Type::Timestamp { .. } | Type::Text { .. })
-        }
-        norn_ir::PropertyType::Date {} => matches!(unwrapped, Type::Date | Type::Text { .. }),
-        norn_ir::PropertyType::Duration {} => {
-            matches!(unwrapped, Type::Duration | Type::Text { .. })
-        }
-        norn_ir::PropertyType::Enum { .. } => {
-            matches!(unwrapped, Type::Enum { .. } | Type::Text { .. })
-        }
-        norn_ir::PropertyType::Integer { .. } => matches!(unwrapped, Type::Integer),
-        norn_ir::PropertyType::Decimal { .. } => {
-            matches!(
-                unwrapped,
-                Type::Decimal { .. } | Type::Number | Type::Integer
-            )
-        }
-        norn_ir::PropertyType::Boolean {} => matches!(unwrapped, Type::Bool),
-        norn_ir::PropertyType::Record { .. } => matches!(unwrapped, Type::Record(_) | Type::Json),
-        norn_ir::PropertyType::JsonExt { .. } => true,
-        norn_ir::PropertyType::Ref { .. } | norn_ir::PropertyType::DecimalBinding { .. } => false,
-    }
 }
 
 fn action_expression_fields(root: &ActionRoot) -> Option<BTreeMap<String, Type>> {
