@@ -84,18 +84,21 @@ pub enum Settlement<I> {
     Record(I),
 }
 
-/// The admission inputs beyond the commit, its authorization and quantity:
-/// derived properties, reference and property reads, mapping bundles, a
-/// bookkeeping event, the receipt mode, and an ACTOR-STAMP-1 creator stamp.
-pub(crate) type AdmissionArgs<'a> = (
-    &'a [(FactKey, Vec<String>)],
-    &'a [norn_kernel::FactExpectation],
-    &'a [(norn_kernel::FactExpectation, Vec<String>)],
-    &'a [crate::mapping_bundle::MappingBundle],
-    Option<norn_ir::RuntimeValue>,
-    crate::function_receipt::ReceiptCommitMode,
-    Option<norn_kernel::CreatorStampProof>,
-);
+/// Explicit per-commit admission options beyond the kernel [`CellCommit`].
+#[derive(Default)]
+pub(crate) struct CommitOptions<'a> {
+    pub(crate) authorization: Option<&'a ObservationAuthorization>,
+    pub(crate) owned_rows: Option<OwnedRowsCommitProof>,
+    pub(crate) quantity: Option<(&'a [norn_ir::quantity_ledger::QuantityRequest], &'a str)>,
+    pub(crate) derived: &'a [(FactKey, Vec<String>)],
+    pub(crate) references: &'a [norn_kernel::FactExpectation],
+    pub(crate) property_reads: &'a [(norn_kernel::FactExpectation, Vec<String>)],
+    pub(crate) mapped: &'a [crate::mapping_bundle::MappingBundle],
+    pub(crate) bookkeeping: Option<norn_ir::RuntimeValue>,
+    pub(crate) mode: crate::function_receipt::ReceiptCommitMode,
+    pub(crate) stamp: Option<norn_kernel::CreatorStampProof>,
+    pub(crate) settling: Option<crate::store::ParkedSettlement>,
+}
 
 /// The simulated outside world: maps a performed command to the kernel input
 /// its result becomes. `Send`, so a driver can be shared behind a mutex by a
@@ -114,9 +117,6 @@ pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     /// S6c, S5a: the bookkeeping events the next commit carries, set only
     /// for the span of [`Self::attributed`].
     attached: Vec<norn_ir::RuntimeValue>,
-    /// PARKED-1 (P3): the parked result the next commit records and consumes
-    /// in its own transaction, set only for the span of [`Self::commit_settled`].
-    settling: Option<crate::store::ParkedSettlement>,
     /// RECEIPT-CONSUME-1: the host's Function receipt authority state.
     pub(crate) receipts: crate::function_receipt::ReceiptHost,
     events: PhantomData<fn() -> E>,
@@ -160,7 +160,6 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: Box::new(responder),
             published: Vec::new(),
             attached: Vec::new(),
-            settling: None,
             receipts: crate::function_receipt::ReceiptHost::default(),
             events: PhantomData,
         })
@@ -192,7 +191,6 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: self.responder,
             published: self.published,
             attached: self.attached,
-            settling: self.settling,
             receipts: self.receipts,
             events: PhantomData,
         }
@@ -885,14 +883,41 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
                 key,
             });
         }
-        reads.sort_by(|left, right| {
-            let left_target_type = self.0.canonical_type(left.key.target.object_type.as_str());
-            let right_target_type = self.0.canonical_type(right.key.target.object_type.as_str());
-            (&left_target_type, &left.key.target.key)
-                .cmp(&(&right_target_type, &right.key.target.key))
-        });
+        sort_link_read_targets(self.0, &mut reads);
         Ok(Some(reads))
     }
+}
+
+fn sort_link_read_targets<S: SqlEngine>(reader: &StoreReader<'_, S>, reads: &mut [LinkReadTarget]) {
+    reads.sort_by(|left, right| {
+        let left_target_type = reader.canonical_type(left.key.target.object_type.as_str());
+        let right_target_type = reader.canonical_type(right.key.target.object_type.as_str());
+        (&left_target_type, &left.key.target.key).cmp(&(&right_target_type, &right.key.target.key))
+    });
+}
+
+fn written_versions(body: &crate::store::ReceiptBody) -> Vec<WrittenVersion> {
+    body.written
+        .iter()
+        .map(|row| WrittenVersion {
+            key: FactKey::new(row.object_type.clone(), row.key.clone()),
+            version: FactVersion(row.version),
+        })
+        .collect()
+}
+
+fn written_link_versions(body: &crate::store::ReceiptBody) -> Vec<WrittenLinkVersion> {
+    body.linked
+        .iter()
+        .map(|row| WrittenLinkVersion {
+            key: LinkKey::new(
+                FactKey::new(row.object_type.clone(), row.source.clone()),
+                row.link.clone(),
+                FactKey::new(row.target_type.clone(), row.target.clone()),
+            ),
+            version: FactVersion(row.version),
+        })
+        .collect()
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
@@ -1242,6 +1267,28 @@ where
     }
 }
 
+fn build_settlement<E, C, I: Serialize>(
+    commit: &CellCommit<E, C, I>,
+    settlement: Settlement<I>,
+) -> Result<Option<crate::store::ParkedSettlement>, CommitError<CellError>> {
+    let Settlement::Record(input) = settlement else {
+        return Ok(None);
+    };
+    let Some(Consumed::Result {
+        command,
+        generation,
+    }) = &commit.consumes
+    else {
+        let reason = "a settlement needs a consumed result".to_owned();
+        return Err(CommitError::Host(CellError::Encoding(reason)));
+    };
+    Ok(Some(crate::store::ParkedSettlement {
+        command_id: command.0.clone(),
+        generation: generation.0,
+        outcome: to_runtime(&input).map_err(CommitError::Host)?,
+    }))
+}
+
 fn due_timer<I: DeserializeOwned>(pending: &PendingTimer) -> Result<DueTimer<I>, CellError> {
     Ok(DueTimer {
         timer: from_runtime(&pending.timer.timer)?,
@@ -1326,26 +1373,8 @@ where
                 Ok(CommitRecord {
                     seq: LedgerSeq(body.commit_seq),
                     consumed: body.consumed.as_ref().map(consumed),
-                    written: body
-                        .written
-                        .iter()
-                        .map(|row| WrittenVersion {
-                            key: FactKey::new(row.object_type.clone(), row.key.clone()),
-                            version: FactVersion(row.version),
-                        })
-                        .collect(),
-                    linked: body
-                        .linked
-                        .iter()
-                        .map(|row| WrittenLinkVersion {
-                            key: LinkKey::new(
-                                FactKey::new(row.object_type.clone(), row.source.clone()),
-                                row.link.clone(),
-                                FactKey::new(row.target_type.clone(), row.target.clone()),
-                            ),
-                            version: FactVersion(row.version),
-                        })
-                        .collect(),
+                    written: written_versions(&body),
+                    linked: written_link_versions(&body),
                     events: events.remove(&body.commit_seq).unwrap_or_default(),
                 })
             })
@@ -1442,16 +1471,12 @@ where
         requests: &[norn_ir::quantity_ledger::QuantityRequest],
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            None,
-            None,
-            Some((requests, idempotency_key)),
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
+            CommitOptions {
+                quantity: Some((requests, idempotency_key)),
+                ..Default::default()
+            },
         )
     }
 
@@ -1468,7 +1493,13 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None)
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                derived,
+                ..Default::default()
+            },
+        )
     }
 
     /// Commit a kernel-prepared turn that creates a flow's run object, and
@@ -1486,7 +1517,13 @@ where
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = start.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                bookkeeping: Some(event),
+                ..Default::default()
+            },
+        )
     }
 
     /// Commit a kernel-prepared turn that consumes a parked decision's
@@ -1505,20 +1542,15 @@ where
         settlement: Settlement<I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
-        self.settle_next(&commit, settlement)?;
-        let answer = self.commit_with_authorization(
+        let settling = build_settlement(&commit, settlement)?;
+        self.commit_admitted(
             commit,
-            None,
-            None,
-            None,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(event),
-        );
-        self.settling = None;
-        answer
+            CommitOptions {
+                bookkeeping: Some(event),
+                settling,
+                ..Default::default()
+            },
+        )
     }
 
     /// PARKED-1 (P3): commit a turn consuming a parked command's result,
@@ -1534,36 +1566,14 @@ where
         commit: CellCommit<E, C, I>,
         settlement: Settlement<I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.settle_next(&commit, settlement)?;
-        let answer =
-            self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None);
-        self.settling = None;
-        answer
-    }
-
-    /// Hold `settlement` for the next commit, `commit`; the caller clears it
-    /// after that commit returns.
-    fn settle_next(
-        &mut self,
-        commit: &CellCommit<E, C, I>,
-        settlement: Settlement<I>,
-    ) -> Result<(), CommitError<CellError>> {
-        if let Settlement::Record(input) = settlement {
-            let Some(Consumed::Result {
-                command,
-                generation,
-            }) = &commit.consumes
-            else {
-                let reason = "a settlement needs a consumed result".to_owned();
-                return Err(CommitError::Host(CellError::Encoding(reason)));
-            };
-            self.settling = Some(crate::store::ParkedSettlement {
-                command_id: command.0.clone(),
-                generation: generation.0,
-                outcome: to_runtime(&input).map_err(CommitError::Host)?,
-            });
-        }
-        Ok(())
+        let settling = build_settlement(&commit, settlement)?;
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                settling,
+                ..Default::default()
+            },
+        )
     }
 
     /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
@@ -1593,16 +1603,12 @@ where
         refused: &crate::decision_ledger::ApprovalRefused,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = refused.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(
+        self.commit_admitted(
             CellCommit::empty(),
-            None,
-            None,
-            None,
-            &[],
-            &[],
-            &[],
-            &[],
-            Some(event),
+            CommitOptions {
+                bookkeeping: Some(event),
+                ..Default::default()
+            },
         )
     }
 
@@ -1620,49 +1626,18 @@ where
         }
         let references = authorization.reference_reads(&commit).to_vec();
         authorization.append_findings(&mut commit);
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            Some(authorization),
-            None,
-            None,
-            &[],
-            &references,
-            &[],
-            mapped,
-            None,
+            CommitOptions {
+                authorization: Some(authorization),
+                references: &references,
+                mapped,
+                ..Default::default()
+            },
         )
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "every ordinary commit is a normal receipt-mode admission"
-    )]
-    fn commit_with_authorization(
-        &mut self,
-        commit: CellCommit<E, C, I>,
-        authorization: Option<&ObservationAuthorization>,
-        owned_rows: Option<OwnedRowsCommitProof>,
-        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
-        derived: &[(FactKey, Vec<String>)],
-        references: &[norn_kernel::FactExpectation],
-        property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
-        mapped: &[crate::mapping_bundle::MappingBundle],
-        bookkeeping: Option<norn_ir::RuntimeValue>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
-        let args = (
-            derived,
-            references,
-            property_reads,
-            mapped,
-            bookkeeping,
-            mode,
-            None,
-        );
-        self.commit_admitted(commit, authorization, owned_rows, quantity, args)
-    }
-
-    /// Admit one commit in `mode`: [`crate::function_receipt::ReceiptCommitMode`]
+    /// Admit one commit in `options.mode`: [`crate::function_receipt::ReceiptCommitMode`]
     /// decides how a consumed Function delivery is rechecked.
     #[allow(
         clippy::too_many_lines,
@@ -1671,11 +1646,21 @@ where
     pub(crate) fn commit_admitted(
         &mut self,
         mut commit: CellCommit<E, C, I>,
-        authorization: Option<&ObservationAuthorization>,
-        owned_rows: Option<OwnedRowsCommitProof>,
-        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
-        (derived, references, property_reads, mapped, bookkeeping, mode, stamp): AdmissionArgs<'_>,
+        options: CommitOptions<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let CommitOptions {
+            authorization,
+            owned_rows,
+            quantity,
+            derived,
+            references,
+            property_reads,
+            mapped,
+            bookkeeping,
+            mode,
+            stamp,
+            settling,
+        } = options;
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
         // before defaults. The host's injected logical time is not retry input.
@@ -1779,16 +1764,10 @@ where
         if let Some((request, key)) = quantity {
             batch.quantity = Some(crate::store::QuantityBatch(request.to_vec()));
             batch.idempotency_key = Some(key.to_owned());
-            if let Some(receipt) = self
-                .store
-                .read()
-                .receipt_by_idempotency_key(MAIN_WORLD, key)
-                .map_err(CommitError::Host)?
-            {
+            if let Some(receipt) = prior {
                 batch.logical_time = receipt.body.logical_time;
             }
         }
-        let settling = self.settling.take();
         let guard = |reader: &StoreReader<'_, S>| {
             let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
             if authorization.is_none() {
@@ -1859,41 +1838,23 @@ where
             guard,
             &mut |_point| Ok(()),
         ) {
-            Ok((CommitVersions { written, linked }, outcome)) => Ok(CommitReceipt {
-                seq: LedgerSeq(outcome.receipt().body.commit_seq),
-                written: if matches!(outcome, crate::store::CommitOutcome::Replayed(_)) {
-                    outcome
-                        .receipt()
-                        .body
-                        .written
-                        .iter()
-                        .map(|row| WrittenVersion {
-                            key: FactKey::new(row.object_type.clone(), row.key.clone()),
-                            version: FactVersion(row.version),
-                        })
-                        .collect()
-                } else {
-                    written
-                },
-                linked: if matches!(outcome, crate::store::CommitOutcome::Replayed(_)) {
-                    outcome
-                        .receipt()
-                        .body
-                        .linked
-                        .iter()
-                        .map(|row| WrittenLinkVersion {
-                            key: LinkKey::new(
-                                FactKey::new(row.object_type.clone(), row.source.clone()),
-                                row.link.clone(),
-                                FactKey::new(row.target_type.clone(), row.target.clone()),
-                            ),
-                            version: FactVersion(row.version),
-                        })
-                        .collect()
-                } else {
-                    linked
-                },
-            }),
+            Ok((CommitVersions { written, linked }, outcome)) => {
+                let replayed = matches!(outcome, crate::store::CommitOutcome::Replayed(_));
+                let body = &outcome.receipt().body;
+                Ok(CommitReceipt {
+                    seq: LedgerSeq(body.commit_seq),
+                    written: if replayed {
+                        written_versions(body)
+                    } else {
+                        written
+                    },
+                    linked: if replayed {
+                        written_link_versions(body)
+                    } else {
+                        linked
+                    },
+                })
+            }
             Err(GuardedError::Guard(refusal)) => Err(refusal),
             Err(GuardedError::Store(CellError::IdentityReuse)) => Err(CommitError::IdentityReuse),
             Err(GuardedError::Store(CellError::IdentityCollision {
@@ -2095,12 +2056,7 @@ where
                 key,
             });
         }
-        reads.sort_by(|left, right| {
-            let left_target_type = reader.canonical_type(left.key.target.object_type.as_str());
-            let right_target_type = reader.canonical_type(right.key.target.object_type.as_str());
-            (&left_target_type, &left.key.target.key)
-                .cmp(&(&right_target_type, &right.key.target.key))
-        });
+        sort_link_read_targets(&reader, &mut reads);
         Ok(Some(reads))
     }
 
@@ -2108,7 +2064,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None)
+        self.commit_admitted(commit, CommitOptions::default())
     }
 
     fn commit_action_references(
@@ -2120,16 +2076,14 @@ where
         if !proof.validates(&commit) {
             return Err(CommitError::ObservationAuthorization);
         }
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            None,
-            None,
-            quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
-            &[],
-            proof.reference_reads(),
-            proof.property_reads(),
-            &[],
-            None,
+            CommitOptions {
+                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
+                references: proof.reference_reads(),
+                property_reads: proof.property_reads(),
+                ..Default::default()
+            },
         )
     }
 
@@ -2148,11 +2102,14 @@ where
         proof: norn_kernel::CreatorStampProof,
         quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        // An ordinary (Normal receipt-mode) admission carrying the stamp proof.
-        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
-        let args: AdmissionArgs<'_> = (&[], &[], &[], &[], None, mode, Some(proof));
-        let quantity = quantity.map(|(request, key)| (std::slice::from_ref(request), key));
-        self.commit_admitted(commit, None, None, quantity, args)
+        self.commit_admitted(
+            commit,
+            CommitOptions {
+                quantity: quantity.map(|(request, key)| (std::slice::from_ref(request), key)),
+                stamp: Some(proof),
+                ..Default::default()
+            },
+        )
     }
 
     fn commit_owned_rows(
@@ -2163,18 +2120,15 @@ where
         let quantity = proof
             .quantity()
             .map(|(request, key)| (request.clone(), key.to_owned()));
-        self.commit_with_authorization(
+        self.commit_admitted(
             commit,
-            None,
-            Some(proof),
-            quantity
-                .as_ref()
-                .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
+            CommitOptions {
+                owned_rows: Some(proof),
+                quantity: quantity
+                    .as_ref()
+                    .map(|(request, key)| (std::slice::from_ref(request), key.as_str())),
+                ..Default::default()
+            },
         )
     }
 
