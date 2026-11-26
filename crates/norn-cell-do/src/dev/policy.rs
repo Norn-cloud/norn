@@ -21,7 +21,7 @@
 //! An action that names no policy stays callable by the local principals
 //! only (a hosted cell would not serve it at all); the `ready` event lists
 //! them.
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::actions::ActionPolicy;
 use crate::policy::{Caller, CallerSlot, DEMO_GRANTS};
@@ -45,8 +45,22 @@ pub(crate) fn reviewer(actor: &str) -> String {
 /// The retained-definition kinds the dev host admits: the hosted host's
 /// (`crate::tenant::host_kinds` over [`DEMO_GRANTS`]), so an approval,
 /// flow or binding that admits on a hosted cell admits here.
-pub(crate) fn dev_kinds() -> DefinitionKinds {
-    crate::tenant::host_kinds(&DEMO_GRANTS)
+pub(crate) fn dev_kinds() -> &'static DefinitionKinds {
+    static KINDS: OnceLock<DefinitionKinds> = OnceLock::new();
+    KINDS.get_or_init(|| crate::tenant::host_kinds(&DEMO_GRANTS))
+}
+
+fn demo_roles() -> Vec<String> {
+    static ROLES: OnceLock<Vec<String>> = OnceLock::new();
+    ROLES
+        .get_or_init(|| {
+            DEMO_GRANTS
+                .entries
+                .iter()
+                .map(|(role, _)| (*role).to_owned())
+                .collect()
+        })
+        .clone()
 }
 
 /// The action policy of the active revision (DEV-ACCESS-1): the compiled
@@ -159,11 +173,7 @@ impl LocalDeveloper {
 fn local_caller(actor: &str) -> Caller {
     Caller {
         subject_id: actor.to_owned(),
-        roles: DEMO_GRANTS
-            .entries
-            .iter()
-            .map(|(role, _)| (*role).to_owned())
-            .collect(),
+        roles: demo_roles(),
         actor_kind: "user",
         role_table: DEMO_GRANTS.version,
         accountable_person: Some(actor.to_owned()),
@@ -220,11 +230,7 @@ impl Authorizer for LocalDeveloper {
         self.is(actor).then(|| RunStarter {
             subject: actor.to_owned(),
             actor_kind: "user".to_owned(),
-            roles: DEMO_GRANTS
-                .entries
-                .iter()
-                .map(|(role, _)| (*role).to_owned())
-                .collect(),
+            roles: demo_roles(),
             role_table: DEMO_GRANTS.version.to_owned(),
             accountable_person: Some(actor.to_owned()),
         })
@@ -284,6 +290,14 @@ impl DevPrincipals {
         Self {
             sessions,
             slot: CallerSlot::default(),
+        }
+    }
+}
+
+impl Drop for DevPrincipals {
+    fn drop(&mut self) {
+        for (bearer, _) in &mut self.sessions {
+            zeroize::Zeroize::zeroize(bearer);
         }
     }
 }

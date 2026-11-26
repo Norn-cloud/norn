@@ -14,6 +14,9 @@ use super::http::Serving;
 /// The longest the loop sleeps: a deadline a request created is run at most
 /// this late.
 pub(crate) const POLL: Duration = Duration::from_secs(1);
+/// Minimum sleep when a next deadline is already at or behind `now_ms`, so
+/// `drive` never busy-spins at 100% CPU.
+const MIN_SLEEP: Duration = Duration::from_millis(10);
 
 /// Run the loop until the process exits.
 pub(crate) fn drive(serving: &Serving) {
@@ -40,7 +43,16 @@ pub(crate) fn tick(serving: &Serving, now_ms: u64) -> Duration {
                 );
             }
             work.next.map_or(POLL, |next| {
-                Duration::from_millis(next.saturating_sub(now_ms)).min(POLL)
+                let wait = next.saturating_sub(now_ms);
+                if wait == 0 {
+                    if work.failed.is_empty() {
+                        MIN_SLEEP
+                    } else {
+                        POLL
+                    }
+                } else {
+                    Duration::from_millis(wait).min(POLL)
+                }
             })
         }
         Err(refusal) => {
