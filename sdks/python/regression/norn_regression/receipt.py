@@ -33,7 +33,8 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -61,7 +62,6 @@ MAX_RECEIPT_SUMMARY_BYTES = 32 * 1024
 # Mirrors `crates/norn-canonical/src/lib.rs`: per-number and per-document bounds.
 MAX_CANONICAL_NUMBER_BYTES = 1_048_576
 MAX_DOCUMENT_NUMBER_BYTES = 4 * MAX_CANONICAL_NUMBER_BYTES
-_QUANTIZE_9 = Decimal("0.000000001")
 
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 # Closed identifier grammar so comma-joined `features` is unambiguous and
@@ -328,12 +328,14 @@ EVALUATION_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
-        "model_id",
-        "version_id",
-        "evaluation_run",
         "dataset_revision",
+        "evaluation_run",
+        "features",
         "metric_name",
+        "model_id",
+        "order",
         "target",
+        "version_id",
     ],
     "properties": {
         "model_id": {"type": "string"},
@@ -381,28 +383,50 @@ EVALUATION_ERROR_SCHEMA: dict[str, Any] = {
 
 
 def verify_evaluator_artifact_pins(regression_dir: Path | None = None) -> None:
-    """Verify every pinned digest in `evaluator_pins.json` matches live on-disk build inputs."""
+    """Verify every pinned digest in `evaluator_pins.json` and the exact `Dockerfile.evaluator` recipe."""
     root = Path(__file__).resolve().parents[1] if regression_dir is None else Path(regression_dir)
     pins = _load_evaluator_pins()
     dockerfile_text = (root / "Dockerfile.evaluator").read_text(encoding="utf-8")
-    if f"python:3.11-slim@{pins['baseImage']}" not in dockerfile_text:
-        raise ValueError(f"Dockerfile.evaluator does not pin python:3.11-slim@{pins['baseImage']}")
-    if 'ENTRYPOINT ["python", "-m", "norn_regression.evaluator_cli"]' not in dockerfile_text:
-        raise ValueError(
-            "Dockerfile.evaluator ENTRYPOINT does not invoke python -m norn_regression.evaluator_cli"
-        )
-    # Every COPY instruction must refer only to pinned source files or evaluator_pins.json.
-    allowed_copied = {
-        *(f"sdks/python/regression/{rel}" for _, _, _, rel in _PINNED_ARTIFACT_SPECS),
-        "sdks/python/regression/norn_regression/evaluator_pins.json",
-    }
+
+    expected_from = f"python:3.11-slim@{pins['baseImage']}"
+    from_lines: list[str] = []
+    actual_copies: set[tuple[str, str]] = set()
+    entrypoint_lines: list[str] = []
     for line in dockerfile_text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("COPY "):
+        if not stripped or stripped.startswith("#"):
+            continue
+        upper = stripped.upper()
+        if upper.startswith("FROM "):
+            from_lines.append(stripped)
+        elif upper.startswith("COPY "):
             parts = stripped.split()
-            for src in parts[1:-1]:
-                if src not in allowed_copied:
-                    raise ValueError(f"Dockerfile.evaluator copies unpinned input: {src}")
+            if len(parts) != 3 or parts[1].startswith("--"):
+                raise ValueError(f"Dockerfile.evaluator COPY must be exact `COPY <src> <dst>`: {stripped!r}")
+            pair = (parts[1], parts[2])
+            if pair in actual_copies:
+                raise ValueError(f"Dockerfile.evaluator duplicate COPY instruction: {stripped!r}")
+            actual_copies.add(pair)
+        elif upper.startswith("ENTRYPOINT "):
+            entrypoint_lines.append(stripped)
+
+    if len(from_lines) != 1 or from_lines[0].split()[1] != expected_from:
+        raise ValueError(f"Dockerfile.evaluator must declare exactly one `FROM {expected_from}`")
+    if entrypoint_lines != ['ENTRYPOINT ["python", "-m", "norn_regression.evaluator_cli"]']:
+        raise ValueError(
+            "Dockerfile.evaluator must declare exactly ENTRYPOINT [\"python\", \"-m\", \"norn_regression.evaluator_cli\"]"
+        )
+    expected_copies = {
+        ("sdks/python/regression/norn_regression/__init__.py", "/app/norn_regression/__init__.py"),
+        ("sdks/python/regression/norn_regression/receipt.py", "/app/norn_regression/receipt.py"),
+        ("sdks/python/regression/norn_regression/evaluator_cli.py", "/app/norn_regression/evaluator_cli.py"),
+        ("sdks/python/regression/norn_regression/evaluator_pins.json", "/app/norn_regression/evaluator_pins.json"),
+    }
+    if actual_copies != expected_copies:
+        raise ValueError(
+            f"Dockerfile.evaluator COPY set mismatch: expected {sorted(expected_copies)}, got {sorted(actual_copies)}"
+        )
+
     for _, _, key, rel_path in _PINNED_ARTIFACT_SPECS:
         actual = f"sha256:{hashlib.sha256((root / rel_path).read_bytes()).hexdigest()}"
         if actual != pins[key]:
@@ -674,11 +698,14 @@ def encode_dataset_snapshot(frame: Any, columns: Sequence[str]) -> bytes:
 
 
 def decode_dataset_snapshot(raw_bytes: bytes) -> tuple[list[str], list[dict[str, Any]]]:
-    """Decode `norn.snapshot/v1` canonical JSON bytes strictly from the hashed representation."""
+    """Decode `norn.snapshot/v1` bytes, refusing any non-canonical encoding."""
     if not isinstance(raw_bytes, (bytes, bytearray)):
         raise TypeError("snapshot payload must be bytes")
-    doc = json.loads(raw_bytes.decode("utf-8"), parse_float=Decimal)
-    if not isinstance(doc, dict) or doc.get("format") != SNAPSHOT_FORMAT_V1:
+    raw = bytes(raw_bytes)
+    doc = json.loads(raw.decode("utf-8"), parse_float=Decimal)
+    if not isinstance(doc, dict) or set(doc.keys()) != {"format", "columns", "rows"}:
+        raise ValueError("dataset snapshot must contain exactly format, columns, and rows")
+    if doc.get("format") != SNAPSHOT_FORMAT_V1:
         raise ValueError(f"dataset snapshot must declare format {SNAPSHOT_FORMAT_V1!r}")
     cols = doc.get("columns")
     rows = doc.get("rows")
@@ -690,13 +717,43 @@ def decode_dataset_snapshot(raw_bytes: bytes) -> tuple[list[str], list[dict[str,
         raise ValueError("dataset snapshot contains duplicate column names")
     if not isinstance(rows, list):
         raise ValueError("dataset snapshot rows must be a list")
+
     decoded_rows: list[dict[str, Any]] = []
+    canonical_rows: list[list[list[Any]]] = []
     for row in rows:
         if not isinstance(row, list) or len(row) != len(cols):
             raise ValueError("dataset snapshot row length does not match columns")
-        decoded_rows.append(
-            {col: _decode_typed_cell(cell) for col, cell in zip(cols, row, strict=True)}
+        decoded_row: dict[str, Any] = {}
+        canon_row: list[list[Any]] = []
+        for col, cell in zip(cols, row, strict=True):
+            val = _decode_typed_cell(cell)
+            decoded_row[col] = val
+            canon_row.append(_encode_typed_cell(val))
+        decoded_rows.append(decoded_row)
+        canonical_rows.append(canon_row)
+
+    if "id" in cols:
+        if cols[0] != "id":
+            raise ValueError("dataset snapshot with 'id' column must place 'id' first")
+        expected_order = sorted(
+            canonical_rows,
+            key=lambda r: (
+                "" if r[0][0] == "null" else str(_decode_typed_cell(r[0])),
+                r[0][0],
+            ),
         )
+        if canonical_rows != expected_order:
+            raise ValueError("dataset snapshot rows are not canonically sorted by 'id'")
+
+    expected_bytes = canonical_json(
+        {
+            "format": SNAPSHOT_FORMAT_V1,
+            "columns": cols,
+            "rows": canonical_rows,
+        }
+    )
+    if raw != expected_bytes:
+        raise ValueError("dataset snapshot bytes are not Norn1 canonical")
     return cols, decoded_rows
 
 
@@ -842,6 +899,38 @@ def _to_exact_eval_decimal(value: Any, label: str) -> Decimal:
     raise ValueError(f"unsupported numeric value in column {label!r}: {value!r}")
 
 
+def _decimal_to_exact_fraction(value: Decimal) -> Fraction:
+    """Convert any finite `Decimal` to an exact `Fraction` without ambient context rounding."""
+    negative, significant, exponent = _exact_decimal_parts(value)
+    if not significant:
+        return Fraction(0)
+    integer = int(significant)
+    if negative:
+        integer = -integer
+    if exponent >= 0:
+        return Fraction(integer * (10**exponent), 1)
+    return Fraction(integer, 10 ** (-exponent))
+
+
+def _fraction_to_decimal_scale9(value: Fraction) -> Decimal:
+    """Round an exact `Fraction` to scale <= 9 (half-even) without touching ambient Decimal context."""
+    negative = value < 0
+    num = -value.numerator if negative else value.numerator
+    den = value.denominator
+    scaled = num * 1_000_000_000
+    quotient, remainder = divmod(scaled, den)
+    twice_rem = remainder * 2
+    if twice_rem > den or (twice_rem == den and quotient % 2 == 1):
+        quotient += 1
+    if quotient == 0:
+        return Decimal(0)
+    exact_q = _int_to_exact_decimal(quotient)
+    _, digits_str, exp = _exact_decimal_parts(exact_q)
+    return _reduce_decimal(
+        Decimal((1 if negative else 0, tuple(int(ch) for ch in digits_str), exp - 9))
+    )
+
+
 def _score_model_artifact(
     model: Mapping[str, Any],
     rows: list[dict[str, Any]],
@@ -850,38 +939,45 @@ def _score_model_artifact(
     features: list[str],
     metric_name: str,
 ) -> tuple[Decimal, list[EvaluationCheck], dict[str, Any]]:
-    """Score the registered model artifact on the decoded snapshot and evaluate its contracts."""
+    """Score the registered model artifact with exact rational arithmetic and evaluate its contracts."""
     if not rows:
         raise ValueError("evaluated dataset snapshot must contain at least one row")
-    intercept: Decimal = model["intercept"]
-    coefficients: Mapping[str, Decimal] = model["coefficients"]
-    contracts: Mapping[str, Decimal | None] = model["contracts"]
+    intercept = _decimal_to_exact_fraction(model["intercept"])
+    coefficients = {
+        feat: _decimal_to_exact_fraction(coef)
+        for feat, coef in model["coefficients"].items()
+    }
+    contracts = {
+        key: (None if val is None else _decimal_to_exact_fraction(val))
+        for key, val in model["contracts"].items()
+    }
 
-    actuals: list[Decimal] = []
-    predictions: list[Decimal] = []
-    abs_errors: list[Decimal] = []
-    sq_errors: list[Decimal] = []
+    actuals: list[Fraction] = []
+    predictions: list[Fraction] = []
+    abs_errors: list[Fraction] = []
+    sq_errors: list[Fraction] = []
 
     for row in rows:
-        y = _to_exact_eval_decimal(row[target], target)
+        y = _decimal_to_exact_fraction(_to_exact_eval_decimal(row[target], target))
         y_hat = intercept
         for feat in features:
-            y_hat += coefficients[feat] * _to_exact_eval_decimal(row[feat], feat)
+            x_val = _decimal_to_exact_fraction(_to_exact_eval_decimal(row[feat], feat))
+            y_hat += coefficients[feat] * x_val
         err = y - y_hat
         actuals.append(y)
         predictions.append(y_hat)
         abs_errors.append(abs(err))
         sq_errors.append(err * err)
 
-    n = Decimal(len(rows))
-    sum_abs_err = sum(abs_errors, Decimal(0))
-    sum_abs_y = sum((abs(y) for y in actuals), Decimal(0))
+    n = Fraction(len(rows), 1)
+    sum_abs_err = sum(abs_errors, Fraction(0))
+    sum_abs_y = sum((abs(y) for y in actuals), Fraction(0))
     mae = sum_abs_err / n
     wape = (sum_abs_err / sum_abs_y) if sum_abs_y > 0 else None
-    y_mean = sum(actuals, Decimal(0)) / n
-    ss_res = sum(sq_errors, Decimal(0))
-    ss_tot = sum(((y - y_mean) * (y - y_mean) for y in actuals), Decimal(0))
-    r_squared = (Decimal(1) - (ss_res / ss_tot)) if ss_tot > 0 else None
+    y_mean = sum(actuals, Fraction(0)) / n
+    ss_res = sum(sq_errors, Fraction(0))
+    ss_tot = sum(((y - y_mean) * (y - y_mean) for y in actuals), Fraction(0))
+    r_squared = (Fraction(1) - (ss_res / ss_tot)) if ss_tot > 0 else None
 
     if metric_name == "wape":
         if wape is None:
@@ -896,7 +992,7 @@ def _score_model_artifact(
     else:
         raise ValueError(f"unsupported metric_name {metric_name!r}; expected one of {sorted(SUPPORTED_METRICS)}")
 
-    metric_value = _reduce_decimal(raw_metric.quantize(_QUANTIZE_9, rounding=ROUND_HALF_EVEN))
+    metric_value = _fraction_to_decimal_scale9(raw_metric)
 
     checks: list[EvaluationCheck] = []
     min_pred = contracts.get("minPrediction")
@@ -956,7 +1052,7 @@ def _score_model_artifact(
             EvaluationCheck(
                 name="finite_predictions",
                 status="pass",
-                detail=f"scored {len(rows)} rows with exact Decimal predictions",
+                detail=f"scored {len(rows)} rows with exact rational predictions",
             )
         )
 
@@ -1190,6 +1286,8 @@ def evaluate_forecast_receipt(
     dataset_revision: str,
     metric_name: str = "wape",
     order: str | None = None,
+    authority_kind: str = "service",
+    generation: int = 1,
     executor: str = "pool.ml-evaluator",
     placement: str = "ml-evaluator/node-1",
     fact_pins: list[dict[str, Any]] | None = None,
@@ -1204,6 +1302,8 @@ def evaluate_forecast_receipt(
         raise ValueError(
             f"unsupported metric_name {metric_name!r}; expected one of {sorted(SUPPORTED_METRICS)}"
         )
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation <= 0:
+        raise ValueError(f"generation must be a positive int, got {generation!r}")
 
     columns = [valid_target, *valid_features] + (
         [valid_order] if valid_order is not None and valid_order not in (valid_target, *valid_features) else []
@@ -1228,14 +1328,33 @@ def evaluate_forecast_receipt(
     if dispatched_invocation is not None:
         if dispatched_invocation.get("manifest") != FORECAST_EVALUATOR_MANIFEST_DIGEST:
             raise ValueError("dispatched invocation manifest does not match forecast evaluator")
+        if dispatched_invocation.get("world") != "main":
+            raise ValueError(
+                f"dispatched invocation world must be 'main', got {dispatched_invocation.get('world')!r}"
+            )
         if dispatched_invocation.get("tenant") != tenant:
             raise ValueError("tenant does not match dispatched invocation")
         if dispatched_invocation.get("commandId") != command_id:
             raise ValueError("command_id does not match dispatched invocation")
-        if dispatched_invocation.get("run", {}).get("id") != version_id:
-            raise ValueError("version_id does not match dispatched invocation run.id")
-        if dispatched_invocation.get("authority", {}).get("id") != authority_id:
-            raise ValueError("authority_id does not match dispatched invocation authority.id")
+        dispatched_run = dispatched_invocation.get("run")
+        if (
+            not isinstance(dispatched_run, Mapping)
+            or dispatched_run.get("id") != version_id
+            or isinstance(dispatched_run.get("generation"), bool)
+            or dispatched_run.get("generation") != generation
+        ):
+            raise ValueError(
+                f"run does not match dispatched invocation: expected id={version_id!r}, generation={generation!r}, got {dispatched_run!r}"
+            )
+        dispatched_authority = dispatched_invocation.get("authority")
+        if (
+            not isinstance(dispatched_authority, Mapping)
+            or dispatched_authority.get("kind") != authority_kind
+            or dispatched_authority.get("id") != authority_id
+        ):
+            raise ValueError(
+                f"authority does not match dispatched invocation: expected kind={authority_kind!r}, id={authority_id!r}, got {dispatched_authority!r}"
+            )
 
         pinned_dataset = dispatched_invocation.get("blobs", {}).get("dataset")
         if not isinstance(pinned_dataset, Mapping) or pinned_dataset.get("digest") != actual_dataset_blob["digest"]:
@@ -1261,7 +1380,7 @@ def evaluate_forecast_receipt(
                 f"dispatched blobs.model.version {pinned_model.get('version')!r} does not match version_id {version_id!r}"
             )
 
-        dispatched_inputs = dispatched_invocation.get("inputs", {})
+        dispatched_inputs = dispatched_invocation.get("inputs")
         expected_inputs = {
             "dataset_revision": dataset_revision,
             "evaluation_run": evaluation_run,
@@ -1272,16 +1391,22 @@ def evaluate_forecast_receipt(
             "target": valid_target,
             "version_id": version_id,
         }
+        if not isinstance(dispatched_inputs, Mapping) or set(dispatched_inputs.keys()) != set(expected_inputs.keys()):
+            raise ValueError(
+                f"dispatched invocation inputs must declare exactly {sorted(expected_inputs.keys())}"
+            )
         for key, expected_val in expected_inputs.items():
-            if dispatched_inputs.get(key) != expected_val:
+            if dispatched_inputs[key] != expected_val:
                 raise ValueError(
-                    f"evaluation setting {key!r}={expected_val!r} does not match dispatched invocation {dispatched_inputs.get(key)!r}"
+                    f"evaluation setting {key!r}={expected_val!r} does not match dispatched invocation {dispatched_inputs[key]!r}"
                 )
         invocation: dict[str, Any] = dict(dispatched_invocation)
     else:
         invocation = build_evaluation_invocation(
             tenant=tenant,
             authority_id=authority_id,
+            authority_kind=authority_kind,
+            generation=generation,
             command_id=command_id,
             version_id=version_id,
             model_id=model_id,

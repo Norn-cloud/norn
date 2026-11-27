@@ -37,13 +37,15 @@ def run_cli(invocation_path: Path, snapshot_path: Path, model_path: Path) -> str
         features,
         tenant=str(invocation["tenant"]),
         authority_id=str(invocation["authority"]["id"]),
+        authority_kind=str(invocation["authority"]["kind"]),
+        generation=invocation["run"]["generation"],
         command_id=str(invocation["commandId"]),
         version_id=str(inputs["version_id"]),
         model_id=str(inputs["model_id"]),
         evaluation_run=str(inputs["evaluation_run"]),
         dataset_revision=str(inputs["dataset_revision"]),
         metric_name=str(inputs["metric_name"]),
-        order=inputs.get("order"),
+        order=inputs["order"],
         dispatched_invocation=invocation,
     )
     return canonical_json_str(receipt)

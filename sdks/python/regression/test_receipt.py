@@ -154,6 +154,14 @@ class ForecastReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must match"):
             encode_dataset_snapshot([{"a,b": 1, "y": 2}], ["y", "a,b"])
 
+        # Raw snapshot decoder refuses non-canonical whitespace or decomposed UTF-8 bytes.
+        non_canonical = b" " + snap_nfc
+        with self.assertRaisesRegex(ValueError, "not Norn1 canonical"):
+            decode_dataset_snapshot(non_canonical)
+        decomposed_raw = snap_nfc.decode("utf-8").replace("caf\u00e9", "caf\u0065\u0301").encode("utf-8")
+        with self.assertRaisesRegex(ValueError, "not Norn1 canonical"):
+            decode_dataset_snapshot(decomposed_raw)
+
     def test_receipt_binds_manifest_dataset_model_revision_scope_and_contract(self):
         rows_a = [
             {"id": "r2", "y": Decimal("5.0"), "x1": Decimal("2.0")},
@@ -412,6 +420,113 @@ class ForecastReceiptTests(unittest.TestCase):
                 check=True,
             )
             self.assertEqual(proc.stdout.strip(), canonical_json_str(good_receipt))
+
+        # Exact rational arithmetic avoids ambient 28-digit Decimal catastrophic cancellation:
+        # 1e28 + 1 - 1e28 == 1 exactly, so MAE == 0 passes maxMae=0.
+        cancel_model = encode_model_artifact(
+            model_id="supply.demand_forecast",
+            target="y",
+            features=["x1", "x2"],
+            intercept="1",
+            coefficients={"x1": "1", "x2": "-1"},
+            contracts={"maxMae": "0"},
+        )
+        cancel_rows = [{"id": "c1", "y": Decimal("1"), "x1": Decimal("1e28"), "x2": Decimal("1e28")}]
+        _, cancel_receipt, _, _ = evaluate_forecast_receipt(
+            cancel_rows,
+            cancel_model,
+            "y",
+            ["x1", "x2"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-cancel",
+            version_id="v-cancel",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+            metric_name="mae",
+        )
+        cancel_summary = cancel_receipt["outcome"]["success"]["summary"]
+        self.assertEqual(cancel_summary["metric_value"], Decimal(0))
+        self.assertTrue(cancel_summary["contracts_passed"])
+
+        # Missing explicit `inputs.order`, wrong world, authority kind, or generation refuse.
+        missing_order = copy.deepcopy(invocation)
+        del missing_order["inputs"]["order"]
+        with self.assertRaisesRegex(ValueError, "inputs must declare exactly"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order=None,
+                dispatched_invocation=missing_order,
+            )
+        wrong_world = copy.deepcopy(invocation)
+        wrong_world["world"] = "fork"
+        with self.assertRaisesRegex(ValueError, "world must be 'main'"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order="seq",
+                dispatched_invocation=wrong_world,
+            )
+        wrong_gen = copy.deepcopy(invocation)
+        wrong_gen["run"]["generation"] = 2
+        with self.assertRaisesRegex(ValueError, "run does not match"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order="seq",
+                dispatched_invocation=wrong_gen,
+            )
+        wrong_auth_kind = copy.deepcopy(invocation)
+        wrong_auth_kind["authority"]["kind"] = "user"
+        with self.assertRaisesRegex(ValueError, "authority does not match"):
+            evaluate_forecast_receipt(
+                snap_bytes,
+                good_model,
+                "y",
+                ["x1"],
+                tenant="org_demo/dev",
+                authority_id="svc:evaluator",
+                command_id="cmd-eval-good",
+                version_id="v1",
+                model_id="supply.demand_forecast",
+                evaluation_run="run-eval",
+                dataset_revision="c10",
+                metric_name="wape",
+                order="seq",
+                dispatched_invocation=wrong_auth_kind,
+            )
 
 
 if __name__ == "__main__":
