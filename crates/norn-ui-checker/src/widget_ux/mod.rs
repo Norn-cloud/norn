@@ -4,7 +4,7 @@
 //! only the records named by their `WidgetExpressionInputs`; this checker
 //! never gives a widget expression ambient actor or model-link access.
 //!
-//! The rest of `norn-checker` interacts with this module only through
+//! The rest of `norn-ui-checker` interacts with this module only through
 //! `check_widget_ux_set`, [`generated_transition_enabled_when`],
 //! [`GeneratedTransitionEnabledWhenError`], and `value_type`.
 
@@ -45,6 +45,48 @@ pub(crate) use types::value_type;
 use crate::ui_machine::DeclaredCodes;
 
 const CODE: &str = "widget.validation.invalid_payload";
+
+/// Maximum `WidgetNode` nesting depth permitted in a widget UX tree.
+pub(crate) const MAX_WIDGET_NODE_DEPTH: usize = 64;
+
+/// Maximum composed baseline page expansions permitted per widget check pass.
+pub(crate) const MAX_COMPOSITION_EXPANSIONS: usize = 128;
+
+pub(super) fn is_nonblank_locale_text(text: &norn_ir::LocaleText) -> bool {
+    !text.0.is_empty() && text.0.values().all(|value| !value.trim().is_empty())
+}
+
+pub(super) type ActionCacheKey<'a> = (&'a str, &'a str, [Option<&'a str>; 5]);
+
+pub(super) fn action_cache_key(artifact: &ArtifactEnvelope) -> ActionCacheKey<'_> {
+    (
+        artifact.artifact_id.as_str(),
+        artifact.version.as_str(),
+        [
+            artifact.scope.org_id.as_deref(),
+            artifact.scope.tenant_id.as_deref(),
+            artifact.scope.workspace_id.as_deref(),
+            artifact.scope.environment_id.as_deref(),
+            artifact.scope.business_unit_id.as_deref(),
+        ],
+    )
+}
+
+pub(super) fn exceeds_widget_node_depth(ux: &WidgetUx) -> Option<String> {
+    for (index, page) in ux.pages.iter().enumerate() {
+        let mut stack = vec![(&page.root, 1usize)];
+        while let Some((node, depth)) = stack.pop() {
+            if depth > MAX_WIDGET_NODE_DEPTH {
+                return Some(format!("/payload/ux/pages/{index}/root"));
+            }
+            let next_depth = depth.saturating_add(1);
+            for child in &node.children {
+                stack.push((child, next_depth));
+            }
+        }
+    }
+    None
+}
 
 fn has_initial_lifecycle_default(property: &EffectiveProperty, initial_states: &[String]) -> bool {
     property
@@ -96,6 +138,16 @@ pub fn check_widget_ux_set(
                     continue;
                 }
             };
+        if let Some(path) = exceeds_widget_node_depth(&ux) {
+            diagnostics.push(finding(
+                artifact,
+                &path,
+                format!(
+                    "widget component tree exceeds maximum nesting depth of {MAX_WIDGET_NODE_DEPTH}"
+                ),
+            ));
+            continue;
+        }
         let view = views.of(artifact);
         let mut checker = UxChecker::new(
             artifact,
@@ -122,7 +174,7 @@ pub fn check_widget_ux_set(
             Some(&codes),
         ));
         diagnostics.extend(crate::ui_layer::check(artifact, &ux));
-        diagnostics.extend(crate::ui_view::check(artifact, &ux));
+        diagnostics.extend(crate::ui_view::check(artifact, &ux, &composed));
         diagnostics.extend(crate::ui_catalog::check(artifact, &ux, &composed));
         let names_lifecycle = ux.pages.iter().any(|page| {
             page.machine
@@ -176,6 +228,9 @@ struct UxChecker<'a, 'u, 'd> {
     form_owned_semantics: BTreeSet<String>,
     form_input_initialization: BTreeMap<String, FormInputInitialization>,
     composition_stack: BTreeSet<(String, String, String)>,
+    composition_expansions: usize,
+    object_type_defs: RefCell<Option<BTreeMap<String, norn_ir::ObjectTypeDef>>>,
+    validated_actions: RefCell<BTreeMap<ActionCacheKey<'a>, Option<ActionRoot>>>,
     next_record: Cell<usize>,
     enforce_effect_root: bool,
 }
@@ -237,15 +292,24 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         ux: &'u WidgetUx,
         diagnostics: &'d mut Vec<Diagnostic>,
     ) -> Self {
-        let mut exact_index = BTreeMap::new();
-        for artifact in all {
-            exact_index
-                .entry((
-                    artifact.artifact_id.as_str(),
-                    artifact.version.as_str(),
-                    artifact.kind(),
-                ))
-                .or_insert(artifact);
+        let mut exact_index: BTreeMap<(&'a str, &'a str, ArtifactKind), &'a ArtifactEnvelope> =
+            BTreeMap::new();
+        for artifact in all.iter().rev() {
+            let key = (
+                artifact.artifact_id.as_str(),
+                artifact.version.as_str(),
+                artifact.kind(),
+            );
+            let visible = scope_visible(&owner.scope, &artifact.scope);
+            match exact_index.get(&key) {
+                None => {
+                    exact_index.insert(key, artifact);
+                }
+                Some(existing) if visible && !scope_visible(&owner.scope, &existing.scope) => {
+                    exact_index.insert(key, artifact);
+                }
+                Some(_) => {}
+            }
         }
         Self {
             owner,
@@ -306,6 +370,9 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             form_owned_semantics: BTreeSet::new(),
             form_input_initialization: BTreeMap::new(),
             composition_stack: BTreeSet::new(),
+            composition_expansions: 0,
+            object_type_defs: RefCell::new(None),
+            validated_actions: RefCell::new(BTreeMap::new()),
             next_record: Cell::new(0),
             enforce_effect_root: true,
         }
@@ -375,7 +442,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             );
             return None;
         };
-        let Some(entity) = self.find_exact(
+        let Some(entity) = self.find_visible_exact(
+            self.owner,
             &binding.object.id,
             &binding.object.version,
             &ArtifactKind::Entity,
@@ -467,6 +535,26 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         self.exact_index.get(&(id, version, kind.clone())).copied()
     }
 
+    pub(super) fn find_visible_exact(
+        &self,
+        owner: &ArtifactEnvelope,
+        id: &str,
+        version: &str,
+        kind: &ArtifactKind,
+    ) -> Option<&'a ArtifactEnvelope> {
+        if std::ptr::eq(owner, self.owner) {
+            return self
+                .find_exact(id, version, kind)
+                .filter(|artifact| scope_visible(&owner.scope, &artifact.scope));
+        }
+        self.all.iter().rev().find(|artifact| {
+            artifact.artifact_id == id
+                && artifact.version == version
+                && artifact.kind() == *kind
+                && scope_visible(&owner.scope, &artifact.scope)
+        })
+    }
+
     fn is_bounded_list_binding(&self, id: &str) -> bool {
         self.bindings.get(id).is_some_and(|binding| {
             matches!(
@@ -513,7 +601,7 @@ pub(crate) fn composed_ux(
         .dependencies
         .iter()
         .any(|dependency| dependency_matches(dependency, &widget.id, &widget.version, &kind));
-    let baseline = all.iter().find(|candidate| {
+    let baseline = all.iter().rev().find(|candidate| {
         candidate.artifact_id == widget.id
             && candidate.version == widget.version
             && candidate.kind() == kind
@@ -522,9 +610,10 @@ pub(crate) fn composed_ux(
     let ArtifactPayload::Widget(payload) = &baseline.filter(|_| pinned)?.payload else {
         return None;
     };
-    serde_json::to_value(payload.ux.as_value()?)
+    let ux = serde_json::to_value(payload.ux.as_value()?)
         .and_then(serde_json::from_value::<WidgetUx>)
-        .ok()
+        .ok()?;
+    exceeds_widget_node_depth(&ux).is_none().then_some(ux)
 }
 
 fn dependency_matches(

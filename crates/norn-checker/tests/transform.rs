@@ -1293,3 +1293,203 @@ fn evaluate_shares_one_fuel_budget_across_rows_and_columns() {
         "the same 100 rows succeed once fuel_units is raised"
     );
 }
+
+fn marked_customer_pool() -> Vec<Value> {
+    let mut pool = ontology();
+    for item in &mut pool {
+        if item["artifactId"] == "shop.Customer" {
+            for prop in item["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties")
+            {
+                if prop["id"] == "email" {
+                    prop["markings"] = json!(["pii.email"]);
+                }
+            }
+        }
+    }
+    pool.push(artifact(
+        "shop.markings",
+        "entity",
+        json!([]),
+        json!({
+            "entityVersion": "2.0",
+            "markings": [{
+                "id": "pii.email", "label": "Email", "severity": "high",
+                "category": "pii.contact", "mask": {"kind": "redacted"}
+            }]
+        }),
+    ));
+    pool
+}
+
+#[test]
+fn a_transform_cannot_filter_or_order_by_a_marked_column() {
+    let pool = marked_customer_pool();
+    let check_view = |nodes: Value, output: &str| {
+        let mut set = pool.clone();
+        set.push(view(nodes, output));
+        let set = envelopes(set);
+        admit(set.last().expect("view"), &set, &BTreeSet::new())
+    };
+    let assert_marked = |err: Vec<norn_checker::Diagnostic>| {
+        assert!(
+            err.iter()
+                .any(|d| d.code.as_str() == "question.validation.marked_field"),
+            "{err:?}"
+        );
+    };
+
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "f": {"op": "filter", "input": "s", "predicate": "input.email == 'a@b.c'"}
+            }),
+            "f",
+        )
+        .expect_err("filter on marked column must refuse"),
+    );
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "w": {
+                    "op": "window", "input": "s", "partitionBy": ["region"],
+                    "orderBy": [
+                        {"column": "email", "direction": "asc"},
+                        {"column": "id", "direction": "asc"}
+                    ],
+                    "columns": [{"name": "rn", "fn": "row_number"}]
+                }
+            }),
+            "w",
+        )
+        .expect_err("order by marked column must refuse"),
+    );
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "w": {
+                    "op": "window", "input": "s", "partitionBy": ["email"],
+                    "orderBy": [{"column": "id", "direction": "asc"}],
+                    "columns": [{"name": "rn", "fn": "row_number"}]
+                }
+            }),
+            "w",
+        )
+        .expect_err("partition by marked column must refuse"),
+    );
+    assert_marked(
+        check_view(
+            json!({
+                "s": {"op": "scan", "input": "customer"},
+                "d": {
+                    "op": "dedupe", "input": "s", "key": ["email"],
+                    "orderBy": [{"column": "id", "direction": "asc"}],
+                    "keep": "first"
+                }
+            }),
+            "d",
+        )
+        .expect_err("dedupe by marked key must refuse"),
+    );
+
+    let projected = check_view(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "p": {
+                "op": "project", "input": "s",
+                "columns": [
+                    {"name": "id", "expression": "input.id"},
+                    {"name": "email", "expression": "input.email"}
+                ]
+            }
+        }),
+        "p",
+    )
+    .expect("projection of marked column must still admit");
+    assert!(
+        projected
+            .output_schema()
+            .column("email")
+            .expect("email")
+            .markings
+            .contains("pii.email")
+    );
+}
+
+#[test]
+fn whole_row_closure_filter_over_marked_schema_is_refused() {
+    let mut marked_set = marked_customer_pool();
+    marked_set.push(view(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "f": {"op": "filter", "input": "s", "predicate": "some([input] as row, row.email == 'a@b.c')"}
+        }),
+        "f",
+    ));
+    let marked_set = envelopes(marked_set);
+    let err = admit(
+        marked_set.last().expect("view"),
+        &marked_set,
+        &BTreeSet::new(),
+    )
+    .expect_err("whole-row closure predicate over marked schema must refuse");
+    assert!(
+        err.iter()
+            .any(|d| d.code.as_str() == "question.validation.marked_field"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn runtime_origins_cover_whole_row_filter_partition_and_dedupe_keys() {
+    let mut unmarked = ontology();
+    unmarked.push(view(
+        json!({
+            "s": {"op": "scan", "input": "customer"},
+            "f": {"op": "filter", "input": "s", "predicate": "some([input] as row, row.region == 'north')"},
+            "w": {
+                "op": "window", "input": "f", "partitionBy": ["region"],
+                "orderBy": [{"column": "id", "direction": "asc"}],
+                "columns": [{"name": "rn", "fn": "row_number"}]
+            },
+            "d": {
+                "op": "dedupe", "input": "w", "key": ["region"],
+                "orderBy": [{"column": "id", "direction": "asc"}],
+                "keep": "first"
+            }
+        }),
+        "d",
+    ));
+    let unmarked = envelopes(unmarked);
+    let plan = admit(unmarked.last().expect("view"), &unmarked, &BTreeSet::new())
+        .expect("unmarked filter + window + dedupe admits");
+    let origins = plan.filter_and_order_origins();
+    assert!(
+        origins.contains(&(
+            "/nodes/f/predicate".to_owned(),
+            "shop.Customer".to_owned(),
+            "email".to_owned(),
+        )),
+        "whole-row filter must conservatively include every schema column origin: {origins:?}"
+    );
+    assert!(
+        origins.contains(&(
+            "/nodes/w/partitionBy/0".to_owned(),
+            "shop.Customer".to_owned(),
+            "region".to_owned(),
+        )),
+        "{origins:?}"
+    );
+    assert!(
+        origins.contains(&(
+            "/nodes/d/key/0".to_owned(),
+            "shop.Customer".to_owned(),
+            "region".to_owned(),
+        )),
+        "{origins:?}"
+    );
+}

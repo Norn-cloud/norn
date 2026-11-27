@@ -342,3 +342,93 @@ fn admission_refuses_a_catalog_its_own_access_rules_contradict() {
     .expect_err("not an identifier");
     assert!(error.has(AuthzCode::AccessNameInvalid), "{error}");
 }
+
+#[test]
+fn reserved_principal_attributes_duplicate_inputs_and_unsorted_holds_role_keys_are_handled() {
+    for reserved in [
+        "scope",
+        "represents",
+        "acted_by",
+        "entitlement_kinds",
+        "entitlement_roles",
+        "entitlement_groups",
+    ] {
+        let entry = json!([{"name": reserved, "type": "string", "source": {"kind": "attribute"}}]);
+        let error = principal_attribute_catalog(&[access(&entry)], &BTreeMap::new())
+            .expect_err("reserved principal attribute must be refused");
+        assert!(
+            error.has(AuthzCode::AccessPrincipalReserved),
+            "{reserved}: {error}"
+        );
+    }
+
+    // Unsorted / duplicate ScopeDimensions in HoldsRolePolicy::compile still resolve cleanly.
+    let unsorted = std::collections::BTreeSet::from([(
+        "reviewer".to_owned(),
+        vec![
+            ScopeDimension::Environment,
+            ScopeDimension::Org,
+            ScopeDimension::Org,
+        ],
+    )]);
+    let policy = HoldsRolePolicy::compile(&unsorted).expect("unsorted keys canonicalize");
+    let reviewer = principal("user:rana", ActorKind::User, &["reviewer"]);
+    let role_pdp = policy
+        .pdp(&[CapabilityGrant {
+            subject_id: reviewer.subject_id.clone(),
+            actor_kind: reviewer.actor_kind,
+            agent_session_id: reviewer.agent_session_id.clone(),
+            scope: Some(scope("org_demo")),
+            capabilities: vec![HOLDS_ROLE_ACTION.to_owned()],
+            binding: None,
+        }])
+        .expect("pdp");
+    let one = inputs(json!([
+        {"name": "isReviewer", "kind": {"holdsRole": {"role": "reviewer", "at": "resource"}}}
+    ]));
+    let req_scope = scope("org_demo");
+    let resolved = resolve_principal_inputs(
+        &catalog(),
+        &role_pdp,
+        &PrincipalContext {
+            principal: &reviewer,
+            request_scope: &req_scope,
+            subject_scope: &req_scope,
+            delegation: &Delegation::Direct,
+        },
+        &one,
+    )
+    .expect("canonicalized holdsRole resolves");
+    assert_eq!(resolved["isReviewer"], RuntimeValue::Bool(true));
+
+    // Empty HoldsRolePolicy still validates grants.
+    let empty_policy = HoldsRolePolicy::compile(&std::collections::BTreeSet::new()).expect("empty");
+    let bad_grant = empty_policy.pdp(&[CapabilityGrant {
+        subject_id: "*".to_owned(),
+        actor_kind: ActorKind::User,
+        agent_session_id: None,
+        scope: Some(scope("org_demo")),
+        capabilities: vec![HOLDS_ROLE_ACTION.to_owned()],
+        binding: None,
+    }]);
+    assert!(bad_grant.is_err());
+
+    // Duplicate input.name is refused rather than silently overwritten.
+    let dup = inputs(json!([
+        {"name": "dup", "kind": {"attribute": {"name": "id"}}},
+        {"name": "dup", "kind": {"attribute": {"name": "level"}}}
+    ]));
+    let refused = resolve_principal_inputs(
+        &catalog(),
+        &role_pdp,
+        &PrincipalContext {
+            principal: &reviewer,
+            request_scope: &req_scope,
+            subject_scope: &req_scope,
+            delegation: &Delegation::Direct,
+        },
+        &dup,
+    )
+    .expect_err("duplicate input names must fail closed");
+    assert_eq!(refused.input, "dup");
+}

@@ -36,7 +36,7 @@ use norn_projections::CedarPrincipalAttribute;
 use crate::admit::ValidatedPolicySet;
 use crate::base::AuthzSchema;
 use crate::diag::{AuthzCode, AuthzDiagnostic, AuthzError};
-use crate::lower::{compile, is_context_name};
+use crate::lower::{compile, is_context_name, is_reserved_principal_attribute};
 use crate::pdp::{DenyReason, Pdp, PdpDecision};
 use crate::request::{
     AccessRequest, AttrValue, CapabilityGrant, Delegation, PrincipalInput, ResourceInput, ScopeKey,
@@ -88,8 +88,9 @@ const fn cedar_type(value_type: PrincipalAttributeType) -> CedarPrincipalAttribu
 /// # Errors
 ///
 /// [`AuthzCode::AccessNameInvalid`] for a malformed entry or a scoped
-/// attribute whose name is not an identifier, and
-/// [`AuthzCode::AccessPrincipalConflict`] for two different declarations of
+/// attribute whose name is not an identifier,
+/// [`AuthzCode::AccessPrincipalReserved`] for a reserved principal attribute,
+/// and [`AuthzCode::AccessPrincipalConflict`] for two different declarations of
 /// one name or a scoped attribute declared at another type than `AccessIR`
 /// uses it at.
 pub fn principal_attribute_catalog(
@@ -108,6 +109,10 @@ pub fn principal_attribute_catalog(
                     format!(
                         "principal attribute '{name}' is not an identifier ([A-Za-z_][A-Za-z0-9_]*)"
                     ),
+                )),
+                Ok(()) if is_reserved_principal_attribute(name) => Some((
+                    AuthzCode::AccessPrincipalReserved,
+                    format!("principal attribute '{name}' is reserved"),
                 )),
                 Ok(()) => inferred
                     .get(name)
@@ -249,6 +254,22 @@ pub struct HoldsRolePolicy {
     keys: BTreeSet<HoldsRoleKey>,
 }
 
+fn holds_role_schema() -> Result<AuthzSchema, AuthzError> {
+    static PARSED: std::sync::OnceLock<Result<AuthzSchema, (AuthzCode, String)>> =
+        std::sync::OnceLock::new();
+    PARSED
+        .get_or_init(|| {
+            let projection = norn_projections::project_cedar_schema(&[], &[], &[]);
+            AuthzSchema::from_projected_cedarschema_fragments(&[
+                projection.schema.as_str(),
+                HOLDS_ROLE_SCHEMA,
+            ])
+            .map_err(|error| (AuthzCode::SchemaInvalid, error.to_string()))
+        })
+        .clone()
+        .map_err(|(code, message)| AuthzError::one(code, message))
+}
+
 impl HoldsRolePolicy {
     /// Compile one rule per key. No key compiles to no rule: nothing is held.
     ///
@@ -257,17 +278,14 @@ impl HoldsRolePolicy {
     /// The schema or a rule does not compile (an empty role, a dimension
     /// list without `org`).
     pub fn compile(keys: &BTreeSet<HoldsRoleKey>) -> Result<Self, AuthzError> {
+        let keys: BTreeSet<HoldsRoleKey> = keys
+            .iter()
+            .map(|(role, dimensions)| (role.clone(), canonical(dimensions)))
+            .collect();
         if keys.is_empty() {
-            return Ok(Self {
-                rules: None,
-                keys: BTreeSet::new(),
-            });
+            return Ok(Self { rules: None, keys });
         }
-        let projection = norn_projections::project_cedar_schema(&[], &[], &[]);
-        let schema = AuthzSchema::from_projected_cedarschema_fragments(&[
-            projection.schema.as_str(),
-            HOLDS_ROLE_SCHEMA,
-        ])?;
+        let schema = holds_role_schema()?;
         let rules = keys
             .iter()
             .enumerate()
@@ -290,7 +308,7 @@ impl HoldsRolePolicy {
         let policy = AccessIr::with_rules(HOLDS_ROLE_POLICY_ID, rules);
         Ok(Self {
             rules: Some(compile(&schema, &policy)?),
-            keys: keys.clone(),
+            keys,
         })
     }
 
@@ -301,12 +319,14 @@ impl HoldsRolePolicy {
     ///
     /// A grant does not compile.
     pub fn pdp(&self, grants: &[CapabilityGrant]) -> Result<HoldsRolePdp, AuthzError> {
+        let pdp = if let Some(rules) = &self.rules {
+            Some(Pdp::new(rules.clone(), grants)?)
+        } else {
+            crate::grants::CompiledGrants::compile(grants)?;
+            None
+        };
         Ok(HoldsRolePdp {
-            pdp: self
-                .rules
-                .as_ref()
-                .map(|rules| Pdp::new(rules.clone(), grants))
-                .transpose()?,
+            pdp,
             keys: self.keys.clone(),
         })
     }
@@ -497,6 +517,9 @@ pub fn resolve_principal_inputs(
         let unavailable = || PrincipalInputUnavailable {
             input: input.name.clone(),
         };
+        if resolved.contains_key(&input.name) {
+            return Err(unavailable());
+        }
         let entry = catalog
             .resolve(&input.kind)
             .map_err(|_unknown| unavailable())?;

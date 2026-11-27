@@ -232,3 +232,24 @@ fn a_path_template_with_an_unclosed_segment_is_refused() {
         .to_string();
     assert!(error.contains("unclosed"), "{error}");
 }
+
+#[test]
+fn stray_closing_brace_and_undeclared_required_property_are_refused() {
+    let fixture = document(&declared(&bound()));
+    let mut stray = serde_json::Map::new();
+    stray.insert(
+        "/v1/objects/{type}/{id}}".to_owned(),
+        fixture["/v1/objects/{type}/{id}"].clone(),
+    );
+    let error = ToolManifest::from_openapi_paths(&paths(&Value::Object(stray)).expect("JSON"))
+        .expect_err("refused")
+        .to_string();
+    assert!(error.contains("unmatched closing brace"), "{error}");
+
+    let mut bad_req = declared(&bound());
+    bad_req["inputSchema"]["required"] = json!(["type", "id", "ghost"]);
+    let req_err = ToolManifest::from_openapi_paths(&paths(&document(&bad_req)).expect("JSON"))
+        .expect_err("refused")
+        .to_string();
+    assert!(req_err.contains("ghost"), "{req_err}");
+}

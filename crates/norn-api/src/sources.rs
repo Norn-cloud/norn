@@ -232,6 +232,8 @@ struct Run {
     queue: std::collections::VecDeque<(norn_kernel::Observed<RuntimeValue>, MappingInput)>,
     after: Option<HttpRequest>,
     watermark_from: String,
+    /// Last page's watermarks whose rows were fully drained/ingested.
+    committed_watermarks: BTreeMap<String, Watermark>,
     read: u64,
     landed: u64,
     quarantined: u64,
@@ -385,6 +387,7 @@ impl Sources {
             queue: std::collections::VecDeque::new(),
             after: None,
             watermark_from: String::new(),
+            committed_watermarks: BTreeMap::new(),
             read: 0,
             landed: 0,
             quarantined: 0,
@@ -592,12 +595,11 @@ impl Sources {
             ));
         };
         state.last_end_ms = Some(now_ms);
-        let watermarks = run
-            .pull
-            .as_ref()
-            .map(|p| p.watermarks().clone())
-            .or_else(|| state.watermarks.clone())
-            .unwrap_or_default();
+        let watermarks = if run.pull.is_some() {
+            run.committed_watermarks.clone()
+        } else {
+            state.watermarks.clone().unwrap_or_default()
+        };
         state.watermarks = Some(watermarks.clone());
         let outcome = if error.is_some() {
             "failed"
@@ -691,6 +693,7 @@ fn begin<E: SqlEngine>(
         .and_then(|text| serde_json::from_str::<BTreeMap<String, Watermark>>(&text).ok());
     let watermarks = stored.or(known).unwrap_or_default();
     run.watermark_from = watermark_text(&watermarks);
+    run.committed_watermarks = watermarks.clone();
     let mut pull = Pull::new(profile, watermarks, Limits::default());
     let first = pull.next_request();
     run.pull = Some(pull);
@@ -831,6 +834,11 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
     }
     if !run.queue.is_empty() {
         return Ok(Next::Continue);
+    }
+    // PULL-WATERMARK-1: advance durable watermarks only after every row of the
+    // accepted page has been ingested cleanly.
+    if let Some(pull) = &run.pull {
+        run.committed_watermarks = pull.watermarks().clone();
     }
     Ok(run.after.take().map_or(Next::Done, Next::Request))
 }
@@ -1001,6 +1009,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         queue: std::collections::VecDeque::new(),
         after: None,
         watermark_from: "{}".to_owned(),
+        committed_watermarks: BTreeMap::new(),
         read,
         landed,
         quarantined,

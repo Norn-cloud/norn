@@ -95,6 +95,7 @@ struct Facts {
     page_pointer: BTreeMap<String, String>,
     item_pointer: BTreeMap<String, String>,
     binding_pointer: BTreeMap<String, String>,
+    expansions: usize,
 }
 
 /// One derived violation: the registered code, the pointer, and the message.
@@ -452,9 +453,12 @@ impl Facts {
             widget.version.clone(),
             page_id.to_owned(),
         );
-        if context.stack.contains(&identity) {
+        if context.stack.contains(&identity)
+            || self.expansions >= crate::widget_ux::MAX_COMPOSITION_EXPANSIONS
+        {
             return;
         }
+        self.expansions = self.expansions.saturating_add(1);
         let Some(baseline) = (context.composed)(widget) else {
             return;
         };
