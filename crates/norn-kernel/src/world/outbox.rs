@@ -33,9 +33,11 @@
 //! generation, so a reissue cannot change it.
 
 use norn_ir::cell_id::CellId;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::CommandId;
+
+pub use super::outbox_ledger as ledger;
 
 /// The queue a pending command waits in, fixed at its first enqueue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -72,7 +74,8 @@ impl Queue {
 }
 
 /// One outbox row's lifecycle state (D03).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
 pub enum OutboxState {
     /// Enqueued and not yet claimed at its generation.
     Requested,
@@ -576,6 +579,27 @@ impl OperationKey {
                 let _written = write!(text, "{byte:02x}");
                 text
             })
+    }
+}
+
+impl std::fmt::Display for OperationKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.to_hex())
+    }
+}
+
+impl Serialize for OperationKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for OperationKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::from_hex(&text).ok_or_else(|| {
+            serde::de::Error::custom("operation key must be 64 lowercase hex digits")
+        })
     }
 }
 
