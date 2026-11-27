@@ -67,12 +67,20 @@ fn sum_plan_with_window(
         .and_then(|items| items.first())
         .cloned()
         .ok_or("missing entity artifact in metrics fixture")?;
-    artifact["artifactId"] = json!("demo.Conversion.entity.v2");
-    artifact["name"] = json!(query_support::TYPE);
-    artifact["namespace"] = json!("demo");
-    artifact["provenance"] =
-        json!({"source":"import","sourcePath":"synthetic:fork-e1-qualification"});
-    artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
+    let fields = artifact
+        .as_object_mut()
+        .ok_or("metrics fixture artifact must be an object")?;
+    fields.insert("artifactId".to_owned(), json!("demo.Conversion.entity.v2"));
+    fields.insert("name".to_owned(), json!(query_support::TYPE));
+    fields.insert("namespace".to_owned(), json!("demo"));
+    fields.insert(
+        "provenance".to_owned(),
+        json!({"source":"import","sourcePath":"synthetic:fork-e1-qualification"}),
+    );
+    fields.insert(
+        "payload".to_owned(),
+        json!({"entityVersion":"2.0","objectType":object}),
+    );
     let artifact: ArtifactEnvelope = serde_json::from_value(artifact)?;
     let catalog =
         ScopedView::uniform(&[artifact], &std::collections::BTreeSet::new()).into_catalog();
@@ -441,13 +449,24 @@ fn fork_question_evaluates_under_world_pin_isolates_pins_and_enforces_pdp() -> T
         .evaluate_question_in_fork(&plan, fork_ctx.clone(), |_| Ok(true))?;
     assert_fork_world_pin_isolated(&main_all, &fork_cell, &fork_all)?;
 
-    // Read PDP visibility enforces identical row filtering inside the fork.
+    // Read PDP visibility and privacy withholding across compare.
+    assert_fork_pdp_and_withholding(&main_cell, &fork_cell, &plan, ctx, fork_ctx)?;
+    Ok(())
+}
+
+fn assert_fork_pdp_and_withholding(
+    main_cell: &SimCell,
+    fork_cell: &SimCell,
+    plan: &QuestionPlan,
+    ctx: QueryContext,
+    fork_ctx: QueryContext,
+) -> TestResult {
     let main_filtered = main_cell
         .store()
-        .evaluate_question(&plan, ctx, |rec| Ok(rec.id != "lot-secret"))?;
+        .evaluate_question(plan, ctx, |rec| Ok(rec.id != "lot-secret"))?;
     let fork_filtered = fork_cell
         .store()
-        .evaluate_question_in_fork(&plan, fork_ctx, |rec| Ok(rec.id != "lot-secret"))?;
+        .evaluate_question_in_fork(plan, fork_ctx, |rec| Ok(rec.id != "lot-secret"))?;
     let week_key = "\"2026-07-06\"";
     assert_eq!(
         main_filtered.rows.get(week_key).and_then(|r| r.value),
@@ -484,7 +503,6 @@ fn fork_question_evaluates_under_world_pin_isolates_pins_and_enforces_pdp() -> T
     assert_eq!(delta.baseline_value, None);
     assert_eq!(delta.candidate_value, None);
     assert_eq!(delta.delta_value, None);
-
     Ok(())
 }
 
