@@ -51,6 +51,28 @@ pub(super) fn slice_pin(base: &str, cutoff: KnowledgeCutoff) -> Result<String, C
         "norn.query.asof/1",
     ))
 }
+fn evidence_to_record(
+    proof: &crate::FactVersionEvidence,
+    model: &str,
+) -> Result<BudgetedRead, CellError> {
+    let snapshot = proof.snapshot();
+    if snapshot.model_hash != model {
+        return Err(refused(UNSUPPORTED_ENGINE));
+    }
+    Ok(snapshot
+        .values
+        .clone()
+        .map_or(BudgetedRead::Missing, |values| {
+            BudgetedRead::Found(ObjectRecord {
+                object_type: snapshot.object_type.clone(),
+                id: snapshot.key.clone(),
+                scope: snapshot.scope.clone(),
+                version: snapshot.version,
+                values,
+            })
+        }))
+}
+
 pub(super) fn historical_record<E: SqlEngine>(
     history: &mut crate::history::HistoryRead<'_, '_, E>,
     world: &str,
@@ -63,25 +85,62 @@ pub(super) fn historical_record<E: SqlEngine>(
     match history.known_at(world, kind, id, cutoff, budget)? {
         HistoricalEvidence::Missing => Ok(BudgetedRead::Missing),
         HistoricalEvidence::Exhausted => Ok(BudgetedRead::Exhausted),
-        HistoricalEvidence::Found(proof) => {
-            let snapshot = proof.snapshot();
-            if snapshot.model_hash != model {
-                return Err(refused(UNSUPPORTED_ENGINE));
-            }
-            Ok(snapshot
-                .values
-                .clone()
-                .map_or(BudgetedRead::Missing, |values| {
-                    BudgetedRead::Found(ObjectRecord {
-                        object_type: snapshot.object_type.clone(),
-                        id: snapshot.key.clone(),
-                        scope: snapshot.scope.clone(),
-                        version: snapshot.version,
-                        values,
-                    })
-                }))
-        }
+        HistoricalEvidence::Found(proof) => evidence_to_record(&proof, model),
     }
+}
+
+/// O(1) authenticated `source.Connection` incarnation at `cutoff` via
+/// `_norn_fact_values/connection_commit`, gated on both the fixed-root
+/// invariant (`root_type("source.Connection") == "source.Connection"`) and
+/// verified history at the current storage revision (no unverified external
+/// SQLite writes). Falls back to [`historical_record`] whenever either
+/// invariant cannot be established.
+pub(super) fn historical_connection_record<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    history: &mut crate::history::HistoryRead<'_, '_, E>,
+    world: &str,
+    id: &str,
+    cutoff: KnowledgeCutoff,
+    model: &str,
+    budget: &mut DecodeBudget,
+) -> Result<BudgetedRead, CellError> {
+    let conn_type = super::freshness::CONNECTION_TYPE;
+    reader.check_history("as-of reads")?;
+    if reader.root_type(conn_type)? != conn_type || reader.has_unverified_external_writes()? {
+        return historical_record(history, world, conn_type, id, cutoff, model, budget);
+    }
+    let head =
+        i64::try_from(cutoff.frontier).map_err(|_n| refused("core.compute.bound_exceeded"))?;
+    let Some(ver) = reader.conn.query_optional(
+        "SELECT version FROM _norn_fact_values INDEXED BY \"_norn_fact_values/connection_commit\" \
+         WHERE world=?1 AND root_type='source.Connection' AND id=?2 AND commit_seq<=?3 \
+         ORDER BY commit_seq DESC, version DESC LIMIT 1",
+        params![world, id, head],
+        |row| row.get::<i64>(0),
+    )?
+    else {
+        let other_root = reader
+            .conn
+            .query_optional(
+                "SELECT 1 FROM _norn_fact_values INDEXED BY \"_norn_fact_values/key_frontier\" \
+                 WHERE world=?1 AND id=?2 AND commit_seq<=?3 LIMIT 1",
+                params![world, id, head],
+                |_| Ok(()),
+            )?
+            .is_some();
+        if other_root {
+            return historical_record(history, world, conn_type, id, cutoff, model, budget);
+        }
+        return Ok(BudgetedRead::Missing);
+    };
+    let ver_u64 = u64::try_from(ver).map_err(|_err| CellError::OutOfRange("fact version"))?;
+    let Some(proof) = history.evidence(world, conn_type, id, ver_u64, budget)? else {
+        return Ok(BudgetedRead::Exhausted);
+    };
+    if proof.receipt().body.logical_time > cutoff.recorded_at.as_millis() {
+        return Err(CellError::TemporalLeakage);
+    }
+    evidence_to_record(&proof, model)
 }
 /// The subjects of `kind` with a deletion committed under a model other than
 /// `model` by `frontier`. The mirror keeps no deletions, so another engine's
