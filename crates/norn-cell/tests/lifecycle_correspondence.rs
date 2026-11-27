@@ -108,7 +108,10 @@ fn native_for(
                     "_norn_clock"
                         | "_norn_export_context"
                         | "_norn_export_journal"
+                        | "_norn_export_payload"
                         | "_norn_ledger"
+                        | "_norn_ledger_payload"
+                        | "_norn_payload"
                         | "_norn_receipt"
                 ) {
                     continue;
