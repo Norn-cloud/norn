@@ -430,9 +430,11 @@ impl IncrementalQuestion {
         if self.members.len() > usize::try_from(self.plan.max_items()).map_err(|_n| stale())? {
             return Err(refused("core.compute.bound_exceeded"));
         }
+        let required = store.required_sources_for_plan(&context.world, &self.plan)?;
         let mut result = finish(
             &self.plan,
             (context, exclusions),
+            &required,
             head,
             super::historical::query_pin(
                 store.model().model_hash(),

@@ -65,6 +65,7 @@ pub struct Prepared {
     request: EvaluateRequest,
     plan: QuestionPlan,
     context: QueryContext,
+    required_sources: crate::compute::RequiredSources,
     exclusions: BTreeMap<String, String>,
     revision: LedgerHead,
     query_pin: String,
@@ -253,6 +254,7 @@ impl<E: SqlEngine> CellStore<E> {
             Source::Dataset { .. } => None,
         };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
+        let required_sources = self.required_sources_for_plan(&context.world, plan)?;
         let request = EvaluateRequest {
             tenant: tenant.clone(),
             source,
@@ -264,6 +266,7 @@ impl<E: SqlEngine> CellStore<E> {
             request,
             plan: plan.clone(),
             context,
+            required_sources,
             exclusions,
             revision,
             query_pin,
@@ -456,6 +459,7 @@ impl<E: SqlEngine> CellStore<E> {
             request,
             plan,
             context,
+            required_sources,
             mut exclusions,
             revision,
             query_pin,
@@ -488,6 +492,7 @@ impl<E: SqlEngine> CellStore<E> {
         let mut result = crate::compute::materialize(
             &plan,
             (context, exclusions),
+            &required_sources,
             revision,
             query_pin,
             definition_pin,

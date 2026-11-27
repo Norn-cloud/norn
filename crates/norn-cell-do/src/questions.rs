@@ -214,17 +214,22 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         ))
     }
     /// The cell's own frontier: its main world, the caller as the population,
-    /// the active revision as the mapping pin, and the cell's own persisted
-    /// clock. It tracks no external source, so there is no source frontier.
-    /// The clock is the store's, not the host's wall clock: the frontier is
-    /// part of the answer's lineage pin, so a trace of the same answer must
-    /// rebuild the same frontier until the cell commits again.
+    /// the active revision as the mapping pin, the cell's persisted clock, and
+    /// real connector cursors/watermarks/heartbeats for every external source
+    /// feeding the question's types (QUERY-FRESH-1).
+    /// The clock is derived strictly from durable store state (never wall
+    /// clock) so a `:trace` of the same answer rebuilds the exact same
+    /// frontier until the cell commits or syncs again.
     fn snapshot(
         &self,
         store: &CellStore<E>,
-        _plan: &QuestionPlan,
+        plan: &QuestionPlan,
         actor: &str,
     ) -> Result<QuestionSnapshot, Refusal> {
+        let clock_floor = store.read().clock_floor().map_err(Refusal::from_compute)?;
+        let freshness = store
+            .source_freshness_snapshot(norn_cell::MAIN_WORLD, plan)
+            .map_err(Refusal::from_compute)?;
         Ok(QuestionSnapshot {
             context: QueryContext {
                 world: norn_cell::MAIN_WORLD.to_owned(),
@@ -232,9 +237,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
                 population_pin: format!("{}:{actor}", self.metrics.label),
                 authorization_epoch: 1,
                 mapping_pin: format!("{}:{}", self.metrics.label, self.derived.receipt),
-                now_ms: store.read().clock_floor().map_err(Refusal::from_compute)?,
-                source_cursors: BTreeMap::new(),
-                watermarks: BTreeMap::new(),
+                now_ms: clock_floor.max(freshness.max_heartbeat_ms),
+                source_cursors: freshness.source_cursors,
+                watermarks: freshness.watermarks,
             },
             cutoff: None,
         })
