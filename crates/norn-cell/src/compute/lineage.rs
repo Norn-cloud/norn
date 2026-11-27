@@ -320,10 +320,12 @@ pub fn keyed_finding_handle(key: &[u8], finding_id: &str) -> String {
 
 /// DATA-SOURCES-1: the public handle a reader without `Sources` sees in place
 /// of raw connector cursor values (`source_cursors` and `watermarks.observed`),
-/// which may contain upstream record IDs and source versions.
+/// which may contain upstream record IDs and source versions. Bound to `scope`
+/// so two cells sharing a stage lineage key never emit matching handles for
+/// equal upstream cursors.
 #[must_use]
-pub fn keyed_cursor_handle(key: &[u8], cursor: &str) -> String {
-    keyed_lineage_handle(key, &format!("norn.cursor/1:{cursor}"))
+pub fn keyed_cursor_handle(key: &[u8], scope: &str, cursor: &str) -> String {
+    keyed_lineage_handle(key, &format!("norn.cursor/2:{scope}\0{cursor}"))
 }
 
 /// DATA-VALUES-1 (D53): one restricted member withholds every value-bearing

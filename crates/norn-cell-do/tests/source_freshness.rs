@@ -1,8 +1,8 @@
 //! QUERY-FRESH-1 (Lane B6): model-derived `RequiredSources`, real connector
 //! cursors/watermarks/heartbeats in `DerivedRuntime::snapshot`, idle-cell
-//! wall-clock aging, `Sources`-grant cursor disclosure, historical/pinned
-//! `:trace` frontier reconstruction, multi-connection coverage, and strict
-//! legacy watermark parsing.
+//! wall-clock aging, `Sources`-grant scope-bound cursor disclosure,
+//! historical/pinned `:trace` frontier reconstruction, production `Tenant::serve`
+//! multi-connection coverage, and strict cursor validation.
 
 #[allow(
     clippy::expect_used,
@@ -21,18 +21,24 @@ mod tests {
     use norn_api::scope::CellScope;
     use norn_api::sources::{Sources, Step, Trigger};
     use norn_cell::compute::ivm::IncrementalQuestion;
+    use norn_cell::compute::lineage::keyed_cursor_handle;
     use norn_cell::compute::{Freshness, QueryContext, RequiredSources};
     use norn_cell::engine::NativeEngine;
     use norn_cell::{
         CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
+        StoreOptions,
     };
+    use norn_cell_do::connect::Connect;
     use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
     use norn_cell_do::principal::FixturePrincipals;
     use norn_cell_do::questions::DerivedQuestions;
     use norn_cell_do::server::{self, Response};
+    use norn_cell_do::tenant::{Served, Tenant};
     use norn_checker::EntityArtifactSetContext;
     use norn_checker::receipt::ReceiptSources;
-    use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+    use norn_ir::{
+        ArtifactEnvelope, ArtifactKind, Decimal, EntityRoot, ResourceLimitProfile, RuntimeValue,
+    };
     use norn_ui_checker::check_artifact_set_with_receipt;
     use serde_json::{Value, json};
 
@@ -41,6 +47,7 @@ mod tests {
     const MEMBER: Option<&str> = Some("Bearer fixture:member@demo");
     const T0: u64 = 1_794_484_800_000;
     const SANDBOX_HOSTS: &str = "erpnext-rest,odoo-rest";
+    const ORDER_DATASET: &str = "Sales Order Item";
 
     const TEST_FIXTURES: &[(&str, &[&str])] = &[
         ("admin@demo", &["admin"]),
@@ -65,13 +72,16 @@ mod tests {
     }
 
     fn catalog_artifacts(systems: &[&str]) -> Vec<ArtifactEnvelope> {
-        let mut set: Vec<ArtifactEnvelope> = serde_json::from_str(
+        let mut set: Vec<ArtifactEnvelope> = serde_json::from_str::<Vec<ArtifactEnvelope>>(
             &std::fs::read_to_string(
                 root().join("fixtures/demo/explorer/three-systems.definitions.json"),
             )
             .expect("retained catalog"),
         )
-        .expect("artifacts");
+        .expect("artifacts")
+        .into_iter()
+        .filter(|a| a.kind() != ArtifactKind::Mapping)
+        .collect();
         for system in systems {
             for kind in ["source", "mapping", "connector"] {
                 set.push(load_artifact(&format!(
@@ -253,13 +263,18 @@ mod tests {
             .to_owned()
     }
 
-    fn holding_question(metric: &str, max_age_ms: u64) -> Value {
+    fn order_line_question(metric: &str, max_age_ms: u64) -> Value {
         json!({
             "irVersion": "0.1",
-            "name": "freshness.holding_qty",
-            "objectSet": "canon.Holding",
+            "name": "freshness.order_line_qty",
+            "objectSet": "canon.OrderLine",
+            "calendar": "iso_utc",
             "aggregate": [{"metric": metric}],
-            "groupBy": [{"path": {"property": "observed_at"}, "grain": "day"}],
+            "groupBy": [
+                {"path": {"property": "due_at"}, "grain": "day"},
+                {"path": {"property": "unit"}},
+                {"path": {"property": "currency"}},
+            ],
             "window": {"start": "2026-01-01T00:00:00Z", "end": "2027-01-01T00:00:00Z"},
             "freshness": {"kind": "live", "maxAgeMs": max_age_ms},
         })
@@ -270,8 +285,13 @@ mod tests {
             "irVersion": "0.1",
             "name": "freshness.delivery_qty",
             "objectSet": "canon.Delivery",
+            "calendar": "iso_utc",
             "aggregate": [{"metric": metric}],
-            "groupBy": [{"path": {"property": "occurred_at"}, "grain": "day"}],
+            "groupBy": [
+                {"path": {"property": "occurred_at"}, "grain": "day"},
+                {"path": {"property": "unit"}},
+                {"path": {"property": "currency"}},
+            ],
             "window": {"start": "2026-01-01T00:00:00Z", "end": "2027-01-01T00:00:00Z"},
             "freshness": {"kind": "live", "maxAgeMs": max_age_ms},
         })
@@ -423,20 +443,61 @@ mod tests {
     }
 
     #[test]
-    fn native_only_questions_remain_exact_with_empty_source_cursors() {
-        let (host, principals, scope) = open_hosted(&[]);
+    fn native_only_questions_remain_exact_and_trace_across_wall_clock_ticks() {
+        let (mut store, scope) = open_store(&[]);
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: scope.key(),
+                logical_time: T0,
+                writes: vec![FactWriteRow::Put {
+                    object_type: "canon.OrderLine".into(),
+                    key: "order-native-1".into(),
+                    values: BTreeMap::from([
+                        ("status".into(), RuntimeValue::from("promised")),
+                        ("due_at".into(), RuntimeValue::from("2026-08-06T12:00:00Z")),
+                        (
+                            "quantity".into(),
+                            RuntimeValue::Decimal("5".parse::<Decimal>().unwrap()),
+                        ),
+                        ("unit".into(), RuntimeValue::from("g")),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("commit native order line");
+        let (host, principals, scope) = wrap_host(store, scope);
         let derived = DerivedQuestions::new([7; 32], scope);
-        let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
-        let body = eval_question(
-            &host,
-            &principals,
-            &derived,
-            &holding_question(&metric, 60_000),
-        );
+        let rt0 = derived.questions_at(&host, T0).expect("rt0");
+        let metric = metric_name_for(&host, &principals, &rt0, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
+        let body = eval_question_at(&host, &principals, &derived, ADMIN, T0, &q);
         assert_eq!(body["freshness"], "exact");
         assert_eq!(body["complete"], true);
         assert_eq!(body["sourceCursors"], json!({}));
+        let bucket = body["rows"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .expect("bucket")
+            .clone();
+        // Unpinned `:trace` 5 seconds later must still succeed on an unchanged native cell.
+        let rt5 = derived.questions_at(&host, T0 + 5_000).expect("rt5");
+        let trace_resp = call_http(
+            &host,
+            &principals,
+            &rt5,
+            "POST",
+            "/v1/questions:trace",
+            &json!({
+                "question": q,
+                "lineageRef": body["lineageRef"],
+                "bucket": bucket,
+            })
+            .to_string(),
+        );
+        assert_eq!(trace_resp.status, 200, "{}", trace_resp.body);
     }
 
     #[test]
@@ -444,8 +505,8 @@ mod tests {
         let (host, principals, scope) = open_hosted(&["erpnext"]);
         let derived = DerivedQuestions::new([7; 32], scope.clone());
         let runtime = derived.questions(&host).expect("runtime");
-        let holding_metric =
-            metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
+        let order_metric =
+            metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
         let delivery_metric =
             metric_name_for(&host, &principals, &runtime, "canon.Delivery", "quantity");
 
@@ -459,8 +520,8 @@ mod tests {
         assert_eq!(delivery_body["freshness"], "exact");
         assert_eq!(delivery_body["complete"], true);
 
-        // Mapped type (`canon.Holding`) before any connector sync MUST be `incomplete`.
-        let q = holding_question(&holding_metric, 60_000);
+        // Mapped type (`canon.OrderLine`) before any connector sync MUST be `incomplete`.
+        let q = order_line_question(&order_metric, 60_000);
         let http_body = eval_question(&host, &principals, &derived, &q);
         assert_eq!(http_body["freshness"], "incomplete");
         assert_eq!(http_body["complete"], false);
@@ -478,7 +539,7 @@ mod tests {
             required,
             RequiredSources(BTreeMap::from([(
                 "erpnext.rest.mapping".into(),
-                BTreeSet::from(["Warehouse Lot Balance".into()]),
+                BTreeSet::from([ORDER_DATASET.into()]),
             )]))
         );
         let empty_ctx = QueryContext {
@@ -512,19 +573,17 @@ mod tests {
         sync_erpnext(&host, &scope, T0);
         let derived = DerivedQuestions::new([7; 32], scope.clone());
         let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
-        let q = holding_question(&metric, 60_000);
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
 
-        // 1. Immediately after a clean sync, freshness is `exact` with real cursors.
         let exact_body = eval_question(&host, &principals, &derived, &q);
         assert_eq!(exact_body["freshness"], "exact", "{exact_body}");
         assert_eq!(exact_body["complete"], true);
-        let heartbeat =
-            exact_body["watermarks"]["erpnext.rest"]["Warehouse Lot Balance"]["heartbeatMs"]
-                .as_u64()
-                .expect("heartbeatMs");
+        let heartbeat = exact_body["watermarks"]["erpnext.rest"][ORDER_DATASET]["heartbeatMs"]
+            .as_u64()
+            .expect("heartbeatMs");
 
-        // 2. Idle cell with ZERO new commits: advancing request clock ages `exact` -> `fresh` -> `stale`.
+        // Idle cell with ZERO new commits: advancing request clock ages `exact` -> `fresh` -> `stale`.
         let fresh_body =
             eval_question_at(&host, &principals, &derived, ADMIN, heartbeat + 5_000, &q);
         assert_eq!(fresh_body["freshness"], "fresh", "{fresh_body}");
@@ -535,7 +594,7 @@ mod tests {
         assert_eq!(stale_body["freshness"], "stale", "{stale_body}");
         assert_eq!(stale_body["complete"], true);
 
-        // 3. Failed sync transitions `source.Connection.status` to `failed` -> `incomplete`.
+        // Failed sync transitions `source.Connection.status` to `failed` -> `incomplete`.
         run_failing_erpnext_sync(&host, &scope, heartbeat + 130_000);
         let failed_body = eval_question(&host, &principals, &derived, &q);
         assert_eq!(failed_body["freshness"], "incomplete", "{failed_body}");
@@ -543,31 +602,28 @@ mod tests {
     }
 
     #[test]
-    fn cursor_disclosure_requires_sources_grant_on_answer_and_trace() {
+    fn cursor_disclosure_requires_sources_grant_and_is_scope_bound() {
         let (host, principals, scope) = open_hosted(&["erpnext"]);
         sync_erpnext(&host, &scope, T0);
         let derived = DerivedQuestions::new([7; 32], scope);
         let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
-        let q = holding_question(&metric, 60_000);
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
 
-        // Admin holds `Sources` -> sees raw connector cursor JSON.
         let admin_ans = eval_question_at(&host, &principals, &derived, ADMIN, 0, &q);
-        let admin_cursor = admin_ans["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"]
+        let admin_cursor = admin_ans["sourceCursors"]["erpnext.rest"][ORDER_DATASET]
             .as_str()
             .expect("admin cursor");
         assert!(admin_cursor.contains("\"version\""), "{admin_cursor}");
         assert_eq!(
-            admin_ans["watermarks"]["erpnext.rest"]["Warehouse Lot Balance"]["observed"].as_str(),
+            admin_ans["watermarks"]["erpnext.rest"][ORDER_DATASET]["observed"].as_str(),
             Some(admin_cursor)
         );
 
-        // Member holds `Values` ONLY (no `Sources`) -> receives 64-char keyed hex handles,
-        // never raw upstream record IDs or versions, on both answer and trace.
         let member_ans = eval_question_at(&host, &principals, &derived, MEMBER, 0, &q);
         assert_eq!(member_ans["freshness"], "exact", "{member_ans}");
         assert_eq!(member_ans["complete"], true);
-        let member_cursor = member_ans["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"]
+        let member_cursor = member_ans["sourceCursors"]["erpnext.rest"][ORDER_DATASET]
             .as_str()
             .expect("member handle");
         assert_ne!(member_cursor, admin_cursor);
@@ -575,11 +631,10 @@ mod tests {
         assert!(
             member_cursor
                 .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
-            "expected lowercase hex handle: {member_cursor}"
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         );
         assert_eq!(
-            member_ans["watermarks"]["erpnext.rest"]["Warehouse Lot Balance"]["observed"].as_str(),
+            member_ans["watermarks"]["erpnext.rest"][ORDER_DATASET]["observed"].as_str(),
             Some(member_cursor)
         );
         let bucket = member_ans["rows"]
@@ -606,13 +661,20 @@ mod tests {
         assert_eq!(trace_resp.status, 200, "{}", trace_resp.body);
         let trace_body: Value = serde_json::from_str(&trace_resp.body).unwrap();
         assert_eq!(
-            trace_body["result"]["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"].as_str(),
+            trace_body["result"]["sourceCursors"]["erpnext.rest"][ORDER_DATASET].as_str(),
             Some(member_cursor)
         );
         assert_eq!(
-            trace_body["result"]["watermarks"]["erpnext.rest"]["Warehouse Lot Balance"]["observed"]
-                .as_str(),
+            trace_body["result"]["watermarks"]["erpnext.rest"][ORDER_DATASET]["observed"].as_str(),
             Some(member_cursor)
+        );
+        assert_eq!(
+            member_cursor,
+            keyed_cursor_handle(&[7; 32], "org_demo/dev", admin_cursor)
+        );
+        assert_ne!(
+            member_cursor,
+            keyed_cursor_handle(&[7; 32], "org_other/dev", admin_cursor)
         );
     }
 
@@ -622,12 +684,12 @@ mod tests {
         sync_erpnext(&host, &scope, T0);
         let derived = DerivedQuestions::new([7; 32], scope.clone());
         let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
-        let q = holding_question(&metric, 60_000);
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let q = order_line_question(&metric, 60_000);
 
         let first = eval_question(&host, &principals, &derived, &q);
         assert_eq!(first["freshness"], "exact", "{first}");
-        let first_cursor = first["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"]
+        let first_cursor = first["sourceCursors"]["erpnext.rest"][ORDER_DATASET]
             .as_str()
             .expect("first cursor")
             .to_owned();
@@ -641,7 +703,6 @@ mod tests {
             .expect("bucket")
             .clone();
 
-        // Second sync advances upstream modified timestamps, live cursors, and heartbeat.
         sync_erpnext_with(
             &host,
             &scope,
@@ -651,12 +712,10 @@ mod tests {
         let second = eval_question(&host, &principals, &derived, &q);
         assert_eq!(second["freshness"], "exact", "{second}");
         assert_ne!(
-            second["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"].as_str(),
+            second["sourceCursors"]["erpnext.rest"][ORDER_DATASET].as_str(),
             Some(first_cursor.as_str())
         );
 
-        // Pinned `:trace` against the first answer's (knownAsOf, nowMs) reconstructs
-        // the historical connector frontier and still succeeds!
         let runtime2 = derived.questions(&host).expect("runtime2");
         let pinned_trace = call_http(
             &host,
@@ -676,54 +735,133 @@ mod tests {
         assert_eq!(pinned_trace.status, 200, "{}", pinned_trace.body);
         let trace_doc: Value = serde_json::from_str(&pinned_trace.body).unwrap();
         assert_eq!(
-            trace_doc["result"]["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"].as_str(),
+            trace_doc["result"]["sourceCursors"]["erpnext.rest"][ORDER_DATASET].as_str(),
             Some(first_cursor.as_str())
         );
     }
 
     #[test]
-    fn multi_source_and_configured_secondary_connection_stay_incomplete_until_synced() {
-        // Case 1: Two distinct mappings (`erpnext` + `odoo`); only `erpnext` synced.
+    fn multi_source_cell_stays_incomplete_until_all_required_sources_sync() {
         let (host, principals, scope) = open_hosted(&["erpnext", "odoo"]);
         sync_erpnext(&host, &scope, T0);
         let derived = DerivedQuestions::new([7; 32], scope);
         let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
-        let q = holding_question(&metric, 60_000);
-        let body = eval_question(&host, &principals, &derived, &q);
+        let metric = metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+        let body = eval_question(
+            &host,
+            &principals,
+            &derived,
+            &order_line_question(&metric, 60_000),
+        );
         assert_eq!(body["freshness"], "incomplete", "{body}");
         assert_eq!(body["complete"], false);
         assert!(
-            body["sourceCursors"]["erpnext.rest"]["Warehouse Lot Balance"]
+            body["sourceCursors"]["erpnext.rest"][ORDER_DATASET]
                 .as_str()
                 .is_some()
         );
-
-        // Case 2: Two configured connections sharing ONE mapping (`erpnext.rest.mapping`).
-        // Even after `erpnext.rest` syncs cleanly, the unsynced `erpnext.secondary` keeps
-        // the answer `incomplete`.
-        let (host2, principals2, scope2) = open_hosted(&["erpnext"]);
-        sync_erpnext(&host2, &scope2, T0);
-        let derived2 =
-            DerivedQuestions::new([7; 32], scope2).with_configured_connections(BTreeMap::from([
-                ("erpnext.rest".into(), "erpnext.rest.mapping".into()),
-                ("erpnext.secondary".into(), "erpnext.rest.mapping".into()),
-            ]));
-        let runtime2 = derived2.questions(&host2).expect("runtime2");
-        let metric2 = metric_name_for(&host2, &principals2, &runtime2, "canon.Holding", "quantity");
-        let body2 = eval_question(
-            &host2,
-            &principals2,
-            &derived2,
-            &holding_question(&metric2, 60_000),
-        );
-        assert_eq!(body2["freshness"], "incomplete", "{body2}");
-        assert_eq!(body2["complete"], false);
     }
 
     #[test]
-    fn corrupt_or_null_legacy_watermark_is_rejected_as_incomplete() {
-        let (mut store, scope) = open_store(&["erpnext"]);
+    fn tenant_serve_enforces_configured_secondary_connection_via_connect() {
+        let dir = std::env::temp_dir().join(format!(
+            "norn-b6-tenant-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let db = dir.join("cell.sqlite");
+        let (mem_store, scope2) = open_store(&["erpnext"]);
+        let active = mem_store
+            .read()
+            .installed_definitions(None)
+            .expect("defs")
+            .expect("active");
+        let model = mem_store.model().clone();
+        let mut disk =
+            CellStore::open(&db, model.clone(), StoreOptions::default()).expect("disk store");
+        disk.install_definitions(
+            model,
+            InstalledDefinitionInput {
+                canonical_set: active.canonical_set,
+                registry: active.registry,
+                receipt_sha256: active.receipt_sha256,
+                admission_receipt: active.admission_receipt,
+                readmission: active.readmission,
+                diff: active.diff,
+                installed_at: active.installed_at,
+                layout: active.layout,
+            },
+            Some(0),
+            &scope2.key(),
+        )
+        .expect("install on disk");
+        let (seed_host, seed_principals, _) = wrap_host(disk, scope2.clone());
+        sync_erpnext(&seed_host, &scope2, T0);
+        let seed_derived = DerivedQuestions::new([7; 32], scope2.clone());
+        let seed_rt = seed_derived.questions(&seed_host).expect("seed_rt");
+        let metric = metric_name_for(
+            &seed_host,
+            &seed_principals,
+            &seed_rt,
+            "canon.OrderLine",
+            "quantity",
+        );
+        drop(seed_host);
+
+        let db_open = db.clone();
+        let mut tenant = Tenant::open(
+            scope2.clone(),
+            &DEMO_GRANTS,
+            Box::new(move || {
+                NativeEngine::open(&db_open, StoreOptions::default()).map_err(|e| e.to_string())
+            }),
+            Some(&[7; 32]),
+        )
+        .expect("tenant open");
+        let principals2 = FixturePrincipals::new(TEST_FIXTURES, tenant.caller());
+        let two_conns = r#"[
+  {"id": "erpnext.rest", "system": "erpnext", "label": "ERPNext Primary",
+   "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+   "instance": "primary", "baseUrl": "http://erpnext-rest:8000",
+   "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]},
+  {"id": "erpnext.secondary", "system": "erpnext", "label": "ERPNext Secondary",
+   "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
+   "instance": "secondary", "baseUrl": "http://erpnext-rest:8000",
+   "orgId": "org_demo", "environmentId": "dev", "secretRefs": ["erpnext_rest_token"]}
+]"#;
+        let vars = json!({
+            "NORN_SECRET_ERPNEXT_REST_TOKEN": "key:secret",
+            "NORN_SOURCE_ALLOWED_HOSTS": SANDBOX_HOSTS,
+        })
+        .to_string();
+        let mut connect = Connect::new(&scope2, two_conns, &vars).expect("connect");
+        let eval_body = json!({ "question": order_line_question(&metric, 60_000) }).to_string();
+        let Served::Cell(resp) = tenant.serve(
+            Some(&mut connect),
+            &principals2,
+            &server::Request {
+                method: "POST",
+                path: "/v1/questions:evaluate",
+                query: SCOPE,
+                authorization: ADMIN,
+                now: T0 / 1_000,
+                body: &eval_body,
+            },
+            T0,
+        ) else {
+            panic!("expected cell response");
+        };
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        let doc: Value = serde_json::from_str(&resp.body).unwrap();
+        assert_eq!(doc["freshness"], "incomplete", "{doc}");
+        assert_eq!(doc["complete"], false);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn commit_connection(store: &mut CellStore<NativeEngine>, scope: &CellScope, watermark: &str) {
         let values = BTreeMap::from([
             ("id".into(), RuntimeValue::from("erpnext.legacy")),
             ("system".into(), RuntimeValue::from("erpnext")),
@@ -743,10 +881,7 @@ mod tests {
                 RuntimeValue::from("2026-11-12T12:00:00.000Z"),
             ),
             ("last_trigger".into(), RuntimeValue::from("manual")),
-            (
-                "watermark".into(),
-                RuntimeValue::from(r#"{"Warehouse Lot Balance": null}"#),
-            ),
+            ("watermark".into(), RuntimeValue::from(watermark)),
             ("rows_read".into(), RuntimeValue::from(0_i64)),
             ("rows_landed".into(), RuntimeValue::from(0_i64)),
             ("rows_quarantined".into(), RuntimeValue::from(0_i64)),
@@ -777,17 +912,29 @@ mod tests {
                 ..CommitBatch::default()
             })
             .expect("commit legacy connection");
-        let (host, principals, scope) = wrap_host(store, scope);
-        let derived = DerivedQuestions::new([7; 32], scope);
-        let runtime = derived.questions(&host).expect("runtime");
-        let metric = metric_name_for(&host, &principals, &runtime, "canon.Holding", "quantity");
-        let body = eval_question(
-            &host,
-            &principals,
-            &derived,
-            &holding_question(&metric, 60_000),
-        );
-        assert_eq!(body["freshness"], "incomplete", "{body}");
-        assert_eq!(body["complete"], false);
+    }
+
+    #[test]
+    fn corrupt_or_object_id_legacy_watermark_is_rejected_as_incomplete() {
+        for bad_watermark in [
+            r#"{"Sales Order Item": null}"#,
+            r#"{"Sales Order Item": {"version": "2026-11-12", "id": {"nested": 1}}}"#,
+        ] {
+            let (mut store, scope) = open_store(&["erpnext"]);
+            commit_connection(&mut store, &scope, bad_watermark);
+            let (host, principals, scope) = wrap_host(store, scope);
+            let derived = DerivedQuestions::new([7; 32], scope);
+            let runtime = derived.questions(&host).expect("runtime");
+            let metric =
+                metric_name_for(&host, &principals, &runtime, "canon.OrderLine", "quantity");
+            let body = eval_question(
+                &host,
+                &principals,
+                &derived,
+                &order_line_question(&metric, 60_000),
+            );
+            assert_eq!(body["freshness"], "incomplete", "{bad_watermark}: {body}");
+            assert_eq!(body["complete"], false);
+        }
     }
 }

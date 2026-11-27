@@ -352,6 +352,17 @@ impl Connect {
         })
     }
 
+    /// Scoped `(connection_id -> mapping_id)` bindings from `NORN_SOURCES` for QUERY-FRESH-1.
+    #[must_use]
+    pub fn configured_mappings(&self) -> BTreeMap<String, String> {
+        self.sources
+            .connections()
+            .iter()
+            .filter(|conn| !conn.mapping.is_empty())
+            .map(|conn| (conn.id.clone(), conn.mapping.clone()))
+            .collect()
+    }
+
     /// The upload `id` names, when its object lies under a prefix the cell
     /// serving `scope_key` writes: as remembered, or, after a restart, rebuilt
     /// from the id itself once its seal checks (UPLOAD-ID-1).

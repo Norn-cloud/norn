@@ -141,6 +141,7 @@ impl DerivedQuestions {
             metrics: self,
             derived,
             request_now_ms: (now_ms > 0).then_some(now_ms),
+            configured_override: BTreeMap::new(),
         })
     }
 }
@@ -196,6 +197,28 @@ pub struct DerivedRuntime<'m> {
     metrics: &'m DerivedQuestions,
     derived: Arc<Derived>,
     request_now_ms: Option<u64>,
+    configured_override: BTreeMap<String, String>,
+}
+
+impl DerivedRuntime<'_> {
+    /// Merge per-request scoped `(connection_id -> mapping_id)` bindings (for
+    /// example from `Connect::configured_mappings`) into this request's
+    /// required-source check.
+    #[must_use]
+    pub fn with_configured_connections(mut self, connections: BTreeMap<String, String>) -> Self {
+        self.configured_override.extend(connections);
+        self
+    }
+
+    fn effective_configured(&self) -> BTreeMap<String, String> {
+        let mut combined = self.metrics.configured_connections.clone();
+        combined.extend(
+            self.configured_override
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        combined
+    }
 }
 
 /// The object type a read of `resource` is governed by: a derived sum's
@@ -254,13 +277,22 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         actor: &str,
     ) -> Result<QuestionSnapshot, Refusal> {
         let clock_floor = store.read().clock_floor().map_err(Refusal::from_compute)?;
+        let configured = self.effective_configured();
         let freshness = store
-            .source_freshness_snapshot_with_configured(
-                norn_cell::MAIN_WORLD,
-                plan,
-                &self.metrics.configured_connections,
-            )
+            .source_freshness_snapshot_with_configured(norn_cell::MAIN_WORLD, plan, &configured)
             .map_err(Refusal::from_compute)?;
+        // Native-only questions have no connector heartbeats to age against, so
+        // keep their `now_ms` anchored to the durable store clock (preserving
+        // unpinned `:trace` stability across wall-clock ticks). Source-backed
+        // questions advance with the trusted request clock so paused connectors
+        // age from `Exact` to `Fresh` and `Stale` even in an idle cell.
+        let now_ms = if freshness.source_cursors.is_empty() && freshness.watermarks.is_empty() {
+            clock_floor
+        } else {
+            clock_floor
+                .max(freshness.max_heartbeat_ms)
+                .max(self.request_now_ms.unwrap_or(0))
+        };
         Ok(QuestionSnapshot {
             context: QueryContext {
                 world: norn_cell::MAIN_WORLD.to_owned(),
@@ -268,9 +300,7 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
                 population_pin: format!("{}:{actor}", self.metrics.label),
                 authorization_epoch: 1,
                 mapping_pin: format!("{}:{}", self.metrics.label, self.derived.receipt),
-                now_ms: clock_floor
-                    .max(freshness.max_heartbeat_ms)
-                    .max(self.request_now_ms.unwrap_or(0)),
+                now_ms,
                 source_cursors: freshness.source_cursors,
                 watermarks: freshness.watermarks,
             },
@@ -287,14 +317,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for DerivedRuntime<'_> {
         let Some((frontier, now)) = answered else {
             return self.snapshot(store, plan, actor);
         };
+        let configured = self.effective_configured();
         let freshness = store
-            .source_freshness_snapshot_at(
-                norn_cell::MAIN_WORLD,
-                plan,
-                frontier,
-                now,
-                &self.metrics.configured_connections,
-            )
+            .source_freshness_snapshot_at(norn_cell::MAIN_WORLD, plan, frontier, now, &configured)
             .map_err(Refusal::from_compute)?;
         Ok(QuestionSnapshot {
             context: QueryContext {

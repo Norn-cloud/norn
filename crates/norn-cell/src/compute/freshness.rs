@@ -125,17 +125,17 @@ pub(crate) fn evaluate_freshness(
 }
 
 fn parse_rfc3339_ms(text: &str) -> Option<u64> {
-    let (seconds, nanos) = norn_expr::temporal::timestamp_ordering_key(text).ok()?;
+    let (seconds, nanos) = norn_checker::transform::instant(text)?;
     let secs = u64::try_from(seconds).ok()?;
     secs.checked_mul(1_000)?
         .checked_add(u64::from(nanos.div_euclid(1_000_000)))
 }
 
-/// Strict parser for `source.Connection.watermark` JSON: only accepts a map of
-/// `dataset -> {"version": "<nonblank>", "id": <json>}`, rejecting `null`,
-/// empty objects, or malformed entries while preserving exact `id` tokens and
-/// matching `Watermark::cursor_json()` byte-for-byte.
-fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, String> {
+/// Strict validator for one connector cursor JSON value: only accepts
+/// `{"version": "<nonblank>", "id": <string|number>}` with no unknown fields,
+/// rejecting `null`, booleans, arrays, objects, or malformed entries while
+/// preserving exact raw numeric `id` tokens and matching `Watermark::cursor_json()`.
+fn validate_cursor_json(raw: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct StoredWatermark<'a> {
@@ -143,6 +143,28 @@ fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, Stri
         #[serde(borrow)]
         id: &'a serde_json::value::RawValue,
     }
+    let wm = serde_json::from_str::<StoredWatermark<'_>>(raw).ok()?;
+    if wm.version.trim().is_empty() {
+        return None;
+    }
+    let id_value: serde_json::Value = serde_json::from_str(wm.id.get()).ok()?;
+    if !matches!(
+        id_value,
+        serde_json::Value::String(_) | serde_json::Value::Number(_)
+    ) {
+        return None;
+    }
+    let encoded_version = serde_json::to_string(&wm.version).ok()?;
+    Some(format!(
+        r#"{{"version":{encoded_version},"id":{}}}"#,
+        wm.id.get()
+    ))
+}
+
+/// Strict parser for `source.Connection.watermark` JSON: only accepts a map of
+/// `dataset -> {"version": "<nonblank>", "id": <string|number>}` validated by
+/// [`validate_cursor_json`].
+fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, String> {
     let Some(raw) = connection
         .values
         .get("watermark")
@@ -156,17 +178,8 @@ fn strict_connection_cursors(connection: &ObjectRecord) -> BTreeMap<String, Stri
     };
     let mut out = BTreeMap::new();
     for (dataset, value) in entries {
-        let Ok(wm) = serde_json::from_str::<StoredWatermark<'_>>(value.get()) else {
-            continue;
-        };
-        if wm.version.trim().is_empty() {
-            continue;
-        }
-        if let Ok(encoded_version) = serde_json::to_string(&wm.version) {
-            out.insert(
-                dataset,
-                format!(r#"{{"version":{encoded_version},"id":{}}}"#, wm.id.get()),
-            );
+        if let Some(canonical) = validate_cursor_json(value.get()) {
+            out.insert(dataset, canonical);
         }
     }
     out
@@ -559,30 +572,36 @@ impl<E: SqlEngine> CellStore<E> {
                 .and_then(RuntimeValue::as_str)
                 .and_then(parse_rfc3339_ms);
             let cursors = reader.source_cursors(source_id)?;
-            let legacy = if cursors.is_empty() {
-                conn.map(strict_connection_cursors).unwrap_or_default()
-            } else {
-                BTreeMap::new()
-            };
+            let conn_cursors = conn.map(strict_connection_cursors).unwrap_or_default();
             let pending: BTreeSet<String> = reader
                 .pending_source_captures(source_id)?
                 .into_iter()
                 .map(|item| item.dataset)
                 .collect();
             for dataset in datasets {
-                let Some((cursor_json, cursor_updated_ms)) = cursors
+                let Some(cursor_json) = cursors
                     .get(dataset)
-                    .map(|record| (record.cursor_json.clone(), Some(record.updated_at_ms)))
-                    .or_else(|| legacy.get(dataset).cloned().map(|raw| (raw, None)))
+                    .and_then(|record| validate_cursor_json(&record.cursor_json))
+                    .or_else(|| {
+                        cursors
+                            .is_empty()
+                            .then(|| conn_cursors.get(dataset).cloned())
+                            .flatten()
+                    })
                 else {
                     continue;
                 };
-                let complete = conn_healthy && !pending.contains(dataset);
-                let heartbeat_ms = if conn.is_some() {
-                    conn_heartbeat_ms.or(cursor_updated_ms)
-                } else {
-                    None
-                };
+                // A live answer reports `complete` (and thus may become `Exact`
+                // and traceable) only when the durable `source.Connection` report
+                // at the current frontier agrees with the validated cursor and
+                // records a valid `last_sync_ended_at` heartbeat, so pinned
+                // historical `:trace` reconstructs the exact same frontier.
+                let report_matches = conn_cursors.get(dataset) == Some(&cursor_json);
+                let heartbeat_ms = conn_heartbeat_ms;
+                let complete = conn_healthy
+                    && !pending.contains(dataset)
+                    && report_matches
+                    && heartbeat_ms.is_some();
                 if complete && let Some(hb) = heartbeat_ms {
                     snapshot.max_heartbeat_ms = snapshot.max_heartbeat_ms.max(hb);
                 }

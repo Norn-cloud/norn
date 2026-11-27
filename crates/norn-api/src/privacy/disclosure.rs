@@ -520,14 +520,15 @@ fn withhold_source_cursors(result: &mut QueryResult, key: &[u8], sources_granted
     if sources_granted {
         return;
     }
+    let scope = result.context.scope.clone();
     for partitions in result.context.source_cursors.values_mut() {
         for cursor in partitions.values_mut() {
-            *cursor = keyed_cursor_handle(key, cursor);
+            *cursor = keyed_cursor_handle(key, &scope, cursor);
         }
     }
     for partitions in result.context.watermarks.values_mut() {
         for watermark in partitions.values_mut() {
-            watermark.observed = keyed_cursor_handle(key, &watermark.observed);
+            watermark.observed = keyed_cursor_handle(key, &scope, &watermark.observed);
         }
     }
 }
