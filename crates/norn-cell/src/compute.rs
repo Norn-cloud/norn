@@ -6,6 +6,8 @@ mod as_of;
 /// VIEW-ENGINE-1: admitted transforms lowered to `DataFusion` (#1765).
 #[cfg(feature = "datafusion")]
 mod df_transform;
+/// Core 08 (E1): question evaluation in a forked world and host compare diff.
+pub mod fork;
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
@@ -22,6 +24,10 @@ mod restatement_state;
 /// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
 pub mod transform;
 pub(crate) use as_of::{AsOfReader, CollectedMembers};
+pub use fork::{
+    ForkQuestionResult, WorldCompareDelta, WorldCompareResult, WorldFrontierPin, compare_forks,
+    compare_main_and_fork, fork_query_pin, fork_result_pin, main_result_pin,
+};
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -487,6 +493,16 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Snapshot, CellError> {
         self.question_snapshot_at(plan, context, None, visible)
     }
+    pub(super) fn question_snapshot_in_fork(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Snapshot, CellError> {
+        self.question_snapshot_inner(plan, context, None, false, true, visible, |snapshot, _| {
+            Ok(snapshot)
+        })
+    }
     fn question_snapshot_at(
         &self,
         plan: &QuestionPlan,
@@ -503,10 +519,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// rows are read as of `cutoff`, but it is pinned as the live answer was
     /// (no slice pin, no historical receipt), so it reproduces that answer's
     /// lineage pin exactly when nothing it read has changed since.
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one snapshot: read, gate, project, pin, in order"
-    )]
+    ///
+    /// Refuses forked stores so main-world live, historical, trace, and IVM
+    /// entry points can never return main-labelled answers or fork-minted
+    /// receipts; fork reads go exclusively through [`Self::evaluate_question_in_fork`].
     fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
@@ -516,6 +532,26 @@ impl<E: SqlEngine> CellStore<E> {
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
         consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
     ) -> Result<T, CellError> {
+        self.question_snapshot_inner(plan, context, cutoff, answered, false, visible, consume)
+    }
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "one snapshot: read, gate, project, pin, in order"
+    )]
+    fn question_snapshot_inner<T>(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: Option<crate::KnowledgeCutoff>,
+        answered: bool,
+        allow_fork: bool,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        if !allow_fork && self.fork_pin().is_some() {
+            return Err(CellError::ForkInvalidWorld);
+        }
         self.conn.transaction(|| {
             self.check_question_scope(&context.scope)?;
             check_question_cutoff(plan, cutoff)?;

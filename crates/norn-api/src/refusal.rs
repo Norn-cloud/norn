@@ -439,6 +439,10 @@ impl Refusal {
             code
         } else if matches!(error, norn_cell::CellError::TemporalLeakage) {
             "core.compute.stale_input"
+        } else if matches!(error, norn_cell::CellError::ForkInvalidWorld) {
+            "core.world.fork_invalid_world"
+        } else if matches!(error, norn_cell::CellError::WorldSimulationForbidden) {
+            "core.world.simulation_forbidden"
         } else {
             return Self::host(error);
         };

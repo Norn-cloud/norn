@@ -1886,9 +1886,30 @@ fn axis7_port_strike_fork_never_interferes_with_main() -> Result<(), String> {
         json!({"po_id": "PO-STRIKE", "supplier_id": "SUP-NILE",
         "promised_at": "2026-07-29T00:00:00Z", "currency": "EGP"}),
     )?;
-    let fork_answer = answer(&stress, &volume)?;
+    assert!(
+        matches!(
+            stress.cell.store().evaluate_question(
+                &volume,
+                context(CLOCK.saturating_add(10_000_000)),
+                |_| Ok(true),
+            ),
+            Err(CellError::ForkInvalidWorld)
+        ),
+        "WORLD-ISOLATE-1: forked store refuses unwrapped main evaluate_question"
+    );
+    let fork_answer = stress
+        .cell
+        .store()
+        .evaluate_question_in_fork(&volume, context(CLOCK.saturating_add(10_000_000)), |_| {
+            Ok(true)
+        })
+        .map_err(|e| format!("fork evaluate: {e}"))?;
+    assert!(
+        fork_answer.simulated,
+        "FORK-PIN-1: fork answer is labeled simulated"
+    );
     assert_eq!(
-        total(&fork_answer, &[WEEKS[0], "each"]).as_deref(),
+        total(&fork_answer.result, &[WEEKS[0], "each"]).as_deref(),
         Some("156"),
         "120 + 30% in the fork"
     );
