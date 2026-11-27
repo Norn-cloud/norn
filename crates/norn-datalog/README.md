@@ -2,8 +2,9 @@
 
 Shared portable Datalog contracts for the definition and record backends
 (Norn-cloud/norn#565): the rule AST, structural validation, and a small
-reference executor that runs an admitted program over finite input facts. It
-produces derived relations as data, never production findings or
+metered reference executor that runs an admitted program over finite input
+facts. It produces derived relations as data (used as a test oracle and by
+opt-in advisory `norn-checker::red_team` analyses), never admission gates or
 authorization decisions.
 
 `Program` is a closed serde AST; `Program::canonical_json` delegates to

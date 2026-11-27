@@ -213,9 +213,6 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
         return merge_widget_diagnostics(findings, extra);
     }
     findings
-        .into_iter()
-        .filter(|d| d.code.as_str() != norn_checker::codes::WIDGET_RING1_REQUIRED)
-        .collect()
 }
 
 /// Resolve `artifacts` against `context.base` and run every Ring-0 set check
@@ -340,6 +337,28 @@ fn check_artifact_set_with_receipt_inner(
         diagnostics,
         receipt,
     })
+}
+
+/// Re-check a retained set under its verified receipt (Ring-0 + Ring-1 UI checks), as a cell
+/// does before it acts on the set: a widget it holds is judged by the laws it was admitted under,
+/// never refused because Ring-0 alone cannot judge it.
+///
+/// # Errors
+///
+/// As [`norn_checker::check_artifact_set_with_verified_receipt`].
+pub fn check_artifact_set_with_verified_receipt(
+    artifacts: &ReceiptSources,
+    context: &EntityArtifactSetContext<'_>,
+    limits: &ResourceLimitProfile,
+    version: &norn_checker::ReceiptVersion,
+) -> Result<CheckedArtifactSet, ReceiptError> {
+    norn_checker::check_artifact_set_with_verified_receipt_by(
+        artifacts,
+        context,
+        limits,
+        version,
+        check_artifact_set,
+    )
 }
 
 /// Check `artifacts` against `context` (Ring-0 + Ring-1 UI checks) under

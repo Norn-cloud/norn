@@ -11,7 +11,7 @@
 // machine moved and by which transition, so the view highlights each lifecycle transition the
 // run takes and the state it lands in. Nothing is read from a finding's message.
 
-import { createDriver, type Driver } from "../../../norn-react/src/machine/driver.ts"
+import { type Clock, createDriver, type Driver } from "../../../norn-react/src/machine/driver.ts"
 import type { Machine } from "../../../norn-react/src/machine/machine.ts"
 import { classifyResponse } from "../../../norn-react/src/machine/outcome.ts"
 import { adoptLifecycleStyles } from "./lifecycle.css.ts"
@@ -302,6 +302,8 @@ export interface Counts {
   readonly refused: string | null
 }
 
+const formatLocale = (locale: Locale): string => (locale === "ar" ? "ar-EG-u-nu-latn" : "en")
+
 /**
  * The per-state counts of one live answer: the server's numbers, nothing derived except that an
  * omitted declared state has 0 rows ONLY when `facet.otherRows === 0`. When `facet.otherRows > 0`,
@@ -309,7 +311,7 @@ export interface Counts {
  */
 export function countsFrom(lifecycle: LifecycleDoc, answer: LiveAnswer | null, locale: Locale = "en"): Counts {
   const w = WORDS[locale]
-  const number = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en")
+  const number = new Intl.NumberFormat(formatLocale(locale))
   const pending = new Map(lifecycle.states.map((state) => [state, { kind: "pending" } as StateCount]))
   if (answer === null) return { states: pending, notes: [], refused: null }
   if (answer.status === 401 || answer.status === 403 || answer.status === 404) return { states: pending, notes: [], refused: w.refused }
@@ -396,6 +398,7 @@ export interface LifecycleReadControllerOptions {
   readonly changes?: LifecycleViewOptions["changes"]
   readonly onState: (state: string, last: LiveAnswer | null) => void
   readonly onLiveRefusal?: (refusal: LiveSubscriptionRefusal | null) => void
+  readonly clock?: Clock
 }
 
 export interface LifecycleReadController {
@@ -421,7 +424,21 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
   let pendingFirstSnapshot: LiveAnswer | null = null
   let liveRefusal: LiveSubscriptionRefusal | null = null
   let disposed = false
+  let terminal = false
   let seen: string | null = null
+  let stop: (() => void) | undefined
+
+  const stopSubscription = () => {
+    const teardown = stop
+    stop = undefined
+    teardown?.()
+  }
+
+  const setLiveRefusal = (refusal: LiveSubscriptionRefusal | null) => {
+    if (liveRefusal?.code === refusal?.code && liveRefusal?.message === refusal?.message) return
+    liveRefusal = refusal
+    options.onLiveRefusal?.(liveRefusal)
+  }
 
   const driver: Driver = createDriver({
     machine: options.machine,
@@ -429,6 +446,7 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
     evaluate: () => {
       throw new Error("the lifecycle view's machine evaluates no expressions")
     },
+    ...(options.clock ? { clock: options.clock } : {}),
     transport: {
       async call(_call, _input, callOptions) {
         const readOnce = async () => {
@@ -451,6 +469,10 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
           return classified
         }
         let classified = await readWithRetry()
+        if (classified.outcome === "not_served") {
+          pendingFirstSnapshot = null
+          return classified
+        }
         // If the first socket snapshot arrived while this GET was in flight and disagrees with the GET,
         // re-read once now (linearized after both observations) so older GET data never wins over a newer commit.
         if (pendingFirstSnapshot !== null) {
@@ -466,85 +488,89 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
     onStep: (step) => {
       if (disposed) return
       const state = step.snapshot.stateId
-      if (pendingFirstSnapshot !== null && state !== "reading" && state !== "opening") {
+      if (state === "not_served") {
+        terminal = true
+        pendingFirstSnapshot = null
+        pendingRefresh = false
+        setLiveRefusal(null)
+        stopSubscription()
+        driver.dispose()
+      } else if (pendingFirstSnapshot !== null && state !== "reading" && state !== "opening") {
         const first = pendingFirstSnapshot
         pendingFirstSnapshot = null
         if (last === null || !answersMatch(last, first)) pendingRefresh = true
       }
       options.onState(state, last)
-      if (pendingRefresh && state !== "reading" && state !== "opening") {
+      if (pendingRefresh && state !== "reading" && state !== "opening" && state !== "not_served") {
         pendingRefresh = false
         queueMicrotask(() => {
-          if (disposed) return
+          if (disposed || terminal) return
           const current = driver.snapshot().stateId
-          if (current === "unavailable") driver.dispatch({ kind: "user", eventId: "retry" })
-          else if (current !== "reading" && current !== "opening") driver.dispatch({ kind: "subscription", bindingId: "subject" })
+          if (current !== "reading" && current !== "opening" && current !== "not_served") {
+            driver.dispatch({ kind: "user", eventId: "changed" })
+          }
         })
       }
     },
   })
 
   const triggerRefresh = () => {
-    if (disposed) return
+    if (disposed || terminal) return
     const state = driver.snapshot().stateId
+    if (state === "not_served") return
     if (state === "reading" || state === "opening") {
       pendingRefresh = true
-    } else if (state === "unavailable") {
-      driver.dispatch({ kind: "user", eventId: "retry" })
     } else {
-      driver.dispatch({ kind: "subscription", bindingId: "subject" })
+      driver.dispatch({ kind: "user", eventId: "changed" })
     }
-  }
-
-  const setLiveRefusal = (refusal: LiveSubscriptionRefusal | null) => {
-    if (liveRefusal?.code === refusal?.code && liveRefusal?.message === refusal?.message) return
-    liveRefusal = refusal
-    options.onLiveRefusal?.(liveRefusal)
   }
 
   options.onState(driver.snapshot().stateId, last)
   driver.dispatch({ kind: "page_opened" })
 
-  const stop = options.changes?.(
-    (answer) => {
-      if (disposed) return
-      setLiveRefusal(null)
-      const digest = answer.digest ?? JSON.stringify({ status: answer.status, body: answer.body })
-      if (seen === null) {
-        seen = digest
-        const state = driver.snapshot().stateId
-        if (state === "reading" || state === "opening") {
-          pendingFirstSnapshot = answer
-        } else if (last === null || !answersMatch(last, answer)) {
+  if (!disposed && !terminal) {
+    stop = options.changes?.(
+      (answer) => {
+        if (disposed || terminal) return
+        setLiveRefusal(null)
+        const digest = answer.digest ?? JSON.stringify({ status: answer.status, body: answer.body })
+        if (seen === null) {
+          seen = digest
+          const state = driver.snapshot().stateId
+          if (state === "reading" || state === "opening") {
+            pendingFirstSnapshot = answer
+          } else if (last === null || !answersMatch(last, answer)) {
+            triggerRefresh()
+          }
+          return
+        }
+        if (digest !== seen) {
+          seen = digest
+          pendingFirstSnapshot = null
           triggerRefresh()
         }
-        return
-      }
-      if (digest !== seen) {
-        seen = digest
-        pendingFirstSnapshot = null
-        triggerRefresh()
-      }
-    },
-    (refusal) => {
-      if (disposed) return
-      // A manual refresh during a refusal can move the displayed counts beyond the last digest.
-      seen = null
-      setLiveRefusal(refusal)
-    },
-  )
+      },
+      (refusal) => {
+        if (disposed || terminal) return
+        // A manual refresh during a refusal can move the displayed counts beyond the last digest.
+        seen = null
+        setLiveRefusal(refusal)
+      },
+    )
+    if (disposed || terminal) stopSubscription()
+  }
 
   return {
     refresh: triggerRefresh,
     retry: () => {
-      if (!disposed) driver.dispatch({ kind: "user", eventId: "retry" })
+      if (!disposed && !terminal) driver.dispatch({ kind: "user", eventId: "retry" })
     },
     state: () => driver.snapshot().stateId,
     lastAnswer: () => last,
     liveRefusal: () => liveRefusal,
     dispose: () => {
       disposed = true
-      stop?.()
+      stopSubscription()
       driver.dispose()
     },
   }
@@ -563,7 +589,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const w = WORDS[locale]
   // The definition's ids in words, sentence case ("on_accepted" reads "On accepted").
   const label = options.label ?? ((id: string) => { const words = id.replaceAll(/[_-]/g, " "); return words.charAt(0).toUpperCase() + words.slice(1) })
-  const number = new Intl.NumberFormat(rtl ? "ar-EG" : "en")
+  const number = new Intl.NumberFormat(formatLocale(locale))
   const findings = (options.findings ?? []).filter((finding) => hasWitness(finding) || finding.unattributed === true)
   const doc = root.ownerDocument
   adoptLifecycleStyles(doc)
@@ -604,6 +630,9 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
 
   const refusedBanner = el("p", { class: "norn-life-refused", "data-region": "refused", role: "status" })
   refusedBanner.hidden = true
+
+  const notServedBanner = el("p", { class: "norn-life-refused", "data-region": "not-served", role: "status" }, w.notServed)
+  notServedBanner.hidden = true
 
   const unavailableBanner = el("p", { class: "norn-life-refused", "data-region": "unavailable", role: "status" })
   unavailableBanner.hidden = true
@@ -668,7 +697,7 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const notesEl = el("p", { class: "norn-life-foot", "data-region": "notes" })
   notesEl.hidden = true
 
-  section.append(header, refusedBanner, unavailableBanner, liveOffBanner, boardEl, notesEl)
+  section.append(header, refusedBanner, notServedBanner, unavailableBanner, liveOffBanner, boardEl, notesEl)
 
   if (findings.length > 0) {
     const findingsSection = el("section", { class: "norn-life-findings", "aria-label": w.findings })
@@ -889,18 +918,24 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
   const page = options.document.payload.ux.pages[0]
   if (!page) throw new Error("the lifecycle view's document has no page")
 
+  let controller: LifecycleReadController | null = null
+
   const paintState = (state: string, last: LiveAnswer | null) => {
     section.setAttribute("data-machine-state", state)
+    notServedBanner.hidden = state !== "not_served"
     unavailableBanner.hidden = state !== "unavailable"
     const text = q('[data-region="unavailable-text"]')
-    if (text) text.textContent = state !== "unavailable" ? "" : isRouteNotServed(last) ? `${w.notServed} ${w.again}` : `${w.failed} ${w.again}`
+    if (text) text.textContent = state !== "unavailable" ? "" : `${w.failed} ${w.again}`
+    const retryButton = q<HTMLButtonElement>('[data-node="retry-button"]')
+    if (retryButton) retryButton.disabled = state !== "unavailable"
     const refreshButton = q<HTMLButtonElement>('[data-node="refresh-button"]')
-    if (refreshButton) refreshButton.disabled = state === "reading"
+    if (refreshButton) refreshButton.disabled = state === "reading" || state === "not_served"
+    if (state === "not_served") liveOffBanner.hidden = true
     if (state === "showing" || state === "refused") {
       const counts = countsFrom(lifecycle, last, locale)
       const body = last && last.status < 400 && isFacetsAnswer(last.body) ? last.body : null
       paintCounts(counts, body ? { total: body.rows, lowerBound: body.lowerBound === true } : null)
-    } else if (state === "unavailable") paintCounts(countsFrom(lifecycle, null, locale), null, true)
+    } else if (state === "unavailable" || state === "not_served") paintCounts(countsFrom(lifecycle, null, locale), null, true)
     drawArrows()
   }
 
@@ -912,12 +947,12 @@ export function mountLifecycleView(root: HTMLElement, options: LifecycleViewOpti
       section.setAttribute("data-live-updates", "off")
       section.setAttribute("data-live-refusal-code", refusal.code)
     }
-    liveOffBanner.hidden = refusal === null
+    liveOffBanner.hidden = refusal === null || controller?.state() === "not_served"
     const text = q('[data-region="live-off-text"]')
     if (text) text.textContent = refusal === null ? "" : options.technical ? `${w.liveOff} (${refusal.code}: ${refusal.message})` : w.liveOff
   }
 
-  const controller = createLifecycleReadController({
+  controller = createLifecycleReadController({
     machine: page.machine,
     read,
     ...(options.changes ? { changes: options.changes } : {}),

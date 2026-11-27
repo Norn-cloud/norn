@@ -176,6 +176,7 @@ fn email(host: &DevHost<NativeEngine>, org: &str, actor: &str, id: &str) -> (V, 
     (
         record
             .values
+            .as_ref()
             .unwrap()
             .get("email")
             .cloned()
@@ -343,7 +344,7 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     )
     .unwrap();
     assert_eq!(record.withheld_properties, vec!["email".to_owned()]);
-    assert!(!record.values.unwrap().contains_key("email"));
+    assert!(!record.values.as_ref().unwrap().contains_key("email"));
     assert_eq!(record.masked["email"].mode, NornMaskMode::Refuse);
 
     let (redacted, _b) = host("org_a", &json!({"kind": "redacted"}), Some(&SECRET));
@@ -938,11 +939,10 @@ fn case_distinct_records_never_share_a_sealed_token() -> Result<(), String> {
 /// alone stays unmarked.
 #[test]
 fn the_privacy_pack_admits_over_the_three_systems_set() {
-    use norn_checker::{
-        EntityArtifactSetContext,
-        receipt::{ReceiptSources, check_artifact_set_with_receipt},
-    };
+    // Both rings, as a cell admits the set: it carries a widget (#1762 C2).
+    use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};
     use norn_ir::{ArtifactEnvelope, ResourceLimitProfile};
+    use norn_ui_checker::check_artifact_set_with_receipt;
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read = |path: &str| -> ArtifactEnvelope {
         serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
@@ -1390,7 +1390,10 @@ fn a_kernel_label_in_a_cell_without_markings_leaves_public_reads_served() {
     let (cell, _dir) = undeclared_cell();
     let item = get_queried_object(&cell, &scope("org_a"), Some("viewer"), ITEM, "i1", &Mapping)
         .expect("a public object is served");
-    assert_eq!(item.values.unwrap().get("name"), Some(&V::from("Lathe")));
+    assert_eq!(
+        item.values.as_ref().unwrap().get("name"),
+        Some(&V::from("Lathe"))
+    );
     if let Ok(run) = get_queried_object(
         &cell,
         &scope("org_a"),
@@ -1399,7 +1402,7 @@ fn a_kernel_label_in_a_cell_without_markings_leaves_public_reads_served() {
         "r1",
         &Mapping,
     ) {
-        assert_eq!(run.values.unwrap().get("detail"), None);
+        assert_eq!(run.values.as_ref().unwrap().get("detail"), None);
     }
 }
 

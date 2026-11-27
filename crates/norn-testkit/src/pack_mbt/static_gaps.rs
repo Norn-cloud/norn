@@ -12,8 +12,8 @@ use std::fmt;
 use norn_kernel::TypeCatalog;
 use norn_kernel::pack_mbt_support::{
     AccessCondition, AccessIr, ActionEffectProgram, ActionRoot, ActionUiEffect, IrJsonValue,
-    LawResponse, Lifecycle, ObjectTypeDef, PropertyType, ResourceCompareOp, ResourceOperand,
-    WriteChange, expression_read_paths,
+    LawResponse, Lifecycle, ObjectTypeDef, PropertyType, PropertyTypeDef, ResourceCompareOp,
+    ResourceOperand, WriteChange, expression_read_paths,
 };
 
 use super::{AdmittedPack, EvidenceLevel, action_call_object_type};
@@ -208,26 +208,13 @@ fn enum_states_for(
     object_type: &ObjectTypeDef,
     property: &str,
 ) -> Vec<String> {
+    let shared: BTreeMap<&str, &PropertyTypeDef> = pack
+        .property_types
+        .iter()
+        .map(|def| (def.name.as_str(), def))
+        .collect();
     let resolve_enum = |ty: &PropertyType| -> Option<Vec<String>> {
-        let resolved = match ty {
-            PropertyType::Ref { name, .. } => pack
-                .property_types
-                .iter()
-                .find(|def| def.name.as_str() == name.as_str())
-                .map_or(ty, |def| &def.property_type),
-            PropertyType::Text { .. }
-            | PropertyType::Integer { .. }
-            | PropertyType::Decimal { .. }
-            | PropertyType::DecimalBinding { .. }
-            | PropertyType::Boolean {}
-            | PropertyType::Enum { .. }
-            | PropertyType::Date {}
-            | PropertyType::Duration {}
-            | PropertyType::Timestamp { .. }
-            | PropertyType::Record { .. }
-            | PropertyType::JsonExt { .. } => ty,
-        };
-        match resolved {
+        match super::resolve_property_type_chain(ty, &shared) {
             PropertyType::Enum { values } => {
                 Some(values.iter().map(|item| item.value.clone()).collect())
             }
@@ -244,33 +231,20 @@ fn enum_states_for(
             | PropertyType::Ref { .. } => None,
         }
     };
-    let mut visited = BTreeSet::new();
-    let mut current = Some(object_type);
-    while let Some(def) = current {
-        if !visited.insert(def.name.as_str()) {
-            break;
-        }
+    let chain = super::object_type_ancestors(pack, object_type);
+    for def in &chain {
         if let Some(prop) = def.properties.iter().find(|p| p.id.as_str() == property)
             && let Some(states) = resolve_enum(&prop.property_type)
         {
             return states;
         }
-        for iface_name in &def.implements {
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-                && let Some(prop) = iface.properties.iter().find(|p| p.id.as_str() == property)
-                && let Some(states) = resolve_enum(&prop.property_type)
-            {
-                return states;
-            }
+    }
+    for owner in super::object_type_interfaces(pack, &chain) {
+        if let Some(prop) = owner.properties.iter().find(|p| p.id.as_str() == property)
+            && let Some(states) = resolve_enum(&prop.property_type)
+        {
+            return states;
         }
-        current = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
     }
     Vec::new()
 }
@@ -463,8 +437,8 @@ fn collect_referenced_fields(
         }
     }
     let mut seen_invariants = BTreeSet::new();
-    let mut walk_ty = Some(object_type);
-    while let Some(def) = walk_ty {
+    let chain = super::object_type_ancestors(pack, object_type);
+    for def in &chain {
         for invariant in &def.invariants {
             if seen_invariants.insert(invariant.id.as_str().to_owned()) {
                 record(
@@ -473,31 +447,16 @@ fn collect_referenced_fields(
                 );
             }
         }
-        for iface_name in &def.implements {
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-            {
-                for owner in
-                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
-                {
-                    for invariant in &owner.invariants {
-                        if seen_invariants.insert(invariant.id.as_str().to_owned()) {
-                            record(
-                                invariant.expression.as_str(),
-                                format!("invariant:{}", invariant.id.as_str()),
-                            );
-                        }
-                    }
-                }
+    }
+    for owner in super::object_type_interfaces(pack, &chain) {
+        for invariant in &owner.invariants {
+            if seen_invariants.insert(invariant.id.as_str().to_owned()) {
+                record(
+                    invariant.expression.as_str(),
+                    format!("invariant:{}", invariant.id.as_str()),
+                );
             }
         }
-        walk_ty = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
     }
     let governed_subjects = collect_governed_subjects(pack, object_type);
     let governed_law_ids: Option<BTreeSet<String>> = catalog
@@ -534,30 +493,15 @@ fn collect_referenced_fields(
 
 fn collect_governed_subjects(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> BTreeSet<String> {
     let mut governed_subjects = BTreeSet::new();
-    let mut walk_subj = Some(object_type);
-    while let Some(def) = walk_subj {
-        if !governed_subjects.insert(def.name.as_str().to_owned()) {
-            break;
-        }
+    let chain = super::object_type_ancestors(pack, object_type);
+    for def in &chain {
+        governed_subjects.insert(def.name.as_str().to_owned());
         for iface_name in &def.implements {
             governed_subjects.insert(iface_name.as_str().to_owned());
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-            {
-                for owner in
-                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
-                {
-                    governed_subjects.insert(owner.name.as_str().to_owned());
-                }
-            }
         }
-        walk_subj = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
+    }
+    for owner in super::object_type_interfaces(pack, &chain) {
+        governed_subjects.insert(owner.name.as_str().to_owned());
     }
     governed_subjects
 }
@@ -611,24 +555,11 @@ fn effective_properties<'a>(
 ) -> Vec<EffectiveProp<'a>> {
     let mut seen_props = BTreeSet::new();
     let mut effective_props = Vec::new();
-    let mut concrete_chain = Vec::new();
-    let mut visited_ty = BTreeSet::new();
-    let mut walk_ty = Some(object_type);
-    while let Some(def) = walk_ty {
-        if !visited_ty.insert(def.name.as_str().to_owned()) {
-            break;
-        }
-        concrete_chain.push(def);
-        walk_ty = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
-    }
+    let concrete_chain = super::object_type_ancestors(pack, object_type);
     // Pass 1: concrete `extends` chain preserves parent default / read-only metadata.
     for def in &concrete_chain {
         for prop in &def.properties {
-            if seen_props.insert(prop.id.as_str().to_owned()) {
+            if seen_props.insert(prop.id.as_str()) {
                 effective_props.push(EffectiveProp {
                     id: prop.id.as_str(),
                     property_type: &prop.property_type,
@@ -638,26 +569,14 @@ fn effective_properties<'a>(
         }
     }
     // Pass 2: interface contracts add interface-only properties without shadowing concrete ones.
-    for def in &concrete_chain {
-        for iface_name in &def.implements {
-            if let Some(iface) = pack
-                .interfaces
-                .iter()
-                .find(|i| i.name.as_str() == iface_name.as_str())
-            {
-                for owner in
-                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
-                {
-                    for prop in &owner.properties {
-                        if seen_props.insert(prop.id.as_str().to_owned()) {
-                            effective_props.push(EffectiveProp {
-                                id: prop.id.as_str(),
-                                property_type: &prop.property_type,
-                                read_only_or_default: false,
-                            });
-                        }
-                    }
-                }
+    for owner in super::object_type_interfaces(pack, &concrete_chain) {
+        for prop in &owner.properties {
+            if seen_props.insert(prop.id.as_str()) {
+                effective_props.push(EffectiveProp {
+                    id: prop.id.as_str(),
+                    property_type: &prop.property_type,
+                    read_only_or_default: false,
+                });
             }
         }
     }
@@ -792,7 +711,7 @@ fn detect_immutable_financial_reversal_gap(
     }
 }
 
-fn high_impact_reason(action: &ActionRoot) -> Option<String> {
+fn high_impact_reason(action: &ActionRoot, target_is_immutable: bool) -> Option<String> {
     let ui_effects = action.effective_ui_effects();
     if ui_effects.contains(&ActionUiEffect::Irreversible) {
         return Some("declared irreversible uiEffect".to_owned());
@@ -811,13 +730,57 @@ fn high_impact_reason(action: &ActionRoot) -> Option<String> {
     {
         return Some("declared monetary effect".to_owned());
     }
-    let lower = action.action_id.to_ascii_lowercase();
-    for keyword in [
-        "approve", "promote", "retire", "post", "pay", "settle", "payout", "activate", "release",
-        "void", "reverse",
-    ] {
-        if lower.contains(keyword) {
-            return Some(format!("high-impact action verb '{keyword}'"));
+    // Mutable draft creation and host-authenticated receipt confirmations are
+    // not human approval decisions, so skip the name-based heuristic for them
+    // while still flagging CreateOnly writes to immutable records (e.g. posting
+    // an immutable journal entry) and honoring explicit irreversible/destructive/
+    // monetary declarations above (DX-9).
+    if !target_is_immutable
+        && action.quantity_effect.is_none()
+        && matches!(
+            action.effect_program,
+            Some(ActionEffectProgram::UpsertInputObject {
+                write_mode: norn_kernel::pack_mbt_support::UpsertWriteMode::CreateOnly,
+                ..
+            })
+        )
+    {
+        return None;
+    }
+    if matches!(
+        action.effect_program,
+        Some(ActionEffectProgram::FireTransition {
+            accept_receipt: Some(_),
+            ..
+        })
+    ) {
+        return None;
+    }
+    // Match on tokens of the action verb segment (final `.` segment), never on
+    // entity nouns such as `payroll`, `payslip`, or `payout` in earlier segments (DX-9).
+    let verb = action
+        .action_id
+        .rsplit('.')
+        .next()
+        .unwrap_or(action.action_id.as_str())
+        .to_ascii_lowercase();
+    for token in verb.split(['_', '-']) {
+        if matches!(
+            token,
+            "approve"
+                | "promote"
+                | "retire"
+                | "post"
+                | "pay"
+                | "payout"
+                | "dispatch"
+                | "settle"
+                | "activate"
+                | "release"
+                | "void"
+                | "reverse"
+        ) {
+            return Some(format!("high-impact action verb '{token}'"));
         }
     }
     None
@@ -885,8 +848,19 @@ fn action_has_sod_policy(policies: &[AccessIr], action_id: &str) -> bool {
 }
 
 fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<StructuralGap>) {
+    let immutable_types: BTreeSet<&str> = pack
+        .object_types
+        .iter()
+        .filter(|ty| ty.immutable)
+        .map(|ty| ty.name.as_str())
+        .collect();
     for action in &pack.actions {
-        let Some(reason) = high_impact_reason(&action.root) else {
+        let target_is_immutable = action
+            .root
+            .effect_program
+            .as_ref()
+            .is_some_and(|eff| immutable_types.contains(eff.target().object_kind));
+        let Some(reason) = high_impact_reason(&action.root, target_is_immutable) else {
             continue;
         };
         // ACTOR-INDEPENDENT-1: `independentOf` separates the caller from a
@@ -907,5 +881,82 @@ fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<Structura
                 ),
             });
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "unit test fixture decoding")]
+mod tests {
+    use norn_kernel::pack_mbt_support::{ActionEffectProgram, ActionRoot, UpsertWriteMode};
+
+    use super::high_impact_reason;
+
+    fn sample_action(action_id: &str, effect: Option<ActionEffectProgram>) -> ActionRoot {
+        let mut root: ActionRoot = serde_json::from_value(serde_json::json!({
+            "actionId": action_id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        }))
+        .expect("minimal action root");
+        root.effect_program = effect;
+        root
+    }
+
+    #[test]
+    fn dx9_skips_create_only_and_noun_matches_and_receipt_confirmations() {
+        let create_payroll = sample_action(
+            "soliman.payroll.create",
+            Some(ActionEffectProgram::UpsertInputObject {
+                object_kind: "soliman.PayrollRun".to_owned(),
+                object_id_field: "id".to_owned(),
+                entity_artifact_id: "soliman.PayrollRun.entity".to_owned(),
+                entity_artifact_version: "0.2.0".to_owned(),
+                write_mode: UpsertWriteMode::CreateOnly,
+            }),
+        );
+        assert!(high_impact_reason(&create_payroll, false).is_none());
+
+        let post_immutable_journal = sample_action(
+            "gap.journal.post",
+            Some(ActionEffectProgram::UpsertInputObject {
+                object_kind: "gap.JournalEntry".to_owned(),
+                object_id_field: "entry_id".to_owned(),
+                entity_artifact_id: "gap.JournalEntry.entity".to_owned(),
+                entity_artifact_version: "1.0.0".to_owned(),
+                write_mode: UpsertWriteMode::CreateOnly,
+            }),
+        );
+        assert!(high_impact_reason(&post_immutable_journal, true).is_some());
+
+        let noun_only = sample_action("soliman.payout.rename", None);
+        assert!(high_impact_reason(&noun_only, false).is_none());
+
+        let receipt_confirm: ActionEffectProgram = serde_json::from_value(serde_json::json!({
+            "kind": "fire_transition",
+            "objectKind": "soliman.PayoutInstruction",
+            "objectIdField": "id",
+            "entityArtifactId": "soliman.PayoutInstruction.entity",
+            "entityArtifactVersion": "0.2.0",
+            "lifecycle": "state",
+            "transition": "confirm_succeeded",
+            "acceptReceipt": {
+                "referenceField": "receipt",
+                "manifestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "digestProperty": "last_evidence_digest",
+                "resultBindings": {}
+            }
+        }))
+        .expect("receipt transition effect");
+        let confirm = sample_action("soliman.payout.confirm_succeeded", Some(receipt_confirm));
+        assert!(high_impact_reason(&confirm, false).is_none());
+
+        let approve = sample_action("soliman.payroll.approve", None);
+        assert!(high_impact_reason(&approve, false).is_some());
+
+        let dispatch = sample_action("soliman.payout.dispatch_now", None);
+        assert!(high_impact_reason(&dispatch, false).is_some());
     }
 }

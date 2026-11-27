@@ -82,6 +82,7 @@ pub mod explain;
 pub mod law_enrollment;
 pub mod law_examples;
 pub mod law_exceptions;
+pub mod law_honesty;
 pub mod naming_series;
 pub mod norm_precedence;
 pub mod object_types;
@@ -96,6 +97,7 @@ pub mod property_codec;
 pub mod property_types;
 pub mod quantity_ledger;
 pub mod receipt;
+pub mod red_team;
 pub mod rule_bindings;
 pub mod sealing;
 mod source_commands;
@@ -161,11 +163,12 @@ pub use ontology::{
 pub use property_types::{check_property_type_defs, resolved_property_type};
 pub use receipt::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
-    IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptSources, ReceiptVersion,
+    IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptSources, ReceiptVersion, SetCheck,
     admission_receipt_sha256, check_artifact_set_for_install,
     check_artifact_set_for_install_with_flow_source_map, check_artifact_set_with_flow_source_map,
     check_artifact_set_with_receipt, check_artifact_set_with_verified_receipt,
-    recover_legacy_admission_receipt, verify_admission_receipt,
+    check_artifact_set_with_verified_receipt_by, recover_legacy_admission_receipt,
+    verify_admission_receipt,
 };
 
 pub use sealing::{

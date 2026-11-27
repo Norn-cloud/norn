@@ -15,7 +15,8 @@ use super::{
 
 impl UxChecker<'_, '_, '_> {
     pub(super) fn index_render_uses(&mut self) {
-        if let Some(app) = &self.ux.app {
+        let ux = self.ux;
+        if let Some(app) = &ux.app {
             for id in &app.navigation_item_ids {
                 self.page_uses
                     .entry(Usage::Navigation(id.clone()))
@@ -23,7 +24,7 @@ impl UxChecker<'_, '_, '_> {
                     .insert(None);
             }
         }
-        for (index, page) in self.ux.pages.clone().iter().enumerate() {
+        for (index, page) in ux.pages.iter().enumerate() {
             self.index_node_uses(
                 &page.root,
                 &page.page_id,
@@ -256,7 +257,8 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn index_override_uses(&mut self) {
-        for (index, override_) in self.ux.overrides.clone().iter().enumerate() {
+        let ux = self.ux;
+        for (index, override_) in ux.overrides.iter().enumerate() {
             let WidgetOverrideValue::ActionPlacement { placement_id } = &override_.value else {
                 continue;
             };
@@ -490,17 +492,16 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn check_ids(&mut self) {
-        let app = self.ux.app.clone();
-        let pages = self.ux.pages.clone();
-        if let Some(app) = &app {
+        let ux = self.ux;
+        if let Some(app) = &ux.app {
             self.check_global_id(&mut BTreeSet::new(), &app.app_id, "/payload/ux/app/appId");
         }
-        self.check_page_ids_and_params(&pages);
-        self.check_collection_global_ids(app.as_ref());
+        self.check_page_ids_and_params(&ux.pages);
+        self.check_collection_global_ids(ux.app.as_ref());
         let mut semantic_ids = BTreeSet::new();
         let mut node_ids = BTreeSet::new();
         let mut section_ids = BTreeSet::new();
-        if let Some(app) = &app {
+        if let Some(app) = &ux.app {
             for item_id in &app.navigation_item_ids {
                 self.navigation_uses
                     .entry(item_id.clone())
@@ -508,7 +509,7 @@ impl UxChecker<'_, '_, '_> {
                     .push(None);
             }
         }
-        for (page_index, page) in pages.iter().enumerate() {
+        for (page_index, page) in ux.pages.iter().enumerate() {
             self.check_node_ids(
                 &page.root,
                 &format!("/payload/ux/pages/{page_index}/root"),
@@ -518,7 +519,7 @@ impl UxChecker<'_, '_, '_> {
                 None,
             );
         }
-        for (index, override_) in self.ux.overrides.clone().iter().enumerate() {
+        for (index, override_) in ux.overrides.iter().enumerate() {
             if override_.target_semantic_id.trim().is_empty() {
                 self.error(
                     &format!("/payload/ux/overrides/{index}/targetSemanticId"),
@@ -572,8 +573,9 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_collection_global_ids(&mut self, app: Option<&norn_ir::WidgetApp>) {
+        let ux = self.ux;
         let mut data_binding_ids = BTreeSet::new();
-        for (index, binding) in self.ux.data_bindings.clone().iter().enumerate() {
+        for (index, binding) in ux.data_bindings.iter().enumerate() {
             self.check_global_id(
                 &mut data_binding_ids,
                 &binding.binding_id,
@@ -581,7 +583,7 @@ impl UxChecker<'_, '_, '_> {
             );
         }
         let mut action_binding_ids = BTreeSet::new();
-        for (index, binding) in self.ux.action_bindings.clone().iter().enumerate() {
+        for (index, binding) in ux.action_bindings.iter().enumerate() {
             self.check_global_id(
                 &mut action_binding_ids,
                 &binding.binding_id,
@@ -589,7 +591,7 @@ impl UxChecker<'_, '_, '_> {
             );
         }
         let mut field_ids = BTreeSet::new();
-        for (index, field) in self.ux.fields.clone().iter().enumerate() {
+        for (index, field) in ux.fields.iter().enumerate() {
             self.check_global_id(
                 &mut field_ids,
                 &field.field_id,
@@ -597,7 +599,7 @@ impl UxChecker<'_, '_, '_> {
             );
         }
         let mut form_ids = BTreeSet::new();
-        for (index, form) in self.ux.forms.clone().iter().enumerate() {
+        for (index, form) in ux.forms.iter().enumerate() {
             self.check_global_id(
                 &mut form_ids,
                 &form.form_id,
@@ -605,7 +607,7 @@ impl UxChecker<'_, '_, '_> {
             );
         }
         let mut placement_ids = BTreeSet::new();
-        for (index, placement) in self.ux.action_placements.clone().iter().enumerate() {
+        for (index, placement) in ux.action_placements.iter().enumerate() {
             self.check_global_id(
                 &mut placement_ids,
                 &placement.placement_id,
@@ -613,7 +615,7 @@ impl UxChecker<'_, '_, '_> {
             );
         }
         let mut navigation_item_ids = BTreeSet::new();
-        for (index, item) in self.ux.navigation_items.clone().iter().enumerate() {
+        for (index, item) in ux.navigation_items.iter().enumerate() {
             self.check_global_id(
                 &mut navigation_item_ids,
                 &item.item_id,

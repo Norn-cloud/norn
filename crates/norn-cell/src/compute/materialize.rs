@@ -57,6 +57,9 @@ pub struct Served {
     pub result: TransformResult,
     /// The stored result they came from, or `None` for a live evaluation.
     pub materialization: Option<MaterializationState>,
+    /// The verified ledger head of the current input snapshot checked during
+    /// this read.
+    pub snapshot_head: LedgerHead,
 }
 
 /// One stored result, verified against its digest.
@@ -115,62 +118,123 @@ impl<E: SqlEngine> CellStore<E> {
         &self,
         plan: &TransformPlan,
         (world, scope): (&str, &str),
-        mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+        access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
         now_ms: u64,
     ) -> Result<Served, CellError> {
+        match self.serve_transform_checked(plan, (world, scope), access, now_ms, |_, _| {
+            Ok::<(), CellError>(())
+        }) {
+            Ok((served, ())) => Ok(served),
+            Err(crate::GuardedError::Store(error) | crate::GuardedError::Guard(error)) => {
+                Err(error)
+            }
+        }
+    }
+
+    /// VIEW-MAT-1: like [`Self::serve_transform`], running `classify` inside
+    /// the same SQLite transaction that reads the snapshot and (for `on_read`
+    /// materializations) before persisting any refreshed result. The `bool`
+    /// argument to `classify` is `true` when serving a stale stored result.
+    ///
+    /// # Errors
+    /// [`crate::GuardedError::Guard`] when `classify` refuses (aborting the
+    /// transaction before any materialization write); otherwise
+    /// [`crate::GuardedError::Store`] as [`Self::serve_transform`].
+    pub fn serve_transform_checked<T, X>(
+        &self,
+        plan: &TransformPlan,
+        (world, scope): (&str, &str),
+        mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+        now_ms: u64,
+        classify: impl FnOnce(&crate::StoreReader<'_, E>, bool) -> Result<T, X>,
+    ) -> Result<(Served, T), crate::GuardedError<X>> {
         self.read().check_live()?;
-        self.conn.transaction(|| {
-            let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
-            let Some(policy) = plan.materialization else {
-                return Ok(Served {
-                    result: self.evaluate_snapshot(plan, snapshot)?,
-                    materialization: None,
-                });
-            };
-            let digest = input_digest(&snapshot)?;
-            let (plan_pin, _) = self.transform_pins(plan)?;
-            if snapshot.whole
-                && let Some(stored) = self
-                    .stored_materialization(&plan.artifact_id)?
-                    .filter(|stored| stored.plan_pin == plan_pin)
-            {
-                let exact = stored.input_digest == digest;
-                let within_age = match policy {
-                    Materialization::Manual => true,
-                    Materialization::OnRead {
-                        max_age_ms: Some(age),
-                    } => now_ms.saturating_sub(stored.refreshed_at_ms) <= age,
-                    Materialization::OnRead { max_age_ms: None } => false,
+        self.conn
+            .transaction(|| -> Result<_, crate::GuardedError<X>> {
+                let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
+                let snapshot_head = snapshot.revision.clone();
+                let Some(policy) = plan.materialization else {
+                    let classified =
+                        classify(&self.read(), false).map_err(crate::GuardedError::Guard)?;
+                    return Ok((
+                        Served {
+                            result: self.evaluate_snapshot(plan, snapshot)?,
+                            materialization: None,
+                            snapshot_head,
+                        },
+                        classified,
+                    ));
                 };
-                if exact || within_age {
-                    return Ok(Served {
-                        materialization: Some(MaterializationState {
-                            frontier: stored.result.revision.clone(),
-                            refreshed_at_ms: stored.refreshed_at_ms,
-                            stale: !exact,
-                        }),
-                        result: stored.result,
-                    });
+                let digest = input_digest(&snapshot)?;
+                let (plan_pin, _) = self.transform_pins(plan)?;
+                let cache_pin =
+                    crate::codec::hash_json(&("norn.transform-cache/1", &plan_pin, world, scope))?;
+                if snapshot.whole
+                    && let Some(stored) = self
+                        .stored_materialization(&plan.artifact_id)?
+                        .filter(|stored| stored.plan_pin == cache_pin)
+                {
+                    let exact = stored.input_digest == digest;
+                    let within_age = match policy {
+                        Materialization::Manual => true,
+                        Materialization::OnRead {
+                            max_age_ms: Some(age),
+                        } => now_ms.saturating_sub(stored.refreshed_at_ms) <= age,
+                        Materialization::OnRead { max_age_ms: None } => false,
+                    };
+                    if exact
+                        || (within_age
+                            && self.stale_inputs_authorized(
+                                plan,
+                                (world, scope),
+                                stored.result.revision.commits,
+                                &mut access,
+                            )?)
+                    {
+                        let classified =
+                            classify(&self.read(), !exact).map_err(crate::GuardedError::Guard)?;
+                        return Ok((
+                            Served {
+                                materialization: Some(MaterializationState {
+                                    frontier: stored.result.revision.clone(),
+                                    refreshed_at_ms: stored.refreshed_at_ms,
+                                    stale: !exact,
+                                }),
+                                result: stored.result,
+                                snapshot_head,
+                            },
+                            classified,
+                        ));
+                    }
                 }
-            }
-            let whole = snapshot.whole;
-            let result = self.evaluate_snapshot(plan, snapshot)?;
-            if whole && matches!(policy, Materialization::OnRead { .. }) {
-                self.store_materialization(plan, &plan_pin, &digest, now_ms, &result)?;
-                return Ok(Served {
-                    materialization: Some(MaterializationState {
-                        frontier: result.revision.clone(),
-                        refreshed_at_ms: now_ms,
-                        stale: false,
-                    }),
-                    result,
-                });
-            }
-            Ok(Served {
-                result,
-                materialization: None,
+                let classified =
+                    classify(&self.read(), false).map_err(crate::GuardedError::Guard)?;
+                let whole = snapshot.whole;
+                let result = self.evaluate_snapshot(plan, snapshot)?;
+                if whole && matches!(policy, Materialization::OnRead { .. }) {
+                    self.store_materialization(plan, &cache_pin, &digest, now_ms, &result)?;
+                    return Ok((
+                        Served {
+                            materialization: Some(MaterializationState {
+                                frontier: result.revision.clone(),
+                                refreshed_at_ms: now_ms,
+                                stale: false,
+                            }),
+                            result,
+                            snapshot_head,
+                        },
+                        classified,
+                    ));
+                }
+                Ok((
+                    Served {
+                        result,
+                        materialization: None,
+                        snapshot_head,
+                    },
+                    classified,
+                ))
             })
-        })
     }
 
     /// VIEW-MAT-1: recompute and store a materialized transform's result.
@@ -184,29 +248,140 @@ impl<E: SqlEngine> CellStore<E> {
         &self,
         plan: &TransformPlan,
         (world, scope): (&str, &str),
-        mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+        access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
         now_ms: u64,
     ) -> Result<Option<MaterializationState>, CellError> {
+        match self.refresh_transform_checked(plan, (world, scope), access, now_ms, |_| {
+            Ok::<(), CellError>(())
+        }) {
+            Ok(state) => Ok(state),
+            Err(crate::GuardedError::Store(error) | crate::GuardedError::Guard(error)) => {
+                Err(error)
+            }
+        }
+    }
+
+    /// VIEW-MAT-1: like [`Self::refresh_transform`], running `guard` inside
+    /// the same SQLite transaction that reads the snapshot and persists the
+    /// refreshed materialization.
+    ///
+    /// # Errors
+    /// [`crate::GuardedError::Guard`] when `guard` refuses (aborting the
+    /// transaction before any write); otherwise [`crate::GuardedError::Store`]
+    /// as [`Self::refresh_transform`].
+    pub fn refresh_transform_checked<X>(
+        &self,
+        plan: &TransformPlan,
+        (world, scope): (&str, &str),
+        mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+        now_ms: u64,
+        guard: impl FnOnce(&crate::StoreReader<'_, E>) -> Result<(), X>,
+    ) -> Result<Option<MaterializationState>, crate::GuardedError<X>> {
         self.check_writable()?;
         if plan.materialization.is_none() {
-            return Err(refused("core.compute.stale_input"));
+            return Err(refused("core.compute.stale_input").into());
         }
-        self.conn.transaction(|| {
-            crate::open_checkpoint::check_fence(&self.conn)?;
-            let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
-            if !snapshot.whole {
-                return Ok(None);
+        self.conn
+            .transaction(|| -> Result<_, crate::GuardedError<X>> {
+                crate::open_checkpoint::check_fence(&self.conn)?;
+                let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
+                if !snapshot.whole {
+                    return Ok(None);
+                }
+                guard(&self.read()).map_err(crate::GuardedError::Guard)?;
+                let digest = input_digest(&snapshot)?;
+                let (plan_pin, _) = self.transform_pins(plan)?;
+                let cache_pin =
+                    crate::codec::hash_json(&("norn.transform-cache/1", &plan_pin, world, scope))?;
+                let result = self.evaluate_snapshot(plan, snapshot)?;
+                self.store_materialization(plan, &cache_pin, &digest, now_ms, &result)?;
+                Ok(Some(MaterializationState {
+                    frontier: result.revision,
+                    refreshed_at_ms: now_ms,
+                    stale: false,
+                }))
+            })
+    }
+
+    /// VIEW-MAT-1: reauthorize every scanned input row that existed at a stale
+    /// stored result's frontier. Returns `false` if any row at that frontier
+    /// is not readable under `access`, or if history cannot be verified within
+    /// the transform row bound (forcing live evaluation).
+    fn stale_inputs_authorized(
+        &self,
+        plan: &TransformPlan,
+        (world, scope): (&str, &str),
+        frontier_commits: u64,
+        access: &mut impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
+    ) -> Result<bool, CellError> {
+        let reader = self.read();
+        if reader
+            .check_history("stale transform authorization")
+            .is_err()
+        {
+            return Ok(false);
+        }
+        let frontier_sql = to_i64(frontier_commits, "stale transform frontier")?;
+        let limits = super::transform::limits();
+        let mut budget = crate::reactive::DecodeBudget::new(&limits);
+        let max_scan = limits.max_scan;
+        let scan_bound = i64::try_from(max_scan)
+            .unwrap_or(i64::MAX)
+            .saturating_add(1);
+        let mut checked = std::collections::BTreeSet::new();
+        for scan in plan.inputs.values() {
+            if !checked.insert(scan.object_type.as_str()) {
+                continue;
             }
-            let digest = input_digest(&snapshot)?;
-            let (plan_pin, _) = self.transform_pins(plan)?;
-            let result = self.evaluate_snapshot(plan, snapshot)?;
-            self.store_materialization(plan, &plan_pin, &digest, now_ms, &result)?;
-            Ok(Some(MaterializationState {
-                frontier: result.revision,
-                refreshed_at_ms: now_ms,
-                stale: false,
-            }))
-        })
+            let Ok(root) = reader.root_type_or_self(&scan.object_type) else {
+                return Ok(false);
+            };
+            let raw_rows = self.conn.query(
+                &format!(
+                    "SELECT \"id\", \"version\" FROM \"{fv}\" \
+                     WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"commit_seq\" <= ?3 \
+                     LIMIT ?4",
+                    fv = crate::system::FACT_VALUES,
+                ),
+                params![world, root, frontier_sql, scan_bound],
+            )?;
+            if raw_rows.len() > max_scan {
+                return Ok(false);
+            }
+            let mut latest: BTreeMap<String, u64> = BTreeMap::new();
+            for row in raw_rows {
+                let row = crate::engine::SqlRow(row);
+                let id: String = row.get(0)?;
+                let version = to_u64(row.get::<i64>(1)?, "fact version")?;
+                latest
+                    .entry(id)
+                    .and_modify(|current| *current = (*current).max(version))
+                    .or_insert(version);
+            }
+            if latest.len() > norn_checker::transform::MAX_ROWS {
+                return Ok(false);
+            }
+            for (id, version) in latest {
+                let Ok(read) =
+                    reader.object_at_version_with_budget(world, root, &id, version, &mut budget)
+                else {
+                    return Ok(false);
+                };
+                match read {
+                    crate::reactive::BudgetedRead::Exhausted => return Ok(false),
+                    crate::reactive::BudgetedRead::Missing => {}
+                    crate::reactive::BudgetedRead::Found(record) => {
+                        if self.model().is_a(&record.object_type, &scan.object_type)
+                            && record.scope == scope
+                            && access(&record)? != RowAccess::Read
+                        {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(true)
     }
 
     fn evaluate_snapshot(

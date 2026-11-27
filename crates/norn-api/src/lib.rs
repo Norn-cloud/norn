@@ -37,6 +37,8 @@ pub use clock::{Clock, ManualClock};
 
 /// The `binding` retained-definition kind (CONNECT's tool bindings).
 pub mod binding_definitions;
+/// Studio's built-in page documents, served beside the installed definitions.
+pub mod builtin_pages;
 /// HOST-INSTALL-1: plan and apply a running cell's kernel definitions.
 pub mod cell_definitions;
 /// Retained (non-kernel) definitions: admit, install, retire, list, get.
