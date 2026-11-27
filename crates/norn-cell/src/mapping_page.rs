@@ -340,6 +340,7 @@ impl<E: SqlEngine> CellStore<E> {
                     legacy_v2.as_str(),
                     input.map(|i| i.mapping.as_str()),
                     active_binding.as_deref(),
+                    raws,
                 )),
             )?;
             let (page_digest, captured) = match &precondition {

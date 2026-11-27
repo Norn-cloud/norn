@@ -350,6 +350,53 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         }
     }
 
+    /// Like [`Self::try_mapping_page`], additionally verifying `fence` inside
+    /// the SQLite commit transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn try_mapping_page_checked(
+        &mut self,
+        page_id: &str,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<crate::mapping_page::PageAttempt, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(crate::mapping_page::PageAttempt::Consumed);
+        };
+        match self.commit_page_with_fence(&observed, &members, fence) {
+            Ok(()) => Ok(crate::mapping_page::PageAttempt::Landed(
+                members
+                    .into_iter()
+                    .map(|(id, _)| (id, MappingOutcome::Landed))
+                    .collect(),
+            )),
+            Err(error) if crate::mapping_page::is_store_failure(&error) => Err(error),
+            Err(_refused) => Ok(crate::mapping_page::PageAttempt::Refused(
+                members.into_iter().map(|(id, _)| id).collect(),
+            )),
+        }
+    }
+
+    /// Like [`Self::finish_mapping_page`], additionally verifying `fence`
+    /// inside the SQLite commit transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store failures.
+    pub fn finish_mapping_page_checked(
+        &mut self,
+        page_id: &str,
+        fence: crate::source_cursor::SourceReportFence<'_>,
+    ) -> Result<bool, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(false);
+        };
+        if !members.is_empty() {
+            return Ok(false);
+        }
+        self.commit_page_with_fence(&observed, &[], fence)?;
+        Ok(true)
+    }
+
     /// MAP-REPROCESS-1: explicitly re-derive one quarantined `mapping-bundle:`
     /// row under the current derivation (MAP-DERIVATION-1), for a row an older
     /// derivation refused that the current one accepts (decimal text before

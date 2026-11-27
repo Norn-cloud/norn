@@ -326,8 +326,14 @@ pub(crate) enum Precondition {
     },
 }
 
-/// Optional legacy `norn.source.page.v2` replay context: `(v2_digest, mapping_id, active_binding)`.
-pub(crate) type LegacyReplay<'a> = (&'a str, Option<&'a str>, Option<&'a str>);
+/// Optional legacy `norn.source.page.v2` replay context:
+/// `(v2_digest, mapping_id, active_binding, delivered_rows)`.
+pub(crate) type LegacyReplay<'a> = (
+    &'a str,
+    Option<&'a str>,
+    Option<&'a str>,
+    &'a [Observed<RuntimeValue>],
+);
 
 /// Validate the active fencing lease and cursor precondition inside an open
 /// capture transaction before writing any inbox row.
@@ -353,7 +359,7 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
             records: existing_pending.records,
         });
     }
-    if let Some((v2, mapping, active_binding)) = legacy_v2
+    if let Some((v2, mapping, active_binding, delivered)) = legacy_v2
         && let Some(existing_pending) =
             read_pending_by_digest(conn, &advance.connection_id, &advance.dataset, v2)?
     {
@@ -362,6 +368,7 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
             &existing_pending.records,
             mapping,
             active_binding,
+            Some(delivered),
         )? {
             return Ok(Precondition::IdempotentReplay {
                 matched_digest: v2.to_owned(),
@@ -391,13 +398,14 @@ pub(crate) fn check_capture_precondition<E: SqlEngine>(
                 records: existing.records.clone(),
             });
         }
-        if let Some((v2, mapping, active_binding)) = legacy_v2
+        if let Some((v2, mapping, active_binding, delivered)) = legacy_v2
             && existing.page_digest == v2
             && crate::mapping_conflict::legacy_source_replay_allowed(
                 conn,
                 &existing.records,
                 mapping,
                 active_binding,
+                Some(delivered),
             )?
         {
             return Ok(Precondition::IdempotentReplay {
@@ -754,7 +762,25 @@ impl<E: SqlEngine> CellStore<E> {
         dataset: &str,
         page_digest: &str,
     ) -> Result<(), CellError> {
+        self.complete_source_pending_checked(connection_id, dataset, page_digest, None)
+    }
+
+    /// Like [`Self::complete_source_pending`], additionally verifying an active
+    /// fencing lease inside the same SQLite transaction.
+    ///
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store errors.
+    pub fn complete_source_pending_checked(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<(), CellError> {
         self.write_tx(|| {
+            if let Some((conn, lid, generation, now_ms)) = lease {
+                verify_active_lease(&self.conn, conn, lid, generation, now_ms)?;
+            }
             let cursor_matches = read_cursor(&self.conn, connection_id, dataset)?
                 .is_some_and(|record| record.page_digest == page_digest);
             if cursor_matches || page_digest.contains(":row:") {
@@ -954,5 +980,19 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     ) -> Result<(), CellError> {
         self.store_mut()
             .complete_source_pending(connection_id, dataset, page_digest)
+    }
+
+    /// See [`CellStore::complete_source_pending_checked`].
+    /// # Errors
+    /// [`CellError::SourceLeaseFenced`] or store errors.
+    pub fn complete_source_pending_checked(
+        &mut self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<(), CellError> {
+        self.store_mut()
+            .complete_source_pending_checked(connection_id, dataset, page_digest, lease)
     }
 }

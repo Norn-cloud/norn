@@ -852,55 +852,53 @@ fn advance<E: SqlEngine>(
 /// ephemeral `Pull` cursor and deleting `_norn_source_pending` once all rows of
 /// that page have been processed.
 fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run, now_ms: u64) -> Result<Next, Failure> {
-    let done_front = match run.pending_captures.front_mut() {
+    let fence = capture::drain_fence(run, now_ms);
+    let (done_front, step_res) = match run.pending_captures.front_mut() {
         Some(capture::ActiveCapture::Captured {
             pending, outcomes, ..
         }) => {
-            let step = host
-                .process_source_page_step(pending, outcomes, run.step_rows)
-                .map_err(|refusal| fail("source.ingest", refusal.message))?;
-            run.mapped = step.len();
-            for ingested in step {
-                crate::pull::tally_outcome(
-                    &ingested.outcome,
-                    &mut run.landed,
-                    &mut run.quarantined,
-                    &mut run.reasons,
-                );
-            }
-            pending.pages.is_empty() && pending.records.is_empty()
+            let step =
+                host.process_source_page_step_checked(pending, outcomes, run.step_rows, fence);
+            let done = pending.pages.is_empty() && pending.records.is_empty();
+            (done, Some(step))
         }
         Some(capture::ActiveCapture::DisputeFallback { state, .. }) => {
-            let step = host
-                .step_source_dispute_fallback(state, now_ms, run.step_rows)
-                .map_err(|error| {
-                    let (code, message) = error.code_and_message();
-                    fail(code, message)
-                })?;
-            run.mapped = step.len();
-            for ingested in step {
-                crate::pull::tally_outcome(
-                    &ingested.outcome,
-                    &mut run.landed,
-                    &mut run.quarantined,
-                    &mut run.reasons,
-                );
-            }
-            state.is_complete()
+            let step = host.step_source_dispute_fallback(state, now_ms, run.step_rows);
+            (state.is_complete(), Some(step))
         }
-        None => false,
+        None => (false, None),
     };
+    if let Some(step) = step_res {
+        let step = step.map_err(|error| {
+            let (code, message) = error.code_and_message();
+            fail(code, message)
+        })?;
+        run.mapped = step.len();
+        for ingested in step {
+            crate::pull::tally_outcome(
+                &ingested.outcome,
+                &mut run.landed,
+                &mut run.quarantined,
+                &mut run.reasons,
+            );
+        }
+    }
     if done_front && let Some(finished) = run.pending_captures.pop_front() {
         let advance = match finished {
             capture::ActiveCapture::Captured {
                 pending, advance, ..
             } => {
-                host.complete_source_pending(
+                let lease = capture::drain_fence(run, now_ms).lease;
+                host.complete_source_pending_checked(
                     &pending.connection_id,
                     &pending.dataset,
                     &pending.page_digest,
+                    lease,
                 )
-                .map_err(|refusal| fail("source.ingest", refusal.message))?;
+                .map_err(|error| {
+                    let (code, message) = error.code_and_message();
+                    fail(code, message)
+                })?;
                 advance
             }
             capture::ActiveCapture::DisputeFallback { advance, .. } => Some(advance),

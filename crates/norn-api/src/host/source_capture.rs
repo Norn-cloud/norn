@@ -350,6 +350,26 @@ impl<E: SqlEngine> DevHost<E> {
         self.observing(|cell| cell.complete_source_pending(connection_id, dataset, page_digest))
     }
 
+    /// Like [`Self::complete_source_pending`], additionally verifying `lease`
+    /// inside SQLite's write transaction so a fenced worker cannot clear or
+    /// mark processed a pending capture after takeover.
+    ///
+    /// # Errors
+    /// [`SourceCaptureError::LeaseFenced`] or store failure.
+    pub fn complete_source_pending_checked(
+        &self,
+        connection_id: &str,
+        dataset: &str,
+        page_digest: &str,
+        lease: Option<(&str, &str, u64, u64)>,
+    ) -> Result<(), SourceCaptureError> {
+        let _epoch = self.definition_read()?;
+        self.observing_raw(|cell| {
+            cell.complete_source_pending_checked(connection_id, dataset, page_digest, lease)
+        })?
+        .map_err(SourceCaptureError::from_cell)
+    }
+
     fn verify_active_mapping_binding(
         cell: &norn_cell::host::SqliteCell<
             norn_cell::ObservationEvent,
@@ -605,6 +625,15 @@ impl<E: SqlEngine> DevHost<E> {
             .expected_binding
             .as_ref()
             .map(|(m, b)| (m.as_str(), b.as_str()));
+        let row_fence = SourceReportFence {
+            lease: Some((
+                state.advance.connection_id.as_str(),
+                state.advance.lease_id.as_str(),
+                state.advance.generation,
+                now_ms,
+            )),
+            expected_binding: binding_ref,
+        };
         let limit = max_rows.max(1);
         let mut step_out = Vec::new();
         while step_out.len() < limit
@@ -625,7 +654,8 @@ impl<E: SqlEngine> DevHost<E> {
             let mut outcomes = BTreeMap::new();
             let mut row_pages = Vec::with_capacity(captured.pages.len());
             for (page_id, _) in &captured.pages {
-                let _consumed = self.process_one_mapping_page(page_id, &mut outcomes)?;
+                let _consumed =
+                    self.process_one_mapping_page_checked(page_id, &mut outcomes, row_fence)?;
                 row_pages.push(page_id.clone());
             }
             let mut row_records = Vec::with_capacity(captured.records.len());
@@ -633,7 +663,11 @@ impl<E: SqlEngine> DevHost<E> {
             for record_id in captured.records {
                 let outcome = match outcomes.remove(&record_id) {
                     Some(outcome) => outcome,
-                    None => self.observing(|cell| cell.process_mapping_outcome(&record_id))?,
+                    None => self
+                        .observing_raw(|cell| {
+                            cell.process_mapping_outcome_checked(&record_id, row_fence)
+                        })?
+                        .map_err(SourceCaptureError::from_cell)?,
                 };
                 row_records.push(record_id.clone());
                 row_out.push(Ingested {
@@ -641,10 +675,11 @@ impl<E: SqlEngine> DevHost<E> {
                     outcome,
                 });
             }
-            self.complete_source_pending(
+            self.complete_source_pending_checked(
                 &state.advance.connection_id,
                 &state.advance.dataset,
                 &pending_key,
+                row_fence.lease,
             )?;
             let _done = state.rows.pop_front();
             state.all_pages.extend(row_pages);
@@ -685,10 +720,38 @@ impl<E: SqlEngine> DevHost<E> {
         outcomes: &mut BTreeMap<String, MappingOutcome>,
         max_rows: usize,
     ) -> Result<Vec<Ingested>, Refusal> {
+        self.process_source_page_step_checked(
+            pending,
+            outcomes,
+            max_rows,
+            SourceReportFence::default(),
+        )
+        .map_err(|error| match error {
+            SourceCaptureError::Refusal(refusal) => refusal,
+            other => {
+                let (code, message) = other.code_and_message();
+                Refusal::host(CellError::Engine(format!("{code}: {message}")))
+            }
+        })
+    }
+
+    /// Like [`Self::process_source_page_step`], additionally verifying `fence`
+    /// inside every mapping-promotion SQLite transaction so a worker fenced by
+    /// a lease takeover cannot keep committing rows.
+    ///
+    /// # Errors
+    /// [`SourceCaptureError::LeaseFenced`] or store/missing-inbox failures.
+    pub fn process_source_page_step_checked(
+        &self,
+        pending: &mut PendingSourceCapture,
+        outcomes: &mut BTreeMap<String, MappingOutcome>,
+        max_rows: usize,
+        fence: SourceReportFence<'_>,
+    ) -> Result<Vec<Ingested>, SourceCaptureError> {
         let _epoch = self.definition_read()?;
         let limit = max_rows.max(1);
         let allow_consumed_drain =
-            self.advance_pending_pages(pending, outcomes, max_rows, limit)?;
+            self.advance_pending_pages_checked(pending, outcomes, max_rows, limit, fence)?;
         let mut processed = Vec::new();
         while processed.len() < limit {
             let Some(id) = pending.records.first() else {
@@ -705,9 +768,13 @@ impl<E: SqlEngine> DevHost<E> {
             if !outcomes.is_empty() || pending.pages.is_empty() || allow_consumed_drain {
                 let id = pending.records.remove(0);
                 if !self.inbox_observation_exists(&id)? {
-                    return Err(Refusal::host(CellError::MappingBundleMismatch));
+                    return Err(SourceCaptureError::from_cell(
+                        CellError::MappingBundleMismatch,
+                    ));
                 }
-                let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
+                let outcome = self
+                    .observing_raw(|cell| cell.process_mapping_outcome_checked(&id, fence))?
+                    .map_err(SourceCaptureError::from_cell)?;
                 processed.push(Ingested {
                     observation_id: id,
                     outcome,
@@ -719,17 +786,20 @@ impl<E: SqlEngine> DevHost<E> {
         Ok(processed)
     }
 
-    fn advance_pending_pages(
+    fn advance_pending_pages_checked(
         &self,
         pending: &mut PendingSourceCapture,
         outcomes: &mut BTreeMap<String, MappingOutcome>,
         max_rows: usize,
         limit: usize,
-    ) -> Result<bool, Refusal> {
+        fence: SourceReportFence<'_>,
+    ) -> Result<bool, SourceCaptureError> {
         let mut allow_consumed_drain = false;
         while let Some(page_id) = pending.pages.first().cloned() {
             if !self.inbox_observation_exists(&page_id)? {
-                return Err(Refusal::host(CellError::MappingBundleMismatch));
+                return Err(SourceCaptureError::from_cell(
+                    CellError::MappingBundleMismatch,
+                ));
             }
             let Some(ids) = self.pending_page_member_ids(&page_id)? else {
                 pending.pages.remove(0);
@@ -750,21 +820,27 @@ impl<E: SqlEngine> DevHost<E> {
                 .cloned()
                 .collect();
             if remaining.is_empty() {
-                let _finished = self.observing(|cell| cell.finish_mapping_page(&page_id))?;
+                let _finished = self
+                    .observing_raw(|cell| cell.finish_mapping_page_checked(&page_id, fence))?
+                    .map_err(SourceCaptureError::from_cell)?;
                 pending.pages.remove(0);
                 allow_consumed_drain = true;
             } else if remaining.len() == ids.len() && ids.len() <= limit {
                 pending.pages.remove(0);
-                if self.process_one_mapping_page(&page_id, outcomes)? {
+                if self.process_one_mapping_page_checked(&page_id, outcomes, fence)? {
                     allow_consumed_drain = true;
                 }
             } else {
                 for member in remaining.iter().take(limit) {
-                    let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
+                    let outcome = self
+                        .observing_raw(|cell| cell.process_mapping_outcome_checked(member, fence))?
+                        .map_err(SourceCaptureError::from_cell)?;
                     outcomes.insert(member.clone(), outcome);
                 }
                 if remaining.len() <= limit {
-                    let _finished = self.observing(|cell| cell.finish_mapping_page(&page_id))?;
+                    let _finished = self
+                        .observing_raw(|cell| cell.finish_mapping_page_checked(&page_id, fence))?
+                        .map_err(SourceCaptureError::from_cell)?;
                     pending.pages.remove(0);
                 }
             }
@@ -786,6 +862,15 @@ impl<E: SqlEngine> DevHost<E> {
         rows: &[(Observed<RuntimeValue>, MappingInput)],
         advance: &CursorAdvanceSpec,
     ) -> Result<Vec<Ingested>, SourceCaptureError> {
+        let fence = SourceReportFence {
+            lease: Some((
+                advance.connection_id.as_str(),
+                advance.lease_id.as_str(),
+                advance.generation,
+                advance.now_ms,
+            )),
+            expected_binding: None,
+        };
         match self.capture_source_page_planned(rows, advance, PAGE_ROWS)? {
             SourceCapturePlan::Captured(mut pending) => {
                 if pending.pages.is_empty() && pending.records.is_empty() {
@@ -794,16 +879,18 @@ impl<E: SqlEngine> DevHost<E> {
                 let mut outcomes = BTreeMap::new();
                 let mut out = Vec::with_capacity(pending.records.len());
                 while !pending.pages.is_empty() || !pending.records.is_empty() {
-                    out.extend(self.process_source_page_step(
+                    out.extend(self.process_source_page_step_checked(
                         &mut pending,
                         &mut outcomes,
                         usize::MAX,
+                        fence,
                     )?);
                 }
-                self.complete_source_pending(
+                self.complete_source_pending_checked(
                     &pending.connection_id,
                     &pending.dataset,
                     &pending.page_digest,
+                    fence.lease,
                 )?;
                 Ok(out)
             }
@@ -866,12 +953,15 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
-    fn process_one_mapping_page(
+    fn process_one_mapping_page_checked(
         &self,
         page_id: &str,
         outcomes: &mut BTreeMap<String, MappingOutcome>,
-    ) -> Result<bool, Refusal> {
-        let attempt = self.observing(|cell| cell.try_mapping_page(page_id))?;
+        fence: SourceReportFence<'_>,
+    ) -> Result<bool, SourceCaptureError> {
+        let attempt = self
+            .observing_raw(|cell| cell.try_mapping_page_checked(page_id, fence))?
+            .map_err(SourceCaptureError::from_cell)?;
         let members = match attempt {
             PageAttempt::Consumed => return Ok(true),
             PageAttempt::Landed(landed) => {
@@ -881,10 +971,14 @@ impl<E: SqlEngine> DevHost<E> {
             PageAttempt::Refused(members) => members,
         };
         for member in &members {
-            let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
+            let outcome = self
+                .observing_raw(|cell| cell.process_mapping_outcome_checked(member, fence))?
+                .map_err(SourceCaptureError::from_cell)?;
             outcomes.insert(member.clone(), outcome);
         }
-        let _finished = self.observing(|cell| cell.finish_mapping_page(page_id))?;
+        let _finished = self
+            .observing_raw(|cell| cell.finish_mapping_page_checked(page_id, fence))?
+            .map_err(SourceCaptureError::from_cell)?;
         Ok(false)
     }
 }

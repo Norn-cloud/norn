@@ -124,7 +124,7 @@ pub(crate) fn evaluate_freshness(
     (freshness, complete)
 }
 
-fn parse_rfc3339_ms(text: &str) -> Option<u64> {
+pub(crate) fn parse_rfc3339_ms(text: &str) -> Option<u64> {
     let (seconds, nanos) = norn_checker::transform::instant(text)?;
     let secs = u64::try_from(seconds).ok()?;
     secs.checked_mul(1_000)?
@@ -669,6 +669,10 @@ impl<E: SqlEngine> CellStore<E> {
                 .iter()
                 .filter_map(|ds| cursors.get(ds).map(|cj| (ds.clone(), cj.clone())))
                 .collect();
+            let quarantined = reader.unresolved_quarantined_datasets_at(
+                &req.mapping_id,
+                heartbeat_ms.map(|hb| (frontier, hb)),
+            )?;
             let conn_healthy = !req_cursors.is_empty()
                 && connection_history_proves_cursors_at(
                     &reader,
@@ -676,12 +680,14 @@ impl<E: SqlEngine> CellStore<E> {
                     conn,
                     (&req.mapping_id, &req.binding_key),
                     &req_cursors,
+                    !quarantined.is_empty(),
                 )?;
             for dataset in &req.datasets {
                 let Some(cursor_json) = req_cursors.get(dataset).cloned() else {
                     continue;
                 };
-                if conn_healthy && let Some(hb) = heartbeat_ms {
+                let complete = conn_healthy && !quarantined.contains(dataset);
+                if complete && let Some(hb) = heartbeat_ms {
                     snapshot.max_heartbeat_ms = snapshot.max_heartbeat_ms.max(hb);
                 }
                 snapshot
@@ -698,7 +704,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Watermark {
                             observed: cursor_json,
                             heartbeat_ms,
-                            complete: conn_healthy,
+                            complete,
                         },
                     );
             }
@@ -746,11 +752,9 @@ impl<E: SqlEngine> CellStore<E> {
                 .transpose()?
                 .unwrap_or(false);
             let mapping_matches = binding_matches && conn_matches;
-            let conn_healthy = mapping_matches
-                && conn
-                    .and_then(|c| c.values.get("status"))
-                    .and_then(RuntimeValue::as_str)
-                    == Some("ok");
+            let status = conn
+                .and_then(|c| c.values.get("status"))
+                .and_then(RuntimeValue::as_str);
             let conn_heartbeat_ms = conn
                 .and_then(|c| c.values.get("last_sync_ended_at"))
                 .and_then(RuntimeValue::as_str)
@@ -759,6 +763,8 @@ impl<E: SqlEngine> CellStore<E> {
             let conn_cursors = conn.map_or_else(BTreeMap::new, strict_connection_cursors);
             let pending = reader.pending_source_datasets(source_id)?;
             let quarantined = reader.unresolved_quarantined_datasets(&req.mapping_id)?;
+            let conn_healthy = mapping_matches
+                && (status == Some("ok") || (status == Some("partial") && !quarantined.is_empty()));
             for dataset in &req.datasets {
                 let Some(cursor_json) = cursors
                     .get(dataset)
@@ -836,7 +842,7 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
         let Some(conn) = self.object(world, CONNECTION_TYPE, source_id)? else {
             return Ok(false);
         };
-        connection_history_proves_cursors_at(self, world, &conn, binding, required)
+        connection_history_proves_cursors_at(self, world, &conn, binding, required, false)
     }
 }
 
@@ -846,11 +852,14 @@ fn connection_history_proves_cursors_at<E: SqlEngine>(
     conn: &ObjectRecord,
     binding: (&str, &str),
     required: &BTreeMap<String, String>,
+    allow_partial: bool,
 ) -> Result<bool, CellError> {
     use crate::engine::{SqlRow, params};
     let (mapping_id, expected_binding) = binding;
+    let status = conn.values.get("status").and_then(RuntimeValue::as_str);
+    let status_ok = status == Some("ok") || (allow_partial && status == Some("partial"));
     if required.is_empty()
-        || conn.values.get("status").and_then(RuntimeValue::as_str) != Some("ok")
+        || !status_ok
         || !conn_matches_mapping_binding(reader, world, conn, mapping_id, expected_binding)?
     {
         return Ok(false);

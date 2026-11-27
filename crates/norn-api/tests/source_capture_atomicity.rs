@@ -1952,6 +1952,19 @@ mod tests {
         assert_eq!(replayed.page_digest, v2_digest);
         assert_eq!(replayed.records, orig_records);
 
+        // Same delivery with changed `feed_mode` must conflict, never hit v2 replay.
+        let mut changed_feed = rows.clone();
+        if let RuntimeValue::Object(obj) = &mut changed_feed[0].0.input {
+            obj.insert(
+                "feed_mode".into(),
+                RuntimeValue::String("delta_patch".into()),
+            );
+        }
+        assert!(matches!(
+            reopened.capture_source_page_planned(&changed_feed, &advance, 10),
+            Err(SourceCaptureError::CursorConflict(_))
+        ));
+
         // Same delivery under a different mapping must conflict, never inherit v2 replay.
         let mut wrong_mapping = rows;
         for (_, input) in &mut wrong_mapping {
