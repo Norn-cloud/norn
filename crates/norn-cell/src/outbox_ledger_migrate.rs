@@ -82,7 +82,7 @@ pub(crate) fn migrate_v11_outbox_ledger<E: SqlEngine>(engine: &E) -> Result<(), 
     }
     let journal = index_journal_enqueues(engine)?;
     for values in rows {
-        backfill_v11_outbox_row(engine, SqlRow(values), &journal)?;
+        backfill_v11_outbox_row(engine, &SqlRow(values), &journal)?;
     }
     Ok(())
 }
@@ -141,7 +141,7 @@ fn index_journal_enqueues<E: SqlEngine>(engine: &E) -> Result<JournalIndex, Cell
 
 fn backfill_v11_outbox_row<E: SqlEngine>(
     engine: &E,
-    row: SqlRow,
+    row: &SqlRow,
     journal: &JournalIndex,
 ) -> Result<(), CellError> {
     let command_id: String = row.get(0)?;

@@ -351,7 +351,7 @@ fn fork_cannot_reconcile_compensate_or_record_late_outcome() -> TestResult {
     let mut cell = open_cell(&path)?;
     let cmd = make_command("fork-cmd", 0, 10, None)?;
     enqueue_cmd(&mut cell, cmd.clone())?;
-    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(cmd.clone()));
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(cmd));
     let proof = cell
         .store()
         .read()
@@ -399,7 +399,7 @@ fn v10_store_upgrades_to_v11_with_validated_outbox_ledgers() -> TestResult {
     let pending = make_command("wait-1", 0, 30, None)?;
     enqueue_cmd(&mut cell, consumed.clone())?;
     enqueue_cmd(&mut cell, claimed.clone())?;
-    enqueue_cmd(&mut cell, pending.clone())?;
+    enqueue_cmd(&mut cell, pending)?;
     assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(consumed.clone()));
     assert!(
         cell.complete_perform(&consumed, rv(json!({ "ok": true }))?)?
