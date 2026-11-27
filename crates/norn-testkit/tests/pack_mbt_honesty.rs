@@ -618,6 +618,41 @@ fn make_read_authorizer(
     )
 }
 
+fn assert_read_authz_coverage(
+    coverage: &Arc<Mutex<DomainCoverage>>,
+    action_hint: &PolicyRuleTarget,
+) -> Result<(), String> {
+    let cov = coverage
+        .lock()
+        .map_err(|err| format!("coverage lock: {err}"))?;
+    assert_eq!(
+        cov.cedar_denies.get(action_hint).copied().unwrap_or(0),
+        0,
+        "read denials must never credit the action rule's deny_rule_hint: {:?}",
+        cov.cedar_denies
+    );
+    assert!(
+        cov.cedar_allows
+            .values()
+            .copied()
+            .fold(0u64, u64::saturating_add)
+            >= 2,
+        "expected PDP read allow hits to be recorded: {:?}",
+        cov.cedar_allows
+    );
+    assert!(
+        cov.cedar_denies
+            .iter()
+            .filter(|(target, _)| target.policy_id == "norn.read")
+            .map(|(_, count)| *count)
+            .fold(0u64, u64::saturating_add)
+            >= 2,
+        "expected PDP read deny hits under norn.read: {:?}",
+        cov.cedar_denies
+    );
+    Ok(())
+}
+
 #[test]
 fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -> Result<(), String>
 {
@@ -707,36 +742,7 @@ fn observed_pdp_authorizer_fails_closed_on_reads_and_enforces_pdp_read_rules() -
         foreign_reader.authorize_read(&read_req),
         Err(ActionDenial::Invisible)
     );
-
-    let cov = coverage
-        .lock()
-        .map_err(|err| format!("coverage lock: {err}"))?;
-    assert_eq!(
-        cov.cedar_denies.get(&action_hint).copied().unwrap_or(0),
-        0,
-        "read denials must never credit the action rule's deny_rule_hint: {:?}",
-        cov.cedar_denies
-    );
-    assert!(
-        cov.cedar_allows
-            .values()
-            .copied()
-            .fold(0u64, u64::saturating_add)
-            >= 2,
-        "expected PDP read allow hits to be recorded: {:?}",
-        cov.cedar_allows
-    );
-    assert!(
-        cov.cedar_denies
-            .iter()
-            .filter(|(target, _)| target.policy_id == "norn.read")
-            .map(|(_, count)| *count)
-            .fold(0u64, u64::saturating_add)
-            >= 2,
-        "expected PDP read deny hits under norn.read: {:?}",
-        cov.cedar_denies
-    );
-    Ok(())
+    assert_read_authz_coverage(&coverage, &action_hint)
 }
 
 fn nested_value(depth: usize) -> Value {
