@@ -469,6 +469,80 @@ describe("not_served vs unavailable (DESIGN.md §12.2, §12.4)", () => {
     expect(draftCountOf(controller.lastAnswer())).toBe(7)
     controller.dispose()
   })
+
+  test("early valid socket snapshot arriving before initial GET 404 still enters terminal not_served without a second GET", async () => {
+    const firstGet = deferred<LiveAnswer>()
+    const timers = fakeClock()
+    let readCalls = 0
+    let emitSnapshot!: (answer: LiveAnswer) => void
+    let stopCalls = 0
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      clock: timers.clock,
+      read: () => {
+        readCalls += 1
+        if (readCalls > 1) throw new Error(`unexpected read #${readCalls}`)
+        return firstGet.promise
+      },
+      changes: (listener) => {
+        emitSnapshot = listener
+        return () => { stopCalls += 1 }
+      },
+      onState: () => {},
+    })
+
+    // Hold initial GET, deliver a valid socket snapshot, then resolve initial GET with 404 route.not_found.
+    emitSnapshot(facetsAnswer(2, "rev-2"))
+    expect(controller.state()).toBe("reading")
+
+    firstGet.resolve({ status: 404, body: { code: "route.not_found", message: "not served" } })
+    await settle()
+
+    expect(readCalls).toBe(1)
+    expect(controller.state()).toBe("not_served")
+    expect(timers.pending()).toEqual([])
+    expect(stopCalls).toBe(1)
+    controller.dispose()
+    expect(stopCalls).toBe(1)
+  })
+
+  test("503 -> retry() before 10s -> 404 clears the armed 10s timer and tears down the live subscription immediately without double-stopping on dispose", async () => {
+    const timers = fakeClock()
+    let readCalls = 0
+    let stopCalls = 0
+    const answers: LiveAnswer[] = [
+      { status: 503, body: undefined },
+      { status: 404, body: { code: "route.not_found", message: "not served" } },
+    ]
+
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      clock: timers.clock,
+      read: async () => answers[readCalls++] ?? { status: 404, body: { code: "route.not_found" } },
+      changes: () => () => { stopCalls += 1 },
+      onState: () => {},
+    })
+
+    await settle()
+    expect(controller.state()).toBe("unavailable")
+    expect(readCalls).toBe(1)
+    expect(timers.pending().map((t) => t.ms)).toEqual([10_000])
+    expect(stopCalls).toBe(0)
+
+    // Retry manually before the 10s timer fires; the retry answers 404 not_served.
+    controller.retry()
+    await settle()
+
+    expect(readCalls).toBe(2)
+    expect(controller.state()).toBe("not_served")
+    expect(timers.pending()).toEqual([])
+    expect(stopCalls).toBe(1)
+
+    // Disposing afterward must not double-invoke the subscription teardown.
+    controller.dispose()
+    expect(stopCalls).toBe(1)
+  })
 })
 
 // A property over generated lifecycles, in both directions: on the board's grid (11rem cards,
@@ -538,7 +612,7 @@ if (!pkg && process.env.NORN_CHECKER_WASM_REQUIRED === "1") {
 }
 const withChecker = pkg ? describe : describe.skip
 withChecker("the checker", () => {
-  test("admits the view's machine: no widget.machine.* finding", async () => {
+  test("admits the view's widget artifact with zero Ring-1 findings", async () => {
     const checker = (await import(pathToFileURL(join(pkg!, "norn_checker_wasm.js")).href)) as {
       initSync(options: { module: Uint8Array }): unknown
       checkArtifactSet(artifactsJson: string, contextJson: string): string
@@ -546,7 +620,6 @@ withChecker("the checker", () => {
     checker.initSync({ module: readFileSync(join(pkg!, "norn_checker_wasm_bg.wasm")) })
     const document = readFileSync(join(import.meta.dir, "../src/elements/lifecycle-view.widget.json"), "utf8")
     const result = JSON.parse(checker.checkArtifactSet(`[${document}]`, "null")) as { diagnostics: { diagnostics: { code: string; message: string }[] } }
-    const machine = result.diagnostics.diagnostics.filter((finding) => finding.code.startsWith("widget.machine."))
-    expect(machine).toEqual([])
+    expect(result.diagnostics.diagnostics).toEqual([])
   })
 })

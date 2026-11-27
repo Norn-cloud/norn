@@ -46,6 +46,14 @@ export const lifecycleViewWidget: W.WidgetDef = W.widget({
               input: "trigger",
             },
           },
+          {
+            nodeId: "refresh-button",
+            component: {
+              kind: "control",
+              label: { en: "Refresh", ar: "تحديث" },
+              input: "trigger",
+            },
+          },
         ],
       },
       machine: {
@@ -54,7 +62,7 @@ export const lifecycleViewWidget: W.WidgetDef = W.widget({
         events: [
           { eventId: "opened", source: { kind: "page_opened" } },
           { eventId: "retry", source: { kind: "user", nodeId: "retry-button" } },
-          { eventId: "changed", source: { kind: "subscription", bindingId: "subject" } },
+          { eventId: "changed", source: { kind: "user", nodeId: "refresh-button" } },
           { eventId: "again", source: { kind: "timer", afterMs: 10000 } },
           W.outcome("accepted", "accepted"),
           W.outcome("refused", "refused"),
@@ -93,20 +101,6 @@ export const lifecycleViewWidget: W.WidgetDef = W.widget({
       },
     },
   ],
-  contract: {
-    dataBindings: [
-      {
-        bindingId: "subject",
-        object: { id: "norn.studio.lifecycle-subject.entity", version: "0.1.0" },
-        query: {
-          kind: "object_list",
-          filters: [],
-          sort: [],
-          page: { size: 1, maxSize: 1 },
-        },
-      },
-    ],
-  },
 })
 
 export const lifecycleViewOptions: EnvelopeOptions = {

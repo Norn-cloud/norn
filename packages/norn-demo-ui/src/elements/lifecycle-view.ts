@@ -424,7 +424,21 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
   let pendingFirstSnapshot: LiveAnswer | null = null
   let liveRefusal: LiveSubscriptionRefusal | null = null
   let disposed = false
+  let terminal = false
   let seen: string | null = null
+  let stop: (() => void) | undefined
+
+  const stopSubscription = () => {
+    const teardown = stop
+    stop = undefined
+    teardown?.()
+  }
+
+  const setLiveRefusal = (refusal: LiveSubscriptionRefusal | null) => {
+    if (liveRefusal?.code === refusal?.code && liveRefusal?.message === refusal?.message) return
+    liveRefusal = refusal
+    options.onLiveRefusal?.(liveRefusal)
+  }
 
   const driver: Driver = createDriver({
     machine: options.machine,
@@ -455,16 +469,16 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
           return classified
         }
         let classified = await readWithRetry()
+        if (classified.outcome === "not_served") {
+          pendingFirstSnapshot = null
+          return classified
+        }
         // If the first socket snapshot arrived while this GET was in flight and disagrees with the GET,
         // re-read once now (linearized after both observations) so older GET data never wins over a newer commit.
         if (pendingFirstSnapshot !== null) {
           const first = pendingFirstSnapshot
           pendingFirstSnapshot = null
-          if (
-            !callOptions.signal.aborted
-            && !(classified.outcome === "not_served" && isRouteNotServed(first))
-            && (last === null || !answersMatch(last, first))
-          ) {
+          if (!callOptions.signal.aborted && (last === null || !answersMatch(last, first))) {
             classified = await readWithRetry()
           }
         }
@@ -475,8 +489,12 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
       if (disposed) return
       const state = step.snapshot.stateId
       if (state === "not_served") {
+        terminal = true
         pendingFirstSnapshot = null
         pendingRefresh = false
+        setLiveRefusal(null)
+        stopSubscription()
+        driver.dispose()
       } else if (pendingFirstSnapshot !== null && state !== "reading" && state !== "opening") {
         const first = pendingFirstSnapshot
         pendingFirstSnapshot = null
@@ -486,17 +504,17 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
       if (pendingRefresh && state !== "reading" && state !== "opening" && state !== "not_served") {
         pendingRefresh = false
         queueMicrotask(() => {
-          if (disposed) return
+          if (disposed || terminal) return
           const current = driver.snapshot().stateId
           if (current === "unavailable") driver.dispatch({ kind: "user", eventId: "retry" })
-          else if (current !== "reading" && current !== "opening" && current !== "not_served") driver.dispatch({ kind: "subscription", bindingId: "subject" })
+          else if (current !== "reading" && current !== "opening" && current !== "not_served") driver.dispatch({ kind: "user", eventId: "changed" })
         })
       }
     },
   })
 
   const triggerRefresh = () => {
-    if (disposed) return
+    if (disposed || terminal) return
     const state = driver.snapshot().stateId
     if (state === "not_served") return
     if (state === "reading" || state === "opening") {
@@ -504,59 +522,56 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
     } else if (state === "unavailable") {
       driver.dispatch({ kind: "user", eventId: "retry" })
     } else {
-      driver.dispatch({ kind: "subscription", bindingId: "subject" })
+      driver.dispatch({ kind: "user", eventId: "changed" })
     }
-  }
-
-  const setLiveRefusal = (refusal: LiveSubscriptionRefusal | null) => {
-    if (liveRefusal?.code === refusal?.code && liveRefusal?.message === refusal?.message) return
-    liveRefusal = refusal
-    options.onLiveRefusal?.(liveRefusal)
   }
 
   options.onState(driver.snapshot().stateId, last)
   driver.dispatch({ kind: "page_opened" })
 
-  const stop = options.changes?.(
-    (answer) => {
-      if (disposed) return
-      setLiveRefusal(null)
-      const digest = answer.digest ?? JSON.stringify({ status: answer.status, body: answer.body })
-      if (seen === null) {
-        seen = digest
-        const state = driver.snapshot().stateId
-        if (state === "reading" || state === "opening") {
-          pendingFirstSnapshot = answer
-        } else if (last === null || !answersMatch(last, answer)) {
+  if (!disposed && !terminal) {
+    stop = options.changes?.(
+      (answer) => {
+        if (disposed || terminal) return
+        setLiveRefusal(null)
+        const digest = answer.digest ?? JSON.stringify({ status: answer.status, body: answer.body })
+        if (seen === null) {
+          seen = digest
+          const state = driver.snapshot().stateId
+          if (state === "reading" || state === "opening") {
+            pendingFirstSnapshot = answer
+          } else if (last === null || !answersMatch(last, answer)) {
+            triggerRefresh()
+          }
+          return
+        }
+        if (digest !== seen) {
+          seen = digest
+          pendingFirstSnapshot = null
           triggerRefresh()
         }
-        return
-      }
-      if (digest !== seen) {
-        seen = digest
-        pendingFirstSnapshot = null
-        triggerRefresh()
-      }
-    },
-    (refusal) => {
-      if (disposed) return
-      // A manual refresh during a refusal can move the displayed counts beyond the last digest.
-      seen = null
-      setLiveRefusal(refusal)
-    },
-  )
+      },
+      (refusal) => {
+        if (disposed || terminal) return
+        // A manual refresh during a refusal can move the displayed counts beyond the last digest.
+        seen = null
+        setLiveRefusal(refusal)
+      },
+    )
+    if (disposed || terminal) stopSubscription()
+  }
 
   return {
     refresh: triggerRefresh,
     retry: () => {
-      if (!disposed) driver.dispatch({ kind: "user", eventId: "retry" })
+      if (!disposed && !terminal) driver.dispatch({ kind: "user", eventId: "retry" })
     },
     state: () => driver.snapshot().stateId,
     lastAnswer: () => last,
     liveRefusal: () => liveRefusal,
     dispose: () => {
       disposed = true
-      stop?.()
+      stopSubscription()
       driver.dispose()
     },
   }
