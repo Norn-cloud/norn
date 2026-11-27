@@ -568,7 +568,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(mismatch());
         }
-        let source_document = SourceDocument::from_json(&input.dataset, &payload_text, None)?;
+        let feed_mode = match raw.get("feed_mode") {
+            None => norn_ir::FeedMode::FullSnapshot,
+            Some(value) => value
+                .as_str()
+                .and_then(norn_ir::FeedMode::parse_wire)
+                .ok_or_else(mismatch)?,
+        };
+        let source_document =
+            SourceDocument::from_json(&input.dataset, &payload_text, None)?.with_mode(feed_mode);
         let (records, diagnostics) = if field("kind")? == "upsert" {
             let outcome = match &plan.compiled {
                 Ok(compiled) => compiled

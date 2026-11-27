@@ -40,9 +40,10 @@
 //! scalar as its text (a numeric source id as the text identity a schema
 //! declares).
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use norn_ir::RuntimeValue;
+use norn_ir::{FeedMode, RuntimeValue, SourceVersion, VersionKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -98,6 +99,28 @@ pub struct Feed {
     pub fields: BTreeMap<String, String>,
     /// The position before the first sync.
     pub initial: Watermark,
+    /// Snapshot vs partial-patch delivery semantics (`full_snapshot` by default).
+    #[serde(default, skip_serializing_if = "is_default_feed_mode")]
+    pub mode: FeedMode,
+    /// Typed source-version parser and comparator (`lexicographical` by default).
+    #[serde(default, skip_serializing_if = "is_default_version_kind")]
+    pub version_kind: VersionKind,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if requires &T"
+)]
+const fn is_default_feed_mode(mode: &FeedMode) -> bool {
+    mode.is_default()
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if requires &T"
+)]
+const fn is_default_version_kind(kind: &VersionKind) -> bool {
+    kind.is_default()
 }
 
 /// An HTTP request with templated parts.
@@ -368,8 +391,32 @@ impl PullProfile {
             }) {
                 return bad(format!("{}: {pointer} is not a JSON pointer", feed.dataset));
             }
+            if !feed.version_kind.is_orderable() {
+                return bad(format!(
+                    "{}: versionKind {:?} cannot order keyset or cursor watermarks",
+                    feed.dataset,
+                    feed.version_kind.as_str()
+                ));
+            }
+            if feed.version_kind != VersionKind::Lexicographical
+                && let Err(error) = SourceVersion::parse(feed.version_kind, &feed.initial.version)
+            {
+                return bad(format!(
+                    "{}: invalid initial version: {error}",
+                    feed.dataset
+                ));
+            }
         }
         Ok(())
+    }
+
+    /// Declared [`FeedMode`] for `dataset`, defaulting to [`FeedMode::FullSnapshot`].
+    #[must_use]
+    pub fn feed_mode(&self, dataset: &str) -> FeedMode {
+        self.feeds
+            .iter()
+            .find(|feed| feed.dataset == dataset)
+            .map_or(FeedMode::FullSnapshot, |feed| feed.mode)
     }
 }
 
@@ -513,11 +560,7 @@ impl Pull {
             });
         }
         let (rows, last) = project_page(feed, items)?;
-        if let Some(greatest) = rows.iter().map(|row| &row.version).max()
-            && self.greatest.as_ref().is_none_or(|g| greatest > g)
-        {
-            self.greatest = Some(greatest.clone());
-        }
+        update_greatest_version(&mut self.greatest, feed.version_kind, &rows, &shape)?;
         self.page = self.page.saturating_add(1);
         let done = match &feed.paging {
             Paging::Keyset { size } => {
@@ -529,6 +572,7 @@ impl Pull {
                             reason: "the keyset position did not advance".into(),
                         });
                     }
+                    check_keyset_order(feed.version_kind, &self.position, &next, &dataset)?;
                     self.position = next;
                 }
                 items.len() < usize::try_from(*size).unwrap_or(usize::MAX)
@@ -601,6 +645,26 @@ pub fn observation(
     let digest = norn_ir::canonical::HashProfile::Norn1
         .hash_json(serde_json::to_string(&row.payload).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
+    let mut input = norn_ir::runtime_object! {
+        "contract" => "norn.raw_observation/v1",
+        "source" => profile.source.as_str(),
+        "source_id" => row.source_id.as_str(),
+        "event_id" => row.version.as_str(),
+        "source_version" => row.version.as_str(),
+        "pipeline_version" => profile.pipeline.as_str(),
+        "kind" => "upsert",
+        "extracted_at" => extracted_at_ms,
+        "payload" => row.payload.clone(),
+        "payload_digest" => digest,
+    };
+    if profile.feed_mode(&row.dataset) == FeedMode::Patch
+        && let RuntimeValue::Object(map) = &mut input
+    {
+        map.insert(
+            "feed_mode".to_owned(),
+            RuntimeValue::String(FeedMode::Patch.as_str().to_owned()),
+        );
+    }
     Ok(norn_kernel::Observed {
         id: norn_kernel::ObservationId(format!(
             "{}/{}/{}@{}",
@@ -612,19 +676,75 @@ pub fn observation(
             mapping_version: profile.pipeline.clone(),
             observed_at: norn_kernel::LogicalTime::from_millis(extracted_at_ms),
         },
-        input: norn_ir::runtime_object! {
-            "contract" => "norn.raw_observation/v1",
-            "source" => profile.source.as_str(),
-            "source_id" => row.source_id.as_str(),
-            "event_id" => row.version.as_str(),
-            "source_version" => row.version.as_str(),
-            "pipeline_version" => profile.pipeline.as_str(),
-            "kind" => "upsert",
-            "extracted_at" => extracted_at_ms,
-            "payload" => row.payload.clone(),
-            "payload_digest" => digest,
-        },
+        input,
     })
+}
+
+fn update_greatest_version(
+    greatest: &mut Option<String>,
+    kind: VersionKind,
+    rows: &[Row],
+    shape: &impl Fn(String) -> PullError,
+) -> Result<(), PullError> {
+    let mut best = greatest
+        .as_deref()
+        .map(|raw| SourceVersion::parse(kind, raw))
+        .transpose()
+        .map_err(|error| shape(error.to_string()))?;
+    for row in rows {
+        let candidate =
+            SourceVersion::parse(kind, &row.version).map_err(|error| shape(error.to_string()))?;
+        let replace = match &best {
+            None => true,
+            Some(current) => {
+                candidate
+                    .try_cmp(current)
+                    .map_err(|error| shape(error.to_string()))?
+                    == Ordering::Greater
+            }
+        };
+        if replace {
+            best = Some(candidate);
+        }
+    }
+    if let Some(best) = best {
+        *greatest = Some(best.raw().to_owned());
+    }
+    Ok(())
+}
+
+fn check_keyset_order(
+    kind: VersionKind,
+    current: &Watermark,
+    next: &Watermark,
+    dataset: &impl Fn() -> String,
+) -> Result<(), PullError> {
+    if kind == VersionKind::Lexicographical {
+        return Ok(());
+    }
+    let cur_ver =
+        SourceVersion::parse(kind, &current.version).map_err(|error| PullError::Bound {
+            dataset: dataset(),
+            reason: error.to_string(),
+        })?;
+    let next_ver = SourceVersion::parse(kind, &next.version).map_err(|error| PullError::Bound {
+        dataset: dataset(),
+        reason: error.to_string(),
+    })?;
+    if next_ver
+        .try_cmp(&cur_ver)
+        .map_err(|error| PullError::Bound {
+            dataset: dataset(),
+            reason: error.to_string(),
+        })?
+        == Ordering::Less
+    {
+        return Err(PullError::Bound {
+            dataset: dataset(),
+            reason: "the keyset version moved backward".into(),
+        });
+    }
+    Ok(())
 }
 
 /// A page's rows and its last item's keyset position (version, id).
@@ -648,21 +768,20 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
                 feed.id_path
             ))
         })?;
-        let version = item
-            .pointer(&feed.version_path)
-            .and_then(RuntimeValue::as_str)
-            .ok_or_else(|| {
-                shape(format!(
-                    "an item has no version text at {}",
-                    feed.version_path
-                ))
-            })?
-            .to_owned();
-        let payload = feed
-            .fields
-            .iter()
-            .map(|(field, pointer)| (field.clone(), project(item, pointer)))
-            .collect();
+        let version = extract_version(item, &feed.version_path, feed.version_kind, &shape)?;
+        let mut payload = BTreeMap::new();
+        for (field, pointer) in &feed.fields {
+            match feed.mode {
+                FeedMode::FullSnapshot => {
+                    payload.insert(field.clone(), project(item, pointer));
+                }
+                FeedMode::Patch => {
+                    if let Some(value) = project_patch(item, pointer) {
+                        payload.insert(field.clone(), value);
+                    }
+                }
+            }
+        }
         last = Some((version.clone(), json_of(id)));
         rows.push(Row {
             dataset: feed.dataset.clone(),
@@ -672,6 +791,24 @@ fn project_page(feed: &Feed, items: &[RuntimeValue]) -> Result<Page, PullError> 
         });
     }
     Ok((rows, last))
+}
+
+fn extract_version(
+    item: &RuntimeValue,
+    pointer: &str,
+    kind: VersionKind,
+    shape: &impl Fn(String) -> PullError,
+) -> Result<String, PullError> {
+    let raw = match kind {
+        VersionKind::Uint64 | VersionKind::Int64 => item.pointer(pointer).and_then(scalar_text),
+        VersionKind::Lexicographical | VersionKind::Rfc3339 | VersionKind::Opaque => item
+            .pointer(pointer)
+            .and_then(RuntimeValue::as_str)
+            .map(str::to_owned),
+    }
+    .ok_or_else(|| shape(format!("an item has no version text at {pointer}")))?;
+    let parsed = SourceVersion::parse(kind, &raw).map_err(|error| shape(error.to_string()))?;
+    Ok(parsed.raw().to_owned())
 }
 
 /// One field of an item: the value at its pointer (`null` when absent), or,
@@ -684,6 +821,18 @@ fn project(item: &RuntimeValue, pointer: &str) -> RuntimeValue {
             .and_then(scalar_text)
             .map_or(RuntimeValue::Null, RuntimeValue::String),
         None => item.pointer(pointer).cloned().unwrap_or_default(),
+    }
+}
+
+/// Patch-mode projection (`FEED-MODE-1`): absent JSON pointers return `None`
+/// (preserving omitted keys), while explicit JSON `null` returns
+/// `Some(RuntimeValue::Null)`.
+fn project_patch(item: &RuntimeValue, pointer: &str) -> Option<RuntimeValue> {
+    match pointer.strip_prefix("text:") {
+        Some(pointer) => item
+            .pointer(pointer)
+            .map(|value| scalar_text(value).map_or(RuntimeValue::Null, RuntimeValue::String)),
+        None => item.pointer(pointer).cloned(),
     }
 }
 
