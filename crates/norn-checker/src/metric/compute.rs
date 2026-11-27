@@ -137,28 +137,26 @@ impl QuestionPlan {
     /// Core 08 (`WORLD-FORK`): narrow this admitted plan's exclusive effective
     /// window end to `min(end, plan.question().time_window.end)`.
     ///
-    /// Never widens a plan beyond its admitted upper bound.
-    ///
-    /// # Errors
-    /// `"core.compute.stale_input"` if `end` is malformed or not strictly after
-    /// `time_window.start`.
-    pub fn with_effective_end(&self, end: norn_ir::UtcTimestamp) -> Result<Self, &'static str> {
+    /// Never widens a plan beyond its admitted upper bound. Returns `None` if
+    /// `end` or the declared window timestamps are malformed, or if `end` is
+    /// not strictly after `time_window.start`.
+    #[must_use]
+    pub fn with_effective_end(&self, end: norn_ir::UtcTimestamp) -> Option<Self> {
         let start_key =
             norn_expr::temporal::timestamp_ordering_key(self.question.time_window.start.as_str())
-                .map_err(|_| "core.compute.stale_input")?;
+                .ok()?;
         let declared_end_key =
             norn_expr::temporal::timestamp_ordering_key(self.question.time_window.end.as_str())
-                .map_err(|_| "core.compute.stale_input")?;
-        let requested_end_key = norn_expr::temporal::timestamp_ordering_key(end.as_str())
-            .map_err(|_| "core.compute.stale_input")?;
+                .ok()?;
+        let requested_end_key = norn_expr::temporal::timestamp_ordering_key(end.as_str()).ok()?;
         if requested_end_key <= start_key {
-            return Err("core.compute.stale_input");
+            return None;
         }
         let mut narrowed = self.clone();
         if requested_end_key < declared_end_key {
             narrowed.question.time_window.end = end;
         }
-        Ok(narrowed)
+        Some(narrowed)
     }
 }
 

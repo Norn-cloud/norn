@@ -45,7 +45,7 @@ pub(super) fn authenticate_fork_commands<'a, S: SqlEngine>(
     let mut authenticated = Vec::with_capacity(commands.len());
     for (offset, command) in commands.iter().enumerate() {
         let offset_u64 = u64::try_from(offset)
-            .map_err(|_| CellError::OutOfRange("fork promotion command index"))?;
+            .map_err(|_err| CellError::OutOfRange("fork promotion command index"))?;
         let seq = pin
             .base
             .commits
