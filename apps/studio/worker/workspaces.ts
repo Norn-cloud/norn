@@ -3,10 +3,12 @@ import {
   atomicallyWithResults,
   commitAcceptInvitation,
   commitActivateSession,
+  commitRevokeApiKey,
   dbAll,
   dbFirst,
   isProvisioningMetadata,
   isSessionLive,
+  listWorkspaceApiKeys,
   LIVE_SESSION_S_SQL,
   publicMetadata,
   BILLING_PAYER,
@@ -15,6 +17,7 @@ import {
   WORKSPACE_ACCESS_DENIED_MESSAGE,
   type Auth,
   type ProvisionDb,
+  type WorkspaceApiKeySummary,
 } from "./auth.ts"
 import { admitCell, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 import { environmentOf } from "./scope.ts"
@@ -237,4 +240,57 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
     )
   }
   return json({ invitation: outcome.invitation, member: outcome.member }, 200, sessionHeaders)
+}
+
+export interface WorkspaceApiKeysDocument {
+  readonly apiKeys: readonly WorkspaceApiKeySummary[]
+}
+
+/** GET /api/workspaces/:orgId/api-keys: read-only workspace-scoped API key list (#1859). */
+export async function listWorkspaceApiKeysRoute(
+  request: Request,
+  context: WorkspaceContext,
+  organizationId: string,
+): Promise<Response> {
+  const { headers: sessionHeaders, response: session } = await context.auth.api.getSession({ headers: request.headers, returnHeaders: true })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.", sessionHeaders)
+  const expectedOrg = request.headers.get("x-norn-expected-org")?.trim() ?? ""
+  if (expectedOrg !== "" && expectedOrg !== organizationId) {
+    return failure(409, "WORKSPACE_CHANGED", "Your active workspace changed. Reload the page before submitting.", sessionHeaders)
+  }
+  const outcome = await listWorkspaceApiKeys(provisionDb(context.db), {
+    userId: session.user.id,
+    organizationId,
+    sessionToken: session.session.token,
+  })
+  if (outcome.kind === "refused") {
+    return failure(outcome.status, outcome.code, outcome.message, sessionHeaders)
+  }
+  const document: WorkspaceApiKeysDocument = { apiKeys: outcome.apiKeys }
+  return json(document, 200, sessionHeaders)
+}
+
+/** DELETE /api/workspaces/:orgId/api-keys/:keyId: atomic workspace-scoped API key revocation (#1859). */
+export async function revokeWorkspaceApiKeyRoute(
+  request: Request,
+  context: WorkspaceContext,
+  organizationId: string,
+  keyId: string,
+): Promise<Response> {
+  const { headers: sessionHeaders, response: session } = await context.auth.api.getSession({ headers: request.headers, returnHeaders: true })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.", sessionHeaders)
+  const expectedOrg = request.headers.get("x-norn-expected-org")?.trim() ?? ""
+  if (expectedOrg !== "" && expectedOrg !== organizationId) {
+    return failure(409, "WORKSPACE_CHANGED", "Your active workspace changed. Reload the page before submitting.", sessionHeaders)
+  }
+  const outcome = await commitRevokeApiKey(provisionDb(context.db), {
+    userId: session.user.id,
+    organizationId,
+    keyId,
+    sessionToken: session.session.token,
+  })
+  if (outcome.kind === "refused") {
+    return failure(outcome.status, outcome.code, outcome.message, sessionHeaders)
+  }
+  return json({ revoked: true, id: outcome.id }, 200, sessionHeaders)
 }

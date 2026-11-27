@@ -990,6 +990,193 @@ export async function commitCreateApiKey(
   }
 }
 
+/** Public metadata of a workspace API key returned by `GET /api/workspaces/:orgId/api-keys`; never exposes the secret hash. */
+export interface WorkspaceApiKeySummary {
+  readonly id: string
+  readonly name: string | null
+  readonly start: string | null
+  readonly prefix: string | null
+  readonly referenceId: string
+  readonly enabled: boolean
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly expiresAt: string | null
+  readonly lastRequest: string | null
+  readonly metadata: Record<string, unknown> | null
+}
+
+export type ListWorkspaceApiKeysOutcome =
+  | { readonly kind: "ok"; readonly apiKeys: readonly WorkspaceApiKeySummary[] }
+  | { readonly kind: "refused"; readonly status: 401 | 403 | 409; readonly code: string; readonly message: string }
+
+export type RevokeWorkspaceApiKeyOutcome =
+  | { readonly kind: "revoked"; readonly id: string }
+  | { readonly kind: "refused"; readonly status: 401 | 403 | 404 | 409; readonly code: string; readonly message: string }
+
+function normalizeIsoTimestamp(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === "number") return Number.isFinite(value) ? new Date(value).toISOString() : null
+  return value
+}
+
+function parseApiKeyMetadata(raw: string | null): Record<string, unknown> | null {
+  if (raw === null || raw === "") return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function diagnoseWorkspaceApiKeyAuthFailure(
+  db: ProvisionDb,
+  args: { readonly userId: string; readonly organizationId: string; readonly sessionToken?: string | null; readonly action: "list" | "revoke" },
+): Promise<{ readonly kind: "authorized" } | { readonly kind: "refused"; readonly status: 401 | 403 | 409; readonly code: string; readonly message: string }> {
+  const hasSession = typeof args.sessionToken === "string" && args.sessionToken !== ""
+  if (hasSession && !(await isSessionLive(db, args.sessionToken!, args.userId))) {
+    return { kind: "refused", status: 401, code: "UNAUTHORIZED_SESSION", message: "Unauthorized or invalid session" }
+  }
+  const row = await dbFirst<{ role: string; metadata: string | null }>(
+    db,
+    `select m."role", o."metadata"
+     from "member" m
+     join "organization" o on o."id" = m."organizationId"
+     where m."organizationId" = ? and m."userId" = ?`,
+    args.organizationId,
+    args.userId,
+  )
+  if (row !== null && hasOrgRole(row.role, ["owner", "admin"]) && isProvisioningMetadata(row.metadata)) {
+    return { kind: "refused", status: 409, code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." }
+  }
+  if (row === null || !hasOrgRole(row.role, ["owner", "admin"])) {
+    const verb = args.action === "list" ? "list" : "revoke"
+    return { kind: "refused", status: 403, code: "FORBIDDEN", message: `You do not have permission to ${verb} API keys for this workspace.` }
+  }
+  return { kind: "authorized" }
+}
+
+/**
+ * Read-only, workspace-scoped API key listing (#1859). Authorizes `owner`/`admin` membership,
+ * `READY_ORG_SQL`, and `LIVE_SESSION_S_SQL` in the exact same SQL snapshot that reads `apikey`
+ * rows, performs zero mutations (even on expired keys), and never returns the hashed secret.
+ */
+export async function listWorkspaceApiKeys(
+  db: ProvisionDb,
+  input: { readonly userId: string; readonly organizationId: string; readonly sessionToken?: string | null },
+): Promise<ListWorkspaceApiKeysOutcome> {
+  const hasSession = typeof input.sessionToken === "string" && input.sessionToken !== ""
+  const sessionGuard = hasSession
+    ? ` and exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})`
+    : ""
+  const params: SqlParam[] = hasSession
+    ? [input.organizationId, input.organizationId, input.userId, input.sessionToken!, input.userId]
+    : [input.organizationId, input.organizationId, input.userId]
+
+  type KeyRow = {
+    id: string
+    name: string | null
+    start: string | null
+    prefix: string | null
+    referenceId: string
+    enabled: number | boolean | null
+    createdAt: string | number
+    updatedAt: string | number
+    expiresAt: string | number | null
+    lastRequest: string | number | null
+    metadata: string | null
+  }
+  const rows = await dbAll<KeyRow>(
+    db,
+    `select k."id", k."name", k."start", k."prefix", k."referenceId", k."enabled",
+            k."createdAt", k."updatedAt", k."expiresAt", k."lastRequest", k."metadata"
+     from "apikey" k
+     where k."referenceId" = ?
+       and exists (
+         select 1 from "member" m
+         join "organization" o on o."id" = m."organizationId"
+         where m."organizationId" = ? and m."userId" = ?
+           and ((',' || m."role" || ',') glob '*,owner,*'
+             or (',' || m."role" || ',') glob '*,admin,*')
+           and ${READY_ORG_SQL}
+       )${sessionGuard}
+     order by k."createdAt" desc, k."id" asc`,
+    ...params,
+  )
+
+  if (rows.length === 0) {
+    const authz = await diagnoseWorkspaceApiKeyAuthFailure(db, { ...input, action: "list" })
+    if (authz.kind === "refused") return authz
+  }
+
+  return {
+    kind: "ok",
+    apiKeys: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      start: row.start,
+      prefix: row.prefix,
+      referenceId: row.referenceId,
+      enabled: row.enabled !== 0 && row.enabled !== false,
+      createdAt: normalizeIsoTimestamp(row.createdAt) ?? "",
+      updatedAt: normalizeIsoTimestamp(row.updatedAt) ?? "",
+      expiresAt: normalizeIsoTimestamp(row.expiresAt),
+      lastRequest: normalizeIsoTimestamp(row.lastRequest),
+      metadata: parseApiKeyMetadata(row.metadata),
+    })),
+  }
+}
+
+/**
+ * Atomically revoke one organization API key ONLY if at deletion time `userId` holds an exact
+ * case-sensitive `owner` or `admin` membership in `organizationId`, the organization satisfies
+ * `READY_ORG_SQL`, and (for session-backed calls) the session is still live (#1859).
+ * Unauthorized callers receive uniform 403/401/409 without probing whether `keyId` exists.
+ */
+export async function commitRevokeApiKey(
+  db: ProvisionDb,
+  input: { readonly userId: string; readonly organizationId: string; readonly keyId: string; readonly sessionToken?: string | null },
+): Promise<RevokeWorkspaceApiKeyOutcome> {
+  const hasSession = typeof input.sessionToken === "string" && input.sessionToken !== ""
+  const sessionGuard = hasSession
+    ? ` and exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})`
+    : ""
+  const params: SqlParam[] = hasSession
+    ? [input.keyId, input.organizationId, input.organizationId, input.userId, input.sessionToken!, input.userId]
+    : [input.keyId, input.organizationId, input.organizationId, input.userId]
+
+  const deleted = await dbFirst<{ id: string }>(
+    db,
+    `delete from "apikey"
+     where "id" = ? and "referenceId" = ?
+       and exists (
+         select 1 from "member" m
+         join "organization" o on o."id" = m."organizationId"
+         where m."organizationId" = ? and m."userId" = ?
+           and ((',' || m."role" || ',') glob '*,owner,*'
+             or (',' || m."role" || ',') glob '*,admin,*')
+           and ${READY_ORG_SQL}
+       )${sessionGuard}
+     returning "id"`,
+    ...params,
+  )
+
+  if (deleted !== null) {
+    return { kind: "revoked", id: deleted.id }
+  }
+
+  const authz = await diagnoseWorkspaceApiKeyAuthFailure(db, {
+    userId: input.userId,
+    organizationId: input.organizationId,
+    sessionToken: input.sessionToken,
+    action: "revoke",
+  })
+  if (authz.kind === "refused") return authz
+  return { kind: "refused", status: 404, code: "API_KEY_NOT_FOUND", message: "API key not found." }
+}
+
 const API_ERROR_STATUS = { 400: "BAD_REQUEST", 401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT" } as const
 function responseHeadersOf(ctx: { responseHeaders?: Headers; context: { responseHeaders?: Headers } }): Headers | undefined {
   if (ctx.responseHeaders === undefined && ctx.context.responseHeaders === undefined) return undefined

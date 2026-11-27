@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import type { FetchTrace } from "@/answer-view"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -129,7 +129,17 @@ function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readon
 
 function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: ToolHost }) {
   const [traced, setTraced] = useState<{ readonly bucket: string; readonly read: Read<Trace> } | { readonly bucket: string; readonly refusal: Refusal } | { readonly bucket: string; readonly unavailable: true } | null>(null)
+  const traceSeq = useRef(0)
+  const mounted = useRef(true)
   const answer = read.document
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  useEffect(() => {
+    traceSeq.current += 1
+    setTraced(null)
+  }, [answer.lineageRef])
   const buckets = answerBuckets(read)
   const latest = buckets.at(-1)
   const freshness = FRESHNESS[answer.freshness]
@@ -138,12 +148,15 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
   const title = typeof question === "string" ? question : typeof (question as { name?: unknown } | undefined)?.name === "string" ? String((question as { name: string }).name) : "Answer"
   const fetchTrace = traceThrough(bridge, input)
   const trace = async (bucket: string) => {
+    const seq = ++traceSeq.current
     try {
       const result = await fetchTrace(answer.lineageRef, bucket)
+      if (!mounted.current || traceSeq.current !== seq) return
       if (result.kind === "read") setTraced({ bucket, read: result.read })
       else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
       else setTraced({ bucket, unavailable: true })
     } catch {
+      if (!mounted.current || traceSeq.current !== seq) return
       setTraced({ bucket, unavailable: true })
     }
   }

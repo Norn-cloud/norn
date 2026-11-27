@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
-import { commitAcceptInvitation, commitActivateSession, commitClearActiveSession, commitCreateApiKey, createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE, type ProvisionDb } from "../auth.ts"
+import { commitAcceptInvitation, commitActivateSession, commitClearActiveSession, commitCreateApiKey, commitRevokeApiKey, createAuth, DISABLED_ORG_PATHS, listWorkspaceApiKeys, WORKSPACE_ACCESS_DENIED_MESSAGE, type ProvisionDb } from "../auth.ts"
 import { billingModeStatement } from "../billing.ts"
 import type { Env } from "../index.ts"
-import type { WorkspacesDocument } from "../workspaces.ts"
+import type { WorkspaceApiKeysDocument, WorkspacesDocument } from "../workspaces.ts"
 import { cookieOf, createMigratedDb, createWorkerClient, createWorkerEnv } from "./harness.ts"
 
 const ORIGIN = "https://studio-alpha.norn.cloud"
@@ -777,4 +777,183 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
     { cookie: bob.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
   )
   expect(unprivScopedCancel.status).toBe(403)
+})
+
+test("GET /api/workspaces/:orgId/api-keys and DELETE /api/workspaces/:orgId/api-keys/:keyId enforce workspace authz, zero side effects, and atomic revocation (#1859)", async () => {
+  const { db, env } = stage()
+  const alice = await enroll(env, "ak-alice@example.com", "Alice")
+  const bob = await enroll(env, "ak-bob@example.com", "Bob")
+  const memberUser = await enroll(env, "ak-member@example.com", "Member")
+  const now = new Date().toISOString()
+
+  db.run(
+    `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_member_alice', ?, ?, 'member', ?)`,
+    [alice.organizationId, memberUser.userId, now],
+  )
+  // Provisioning org where Alice is owner.
+  db.run(
+    `insert into "organization" ("id", "name", "slug", "createdAt", "metadata") values ('org_ak_prov', 'Prov', 'ak-prov', ?, ?)`,
+    [now, JSON.stringify({ "norn.provisioning": true })],
+  )
+  db.run(
+    `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_alice_prov', 'org_ak_prov', ?, 'owner', ?)`,
+    [alice.userId, now],
+  )
+
+  // Mint one key in Alice's workspace and one key in Bob's workspace, plus one expired key in Alice's workspace.
+  const aliceCreated = await mutate(
+    env,
+    "POST",
+    "/api/auth/api-key/create",
+    { name: "alice-ci", organizationId: alice.organizationId, metadata: { purpose: "ci" } },
+    { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  )
+  expect(aliceCreated.status).toBe(200)
+  const aliceKey = (await aliceCreated.json()) as { id: string; key: string }
+  const bobCreated = await mutate(
+    env,
+    "POST",
+    "/api/auth/api-key/create",
+    { name: "bob-ci", organizationId: bob.organizationId },
+    { cookie: bob.cookie, [EXPECTED_ORG_HEADER]: bob.organizationId },
+  )
+  expect(bobCreated.status).toBe(200)
+  const bobKey = (await bobCreated.json()) as { id: string; key: string }
+  db.run(
+    `insert into "apikey" ("id", "configId", "name", "start", "referenceId", "prefix", "key", "enabled", "expiresAt", "createdAt", "updatedAt")
+     values ('ak_expired', 'default', 'old-key', 'old123', ?, null, 'secret_hash_never_returned', 1, '2020-01-01T00:00:00.000Z', '2019-01-01T00:00:00.000Z', '2019-01-01T00:00:00.000Z')`,
+    [alice.organizationId],
+  )
+
+  // Unauthenticated callers get 401.
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys`)).status).toBe(401)
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, { method: "DELETE", headers: { origin: ORIGIN } })).status).toBe(401)
+
+  // Cross-origin DELETE is refused 403.
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, { method: "DELETE", headers: { cookie: alice.cookie, origin: "https://evil.example" } })).status).toBe(403)
+
+  // Mismatched x-norn-expected-org returns 409 WORKSPACE_CHANGED on both GET and DELETE.
+  const wrongHeaderList = await call(env, `/api/workspaces/${alice.organizationId}/api-keys`, {
+    headers: { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: bob.organizationId },
+  })
+  expect(wrongHeaderList.status).toBe(409)
+  expect(await wrongHeaderList.json()).toMatchObject({ code: "WORKSPACE_CHANGED" })
+  const wrongHeaderDel = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: alice.cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: bob.organizationId },
+  })
+  expect(wrongHeaderDel.status).toBe(409)
+  expect(await wrongHeaderDel.json()).toMatchObject({ code: "WORKSPACE_CHANGED" })
+
+  // Non-member (Bob) and non-admin member get uniform 403 regardless of whether keyId exists (no existence oracle).
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys`, { headers: { cookie: bob.cookie } })).status).toBe(403)
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys`, { headers: { cookie: memberUser.cookie } })).status).toBe(403)
+  const bobDelReal = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: bob.cookie, origin: ORIGIN },
+  })
+  const bobDelMissing = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/key_missing`, {
+    method: "DELETE",
+    headers: { cookie: bob.cookie, origin: ORIGIN },
+  })
+  expect(bobDelReal.status).toBe(403)
+  expect(bobDelMissing.status).toBe(403)
+  expect(await bobDelReal.json()).toEqual(await bobDelMissing.json())
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: memberUser.cookie, origin: ORIGIN },
+  })).status).toBe(403)
+
+  // Provisioning workspace refuses 409 WORKSPACE_PROVISIONING on both GET and DELETE.
+  expect((await call(env, "/api/workspaces/org_ak_prov/api-keys", { headers: { cookie: alice.cookie } })).status).toBe(409)
+  expect((await call(env, "/api/workspaces/org_ak_prov/api-keys/any", { method: "DELETE", headers: { cookie: alice.cookie, origin: ORIGIN } })).status).toBe(409)
+
+  // Authorized owner GET lists only Alice's workspace keys without hashes and does NOT delete expired keys (read-only).
+  const listRes = await call(env, `/api/workspaces/${alice.organizationId}/api-keys`, {
+    headers: { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  })
+  expect(listRes.status).toBe(200)
+  const listed = (await listRes.json()) as WorkspaceApiKeysDocument
+  expect(listed.apiKeys.map((k) => k.id).sort()).toEqual([aliceKey.id, "ak_expired"].sort())
+  for (const item of listed.apiKeys) {
+    expect("key" in item).toBe(false)
+    expect(item.referenceId).toBe(alice.organizationId)
+  }
+  expect(listed.apiKeys.find((k) => k.id === aliceKey.id)?.metadata).toEqual({ purpose: "ci" })
+  expect(db.query(`select count(*) as n from "apikey" where "id" = 'ak_expired'`).get()).toEqual({ n: 1 })
+
+  // Authorized owner DELETE of a foreign-tenant keyId vs missing keyId returns identical 404 (no cross-tenant oracle).
+  const aliceDelBob = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${bobKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: alice.cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  })
+  const aliceDelMissing = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/key_absent`, {
+    method: "DELETE",
+    headers: { cookie: alice.cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  })
+  expect(aliceDelBob.status).toBe(404)
+  expect(aliceDelMissing.status).toBe(404)
+  expect(await aliceDelBob.json()).toEqual(await aliceDelMissing.json())
+  expect(db.query(`select count(*) as n from "apikey" where "id" = ?`).get(bobKey.id)).toEqual({ n: 1 })
+
+  // Concurrent role demotion racing with DELETE commits zero deletion and refuses 403.
+  const origPrepare = db.prepare.bind(db)
+  let demotedOnDelete = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!demotedOnDelete && sql.includes(`delete from "apikey"`)) {
+      demotedOnDelete = true
+      origPrepare(`update "member" set "role" = 'member' where "organizationId" = ? and "userId" = ?`).run(alice.organizationId, alice.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const racedDel = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: alice.cookie, origin: ORIGIN },
+  })
+  db.prepare = origPrepare
+  expect(demotedOnDelete).toBe(true)
+  expect(racedDel.status).toBe(403)
+  expect(db.query(`select count(*) as n from "apikey" where "id" = ?`).get(aliceKey.id)).toEqual({ n: 1 })
+
+  // Restore owner role, revoke succeeds atomically, second revoke returns 404.
+  db.run(`update "member" set "role" = 'owner' where "organizationId" = ? and "userId" = ?`, [alice.organizationId, alice.userId])
+  const okDel = await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: alice.cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  })
+  expect(okDel.status).toBe(200)
+  expect(await okDel.json()).toMatchObject({ revoked: true, id: aliceKey.id })
+  expect(db.query(`select count(*) as n from "apikey" where "id" = ?`).get(aliceKey.id)).toEqual({ n: 0 })
+  expect((await call(env, `/api/workspaces/${alice.organizationId}/api-keys/${aliceKey.id}`, {
+    method: "DELETE",
+    headers: { cookie: alice.cookie, origin: ORIGIN },
+  })).status).toBe(404)
+
+  // D1-shaped adapter exercises listWorkspaceApiKeys and commitRevokeApiKey end to end.
+  const d1Wrapper: ProvisionDb = {
+    prepare(sql: string) {
+      return {
+        bind(...params: (string | number | null)[]) {
+          return {
+            first: async <T>() => (db.query(sql).get(...params) as T | null) ?? null,
+            all: async <T>() => ({ results: db.query(sql).all(...params) as T[] }),
+            run: async () => { db.query(sql).run(...params); return { success: true } },
+          }
+        },
+      }
+    },
+    batch: async () => [],
+  }
+  const aliceSession = db.query(`select "token" from "session" where "userId" = ?`).get(alice.userId) as { token: string }
+  const d1Listed = await listWorkspaceApiKeys(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, sessionToken: aliceSession.token })
+  expect(d1Listed.kind).toBe("ok")
+  if (d1Listed.kind === "ok") expect(d1Listed.apiKeys.map((k) => k.id)).toEqual(["ak_expired"])
+  const d1Revoked = await commitRevokeApiKey(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, keyId: "ak_expired", sessionToken: aliceSession.token })
+  expect(d1Revoked).toEqual({ kind: "revoked", id: "ak_expired" })
+  const d1Empty = await listWorkspaceApiKeys(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, sessionToken: aliceSession.token })
+  expect(d1Empty).toEqual({ kind: "ok", apiKeys: [] })
+  // Expired session refuses 401 on both list and revoke.
+  db.run(`update "session" set "expiresAt" = ? where "token" = ?`, [new Date(Date.now() - 10_000).toISOString(), aliceSession.token])
+  expect((await listWorkspaceApiKeys(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, sessionToken: aliceSession.token }))).toMatchObject({ kind: "refused", status: 401 })
+  expect((await commitRevokeApiKey(d1Wrapper, { userId: alice.userId, organizationId: alice.organizationId, keyId: "ak_expired", sessionToken: aliceSession.token }))).toMatchObject({ kind: "refused", status: 401 })
 })
