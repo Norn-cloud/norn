@@ -1,5 +1,5 @@
 import { Norn } from "@norn/authoring"
-import { PosSale, StockLot, Store } from "./retail.ts"
+import { PosSale, StockLot, Store, StoreCount } from "./retail.ts"
 
 // Chasm-trap-safe retail commercial KPI transforms: aggregate each fact stream
 // to `(store_id, sku_id, unit, currency)` (or receipt week) first, then join
@@ -152,4 +152,84 @@ export const EntityManagementSummary = Norn.transform({
     },
   },
   output: "summary",
+})
+
+/**
+ * Active store-SKU stock positions derived from additive lot receipts minus
+ * additive depletions (`remaining_qty == received_qty - depleted_qty > 0`),
+ * providing the canonical expected-grain population for physical count
+ * reconciliation and commercial KPI rollup completeness gates.
+ */
+export const StoreActivePositions = Norn.transform({
+  id: "supply.retail.store_active_positions", title: "Active store-SKU stock positions", version: "0.1.0",
+  inputs: { lot: StockLot },
+  nodes: {
+    lot: { op: "scan", input: "lot" },
+    per_position: {
+      op: "aggregate", input: "lot",
+      groupBy: [{ column: "store_id" }, { column: "sku_id" }, { column: "unit" }, { column: "currency" }],
+      measures: [
+        { name: "sum_received_qty", fn: "sum", column: "received_qty", label: "Total received" },
+        { name: "sum_depleted_qty", fn: "sum", column: "depleted_qty", label: "Total depleted" },
+        { name: "lot_count", fn: "count" },
+        { name: "costed_lots", fn: "count", column: "unit_cost" },
+      ],
+    },
+    derived: {
+      op: "project", input: "per_position", columns: [
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sku_id", expression: "input.sku_id" },
+        { name: "unit", expression: "input.unit" },
+        { name: "currency", expression: "input.currency" },
+        { name: "derived_on_hand_qty", expression: "input.sum_received_qty - input.sum_depleted_qty" },
+        { name: "lot_count", expression: "input.lot_count" },
+        { name: "costed_lots", expression: "input.costed_lots" },
+        { name: "cost_complete", expression: "input.costed_lots == input.lot_count" },
+      ],
+    },
+    active: { op: "filter", input: "derived", predicate: "input.derived_on_hand_qty > 0" },
+  },
+  output: "active",
+})
+
+/** Latest governed `on_hand` physical counts per `(store_id, sku_id, unit)`. */
+export const StoreOnHandCountPositions = Norn.transform({
+  id: "supply.retail.store_on_hand_count_positions", title: "Store on-hand physical counts", version: "0.1.0",
+  inputs: { count: StoreCount },
+  nodes: {
+    count: { op: "scan", input: "count" },
+    on_hand_only: { op: "filter", input: "count", predicate: "input.quantity_basis == \"on_hand\"" },
+    projected: {
+      op: "project", input: "on_hand_only", columns: [
+        { name: "id", expression: "input.id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sku_id", expression: "input.sku_id" },
+        { name: "unit", expression: "input.unit" },
+        { name: "on_hand_qty", expression: "input.on_hand_qty" },
+        { name: "as_of", expression: "input.as_of" },
+      ],
+    },
+  },
+  output: "projected",
+})
+
+/** Latest governed `available` physical counts per `(store_id, sku_id, unit)`. */
+export const StoreAvailableCountPositions = Norn.transform({
+  id: "supply.retail.store_available_count_positions", title: "Store available physical counts", version: "0.1.0",
+  inputs: { count: StoreCount },
+  nodes: {
+    count: { op: "scan", input: "count" },
+    available_only: { op: "filter", input: "count", predicate: "input.quantity_basis == \"available\"" },
+    projected: {
+      op: "project", input: "available_only", columns: [
+        { name: "id", expression: "input.id" },
+        { name: "store_id", expression: "input.store_id" },
+        { name: "sku_id", expression: "input.sku_id" },
+        { name: "unit", expression: "input.unit" },
+        { name: "on_hand_qty", expression: "input.on_hand_qty" },
+        { name: "as_of", expression: "input.as_of" },
+      ],
+    },
+  },
+  output: "projected",
 })

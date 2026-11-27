@@ -686,8 +686,10 @@ export const StoreCommercialRollupValid = Norn.law("store_commercial_rollup_vali
 export const StoreCommercialRollupCountNotFuture = Norn.law("store_commercial_rollup_count_not_future", {
   on: StoreCommercialRollup,
   when: (self): self is typeof self & { readonly count_as_of: NonNullable<typeof self.count_as_of> } => self.count_as_of !== null,
-  must: (self) => self.count_as_of <= self.period_end,
-  because: "A verified commercial KPI rollup cannot cite a physical count dated after its period_end cutoff.",
+  must: (self) =>
+    self.count_as_of <= self.period_end
+    && Norn.secondsBetween(self.count_as_of, self.period_end) <= 604800,
+  because: "A verified commercial KPI rollup must cite a fresh physical count dated at or before period_end and within the 7-day freshness window.",
 })
 
 export const StoreCommercialRollupPeriodWeekMatchesEnd = Norn.law("store_commercial_rollup_period_week_matches_end", {
@@ -710,7 +712,7 @@ export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commer
   must: (self) =>
     ((self.count_status === "verified" && self.on_hand_count !== null) || (self.count_status === "unverified" && self.on_hand_count === null))
     && ((self.cost_status === "costed" && self.cost_record !== null && self.opening_cut !== null) || (self.cost_status === "missing_cost" && self.cost_record === null && self.opening_cut === null)),
-  because: "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening InventoryValuationCut.",
+  because: "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening StockValuationCut.",
 })
 
 export const StoreCommercialRollupMatchesOpeningCut = Norn.law("store_commercial_rollup_matches_opening_cut", {
@@ -723,7 +725,7 @@ export const StoreCommercialRollupMatchesOpeningCut = Norn.law("store_commercial
     && self.currency === self.opening_cut.currency
     && self.opening_cut.cut_at === self.period_start
     && self.opening_stock_value === self.opening_cut.stock_value,
-  because: "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-inventory InventoryValuationCut at period_start for the same store, SKU, and currency.",
+  because: "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-stock StockValuationCut at period_start for the same store, SKU, and currency.",
 })
 
 export const StoreCommercialRollupMatchesCount = Norn.law("store_commercial_rollup_matches_count", {

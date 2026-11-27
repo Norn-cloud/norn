@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening InventoryValuationCut.",
+  "name": "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening StockValuationCut.",
   "namespace": "supply",
   "payload": {
     "id": "supply.StoreCommercialRollup.store_commercial_rollup_requires_evidence_links",
@@ -24,7 +24,7 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening InventoryValuationCut.",
+    "rationale": "A verified commercial KPI rollup must link its governed on-hand StoreCount and a costed rollup must link both its UnitCost and immutable opening StockValuationCut.",
     "response": {
       "expression": "(((self.count_status == 'verified') and (self.on_hand_count != null)) or ((self.count_status == 'unverified') and (self.on_hand_count == null))) and ((((self.cost_status == 'costed') and (self.cost_record != null)) and (self.opening_cut != null)) or (((self.cost_status == 'missing_cost') and (self.cost_record == null)) and (self.opening_cut == null)))",
       "kind": "predicate"

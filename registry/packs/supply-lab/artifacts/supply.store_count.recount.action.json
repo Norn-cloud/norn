@@ -100,7 +100,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((slice.store.status == 'active') and (slice.count.store_id == input.store_id)) and (slice.count.sku_id == input.sku_id)) and (slice.count.unit == input.unit)) and (slice.count.quantity_basis == input.quantity_basis)"
+      "(((((slice.store.status == 'active') and (slice.count.store_id == input.store_id)) and (slice.count.sku_id == input.sku_id)) and (slice.count.unit == input.unit)) and (slice.count.quantity_basis == input.quantity_basis)) and (timestamp(input.as_of) >= timestamp(slice.count.as_of))"
     ],
     "scopeRequired": [
       "orgId",

@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-inventory InventoryValuationCut at period_start for the same store, SKU, and currency.",
+  "name": "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-stock StockValuationCut at period_start for the same store, SKU, and currency.",
   "namespace": "supply",
   "payload": {
     "condition": "self.opening_cut != null",
@@ -25,7 +25,7 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-inventory InventoryValuationCut at period_start for the same store, SKU, and currency.",
+    "rationale": "A costed commercial KPI rollup must bind opening_stock_value to the immutable remaining-stock StockValuationCut at period_start for the same store, SKU, and currency.",
     "response": {
       "expression": "((((((self.opening_cut_id ?? '') == self.opening_cut.cut_id) and (self.store_id == self.opening_cut.store_id)) and (self.sku_id == self.opening_cut.sku_id)) and (self.currency == self.opening_cut.currency)) and (self.opening_cut.cut_at == self.period_start)) and (self.opening_stock_value == self.opening_cut.stock_value)",
       "kind": "predicate"

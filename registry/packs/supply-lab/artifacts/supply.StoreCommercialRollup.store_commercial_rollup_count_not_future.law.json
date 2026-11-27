@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A verified commercial KPI rollup cannot cite a physical count dated after its period_end cutoff.",
+  "name": "A verified commercial KPI rollup must cite a fresh physical count dated at or before period_end and within the 7-day freshness window.",
   "namespace": "supply",
   "payload": {
     "condition": "self.count_as_of != null",
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A verified commercial KPI rollup cannot cite a physical count dated after its period_end cutoff.",
+    "rationale": "A verified commercial KPI rollup must cite a fresh physical count dated at or before period_end and within the 7-day freshness window.",
     "response": {
-      "expression": "timestamp(self.count_as_of) <= timestamp(self.period_end)",
+      "expression": "(timestamp(self.count_as_of) <= timestamp(self.period_end)) and (seconds_between(timestamp(self.count_as_of), timestamp(self.period_end)) <= 604800)",
       "kind": "predicate"
     },
     "scope": {

@@ -92,7 +92,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.store.status == 'active') and (slice.lot.cost_status == 'costed')) and ((input.depleted_qty + input.remaining_qty) == slice.lot.received_qty)"
+      "((((slice.store.status == 'active') and (slice.lot.cost_status == 'costed')) and (timestamp(input.as_of) >= timestamp(slice.lot.as_of))) and (input.depleted_qty >= slice.lot.depleted_qty)) and ((input.depleted_qty + input.remaining_qty) == slice.lot.received_qty)"
     ],
     "scopeRequired": [
       "orgId",

@@ -294,12 +294,19 @@ export const UpdateStockLotBalance = Norn.action({
     Schema.Struct({
       input: UpdateStockLotBalanceInput,
       slice: Schema.Struct({
-        lot: Schema.Struct({ cost_status: Schema.String, received_qty: Norn.decimal(6) }),
+        lot: Schema.Struct({
+          cost_status: Schema.String,
+          received_qty: Norn.decimal(6),
+          depleted_qty: Norn.decimal(6),
+          as_of: Norn.timestamp("utc"),
+        }),
         store: Schema.Struct({ status: Schema.String }),
       }),
     }),
     (ctx) => ctx.slice.store.status === "active"
       && ctx.slice.lot.cost_status === "costed"
+      && Norn.parseTimestamp(ctx.input.as_of) >= Norn.parseTimestamp(ctx.slice.lot.as_of)
+      && ctx.input.depleted_qty >= ctx.slice.lot.depleted_qty
       && (ctx.input.depleted_qty + ctx.input.remaining_qty) === ctx.slice.lot.received_qty,
     { root: "context" },
   )],
@@ -363,7 +370,13 @@ export const RecountStore = Norn.action({
     Schema.Struct({
       input: StoreCountInput,
       slice: Schema.Struct({
-        count: Schema.Struct({ store_id: Schema.String, sku_id: Schema.String, unit: Schema.String, quantity_basis: Schema.String }),
+        count: Schema.Struct({
+          store_id: Schema.String,
+          sku_id: Schema.String,
+          unit: Schema.String,
+          quantity_basis: Schema.String,
+          as_of: Norn.timestamp("utc"),
+        }),
         store: Schema.Struct({ status: Schema.String }),
       }),
     }),
@@ -371,7 +384,8 @@ export const RecountStore = Norn.action({
       && ctx.slice.count.store_id === ctx.input.store_id
       && ctx.slice.count.sku_id === ctx.input.sku_id
       && ctx.slice.count.unit === ctx.input.unit
-      && ctx.slice.count.quantity_basis === ctx.input.quantity_basis,
+      && ctx.slice.count.quantity_basis === ctx.input.quantity_basis
+      && Norn.parseTimestamp(ctx.input.as_of) >= Norn.parseTimestamp(ctx.slice.count.as_of),
     { root: "context" },
   )],
   writes: [{ type: StoreCount, change: "modified" }],
@@ -636,6 +650,17 @@ export const RecordStockValuationCut = Norn.action({
       filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
       aggregate: { kind: "count" }, maxItems: 100,
     },
+    {
+      name: "all_sales_count", type: PosSale,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
+    {
+      name: "sales_by_cut_count", type: PosSale,
+      filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency" },
+      window: { property: "sold_at", start: "book_epoch", end: "cut_at", startInclusive: true, endInclusive: true },
+      aggregate: { kind: "count" }, maxItems: 100,
+    },
   ],
   preconditions: [Norn.expression(
     Schema.Struct({
@@ -648,6 +673,8 @@ export const RecordStockValuationCut = Norn.action({
         all_lots_count: Schema.Int,
         lots_as_of_by_cut: Schema.Int,
         costed_lots_count: Schema.Int,
+        all_sales_count: Schema.Int,
+        sales_by_cut_count: Schema.Int,
       }),
     }),
     (ctx) => ctx.slice.store.status === "active"
@@ -656,7 +683,8 @@ export const RecordStockValuationCut = Norn.action({
       && ctx.input.currency === ctx.slice.store.currency
       && ctx.input.stock_value === ctx.aggregates.total_stock_value
       && ctx.aggregates.lots_as_of_by_cut === ctx.aggregates.all_lots_count
-      && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count,
+      && ctx.aggregates.costed_lots_count === ctx.aggregates.all_lots_count
+      && ctx.aggregates.sales_by_cut_count === ctx.aggregates.all_sales_count,
     { root: "context" },
   )],
   createLinks: [
@@ -723,8 +751,9 @@ const StoreCommercialRollupRef = Schema.Struct({ rollup_id: Schema.String })
 
 /**
  * Record a verified and costed store-SKU-week commercial KPI rollup bound at
- * snapshot time to governed `(store_id, sku_id)` `on_hand` `StoreCount`,
- * immutable `InventoryValuationCut` at `period_start`, `UnitCost`, and windowed
+ * snapshot time to governed `(store_id, sku_id)` `on_hand` `StoreCount`
+ * (reconciled against live `StockLot.remaining_qty` and within 7-day freshness),
+ * immutable `StockValuationCut` at `period_start`, `UnitCost`, and windowed
  * `PosSale` + `StockLot` kernel aggregates (refusing any post-cutoff lot balance
  * updates `as_of > period_end`, deriving `sales_weeks` strictly from
  * `[period_start, period_week]`, and refusing missing-cost rows).
@@ -787,6 +816,11 @@ export const RecordStoreCommercialRollup = Norn.action({
       filter: { store_id: "store_id", sku_id: "sku_id", currency: "currency", cost_status: "cost_status" },
       aggregate: { kind: "count" }, maxItems: 100,
     },
+    {
+      name: "total_lot_remaining_qty", type: StockLot,
+      filter: { store_id: "store_id", sku_id: "sku_id", unit: "unit" },
+      aggregate: { kind: "sum", property: "remaining_qty" }, maxItems: 100,
+    },
   ],
   derive: [
     { field: "weeks_of_supply", inputRequired: false, expression: Norn.expression(StoreCommercialRollupInput, () => 0) },
@@ -824,6 +858,7 @@ export const RecordStoreCommercialRollup = Norn.action({
         all_lots_count: Schema.Int,
         lots_as_of_by_period_end: Schema.Int,
         costed_lots_count: Schema.Int,
+        total_lot_remaining_qty: Norn.decimal(6),
       }),
     }),
     (ctx) => ctx.slice.store.status === "active"
@@ -842,6 +877,7 @@ export const RecordStoreCommercialRollup = Norn.action({
       && Norn.parseTimestamp(ctx.input.count_as_of) === Norn.parseTimestamp(ctx.slice.on_hand_count.as_of)
       && ctx.input.count_ref === ctx.slice.on_hand_count.count_ref
       && ctx.input.on_hand_qty === ctx.slice.on_hand_count.on_hand_qty
+      && ctx.input.on_hand_qty === ctx.aggregates.total_lot_remaining_qty
       && ctx.input.store_id === ctx.slice.opening_cut.store_id
       && ctx.input.sku_id === ctx.slice.opening_cut.sku_id
       && ctx.input.currency === ctx.slice.opening_cut.currency

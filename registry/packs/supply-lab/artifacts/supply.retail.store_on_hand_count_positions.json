@@ -1,0 +1,81 @@
+{
+  "artifactId": "supply.retail.store_on_hand_count_positions",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCount.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Store on-hand physical counts",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "count": {
+          "input": "count",
+          "op": "scan"
+        },
+        "on_hand_only": {
+          "input": "count",
+          "op": "filter",
+          "predicate": "input.quantity_basis == \"on_hand\""
+        },
+        "projected": {
+          "columns": [
+            {
+              "expression": "input.id",
+              "name": "id"
+            },
+            {
+              "expression": "input.store_id",
+              "name": "store_id"
+            },
+            {
+              "expression": "input.sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.on_hand_qty",
+              "name": "on_hand_qty"
+            },
+            {
+              "expression": "input.as_of",
+              "name": "as_of"
+            }
+          ],
+          "input": "on_hand_only",
+          "op": "project"
+        }
+      },
+      "output": "projected"
+    },
+    "inputs": [
+      {
+        "alias": "count",
+        "artifactId": "supply.StoreCount.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.store_on_hand_count_positions",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.store_on_hand_count_positions.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
