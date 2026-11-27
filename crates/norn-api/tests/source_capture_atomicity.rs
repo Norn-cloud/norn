@@ -1345,31 +1345,33 @@ mod tests {
     }
 
     /// Regression 10: lowering `max_rows` to 1 while draining a single captured
-    /// `mapping-page:` run whose members are commit-refused (`canon.Holding`
-    /// with negative `quantity`, so both pass source schema and mapping into
-    /// one `mapping-page:` run and fail `core.Resource::non_negative_quantity`
-    /// at commit while staying inbox-pending as quarantined) terminates cleanly
-    /// in bounded steps without retrying the same member forever.
+    /// `mapping-page:` run whose members are commit-refused (disputed by a
+    /// conflicting resend before promotion, so `check_mapping_bundle` refuses
+    /// both with `UnsupportedMappingProfile` and leaves both pending in
+    /// `_norn_inbox` as quarantined) terminates cleanly in bounded steps
+    /// without retrying the same member forever.
     #[test]
     fn paced_drain_with_multiple_quarantined_rows_terminates_cleanly() {
         let host = open_native_host(&rest_artifacts(&[]));
         let dataset = "Warehouse Lot Balance".to_owned();
-        let (two_holdings, next_wm) = seal_holding_rows(|items| {
+        let (two_holdings, next_wm) = seal_holding_rows(|_| {});
+        let (conflicting_holdings, _) = seal_holding_rows(|items| {
             for item in items.iter_mut() {
-                item["quantity"] = json!(-5.0);
+                item["quantity"] = json!(999_999.0);
             }
         });
         let lease = host
             .acquire_source_lease("erpnext.rest", "run-q-pace", T0, RUN_LEASE_MS)
             .expect("lease");
+        let next_cursor = Some(next_wm.cursor_json().expect("json"));
         let advance = CursorAdvanceSpec {
             connection_id: "erpnext.rest".into(),
-            dataset,
+            dataset: dataset.clone(),
             lease_id: lease.lease_id.clone(),
             generation: lease.generation,
             now_ms: T0.saturating_add(1),
             expected_previous_cursor: None,
-            next_cursor: Some(next_wm.cursor_json().expect("json")),
+            next_cursor: next_cursor.clone(),
             renew_ttl_ms: Some(RUN_LEASE_MS),
         };
         let mut pending = host
@@ -1381,6 +1383,24 @@ mod tests {
             "both valid holding rows must enter one mapping-page: run to exercise paced page-member draining"
         );
         assert_eq!(pending.records.len(), 2);
+
+        // Capture conflicting resends for both source events so commit-time
+        // `check_mapping_bundle` quarantines both members while leaving them
+        // pending in `_norn_inbox`.
+        let conflict_advance = CursorAdvanceSpec {
+            connection_id: "erpnext.rest".into(),
+            dataset,
+            lease_id: lease.lease_id,
+            generation: lease.generation,
+            now_ms: T0.saturating_add(2),
+            expected_previous_cursor: next_cursor,
+            next_cursor: None,
+            renew_ttl_ms: Some(RUN_LEASE_MS),
+        };
+        let _conflict_pending = host
+            .capture_source_page_atomic(&conflicting_holdings, &conflict_advance, 10)
+            .expect("capture conflicting resends");
+
         let mut outcomes = BTreeMap::new();
         let mut seen = Vec::new();
         let mut steps = 0_usize;
