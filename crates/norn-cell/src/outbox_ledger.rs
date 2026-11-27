@@ -140,10 +140,19 @@ fn parse_dedup_contract(value: &Value, strict: bool) -> Result<ProviderDedupCont
             Ok(ProviderDedupContract::OperationKeyIdempotent)
         }
         Value::String(text) if text == "none" => Ok(ProviderDedupContract::None),
-        _ if strict => Err(CellError::Encoding(
-            "unknown outbox dedupContract value".to_owned(),
-        )),
-        _ => Ok(ProviderDedupContract::None),
+        Value::Bool(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Array(_)
+        | Value::Object(_) => {
+            if strict {
+                Err(CellError::Encoding(
+                    "unknown outbox dedupContract value".to_owned(),
+                ))
+            } else {
+                Ok(ProviderDedupContract::None)
+            }
+        }
     }
 }
 
