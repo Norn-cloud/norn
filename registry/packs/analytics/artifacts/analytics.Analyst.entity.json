@@ -1,0 +1,66 @@
+{
+  "artifactId": "analytics.Analyst.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Analytics steward",
+  "namespace": "analytics",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Concrete accountable analyst, reviewer, or system steward implementing core.Agent for governed metrics, studies, and publications.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Agent"
+      ],
+      "name": "analytics.Analyst",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "organization"
+              },
+              {
+                "value": "system"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.Analyst.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

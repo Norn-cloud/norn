@@ -1,0 +1,50 @@
+{
+  "artifactId": "bi.MetricSlice.denominator_non_zero.law",
+  "dependencies": [
+    {
+      "artifactId": "bi.MetricSlice.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "BI-ADD-1: every metric slice must carry a non-zero denominator; zero-denominator slices refuse rather than synthesizing zero or infinity.",
+  "namespace": "bi",
+  "payload": {
+    "id": "bi.MetricSlice.denominator_non_zero",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "bi",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/analytics/analytics.ts"
+    },
+    "rationale": "BI-ADD-1: every metric slice must carry a non-zero denominator; zero-denominator slices refuse rather than synthesizing zero or infinity.",
+    "response": {
+      "expression": "self.denominator != 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "bi.MetricSlice"
+      ],
+      "root": {
+        "id": "bi.MetricSlice",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "bi.MetricSlice"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/bi.MetricSlice.denominator_non_zero.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
