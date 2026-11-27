@@ -155,11 +155,17 @@
           },
           "type": "number"
         },
+        "period_start": {
+          "type": "string"
+        },
         "period_week": {
           "type": "string"
         },
         "rollup_id": {
           "type": "string"
+        },
+        "sales_weeks": {
+          "type": "integer"
         },
         "sku_id": {
           "type": "string"
@@ -192,7 +198,9 @@
         "currency",
         "cost_status",
         "count_status",
+        "period_start",
         "period_end",
+        "sales_weeks",
         "on_hand_qty",
         "avg_weekly_sales_qty",
         "weeks_of_supply",

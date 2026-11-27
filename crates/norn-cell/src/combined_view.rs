@@ -10,6 +10,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::metric::compute::QuestionPlan;
+use norn_checker::transform::TransformPlan;
+use norn_expr::Value as RuntimeValue;
 use norn_ir::cell_id::CellId;
 use norn_ir::data_quality::DataQualityFindingStatus;
 use norn_kernel::FactKey;
@@ -20,12 +22,27 @@ use norn_kernel::read_envelope::{
 use norn_kernel::world::pin::SnapshotPin;
 use serde::{Deserialize, Serialize};
 
-use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
+use crate::compute::{Freshness, Frontier, QueryContext, QueryResult, RowAccess, Watermark};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
 use crate::read::LedgerHead;
 use crate::snapshot::Main;
 use crate::store::CellStore;
+
+/// Declared transform whose boolean coverage column must equal `true` on every
+/// evaluated row for the cell cut to be marked complete.
+pub struct CoverageTransformGate<'a> {
+    /// Declared transform identifier reported in [`CellCutSnapshot::failed_coverage_gates`].
+    pub name: &'a str,
+    /// Admitted transform plan evaluated at the same pinned cut.
+    pub plan: &'a TransformPlan,
+    /// Boolean output column name that must evaluate to `true` on every row.
+    pub required_true_column: &'a str,
+}
+
+/// Optional domain-specific coverage probe evaluated inside the pinned read cut.
+pub type CoverageProbe<'a, E> =
+    &'a dyn Fn(&CellStore<E>, &QueryContext) -> Result<BTreeSet<String>, CellError>;
 
 /// Classification of a multi-cell read-only projection (`READ-LOCAL-1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +70,11 @@ pub struct CellViewInput<'a, E: SqlEngine> {
     pub min_fresh_ms: u64,
     /// Evidence object types scanned for open data-quality findings.
     pub evidence_types: &'a [&'a str],
+    /// Declared transforms whose boolean coverage column must be `true` on every row.
+    pub coverage_transforms: &'a [CoverageTransformGate<'a>],
+    /// Optional domain coverage probe evaluated inside the pinned cut (for example
+    /// physical count freshness or reconciliation checks).
+    pub coverage_probe: Option<CoverageProbe<'a, E>>,
     /// Named admitted questions to evaluate at this cell's pinned cut.
     pub questions: &'a [(&'a str, &'a QuestionPlan)],
 }
@@ -90,7 +112,9 @@ pub struct CellCutSnapshot {
     pub open_findings: usize,
     /// Unconsumed inbox observations quarantined at mapping time.
     pub pending_observations: usize,
-    /// True only when all answers are complete and fresh with zero open feed issues.
+    /// Coverage transform gates or pinned probes that failed at this cut.
+    pub failed_coverage_gates: BTreeSet<String>,
+    /// True only when all answers are complete and fresh with zero open feed or coverage issues.
     pub complete: bool,
     /// Exact question answers keyed by declared question name, withheld (`None`)
     /// whenever `complete` is `false`.
@@ -140,13 +164,14 @@ fn check_missing_feeds(
             let Some(wm_parts) = watermarks.get(**feed) else {
                 return true;
             };
-            parts.iter().any(|(part, consumed)| {
-                wm_parts.get(part).is_none_or(|wm| {
-                    !wm.complete
-                        || wm.observed != *consumed
-                        || wm.heartbeat_ms.is_none_or(|hb| hb < min_fresh_ms)
+            wm_parts.keys().any(|part| !parts.contains_key(part))
+                || parts.iter().any(|(part, consumed)| {
+                    wm_parts.get(part).is_none_or(|wm| {
+                        !wm.complete
+                            || wm.observed != *consumed
+                            || wm.heartbeat_ms.is_none_or(|hb| hb < min_fresh_ms)
+                    })
                 })
-            })
         })
         .map(|feed| (*feed).to_owned())
         .collect()
@@ -239,12 +264,45 @@ fn build_read_token(
     }
 }
 
+fn evaluate_coverage_gates<E: SqlEngine>(
+    input: &CellViewInput<'_, E>,
+    head_before: &LedgerHead,
+    definition_pin: &str,
+) -> Result<BTreeSet<String>, CellError> {
+    let stale = || CellError::ComputeRefused("core.compute.stale_input");
+    let mut failed = BTreeSet::new();
+    for gate in input.coverage_transforms {
+        let tf = input.store.evaluate_transform(
+            gate.plan,
+            &input.context.world,
+            &input.context.scope,
+            |_| Ok(RowAccess::Read),
+        )?;
+        if tf.revision != *head_before || tf.definition_pin != definition_pin {
+            return Err(stale());
+        }
+        let all_true = tf.complete
+            && tf.rows.iter().all(|row| {
+                row.values.get(gate.required_true_column) == Some(&RuntimeValue::Bool(true))
+            });
+        if !all_true {
+            failed.insert(gate.name.to_owned());
+        }
+    }
+    if let Some(probe) = input.coverage_probe {
+        failed.extend(probe(input.store, &input.context)?);
+    }
+    Ok(failed)
+}
+
 /// Evaluate one cell's pinned read cut using the supplied question evaluator
 /// (either the cell's exact evaluator or a synced OLAP engine).
 ///
 /// # Errors
 /// Returns `CellError::Encoding` if `authority` does not match `anchor_key`,
 /// `CellError::SnapshotWorldMismatch` on a fork store,
+/// `CellError::ComputeRefused("core.compute.duplicate_question")` if two
+/// requested questions share the same name,
 /// `CellError::ComputeRefused("core.compute.stale_input")` if the anchor
 /// object is absent or the ledger head, definition pin, query context, or
 /// pending-observation identity set shifts during evaluation, or propagates
@@ -266,6 +324,9 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
 
     let mut answers = BTreeMap::new();
     for (name, plan) in input.questions {
+        if answers.contains_key(*name) {
+            return Err(CellError::ComputeRefused("core.compute.duplicate_question"));
+        }
         let (expected_query_pin, expected_def_pin) = input.store.question_pins(plan, None)?;
         if expected_def_pin != definition_pin {
             return Err(stale());
@@ -282,6 +343,7 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         answers.insert((*name).to_owned(), result);
     }
 
+    let failed_coverage_gates = evaluate_coverage_gates(input, &head_before, &definition_pin)?;
     let open_findings =
         count_open_findings(input.store, &input.context.world, input.evidence_types)?;
     let head_after = input.store.verified_head()?;
@@ -300,8 +362,11 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         .values()
         .all(|q| q.complete && matches!(q.freshness, Freshness::Exact | Freshness::Fresh));
     let pending_observations = pending_after.len();
-    let complete =
-        all_fresh && missing_feeds.is_empty() && open_findings == 0 && pending_observations == 0;
+    let complete = all_fresh
+        && missing_feeds.is_empty()
+        && open_findings == 0
+        && pending_observations == 0
+        && failed_coverage_gates.is_empty();
     let authority_pin = AuthorityPin::from(input.authority);
     let read_token = build_read_token(
         pin,
@@ -326,6 +391,7 @@ pub fn evaluate_cell_cut<E: SqlEngine>(
         missing_feeds,
         open_findings,
         pending_observations,
+        failed_coverage_gates,
         complete,
         answers: complete.then_some(answers),
     })

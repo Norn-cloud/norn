@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end so store_week_grain uniqueness matches the weekly question bucket.",
+  "name": "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end with a valid positive sales_weeks window so store_week_grain uniqueness matches the weekly question bucket.",
   "namespace": "supply",
   "payload": {
     "id": "supply.StoreCommercialRollup.store_commercial_rollup_period_week_matches_end",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end so store_week_grain uniqueness matches the weekly question bucket.",
+    "rationale": "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end with a valid positive sales_weeks window so store_week_grain uniqueness matches the weekly question bucket.",
     "response": {
-      "expression": "(((len(self.period_week) == 10) and ((floor(days_between(date('2024-01-01'), date(self.period_week)) / 7) * 7) == days_between(date('2024-01-01'), date(self.period_week)))) and (seconds_between(timestamp(self.period_week + 'T00:00:00Z'), timestamp(self.period_end)) >= 0)) and (seconds_between(timestamp(self.period_week + 'T00:00:00Z'), timestamp(self.period_end)) < 604800)",
+      "expression": "(((((self.sales_weeks >= 1) and (timestamp(self.period_start) <= timestamp(self.period_end))) and (len(self.period_week) == 10)) and ((floor(days_between(date('2024-01-01'), date(self.period_week)) / 7) * 7) == days_between(date('2024-01-01'), date(self.period_week)))) and (seconds_between(timestamp(self.period_week + 'T00:00:00Z'), timestamp(self.period_end)) >= 0)) and (seconds_between(timestamp(self.period_week + 'T00:00:00Z'), timestamp(self.period_end)) < 604800)",
       "kind": "predicate"
     },
     "scope": {

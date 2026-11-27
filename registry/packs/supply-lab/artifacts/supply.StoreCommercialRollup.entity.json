@@ -186,10 +186,23 @@
           }
         },
         {
+          "id": "period_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
           "id": "period_end",
           "type": {
             "kind": "timestamp",
             "timezone": "utc"
+          }
+        },
+        {
+          "id": "sales_weeks",
+          "type": {
+            "kind": "integer"
           }
         },
         {

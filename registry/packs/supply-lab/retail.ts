@@ -574,7 +574,9 @@ const StoreCommercialRollupProps = Schema.Struct({
   count_ref: Schema.NullOr(Schema.String),
   count_as_of: Schema.NullOr(Norn.timestamp("utc")),
   costed_ref: Schema.NullOr(Schema.String),
+  period_start: Norn.timestamp("utc"),
   period_end: Norn.timestamp("utc"),
+  sales_weeks: Schema.Int,
   on_hand_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   avg_weekly_sales_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   // Weeks of supply: ratio of sums `sum(on_hand_qty) / sum(avg_weekly_sales_qty)`.
@@ -639,12 +641,14 @@ export const StoreCommercialRollupCountNotFuture = Norn.law("store_commercial_ro
 export const StoreCommercialRollupPeriodWeekMatchesEnd = Norn.law("store_commercial_rollup_period_week_matches_end", {
   on: StoreCommercialRollup,
   must: (self) =>
-    Norn.byteLength(self.period_week) === 10
+    self.sales_weeks >= 1
+    && self.period_start <= self.period_end
+    && Norn.byteLength(self.period_week) === 10
     && Norn.floor(Norn.daysBetween("2024-01-01", self.period_week) / 7) * 7
       === Norn.daysBetween("2024-01-01", self.period_week)
     && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) >= 0
     && Norn.secondsBetween(self.period_week + "T00:00:00Z", self.period_end) < 604800,
-  because: "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end so store_week_grain uniqueness matches the weekly question bucket.",
+  because: "Store commercial KPI rollup period_week must equal the canonical UTC ISO-week Monday YYYY-MM-DD containing period_end with a valid positive sales_weeks window so store_week_grain uniqueness matches the weekly question bucket.",
 })
 
 export const StoreCommercialRollupRequiresEvidenceLinks = Norn.law("store_commercial_rollup_requires_evidence_links", {
