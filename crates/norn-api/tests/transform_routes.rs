@@ -284,7 +284,7 @@ fn rows_page_with_lineage_under_the_installed_plan() {
         &scope(),
         Some("full"),
         TRANSFORM,
-        &params(Some("2"), Some(&cursor)),
+        &params(Some("2"), Some(cursor)),
         &Mapping,
         NOW,
     )

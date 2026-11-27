@@ -76,7 +76,7 @@ mod tests {
     const ORDER: &str = "shop.Order";
     const TRANSFORM: &str = "shop.customer_summary";
     const QUESTION: &str = "shop.order_week";
-    const WEEK: &str = "\"2026-10-26T00:00:00Z\"";
+    const WEEK: &str = "\"2026-10-26\"";
 
     fn physical() -> CellScope {
         CellScope {
@@ -130,7 +130,7 @@ mod tests {
         serde_json::to_string(err).expect("refusal json")
     }
 
-    fn artifact(id: &str, kind: &str, deps: Json, payload: Json) -> Json {
+    fn artifact(id: &str, kind: &str, deps: &Json, payload: &Json) -> Json {
         json!({
             "irVersion": "0.1", "artifactId": id, "kind": kind,
             "namespace": "shop", "name": id, "version": "0.1.0", "lifecycle": "draft",
@@ -146,7 +146,7 @@ mod tests {
             "properties": [
                 {"id": "region", "type": {"kind": "text"}},
                 {"id": "email", "type": {"kind": "text"}, "constraints": {"nullable": true}, "markings": ["pii.contact"]},
-                {"id": "note", "type": {"kind": "text"}, "constraints": {"nullable": true}, "markings": ["pii.secret"]}
+                {"id": "note", "type": {"kind": "text"}, "constraints": {"nullable": true}, "markings": ["pii.contact", "pii.secret"]}
             ],
             "links": [
                 {"id": "referred", "target": CUSTOMER, "cardinality": {"to": "many", "from": "many"}}
@@ -159,8 +159,8 @@ mod tests {
         let transform = artifact(
             TRANSFORM,
             "derived",
-            json!([pin]),
-            json!({
+            &json!([pin]),
+            &json!({
                 "viewVersion": "0.1", "viewId": TRANSFORM,
                 "inputs": [{"artifactId": "shop.Customer.entity", "kind": "entity", "version": "0.1.0", "alias": "c"}],
                 "calc": {"kind": "relational", "output": "proj", "nodes": {
@@ -179,14 +179,14 @@ mod tests {
             artifact(
                 "shop.Customer.entity",
                 "entity",
-                json!([]),
-                json!({"entityVersion": "2.0", "objectType": customer})
+                &json!([]),
+                &json!({"entityVersion": "2.0", "objectType": customer})
             ),
             artifact(
                 "shop.markings.entity",
                 "entity",
-                json!([]),
-                json!({
+                &json!([]),
+                &json!({
                     "entityVersion": "2.0",
                     "markings": [
                         {"id": "pii.contact", "label": "Contact", "severity": "high", "category": "pii.contact", "mask": mask},
@@ -440,40 +440,52 @@ mod tests {
         ]
     }
 
+    struct WorldCase<'a> {
+        email: &'a str,
+        note: &'a str,
+        withheld_region: &'a str,
+        withheld_email: &'a str,
+        hidden_link: bool,
+    }
+
     #[test]
     fn small_world_object_query_history_links_and_transform_noninterference() {
         let masks = [json!({"kind": "redacted"}), json!({"kind": "null"})];
         // Equal commit count across worlds so transform `commits` stays aligned.
-        let cases: [(&str, &str, &[(&str, &str)], bool); 3] = [
-            (
-                "alpha@secret.test",
-                "memo-1",
-                &[("east", "w1@x.test"), ("east", "w2@x.test")],
-                false,
-            ),
-            (
-                "omega-very-long-secret@corp.example",
-                "top-secret-memo-99999",
-                &[("west", "w3@x.test"), ("south", "w4@x.test")],
-                true,
-            ),
-            (
-                "z@q.io",
-                "another-classified-note",
-                &[("central", "z@x.test"), ("north", "z2@x.test")],
-                true,
-            ),
+        let cases = [
+            WorldCase {
+                email: "alpha@secret.test",
+                note: "memo-1",
+                withheld_region: "east",
+                withheld_email: "w1@x.test",
+                hidden_link: false,
+            },
+            WorldCase {
+                email: "omega-very-long-secret@corp.example",
+                note: "top-secret-memo-99999",
+                withheld_region: "west",
+                withheld_email: "w3@x.test",
+                hidden_link: true,
+            },
+            WorldCase {
+                email: "z@q.io",
+                note: "another-classified-note",
+                withheld_region: "central",
+                withheld_email: "z@x.test",
+                hidden_link: true,
+            },
         ];
         for mask in &masks {
             let mut baseline: Option<Vec<String>> = None;
-            for (email, note, withheld_writes, hidden_link) in cases {
+            for case in &cases {
+                let withheld_writes = [(case.withheld_region, case.withheld_email)];
                 let (host, _dir) = open_object_world(&ObjectWorldSpec {
                     mask,
-                    secret_email: email,
-                    secret_note: note,
+                    secret_email: case.email,
+                    secret_note: case.note,
                     secret_note_v2: None,
-                    withheld_updates: withheld_writes,
-                    hidden_link,
+                    withheld_updates: &withheld_writes,
+                    hidden_link: case.hidden_link,
                 });
                 let absent_refusal = refusal_json(
                     &get_queried_object(
@@ -500,8 +512,16 @@ mod tests {
                 assert_eq!(absent_refusal, hidden_refusal);
                 let outputs = capture_object_world_outputs(&host);
                 for text in &outputs {
-                    assert!(!text.contains(email), "leaked email {email} in {text}");
-                    assert!(!text.contains(note), "leaked note {note} in {text}");
+                    assert!(
+                        !text.contains(case.email),
+                        "leaked email {} in {text}",
+                        case.email
+                    );
+                    assert!(
+                        !text.contains(case.note),
+                        "leaked note {} in {text}",
+                        case.note
+                    );
                 }
                 if let Some(expected) = &baseline {
                     assert_eq!(&outputs, expected, "worlds diverged under {mask}");
@@ -591,14 +611,14 @@ mod tests {
             artifact(
                 "shop.Note.entity",
                 "entity",
-                json!([]),
-                json!({"entityVersion": "2.0", "objectType": note})
+                &json!([]),
+                &json!({"entityVersion": "2.0", "objectType": note})
             ),
             artifact(
                 "shop.dyn_markings.entity",
                 "entity",
-                json!([]),
-                json!({
+                &json!([]),
+                &json!({
                     "entityVersion": "2.0",
                     "markings": [{"id": "pii.dynamic", "label": "Dynamic", "severity": "high", "category": "pii", "mask": {"kind": "refuse"}}]
                 })
@@ -720,36 +740,36 @@ mod tests {
         let iface: ArtifactEnvelope = serde_json::from_value(artifact(
             "shop.Doc.interface",
             "entity",
-            json!([]),
-            json!({"entityVersion": "2.0", "interface": {"name": "shop.Doc", "properties": [{"id": "id", "type": {"kind": "text"}}]}}),
+            &json!([]),
+            &json!({"entityVersion": "2.0", "interface": {"name": "shop.Doc", "properties": [{"id": "id", "type": {"kind": "text"}}]}}),
         ))
         .expect("iface");
         let pub_doc: ArtifactEnvelope = serde_json::from_value(artifact(
             "shop.PublicDoc.entity",
             "entity",
-            json!([]),
-            json!({"entityVersion": "2.0", "objectType": {"name": "shop.PublicDoc", "implements": ["shop.Doc"], "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "label", "type": {"kind": "text"}}]}}),
+            &json!([]),
+            &json!({"entityVersion": "2.0", "objectType": {"name": "shop.PublicDoc", "implements": ["shop.Doc"], "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "label", "type": {"kind": "text"}}]}}),
         ))
         .expect("pub_doc");
         let sec_doc: ArtifactEnvelope = serde_json::from_value(artifact(
             "shop.SecretDoc.entity",
             "entity",
-            json!([]),
-            json!({"entityVersion": "2.0", "objectType": {"name": "shop.SecretDoc", "implements": ["shop.Doc"], "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "secret", "type": {"kind": "text"}, "markings": ["pii.secret"]}]}}),
+            &json!([]),
+            &json!({"entityVersion": "2.0", "objectType": {"name": "shop.SecretDoc", "implements": ["shop.Doc"], "properties": [{"id": "id", "type": {"kind": "text"}}, {"id": "secret", "type": {"kind": "text"}, "markings": ["pii.secret"]}]}}),
         ))
         .expect("sec_doc");
         let markings: ArtifactEnvelope = serde_json::from_value(artifact(
             "shop.doc_markings.entity",
             "entity",
-            json!([]),
-            json!({"entityVersion": "2.0", "markings": [{"id": "pii.secret", "label": "Secret", "severity": "high", "category": "pii", "mask": {"kind": "refuse"}}]}),
+            &json!([]),
+            &json!({"entityVersion": "2.0", "markings": [{"id": "pii.secret", "label": "Secret", "severity": "high", "category": "pii", "mask": {"kind": "refuse"}}]}),
         ))
         .expect("markings");
         let source: ArtifactEnvelope = serde_json::from_value(artifact(
             "shop.doc.source",
             "source_schema",
-            json!([]),
-            json!({
+            &json!([]),
+            &json!({
                 "format": "norn.source-schema/1",
                 "source": {"system": "synthetic-doc", "instance": "demo", "version": "doc/1"},
                 "observedAt": "2026-11-02T00:00:00Z",
@@ -777,13 +797,13 @@ mod tests {
         let mapping: ArtifactEnvelope = serde_json::from_value(artifact(
             "shop.doc.mapping",
             "mapping",
-            json!([
+            &json!([
                 {"artifactId": "shop.doc.source", "kind": "source_schema", "required": true, "version": "0.1.0"},
                 {"artifactId": "shop.Doc.interface", "kind": "entity", "required": true, "version": "0.1.0"},
                 {"artifactId": "shop.PublicDoc.entity", "kind": "entity", "required": true, "version": "0.1.0"},
                 {"artifactId": "shop.SecretDoc.entity", "kind": "entity", "required": true, "version": "0.1.0"}
             ]),
-            json!({
+            &json!({
                 "format": "norn.mapping/1",
                 "extensions": {"norn.mapping.generic/1.0.0": {"parity": "unqualified"}},
                 "source": {"schemaId": pin.artifact_id, "version": pin.version, "sha256": pin.sha256},
@@ -1056,8 +1076,8 @@ mod tests {
         let model =
             norn_cell::Model::from_definitions(std::slice::from_ref(&order), &[]).expect("model");
         let artifacts: Vec<ArtifactEnvelope> = serde_json::from_value(json!([
-            artifact("shop.Order.entity", "entity", json!([]), json!({"entityVersion": "2.0", "objectType": order})),
-            artifact("shop.markings.entity", "entity", json!([]), json!({
+            artifact("shop.Order.entity", "entity", &json!([]), &json!({"entityVersion": "2.0", "objectType": order})),
+            artifact("shop.markings.entity", "entity", &json!([]), &json!({
                 "entityVersion": "2.0",
                 "markings": [{"id": "pii.memo", "label": "Memo", "severity": "high", "category": "pii", "mask": {"kind": "redacted"}}]
             }))
