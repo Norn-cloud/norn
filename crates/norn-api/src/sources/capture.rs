@@ -77,23 +77,65 @@ pub(super) fn load_connector_profile<E: SqlEngine>(
         crate::pull_feed::bind_mapping_feed_declaration(&mut profile, &mapping_payload)
             .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
     }
+    // SYNC-PAGE-1: the host's page size, when it sets one.
+    if let Some(rows) = config.page_size {
+        for feed in &mut profile.feeds {
+            match &mut feed.paging {
+                crate::pull::Paging::Keyset { size } | crate::pull::Paging::Cursor { size, .. } => {
+                    *size = rows;
+                }
+            }
+        }
+    }
     let payload: serde_json::Value = serde_json::from_str(raw_payload)
         .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
     Ok((profile, payload))
 }
 
-/// Parsed watermarks paired with their exact stored `_norn_source_cursor` JSON strings.
-pub(super) type LoadedWatermarks = (BTreeMap<String, Watermark>, BTreeMap<String, String>);
+pub(super) fn running_summary(run_id: &str) -> super::RunSummary {
+    super::RunSummary {
+        run: run_id.to_owned(),
+        outcome: "running",
+        rows_read: 0,
+        rows_landed: 0,
+        rows_quarantined: 0,
+        quarantine_reasons: BTreeMap::new(),
+        error: None,
+    }
+}
+
+/// Parsed watermarks paired with their exact stored `_norn_source_cursor` JSON
+/// strings, plus whether the run must drain prior-mapping pending captures
+/// before resetting cursors for a rebound mapping.
+pub(super) type LoadedWatermarks = (BTreeMap<String, Watermark>, BTreeMap<String, String>, bool);
+
+fn decode_cursors(
+    cursors: BTreeMap<String, norn_cell::SourceCursorRecord>,
+) -> (BTreeMap<String, Watermark>, BTreeMap<String, String>) {
+    let mut parsed = BTreeMap::new();
+    let mut raw_cursors = BTreeMap::new();
+    for (dataset, record) in cursors {
+        if let Ok(watermark) = serde_json::from_str::<Watermark>(&record.cursor_json) {
+            parsed.insert(dataset.clone(), watermark);
+            raw_cursors.insert(dataset, record.cursor_json);
+        }
+    }
+    (parsed, raw_cursors)
+}
 
 /// Read the connection's durably committed watermarks alongside their exact
 /// stored cursor JSON strings. If `source.Connection.mapping_id` differs from
-/// `config.mapping` (a mapping rebind), clear inherited cursors under the
-/// fencing lease so the rebound mapping pulls from `feed.initial`.
+/// `config.mapping` (a mapping rebind):
+/// - when pending captures from the old mapping remain, drain them first under
+///   their original captured binding (`drain_only = true`);
+/// - otherwise clear inherited cursors under the fencing lease so the rebound
+///   mapping pulls from `feed.initial`.
 pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
     lease: &SourceLease,
     known: Option<BTreeMap<String, Watermark>>,
+    has_pending: bool,
     now_ms: u64,
 ) -> Result<LoadedWatermarks, Failure> {
     let connection_id = config.id.as_str();
@@ -111,26 +153,26 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         .as_deref()
         .is_some_and(|m| !m.is_empty() && m != config.mapping)
     {
-        host.reset_source_cursors(connection_id, &lease.lease_id, lease.generation, now_ms)
-            .map_err(|error| {
-                let (code, message) = error.code_and_message();
-                fail(code, message)
-            })?;
-        return Ok((BTreeMap::new(), BTreeMap::new()));
+        if !has_pending {
+            host.reset_source_cursors(connection_id, &lease.lease_id, lease.generation, now_ms)
+                .map_err(|error| {
+                    let (code, message) = error.code_and_message();
+                    fail(code, message)
+                })?;
+            return Ok((BTreeMap::new(), BTreeMap::new(), false));
+        }
+        let cursors = host
+            .source_cursors(connection_id)
+            .map_err(|r| fail("source.ingest", r.message))?;
+        let (parsed, raw_cursors) = decode_cursors(cursors);
+        return Ok((parsed, raw_cursors, true));
     }
     let cursors = host
         .source_cursors(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
     if !cursors.is_empty() {
-        let mut parsed = BTreeMap::new();
-        let mut raw_cursors = BTreeMap::new();
-        for (dataset, record) in cursors {
-            if let Ok(watermark) = serde_json::from_str::<Watermark>(&record.cursor_json) {
-                parsed.insert(dataset.clone(), watermark);
-                raw_cursors.insert(dataset, record.cursor_json);
-            }
-        }
-        return Ok((parsed, raw_cursors));
+        let (parsed, raw_cursors) = decode_cursors(cursors);
+        return Ok((parsed, raw_cursors, false));
     }
     let legacy = legacy_connection_watermarks(host, connection_id)
         .or(known)
@@ -155,7 +197,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
             fail(code, message)
         })?;
     }
-    Ok((legacy, encoded))
+    Ok((legacy, encoded, false))
 }
 
 /// Mapping ID to record on `source.Connection`: preserve the prior stored

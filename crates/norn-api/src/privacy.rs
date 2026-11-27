@@ -956,16 +956,7 @@ fn result_sources_granted<E: SqlEngine>(
     let reader = store.read();
     for row in result.rows.values() {
         if row.member_count.is_some() && row.members.is_empty() {
-            let all = ObjectRecord {
-                object_type: grain.to_owned(),
-                id: norn_cell::compute::ALL_MEMBERS.to_owned(),
-                scope: result.context.scope.clone(),
-                version: 0,
-                values: BTreeMap::new(),
-            };
-            if !check(&all)? {
-                return Ok(false);
-            }
+            return Ok(false);
         }
         for (id, member) in &row.members {
             let rec = match reader.object(&result.context.world, grain, id) {

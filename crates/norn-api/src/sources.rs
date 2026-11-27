@@ -629,7 +629,7 @@ impl Sources {
         };
         if !superseded {
             state.last_end_ms = Some(now_ms);
-            let watermarks = if run.pull.is_some() {
+            let watermarks = if run.pull.is_some() || !run.committed_watermarks.is_empty() {
                 run.committed_watermarks.clone()
             } else {
                 state.watermarks.clone().unwrap_or_default()
@@ -674,17 +674,7 @@ fn begin<E: SqlEngine>(
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<Next, Failure> {
-    let (mut profile, payload) = capture::load_connector_profile(host, config)?;
-    // SYNC-PAGE-1: the host's page size, when it sets one.
-    if let Some(rows) = config.page_size {
-        for feed in &mut profile.feeds {
-            match &mut feed.paging {
-                crate::pull::Paging::Keyset { size } | crate::pull::Paging::Cursor { size, .. } => {
-                    *size = rows;
-                }
-            }
-        }
-    }
+    let (profile, payload) = capture::load_connector_profile(host, config)?;
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets, config)?;
@@ -696,33 +686,38 @@ fn begin<E: SqlEngine>(
             fail(code, message)
         })?;
     run.lease = Some(lease.clone());
-    let (watermarks, raw_cursors) =
-        capture::load_and_seed_watermarks(host, config, &lease, known, now_ms)?;
     let pending = capture::load_pending_captures(host, &config.id)?;
+    let (watermarks, raw_cursors, drain_only) = capture::load_and_seed_watermarks(
+        host,
+        config,
+        &lease,
+        known,
+        !pending.is_empty(),
+        now_ms,
+    )?;
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     run.committed_cursor_json = raw_cursors;
     run.pending_captures.extend(pending);
-    let mut pull = Pull::new(profile, watermarks, Limits::default());
-    let first = pull.next_request();
-    run.pull = Some(pull);
+    let first = (!drain_only)
+        .then(|| {
+            let mut pull = Pull::new(profile, watermarks, Limits::default());
+            let first = pull.next_request();
+            run.pull = Some(pull);
+            first
+        })
+        .flatten();
     report(
         host,
         config,
         run,
-        &RunSummary {
-            run: run.id.clone(),
-            outcome: "running",
-            rows_read: 0,
-            rows_landed: 0,
-            rows_quarantined: 0,
-            quarantine_reasons: BTreeMap::new(),
-            error: None,
-        },
+        &capture::running_summary(&run.id),
         &run.watermark_from,
         None,
     );
-    let next_req = if let Some(token) = token {
+    let next_req = if drain_only {
+        None
+    } else if let Some(token) = token {
         run.held = first;
         Some(token)
     } else {
