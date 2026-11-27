@@ -124,7 +124,7 @@ pub struct OwlGraph<'a> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OwlReader;
 
-fn admit(graph: OwlGraph<'_>, config: &OwlConfig) -> Result<(), String> {
+fn admit(graph: OwlGraph<'_>, config: &OwlConfig, graph_sha256: &str) -> Result<(), String> {
     let source = &config.admission;
     if !source.source_id.starts_with("source.")
         || source.release_id.trim().is_empty()
@@ -140,7 +140,7 @@ fn admit(graph: OwlGraph<'_>, config: &OwlConfig) -> Result<(), String> {
     if graph.bytes.len() > MAX_GRAPH_BYTES {
         return Err(format!("graph exceeds {MAX_GRAPH_BYTES} bytes"));
     }
-    if sha256_hex(graph.bytes) != config.graph_sha256 {
+    if graph_sha256 != config.graph_sha256 {
         return Err(format!(
             "unadmitted bytes: {} is not the pinned graph",
             graph.path
@@ -156,6 +156,8 @@ fn admit(graph: OwlGraph<'_>, config: &OwlConfig) -> Result<(), String> {
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_lowercase())
+            && !namespace.prefix.ends_with('-')
+            && !namespace.prefix.contains("--")
             && namespace
                 .prefix
                 .chars()
@@ -267,7 +269,8 @@ impl SchemaImporter for OwlReader {
     }
 
     fn inventory(&self, source: Self::Source<'_>, config: &Self::Config) -> Vec<SourceElement> {
-        let model = admit(source, config).and_then(|()| model_of(source, config));
+        let graph_sha256 = sha256_hex(source.bytes);
+        let model = admit(source, config, &graph_sha256).and_then(|()| model_of(source, config));
         match model {
             Ok(model) => model
                 .items
@@ -280,6 +283,8 @@ impl SchemaImporter for OwlReader {
 
     fn import(&self, source: Self::Source<'_>, config: &Self::Config) -> SchemaImport {
         let mut ledger = LossLedger::new();
+        let input_pin = InputPin::of(source.path, source.bytes);
+        let graph_sha256 = input_pin.sha256.clone();
         let mut output = SchemaImport {
             provenance: ImportProvenance {
                 adapter: self.adapter(),
@@ -289,18 +294,22 @@ impl SchemaImporter for OwlReader {
                 }),
                 evaluator: None,
                 tables: Vec::new(),
-                inputs: vec![InputPin::of(source.path, source.bytes)],
+                inputs: vec![input_pin],
             },
             source_schema: None,
             layers: Vec::new(),
             diagnostics: Vec::new(),
             loss_report: LossLedger::new().finish(),
         };
-        let result = admit(source, config)
-            .and_then(|()| model_of(source, config))
-            .and_then(|model| lower(&model, source, config, &mut output, &mut ledger));
+        let result =
+            match admit(source, config, &graph_sha256).and_then(|()| model_of(source, config)) {
+                Ok(model) => lower(&model, &graph_sha256, config, &mut output, &mut ledger),
+                Err(error) => {
+                    ledger.declare(SourceElement::definition("owl.graph", source.path));
+                    Err(error)
+                }
+            };
         if let Err(error) = result {
-            ledger.declare(SourceElement::definition("owl.graph", source.path));
             output.diagnostics.push(Diagnostic {
                 code: crate::codes::OWL_INVALID.code.into(),
                 severity: DiagnosticSeverity::Error,
@@ -320,13 +329,18 @@ impl SchemaImporter for OwlReader {
 
 fn lower(
     model: &Model,
-    source: OwlGraph<'_>,
+    graph_hash: &str,
     config: &OwlConfig,
     output: &mut SchemaImport,
     ledger: &mut LossLedger,
 ) -> Result<(), String> {
-    for item in &model.items {
-        ledger.declare(element_of(model, item));
+    let elements: Vec<SourceElement> = model
+        .items
+        .iter()
+        .map(|item| element_of(model, item))
+        .collect();
+    for element in &elements {
+        ledger.declare(element.clone());
     }
     let mut table = TypeTable::load(DATATYPES)?;
     output.provenance.tables = vec![table.pin().clone()];
@@ -367,15 +381,14 @@ fn lower(
             description: model.definitions.get(iri).cloned(),
         });
     }
-    for (index, item) in model.items.iter().enumerate() {
+    for (index, element) in elements.iter().enumerate() {
         let disposition = lowered
             .dispositions
             .get(&index)
             .cloned()
-            .ok_or_else(|| format!("no disposition for {:?}", element_of(model, item)))?;
-        ledger.resolve(&element_of(model, item), disposition);
+            .ok_or_else(|| format!("no disposition for {element:?}"))?;
+        ledger.resolve(element, disposition);
     }
-    let graph_hash = sha256_hex(source.bytes);
     output.source_schema = Some(SourceSchemaIr {
         format: SourceSchemaFormat::V1,
         source: SourceIdentity {
@@ -387,7 +400,7 @@ fn lower(
         adapter: OwlReader.adapter(),
         raw_metadata: EvidenceRef {
             uri: format!("urn:norn:owl-graph:sha256:{graph_hash}"),
-            sha256: graph_hash,
+            sha256: graph_hash.to_owned(),
         },
         datasets,
         fields: Vec::new(),

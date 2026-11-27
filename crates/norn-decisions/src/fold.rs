@@ -1,9 +1,11 @@
 //! Ordered-fold transition relation; application state is entirely declared.
 use crate::{
+    admit::ENGINE_MAX_DEPTH,
     convert::{from_variable, value_to_canonical},
     evaluate::poll_once,
     step::StepContracts,
 };
+use norn_expr::Value;
 use norn_expr::schema::Schema;
 use norn_ir::{
     Rounding as IrRounding,
@@ -62,14 +64,14 @@ impl FoldPlan {
         }
         let ordered = ordered_items(&items, f, &self.item_schema, &meter, profile)?;
         let mut state = isolate.run_standard(f.initial.as_str())?;
-        check_state(
+        let checked = check_state(
             &state,
             &self.state_schema,
             f.max_accumulator_bytes,
             &meter,
             profile,
         )?;
-        state = crate::convert::to_variable_exact(&from_variable(&state)?)?;
+        state = crate::convert::to_variable_exact(&checked)?;
         for (index, (_, item)) in ordered.into_iter().enumerate() {
             meter.charge(1)?;
             let step = Variable::from_object(
@@ -84,20 +86,23 @@ impl FoldPlan {
             contracts.check_exact(&self.key, &step, true, Some(&meter))?;
             let response = poll_once(self.helper.evaluate_metered_with_tzdb(
                 step,
-                EvaluationOptions::default(),
+                EvaluationOptions {
+                    trace: false,
+                    max_depth: ENGINE_MAX_DEPTH,
+                },
                 meter.clone(),
                 tzdb.map(Arc::clone),
             ))??;
             state = response.result;
             contracts.check_exact(&self.key, &state, false, Some(&meter))?;
-            check_state(
+            let checked = check_state(
                 &state,
                 &self.state_schema,
                 f.max_accumulator_bytes,
                 &meter,
                 profile,
             )?;
-            state = crate::convert::to_variable_exact(&from_variable(&state)?)?;
+            state = crate::convert::to_variable_exact(&checked)?;
         }
         Ok(state)
     }
@@ -111,24 +116,28 @@ enum OrderKey {
 
 fn inspect(value: &Variable, meter: &Meter, profile: ScaledArithmetic) -> Result<(), Failure> {
     meter.charge(1)?;
-    match value {
-        Variable::Number(n) => {
-            profile.coefficient(*n)?;
-        }
-        Variable::String(s) => meter.charge(u64::try_from(s.len())?)?,
-        Variable::Array(a) => {
-            for v in a.borrow().iter() {
-                inspect(v, meter, profile)?;
+    let mut stack = vec![value.clone()];
+    while let Some(current) = stack.pop() {
+        match &current {
+            Variable::Number(n) => {
+                profile.coefficient(*n)?;
             }
-        }
-        Variable::Object(o) => {
-            for (key, v) in o.borrow().iter() {
-                meter.charge(u64::try_from(key.len())?)?;
-                inspect(v, meter, profile)?;
+            Variable::String(s) => meter.charge(u64::try_from(s.len())?)?,
+            Variable::Array(a) => {
+                for v in a.borrow().iter() {
+                    meter.charge(1)?;
+                    stack.push(v.clone());
+                }
             }
+            Variable::Object(o) => {
+                for (key, v) in o.borrow().iter() {
+                    meter.charge(u64::try_from(key.len())?.saturating_add(1))?;
+                    stack.push(v.clone());
+                }
+            }
+            Variable::Null | Variable::Bool(_) => {}
+            Variable::Dynamic(_) => return Err("unsupported fold value".into()),
         }
-        Variable::Null | Variable::Bool(_) => {}
-        Variable::Dynamic(_) => return Err("unsupported fold value".into()),
     }
     Ok(())
 }
@@ -139,7 +148,7 @@ fn check_state(
     bound: u32,
     meter: &Meter,
     profile: ScaledArithmetic,
-) -> Result<(), Failure> {
+) -> Result<Value, Failure> {
     inspect(value, meter, profile)?;
     let value = from_variable(value)?;
     schema.check(&value, "accumulator").map_err(|e| e.reason)?;
@@ -148,7 +157,7 @@ fn check_state(
     if bytes.len() > usize::try_from(bound)? {
         return Err("fold accumulator byte bound exceeded".into());
     }
-    Ok(())
+    Ok(value)
 }
 
 pub(crate) fn fold_key(rule: &str, node: &str) -> String {

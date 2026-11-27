@@ -141,9 +141,10 @@ pub struct TypedEvent {
     pub(crate) rule_id: String,
     pub(crate) schema: Arc<Schema>,
     pub(crate) value: Value,
-    /// PRINCIPAL-INPUT-1: the host-resolved principal inputs, once bound
+    /// PRINCIPAL-INPUT-1: the host-resolved principal inputs and the schema
+    /// they were validated against, once bound
     /// ([`AdmittedDecision::bind_principal`]).
-    pub(crate) principal: Option<Value>,
+    pub(crate) principal: Option<(Arc<Schema>, Value)>,
 }
 
 impl TypedEvent {
@@ -335,14 +336,25 @@ fn evaluate_with(
             decision: decision.rule_id().to_owned(),
         });
     }
-    let mut members = vec![
-        ("event", event.value.clone()),
-        ("slice", slice.value.clone()),
-    ];
-    if let Some(principal) = &event.principal {
-        members.push((norn_ir::rule::DECIDE_PRINCIPAL_MEMBER, principal.clone()));
+    let event_var = to_variable(&event.value)?;
+    let principal_var = event
+        .principal
+        .as_ref()
+        .map(|(_, principal)| to_variable(principal))
+        .transpose()?;
+    let slice_var = to_variable(&slice.value)?;
+    let input = Variable::empty_object();
+    if let Variable::Object(map) = &input {
+        let mut map = map.borrow_mut();
+        map.insert(Variable::key("event"), event_var);
+        if let Some(principal_var) = principal_var {
+            map.insert(
+                Variable::key(norn_ir::rule::DECIDE_PRINCIPAL_MEMBER),
+                principal_var,
+            );
+        }
+        map.insert(Variable::key("slice"), slice_var);
     }
-    let input = to_variable(&Value::object(members))?;
     let meter = Meter::new(budget.units());
     let options = EvaluationOptions {
         trace,
