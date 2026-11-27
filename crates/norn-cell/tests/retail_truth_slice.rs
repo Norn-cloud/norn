@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use norn_cell::combined_view::{
     CellCoverageSpec, CellViewInput, CombinedViewKind, CombinedViewReport, CoverageTransformGate,
@@ -51,6 +52,7 @@ use norn_cell::compute::transform::{RowAccess, TransformResult};
 use norn_cell::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use norn_cell::engine::NativeEngine;
 use norn_cell::mapping_bundle::MappingInput;
+use norn_cell::mapping_conflict::MappingConflict;
 use norn_cell::source_cursor::CursorAdvanceSpec;
 use norn_cell::{
     AdmittedDefinitions, CellError, CellStore, LedgerHead, MappingOutcome, Model, SqliteCell,
@@ -5267,6 +5269,90 @@ fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), S
     let snap = report.cells.get(1).ok_or("missing partner snap")?;
     assert_eq!(snap.pending_observations, 0);
     assert!(snap.complete, "{:?}", snap.failed_coverage_gates);
+    verify_nonempty_pending_bundle_row_privacy(&mut sole_dummy)?;
+    Ok(())
+}
+
+fn verify_nonempty_pending_bundle_row_privacy(book: &mut EntityBook) -> Result<(), String> {
+    // Nonempty quarantined mapping bundle (`mapping-conflict:`): type-level `Read` on
+    // `ALL_MEMBERS` with row-level `None`, `Count`, and `Read` on the conflicting row,
+    // verifying `pending_record_readable` passes the incoming mapped row values.
+    let (_, first_clean) = book.ingest_feed(&FeedRow {
+        feed_id: "supply.pos_sales",
+        mapping: "supply.pos_sales.mapping",
+        dataset: "pos_sale_line",
+        source: "synthetic-pos",
+        event: "ev-sole-pos-conflict",
+        record: "POS-CONFLICT-1",
+        payload: r#"{"pos_line_id":"POS-CONFLICT-1","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":1,"uom":"PCS","net_amount":100,"ccy":"EGP","sold_at":"2026-09-02T16:00:00Z"}"#,
+    })?;
+    assert!(first_clean, "initial conflict fixture row must land");
+    let (_, conflict_clean) = book.ingest_feed(&FeedRow {
+        feed_id: "supply.pos_sales",
+        mapping: "supply.pos_sales.mapping",
+        dataset: "pos_sale_line",
+        source: "synthetic-pos",
+        event: "ev-sole-pos-conflict",
+        record: "POS-CONFLICT-1",
+        payload: r#"{"pos_line_id":"POS-CONFLICT-1","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":2,"uom":"PCS","net_amount":200,"ccy":"EGP","sold_at":"2026-09-02T16:00:00Z"}"#,
+    })?;
+    assert!(!conflict_clean, "conflicting source event must quarantine");
+    let pending = book
+        .cell()?
+        .store()
+        .read()
+        .pending_observations()
+        .map_err(|e| format!("pending_observations: {e}"))?;
+    assert_eq!(pending.len(), 1);
+    let obs = pending.first().ok_or("missing conflict pending row")?;
+    assert!(
+        obs.observation_id.starts_with("mapping-conflict:"),
+        "expected mapping-conflict, got {}",
+        obs.observation_id
+    );
+    let observed: norn_kernel::Observed<RuntimeValue> =
+        norn_ir::runtime::decode(&obs.observed).map_err(|e| format!("decode observed: {e}"))?;
+    let conflict: MappingConflict =
+        norn_ir::runtime::decode(&observed.input).map_err(|e| format!("decode conflict: {e}"))?;
+    assert_eq!(conflict.incoming.records.len(), 1);
+    assert_eq!(
+        conflict.incoming.records.first().map(|r| r.key.as_str()),
+        Some("POS-CONFLICT-1")
+    );
+
+    let seen_incoming_values = AtomicBool::new(false);
+    let row_none = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" && obj.id == "POS-CONFLICT-1" {
+            if obj.values.get("store_code").map(scalar).as_deref() == Some("ST-SOLE-CFC-1")
+                && obj.values.get("net_revenue").map(scalar).as_deref() == Some("200")
+            {
+                seen_incoming_values.store(true, Ordering::Relaxed);
+            }
+            Ok(RowAccess::None)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let none_cut = evaluate_single_library_cut_with_access(book, "LE-SOLE", &row_none)?;
+    assert_eq!(none_cut.pending_observations, 0);
+    assert!(
+        seen_incoming_values.load(Ordering::Relaxed),
+        "evidence_access must receive incoming mapped row values"
+    );
+
+    let row_count = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" && obj.id == "POS-CONFLICT-1" {
+            Ok(RowAccess::Count)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let count_cut = evaluate_single_library_cut_with_access(book, "LE-SOLE", &row_count)?;
+    assert_eq!(count_cut.pending_observations, 0);
+
+    let row_read = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
+    let read_cut = evaluate_single_library_cut_with_access(book, "LE-SOLE", &row_read)?;
+    assert_eq!(read_cut.pending_observations, 1);
     Ok(())
 }
 

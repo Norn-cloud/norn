@@ -17,13 +17,14 @@ use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::transform::TransformPlan;
 use norn_ir::cell_id::CellId;
 use norn_ir::data_quality::DataQualityFindingStatus;
+use norn_ir::mapping::MappedRecord;
 use norn_ir::{Decimal, RuntimeValue};
-use norn_kernel::FactKey;
 use norn_kernel::authz::CommitBinding;
 use norn_kernel::read_envelope::{
     AuthorityPin, Completeness, LocalFrontier, ReadContext, ReadFormat, ReadSemantics, ReadToken,
 };
 use norn_kernel::world::pin::SnapshotPin;
+use norn_kernel::{FactKey, Observed};
 use serde::{Deserialize, Serialize};
 
 use crate::compute::lineage::{keyed_finding_handle, keyed_lineage_handle, keyed_revision_handle};
@@ -31,7 +32,10 @@ use crate::compute::transform::{RowAccess, TransformResult, TransformRow};
 use crate::compute::{ALL_MEMBERS, Freshness, Frontier, QueryContext, QueryResult, Watermark};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
-use crate::read::{LedgerHead, ObjectRecord};
+use crate::mapping_bundle::MappingBundle;
+use crate::mapping_conflict::MappingConflict;
+use crate::mapping_identity::IdentityEvidence;
+use crate::read::{LedgerHead, ObjectRecord, PendingObservation};
 use crate::snapshot::Main;
 use crate::source_cursor::{PendingSourceCapture, SourceCursorRecord};
 use crate::store::CellStore;
@@ -379,45 +383,52 @@ fn authorized_evidence_types<E: SqlEngine>(
     Ok(allowed)
 }
 
+fn retained_mapping_bundle(obs: &PendingObservation) -> Option<MappingBundle> {
+    let observed: Observed<RuntimeValue> = norn_ir::runtime::decode(&obs.observed).ok()?;
+    if observed.id.0 != obs.observation_id {
+        return None;
+    }
+    if obs.observation_id.starts_with("mapping-bundle:") {
+        let bundle: MappingBundle = norn_ir::runtime::decode(&observed.input).ok()?;
+        (obs.observation_id == format!("mapping-bundle:{}", bundle.digest)).then_some(bundle)
+    } else if obs.observation_id.starts_with("mapping-conflict:") {
+        let conflict: MappingConflict = norn_ir::runtime::decode(&observed.input).ok()?;
+        (obs.observation_id == format!("mapping-conflict:{}", conflict.finding.id))
+            .then_some(conflict.incoming)
+    } else if obs.observation_id.starts_with("mapping-identity:") {
+        let evidence: IdentityEvidence = norn_ir::runtime::decode(&observed.input).ok()?;
+        (obs.observation_id == format!("mapping-identity:{}", evidence.finding.id))
+            .then_some(evidence.bundle)
+    } else {
+        None
+    }
+}
+
 fn pending_record_readable<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
     allowed_evidence: &BTreeSet<String>,
-    rec: &RuntimeValue,
+    rec: &MappedRecord,
 ) -> Result<bool, CellError> {
-    let Some(object_type) = rec.get("objectType").and_then(RuntimeValue::as_str) else {
-        return Ok(false);
-    };
-    if !allowed_evidence.contains(object_type) {
+    if !allowed_evidence.contains(rec.object_type.0.as_str()) {
         return Ok(false);
     }
-    let Some(key) = rec.get("key").and_then(RuntimeValue::as_str) else {
+    let Some(invocation) = rec.invocations.first() else {
         return Ok(false);
     };
-    let values = match rec
-        .get("invocations")
-        .and_then(|v| match v {
-            RuntimeValue::Array(items) => items.first(),
-            _ => None,
-        })
-        .and_then(|inv| inv.get("input"))
-    {
-        Some(RuntimeValue::Object(map)) => map.clone(),
-        _ => BTreeMap::new(),
-    };
     let record = ObjectRecord {
-        object_type: object_type.to_owned(),
-        id: key.to_owned(),
+        object_type: rec.object_type.0.clone(),
+        id: rec.key.clone(),
         scope: input.context.scope.clone(),
         version: 0,
-        values,
+        values: invocation.input.clone(),
     };
     Ok(matches!((input.evidence_access)(&record)?, RowAccess::Read))
 }
 
-/// Count unconsumed inbox observations scoped strictly to `input.feed_mappings`
-/// and each mapping's authorized evidence type (`HOST-READ-2`), applying
-/// per-row `RowAccess::Read` visibility on nonempty mapping bundles and keeping
-/// unrelated mappings or unauthorized evidence types invisible.
+/// Count unconsumed retained mapping bundles in the inbox scoped strictly to
+/// `input.feed_mappings` and each mapping's authorized evidence type
+/// (`HOST-READ-2`), applying per-row `RowAccess::Read` visibility on nonempty
+/// bundles and ignoring ordinary non-mapping or malformed observations.
 fn count_scoped_pending_observations<E: SqlEngine>(
     input: &CellViewInput<'_, E>,
 ) -> Result<usize, CellError> {
@@ -428,29 +439,26 @@ fn count_scoped_pending_observations<E: SqlEngine>(
     let mappings: BTreeMap<&str, &str> = input.feed_mappings.iter().copied().collect();
     let mut count = 0_usize;
     for obs in input.store.read().pending_observations()? {
-        let bundle = obs.observed.get("input");
-        let mapping_id = bundle
-            .and_then(|b| b.get("input"))
-            .and_then(|i| i.get("mapping"))
-            .and_then(RuntimeValue::as_str);
-        let Some(expected_evidence) = mapping_id.and_then(|id| mappings.get(id).copied()) else {
+        let Some(bundle) = retained_mapping_bundle(&obs) else {
+            continue;
+        };
+        let Some(expected_evidence) = mappings.get(bundle.input.mapping.as_str()).copied() else {
             continue;
         };
         if !allowed_evidence.contains(expected_evidence) {
             continue;
         }
-        let visible = match bundle.and_then(|b| b.get("records")) {
-            Some(RuntimeValue::Array(rows)) if !rows.is_empty() => {
-                let mut any_readable = false;
-                for rec in rows {
-                    if pending_record_readable(input, &allowed_evidence, rec)? {
-                        any_readable = true;
-                        break;
-                    }
+        let visible = if bundle.records.is_empty() {
+            true
+        } else {
+            let mut any_readable = false;
+            for rec in &bundle.records {
+                if pending_record_readable(input, &allowed_evidence, rec)? {
+                    any_readable = true;
+                    break;
                 }
-                any_readable
             }
-            _ => true,
+            any_readable
         };
         if visible {
             count = count.saturating_add(1);
@@ -788,10 +796,12 @@ fn check_reconciliation_gate(
 }
 
 fn bucket_element(bucket: &RuntimeValue, index: usize) -> Option<&RuntimeValue> {
-    match bucket {
-        RuntimeValue::Array(items) => items.get(index),
-        scalar if index == 0 => Some(scalar),
-        _ => None,
+    if let RuntimeValue::Array(items) = bucket {
+        items.get(index)
+    } else if index == 0 {
+        Some(bucket)
+    } else {
+        None
     }
 }
 
