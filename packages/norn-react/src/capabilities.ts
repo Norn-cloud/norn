@@ -160,33 +160,111 @@ function tokenizeZen(expression: string): ZenToken[] {
   return tokens
 }
 
+const ZEN_NON_RECEIVER_IDENTS = new Set(["in", "not", "and", "or", "true", "false", "null"])
+
+function isBareInputIdent(tokens: readonly ZenToken[], index: number): boolean {
+  const token = tokens[index]
+  if (token?.kind !== "ident" || token.value !== "input") return false
+  const prev = index > 0 ? tokens[index - 1] : undefined
+  if (prev?.kind === "punct" && (prev.value === "." || prev.value === "?.")) return false
+  return true
+}
+
+function findMatchingOpen(tokens: readonly ZenToken[], closeIndex: number, openChar: string, closeChar: string): number {
+  let depth = 0
+  for (let i = closeIndex; i >= 0; i -= 1) {
+    const token = tokens[i]!
+    if (token.kind === "punct" && token.value === closeChar) depth += 1
+    else if (token.kind === "punct" && token.value === openChar) {
+      depth -= 1
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+function sliceContainsUnchainedInput(tokens: readonly ZenToken[], start: number, end: number): boolean {
+  for (let i = start; i <= end; i += 1) {
+    if (!isBareInputIdent(tokens, i)) continue
+    const next = i + 1 <= end ? tokens[i + 1] : undefined
+    if (next?.kind === "punct" && (next.value === "." || next.value === "?." || next.value === "[")) continue
+    return true
+  }
+  return false
+}
+
+function isSubscriptOpen(tokens: readonly ZenToken[], bracketIndex: number): boolean {
+  if (bracketIndex <= 0) return false
+  const prev = tokens[bracketIndex - 1]!
+  if (prev.kind === "punct") return prev.value === ")" || prev.value === "]" || prev.value === "?."
+  if (prev.kind === "ident") return !ZEN_NON_RECEIVER_IDENTS.has(prev.value)
+  return false
+}
+
+function receiverMayBeInput(tokens: readonly ZenToken[], accessIndex: number): boolean {
+  let receiverEnd = accessIndex - 1
+  if (receiverEnd < 0) return false
+  if (tokens[receiverEnd]!.kind === "punct" && tokens[receiverEnd]!.value === "?.") {
+    receiverEnd -= 1
+    if (receiverEnd < 0) return false
+  }
+  const endToken = tokens[receiverEnd]!
+  if (endToken.kind === "ident") return isBareInputIdent(tokens, receiverEnd)
+  if (endToken.kind === "punct" && endToken.value === ")") {
+    const open = findMatchingOpen(tokens, receiverEnd, "(", ")")
+    if (open < 0) return false
+    return sliceContainsUnchainedInput(tokens, open + 1, receiverEnd - 1)
+  }
+  if (endToken.kind === "punct" && endToken.value === "]") {
+    // Walk back through chained subscripts `[i][j]` to include the indexed base (e.g. `[input][0].recordVersion`).
+    let cursor = receiverEnd
+    let spanStart = receiverEnd
+    while (cursor >= 0 && tokens[cursor]!.kind === "punct" && tokens[cursor]!.value === "]") {
+      const open = findMatchingOpen(tokens, cursor, "[", "]")
+      if (open < 0) return false
+      spanStart = open
+      cursor = open - 1
+      if (cursor >= 0 && tokens[cursor]!.kind === "punct" && tokens[cursor]!.value === "?.") cursor -= 1
+    }
+    if (cursor >= 0 && tokens[cursor]!.kind === "punct" && tokens[cursor]!.value === ")") {
+      const open = findMatchingOpen(tokens, cursor, "(", ")")
+      if (open >= 0) spanStart = open
+    }
+    return sliceContainsUnchainedInput(tokens, spanStart, receiverEnd)
+  }
+  return false
+}
+
 /**
  * Whether a Zen expression accesses the unsupported `input.recordVersion` slot — covering direct,
- * parenthesized, optional-chained, and conditional forms (`input.recordVersion`, `(input).recordVersion`,
- * `(true ? input : input).recordVersion`, `input?.recordVersion`, `((input))["recordVersion"]`)
- * while ignoring string literals like `"input.recordVersion"`.
+ * parenthesized, optional-chained, indexed, and conditional forms (`input.recordVersion`,
+ * `(input).recordVersion`, `(true ? input : input).recordVersion`, `input?.recordVersion`,
+ * `((input))["recordVersion"]`, `[input][0].recordVersion`) while ignoring string literals
+ * (`"input.recordVersion"`), array literals (`input.draft.kind in ["recordVersion"]`), and nested
+ * domain properties (`input.record.recordVersion`).
  */
 export function referencesRecordVersion(expression: string): boolean {
   const tokens = tokenizeZen(expression)
-  let hasInputIdent = false
-  let hasRecordVersionAccess = false
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!
-    const prev = i > 0 ? tokens[i - 1] : undefined
-    if (token.kind === "ident" && token.value === "input" && !(prev?.kind === "punct" && (prev.value === "." || prev.value === "?."))) {
-      hasInputIdent = true
-    }
     if (token.kind === "punct" && (token.value === "." || token.value === "?.")) {
       const member = tokens[i + 1]
-      if (member?.kind === "ident" && member.value === "recordVersion") hasRecordVersionAccess = true
-    } else if (token.kind === "punct" && token.value === "[") {
+      if (member?.kind === "ident" && member.value === "recordVersion" && receiverMayBeInput(tokens, i)) {
+        return true
+      }
+    } else if (token.kind === "punct" && token.value === "[" && isSubscriptOpen(tokens, i)) {
       const key = tokens[i + 1]
       const close = tokens[i + 2]
-      if (key?.kind === "string" && key.value === "recordVersion" && close?.kind === "punct" && close.value === "]") {
-        hasRecordVersionAccess = true
+      if (
+        key?.kind === "string" &&
+        key.value === "recordVersion" &&
+        close?.kind === "punct" &&
+        close.value === "]" &&
+        receiverMayBeInput(tokens, i)
+      ) {
+        return true
       }
     }
-    if (hasInputIdent && hasRecordVersionAccess) return true
   }
   return false
 }

@@ -24,7 +24,7 @@ import { enabled, eventsOf } from "./machine/controls.ts"
 import { EngineNotReady } from "./machine/evaluate.ts"
 import type { Fields, Machine, MachineEvent } from "./machine/machine.ts"
 import { messageOf, type BindingCallState, type BindingReadState } from "./reads.ts"
-import type { MachineRuntime, PinnedRecord } from "./runtime.ts"
+import { securitySince, type MachineRuntime, type PinnedRecord } from "./runtime.ts"
 import { matchActionState, matchReadState } from "./state.ts"
 import {
   nodesOf,
@@ -386,13 +386,16 @@ function renderChildren(scope: PageScope, children: readonly WidgetNode[]): Reac
 
 // ---- Selectable Lists (WidgetComponent::List) ---------------------------------------------------
 
-/** Extract a stable row key from a projected record. */
-export function rowIdOf(row: Doc, index: number): string {
+/** Canonical envelope row identity: ONLY top-level `id` or `key`, never `values.id` or row index. */
+export function envelopeRowId(row: Doc): string | null {
   if (typeof row.id === "string" && row.id !== "") return row.id
   if (typeof row.key === "string" && row.key !== "") return row.key
-  const values = asDoc(row.values)
-  if (typeof values?.id === "string" && values.id !== "") return values.id
-  return String(index)
+  return null
+}
+
+/** Extract a stable option/display key from a projected record (never inspects `values.id`). */
+export function rowIdOf(row: Doc, index: number): string {
+  return envelopeRowId(row) ?? String(index)
 }
 
 /** Next selected row id set for `"single"` or `"multiple"` list selection. */
@@ -477,7 +480,7 @@ export function flattenSelectionRecord(row: Doc): Record<string, unknown> {
   return out
 }
 
-/** Reconcile selected row ids against a refreshed list snapshot, pruning removed or withheld rows. */
+/** Reconcile selected row ids against a refreshed list snapshot, pruning removed, withheld, or envelope-less rows. */
 export function reconcileSelection(
   selectedIds: readonly string[],
   rows: readonly Doc[],
@@ -486,7 +489,9 @@ export function reconcileSelection(
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index]!
     if (row.withheld === true) continue
-    available.set(rowIdOf(row, index), row)
+    const rowId = envelopeRowId(row)
+    if (rowId === null) continue
+    available.set(rowId, row)
   }
   const ids: string[] = []
   const records: Record<string, unknown>[] = []
@@ -555,15 +560,15 @@ function ListRows({
     )
   }
 
-  const rowIds = rows.map((row, index) => rowIdOf(row, index))
+  const rowIds = rows.map((row) => envelopeRowId(row))
   const activeSelected = reconciled.ids
   const clampedFocus = Math.min(Math.max(0, focusIndex), rows.length - 1)
   const listConfirmMark = confirmMark(confirmReason(scope.ux, scope.machine, node.nodeId, null, scope.actionEffects, scope.locale, scope.translate))
 
   const toggleRow = (index: number) => {
     const row = rows[index]
-    if (row === undefined || row.withheld === true) return
-    const rowId = rowIds[index]!
+    const rowId = rowIds[index] ?? null
+    if (row === undefined || row.withheld === true || rowId === null) return
     const next = nextSelection(selection, activeSelected, rowId)
     setSelectedIds(next)
     setFocusIndex(index)
@@ -610,26 +615,27 @@ function ListRows({
         </thead>
         <tbody>
           {rows.map((row, index) => {
-            const rowId = rowIds[index]!
+            const rowId = rowIds[index] ?? null
             const withheld = row.withheld === true
-            const isSelected = !withheld && activeSelected.includes(rowId)
+            const selectable = !withheld && rowId !== null
+            const isSelected = selectable && activeSelected.includes(rowId)
             const indicator = selection === "single" ? "radio" : "checkbox"
             return (
               <tr
-                key={rowId}
+                key={rowId ?? `__row_${index}`}
                 ref={(el) => {
                   rowRefs.current[index] = el
                 }}
                 {...rowMark(withheld)}
-                {...(withheld ? {} : listConfirmMark)}
-                data-row-id={rowId}
+                {...(selectable ? listConfirmMark : {})}
+                data-row-id={rowId ?? undefined}
                 data-selected={isSelected ? "" : undefined}
                 aria-selected={isSelected ? "true" : "false"}
-                aria-disabled={withheld ? "true" : undefined}
+                aria-disabled={!selectable ? "true" : undefined}
                 tabIndex={clampedFocus === index ? 0 : -1}
                 onClick={() => toggleRow(index)}
                 onKeyDown={(event) => onRowKeyDown(index, event)}
-                className={`border-t border-border transition-colors ${withheld ? "cursor-not-allowed opacity-55" : "cursor-pointer hover:bg-accent/50 data-[selected]:bg-accent"} ${ROW_FOCUS}`}
+                className={`border-t border-border transition-colors ${!selectable ? "cursor-not-allowed opacity-55" : "cursor-pointer hover:bg-accent/50 data-[selected]:bg-accent"} ${ROW_FOCUS}`}
               >
                 <td className="w-9 px-2 py-1.5">
                   <span
@@ -971,7 +977,12 @@ export function readPrefill(scope: PageScope, form: WidgetForm, field: FieldPres
 export function mergePrefillSecurity(live: PrefillInfo, pinned: PrefillInfo | undefined): PrefillInfo {
   if (pinned === undefined) return live
   const withheld = live.withheld || pinned.withheld
-  const masked = live.masked ?? pinned.masked
+  const masked =
+    live.masked?.mode === "refuse"
+      ? live.masked
+      : pinned.masked?.mode === "refuse"
+        ? pinned.masked
+        : (live.masked ?? pinned.masked)
   return {
     value: withheld ? undefined : (live.value !== undefined ? live.value : pinned.value),
     masked,
@@ -1338,10 +1349,35 @@ function fieldReadSettledOk(scope: PageScope, form: WidgetForm, field: FieldPres
   return scope.runtime.reads.get(ref.bindingId)?.kind === "ok"
 }
 
-function runtimeSecurityForField(scope: PageScope, form: WidgetForm, field: FieldPresentation): PrefillInfo | undefined {
+function captureOkReadSeqs(
+  scope: PageScope,
+  form: WidgetForm,
+  fields: readonly FieldPresentation[],
+  previous?: Readonly<Record<string, number>>,
+): Readonly<Record<string, number>> {
+  const next: Record<string, number> = previous === undefined ? {} : { ...previous }
+  for (const field of fields) {
+    const ref = prefillRefOf(form, field)
+    if (ref === undefined) continue
+    if (scope.runtime.reads.get(ref.bindingId)?.kind !== "ok") continue
+    const latestSeq = scope.runtime.readSecurityLog?.get(ref.bindingId)?.latestSeq
+    if (latestSeq !== undefined) next[ref.bindingId] = latestSeq
+  }
+  return next
+}
+
+function runtimeSecurityForField(
+  scope: PageScope,
+  form: WidgetForm,
+  field: FieldPresentation,
+  pinnedSecuritySeqs?: Readonly<Record<string, number>>,
+): PrefillInfo | undefined {
   const ref = prefillRefOf(form, field)
   if (ref === undefined) return undefined
-  const security = scope.runtime.readSecurity?.get(ref.bindingId)
+  const log = scope.runtime.readSecurityLog?.get(ref.bindingId)
+  const security = log !== undefined
+    ? securitySince(log, pinnedSecuritySeqs?.[ref.bindingId] ?? 0)
+    : scope.runtime.readSecurity?.get(ref.bindingId)
   if (security === undefined) return undefined
   const masked = own(asDoc(security.masked), ref.propertyId) as MaskedProperty | undefined
   const withheld =
@@ -1402,13 +1438,16 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
   const liveSecurityKey = formFields
     .map((field) => {
       const info = livePrefills[field.fieldId]!
-      return `${field.fieldId}:${fieldReadSettledOk(scope, form, field) ? "1" : "0"}:${info.withheld ? "1" : "0"}:${info.masked?.mode ?? ""}`
+      const ref = prefillRefOf(form, field)
+      const latestSeq = ref === undefined ? 0 : (scope.runtime.readSecurityLog?.get(ref.bindingId)?.latestSeq ?? 0)
+      return `${field.fieldId}:${fieldReadSettledOk(scope, form, field) ? "1" : "0"}:${latestSeq}:${info.withheld ? "1" : "0"}:${info.masked?.mode ?? ""}`
     })
     .join("|")
   const [initialDraft, setInitialDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [draft, setDraft] = useState<Record<string, unknown>>(() => prefillSnapshot)
   const [pinnedRecord, setPinnedRecord] = useState<PinnedRecord | undefined>(() => liveBaselineRecord)
   const [pinnedPrefills, setPinnedPrefills] = useState<Readonly<Record<string, PrefillInfo>>>(() => livePrefills)
+  const [pinnedSecuritySeqs, setPinnedSecuritySeqs] = useState<Readonly<Record<string, number>>>(() => captureOkReadSeqs(scope, form, formFields))
   const [submitted, setSubmitted] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [typedPhrase, setTypedPhrase] = useState("")
@@ -1418,10 +1457,10 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
   // Hydrate from server prefill and advance pinned baseline ONLY while clean.
   // - While dirty, keep the edited draft and baseline revision pinned, but STILL ratchet
   //   `pinnedPrefills` monotonically stricter whenever a refresh delivers new `masked`/`withheld`
-  //   metadata so a subsequent pending/refused refresh can never drop L6 redaction marks.
+  //   metadata (including synchronous `readSecurityLog` entries since the clean baseline) so a
+  //   subsequent pending/refused refresh can never drop L6 redaction marks.
   // - While clean, take fresh security metadata from any field whose backing read settled `ok`
-  //   (allowing restored fields to un-hide without remount) while preserving pinned marks across
-  //   non-`ok` refreshes.
+  //   AND advance `pinnedSecuritySeqs` so restored fields stay restored when edited next.
   useEffect(() => {
     if (dirty) {
       setPinnedPrefills((previous) => {
@@ -1429,7 +1468,8 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
         const next: Record<string, PrefillInfo> = { ...previous }
         for (const field of formFields) {
           const prev = previous[field.fieldId]
-          const merged = mergePrefillSecurity(livePrefills[field.fieldId]!, prev)
+          const rtSec = runtimeSecurityForField(scope, form, field, pinnedSecuritySeqs)
+          const merged = mergePrefillSecurity(mergePrefillSecurity(livePrefills[field.fieldId]!, prev), rtSec)
           if (prev === undefined || merged.withheld !== prev.withheld || merged.masked?.mode !== prev.masked?.mode) {
             next[field.fieldId] = merged
             changed = true
@@ -1444,6 +1484,7 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       setInitialDraft(prefillSnapshot)
       setDraft(prefillSnapshot)
       setPinnedRecord(liveBaselineRecord)
+      setPinnedSecuritySeqs((previous) => captureOkReadSeqs(scope, form, formFields, previous))
       setPinnedPrefills((previous) => {
         const next: Record<string, PrefillInfo> = {}
         for (const field of formFields) {
@@ -1461,6 +1502,7 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
     }
     setInitialDraft(prefillSnapshot)
     setDraft(prefillSnapshot)
+    setPinnedSecuritySeqs((previous) => captureOkReadSeqs(scope, form, formFields, previous))
     setPinnedPrefills((previous) => {
       const next: Record<string, PrefillInfo> = {}
       for (const field of formFields) {
@@ -1519,7 +1561,7 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       pinnedPrefills[field.fieldId],
       dirty,
       fieldReadSettledOk(scope, form, field),
-      runtimeSecurityForField(scope, form, field),
+      runtimeSecurityForField(scope, form, field, pinnedSecuritySeqs),
     )
     const agentMark = valueMark(prefill.masked, prefill.withheld)
     const value = prefill.withheld ? "" : (Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined))
@@ -1536,10 +1578,16 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
         if (empty) hint = "This field is required."
       }
     }
-    return { field, key, value, agentMark, withheld: prefill.withheld, visible, required, readOnly, hint }
+    return { field, key, value, prefill, agentMark, withheld: prefill.withheld, visible, required, readOnly, hint }
   })
 
   const updateField = (key: string, nextValue: unknown) => {
+    if (!dirty) {
+      setPinnedSecuritySeqs((previous) => captureOkReadSeqs(scope, form, formFields, previous))
+      const snapshotPrefills: Record<string, PrefillInfo> = {}
+      for (const state of fieldStates) snapshotPrefills[state.field.fieldId] = state.prefill
+      setPinnedPrefills(snapshotPrefills)
+    }
     const nextDraft = { ...draft, [key]: nextValue }
     setDraft(nextDraft)
     if (confirming) {

@@ -48,14 +48,63 @@ export interface ReadSecurity {
   readonly withheldProperties: readonly string[]
 }
 
+/**
+ * Bounded per-binding log of `ReadSecurity` snapshots keyed by monotonic `ok`-read sequence number.
+ * Folding entries with `seq > cleanBaselineSeq` lets dirty forms catch batched `ok -> pending` or
+ * `refuse -> redacted` transitions without resurrecting withholding that a later clean `ok` read cleared.
+ */
+export interface ReadSecurityLog {
+  readonly latestSeq: number
+  readonly floorSeq: number
+  readonly floorSecurity: ReadSecurity | null
+  readonly entries: readonly { readonly seq: number; readonly security: ReadSecurity }[]
+}
+
+const MAX_READ_SECURITY_LOG_ENTRIES = 256
+
+const isRefuseMask = (entry: unknown): boolean =>
+  typeof entry === "object" && entry !== null && !Array.isArray(entry) && (entry as { readonly mode?: unknown }).mode === "refuse"
+
+/** Merge two `ReadSecurity` snapshots monotonically: never downgrade `withheld` or `mode: "refuse"`. */
+export function mergeReadSecurity(previous: ReadSecurity | undefined, incoming: ReadSecurity): ReadSecurity {
+  if (previous === undefined) return incoming
+  const masked: Record<string, unknown> = { ...previous.masked }
+  for (const key of Object.keys(incoming.masked)) {
+    if (!Object.hasOwn(incoming.masked, key)) continue
+    if (isRefuseMask(previous.masked[key]) && !isRefuseMask(incoming.masked[key])) continue
+    masked[key] = incoming.masked[key]
+  }
+  const withheldSet = new Set([...previous.withheldProperties, ...incoming.withheldProperties])
+  for (const key of Object.keys(masked)) {
+    if (Object.hasOwn(masked, key) && isRefuseMask(masked[key])) withheldSet.add(key)
+  }
+  return {
+    withheld: previous.withheld || incoming.withheld,
+    masked,
+    withheldProperties: [...withheldSet],
+  }
+}
+
+/** Fold every `ok`-read security snapshot strictly newer than `afterSeq` using monotonic severity. */
+export function securitySince(log: ReadSecurityLog | undefined, afterSeq: number): ReadSecurity | undefined {
+  if (log === undefined) return undefined
+  let merged: ReadSecurity | undefined = log.floorSecurity !== null && afterSeq < log.floorSeq ? log.floorSecurity : undefined
+  for (const entry of log.entries) {
+    if (entry.seq > afterSeq) merged = mergeReadSecurity(merged, entry.security)
+  }
+  return merged
+}
+
 /** What the page draws from its runtime: all of it from the machine and the server's answers. */
 export interface RuntimeView {
   readonly snapshot: Snapshot
   readonly engine: EngineState
   readonly reads: ReadonlyMap<string, BindingReadState>
   readonly calls: ReadonlyMap<string, BindingCallState>
-  /** Monotonic per-binding L6 masking/withholding seen since last clean reset (survives synchronous `ok -> pending` batching). */
+  /** Monotonic per-binding L6 masking/withholding seen (survives synchronous `ok -> pending` batching). */
   readonly readSecurity?: ReadonlyMap<string, ReadSecurity>
+  /** Watermarked per-binding `ok`-read security log so clean restores reset prior withholding cleanly. */
+  readonly readSecurityLog?: ReadonlyMap<string, ReadSecurityLog>
   /** Messages waiting for the engine. */
   readonly waiting: number
   /** The last step the engine refused (it fired nothing; the page stayed where it was), until a person's next step. */
@@ -134,7 +183,16 @@ const errorOf = (error: unknown): Error => (error instanceof Error ? error : new
 /** The view of a page that has not started: its initial state, nothing read, nothing called. */
 export function initialView(machine: Machine, engine: LazyEngine): RuntimeView {
   const state = engine.state()
-  return { snapshot: init(machine).snapshot, engine: state, reads: new Map(), calls: new Map(), readSecurity: new Map(), waiting: 0, fault: null }
+  return {
+    snapshot: init(machine).snapshot,
+    engine: state,
+    reads: new Map(),
+    calls: new Map(),
+    readSecurity: new Map(),
+    readSecurityLog: new Map(),
+    waiting: 0,
+    fault: null,
+  }
 }
 
 /**
@@ -214,17 +272,17 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       if (typeof item !== "object" || item === null || Array.isArray(item)) continue
       const row = item as Readonly<Record<string, unknown>>
       if (row.withheld === true) continue
-      const rowValues = typeof row.values === "object" && row.values !== null && !Array.isArray(row.values)
-        ? (row.values as Readonly<Record<string, unknown>>)
-        : null
       const rowId =
         typeof row.id === "string" && row.id !== ""
           ? row.id
           : typeof row.key === "string" && row.key !== ""
             ? row.key
-            : typeof rowValues?.id === "string" && rowValues.id !== ""
-              ? rowValues.id
-              : String(index)
+            : null
+      // Never infer identity from `values.id` or row index when the envelope ID is absent.
+      if (rowId === null) continue
+      const rowValues = typeof row.values === "object" && row.values !== null && !Array.isArray(row.values)
+        ? (row.values as Readonly<Record<string, unknown>>)
+        : null
       const flattened: Record<string, unknown> = {}
       if (rowValues !== null) {
         Object.assign(flattened, rowValues)
@@ -245,6 +303,8 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     selections.set(bindingId, pruned)
   }
 
+  let readSeq = 0
+
   const extractReadSecurity = (document: unknown): ReadSecurity | null => {
     if (typeof document !== "object" || document === null || Array.isArray(document)) return null
     const doc = document as Readonly<Record<string, unknown>>
@@ -252,45 +312,71 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       ? (doc.masked as Readonly<Record<string, unknown>>)
       : {}
     const masked: Record<string, unknown> = {}
+    const withheldSet = new Set<string>(
+      Array.isArray(doc.withheldProperties)
+        ? doc.withheldProperties.filter((entry): entry is string => typeof entry === "string")
+        : [],
+    )
     for (const key of Object.keys(rawMasked)) {
-      if (Object.hasOwn(rawMasked, key)) masked[key] = rawMasked[key]
+      if (!Object.hasOwn(rawMasked, key)) continue
+      const mask = rawMasked[key]
+      masked[key] = mask
+      if (isRefuseMask(mask)) withheldSet.add(key)
     }
-    const withheldProperties = Array.isArray(doc.withheldProperties)
-      ? doc.withheldProperties.filter((entry): entry is string => typeof entry === "string")
-      : []
     return {
       withheld: doc.withheld === true,
       masked,
-      withheldProperties,
+      withheldProperties: [...withheldSet],
     }
   }
 
-  const mergeReadSecurity = (previous: ReadSecurity | undefined, incoming: ReadSecurity): ReadSecurity => {
-    if (previous === undefined) return incoming
-    const masked: Record<string, unknown> = { ...previous.masked }
-    for (const key of Object.keys(incoming.masked)) {
-      if (Object.hasOwn(incoming.masked, key)) masked[key] = incoming.masked[key]
+  const sameReadSecurity = (left: ReadSecurity, right: ReadSecurity): boolean =>
+    left.withheld === right.withheld &&
+    left.withheldProperties.length === right.withheldProperties.length &&
+    left.withheldProperties.every((entry, idx) => entry === right.withheldProperties[idx]) &&
+    JSON.stringify(left.masked) === JSON.stringify(right.masked)
+
+  const appendReadSecurityLog = (previous: ReadSecurityLog | undefined, seq: number, security: ReadSecurity): ReadSecurityLog => {
+    if (previous === undefined) {
+      return { latestSeq: seq, floorSeq: 0, floorSecurity: null, entries: [{ seq, security }] }
     }
-    const withheldProperties = [...new Set([...previous.withheldProperties, ...incoming.withheldProperties])]
-    return {
-      withheld: previous.withheld || incoming.withheld,
-      masked,
-      withheldProperties,
+    const entries = [...previous.entries]
+    const last = entries[entries.length - 1]
+    if (last !== undefined && sameReadSecurity(last.security, security)) {
+      entries[entries.length - 1] = { seq, security }
+      return { ...previous, latestSeq: seq, entries }
     }
+    entries.push({ seq, security })
+    let floorSeq = previous.floorSeq
+    let floorSecurity = previous.floorSecurity
+    while (entries.length > MAX_READ_SECURITY_LOG_ENTRIES) {
+      const oldest = entries.shift()!
+      floorSeq = oldest.seq
+      floorSecurity = mergeReadSecurity(floorSecurity ?? undefined, oldest.security)
+    }
+    return { latestSeq: seq, floorSeq, floorSecurity, entries }
   }
 
   const setRead = (bindingId: string, state: BindingReadState) => {
     reconcileRuntimeSelection(bindingId, state)
     const nextReads = new Map(view.reads).set(bindingId, state)
     let nextSecurity = view.readSecurity
+    let nextSecurityLog = view.readSecurityLog
     if (state.kind === "ok") {
       const incoming = extractReadSecurity(state.document)
       if (incoming !== null) {
+        readSeq += 1
         const merged = mergeReadSecurity(view.readSecurity?.get(bindingId), incoming)
         nextSecurity = new Map(view.readSecurity).set(bindingId, merged)
+        const updatedLog = appendReadSecurityLog(view.readSecurityLog?.get(bindingId), readSeq, incoming)
+        nextSecurityLog = new Map(view.readSecurityLog).set(bindingId, updatedLog)
       }
     }
-    change({ reads: nextReads, ...(nextSecurity === undefined ? {} : { readSecurity: nextSecurity }) })
+    change({
+      reads: nextReads,
+      ...(nextSecurity === undefined ? {} : { readSecurity: nextSecurity }),
+      ...(nextSecurityLog === undefined ? {} : { readSecurityLog: nextSecurityLog }),
+    })
   }
   const setCall = (bindingId: string, state: BindingCallState) => change({ calls: new Map(view.calls).set(bindingId, state) })
   const stopWaiting = () => {

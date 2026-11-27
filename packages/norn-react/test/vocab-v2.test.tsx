@@ -18,6 +18,7 @@ import {
   canDismissDialog,
   canDispatchFormConfirmation,
   computeFormDirty,
+  envelopeRowId,
   evaluateFieldCondition,
   flattenSelectionRecord,
   formatRefusalCategory,
@@ -38,7 +39,7 @@ import {
 } from "../src/nodes.tsx"
 import type { BindingCallState, BindingReadState, WidgetCalls, WidgetReader } from "../src/reads.ts"
 import { NornAppRenderer } from "../src/renderer.tsx"
-import { createPageRuntime, DEFAULT_SUBMIT_DEADLINE_MS, needsEngine, type MachineRuntime } from "../src/runtime.ts"
+import { createPageRuntime, DEFAULT_SUBMIT_DEADLINE_MS, mergeReadSecurity, needsEngine, securitySince, type MachineRuntime } from "../src/runtime.ts"
 import type { DismissalMethod, FieldPresentation, WidgetForm, WidgetNode, WidgetUx } from "../src/ux.ts"
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -1518,16 +1519,22 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(numRefusedMarkup).toContain("field:number:unformatted (f-qty)")
   })
 
-  test("referencesRecordVersion detects parenthesized, optional, and conditional accesses while ignoring string literals", () => {
+  test("referencesRecordVersion detects parenthesized, optional, indexed, and conditional accesses while ignoring literals, arrays, and nested properties", () => {
     expect(referencesRecordVersion("input.recordVersion")).toBe(true)
     expect(referencesRecordVersion("(input).recordVersion")).toBe(true)
     expect(referencesRecordVersion("(true ? input : input).recordVersion")).toBe(true)
     expect(referencesRecordVersion("((input))['recordVersion']")).toBe(true)
     expect(referencesRecordVersion('((input))["recordVersion"]')).toBe(true)
     expect(referencesRecordVersion("input?.recordVersion")).toBe(true)
+    expect(referencesRecordVersion('input?.["recordVersion"]')).toBe(true)
+    expect(referencesRecordVersion("[input][0].recordVersion")).toBe(true)
     expect(referencesRecordVersion('"input.recordVersion"')).toBe(false)
     expect(referencesRecordVersion("'input.recordVersion'")).toBe(false)
     expect(referencesRecordVersion("input.record.version")).toBe(false)
+    expect(referencesRecordVersion('input.draft.kind in ["recordVersion"]')).toBe(false)
+    expect(referencesRecordVersion('["recordVersion"]')).toBe(false)
+    expect(referencesRecordVersion("input.record.recordVersion")).toBe(false)
+    expect(referencesRecordVersion('input.draft["recordVersion"]')).toBe(false)
   })
 
   test("runtime.readSecurity synchronously captures withholding across batched ok -> pending transitions", async () => {
@@ -1713,6 +1720,107 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     pushSnapshot?.({ records: [rowB] })
     await flush()
     expect(sent).toEqual([{ actionId: "canon.order.act", input: { selected: [] } }])
+
+    // Select row B by envelope id, then push an envelope-less row carrying values.id === "env-B":
+    // neither reconcileSelection nor runtime selection reconciliation may infer identity from values.id!
+    runtime.setSelection("orders", [flattenSelectionRecord(rowB)], ["env-B"])
+    const envelopeLessImpostor = { values: { id: "env-B", name: "Impostor" } }
+    expect(envelopeRowId(envelopeLessImpostor)).toBeNull()
+    expect(reconcileSelection(["env-B"], [envelopeLessImpostor])).toEqual({ ids: [], records: [], changed: true })
+    pushSnapshot?.({ records: [envelopeLessImpostor] })
+    await flush()
+    expect(sent).toEqual([
+      { actionId: "canon.order.act", input: { selected: [] } },
+      { actionId: "canon.order.act", input: { selected: [] } },
+    ])
+    runtime.dispose()
+  })
+
+  test("mergeReadSecurity preserves mode:'refuse' against later 'redacted', and readSecurityLog resets cleanly on restored ok reads", async () => {
+    let pushSnapshot: ((doc: unknown) => void) | undefined
+    const revRefused = { id: "ord-1", values: {}, masked: { secret: { mode: "refuse", markings: ["pii"], revealable: false } } }
+    const revRedacted = { id: "ord-1", values: { secret: "***" }, masked: { secret: { mode: "redacted", markings: ["pii"], revealable: false } } }
+    const revRestored = { id: "ord-1", values: { secret: "visible-again" } }
+
+    // Direct unit law: mergeReadSecurity and mergePrefillSecurity never downgrade mode:'refuse' to 'redacted'.
+    const mergedSec = mergeReadSecurity(
+      { withheld: false, masked: { secret: { mode: "refuse" } }, withheldProperties: ["secret"] },
+      { withheld: false, masked: { secret: { mode: "redacted" } }, withheldProperties: [] },
+    )
+    expect((mergedSec.masked.secret as { mode?: string })?.mode).toBe("refuse")
+    expect(mergedSec.withheldProperties).toContain("secret")
+    const mergedPrefill = mergePrefillSecurity(
+      { value: "***", masked: { mode: "redacted", markings: ["pii"], revealable: false }, withheld: false },
+      { value: undefined, masked: { mode: "refuse", markings: ["pii"], revealable: false }, withheld: true },
+    )
+    expect(mergedPrefill.withheld).toBe(true)
+    expect(mergedPrefill.masked?.mode).toBe("refuse")
+
+    const liveMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "opening",
+      fields: [],
+      events: [
+        { eventId: "opened", source: { kind: "page_opened" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+        { eventId: "sub", source: { kind: "subscription", bindingId: "order-detail" } },
+      ],
+      states: [
+        { stateId: "opening", role: "idle" },
+        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "order-detail" }, deadlineMs: 5000 },
+        { stateId: "ready", role: "idle" },
+      ],
+      transitions: [
+        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
+        { transitionId: "t-ok", from: "loading", on: "accepted", target: "ready" },
+        { transitionId: "t-ref", from: "loading", on: "refused", target: "ready" },
+        { transitionId: "t-sub", from: "ready", on: "sub", target: "ready" },
+      ],
+    }
+
+    const ux = makeUx(
+      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
+      { dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }] },
+      liveMachine,
+    )
+
+    const runtime = createPageRuntime(
+      {
+        ux,
+        machine: liveMachine,
+        reader: { kind: "live", widget: () => ({ queryKey: ["order"], queryFn: async () => ({ outcome: "accepted", payload: {}, body: revRestored }) }) },
+        calls: { call: async () => ({ outcome: "not_served", payload: {} }) },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({
+          context: { orderId: "ord-1" },
+          objectTypeOf: () => "canon.Order",
+          actionIdOf: () => undefined,
+          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
+        }),
+      },
+      () => {},
+    )
+    await flush()
+    const seqInitial = runtime.view().readSecurityLog?.get("order-detail")?.latestSeq ?? 0
+    expect(seqInitial).toBeGreaterThan(0)
+
+    // While dirty (pinned at seqInitial), push mode:'refuse' then synchronously mode:'redacted':
+    // securitySince(log, seqInitial) MUST retain 'refuse' and withhold 'secret'.
+    pushSnapshot?.(revRefused)
+    pushSnapshot?.(revRedacted)
+    const sinceInitial = securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqInitial)
+    expect((sinceInitial?.masked.secret as { mode?: string })?.mode).toBe("refuse")
+    expect(sinceInitial?.withheldProperties).toContain("secret")
+
+    // Later, a clean read restores 'secret'. Clean form advances its watermark to latestSeq.
+    pushSnapshot?.(revRestored)
+    const seqRestored = runtime.view().readSecurityLog?.get("order-detail")?.latestSeq ?? 0
+    expect(seqRestored).toBeGreaterThan(seqInitial)
+    // Next local edit makes the form dirty while restored read remains ok: securitySince(log, seqRestored)
+    // is undefined, so prior withholding is NOT resurrected!
+    const sinceRestored = securitySince(runtime.view().readSecurityLog?.get("order-detail"), seqRestored)
+    expect(sinceRestored).toBeUndefined()
     runtime.dispose()
   })
 
