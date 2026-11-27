@@ -412,25 +412,29 @@ pub fn execute_action_in_fork<S: SqlEngine>(
     definitions: &AdmittedDefinitions,
     command: &ForkActionCall,
     authorizer: &dyn ActionAuthorizer,
-) -> Result<ActionOutcome, ActionRefusal<CellError>> {
+) -> Result<ActionOutcome, Box<ActionRefusal<CellError>>> {
     if fork.store().fork_pin().is_none() {
-        return Err(ActionRefusal::Decision(DecisionRefusal::Host(
+        return Err(Box::new(ActionRefusal::Decision(DecisionRefusal::Host(
             CellError::WorldSimulationForbidden,
-        )));
+        ))));
     }
     if let Err(error) = fork.store().refuse_fork_write() {
-        return Err(ActionRefusal::Decision(DecisionRefusal::Host(error)));
+        return Err(Box::new(ActionRefusal::Decision(DecisionRefusal::Host(
+            error,
+        ))));
     }
     if let Err(error) = verify_active_definitions(fork.store(), definitions) {
-        return Err(ActionRefusal::Decision(DecisionRefusal::Host(error)));
+        return Err(Box::new(ActionRefusal::Decision(DecisionRefusal::Host(
+            error,
+        ))));
     }
     let Some(admitted) = definitions.action(&command.action_id) else {
-        return Err(ActionRefusal::UnsupportedEffect {
+        return Err(Box::new(ActionRefusal::UnsupportedEffect {
             action_id: command.action_id.clone(),
-        });
+        }));
     };
     let scope_event = scope_binding_event(&command.idempotency_key, &command.scope)
-        .map_err(|error| ActionRefusal::Decision(DecisionRefusal::Host(error)))?;
+        .map_err(|error| Box::new(ActionRefusal::Decision(DecisionRefusal::Host(error))))?;
     let catalog = definitions.catalog();
     let call = ActionCall {
         action: &admitted.root,
@@ -451,7 +455,7 @@ pub fn execute_action_in_fork<S: SqlEngine>(
         trace: command.trace.clone(),
     };
     fork.attributed(vec![scope_event], |cell| {
-        commit_action(cell, &catalog, &call, authorizer)
+        commit_action(cell, &catalog, &call, authorizer).map_err(Box::new)
     })
 }
 

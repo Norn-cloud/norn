@@ -373,9 +373,11 @@ fn promote_supply_po_create_replays_into_main_and_closes_decision_fork() -> Resu
     ));
     let second_cmd = po_create_call("PO-AFTER-PROMOTE", "planner:amal", "fork-po-after")?;
     assert!(matches!(
-        execute_action_in_fork(&mut decision_fork, &definitions, &second_cmd, &AllowAll),
-        Err(norn_kernel::ActionRefusal::Decision(
-            norn_kernel::DecisionRefusal::Host(CellError::ForkClosed { ref world, ref state })
+        execute_action_in_fork(&mut decision_fork, &definitions, &second_cmd, &AllowAll)
+            .err()
+            .as_deref(),
+        Some(norn_kernel::ActionRefusal::Decision(
+            norn_kernel::DecisionRefusal::Host(CellError::ForkClosed { world, state })
         )) if world == "D_1" && state == "promoted"
     ));
     assert!(matches!(
@@ -909,9 +911,11 @@ fn discarded_fork_refuses_read_commit_fork_and_scenario_open() -> Result<(), Str
     ));
     let cmd = po_create_call("PO-CLOSED", "planner:amal", "closed-key")?;
     assert!(matches!(
-        execute_action_in_fork(&mut discarded, &definitions, &cmd, &AllowAll),
-        Err(norn_kernel::ActionRefusal::Decision(
-            norn_kernel::DecisionRefusal::Host(CellError::ForkClosed { ref world, ref state })
+        execute_action_in_fork(&mut discarded, &definitions, &cmd, &AllowAll)
+            .err()
+            .as_deref(),
+        Some(norn_kernel::ActionRefusal::Decision(
+            norn_kernel::DecisionRefusal::Host(CellError::ForkClosed { world, state })
         )) if world == "D_DISCARD" && state == "discarded"
     ));
     let base = main
