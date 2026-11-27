@@ -1324,8 +1324,8 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
             let end = (index + workers).min(statements.len());
             let batch = &statements[index..end];
             index = end;
-            let outcomes: Vec<CaseOutcome> = if batch.len() == 1 {
-                vec![run_case(kind, transaction, batch[0])]
+            let outcomes: Vec<std::thread::Result<CaseOutcome>> = if batch.len() == 1 {
+                vec![Ok(run_case(kind, transaction, batch[0]))]
             } else {
                 let run_case = &run_case;
                 std::thread::scope(|thread_scope| {
@@ -1338,7 +1338,7 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
                         .collect();
                     handles
                         .into_iter()
-                        .map(|handle| handle.join().unwrap())
+                        .map(std::thread::ScopedJoinHandle::join)
                         .collect()
                 })
             };
@@ -1346,6 +1346,10 @@ fn fault_sweep_of(kinds: &[EngineFaultKind], first: &[u32], later: &[u32]) -> Sw
                 if past && at_statement != u32::MAX {
                     continue;
                 }
+                let outcome = match outcome {
+                    Ok(outcome) => outcome,
+                    Err(payload) => std::panic::resume_unwind(payload),
+                };
                 swept.cases += 1;
                 match outcome {
                     CaseOutcome::Hit { is_whole: true } => swept.whole += 1,
