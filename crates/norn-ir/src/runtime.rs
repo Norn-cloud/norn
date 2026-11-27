@@ -381,9 +381,10 @@ impl Decimal {
 }
 
 /// Whether `S` builds an in-memory `serde_json::Value` (`serde_json::to_value`
-/// and the nested serializers it uses), whose numbers are binary.
+/// and nested or wrapper serializers such as `FlatMapSerializer` around it),
+/// whose numbers are binary.
 fn builds_serde_json_value<S>() -> bool {
-    std::any::type_name::<S>().starts_with("serde_json::value::")
+    std::any::type_name::<S>().contains("serde_json::value::")
 }
 
 impl Serialize for Decimal {
