@@ -248,7 +248,7 @@ fn seed_main_with_payment_and_timer(cell: &mut SimCell) -> TestResult {
 
 fn entropy_bonus_grams(entropy: Entropy) -> (u8, i64) {
     let tag = entropy.as_bytes().first().copied().unwrap_or(0);
-    (tag, i64::from(tag) * 100)
+    (tag, i64::from(tag).saturating_mul(100))
 }
 
 fn consume_simulated_payment(scenario: &mut SimScenario, entropy: Entropy) -> TestResult {
@@ -256,7 +256,7 @@ fn consume_simulated_payment(scenario: &mut SimScenario, entropy: Entropy) -> Te
     let simulated = scenario
         .apply_fixture_perform()?
         .ok_or("expected fixture outcome")?;
-    let total_grams = simulated.input.extra_grams + bonus;
+    let total_grams = simulated.input.extra_grams.saturating_add(bonus);
     scenario
         .commit(
             CellCommit {
@@ -265,7 +265,7 @@ fn consume_simulated_payment(scenario: &mut SimScenario, entropy: Entropy) -> Te
                     expected: FactVersion(0),
                     mutation: FactMutation::Put {
                         values: conversion_values(
-                            50_000 + bonus,
+                            50_000_i64.saturating_add(bonus),
                             total_grams,
                             "2026-07-09T00:00:00Z",
                         )?,
