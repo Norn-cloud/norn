@@ -27,6 +27,21 @@ pub(super) enum ActiveCapture {
     },
 }
 
+/// Bind an installed mapping's `norn.feed/1` declaration onto `profile` before
+/// projection and pagination (`FEED-MODE-1`).
+pub(super) fn bind_mapping_feed<E: SqlEngine>(
+    host: &DevHost<E>,
+    mapping_id: &str,
+    profile: &mut PullProfile,
+) -> Result<(), Failure> {
+    if let Ok(Some(mapping)) = host.installed_artifact(mapping_id) {
+        let mapping_payload = mapping.get("payload").cloned().unwrap_or_default();
+        crate::pull_feed::bind_mapping_feed_declaration(profile, &mapping_payload)
+            .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
+    }
+    Ok(())
+}
+
 /// Read the connection's durably committed watermarks. `_norn_source_cursor` is
 /// authoritative; when upgrading a populated legacy cell whose prior syncs only
 /// wrote `source.Connection.watermark`, seed each legacy dataset cursor into

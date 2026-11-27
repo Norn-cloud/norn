@@ -689,11 +689,7 @@ fn begin<E: SqlEngine>(
                 format!("{} declares no norn.pull/1 profile", config.connector),
             )
         })?;
-    if let Ok(Some(mapping)) = host.installed_artifact(&config.mapping) {
-        let mapping_payload = mapping.get("payload").cloned().unwrap_or_default();
-        crate::pull_feed::bind_mapping_feed_declaration(&mut profile, &mapping_payload)
-            .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
-    }
+    capture::bind_mapping_feed(host, &config.mapping, &mut profile)?;
     // SYNC-PAGE-1: the host's page size, when it sets one.
     if let Some(rows) = config.page_size {
         for feed in &mut profile.feeds {
