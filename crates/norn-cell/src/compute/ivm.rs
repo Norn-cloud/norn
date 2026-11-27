@@ -437,6 +437,15 @@ impl IncrementalQuestion {
         )?;
         result.engine = Engine::Ivm;
         result.unlinked = u64::try_from(self.unlinked.len()).map_err(|_n| stale())?;
+        // SOURCE-AGREE-1: keep open source disagreements identical to exact
+        // recompute (`compute.rs::question_snapshot_at_with`) at this frontier.
+        result.source_disagreements = reader.answer_disagreements(
+            &result.context.world,
+            self.plan.grain().as_str(),
+            result.known_as_of,
+            &mut |id| Ok(self.contributions.contains_key(id)),
+            visible,
+        )?;
         self.totals.0.retain(|key, _| result.rows.contains_key(key));
         self.totals.1.retain(|key, _| result.rows.contains_key(key));
         self.receipt_pin = reader.receipt_at(result.revision.commits)?.map(|r| r.hash);
