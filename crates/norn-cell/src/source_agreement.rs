@@ -61,6 +61,27 @@ const REVIEW: &str = "source.AgreementReview";
 /// One version's partition values, by property.
 type Reports = BTreeMap<PropertyId, Option<String>>;
 
+/// Shared read context for resolving a subject's reported partition claims.
+struct ClaimContext<'a> {
+    world: &'a str,
+    key: &'a str,
+    records: &'a [Option<ObjectRecord>],
+    values: &'a [Reports],
+}
+
+/// Bounded per-subject memo of decoded source provenance across versions.
+struct ProvenanceMemo {
+    budget: crate::reactive::DecodeBudget,
+    entries: BTreeMap<usize, Option<InstanceSourceProvenance>>,
+}
+
+/// One resolved mapped report of a partition-source property.
+struct ReportedClaim {
+    index: usize,
+    claim: SourceClaim,
+    lineage: Option<norn_ir::InstanceProvenance>,
+}
+
 /// A partition value as the rule compares it: a code, or `None` for null.
 fn code(value: Option<&RuntimeValue>) -> Option<String> {
     match value {
@@ -96,7 +117,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         for property in partition {
             let path = format!("$.values.{}", property.as_str());
             let rows = self.conn.query(
-                &format!("SELECT \"id\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"commit_seq\" <= ?3 GROUP BY \"id\" HAVING count(DISTINCT json_quote(json_extract(\"snapshot\", ?4))) > 1 ORDER BY \"id\" LIMIT ?5"),
+                &format!("SELECT \"id\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"commit_seq\" <= ?3 AND json_extract(\"snapshot\", '$.values') IS NOT NULL GROUP BY \"id\" HAVING count(DISTINCT json_quote(json_extract(\"snapshot\", ?4))) > 1 ORDER BY \"id\" LIMIT ?5"),
                 params![world, object_type, to_i64(frontier, "frontier")?, path, bound],
             )?;
             for row in rows {
@@ -131,7 +152,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// A subject's verified versions up to `frontier`, oldest first, with their
-    /// partition values.
+    /// partition values. Deleted tombstones are preserved as `None` (empty
+    /// reports) so neither change detection nor gap walkback crosses a deletion
+    /// boundary.
     fn partition_history(
         &self,
         world: &str,
@@ -139,7 +162,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         frontier: Option<u64>,
         partition: &[PropertyId],
-    ) -> Result<(Vec<ObjectRecord>, Vec<Reports>), CellError> {
+    ) -> Result<(Vec<Option<ObjectRecord>>, Vec<Reports>), CellError> {
         // S7/S8 (#1551 round 5): scanning `_norn_fact_values` requires verified history.
         self.check_history("source disagreement history")?;
         let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
@@ -153,20 +176,90 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let mut records = Vec::with_capacity(rows.len());
         for row in rows {
             let version = to_u64(SqlRow(row).get(0)?, "fact version")?;
-            if let Some(record) = self.object_at_version(world, object_type, key, version)? {
-                records.push(record);
-            }
+            records.push(self.object_at_version(world, object_type, key, version)?);
         }
         let values = records
             .iter()
-            .map(|record| {
-                partition
+            .map(|record| match record {
+                Some(record) => partition
                     .iter()
                     .map(|p| (p.clone(), code(record.values.get(p.as_str()))))
-                    .collect()
+                    .collect(),
+                None => BTreeMap::new(),
             })
             .collect();
         Ok((records, values))
+    }
+
+    fn load_provenance<'a>(
+        &self,
+        ctx: &ClaimContext<'_>,
+        memo: &'a mut ProvenanceMemo,
+        index: usize,
+    ) -> Result<Option<&'a InstanceSourceProvenance>, CellError> {
+        let Some(record) = ctx.records.get(index).and_then(Option::as_ref) else {
+            return Ok(None);
+        };
+        let entry = match memo.entries.entry(index) {
+            std::collections::btree_map::Entry::Occupied(occupied) => occupied.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let fact = FactRef::new(record.object_type.as_str(), ctx.key, record.version);
+                vacant.insert(self.instance_source_provenance(
+                    ctx.world,
+                    &fact,
+                    &mut memo.budget,
+                    |_| Ok(true),
+                )?)
+            }
+        };
+        Ok(entry.as_ref())
+    }
+
+    /// Resolve the mapped report of `property` at `index`. When a source
+    /// declared a mapping gap (`field_provenance` omits `property`), the stored
+    /// row inherited its prior value rather than reporting a new one; when
+    /// `walk_back` is true, walk back across consecutive gap versions carrying
+    /// that same value to find the actual reporting source (SOURCE-AGREE-1).
+    /// Tombstones (`None` records) terminate the walkback.
+    fn reported_claim(
+        &self,
+        ctx: &ClaimContext<'_>,
+        memo: &mut ProvenanceMemo,
+        index: usize,
+        property: &PropertyId,
+        walk_back: bool,
+    ) -> Result<Option<ReportedClaim>, CellError> {
+        let target = ctx.values.get(index).and_then(|v| v.get(property)).cloned();
+        let mut cursor = index;
+        loop {
+            if ctx.values.get(cursor).and_then(|v| v.get(property)) != target.as_ref() {
+                return Ok(None);
+            }
+            let Some(record) = ctx.records.get(cursor).and_then(Option::as_ref) else {
+                return Ok(None);
+            };
+            let Some(source) = self.load_provenance(ctx, memo, cursor)? else {
+                return Ok(None);
+            };
+            if let Some(lineage) = source.field_provenance.get(property).cloned() {
+                let system = lineage.source.system.clone();
+                let value = target.flatten();
+                let fact = FactRef::new(record.object_type.as_str(), ctx.key, record.version);
+                return Ok(Some(ReportedClaim {
+                    index: cursor,
+                    claim: SourceClaim {
+                        system,
+                        value,
+                        fact,
+                    },
+                    lineage: Some(lineage),
+                }));
+            }
+            if !walk_back || cursor == 0 {
+                return Ok(None);
+            }
+            cursor = cursor.saturating_sub(1);
+        }
     }
 
     /// SOURCE-AGREE-1 for one subject at `frontier` (a commit; the current
@@ -194,72 +287,43 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if changes.is_empty() {
             return Ok(Vec::new());
         }
-        let mut budget = crate::compute::question_budget()?;
-        let mut provenance: BTreeMap<usize, Option<InstanceSourceProvenance>> = BTreeMap::new();
+        let ctx = ClaimContext {
+            world,
+            key,
+            records: &records,
+            values: &values,
+        };
+        let mut memo = ProvenanceMemo {
+            budget: crate::compute::question_budget()?,
+            entries: BTreeMap::new(),
+        };
         let mut found = Vec::new();
         for change in changes {
-            let mut claim = |index: usize| -> Result<_, CellError> {
-                let Some(record) = records.get(index) else {
-                    return Ok(None);
-                };
-                let read = match provenance.entry(index) {
-                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        let fact = FactRef::new(record.object_type.as_str(), key, record.version);
-                        entry.insert(self.instance_source_provenance(
-                            world,
-                            &fact,
-                            &mut budget,
-                            |_| Ok(true),
-                        )?)
-                    }
-                };
-                let Some(source) = read.as_ref() else {
-                    return Ok(None);
-                };
-                let lineage = source.field_provenance.get(&change.property).cloned();
-                let system = lineage.as_ref().map_or_else(
-                    || source.source_record_ref.system.clone(),
-                    |field| field.source.system.clone(),
-                );
-                let value = values
-                    .get(index)
-                    .and_then(|v| v.get(&change.property).cloned())
-                    .flatten();
-                let fact = FactRef::new(record.object_type.as_str(), key, record.version);
-                Ok(Some((
-                    SourceClaim {
-                        system,
-                        value,
-                        fact,
-                    },
-                    lineage,
-                )))
-            };
-            let (Some(earlier), Some(later)) = (claim(change.earlier)?, claim(change.later)?)
-            else {
+            let (Some(earlier), Some(later)) = (
+                self.reported_claim(&ctx, &mut memo, change.earlier, &change.property, true)?,
+                self.reported_claim(&ctx, &mut memo, change.later, &change.property, false)?,
+            ) else {
                 continue;
             };
-            if earlier.0.system == later.0.system {
+            if earlier.claim.system == later.claim.system {
                 continue;
             }
             let current = values
                 .last()
                 .and_then(|v| v.get(&change.property).cloned())
                 .flatten();
-            let seen = later.1.as_ref().map_or_else(
+            let seen = later.lineage.as_ref().map_or_else(
                 || norn_ir::provenance::UtcTimestamp("1970-01-01T00:00:00Z".to_owned()),
                 |lineage| lineage.recorded_at.clone(),
             );
-            let finding = rule::finding(
+            let mut finding = rule::finding(
                 DataQualitySubject::new(norn_ir::ObjectTypeName(object_type.to_owned()), key),
                 change.property.clone(),
-                earlier,
-                later,
+                (earlier.claim, earlier.lineage),
+                (later.claim, later.lineage),
                 current.as_deref(),
                 seen,
             )?;
-            let mut finding = finding;
             // A steward's accepted review acknowledges an open disagreement.
             if finding.status == DataQualityFindingStatus::Open
                 && self.accepted(world, &finding.id, frontier)?
@@ -267,8 +331,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 finding.status = DataQualityFindingStatus::Acknowledged;
             }
             let (Some(earlier), Some(later)) = (
-                records.get(change.earlier).cloned(),
-                records.get(change.later).cloned(),
+                records.get(earlier.index).and_then(Option::as_ref).cloned(),
+                records.get(later.index).and_then(Option::as_ref).cloned(),
             ) else {
                 continue;
             };
