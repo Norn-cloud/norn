@@ -1342,7 +1342,7 @@ fn observation_authorization_validates_seals_and_preserves_predicate_reads() {
     let customer_key = FactKey::new("test.Customer", "CUST-1");
     let values: JsonObject = serde_json::from_value(json!({"amount": 10})).unwrap();
     let prov = provenance("predicate_reads");
-    let mut cell = cell().with_types(vec![order_type, customer_type]);
+    let mut cell = cell().with_types(vec![order_type.clone(), customer_type.clone()]);
     let delivery = next_delivery(&mut cell, "pred-1");
     let slice = load_slice(&cell, [key.clone()]).unwrap();
     let prepared = prepare_observed_snapshot(

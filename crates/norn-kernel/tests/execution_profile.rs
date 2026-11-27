@@ -475,3 +475,79 @@ fn empty_predicate_read_enforces_predicate_ownership() {
     )
     .expect("local default atomic ownership admits empty predicate read");
 }
+
+struct SubtypePredicateView;
+
+impl CommitView for SubtypePredicateView {
+    type Error = Infallible;
+
+    fn predicate_ownership(
+        &self,
+        predicate: &PredicateQuery,
+    ) -> Result<AtomicOwnership, Infallible> {
+        Ok(if predicate.object_type.as_str() == "test.LawChild" {
+            AtomicOwnership::Foreign
+        } else {
+            AtomicOwnership::Local
+        })
+    }
+
+    fn pending(&self, _: &Consumed) -> Result<bool, Infallible> {
+        Ok(true)
+    }
+
+    fn version(&self, _: &FactKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn concrete(&self, _: &FactKey) -> Result<Option<ObjectTypeName>, Infallible> {
+        Ok(None)
+    }
+
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Infallible> {
+        Ok(FactVersion::ABSENT)
+    }
+
+    fn links_of(&self, _: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
+        Ok(Vec::new())
+    }
+
+    fn predicate_members(
+        &self,
+        _: &PredicateQuery,
+        _: usize,
+    ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
+        Ok(Some(Vec::new()))
+    }
+}
+
+#[test]
+fn subtype_predicate_read_preserves_subtype_type_for_ownership() {
+    let mut subtype_types = law_object_types();
+    let subtype: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "test.LawChild",
+        "extends": law_key(1).object_type.as_str(),
+        "properties": []
+    }))
+    .expect("valid subtype");
+    subtype_types.push(subtype);
+    let subtype_catalog = TypeCatalog::new(&subtype_types);
+    let subtype_model = CommitModel::new(&subtype_catalog);
+    let subtype_proposal: CellCommit<(), (), ()> = CellCommit {
+        predicate_reads: vec![PredicateReadExpectation {
+            predicate: PredicateQuery {
+                object_type: ObjectTypeName("test.LawChild".to_owned()),
+                filter: BTreeMap::new(),
+                window: None,
+            },
+            members: Vec::new(),
+        }],
+        ..CellCommit::empty()
+    };
+
+    let subtype_result = check_commit(&subtype_proposal, &subtype_model, &SubtypePredicateView);
+    assert!(
+        matches!(subtype_result, Err(CommitError::AtomicBoundary { .. })),
+        "subtype predicate read must preserve subtype object_type for predicate_ownership, got {subtype_result:?}"
+    );
+}

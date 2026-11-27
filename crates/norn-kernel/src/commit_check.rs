@@ -214,10 +214,11 @@ pub trait CommitView {
     }
 
     /// Ownership of the complete predicate-read partition queried by
-    /// `predicate`. Local-only stores own every predicate partition within
-    /// their bound cell. Hosts with external or unresolved partitions must
-    /// override this method (or [`Self::atomic_ownership`], which the default
-    /// delegates to via the canonical object-type partition key).
+    /// `predicate` (the exact query passed to [`Self::predicate_members`]).
+    /// Local-only stores own every predicate partition within their bound cell.
+    /// Hosts with external or unresolved partitions must override this method
+    /// (or [`Self::atomic_ownership`], which the default delegates to via the
+    /// queried object-type partition key).
     ///
     /// # Errors
     /// Ownership cannot be resolved under the commit's read snapshot.

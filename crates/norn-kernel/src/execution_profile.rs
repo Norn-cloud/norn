@@ -131,12 +131,9 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
             }
         }
         for predicate in self.predicates.borrow().iter() {
-            let canonical_key = model.canonical(&FactKey::new(predicate.object_type.as_str(), ""));
-            let mut canonical_predicate = predicate.clone();
-            canonical_predicate.object_type = canonical_key.object_type;
             let ownership = self
                 .inner
-                .predicate_ownership(&canonical_predicate)
+                .predicate_ownership(predicate)
                 .map_err(CommitError::Host)?;
             if !supports_local(ownership) {
                 return Err(CommitError::AtomicBoundary {
