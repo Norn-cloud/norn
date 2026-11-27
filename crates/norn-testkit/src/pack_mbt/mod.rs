@@ -623,6 +623,104 @@ pub(crate) fn set_property_decision<H: PackHost>(
     )
 }
 
+fn take_self_ident(s: &str) -> Option<(String, &str)> {
+    let rest = s.strip_prefix("self.")?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then(|| (name.clone(), rest.get(name.len()..).unwrap_or_default()))
+}
+
+fn unwrap_self_group(group: &str) -> Option<String> {
+    let (name, tail) = take_self_ident(group.trim())?;
+    let rest = tail.trim_start();
+    (rest.is_empty() || rest.starts_with("??")).then_some(name)
+}
+
+fn is_op_boundary(s: &str, lhs: bool) -> bool {
+    let t = if lhs { s.trim_end() } else { s.trim_start() };
+    let toks = if lhs {
+        ["&&", "||", "(", ","]
+    } else {
+        ["&&", "||", ")", ","]
+    };
+    t.is_empty()
+        || toks.iter().any(|k| {
+            if lhs {
+                t.ends_with(k)
+            } else {
+                t.starts_with(k)
+            }
+        })
+}
+
+fn extract_lhs_self_prop(lhs_part: &str) -> Option<String> {
+    let trimmed = lhs_part.trim_end();
+    if let Some(inner) = trimmed.strip_suffix(')') {
+        let open = inner
+            .char_indices()
+            .rev()
+            .try_fold(1usize, |d, (i, c)| match c {
+                ')' => Ok(d.saturating_add(1)),
+                '(' if d == 1 => Err(i),
+                '(' => Ok(d.saturating_sub(1)),
+                _ => Ok(d),
+            })
+            .err()?;
+        return is_op_boundary(inner.get(..open).unwrap_or_default(), true)
+            .then(|| unwrap_self_group(inner.get(open.saturating_add(1)..).unwrap_or_default()))
+            .flatten();
+    }
+    let rev: String = trimmed
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let name: String = rev.chars().rev().collect();
+    let before = trimmed.strip_suffix(name.as_str())?.strip_suffix("self.")?;
+    (!name.is_empty() && is_op_boundary(before, true)).then_some(name)
+}
+
+fn extract_rhs_self_prop(rhs_part: &str) -> Option<String> {
+    let trimmed = rhs_part.trim_start();
+    if let Some(inner) = trimmed.strip_prefix('(') {
+        let close = inner
+            .char_indices()
+            .try_fold(1usize, |d, (i, c)| match c {
+                '(' => Ok(d.saturating_add(1)),
+                ')' if d == 1 => Err(i),
+                ')' => Ok(d.saturating_sub(1)),
+                _ => Ok(d),
+            })
+            .err()?;
+        let after = inner.get(close.saturating_add(1)..).unwrap_or_default();
+        return is_op_boundary(after, false)
+            .then(|| unwrap_self_group(inner.get(..close).unwrap_or_default()))
+            .flatten();
+    }
+    let (name, tail) = take_self_ident(trimmed)?;
+    is_op_boundary(tail, false).then_some(name)
+}
+
+pub(crate) fn extract_self_equality_pairs(expr: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut offset = 0;
+    while let Some(rel) = expr.get(offset..).and_then(|tail| tail.find("==")) {
+        let eq_pos = offset.saturating_add(rel);
+        let lhs = expr.get(..eq_pos).unwrap_or_default();
+        let rhs = expr.get(eq_pos.saturating_add(2)..).unwrap_or_default();
+        if !lhs.ends_with(['!', '='])
+            && !rhs.starts_with('=')
+            && let (Some(l), Some(r)) = (extract_lhs_self_prop(lhs), extract_rhs_self_prop(rhs))
+        {
+            pairs.push((l, r));
+        }
+        offset = eq_pos.saturating_add(2);
+    }
+    pairs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,5 +803,35 @@ mod tests {
         let plan = coverage::DomainCoveragePlan::from_pack(&pack);
         assert!(plan.transitions.is_empty());
         assert_eq!(plan.immutable_targets.len(), 1);
+    }
+
+    #[test]
+    fn extract_self_equality_pairs_handles_coalesce_and_rejects_compound_exprs() {
+        assert_eq!(
+            extract_self_equality_pairs(
+                "self.evaluation_revision !== null && self.pinned_dataset_revision == (self.evaluation_revision ?? '') && self.evaluated_artifact_sha256 !== null && self.artifact_sha256 == (self.evaluated_artifact_sha256 ?? '')"
+            ),
+            vec![
+                (
+                    "pinned_dataset_revision".to_owned(),
+                    "evaluation_revision".to_owned()
+                ),
+                (
+                    "artifact_sha256".to_owned(),
+                    "evaluated_artifact_sha256".to_owned()
+                ),
+            ]
+        );
+        assert_eq!(
+            extract_self_equality_pairs("(self.a ?? '') == self.b"),
+            vec![("a".to_owned(), "b".to_owned())]
+        );
+        assert!(extract_self_equality_pairs("self.a == (self.b + 1)").is_empty());
+        assert!(extract_self_equality_pairs("self.a == (self.b ?? 0) + 1").is_empty());
+        assert!(extract_self_equality_pairs("self.a == self.b + 1").is_empty());
+        assert!(extract_self_equality_pairs("1 + self.a == self.b").is_empty());
+        assert!(extract_self_equality_pairs("(self.a + 1) == self.b").is_empty());
+        assert!(extract_self_equality_pairs("self.a !== (self.b ?? '')").is_empty());
+        assert!(extract_self_equality_pairs("self.a == (self.b ?? f(1)) + 1").is_empty());
     }
 }

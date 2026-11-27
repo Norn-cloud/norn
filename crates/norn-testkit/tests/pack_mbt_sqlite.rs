@@ -32,10 +32,9 @@ use norn_kernel::result_reconciliation::{
     ResultAuthorizer, ResultAuthzRequest, ResultChecks, ResultDenial,
 };
 use norn_kernel::{
-    BoundedFact, CellCommit, CellHost, Command, CommitError, CommitReceipt, Consumed,
-    DecisionRefusal, DueTimer, Effect, FactEvent, IdempotencyKey, LinkKey, LinkReadTarget,
-    LinkState, LogicalTime, Observed, OwnedRowsCommitProof, Performed, PredicateObject,
-    PredicateQuery,
+    BoundedFact, CellCommit, CellHost, Command, CommitError, CommitReceipt, DecisionRefusal,
+    DueTimer, Effect, FactEvent, IdempotencyKey, LinkKey, LinkReadTarget, LinkState, LogicalTime,
+    Observed, OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery,
 };
 use norn_testkit::pack_mbt::coverage::{
     DomainCoverage, DomainTransition, ImmutableTarget, PolicyRuleTarget,
@@ -468,19 +467,6 @@ impl PackHost for SqlitePackHost {
             .cell_mut()
             .map_err(|err| format!("cell_mut: {err}"))?
             .inner_mut();
-        while let Some(stale) = cell
-            .perform()
-            .map_err(|err| format!("drain stale mbt receipt command: {err}"))?
-        {
-            cell.commit(CellCommit {
-                consumes: Some(Consumed::Result {
-                    command: stale.command,
-                    generation: stale.generation,
-                }),
-                ..CellCommit::empty()
-            })
-            .map_err(|err| format!("consume stale mbt receipt delivery: {err}"))?;
-        }
         cell.commit(CellCommit {
             writes: vec![FactWrite {
                 key: FactKey::new(FUNCTION_COMMAND_TYPE, cmd_id.as_str()),
@@ -506,11 +492,19 @@ impl PackHost for SqlitePackHost {
             ..CellCommit::empty()
         })
         .map_err(|err| format!("enqueue mbt receipt command: {err}"))?;
-        let performed = cell
+        let Some(delivered) = cell
             .perform()
-            .map_err(|err| format!("perform mbt receipt command: {err}"))?;
-        if performed.is_none() {
+            .map_err(|err| format!("perform mbt receipt command: {err}"))?
+        else {
             return Err(format!("mbt receipt command {cmd_id} did not perform"));
+        };
+        if delivered.command != dispatched.command_id()
+            || delivered.generation != dispatched.generation()
+        {
+            return Err(format!(
+                "unexpected outbox head {:?} (generation {:?}) while seeding mbt receipt command {cmd_id}",
+                delivered.command, delivered.generation
+            ));
         }
         let command = dispatched.command_id();
         let digest = cell
