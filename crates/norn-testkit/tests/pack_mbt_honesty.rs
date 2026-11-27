@@ -29,8 +29,8 @@ use norn_kernel::authz::{
     UnboundProfile, VerifiedPrincipal, compile_all_projected,
 };
 use norn_kernel::cell_host::{
-    CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactKey, FactState, JsonObject,
-    LinkKey, LinkState, Observed, Performed,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactKey, FactState,
+    JsonObject, LinkKey, LinkState, Observed, Performed,
 };
 use norn_kernel::pack_mbt_support::cedar_projection::{
     project_cedar_schema_with_catalog, project_host_access_schema,
@@ -72,6 +72,14 @@ impl CellHost for MemoryPackHost {
 
     fn load(&self, key: &FactKey) -> Result<FactState, Infallible> {
         self.cell.load(key)
+    }
+
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<BoundedFact>, Infallible> {
+        self.cell.load_bounded(key, max_bytes)
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Infallible> {

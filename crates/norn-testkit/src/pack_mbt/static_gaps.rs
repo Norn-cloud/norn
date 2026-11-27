@@ -948,27 +948,27 @@ mod tests {
         root
     }
 
-    fn create_only(kind: &str, id_field: &str, ver: &str) -> Option<ActionEffectProgram> {
-        Some(ActionEffectProgram::UpsertInputObject {
+    fn create_only(kind: &str, id_field: &str, ver: &str) -> ActionEffectProgram {
+        ActionEffectProgram::UpsertInputObject {
             object_kind: kind.to_owned(),
             object_id_field: id_field.to_owned(),
             entity_artifact_id: format!("{kind}.entity"),
             entity_artifact_version: ver.to_owned(),
             write_mode: UpsertWriteMode::CreateOnly,
-        })
+        }
     }
 
     #[test]
     fn dx9_skips_create_only_and_noun_matches_and_receipt_confirmations() {
         let create_payroll = sample_action(
             "soliman.payroll.create",
-            create_only("soliman.PayrollRun", "id", "0.2.0"),
+            Some(create_only("soliman.PayrollRun", "id", "0.2.0")),
         );
         assert!(high_impact_reason(&create_payroll, false).is_none());
 
         let post_immutable_journal = sample_action(
             "gap.journal.post",
-            create_only("gap.JournalEntry", "entry_id", "1.0.0"),
+            Some(create_only("gap.JournalEntry", "entry_id", "1.0.0")),
         );
         assert!(high_impact_reason(&post_immutable_journal, true).is_some());
 
