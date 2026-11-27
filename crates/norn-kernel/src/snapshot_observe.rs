@@ -1908,6 +1908,12 @@ pub fn prepare_observed_snapshot(
         version: original.version,
         values: effective_original.clone(),
     };
+    if let Some(missing) = catalog.missing_interface(&key.object_type) {
+        return Err(ObservationRefusal::InvariantModel {
+            key: key.clone(),
+            interface: missing.as_str().to_owned(),
+        });
+    }
     for property in catalog.lifecycle_properties(&key.object_type) {
         if values.contains_key(property.as_str()) {
             return Err(invalid(

@@ -496,13 +496,32 @@ pub struct DeclaredLifecycle {
     pub lifecycle: Lifecycle,
 }
 
-/// Every lifecycle the `EntityIR` v2 object types in `artifacts` declare, in
-/// artifact then declaration order. Artifacts that are not `EntityIR` v2
-/// object types, or do not decode, are skipped: this is a projection input,
-/// not a check; run [`crate::check_artifact_set`] for the findings.
+/// Every lifecycle the `EntityIR` v2 object types in `artifacts` declare (plus
+/// effective lifecycles inherited from implemented interfaces), in artifact
+/// then declaration order. Artifacts that are not `EntityIR` v2 object types,
+/// or do not decode, are skipped: this is a projection input, not a check; run
+/// [`crate::check_artifact_set`] for the findings.
 #[must_use]
 pub fn declared_lifecycles(artifacts: &[ArtifactEnvelope]) -> Vec<DeclaredLifecycle> {
     let catalog = EffectiveCatalog::from_artifacts(artifacts);
+    let mut interface_lifecycle_props: BTreeMap<norn_ir::InterfaceName, BTreeSet<PropertyId>> =
+        BTreeMap::new();
+    for artifact in artifacts {
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            continue;
+        };
+        if let EntityRoot::V2Interface(root) = *root {
+            let props: BTreeSet<PropertyId> = root
+                .interface
+                .lifecycles
+                .iter()
+                .map(|lifecycle| lifecycle.property.clone())
+                .collect();
+            if !props.is_empty() {
+                interface_lifecycle_props.insert(root.interface.name, props);
+            }
+        }
+    }
     let mut out = Vec::new();
     for artifact in artifacts {
         let Decoded::Root(root) = decode_v2(artifact) else {
@@ -515,7 +534,9 @@ pub fn declared_lifecycles(artifacts: &[ArtifactEnvelope]) -> Vec<DeclaredLifecy
         let effective = catalog
             .object_type(&artifact.artifact_id)
             .and_then(Result::ok);
+        let mut emitted = BTreeSet::new();
         for declared in &def.lifecycles {
+            emitted.insert(declared.property.clone());
             let property = declared.property.as_str();
             let (states, lifecycle) =
                 match effective.and_then(|object_type| object_type.lifecycle(property)) {
@@ -539,6 +560,26 @@ pub fn declared_lifecycles(artifacts: &[ArtifactEnvelope]) -> Vec<DeclaredLifecy
                 states,
                 lifecycle,
             });
+        }
+        if let Some(effective) = effective {
+            let inherited_from_interfaces: BTreeSet<&PropertyId> = effective
+                .interfaces
+                .iter()
+                .filter_map(|iface| interface_lifecycle_props.get(iface))
+                .flatten()
+                .collect();
+            for EffectiveLifecycle { states, lifecycle } in &effective.lifecycles {
+                if !emitted.contains(&lifecycle.property)
+                    && inherited_from_interfaces.contains(&lifecycle.property)
+                {
+                    out.push(DeclaredLifecycle {
+                        artifact_id: artifact.artifact_id.clone(),
+                        object_type: def.name.clone(),
+                        states: states.clone(),
+                        lifecycle: lifecycle.clone(),
+                    });
+                }
+            }
         }
     }
     out
