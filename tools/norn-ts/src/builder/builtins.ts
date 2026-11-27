@@ -53,20 +53,60 @@ const TRACE_CONTEXT = S.record(
   ["intentRef", "sessionDigest"],
 )
 
+/** Supported explicit pin fields on `norn.action@1` steps (STEP-PIN-1). */
+export type ActionStepPinField = "artifactId" | "version" | "digest" | "definitionsVersion"
+
+const ACTION_STEP_PIN_FIELDS: ReadonlyMap<ActionStepPinField, S.ValueSchema> = new Map<
+  ActionStepPinField,
+  S.ValueSchema
+>([
+  ["artifactId", S.text()],
+  ["version", S.text()],
+  ["digest", S.text()],
+  ["definitionsVersion", S.integer],
+])
+
+function actionStepPinSchema(fields: ReadonlyArray<ActionStepPinField>): S.ObjectSchema {
+  if (fields.length === 0) {
+    throw new Error("actionFn pinFields must declare at least one pin field (empty pin `{}` is rejected by norn.action@1)")
+  }
+  const properties: Record<string, S.ValueSchema> = {}
+  for (const field of fields) {
+    const schema = ACTION_STEP_PIN_FIELDS.get(field)
+    if (schema === undefined) {
+      throw new Error(`unknown actionFn pin field: ${String(field)}`)
+    }
+    properties[field] = schema
+  }
+  return S.record(properties)
+}
+
 /**
  * `norn.action@1` (ACTION-STEP-1): a step that calls the governed action `action` with an input of
- * `input`'s shape (the action's own input record) and optional `trace` context. The cell executes it
- * through the ordinary action path, under the run starter's authority for the whole run; a person
- * who decided an earlier step lends it nothing. Its output is the action's target. Its typed
- * failures are `Denied` (the starter may not call the action) and `Refused` (any other refusal,
- * with its `code`). One handle per action: the input schema is the action's, the Function is the
- * same.
+ * `input`'s shape (the action's own input record) and optional `trace` context (and optional `pin`
+ * when `options.pinFields` declares the required pin fields; every declared pin field is required
+ * in the closed schema so empty `pin: {}` is rejected statically, matching `action.input.json`).
+ * The cell executes it through the ordinary action path, under the run starter's authority for the
+ * whole run; a person who decided an earlier step lends it nothing. Its output is the action's
+ * target. Its typed failures are `Denied` (the starter may not call the action) and `Refused` (any
+ * other refusal, with its `code`). One handle per action: the input schema is the action's, the
+ * Function is the same.
  */
-export function actionFn(action: string, input: S.ObjectSchema): FnRef {
+export function actionFn(
+  action: string,
+  input: S.ObjectSchema,
+  options?: { readonly pinFields?: readonly [ActionStepPinField, ...ActionStepPinField[]] },
+): FnRef {
+  const stepInput = options?.pinFields !== undefined
+    ? S.record(
+        { action: S.text([action]), input, trace: TRACE_CONTEXT, pin: actionStepPinSchema(options.pinFields) },
+        ["trace", "pin"],
+      )
+    : S.record({ action: S.text([action]), input, trace: TRACE_CONTEXT }, ["trace"])
   return fn({
     id: "norn.action",
     version: "1",
-    input: S.record({ action: S.text([action]), input, trace: TRACE_CONTEXT }, ["trace"]),
+    input: stepInput,
     output: S.record({ objectType: S.text(), objectId: S.text(), version: S.integer }),
     errors: [taggedError("Denied", S.record({}), { at }), taggedError("Refused", S.record({ code: S.text() }, ["code"]), { at })],
     at,

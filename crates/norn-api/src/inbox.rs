@@ -63,7 +63,7 @@ use crate::object_review::SOURCE_EVIDENCE;
 use crate::object_routes::{
     ObjectAccess, SCAN_BATCH, collection, get_object_query_within, locked, permitted,
 };
-use crate::privacy::NornMaskedProperty;
+use crate::privacy::{NornMaskedProperty, disclosure::project_object};
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -893,9 +893,7 @@ fn record<E: SqlEngine>(
     let review = locked(host, access, start, |reader| {
         let catalog = host.marking_catalog(reader)?;
         let markings = crate::privacy::row_markings(reader, &catalog, row)?;
-        let mut projected = row.clone();
-        let outcome =
-            crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut projected);
+        let projected = project_object(host, actor, &catalog, markings.as_ref(), row.clone());
         let marked = markings.as_ref().map_or_default(|markings| {
             markings
                 .iter()
@@ -951,8 +949,8 @@ fn record<E: SqlEngine>(
             None => None,
         };
         Ok(Review {
-            values: projected.values.into_iter().collect(),
-            masked: outcome.masked,
+            values: projected.values.clone().into_iter().collect(),
+            masked: projected.masked.clone(),
             marked,
             unavailable: markings.is_none(),
             neighbors,
@@ -1577,7 +1575,7 @@ fn failing_sources<E: SqlEngine>(
         ],
         1,
     );
-    let skipped = not_set_up.as_ref().map_or((0, false), totals);
+    let skipped = not_set_up.as_deref().map_or((0, false), totals);
     let limit = usize::try_from(skipped.0)
         .unwrap_or(usize::MAX)
         .saturating_add(MAX_INBOX_SOURCES)
@@ -1593,17 +1591,17 @@ fn failing_sources<E: SqlEngine>(
     let (count, approximate) = totals(&page);
     let items = page
         .records
-        .into_iter()
+        .iter()
         .filter_map(|record| {
-            let values = record.values?;
+            let values = record.values.as_ref()?;
             let not_set_up = matches!(
                 values.get("last_error_code"),
                 Some(RuntimeValue::String(code)) if code == CONNECTOR_MISSING
             );
             (!not_set_up).then(|| NornInboxSource {
                 target: record_target(&record.object_type, &record.id),
-                id: record.id,
-                values,
+                id: record.id.clone(),
+                values: values.clone(),
             })
         })
         .take(MAX_INBOX_SOURCES)

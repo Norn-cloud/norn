@@ -19,7 +19,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::read::{LinkDirection, LinkEdgeRecord, LinkPagePosition, LinkRef};
-use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::{MAIN_WORLD, ObjectRecord, engine::SqlEngine};
 use serde::{Deserialize, Serialize};
 
@@ -492,7 +491,7 @@ pub fn get_object_links<E: SqlEngine>(
     id: &str,
     params: &ObjectLinkParams,
     access: &dyn ObjectAccess,
-) -> Result<NornObjectLinkPage, Refusal> {
+) -> Result<crate::privacy::DisclosedObjectLinks, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let query = parse_links(params, &declared_links(host)?)?;
     let digest = norn_cell::compute::lineage::keyed_lineage_handle(
@@ -568,13 +567,13 @@ pub fn get_object_links<E: SqlEngine>(
         complete,
         bound: LINK_COUNT_BOUND,
     });
-    Ok(NornObjectLinkPage {
-        object_type: object_type.to_owned(),
-        id: id.to_owned(),
-        items: scan.listed.into_iter().map(NornLinkEdge::from).collect(),
+    Ok(crate::privacy::disclosure::project_object_links(
+        object_type.to_owned(),
+        id.to_owned(),
+        scan.listed.into_iter().map(NornLinkEdge::from).collect(),
         next,
         counts,
-    })
+    ))
 }
 
 /// The requested object, when the caller may see it: Population on the row,
@@ -625,7 +624,7 @@ pub fn get_object_lineage<E: SqlEngine>(
     object_type: &str,
     id: &str,
     access: &dyn ObjectAccess,
-) -> Result<InstanceSourceProvenance, Refusal> {
+) -> Result<crate::privacy::DisclosedSourceLineage, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = locked(host, access, &mut start, |reader| {
@@ -656,12 +655,7 @@ pub fn get_object_lineage<E: SqlEngine>(
         let mut budget = DecodeBudget::new(&ReactiveLimits::from_profile(
             &norn_ir::ResourceLimitProfile::norn_limits_v1(),
         ));
-        let catalog = host.marking_catalog(reader)?;
-        reader
-            .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |instance| {
-                crate::privacy::discloses_source(reader, &catalog, instance)
-            })
-            .map_err(Refusal::host)?
+        crate::privacy::disclosure::project_source_lineage(host, reader, &fact, &mut budget)?
             .ok_or_else(not_found)
     })
 }

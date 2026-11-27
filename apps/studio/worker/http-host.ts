@@ -45,7 +45,7 @@ const SAFE = new Set(["GET", "HEAD", "OPTIONS"])
 
 /** A `norn/refusal@2` answer from this adapter, in the shape the host's own refusals have. */
 function hostRefusal(status: 502 | 504, code: string, retryable: boolean, message: string, explanation: string): Response {
-  return new Response(JSON.stringify({ format: "norn/refusal@2", retryable, reason: null, code, category: "host", message, explanation }), {
+  return new Response(JSON.stringify({ format: "norn/refusal@2", retryable, reason: null, code, category: "internal", message, explanation }), {
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   })

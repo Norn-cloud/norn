@@ -1,0 +1,51 @@
+{
+  "artifactId": "units.compute.UnitDefinition.exact_information_factor.law",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "UNITS-SCALE-1: IEC 80000-13 binary (KiBy..TiBy) and SI decimal (kBy..TBy) storage units carry distinct exact rational factors to By.",
+  "namespace": "units",
+  "payload": {
+    "condition": "self.dimension == 'information'",
+    "id": "units.compute.UnitDefinition.exact_information_factor",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "units.compute",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/compute-units/units.ts"
+    },
+    "rationale": "UNITS-SCALE-1: IEC 80000-13 binary (KiBy..TiBy) and SI decimal (kBy..TBy) storage units carry distinct exact rational factors to By.",
+    "response": {
+      "expression": "(self.base_code == 'By') and ((((self.code == 'bit') and (self.numerator == 1)) and (self.denominator == 8)) or ((self.denominator == 1) and ((((((((((self.code == 'By') and (self.numerator == 1)) or ((self.code == 'KiBy') and (self.numerator == 1024))) or ((self.code == 'MiBy') and (self.numerator == 1048576))) or ((self.code == 'GiBy') and (self.numerator == 1073741824))) or ((self.code == 'TiBy') and (self.numerator == 1099511627776))) or ((self.code == 'kBy') and (self.numerator == 1000))) or ((self.code == 'MBy') and (self.numerator == 1000000))) or ((self.code == 'GBy') and (self.numerator == 1000000000))) or ((self.code == 'TBy') and (self.numerator == 1000000000000)))))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "units.compute.UnitDefinition"
+      ],
+      "root": {
+        "id": "units.compute.UnitDefinition",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "units.compute.UnitDefinition"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/units.compute.UnitDefinition.exact_information_factor.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

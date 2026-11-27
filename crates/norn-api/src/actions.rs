@@ -19,11 +19,10 @@ use http::StatusCode;
 use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, engine::SqlEngine};
 use norn_ir::RuntimeValue;
 use norn_kernel::{
-    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Prepared,
-    Refusable, TypeCatalog,
+    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, LogicalTime, Prepared, Refusable,
+    TypeCatalog,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use utoipa::{IntoParams, ToSchema};
 
 /// Longest accepted request body, in bytes: the kernel's 256 KiB caller-input
@@ -303,6 +302,7 @@ pub fn call_action<E: SqlEngine>(
             actor,
             principal: principal.as_ref(),
             attempt: None,
+            step_pin: None,
             action_id,
             request,
             now,
@@ -330,32 +330,7 @@ fn automation_key_reserved() -> Refusal {
     )
 }
 
-/// S5a: the record under a step's call key was not committed by that step
-/// attempt's own dispatch, so it is never the step's outcome.
-pub(crate) fn foreign_step_record() -> Refusal {
-    Refusal::new(
-        StatusCode::CONFLICT,
-        "action.idempotency_conflict",
-        "another call holds this step's call key",
-        "the record under the step's call key was not committed by the step's own call",
-    )
-}
-
-/// S5a: a step attempt's call answers only with the record its own dispatch
-/// committed, now or on an earlier try, never another's under its key.
-fn require_owned<E: SqlEngine>(
-    store: &norn_cell::CellStore<E>,
-    action_id: &str,
-    idempotency_key: &str,
-    attempt: Option<&crate::approvals::StepAttempt>,
-) -> Result<(), Refusal> {
-    match attempt {
-        Some(attempt) if !crate::flow_driver::owns(store, action_id, idempotency_key, attempt)? => {
-            Err(foreign_step_record())
-        }
-        _owned_or_direct => Ok(()),
-    }
-}
+pub(crate) use crate::step_pin::foreign_step_record;
 
 /// S5a: `attempt`, when the trusted invocation names one, still waits on
 /// exactly the call keyed `idempotency_key`.
@@ -418,6 +393,8 @@ pub(crate) struct ActionCall<'a> {
     /// an approval's dispatch of the call it holds), never derived from the
     /// idempotency key. `None` for a direct call.
     pub(crate) attempt: Option<&'a crate::approvals::StepAttempt>,
+    /// STEP-PIN-1 (D2): target-definition pin for parked `norn.action@1` flow steps.
+    pub(crate) step_pin: Option<&'a crate::step_pin::StepActionPin>,
     pub(crate) action_id: &'a str,
     pub(crate) request: &'a ActionRequest,
     pub(crate) now: LogicalTime,
@@ -444,6 +421,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         actor,
         principal,
         attempt,
+        step_pin,
         action_id,
         request,
         now,
@@ -453,19 +431,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(action_denied)?;
-    let epoch = host.definition_read();
-    let authorized = host.authorizer.authorize(&AccessRequest {
-        scope: host.scope(),
-        actor: Some(actor),
-        operation: Operation::CallAction(action_id.to_owned()),
-    });
-    let scoped = host
-        .scope()
-        .admit(query.org_id.as_deref(), query.environment_id.as_deref());
-    if authorized.is_err() || scoped.is_err() {
-        return Err(action_denied());
-    }
-    let _epoch = epoch?;
+    let _epoch = authorize_action_call(host, query, actor, action_id)?;
     let key = handle_key(disclosure)?;
     let RuntimeValue::Object(input) = &request.input else {
         return Err(invalid_at("/input", "input must be a JSON object"));
@@ -480,48 +446,44 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     let (installed_version, admitted) = host
         .retained(&cell.store().read())?
         .ok_or_else(action_denied)?;
-    let (artifact, action) = admitted
-        .actions
-        .iter()
-        .find(|(_, action)| action.action_id == action_id)
-        .ok_or_else(action_denied)?;
+    let active_pin = step_pin.filter(|_| approved.is_none());
+    let (artifact, action) = crate::step_pin::resolve_step_action(
+        host,
+        &cell,
+        installed_version,
+        &admitted,
+        action_id,
+        active_pin,
+    )?
+    .ok_or_else(action_denied)?;
     if query.version.is_some_and(|pin| pin != installed_version) {
         return Err(stale_pin(&mut cell, approved, principal, attempt)?);
     }
     let model = cell.store().model().clone();
-    // ADMIT-CACHE-1: the model's definition work is derived once per model.
-    let catalog = model
-        .type_catalog()
-        .with_governing_laws(model.law_artifacts())
-        .with_action_rules(&admitted.rules)
-        .with_transition_guards(&admitted.guards);
-    let now = turn_clock(&mut cell, now)?;
-    let kernel_call = norn_kernel::ActionCall {
+    // APPROVAL-REVISION-1 & STEP-PIN-1: derive the catalog, bind the action
+    // digest, and verify any parked flow step pin inside this definitions + cell hold.
+    let (catalog, action_digest) = crate::step_pin::prepare_verified_catalog(
+        host,
+        &cell,
+        installed_version,
+        &model,
+        &admitted,
+        artifact,
         action,
-        action_artifact_id: &artifact.artifact_id,
-        action_version: &artifact.version,
-        scope: BTreeMap::from([
-            ("orgId".into(), host.scope().org_id.clone()),
-            ("environmentId".into(), host.scope().environment_id.clone()),
-        ]),
-        actor: actor.to_owned(),
-        approved_intent: None,
-        input: input.clone(),
-        idempotency_key: request.idempotency_key.clone(),
-        object_type: None,
-        turn: DecisionTurn {
-            id: format!("{action_id}/{}", request.idempotency_key),
-            now,
-            // L5 (Fable S2): the turn's world is the store's pin, never assumed.
-            world: cell.store().world(),
-            consumes: None,
-        },
+        active_pin,
+    )?;
+    let now = turn_clock(&mut cell, now)?;
+    let kernel_call = crate::step_pin::build_kernel_call(
+        host,
+        &cell,
+        artifact,
+        action,
+        actor,
+        input,
+        &request.idempotency_key,
+        now,
         trace,
-    };
-    // APPROVAL-REVISION-1: an approval binds to the action as defined now,
-    // with what it writes.
-    let action_digest =
-        crate::action_admission::effective_digest(&admitted, action, &model, &catalog)?;
+    );
     let outcome = match through_gate(
         host,
         &mut cell,
@@ -537,15 +499,40 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
-        Gated::Commit(approval) => {
-            let approval = approval.as_deref();
-            commit_call(host, &mut cell, &catalog, &kernel_call, approval, attempt)?
-        }
+        Gated::Commit(approval) => commit_call(
+            host,
+            &mut cell,
+            &catalog,
+            &kernel_call,
+            approval.as_deref(),
+            attempt,
+        )?,
     };
-    require_owned(cell.store(), action_id, &request.idempotency_key, attempt)?;
+    crate::step_pin::require_owned(cell.store(), action_id, &request.idempotency_key, attempt)?;
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
+}
+
+fn authorize_action_call<'a, E: SqlEngine>(
+    host: &'a DevHost<E>,
+    query: &ActionQuery,
+    actor: &str,
+    action_id: &str,
+) -> Result<std::sync::RwLockReadGuard<'a, ()>, Refusal> {
+    let epoch = host.definition_read();
+    let authorized = host.authorizer.authorize(&AccessRequest {
+        scope: host.scope(),
+        actor: Some(actor),
+        operation: Operation::CallAction(action_id.to_owned()),
+    });
+    let scoped = host
+        .scope()
+        .admit(query.org_id.as_deref(), query.environment_id.as_deref());
+    if authorized.is_err() || scoped.is_err() {
+        return Err(action_denied());
+    }
+    epoch
 }
 
 /// Commit a call past its gate, as the caller gets it: under an approval,
@@ -619,12 +606,16 @@ fn stale_pin<E: SqlEngine>(
     principal: Option<&norn_cell::flow_run::RunStarter>,
     attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<Refusal, Refusal> {
-    let stale = Refusal::new(
-        StatusCode::CONFLICT,
-        "defs.stale",
-        "the definitions changed; refresh the action catalog",
-        "the call pins a definitions version that is no longer active",
-    );
+    let stale = if attempt.is_some() {
+        crate::step_pin::pin_mismatch()
+    } else {
+        Refusal::new(
+            StatusCode::CONFLICT,
+            "defs.stale",
+            "the definitions changed; refresh the action catalog",
+            "the call pins a definitions version that is no longer active",
+        )
+    };
     let approval = approved
         .map(|command| crate::decisions::decision_id(command, 1))
         .transpose()?;

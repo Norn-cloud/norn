@@ -51,7 +51,7 @@ pub(super) fn slice_pin(base: &str, cutoff: KnowledgeCutoff) -> Result<String, C
         "norn.query.asof/1",
     ))
 }
-pub(crate) fn historical_record<E: SqlEngine>(
+pub(super) fn historical_record<E: SqlEngine>(
     history: &mut crate::history::HistoryRead<'_, '_, E>,
     world: &str,
     kind: &str,
@@ -91,7 +91,7 @@ pub(crate) fn historical_record<E: SqlEngine>(
 ///
 /// # Errors
 /// More such subjects than the question budget allows, or a store error.
-pub(crate) fn foreign_model_deletions<E: SqlEngine>(
+pub(super) fn foreign_model_deletions<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     world: &str,
     kind: &str,

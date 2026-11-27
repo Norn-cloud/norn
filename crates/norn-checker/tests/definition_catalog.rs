@@ -1408,3 +1408,177 @@ fn enum_alias_chains_preserve_lifecycle_metadata() {
         check_ref_lifecycle(hops);
     }
 }
+
+fn interface_lifecycle_finish_action() -> ArtifactEnvelope {
+    envelope(json!({
+        "irVersion": "0.1",
+        "artifactId": "test.task.finish.action",
+        "kind": "action",
+        "namespace": "test",
+        "name": "finish",
+        "version": "1.0.0",
+        "lifecycle": "draft",
+        "scope": {},
+        "dependencies": [{
+            "artifactId": "test.Task.entity",
+            "version": "1.0.0",
+            "kind": "entity",
+            "required": true
+        }],
+        "provenance": { "source": "system" },
+        "payload": {
+            "actionId": "test.task.finish",
+            "scopeRequired": ["orgId"],
+            "idempotent": false,
+            "ledgered": false,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code"],
+                "properties": { "code": { "type": "string" } }
+            },
+            "outputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+            },
+            "writes": [{ "entityKind": "test.Task", "change": "modified" }],
+            "effectProgram": {
+                "kind": "fire_transition",
+                "objectIdField": "code",
+                "objectKind": "test.Task",
+                "entityArtifactId": "test.Task.entity",
+                "entityArtifactVersion": "1.0.0",
+                "lifecycle": "status",
+                "transition": "finish"
+            }
+        }
+    }))
+}
+
+fn interface_lifecycle_catalog_fixtures() -> Vec<ArtifactEnvelope> {
+    let parent_iface = artifact(
+        "test.a.ParentContract.interface",
+        &json!({
+            "entityVersion": "2.0",
+            "interface": {
+                "name": "test.a.ParentContract",
+                "properties": [{
+                    "id": "status",
+                    "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "done" }] }
+                }],
+                "lifecycles": [{
+                    "property": "status",
+                    "initial": ["open"],
+                    "terminal": ["done"],
+                    "transitions": [{ "id": "finish", "from": ["open"], "to": "done" }]
+                }]
+            }
+        }),
+    );
+    // Child interface sorts AFTER parent alphabetically and inherits `status`
+    // without redeclaring it in `properties`, while narrowing `finish` with a guard.
+    let child_iface = artifact(
+        "test.z.ChildContract.interface",
+        &json!({
+            "entityVersion": "2.0",
+            "interface": {
+                "name": "test.z.ChildContract",
+                "extends": ["test.a.ParentContract"],
+                "lifecycles": [{
+                    "property": "status",
+                    "initial": ["open"],
+                    "terminal": ["done"],
+                    "transitions": [{
+                        "id": "finish",
+                        "from": ["open"],
+                        "to": "done",
+                        "guards": ["self.ready == true"]
+                    }]
+                }]
+            }
+        }),
+    );
+    let obj = artifact(
+        "test.Task.entity",
+        &json!({
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.Task",
+                "implements": ["test.a.ParentContract", "test.z.ChildContract"],
+                "properties": [
+                    { "id": "code", "type": { "kind": "text" } },
+                    { "id": "ready", "type": { "kind": "boolean" } },
+                    {
+                        "id": "status",
+                        "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "done" }] },
+                        "default": "open"
+                    }
+                ],
+                "identity": [{ "name": "primary", "properties": ["code"] }]
+            }
+        }),
+    );
+    vec![
+        parent_iface,
+        child_iface,
+        obj,
+        interface_lifecycle_finish_action(),
+    ]
+}
+
+#[test]
+fn interface_lifecycles_project_and_pin_narrowing_child_transitions() {
+    let fixtures = interface_lifecycle_catalog_fixtures();
+    let catalog = admitted_catalog(&fixtures, &[]);
+
+    // Parent interface projects PropertyRow.lifecycle, states, and transition.
+    let parent_status = catalog
+        .properties
+        .iter()
+        .find(|row| row.at.member.id() == "property:test.a.ParentContract#status")
+        .expect("parent interface status property row");
+    assert_eq!(
+        parent_status
+            .lifecycle
+            .as_ref()
+            .expect("parent status lifecycle")
+            .states,
+        ["open", "done"]
+    );
+
+    // Child interface projects Member::State rows even though `status` is inherited.
+    let child_open_state = MemberRef {
+        artifact_id: "test.z.ChildContract.interface".to_owned(),
+        version: "1.0.0".to_owned(),
+        member: Member::State {
+            type_name: "test.z.ChildContract".to_owned(),
+            lifecycle: "status".to_owned(),
+            state: "open".to_owned(),
+        },
+    };
+    assert!(
+        catalog.contains(&child_open_state),
+        "child interface emits state rows for inherited lifecycle property"
+    );
+
+    // FireTransition write pins the narrowing child interface (not parent `test.a.ParentContract`).
+    let child_transition = MemberRef {
+        artifact_id: "test.z.ChildContract.interface".to_owned(),
+        version: "1.0.0".to_owned(),
+        member: Member::Transition {
+            type_name: "test.z.ChildContract".to_owned(),
+            lifecycle: "status".to_owned(),
+            transition: "finish".to_owned(),
+        },
+    };
+    assert!(
+        catalog.writes.iter().any(|row| {
+            row.writer.artifact_id == "test.task.finish.action"
+                && row.target == child_transition
+                && row.via == WriteVia::FireTransition
+        }),
+        "action write pins narrowing child interface transition: {:?}",
+        catalog.writes
+    );
+}

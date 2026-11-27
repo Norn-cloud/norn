@@ -31,8 +31,8 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
         {Icon && <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />}
         {/* A title wraps (two lines at most) rather than losing its end; a hint goes to the next line when both don't fit. */}
         <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-body font-normal tracking-[-0.01em] text-foreground [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
-        {/* A hint (text) gives way on a phone; a control (an element) stays. */}
-        {action && <div className={cn("ms-auto shrink-0 text-meta text-muted-foreground", typeof action === "string" && "max-sm:hidden")}>{action}</div>}
+        {/* A hint (text) gives way on a phone; a control (an element) stays and wraps cleanly within the header. */}
+        {action && <div className={cn("ms-auto max-w-full text-meta text-muted-foreground", typeof action === "string" && "shrink-0 max-sm:hidden")}>{action}</div>}
       </header>}
       <InPanel value={true}>{children}</InPanel>
     </section>

@@ -19,6 +19,8 @@ mod action_read_plan;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "analytics_backend.rs"]
 mod analytics_backend;
+#[path = "asof_reader.rs"]
+mod asof_reader;
 #[path = "bench_clauses.rs"]
 mod bench_clauses;
 #[path = "bench_import.rs"]

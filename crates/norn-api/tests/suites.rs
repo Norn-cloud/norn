@@ -20,8 +20,12 @@ mod answer_contract;
 mod catalog_counts;
 #[path = "clock.rs"]
 mod clock;
+#[path = "disclosure_noninterference.rs"]
+mod disclosure_noninterference;
 #[path = "explorer_objects.rs"]
 mod explorer_objects;
+#[path = "feed_mode_patch.rs"]
+mod feed_mode_patch;
 #[path = "host_perimeter.rs"]
 mod host_perimeter;
 #[path = "jcs_rfc8785_corpus.rs"]
@@ -48,6 +52,8 @@ mod pull_rest;
 mod question_routes;
 #[path = "read_authority.rs"]
 mod read_authority;
+#[path = "source_capture_atomicity.rs"]
+mod source_capture_atomicity;
 #[path = "studio_access.rs"]
 mod studio_access;
 #[path = "sync_schedule.rs"]

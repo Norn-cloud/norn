@@ -41,15 +41,15 @@ use norn_ir::entitlement::{
 use norn_ir::mapping::{
     ActionInvocation, EntitlementConditionMap, EntitlementCoverageStatus, EntitlementFieldPath,
     EntitlementGranteeKind, EntitlementJoinCardinality, EntitlementJoinMode, EntitlementMap,
-    IdentityBinding, LinkPatch, MappedDelete, MappedRecord, MappingIr, NestedSource, ObjectMap,
+    IdentityBinding, MappedDelete, MappedRecord, MappingIr, NestedSource, ObjectMap,
     ObservedLifecycleSnapshot,
 };
 use norn_ir::provenance::{InstanceProvenance, MappingVersion, SourceRecordRef, UtcTimestamp};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{
     ActionRoot, ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal,
-    IrVersion01, LinkId, MarkingId, ObjectTypeName, PropertyId, ResourceLimitProfile,
-    RuntimeObject, RuntimeValue, SUPPORTED_IR_VERSION,
+    IrVersion01, LinkId, MarkingId, ObjectTypeName, PropertyId, ResourceLimitProfile, RuntimeValue,
+    SUPPORTED_IR_VERSION,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -84,6 +84,10 @@ pub struct SourceDocument {
     pub record: norn_canonical::JsonValue,
     /// When the source last changed the record, if it says.
     pub observed_at: Option<UtcTimestamp>,
+    /// Delivery semantics of this record (`None` inherits the mapping's
+    /// `norn.feed/1` mode or defaults to `FullSnapshot`; `Some(mode)` must not
+    /// contradict a mapping's declared `norn.feed/1` mode).
+    pub mode: Option<norn_ir::FeedMode>,
 }
 
 impl SourceDocument {
@@ -103,7 +107,15 @@ impl SourceDocument {
             dataset: dataset.into(),
             record: norn_canonical::parse(record)?,
             observed_at,
+            mode: None,
         })
+    }
+
+    /// Set the delivery [`norn_ir::FeedMode`] of this source document.
+    #[must_use]
+    pub const fn with_mode(mut self, mode: norn_ir::FeedMode) -> Self {
+        self.mode = Some(mode);
+        self
     }
 }
 
@@ -147,69 +159,74 @@ pub struct MappedSnapshot {
 }
 
 #[derive(Debug, Clone)]
-struct CompiledMap {
-    id: String,
-    dataset: String,
-    nested_in: Option<NestedSource>,
-    object_type: ObjectTypeName,
-    input_types: BTreeMap<String, Type>,
-    when: Option<Expression>,
-    subject: Expression,
-    source_record: Expression,
-    properties: Vec<CompiledProperty>,
-    identity_metadata: PropertyProvenance,
-    property_metadata: BTreeMap<String, PropertyProvenance>,
-    links: Vec<CompiledLink>,
-    identity_bindings: BTreeMap<String, IdentityBinding>,
-    lifecycles: Vec<CompiledLifecycleRule>,
-    observe_action: String,
+pub(super) struct CompiledMap {
+    pub(super) id: String,
+    pub(super) dataset: String,
+    pub(super) nested_in: Option<NestedSource>,
+    pub(super) declared_feed: Option<norn_ir::feed::FeedContract>,
+    pub(super) object_type: ObjectTypeName,
+    pub(super) input_types: BTreeMap<String, Type>,
+    pub(super) identity_fields: Vec<String>,
+    pub(super) when: Option<Expression>,
+    pub(super) subject: Expression,
+    pub(super) source_record: Expression,
+    pub(super) properties: Vec<CompiledProperty>,
+    pub(super) identity_metadata: PropertyProvenance,
+    pub(super) property_metadata: BTreeMap<String, PropertyProvenance>,
+    pub(super) links: Vec<CompiledLink>,
+    pub(super) identity_bindings: BTreeMap<String, IdentityBinding>,
+    pub(super) lifecycles: Vec<CompiledLifecycleRule>,
+    pub(super) observe_action: String,
 }
 
 #[derive(Debug, Clone, Default)]
-struct PropertyProvenance {
-    source_fields: Vec<String>,
-    markings: Vec<MarkingId>,
+pub(super) struct PropertyProvenance {
+    pub(super) source_fields: Vec<String>,
+    pub(super) markings: Vec<MarkingId>,
 }
 
 #[derive(Debug, Clone)]
-struct CompiledProperty {
-    property: PropertyId,
-    expression: Expression,
-    target_type: Type,
-    nested: Option<CompiledNestedProperty>,
+pub(super) struct CompiledProperty {
+    pub(super) property: PropertyId,
+    pub(super) expression: Expression,
+    pub(super) target_type: Type,
+    pub(super) nested: Option<CompiledNestedProperty>,
+    pub(super) source_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct CompiledNestedProperty {
-    dataset: String,
-    field: String,
-    input_types: BTreeMap<String, Type>,
-    predicate: Expression,
+pub(super) struct CompiledNestedProperty {
+    pub(super) dataset: String,
+    pub(super) field: String,
+    pub(super) input_types: BTreeMap<String, Type>,
+    pub(super) predicate: Expression,
 }
 
 #[derive(Debug, Clone)]
-struct CompiledLifecycleRule {
-    property: PropertyId,
-    expression: Expression,
+pub(super) struct CompiledLifecycleRule {
+    pub(super) property: PropertyId,
+    pub(super) expression: Expression,
     /// Present for legacy transition expressions; maps transition ids to
     /// the destination states they observe.
-    transition_destinations: Option<BTreeMap<String, String>>,
+    pub(super) transition_destinations: Option<BTreeMap<String, String>>,
     /// The terminal state a source delete means (#3013).
-    on_delete: Option<String>,
+    pub(super) on_delete: Option<String>,
+    pub(super) source_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct CompiledLink {
-    link: LinkId,
-    expression: Expression,
-    target_type: ObjectTypeName,
-    identity_binding: bool,
-    required: bool,
-    reviewed_references: Vec<norn_ir::mapping_evidence::ReviewedReference>,
-    chunks: Vec<Expression>,
+pub(super) struct CompiledLink {
+    pub(super) link: LinkId,
+    pub(super) expression: Expression,
+    pub(super) target_type: ObjectTypeName,
+    pub(super) identity_binding: bool,
+    pub(super) required: bool,
+    pub(super) reviewed_references: Vec<norn_ir::mapping_evidence::ReviewedReference>,
+    pub(super) chunks: Vec<Expression>,
+    pub(super) source_fields: Vec<String>,
 }
 
-enum LinkTargetResolution {
+pub(super) enum LinkTargetResolution {
     Clear,
     Target(String),
 }
@@ -795,11 +812,29 @@ fn compile_map(
         })
     };
     let when = map.when.as_ref().map(compile).transpose()?;
-    let properties = compile_properties(map, record, source, &compile, &unresolved)?;
-    let links = compile_links(map, mapping, model, &object_type, &compile, &unresolved)?;
-    let lifecycles = compile_lifecycle_rules(map, model, &object_type, &compile, &at())?;
+    let declared_feed =
+        super::patch::map_feed_contract(mapping, &map.source.dataset).map_err(|reason| {
+            Box::new(error(
+                codes::INVALID_DOCUMENT,
+                reason,
+                Span::pointer("/extensions"),
+            ))
+        })?;
+    let properties = compile_properties(map, record, source, &input_types, &compile, &unresolved)?;
+    let links = compile_links(
+        map,
+        mapping,
+        model,
+        &object_type,
+        &input_types,
+        &compile,
+        &unresolved,
+    )?;
+    let lifecycles =
+        compile_lifecycle_rules(map, model, &object_type, &input_types, &compile, &at())?;
     let mut identity_expressions = vec![map.subject.as_str(), map.source_record.as_str()];
     identity_expressions.extend(map.when.as_ref().map(norn_ir::ZenExpression::as_str));
+    let identity_fields = super::patch::rule_fields(&identity_expressions, &input_types);
     let identity_reads = expression_reads_union(&identity_expressions, "input");
     let mut identity_metadata = source_provenance(&identity_reads, source, &map.source.dataset);
     if let Some(parent) = &map.source.nested_in
@@ -904,8 +939,10 @@ fn compile_map(
         id: map.id.clone(),
         dataset: map.source.dataset.clone(),
         nested_in: map.source.nested_in.clone(),
+        declared_feed,
         object_type,
         input_types,
+        identity_fields,
         when,
         subject: compile(&map.subject)?,
         source_record: compile(&map.source_record)?,
@@ -928,6 +965,7 @@ fn compile_properties<C, U>(
     map: &ObjectMap,
     record: &norn_expr::RecordType,
     source: &SourceSchemaIr,
+    input_types: &BTreeMap<String, Type>,
     compile: &C,
     unresolved: &U,
 ) -> Result<Vec<CompiledProperty>, Box<Diagnostic>>
@@ -957,11 +995,16 @@ where
                     })
                 })
                 .transpose()?;
+            let source_fields = match &nested {
+                Some(nested) => vec![nested.field.clone()],
+                None => super::patch::rule_fields(&[entry.value.as_str()], input_types),
+            };
             Ok(CompiledProperty {
                 property: entry.property.clone(),
                 expression: compile(&entry.value)?,
                 target_type,
                 nested,
+                source_fields,
             })
         })
         .collect()
@@ -972,6 +1015,7 @@ fn compile_links<C, U>(
     mapping: &MappingIr,
     model: &MappingModel,
     object_type: &ObjectTypeName,
+    input_types: &BTreeMap<String, Type>,
     compile: &C,
     unresolved: &U,
 ) -> Result<Vec<CompiledLink>, Box<Diagnostic>>
@@ -1016,6 +1060,7 @@ where
             {
                 return Err(unresolved());
             }
+            let source_fields = super::patch::rule_fields(&[entry.key.as_str()], input_types);
             Ok(CompiledLink {
                 link: entry.link.clone(),
                 expression: compile(&entry.key)?,
@@ -1023,6 +1068,7 @@ where
                 identity_binding: entry.identity_binding,
                 reviewed_references,
                 chunks: Vec::new(),
+                source_fields,
                 required: model
                     .env()
                     .record(object_type.as_str())
@@ -1039,6 +1085,11 @@ where
             // Full admission proves these nullable chunks are complete, disjoint
             // and target the same relationship before compilation reaches here.
             link.chunks.push(entry.expression);
+            for field in entry.source_fields {
+                if !link.source_fields.contains(&field) {
+                    link.source_fields.push(field);
+                }
+            }
         } else {
             links.push(entry);
         }
@@ -1050,46 +1101,57 @@ fn compile_lifecycle_rules(
     map: &ObjectMap,
     model: &MappingModel,
     object_type: &ObjectTypeName,
+    input_types: &BTreeMap<String, Type>,
     compile: &impl Fn(&norn_ir::ZenExpression) -> Result<Expression, Box<Diagnostic>>,
     at: &Span,
 ) -> Result<Vec<CompiledLifecycleRule>, Box<Diagnostic>> {
     let mut lifecycles = Vec::new();
     for entry in &map.lifecycles {
-        let (expression, transition_destinations) = match (&entry.state, &entry.transition) {
-            (Some(state), None) => (compile(state)?, None),
-            (None, Some(transition)) => {
-                let destinations = model
-                    .transitions(object_type.as_str(), entry.property.as_str())
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|id| {
-                        model
-                            .transition_destination(
-                                object_type.as_str(),
-                                entry.property.as_str(),
-                                id,
-                            )
-                            .map(|state| (id.clone(), state.to_owned()))
-                    })
-                    .collect();
-                (compile(transition)?, Some(destinations))
-            }
-            _ => {
-                return Err(Box::new(error(
-                    codes::LIFECYCLE_RULE_SHAPE,
-                    format!(
-                        "lifecycle {} must specify exactly one of state or transition",
-                        entry.property.as_str()
-                    ),
-                    at.clone(),
-                )));
-            }
-        };
+        let (expression, transition_destinations, source_fields) =
+            match (&entry.state, &entry.transition) {
+                (Some(state), None) => (
+                    compile(state)?,
+                    None,
+                    super::patch::rule_fields(&[state.as_str()], input_types),
+                ),
+                (None, Some(transition)) => {
+                    let destinations = model
+                        .transitions(object_type.as_str(), entry.property.as_str())
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|id| {
+                            model
+                                .transition_destination(
+                                    object_type.as_str(),
+                                    entry.property.as_str(),
+                                    id,
+                                )
+                                .map(|state| (id.clone(), state.to_owned()))
+                        })
+                        .collect();
+                    (
+                        compile(transition)?,
+                        Some(destinations),
+                        super::patch::rule_fields(&[transition.as_str()], input_types),
+                    )
+                }
+                _ => {
+                    return Err(Box::new(error(
+                        codes::LIFECYCLE_RULE_SHAPE,
+                        format!(
+                            "lifecycle {} must specify exactly one of state or transition",
+                            entry.property.as_str()
+                        ),
+                        at.clone(),
+                    )));
+                }
+            };
         lifecycles.push(CompiledLifecycleRule {
             property: entry.property.clone(),
             expression,
             transition_destinations,
             on_delete: entry.on_delete.clone(),
+            source_fields,
         });
     }
     Ok(lifecycles)
@@ -1282,7 +1344,10 @@ fn read_fields(expression: &str) -> Vec<String> {
     out
 }
 
-fn expression_reads_union(expressions: &[&str], root: &str) -> norn_expr::ExpressionReads {
+pub(super) fn expression_reads_union(
+    expressions: &[&str],
+    root: &str,
+) -> norn_expr::ExpressionReads {
     let mut union = norn_expr::ExpressionReads::default();
     for expression in expressions {
         let reads =
@@ -1388,14 +1453,18 @@ fn compiled_property_provenance(
     metadata
 }
 
-fn apply_property_metadata(provenance: &mut InstanceProvenance, map: &CompiledMap, property: &str) {
+pub(super) fn apply_property_metadata(
+    provenance: &mut InstanceProvenance,
+    map: &CompiledMap,
+    property: &str,
+) {
     if let Some(metadata) = map.property_metadata.get(property) {
         provenance.source_fields.clone_from(&metadata.source_fields);
         provenance.markings.clone_from(&metadata.markings);
     }
 }
 
-fn apply_identity_metadata(provenance: &mut InstanceProvenance, map: &CompiledMap) {
+pub(super) fn apply_identity_metadata(provenance: &mut InstanceProvenance, map: &CompiledMap) {
     provenance
         .source_fields
         .clone_from(&map.identity_metadata.source_fields);
@@ -2111,6 +2180,7 @@ impl CompiledMapping {
             lifecycle_snapshots: Vec::new(),
             links: Vec::new(),
             cleared_links: Vec::new(),
+            field_patches: BTreeMap::new(),
             property_provenance,
             provenance: provenance("id"),
         }))
@@ -2310,6 +2380,17 @@ impl CompiledMapping {
         }
     }
 
+    pub(super) fn provenance_for(
+        &self,
+        map: &CompiledMap,
+        source_record: &str,
+        member: &str,
+        document: &SourceDocument,
+        recorded_at: &UtcTimestamp,
+    ) -> InstanceProvenance {
+        self.provenance(map, source_record, member, document, recorded_at)
+    }
+
     fn apply_row(
         &self,
         map: &CompiledMap,
@@ -2318,109 +2399,11 @@ impl CompiledMapping {
         recorded_at: &UtcTimestamp,
         derivation: Derivation,
     ) -> Result<Option<MappedRecord>, Refused> {
-        let Some(norn_canonical::JsonValue::Object(row)) = row else {
-            return Err((
-                codes::INVALID_RECORD,
-                "the record is not an object".to_owned(),
-            )
-                .into());
-        };
-        let mut input = BTreeMap::new();
-        for (field, ty) in &map.input_types {
-            let raw = row.get(field);
-            let value = conform(raw, ty, derivation).map_err(|reason| Refused {
-                code: codes::INVALID_RECORD,
-                reason: format!("field {field:?} {reason}"),
-                field: Some(Box::new(FieldRefusal {
-                    field: field.clone(),
-                    value: raw.map(json_text),
-                    expected: type_name(ty),
-                    reason,
-                })),
-            })?;
-            input.insert(field.clone(), value);
-        }
-        let context = Value::object([("input", Value::Object(input))]);
-        if !map_matches(map, &context)? {
-            return Ok(None);
-        }
-        let key = text(&map.subject, &context)?;
-        let source_record = text(&map.source_record, &context)?;
-        let provenance =
-            |member: &str| self.provenance(map, &source_record, member, document, recorded_at);
-        let mut property_provenance = BTreeMap::new();
-        let mut values = RuntimeObject::new();
-        values.insert(
-            OBJECT_ID_FIELD.to_owned(),
-            RuntimeValue::String(key.clone()),
-        );
-        for entry in &map.properties {
-            let value = match &entry.nested {
-                Some(nested) => select_nested_value(
-                    nested,
-                    row,
-                    &entry.property,
-                    &entry.expression,
-                    &entry.target_type,
-                    derivation,
-                )?,
-                None => evaluate(&entry.expression, &context)?,
-            };
-            if let Some(encoded) = encode(&value, &entry.target_type).map_err(|reason| {
-                (
-                    codes::EVALUATION_FAILED,
-                    format!("property {}: {reason}", entry.property.as_str()),
-                )
-            })? {
-                values.insert(entry.property.as_str().to_owned(), encoded);
-                let mut recorded = provenance(entry.property.as_str());
-                apply_property_metadata(&mut recorded, map, entry.property.as_str());
-                property_provenance.insert(entry.property.clone(), recorded);
-            }
-        }
-        let invocations = vec![ActionInvocation {
-            action_id: map.observe_action.clone(),
-            input: values,
-        }];
-        let mut lifecycle_snapshots = evaluate_lifecycle_snapshots(map, &context, &provenance)?;
-        for snapshot in &mut lifecycle_snapshots {
-            apply_property_metadata(&mut snapshot.provenance, map, snapshot.property.as_str());
-            property_provenance.insert(snapshot.property.clone(), snapshot.provenance.clone());
-        }
-        let mut links = Vec::new();
-        let mut cleared_links = Vec::new();
-        for link in &map.links {
-            match resolve_link_target(link, map, &context)? {
-                LinkTargetResolution::Clear => cleared_links.push(link.link.clone()),
-                LinkTargetResolution::Target(target_key) => {
-                    links.push(LinkPatch {
-                        object_type: map.object_type.clone(),
-                        key: key.clone(),
-                        link: link.link.clone(),
-                        target_type: link.target_type.clone(),
-                        target_key,
-                        provenance: provenance(link.link.as_str()),
-                    });
-                }
-            }
-        }
-        let mut record_provenance = provenance("subject");
-        apply_identity_metadata(&mut record_provenance, map);
-        Ok(Some(MappedRecord {
-            map: map.id.clone(),
-            object_type: map.object_type.clone(),
-            key,
-            invocations,
-            lifecycle_snapshots,
-            links,
-            cleared_links,
-            property_provenance,
-            provenance: record_provenance,
-        }))
+        super::patch::apply_row_with_mode(self, map, row, document, recorded_at, derivation)
     }
 }
 
-fn resolve_link_target(
+pub(super) fn resolve_link_target(
     link: &CompiledLink,
     map: &CompiledMap,
     context: &Value,
@@ -2813,7 +2796,10 @@ fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
 
 /// Evaluate a map guard before its subject and source identity using the
 /// complete, source-typed input context.
-fn map_matches(map: &CompiledMap, context: &Value) -> Result<bool, (&'static str, String)> {
+pub(super) fn map_matches(
+    map: &CompiledMap,
+    context: &Value,
+) -> Result<bool, (&'static str, String)> {
     let Some(when) = &map.when else {
         return Ok(true);
     };
@@ -2831,7 +2817,7 @@ fn map_matches(map: &CompiledMap, context: &Value) -> Result<bool, (&'static str
 }
 
 /// Select and evaluate the one child row that supplies a parent property.
-fn select_nested_value(
+pub(super) fn select_nested_value(
     nested: &CompiledNestedProperty,
     parent: &BTreeMap<String, norn_canonical::JsonValue>,
     property: &PropertyId,
@@ -2989,48 +2975,42 @@ fn evaluate_with_remaining(
         })
 }
 
-fn evaluate_lifecycle_snapshots(
-    map: &CompiledMap,
+pub(super) fn evaluate_one_lifecycle_snapshot(
+    lifecycle: &CompiledLifecycleRule,
     context: &Value,
     provenance: &impl Fn(&str) -> InstanceProvenance,
-) -> Result<Vec<ObservedLifecycleSnapshot>, (&'static str, String)> {
-    let mut lifecycle_snapshots = Vec::new();
-    for lifecycle in &map.lifecycles {
-        match evaluate(&lifecycle.expression, context)? {
-            Value::Null => {}
-            Value::String(observed) => {
-                let state = if let Some(destinations) = &lifecycle.transition_destinations {
-                    destinations.get(&observed).cloned().ok_or_else(|| {
-                        (
-                            codes::EVALUATION_FAILED,
-                            format!(
-                                "{observed:?} is not a transition of {}",
-                                lifecycle.property.as_str()
-                            ),
-                        )
-                    })?
-                } else {
-                    observed
-                };
-                let lifecycle_provenance = provenance(lifecycle.property.as_str());
-                lifecycle_snapshots.push(ObservedLifecycleSnapshot {
-                    property: lifecycle.property.clone(),
-                    state,
-                    provenance: lifecycle_provenance,
-                });
-            }
-            other @ (Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => {
-                return Err((
-                    codes::EVALUATION_FAILED,
-                    format!(
-                        "lifecycle rule {} yielded {other:?}",
-                        lifecycle.property.as_str()
-                    ),
-                ));
-            }
+) -> Result<Option<ObservedLifecycleSnapshot>, (&'static str, String)> {
+    match evaluate(&lifecycle.expression, context)? {
+        Value::Null => Ok(None),
+        Value::String(observed) => {
+            let state = if let Some(destinations) = &lifecycle.transition_destinations {
+                destinations.get(&observed).cloned().ok_or_else(|| {
+                    (
+                        codes::EVALUATION_FAILED,
+                        format!(
+                            "{observed:?} is not a transition of {}",
+                            lifecycle.property.as_str()
+                        ),
+                    )
+                })?
+            } else {
+                observed
+            };
+            let lifecycle_provenance = provenance(lifecycle.property.as_str());
+            Ok(Some(ObservedLifecycleSnapshot {
+                property: lifecycle.property.clone(),
+                state,
+                provenance: lifecycle_provenance,
+            }))
         }
+        other @ (Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => Err((
+            codes::EVALUATION_FAILED,
+            format!(
+                "lifecycle rule {} yielded {other:?}",
+                lifecycle.property.as_str()
+            ),
+        )),
     }
-    Ok(lifecycle_snapshots)
 }
 
 /// The rows a map reads from one document: the document itself, or the
@@ -3056,7 +3036,10 @@ fn rows<'d>(
     }
 }
 
-fn evaluate(expression: &Expression, context: &Value) -> Result<Value, (&'static str, String)> {
+pub(super) fn evaluate(
+    expression: &Expression,
+    context: &Value,
+) -> Result<Value, (&'static str, String)> {
     expression
         .evaluate(context, EvaluationBudget::default())
         .map(norn_expr::Evaluation::into_value)
@@ -3068,7 +3051,10 @@ fn evaluate(expression: &Expression, context: &Value) -> Result<Value, (&'static
         })
 }
 
-fn text(expression: &Expression, context: &Value) -> Result<String, (&'static str, String)> {
+pub(super) fn text(
+    expression: &Expression,
+    context: &Value,
+) -> Result<String, (&'static str, String)> {
     match evaluate(expression, context)? {
         Value::String(text) if !text.is_empty() => Ok(text),
         other @ (Value::Null
@@ -3163,10 +3149,10 @@ impl RowRefusal {
 
 /// A row refusal inside [`CompiledMapping::apply_row`], before the map and
 /// document are attached.
-struct Refused {
-    code: &'static str,
-    reason: String,
-    field: Option<Box<FieldRefusal>>,
+pub(super) struct Refused {
+    pub(super) code: &'static str,
+    pub(super) reason: String,
+    pub(super) field: Option<Box<FieldRefusal>>,
 }
 
 impl From<(&'static str, String)> for Refused {
@@ -3179,7 +3165,7 @@ impl From<(&'static str, String)> for Refused {
     }
 }
 
-fn json_text(value: &norn_canonical::JsonValue) -> String {
+pub(super) fn json_text(value: &norn_canonical::JsonValue) -> String {
     norn_canonical::serialize_json(value)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
@@ -3187,7 +3173,7 @@ fn json_text(value: &norn_canonical::JsonValue) -> String {
 }
 
 /// A declared source type in words, for a refusal's `expected`.
-fn type_name(ty: &Type) -> String {
+pub(super) fn type_name(ty: &Type) -> String {
     if let Type::Optional(inner) = ty {
         return format!("optional {}", type_name(inner));
     }
@@ -3224,7 +3210,7 @@ fn type_name(ty: &Type) -> String {
 
 /// `derivation`: how exact decimal text conforms to a declared decimal
 /// (MAP-DECIMAL-TEXT-1, [`Derivation::V2`]); [`Derivation::V1`] refused it.
-fn conform(
+pub(super) fn conform(
     raw: Option<&norn_canonical::JsonValue>,
     ty: &Type,
     derivation: Derivation,
@@ -3366,7 +3352,7 @@ fn any_value(value: &norn_canonical::JsonValue) -> Result<Value, String> {
 /// (#2770, #3014). Nullable properties retain explicit null so an observed
 /// removal clears a previously stored value. Numbers keep their decimal digits: an integer property takes
 /// an `i64`, a decimal one the exact evaluated decimal.
-fn encode(value: &Value, ty: &Type) -> Result<Option<RuntimeValue>, String> {
+pub(super) fn encode(value: &Value, ty: &Type) -> Result<Option<RuntimeValue>, String> {
     match (value, ty) {
         (Value::Null, Type::Optional(_)) => Ok(Some(RuntimeValue::Null)),
         (value, Type::Optional(inner)) => encode(value, inner),

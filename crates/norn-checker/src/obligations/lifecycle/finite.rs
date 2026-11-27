@@ -1,7 +1,11 @@
 //! PROOF-LIFECYCLE-2: exact frozen inputs for conditional chart relations, never evidence.
 use super::super::{ApprovedContract, Challenge, ChallengeError, DefinitionSource};
+use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::{EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType};
-use norn_ir::{LawIR, PropertyType, RuntimeValue};
+use norn_ir::{
+    ArtifactEnvelope, ArtifactKind, ConstraintClass, EntityRoot, Invariant, LawIR, PropertyType,
+    RuntimeValue,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Exact stored scalar values, keyed by declaration property ID.
@@ -31,6 +35,12 @@ pub struct Snapshot {
     pub nodes: Vec<Row>,
     /// Applicable governing laws, retaining artifact identities and complete `LawIR`.
     pub laws: Vec<(String, LawIR)>,
+    /// Effective integrity invariants (owned by the subject's lineage or implemented
+    /// interfaces); quality invariants do not refuse native transitions.
+    pub invariants: Vec<(String, Invariant)>,
+    /// Subject-bound `ZenTypeEnv` for preparing and evaluating integrity
+    /// invariants under the native exact profile (`evaluate_prepared`).
+    pub invariant_env: Option<norn_expr::ZenTypeEnv>,
 }
 /// Fresh source identity and exact finite inputs, never checked evidence.
 #[derive(Debug)]
@@ -49,14 +59,16 @@ fn freeze(
     object: &EffectiveObjectType,
     bounds: &Bounds,
     laws: Vec<(String, LawIR)>,
+    invariants: Vec<(String, Invariant)>,
+    invariant_env: Option<norn_expr::ZenTypeEnv>,
 ) -> Result<Snapshot, String> {
     require(
         object.lifecycles.len() == 1,
         "requires one isolated effective lifecycle",
     )?;
     require(
-        !object.has_invariants && object.owned_collections.is_empty(),
-        "declared invariants or owned effects are outside the conditional profile",
+        object.owned_collections.is_empty(),
+        "owned child collections are outside the conditional profile",
     )?;
     let machine = object
         .lifecycle(&bounds.property)
@@ -84,10 +96,7 @@ fn freeze(
     let mut rows = vec![Row::new()];
     let mut fields = BTreeMap::new();
     for property in &object.properties {
-        require(
-            !property.computed && !property.nullable,
-            "computed or nullable scalar context is unsupported",
-        )?;
+        require(!property.computed, "computed scalar context is unsupported")?;
         let EffectiveKind::Base(kind) = &property.kind else {
             return Err("unresolved scalar context type".into());
         };
@@ -143,7 +152,132 @@ fn freeze(
         fields,
         nodes,
         laws,
+        invariants,
+        invariant_env,
     })
+}
+
+/// Build the subject-bound `ZenTypeEnv` matching native `TypeCatalog` so
+/// integrity invariants run through `evaluate_prepared` (exact Decimal profile).
+fn build_invariant_env(
+    pool: &[ArtifactEnvelope],
+    registry: &BTreeSet<norn_ir::PropertyTypeName>,
+    object: &EffectiveObjectType,
+) -> Result<norn_expr::ZenTypeEnv, String> {
+    let mut property_types = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut object_types = Vec::new();
+    let mut extensions = Vec::new();
+    for artifact in pool.iter().filter(|a| a.kind() == ArtifactKind::Entity) {
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            continue;
+        };
+        match *root {
+            EntityRoot::V2(root) => object_types.push(root.object_type),
+            EntityRoot::V2Interface(root) => interfaces.push(root.interface),
+            EntityRoot::V2Extension(root) => extensions.push(root.object_type_extension),
+            EntityRoot::V2PropertyTypes(root) => property_types.extend(root.property_types),
+            EntityRoot::V1(_) | EntityRoot::V2Markings(_) => {}
+        }
+    }
+    let definitions = norn_expr::EntityDefinitions {
+        property_types: &property_types,
+        object_types: &object_types,
+        interfaces: &interfaces,
+        extensions: &extensions,
+    };
+    norn_expr::ZenTypeEnv::from_artifact_set_for_checking(
+        &definitions,
+        registry,
+        norn_expr::EnvOptions::default(),
+    )
+    .map_err(|errors| {
+        errors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?
+    .bind_self(&object.name)
+    .map_err(|error| error.to_string())
+}
+
+/// Collect every integrity invariant declared by `object`'s lineage or
+/// implemented interfaces (including transitive parent interfaces). Fails
+/// closed if any owner in `lineage` or the interface closure cannot be
+/// resolved in `pool`. Quality invariants do not refuse native writes.
+fn integrity_invariants(
+    pool: &[ArtifactEnvelope],
+    object: &EffectiveObjectType,
+) -> Result<Vec<(String, Invariant)>, String> {
+    if !object.has_invariants {
+        return Ok(Vec::new());
+    }
+    let mut by_type: BTreeMap<String, Vec<Invariant>> = BTreeMap::new();
+    let mut by_interface: BTreeMap<String, (Vec<String>, Vec<Invariant>)> = BTreeMap::new();
+    for artifact in pool.iter().filter(|a| a.kind() == ArtifactKind::Entity) {
+        let Decoded::Root(root) = decode_v2(artifact) else {
+            continue;
+        };
+        match *root {
+            EntityRoot::V2(root) => {
+                by_type.insert(root.object_type.name.0, root.object_type.invariants);
+            }
+            EntityRoot::V2Interface(root) => {
+                by_interface.insert(
+                    root.interface.name.0,
+                    (
+                        root.interface
+                            .extends
+                            .into_iter()
+                            .map(|name| name.0)
+                            .collect(),
+                        root.interface.invariants,
+                    ),
+                );
+            }
+            EntityRoot::V1(_)
+            | EntityRoot::V2PropertyTypes(_)
+            | EntityRoot::V2Extension(_)
+            | EntityRoot::V2Markings(_) => {}
+        }
+    }
+    let mut out = Vec::new();
+    for owner in &object.lineage {
+        let invariants = by_type
+            .get(owner.as_str())
+            .ok_or_else(|| format!("unresolved invariant owner {}", owner.as_str()))?;
+        for invariant in invariants {
+            if invariant.classification == ConstraintClass::Integrity {
+                out.push((owner.as_str().to_owned(), invariant.clone()));
+            }
+        }
+    }
+    let mut visited = BTreeSet::new();
+    let mut pending: Vec<String> = object
+        .interfaces
+        .iter()
+        .map(|name| name.as_str().to_owned())
+        .collect();
+    while let Some(owner) = pending.pop() {
+        if !visited.insert(owner.clone()) {
+            continue;
+        }
+        let (parents, invariants) = by_interface
+            .get(&owner)
+            .ok_or_else(|| format!("unresolved interface invariant owner {owner}"))?;
+        for invariant in invariants {
+            if invariant.classification == ConstraintClass::Integrity {
+                out.push((owner.clone(), invariant.clone()));
+            }
+        }
+        for parent in parents {
+            if !visited.contains(parent) {
+                pending.push(parent.clone());
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn extend_rows(
@@ -275,9 +409,15 @@ impl ApprovedContract {
                     })
                     .map(|(artifact, law)| (artifact.artifact_id.clone(), law.clone()))
                     .collect();
-                freeze(object, bounds, applicable)
+                let invariants = integrity_invariants(&pool, object)?;
+                let invariant_env = if invariants.is_empty() {
+                    None
+                } else {
+                    Some(build_invariant_env(&pool, registry, object)?)
+                };
+                freeze(object, bounds, applicable, invariants, invariant_env)
             });
-        let document = serde_json::json!({"profile":"norn.lifecycle.frozen/1","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxSelectorBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
+        let document = serde_json::json!({"profile":"norn.lifecycle.frozen/2","objectType":bounds.object_type,"property":bounds.property,"frozenScalarsJson":String::from_utf8(domains).map_err(|_error|ChallengeError::LossyInput)?,"seed":bounds.seed,"maxModeledObjects":1,"maxNodes":4096,"maxSnapshotBytes":4_194_304,"maxFields":16,"maxStates":128,"maxTransitions":128,"maxFrozenLiteralBytes":10_000,"maxSelectorBytes":10_000,"maxPinnedBoundsBytes":65_536,"maxSteps":object.and_then(|object|object.lifecycle(&bounds.property)).map(|machine|machine.states.len()),"interpretation":snapshot.as_ref().map(|snapshot|&snapshot.fields).ok(),"frame":"one admitted subject; scalar context and external references frozen; pre-authorized declared transitions only"});
         let bytes = norn_canonical::canonical_json_exact_of(&document)
             .map_err(|_error| ChallengeError::LossyInput)?;
         if bytes.len() > 65_536 {

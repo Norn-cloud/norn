@@ -704,16 +704,72 @@ fn an_approval_never_executes_under_a_changed_gate() {
 }
 
 /// APPROVAL-REVISION-1 on the hosted path: an approved step call whose
-/// action changed drives nothing on the decider's request. The run's waiting
-/// step is not called again under the changed action (no new approval
-/// parks), and the run stays where it was; the starter's retry calls it as
-/// another call, which asks for a new approval.
+/// approval gate changed drives nothing on the decider's request. The run's
+/// waiting step is not called again under the changed gate (no new approval
+/// parks), and the run stays where it was; the starter's retry calls the
+/// unchanged pinned action as another call, which asks for a new approval.
 #[test]
 fn a_stale_approval_never_drives_its_flow_step() {
     let cell = cell();
     gate(&cell, None);
     let approval = start_gated_run(&cell, "melt-run-stale");
-    // The action's next revision, over the active set (the flow stays).
+    // Revise the approval gate while keeping the run's pinned action unchanged.
+    let mut revised = json!({ "kind": "approval", "id": APPROVAL_ID,
+        "payload": { "action": MELT_ACTION, "decider": { "roles": ["admin", "member"] },
+                     "question": "Convert this melt?", "risk": "high" } });
+    let (status, admitted) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:admit",
+        OPERATOR,
+        &revised.to_string(),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    revised["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    revised["expectedVersion"] = json!(1);
+    let (status, installed) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:install",
+        OPERATOR,
+        &revised.to_string(),
+    );
+    assert_eq!(status, 200, "{installed}");
+
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    assert_eq!(
+        decided["run"]["state"],
+        json!("awaiting_perform_convert"),
+        "{decided}"
+    );
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(0),
+        "nothing parked anew"
+    );
+    assert_eq!(melt_status(&cell), 404);
+    let run = restart(&cell, "melt-run-stale");
+    assert_eq!(run["state"], json!("awaiting_perform_convert"), "{run}");
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(1),
+        "a new approval"
+    );
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1 + STEP-PIN-1 on the hosted path: when the action
+/// definition itself changes (`OMITS_LOSS`) after a flow step parks for
+/// approval, the stale approval drives nothing on the decider's request, and
+/// the starter's retry fails closed (`failed_refused`) rather than parking or
+/// executing under the mutated action.
+#[test]
+fn a_stale_approval_after_action_change_fails_closed_on_retry() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-stale-action");
     let fixture: Value = serde_json::from_str(include_str!(
         "../../norn-cell/tests/fixtures/constitution.json"
     ))
@@ -737,12 +793,12 @@ fn a_stale_approval_never_drives_its_flow_step() {
         "nothing parked anew"
     );
     assert_eq!(melt_status(&cell), 404);
-    let run = restart(&cell, "melt-run-stale");
-    assert_eq!(run["state"], json!("awaiting_perform_convert"), "{run}");
+    let run = restart(&cell, "melt-run-stale-action");
+    assert_eq!(run["state"], json!("failed_refused"), "{run}");
     assert_eq!(
         pending(&cell, APPROVER)["total"],
-        json!(1),
-        "a new approval"
+        json!(0),
+        "mutated action must never park a fresh approval for the old run"
     );
     assert_eq!(melt_status(&cell), 404);
 }

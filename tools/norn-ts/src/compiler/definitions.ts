@@ -956,21 +956,24 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings", "dependencies",
+      "name", "title", "version", "description", "role", "extends", "disjointWith", "properties", "links", "invariants", "lifecycles", "markings", "propertyMarkings", "dependencies",
       ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS,
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const invariantsNode = members.get("invariants")
     const linksNode = members.get("links")
+    const lifecyclesNode = members.get("lifecycles")
     return E.interfaceType({
       ...rest,
       ...this.localized(members),
       ...this.memberLabels(members, projected.map((p) => p.id)),
       extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
+      disjointWith: members.has("disjointWith") ? this.list(members.get("disjointWith")!).map((target) => this.typeName(target, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
       links: linksNode ? this.list(linksNode).map((x) => this.interfaceLink(x)) : [],
       invariants: invariantsNode ? this.list(invariantsNode).map((x) => this.invariant(x)) : [],
+      ...(lifecyclesNode ? { lifecycles: this.list(lifecyclesNode).map((x) => this.lifecycle(x)) } : {}),
       at: this.at(call),
     })
   }
@@ -1756,28 +1759,101 @@ class DefinitionCompiler {
   }
 
   private access(call: ts.CallExpression): P.AccessDef {
-    const members = this.meta(call, ["id", "title", "version", "rules", "principalCatalog"])
+    const members = this.meta(call, ["id", "title", "version", "rules", "principalCatalog", "scopedRoles"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const principalCatalog = members.get("principalCatalog")
-    return P.access({
-      // The closed grammar (types, sources) is the Rust checker's.
-      ...(principalCatalog ? { principalCatalog: this.list(principalCatalog).map((entry) => this.json(entry) as unknown as P.PrincipalCatalogEntry) } : {}),
-      id: this.string(need("id")),
-      title: this.string(need("title")),
-      version: this.string(need("version")),
-      rules: this.list(need("rules")).map((r) => {
+    const scopedRolesNode = members.get("scopedRoles")
+    // SCOPE-KEY-1: declare a role's scope attribute + resource property once;
+    // the compiler injects `{ resource: { name: property, op: "in", value: { principalAttribute: attribute } } }`
+    // onto every rule naming that role (unless already present).
+    const scopedRoles = scopedRolesNode
+      ? this.list(scopedRolesNode).map((entry) => {
+          const s = this.closedRecord(entry, ["role", "attribute", "property"], ["role", "attribute", "property"])
+          return {
+            role: this.string(s.get("role")!),
+            attribute: this.string(s.get("attribute")!),
+            property: this.string(s.get("property")!),
+          }
+        })
+      : []
+    const usedScopedRoles = new Set<string>()
+    const rules = this.list(need("rules")).map((r) => {
         const m = this.closedRecord(r, ["ruleId", "actions", "resourceType", "scope", "allOf"], ["ruleId", "actions", "resourceType", "scope"])
         const scope = this.closedRecord(m.get("scope")!, ["dimensions"], ["dimensions"])
-        const allOf = m.get("allOf")
+        const allOfNode = m.get("allOf")
+        const allOf: P.AccessCondition[] = allOfNode
+          ? this.list(allOfNode).map((c) => this.json(c) as unknown as P.AccessCondition)
+          : []
+        if (scopedRoles.length > 0) {
+          const ruleRoles = new Set<string>()
+          for (const cond of allOf) {
+            const roleAnyOf = (cond as { role?: { anyOf?: ReadonlyArray<string> } }).role?.anyOf
+            if (Array.isArray(roleAnyOf)) {
+              for (const role of roleAnyOf) ruleRoles.add(role)
+            }
+          }
+          if (ruleRoles.size > 0) {
+            const groups = new Map<string, { attribute: string; property: string; roles: Set<string> }>()
+            for (const sr of scopedRoles) {
+              if (ruleRoles.has(sr.role)) usedScopedRoles.add(sr.role)
+              const key = `${sr.attribute}\0${sr.property}`
+              const entry = groups.get(key) ?? { attribute: sr.attribute, property: sr.property, roles: new Set<string>() }
+              entry.roles.add(sr.role)
+              groups.set(key, entry)
+            }
+            const SELF_SCOPE_ATTRS = new Set([
+              "id", "subject_id", "subjectid", "actor_id", "actorid", "user_id", "userid",
+              "principal_id", "principalid", "employee_id", "employeeid", "person_id", "personid",
+              "member_id", "memberid",
+            ])
+            const hasExplicitSelfScope = allOf.some((cond) => {
+              const res = (cond as { resource?: { op?: string; value?: { principalAttribute?: string } } }).resource
+              return (
+                res?.op === "eq" &&
+                typeof res?.value?.principalAttribute === "string" &&
+                SELF_SCOPE_ATTRS.has(res.value.principalAttribute.toLowerCase())
+              )
+            })
+            for (const group of groups.values()) {
+              const matched = [...ruleRoles].filter((role) => group.roles.has(role))
+              if (matched.length === 0) continue
+              const alreadyScoped = allOf.some((cond) => {
+                const res = (cond as { resource?: { name?: string; op?: string; value?: { principalAttribute?: string } } }).resource
+                return res?.name === group.property && res?.op === "in" && res?.value?.principalAttribute === group.attribute
+              })
+              if (alreadyScoped || hasExplicitSelfScope) continue
+              if (matched.length < ruleRoles.size) {
+                throw new CompileError(
+                  "NORN-FLOW-VALUE",
+                  `rule mixes scoped role(s) [${matched.join(", ")}] with unscoped roles; split the rule or declare an explicit resource scope predicate`,
+                  r,
+                )
+              }
+              allOf.push({ resource: { name: group.property, op: "in", value: { principalAttribute: group.attribute } } } as unknown as P.AccessCondition)
+            }
+          }
+        }
         return {
           ruleId: this.string(m.get("ruleId")!),
           actions: this.list(m.get("actions")!).map((a) => this.actionId(a)),
           resourceType: this.typeName(m.get("resourceType")!, OBJECT_TYPES),
           // The closed grammar (dimension names, condition nodes) is the Rust checker's.
           scope: { dimensions: this.strings(scope.get("dimensions")!) as P.ScopeDimension[] },
-          ...(allOf ? { allOf: this.list(allOf).map((c) => this.json(c) as unknown as P.AccessCondition) } : {}),
+          ...(allOf.length > 0 ? { allOf } : {}),
         }
-      }),
+      })
+    for (const sr of scopedRoles) {
+      if (!usedScopedRoles.has(sr.role)) {
+        throw new CompileError("NORN-FLOW-VALUE", `scopedRoles declares role ${JSON.stringify(sr.role)} which does not appear in any rule`, scopedRolesNode!)
+      }
+    }
+    return P.access({
+      // The closed grammar (types, sources) is the Rust checker's.
+      ...(principalCatalog ? { principalCatalog: this.list(principalCatalog).map((entry) => this.json(entry) as unknown as P.PrincipalCatalogEntry) } : {}),
+      id: this.string(need("id")),
+      title: this.string(need("title")),
+      version: this.string(need("version")),
+      rules,
       at: this.at(call),
     })
   }
@@ -2549,11 +2625,25 @@ class DefinitionCompiler {
       const token = m.get("token")
       if (token) this.closedRecord(token, ["header", "prefix"], ["header"])
       for (const feed of this.list(m.get("feeds")!)) {
-        const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
+        const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial", "mode", "versionKind"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
+        const mode = f.get("mode")
+        if (mode) {
+          const v = this.string(mode)
+          if (v !== "full_snapshot" && v !== "patch") throw new CompileError("NORN-FLOW-LITERAL", `unknown pull feed mode ${v}`, mode)
+        }
+        const versionKind = f.get("versionKind")
+        if (versionKind) {
+          const v = this.string(versionKind)
+          if (v !== "lexicographical" && v !== "int64" && v !== "uint64" && v !== "rfc3339") throw new CompileError("NORN-FLOW-LITERAL", `unknown pull feed versionKind ${v}`, versionKind)
+        }
         this.closedRecord(f.get("request")!, ["method", "path", "query", "headers", "body"], ["method", "path"])
         const paging = this.closedRecord(f.get("paging")!, ["kind", "size", "nextCursorPath", "hasNextPath"], ["kind", "size"])
         if (this.string(paging.get("kind")!) === "keyset") this.closedRecord(f.get("paging")!, ["kind", "size"], ["kind", "size"])
-        this.closedRecord(f.get("initial")!, ["version", "id"], ["version", "id"])
+        const initialNode = f.get("initial")!
+        const initial = this.closedRecord(initialNode, ["version", "id", "idDecimal"], ["version"])
+        const hasId = initial.has("id"), hasIdDecimal = initial.has("idDecimal")
+        if (hasId === hasIdDecimal) throw new CompileError("NORN-FLOW-LITERAL", "pull feed initial must declare exactly one of id or idDecimal", initialNode)
+        if (hasIdDecimal) this.string(initial.get("idDecimal")!)
       }
     }
     if (cursor) this.closedRecord(cursor, ["cursorId", "resourceId", "storageKey"], ["cursorId", "resourceId", "storageKey"])

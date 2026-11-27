@@ -330,14 +330,14 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
         let grain = plan.grain().as_str().to_owned();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &context.scope))?;
-        let prepared = store
-            .analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?
-            .expecting(self.transport.capabilities().engine);
         let mut answer = if admitted {
+            let prepared = store
+                .analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?
+                .expecting(self.transport.capabilities().engine);
             let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;
             store.analytics_answer_known_at(prepared, response)?
         } else {
-            store.analytics_empty_authorized_answer_known_at(prepared)?
+            store.analytics_empty_known_at(plan, context, &self.tenant, cutoff)?
         };
         finish_answer(store, plan, &mut answer.result, Some(cutoff), visible)?;
         Ok(answer)
@@ -463,15 +463,11 @@ pub fn export_objects<E: SqlEngine>(
     let guard = host.cell()?;
     let store = guard.store();
     // PRIVACY-1: an export carries stored values, so a cell that declares
-    // markings exports nothing; a marked value leaves only through a reveal.
-    // The decision and the frontier the engine exports are read at one cell
-    // version (S3, #1547), and the engine exports the rows live at it.
-    let (leave, source, snapshot, _version) = decided_source(host, store, object_type, |reader| {
-        stored_values_leave(host, reader, object_type)
-    })?;
-    if !leave {
-        return Err(crate::authz::read_denied());
-    }
+    // markings or holds dynamic `_norn_markings` exports nothing; a marked
+    // value leaves only through a reveal. `admit_export` brackets the marking
+    // decision and the exported source at one cell version (S3, #1547) and
+    // issues a non-cloneable permit consumed at export dispatch.
+    let permit = crate::privacy::disclosure::admit_export(host, store, object_type)?;
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let mut named = std::collections::BTreeSet::new();
     for column in &columns {
@@ -489,7 +485,26 @@ pub fn export_objects<E: SqlEngine>(
             return Err(Refusal::invalid(format!("`{column}` is named twice")));
         }
     }
-    let tenant = TenantId::of_scope(&host.scope().key());
+    dispatch_export(
+        store,
+        transport,
+        &host.scope().key(),
+        permit,
+        columns,
+        format,
+    )
+}
+
+fn dispatch_export<E: SqlEngine>(
+    store: &CellStore<E>,
+    transport: &dyn Transport,
+    scope_key: &str,
+    permit: crate::privacy::disclosure::DisclosedExportPermit,
+    columns: Vec<String>,
+    format: ExportFormat,
+) -> Result<(), Refusal> {
+    let (source, snapshot) = permit.into_parts();
+    let tenant = TenantId::of_scope(scope_key);
     let mut call = EngineCall::new(
         "export",
         &ExportRequest {
@@ -1720,9 +1735,9 @@ pub fn page_objects<E: SqlEngine>(
     params: &crate::object_query::ObjectQueryParams,
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
-) -> Result<crate::objects::NornObjectQueryPage, Refusal> {
+) -> Result<crate::privacy::DisclosedObjectQueryPage, Refusal> {
     use crate::object_query::{self, Cursor};
-    use crate::objects::{NornAppliedQuery, NornObjectQueryPage, NornQueryTotal};
+    use crate::objects::{NornAppliedQuery, NornQueryTotal};
     use norn_cell::analytics::{PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let actor = actor.unwrap_or_default();
@@ -1804,20 +1819,20 @@ pub fn page_objects<E: SqlEngine>(
         .into_iter()
         .map(|row| queried(object_type, &scope_key, row, values, &marks))
         .collect::<Result<Vec<_>, Refusal>>()?;
-    Ok(NornObjectQueryPage {
-        object_type: object_type.to_owned(),
+    Ok(crate::privacy::disclosure::project_object_query_page(
+        object_type.to_owned(),
         records,
-        quarantine_count: quarantined,
-        query: NornAppliedQuery {
+        quarantined,
+        NornAppliedQuery {
             sort: query.sort_document(),
             filter: query.filter_document(),
         },
         next,
-        total: Some(NornQueryTotal {
+        Some(NornQueryTotal {
             count: page.total,
             approximate: false,
         }),
-    })
+    ))
 }
 
 /// A parsed grid query's clauses and keys as the engine takes them.
@@ -1954,50 +1969,16 @@ fn queried(
     row: norn_cell::analytics::PageRow,
     values: bool,
     marks: &DatasetMarks,
-) -> Result<crate::objects::NornQueriedRecord, Refusal> {
-    let mut masked = BTreeMap::new();
-    let mut withheld_properties = Vec::new();
-    let read = if values {
-        let mut read = row
-            .values
-            .iter()
-            .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
-            .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
-            .map_err(Refusal::host)?;
-        for (column, ids) in &marks.columns {
-            let mask = crate::privacy::strongest(&marks.catalog, ids)
-                .unwrap_or(norn_ir::MaskPolicy::Refuse {});
-            let Some(value) = read.get_mut(column) else {
-                continue;
-            };
-            let mode = crate::privacy::apply(&mask, marks.key.as_ref(), value);
-            if mode == crate::privacy::NornMaskMode::Refuse {
-                read.remove(column);
-                withheld_properties.push(column.clone());
-            }
-            masked.insert(
-                column.clone(),
-                crate::privacy::NornMaskedProperty {
-                    mode,
-                    markings: ids.clone(),
-                    revealable: false,
-                },
-            );
-        }
-        Some(read)
-    } else {
-        None
-    };
-    Ok(crate::objects::NornQueriedRecord {
-        object_type: object_type.to_owned(),
-        id: row.id,
-        scope: scope_key.to_owned(),
-        version: read.as_ref().map(|_| row.version),
-        withheld: read.is_none(),
-        values: read,
-        withheld_properties,
-        masked,
-    })
+) -> Result<crate::privacy::DisclosedQueriedObject, Refusal> {
+    crate::privacy::disclosure::project_dataset_queried_object(
+        object_type,
+        scope_key,
+        row,
+        values,
+        &marks.catalog,
+        &marks.columns,
+        marks.key.as_ref(),
+    )
 }
 
 /// HOST-READ-3 over a loaded dataset: one row by identity, as
@@ -2013,7 +1994,7 @@ pub fn record_object<E: SqlEngine>(
     (object_type, id): (&str, &str),
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
-) -> Result<crate::objects::NornQueriedRecord, Refusal> {
+) -> Result<crate::privacy::DisclosedQueriedObject, Refusal> {
     use norn_cell::analytics::{PageRequest, PageResponse};
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
@@ -2103,27 +2084,6 @@ fn page_clause(
     })
 }
 
-/// PRIVACY-1: whether `object_type`'s current stored values may leave as stored.
-fn stored_values_leave<E: SqlEngine>(
-    host: &DevHost<E>,
-    reader: &norn_cell::StoreReader<'_, E>,
-    object_type: &str,
-) -> Result<bool, Refusal> {
-    if let Some(current) = reader
-        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
-        .map_err(Refusal::host)?
-        && !reader
-            .effective_dataset_markings(&current.manifest)
-            .map_err(Refusal::host)?
-            .is_empty()
-    {
-        return Ok(false);
-    }
-    let catalog = host.marking_catalog(reader)?;
-    Ok(catalog.is_empty()
-        || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
-}
-
 /// A cell version: its head and foreign-write revision.
 type CellVersion = (u64, Option<(u64, u64)>);
 
@@ -2148,29 +2108,8 @@ fn decided_source<E: SqlEngine, T>(
     Err(crate::object_routes::snapshot_moved())
 }
 
-/// Whether every live row of `object_type` has a complete marking snapshot
-/// with no label on any of its properties. For a loaded dataset whose rows
-/// live in the engine, this checks the effective dataset markings (manifest
-/// union current model). An unknown type, an incomplete snapshot or an
-/// unbounded summary counts as labeled: it fails closed.
-fn unlabeled<E: SqlEngine>(r: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
-    match r.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
-        Ok(Some(c)) => r
-            .effective_dataset_markings(&c.manifest)
-            .is_ok_and(|m| m.is_empty()),
-        Ok(None) => mirror_unlabeled(r, object_type),
-        Err(_) => false,
-    }
-}
-
 fn mirror_unlabeled<E: SqlEngine>(r: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
-    let Ok(properties) = r.model().effective_property_types(object_type) else {
-        return false;
-    };
-    properties.iter().all(|(property, _)| {
-        r.property_marking_summary(norn_cell::MAIN_WORLD, object_type, property)
-            .is_ok_and(|labels| labels.is_some_and(|labels| labels.is_empty()))
-    })
+    crate::privacy::disclosure::mirror_unlabeled(r, object_type)
 }
 
 /// How `GET /v1/objects/{type}:profile` handles `object_type` under PRIVACY-1
@@ -2402,7 +2341,7 @@ mod tests {
             ),
         )
         .expect("read");
-        let values = read.values.expect("values");
+        let values = read.values.as_ref().expect("values");
         assert_eq!(values["customer"], RuntimeValue::String(pseudonym));
         assert_eq!(values["amount"].canonical_json().expect("json"), b"12.5");
         assert_eq!(read.masked["customer"].mode, NornMaskMode::Pseudonym);
@@ -2416,7 +2355,13 @@ mod tests {
             &marks(MaskPolicy::Refuse {}, None),
         )
         .expect("read");
-        assert!(!refused.values.expect("values").contains_key("customer"));
+        assert!(
+            !refused
+                .values
+                .as_ref()
+                .expect("values")
+                .contains_key("customer")
+        );
         assert_eq!(refused.withheld_properties, vec!["customer".to_owned()]);
     }
 }
