@@ -425,3 +425,159 @@ pub fn action_call_object_type() -> ObjectTypeDef {
 pub fn json_string(value: &str) -> JsonValue {
     JsonValue::String(value.to_owned())
 }
+
+/// Returns `object_type` followed by its `extends` ancestors in order,
+/// breaking safely on any `extends` cycle.
+pub(crate) fn object_type_ancestors<'a>(
+    pack: &'a AdmittedPack,
+    object_type: &'a ObjectTypeDef,
+) -> Vec<&'a ObjectTypeDef> {
+    let mut visited = BTreeSet::new();
+    let mut chain = Vec::new();
+    let mut current = Some(object_type);
+    while let Some(def) = current {
+        if !visited.insert(def.name.as_str()) {
+            break;
+        }
+        chain.push(def);
+        current = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    chain
+}
+
+/// Returns every interface implemented by any type in `chain` together with
+/// all transitive super-interfaces (`contract_owners`), deduplicated in
+/// deterministic traversal order.
+pub(crate) fn object_type_interfaces<'a>(
+    pack: &'a AdmittedPack,
+    chain: &[&'a ObjectTypeDef],
+) -> Vec<&'a InterfaceDef> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for def in chain {
+        for iface_name in &def.implements {
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+            {
+                for owner in
+                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                {
+                    if seen.insert(owner.name.as_str()) {
+                        out.push(owner);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Dereferences a chain of `PropertyType::Ref` aliases through `shared`,
+/// stopping safely on missing targets or alias cycles.
+pub(crate) fn resolve_property_type_chain<'a>(
+    mut ty: &'a PropertyType,
+    shared: &'a BTreeMap<&'a str, &'a PropertyTypeDef>,
+) -> &'a PropertyType {
+    let mut visited = BTreeSet::new();
+    while let PropertyType::Ref { name, .. } = ty {
+        if !visited.insert(name.as_str()) {
+            break;
+        }
+        let Some(def) = shared.get(name.as_str()) else {
+            break;
+        };
+        ty = &def.property_type;
+    }
+    ty
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn cycle_safe_walkers_and_multihop_refs_terminate() {
+        let one: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "t.One",
+            "extends": "t.Two",
+            "properties": [
+                { "id": "creator", "protected": true, "type": { "kind": "text" } },
+                { "id": "node", "type": { "kind": "ref", "name": "t.RecNode" } }
+            ]
+        }))
+        .expect("t.One decodes");
+        let two: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "t.Two",
+            "extends": "t.One",
+            "properties": []
+        }))
+        .expect("t.Two decodes");
+        let prop_types: Vec<PropertyTypeDef> = serde_json::from_value(json!([
+            { "name": "t.Alias1", "type": { "kind": "ref", "name": "t.Alias2" } },
+            { "name": "t.Alias2", "type": { "kind": "enum", "values": [{ "value": "open" }] } },
+            {
+                "name": "t.RecNode",
+                "type": {
+                    "kind": "record",
+                    "members": [{ "id": "next", "type": { "kind": "ref", "name": "t.RecNode" } }]
+                }
+            }
+        ]))
+        .expect("property types decode");
+        let pack = AdmittedPack {
+            name: "cycle".to_owned(),
+            object_types: vec![one, two],
+            property_types: prop_types,
+            ..AdmittedPack::default()
+        };
+        let first = pack.object_types.first().expect("first type");
+        assert_eq!(object_type_ancestors(&pack, first).len(), 2);
+        assert_eq!(seed::protected_properties(&pack, first), vec!["creator"]);
+        let shared: BTreeMap<&str, &PropertyTypeDef> = pack
+            .property_types
+            .iter()
+            .map(|def| (def.name.as_str(), def))
+            .collect();
+        let alias1: PropertyType =
+            serde_json::from_value(json!({ "kind": "ref", "name": "t.Alias1" }))
+                .expect("ref decodes");
+        let resolved = resolve_property_type_chain(&alias1, &shared);
+        assert!(matches!(resolved, PropertyType::Enum { .. }));
+        let synthesized = synth::synthesize_object(&pack, first, "k1", 1);
+        assert!(synthesized.contains_key("node"));
+    }
+
+    #[test]
+    fn immutable_entity_coverage_plan_skips_unreachable_lifecycle_targets() {
+        let locked: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "t.Locked",
+            "immutable": true,
+            "properties": [
+                { "id": "status", "type": { "kind": "enum", "values": [{ "value": "open" }, { "value": "closed" }] } }
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["open"],
+                "terminal": ["closed"],
+                "immutable": ["open"],
+                "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
+            }]
+        }))
+        .expect("t.Locked decodes");
+        let pack = AdmittedPack {
+            name: "imm".to_owned(),
+            object_types: vec![locked],
+            ..AdmittedPack::default()
+        };
+        let plan = coverage::DomainCoveragePlan::from_pack(&pack);
+        assert!(plan.transitions.is_empty());
+        assert_eq!(plan.immutable_targets.len(), 1);
+    }
+}

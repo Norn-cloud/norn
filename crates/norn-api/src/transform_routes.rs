@@ -27,6 +27,7 @@ use crate::authz::{
 };
 use crate::host::DevHost;
 use crate::object_routes::{ObjectAccess, collection, mapped};
+use crate::privacy::MarkingCatalog;
 use crate::refusal::Refusal;
 use crate::scope::ScopeQuery;
 
@@ -389,28 +390,62 @@ fn row_access<E: SqlEngine>(
 }
 
 /// The rows a reader is served: live, or a materialized transform's stored
-/// result when the reader may read every input row (VIEW-MAT-1).
+/// result when the reader may read every input row (VIEW-MAT-1), together with
+/// the effective column markings, live head commit and marking catalog checked
+/// on the same cell guard.
+struct EvaluatedTransform {
+    plan: TransformPlan,
+    served: Served,
+    marked: Vec<(String, Vec<String>)>,
+    head_commits: u64,
+    catalog: MarkingCatalog,
+}
+
 fn evaluate<E: SqlEngine>(
     host: &DevHost<E>,
     (scope, actor): (&ScopeQuery, Option<&str>),
     transform: &str,
     access: &dyn ObjectAccess,
     now: LogicalTime,
-) -> Result<(TransformPlan, Served), Refusal> {
+) -> Result<EvaluatedTransform, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let store = cell.store();
+    let eval_defs = store
+        .read()
+        .active_definitions_identity()
+        .map_err(Refusal::host)?;
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
-    let served = store
-        .serve_transform(
+    let (served, classified) = store
+        .serve_transform_checked(
             &plan,
             (MAIN_WORLD, &host.scope().key()),
             |row| Ok(row_access(host, access, &actor, row)),
             now.as_millis(),
+            |reader, stale| {
+                crate::privacy::classify_transform_in_tx(
+                    host,
+                    reader,
+                    store.model(),
+                    &plan,
+                    eval_defs.as_ref(),
+                    stale,
+                )
+            },
         )
-        .map_err(Refusal::from_compute)?;
-    Ok((plan, served))
+        .map_err(|error| match error {
+            norn_cell::GuardedError::Store(err) => Refusal::from_compute(err),
+            norn_cell::GuardedError::Guard(refusal) => refusal,
+        })?;
+    let head_commits = served.snapshot_head.commits;
+    Ok(EvaluatedTransform {
+        plan,
+        served,
+        marked: classified.marked,
+        head_commits,
+        catalog: classified.catalog,
+    })
 }
 
 fn additivity(value: &PropertyAdditivity) -> &'static str {
@@ -453,28 +488,6 @@ fn column(column: &Column, schema: &NodeSchema) -> NornTransformColumn {
     }
 }
 
-/// Whether any grain column carries lineage markings.
-fn grain_marked(plan: &TransformPlan, grain: &[String]) -> bool {
-    plan.output_schema()
-        .columns
-        .iter()
-        .any(|column| !column.markings.is_empty() && grain.contains(&column.name))
-}
-
-/// Each output column with its lineage markings.
-fn marked_columns(plan: &TransformPlan) -> Vec<(String, Vec<String>)> {
-    plan.output_schema()
-        .columns
-        .iter()
-        .map(|column| {
-            (
-                column.name.clone(),
-                column.markings.iter().cloned().collect(),
-            )
-        })
-        .collect()
-}
-
 fn public_row_id(key: Option<&crate::privacy::PseudonymKey>, id: &str) -> String {
     key.map_or_else(|| id.to_owned(), |key| key.keyed_id(id))
 }
@@ -497,6 +510,16 @@ fn parse_limit(limit: Option<&str>) -> Result<usize, Refusal> {
     }
 }
 
+fn parse_cursor(cursor: &str) -> Option<(u64, u64, &str)> {
+    let (epoch, row) = cursor.split_once(':')?;
+    if let Some((served, head)) = epoch.split_once('@') {
+        Some((served.parse().ok()?, head.parse().ok()?, row))
+    } else {
+        let at: u64 = epoch.parse().ok()?;
+        Some((at, at, row))
+    }
+}
+
 /// One page of a transform's rows, evaluated now under the reader's visibility.
 ///
 /// # Errors
@@ -515,26 +538,22 @@ pub fn get_transform_rows<E: SqlEngine>(
     now: LogicalTime,
 ) -> Result<NornTransformPage, Refusal> {
     let limit = parse_limit(params.limit.as_deref())?;
-    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
-    let result = &served.result;
+    let evaluated = evaluate(host, (scope, actor), transform, access, now)?;
+    let result = &evaluated.served.result;
     let commits = result.revision.commits;
-    let key = crate::privacy::row_ids(host, grain_marked(&plan, &result.grain))?;
+    let head_commits = evaluated.head_commits;
+    let key = crate::privacy::row_ids(
+        host,
+        &evaluated.catalog,
+        crate::privacy::grain_marked(&evaluated.marked, &result.grain),
+    )?;
     let start = match params.after.as_deref() {
         None => 0,
         Some(cursor) => {
-            let (at, row) = cursor
-                .split_once(':')
-                .and_then(|(at, row)| at.parse::<u64>().ok().map(|at| (at, row)))
+            let (served_at, head_at, row) = parse_cursor(cursor)
                 .ok_or_else(|| Refusal::invalid("the cursor was not issued for this transform"))?;
-            if at != commits {
-                let mut moved = Refusal::new(
-                    StatusCode::CONFLICT,
-                    "transform.snapshot_moved",
-                    "the cell committed since the cursor was issued",
-                    "read the transform again from its first page",
-                );
-                moved.retryable = true;
-                return Err(moved);
+            if served_at != commits || head_at != head_commits {
+                return Err(crate::privacy::transform_snapshot_moved());
             }
             let position = result
                 .rows
@@ -557,26 +576,37 @@ pub fn get_transform_rows<E: SqlEngine>(
         })
         .collect();
     // PRIVACY-1: a marked column leaves projected, as its source property does.
-    let marked = marked_columns(&plan);
     crate::privacy::project_columns(
         host,
-        &marked,
+        &evaluated.catalog,
+        &evaluated.marked,
         &mut page
             .iter_mut()
             .map(|row| &mut row.values)
             .collect::<Vec<_>>(),
-    )?;
+    );
     let end = start.saturating_add(page.len());
     let next_after = (end < total)
-        .then(|| page.last().map(|row| format!("{commits}:{}", row.row_id)))
+        .then(|| {
+            page.last()
+                .map(|row| format!("{commits}@{head_commits}:{}", row.row_id))
+        })
         .flatten();
+    let mut page_columns = columns(evaluated.plan.output_schema());
+    for (col, (_, eff)) in page_columns.iter_mut().zip(&evaluated.marked) {
+        col.markings.clone_from(eff);
+    }
     Ok(NornTransformPage {
         transform: result.transform.clone(),
         version: result.version.clone(),
         engine: "cell".to_owned(),
         commits,
-        materialization: served.materialization.as_ref().map(materialization),
-        columns: columns(plan.output_schema()),
+        materialization: evaluated
+            .served
+            .materialization
+            .as_ref()
+            .map(materialization),
+        columns: page_columns,
         grain: result.grain.clone(),
         rows: page,
         total_rows: u64::try_from(total).unwrap_or(u64::MAX),
@@ -603,21 +633,34 @@ pub fn get_transform_row_lineage<E: SqlEngine>(
     access: &dyn ObjectAccess,
     now: LogicalTime,
 ) -> Result<NornTransformLineage, Refusal> {
-    let (plan, served) = evaluate(host, (scope, actor), transform, access, now)?;
-    let result = &served.result;
-    let key = crate::privacy::row_ids(host, grain_marked(&plan, &result.grain))?;
+    let evaluated = evaluate(host, (scope, actor), transform, access, now)?;
+    let result = &evaluated.served.result;
+    let key = crate::privacy::row_ids(
+        host,
+        &evaluated.catalog,
+        crate::privacy::grain_marked(&evaluated.marked, &result.grain),
+    )?;
     let found = result
         .rows
         .iter()
         .find(|candidate| public_row_id(key.as_ref(), &candidate.id) == row)
         .ok_or_else(row_not_found)?;
     let mut values = found.values.clone();
-    crate::privacy::project_columns(host, &marked_columns(&plan), &mut [&mut values])?;
+    crate::privacy::project_columns(
+        host,
+        &evaluated.catalog,
+        &evaluated.marked,
+        &mut [&mut values],
+    );
     Ok(NornTransformLineage {
         transform: result.transform.clone(),
         row_id: public_row_id(key.as_ref(), &found.id),
         commits: result.revision.commits,
-        materialization: served.materialization.as_ref().map(materialization),
+        materialization: evaluated
+            .served
+            .materialization
+            .as_ref()
+            .map(materialization),
         values,
         members: found
             .members
@@ -851,6 +894,10 @@ pub fn refresh_transform<E: SqlEngine>(
     let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let store = cell.store();
+    let eval_defs = store
+        .read()
+        .active_definitions_identity()
+        .map_err(Refusal::host)?;
     let plan = installed_plan(store, transform)?;
     input_gates(host, access, &actor, &plan)?;
     if plan.materialization.is_none() {
@@ -859,13 +906,27 @@ pub fn refresh_transform<E: SqlEngine>(
         ));
     }
     store
-        .refresh_transform(
+        .refresh_transform_checked(
             &plan,
             (MAIN_WORLD, &host.scope().key()),
             |row| Ok(row_access(host, access, &actor, row)),
             now.as_millis(),
+            |reader| {
+                let _ = crate::privacy::guard_transform_in_tx(
+                    host,
+                    reader,
+                    store.model(),
+                    &plan,
+                    eval_defs.as_ref(),
+                    false,
+                )?;
+                Ok(())
+            },
         )
-        .map_err(Refusal::from_compute)?
+        .map_err(|error| match error {
+            norn_cell::GuardedError::Store(err) => Refusal::from_compute(err),
+            norn_cell::GuardedError::Guard(refusal) => refusal,
+        })?
         .map(|state| materialization(&state))
         .ok_or_else(read_denied)
 }

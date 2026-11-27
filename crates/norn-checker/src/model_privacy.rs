@@ -537,6 +537,163 @@ pub(crate) fn check(
     findings
 }
 
+/// Conservatively resolve the schema columns read by a transform expression.
+/// An empty dependency path (whole-row or unresolved alias read) maps to every
+/// column in `schema` so static and runtime marking guards never miss a read.
+pub(crate) fn expression_columns<'a>(
+    schema: &'a crate::transform::NodeSchema,
+    source: &str,
+) -> Result<Vec<&'a crate::transform::Column>, String> {
+    let paths = norn_expr::expression_read_paths(source, crate::transform::ROW_ROOT)
+        .map_err(|error| error.to_string())?;
+    if paths.iter().any(Vec::is_empty) {
+        return Ok(schema.columns.iter().collect());
+    }
+    Ok(paths
+        .iter()
+        .filter_map(|path| path.first())
+        .filter_map(|name| schema.column(name))
+        .collect())
+}
+
+impl crate::transform::TransformPlan {
+    fn push_column_origins(
+        &self,
+        out: &mut Vec<(String, String, String)>,
+        pointer: &str,
+        column: &crate::transform::Column,
+    ) {
+        for origin in &column.origins {
+            if let Some(scan) = self.inputs.get(&origin.alias) {
+                out.push((
+                    pointer.to_owned(),
+                    scan.object_type.clone(),
+                    origin.property.clone(),
+                ));
+            }
+        }
+    }
+
+    fn push_named_origin(
+        &self,
+        out: &mut Vec<(String, String, String)>,
+        pointer: &str,
+        schema: &crate::transform::NodeSchema,
+        col_name: &str,
+    ) {
+        if let Some(column) = schema.column(col_name) {
+            self.push_column_origins(out, pointer, column);
+        }
+    }
+
+    /// Every `(pointer, object_type, property)` origin read by a `Filter`
+    /// predicate or `Window`/`Dedupe` `partitionBy`/`key`/`orderBy` key, used
+    /// at runtime to refuse dynamic `_norn_markings` on filter, partition,
+    /// dedupe, or order columns.
+    #[must_use]
+    pub fn filter_and_order_origins(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (node_id, node) in &self.nodes {
+            match &node.step {
+                crate::transform::Step::Filter { input, predicate } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        let pointer = format!("/nodes/{node_id}/predicate");
+                        let cols =
+                            expression_columns(&input_node.schema, predicate.expression.source())
+                                .unwrap_or_else(|_| input_node.schema.columns.iter().collect());
+                        for col in cols {
+                            self.push_column_origins(&mut out, &pointer, col);
+                        }
+                    }
+                }
+                crate::transform::Step::Window {
+                    input,
+                    partition_by,
+                    order_by,
+                    ..
+                } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        for (index, col_name) in partition_by.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/partitionBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/orderBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                    }
+                }
+                crate::transform::Step::Dedupe {
+                    input,
+                    key,
+                    order_by,
+                    ..
+                } => {
+                    if let Some(input_node) = self.nodes.get(input) {
+                        for (index, col_name) in key.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/key/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                        for (index, (col_name, _, _)) in order_by.iter().enumerate() {
+                            self.push_named_origin(
+                                &mut out,
+                                &format!("/nodes/{node_id}/orderBy/{index}"),
+                                &input_node.schema,
+                                col_name,
+                            );
+                        }
+                    }
+                }
+                crate::transform::Step::Scan { .. }
+                | crate::transform::Step::Project { .. }
+                | crate::transform::Step::Join { .. }
+                | crate::transform::Step::Aggregate { .. }
+                | crate::transform::Step::Union { .. } => {}
+            }
+        }
+        out
+    }
+}
+
+/// The column type of a computed scalar in `ViewIR` transforms.
+pub(crate) fn transform_column_type(inferred: &norn_expr::InferredType) -> Option<norn_expr::Type> {
+    use norn_expr::{InferredType, Type};
+    if let InferredType::Optional(inner) = inferred {
+        return Some(Type::Optional(Box::new(transform_column_type(inner)?)));
+    }
+    if let InferredType::Enum(values) = inferred {
+        return Some(Type::enumeration(values.iter().cloned()));
+    }
+    if matches!(inferred, InferredType::Bool) {
+        Some(Type::Bool)
+    } else if matches!(inferred, InferredType::String | InferredType::Const(_)) {
+        Some(Type::text())
+    } else if matches!(inferred, InferredType::Date) {
+        Some(Type::Date)
+    } else if matches!(inferred, InferredType::Timestamp) {
+        Some(Type::Timestamp {
+            timezone: norn_ir::TimezonePolicy::Utc,
+        })
+    } else if matches!(inferred, InferredType::Number) {
+        Some(Type::Number)
+    } else {
+        // Null, lists and records are not column values.
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::input_reads;

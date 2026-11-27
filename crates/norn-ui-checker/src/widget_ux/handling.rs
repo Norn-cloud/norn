@@ -77,7 +77,8 @@ impl UxChecker<'_, '_, '_> {
     /// The resolved property a reference names, without reporting: other passes report a bad one.
     fn property_of(&self, property: &PropertyRef) -> Option<&EffectiveProperty> {
         let binding = self.bindings.get(property.binding_id.as_str())?;
-        let entity = self.find_exact(
+        let entity = self.find_visible_exact(
+            self.owner,
             &binding.object.id,
             &binding.object.version,
             &ArtifactKind::Entity,
@@ -86,16 +87,95 @@ impl UxChecker<'_, '_, '_> {
         object.property(&property.property_id)
     }
 
+    fn check_rendered_property(&self, found: &EffectiveProperty, property_id: &str, pointer: &str) {
+        let Some((value_type, exact)) = rendered(found) else {
+            return;
+        };
+        let Some(renderer) = self
+            .ux
+            .catalog
+            .iter()
+            .find(|entry| entry.renders == Some(value_type))
+        else {
+            return;
+        };
+        let entry = &renderer.entry_id;
+        if !found.markings.is_empty() && !renderer.handles.contains(&WidgetValueHandling::Masked) {
+            self.coded(
+                MARKED_UNHANDLED,
+                pointer,
+                format!(
+                    "property `{property_id}` is marked, so its value may arrive masked or withheld, but its renderer `{entry}` does not declare `handles: [\"masked\"]`"
+                ),
+            );
+        }
+        if exact && !renderer.handles.contains(&WidgetValueHandling::Exact) {
+            self.coded(
+                EXACT_UNHANDLED,
+                pointer,
+                format!(
+                    "property `{property_id}` is an exact decimal, but its renderer `{entry}` does not declare `handles: [\"exact\"]`"
+                ),
+            );
+        }
+    }
+
     /// Every rendered property reference whose value may be masked or is exact is drawn by a
     /// renderer that declares it handles that value.
     pub(super) fn check_value_handling(&self) {
         let mut refs = Vec::new();
         for (index, field) in self.ux.fields.iter().enumerate() {
-            if let WidgetFieldTarget::Property { property } = &field.target {
-                refs.push((
-                    property,
-                    format!("/payload/ux/fields/{index}/target/property"),
-                ));
+            match &field.target {
+                WidgetFieldTarget::Property { property } => {
+                    refs.push((
+                        property,
+                        format!("/payload/ux/fields/{index}/target/property"),
+                    ));
+                }
+                WidgetFieldTarget::FormInput {
+                    initial: Some(property),
+                    ..
+                } => {
+                    refs.push((
+                        property,
+                        format!("/payload/ux/fields/{index}/target/initial"),
+                    ));
+                }
+                WidgetFieldTarget::FormInput { initial: None, .. } => {}
+                WidgetFieldTarget::ParentProperty {
+                    form_id,
+                    property_id,
+                    ..
+                } => {
+                    if let Some(form) = self.forms.get(form_id.as_str()).copied()
+                        && let Some(action) = self.action_for_form(form)
+                        && let Some(object) = self.parent_object(action)
+                        && let Some(found) = object.property(property_id)
+                    {
+                        self.check_rendered_property(
+                            found,
+                            property_id,
+                            &format!("/payload/ux/fields/{index}/target/propertyId"),
+                        );
+                    }
+                }
+                WidgetFieldTarget::ChildRowProperty {
+                    form_id,
+                    collection_id,
+                    property_id,
+                } => {
+                    if let Some(form) = self.forms.get(form_id.as_str()).copied()
+                        && let Some(action) = self.action_for_form(form)
+                        && let Some(object) = self.child_object(action, collection_id)
+                        && let Some(found) = object.property(property_id)
+                    {
+                        self.check_rendered_property(
+                            found,
+                            property_id,
+                            &format!("/payload/ux/fields/{index}/target/propertyId"),
+                        );
+                    }
+                }
             }
         }
         for (index, page) in self.ux.pages.iter().enumerate() {
@@ -109,39 +189,7 @@ impl UxChecker<'_, '_, '_> {
             let Some(found) = self.property_of(property) else {
                 continue;
             };
-            let Some((value_type, exact)) = rendered(found) else {
-                continue;
-            };
-            let Some(renderer) = self
-                .ux
-                .catalog
-                .iter()
-                .find(|entry| entry.renders == Some(value_type))
-            else {
-                continue;
-            };
-            let id = &property.property_id;
-            let entry = &renderer.entry_id;
-            if !found.markings.is_empty()
-                && !renderer.handles.contains(&WidgetValueHandling::Masked)
-            {
-                self.coded(
-                    MARKED_UNHANDLED,
-                    &pointer,
-                    format!(
-                        "property `{id}` is marked, so its value may arrive masked or withheld, but its renderer `{entry}` does not declare `handles: [\"masked\"]`"
-                    ),
-                );
-            }
-            if exact && !renderer.handles.contains(&WidgetValueHandling::Exact) {
-                self.coded(
-                    EXACT_UNHANDLED,
-                    &pointer,
-                    format!(
-                        "property `{id}` is an exact decimal, but its renderer `{entry}` does not declare `handles: [\"exact\"]`"
-                    ),
-                );
-            }
+            self.check_rendered_property(found, &property.property_id, &pointer);
         }
     }
 
