@@ -334,6 +334,7 @@ run_phase() {
       python3 scripts/importers/test_owl_sources.py
       python3 scripts/metrics/test_metrics.py
       python3 scripts/ci/test_infisical_oidc.py
+      python3 tools/norn-py/run_tests.py
       lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
@@ -346,8 +347,6 @@ run_phase() {
       rm -f "$parity_report"
       "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture) | test(=ci::bundle::tests::matches_python_on_real_plans) | test(=ci::bundle::tests::refuses_wrong_inventories_and_ids) | test(=ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary) | test(=ci::bundle::tests::prunes_only_workspace_cargo_outputs)'
       require_passed "$parity_report" norn-skeleton-guard ci::tests::the_parity_fixture_keeps_every_gate_pinned_case ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture ci::bundle::tests::matches_python_on_real_plans ci::bundle::tests::refuses_wrong_inventories_and_ids ci::bundle::tests::groups_shared_builds_and_prunes_every_other_boundary ci::bundle::tests::prunes_only_workspace_cargo_outputs
-      # Run after policy, provenance and guard checks so ungated tools/norn-py code never runs before them.
-      python3 tools/norn-py/run_tests.py
       ;;
     test)
       select_shard "${2:-all}"
