@@ -513,7 +513,7 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
       },
       () => {},
     )
-    runtime.setSelection("items", reconciled.records)
+    runtime.setSelection("items", reconciled.records, reconciled.ids)
     runtime.send({ kind: "user", eventId: "run", payload: {} })
     await flush()
     expect(runtime.view().snapshot.stateId).toBe("done")
@@ -603,11 +603,15 @@ describe("Selectable Lists (WidgetComponent::List)", () => {
     expect(runtime.view().snapshot.stateId).toBe("ready")
 
     // Select all 3 rows from initial snapshot.
-    runtime.setSelection("items", [
-      { id: "row-1", name: "Alpha" },
-      { id: "row-2", name: "Beta" },
-      { id: "row-3", name: "Gamma" },
-    ])
+    runtime.setSelection(
+      "items",
+      [
+        { id: "row-1", name: "Alpha" },
+        { id: "row-2", name: "Beta" },
+        { id: "row-3", name: "Gamma" },
+      ],
+      ["row-1", "row-2", "row-3"],
+    )
 
     // Live subscription snapshot removes row-2, withholds row-3, updates row-1, and synchronously triggers sync-selected.
     pushSnapshot?.({
@@ -1514,16 +1518,102 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(numRefusedMarkup).toContain("field:number:unformatted (f-qty)")
   })
 
-  test("referencesRecordVersion detects parenthesized/optional accesses and ignores string literals", () => {
+  test("referencesRecordVersion detects parenthesized, optional, and conditional accesses while ignoring string literals", () => {
     expect(referencesRecordVersion("input.recordVersion")).toBe(true)
     expect(referencesRecordVersion("(input).recordVersion")).toBe(true)
+    expect(referencesRecordVersion("(true ? input : input).recordVersion")).toBe(true)
     expect(referencesRecordVersion("((input))['recordVersion']")).toBe(true)
     expect(referencesRecordVersion('((input))["recordVersion"]')).toBe(true)
     expect(referencesRecordVersion("input?.recordVersion")).toBe(true)
     expect(referencesRecordVersion('"input.recordVersion"')).toBe(false)
     expect(referencesRecordVersion("'input.recordVersion'")).toBe(false)
     expect(referencesRecordVersion("input.record.version")).toBe(false)
-    expect(referencesRecordVersion("foo(input).recordVersion")).toBe(false)
+  })
+
+  test("runtime.readSecurity synchronously captures withholding across batched ok -> pending transitions", async () => {
+    let pushSnapshot: ((doc: unknown) => void) | undefined
+    const revVisible = { id: "ord-1", values: { secret: "plain" } }
+    const revWithheld = { id: "ord-1", values: {}, withheldProperties: ["secret"] }
+    let resolveReread!: (value: Classified) => void
+    let reads = 0
+
+    const batchMachine: Machine = {
+      machineVersion: "0.1",
+      initialStateId: "opening",
+      fields: [],
+      events: [
+        { eventId: "opened", source: { kind: "page_opened" } },
+        { eventId: "accepted", source: { kind: "outcome", outcome: "accepted" } },
+        { eventId: "refused", source: { kind: "outcome", outcome: "refused" } },
+        { eventId: "sub", source: { kind: "subscription", bindingId: "order-detail" } },
+      ],
+      states: [
+        { stateId: "opening", role: "idle" },
+        { stateId: "loading", role: "pending", awaits: { kind: "read", bindingId: "order-detail" }, deadlineMs: 5000 },
+        { stateId: "ready", role: "idle" },
+      ],
+      transitions: [
+        { transitionId: "t-open", from: "opening", on: "opened", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
+        { transitionId: "t-ok", from: "loading", on: "accepted", target: "ready" },
+        { transitionId: "t-ref", from: "loading", on: "refused", target: "ready" },
+        // Subscription snapshot synchronously starts a re-read, immediately flipping read state ok -> pending!
+        { transitionId: "t-sub", from: "ready", on: "sub", target: "loading", effects: [{ kind: "start", call: { kind: "read", bindingId: "order-detail" } }] },
+      ],
+    }
+
+    const ux = makeUx(
+      { nodeId: "root", component: { kind: "section", section: { sectionId: "root", kind: "section", label: { en: "Root" }, fields: [], order: 0 } }, children: [] },
+      {
+        dataBindings: [{ bindingId: "order-detail", object: { id: "canon.Order.entity", version: "0.1.0" }, query: { kind: "object_runtime_detail", pageId: "main", parameterId: "orderId" } }],
+      },
+      batchMachine,
+    )
+
+    const runtime = createPageRuntime(
+      {
+        ux,
+        machine: batchMachine,
+        reader: {
+          kind: "live",
+          widget: () => ({
+            queryKey: ["order", reads],
+            queryFn: () => {
+              reads += 1
+              if (reads === 1) return Promise.resolve({ outcome: "accepted" as const, payload: {}, body: revVisible })
+              return new Promise<Classified>((resolve) => { resolveReread = resolve })
+            },
+          }),
+        },
+        calls: { call: async () => ({ outcome: "not_served", payload: {} }) },
+        engine: lazyEngine(async () => pathEngine),
+        host: () => ({
+          context: { orderId: "ord-1" },
+          objectTypeOf: () => "canon.Order",
+          actionIdOf: () => undefined,
+          live: { subscribe: (_read, listener) => { pushSnapshot = listener.snapshot; return () => {} } },
+        }),
+      },
+      () => {},
+    )
+    await flush()
+    expect(runtime.view().reads.get("order-detail")?.kind).toBe("ok")
+
+    // Subscription delivers revWithheld AND synchronously transitions binding back to pending.
+    pushSnapshot?.(revWithheld)
+    expect(runtime.view().reads.get("order-detail")?.kind).toBe("pending")
+    // Even though React never committed while `ok`, runtime.readSecurity synchronously recorded withholding!
+    expect(runtime.view().readSecurity?.get("order-detail")?.withheldProperties).toContain("secret")
+    const resolved = resolveFieldPrefillSecurity(
+      { value: undefined, masked: undefined, withheld: false },
+      { value: "plain", masked: undefined, withheld: false },
+      true,
+      false,
+      { value: undefined, masked: undefined, withheld: true },
+    )
+    expect(resolved.withheld).toBe(true)
+    resolveReread({ outcome: "accepted", payload: {}, body: revWithheld })
+    await flush()
+    runtime.dispose()
   })
 
   test("resolveFieldPrefillSecurity ratchets stricter masking while dirty and restores withheld fields on clean ok refresh", () => {

@@ -38,12 +38,24 @@ export interface PinnedRecord {
   readonly document: unknown
 }
 
+/**
+ * Synchronous L6 masking/withholding snapshot captured in `runtime.ts` on every `ok` read, before
+ * React batching can collapse an `ok -> pending` transition and hide new withholding from a dirty form.
+ */
+export interface ReadSecurity {
+  readonly withheld: boolean
+  readonly masked: Readonly<Record<string, unknown>>
+  readonly withheldProperties: readonly string[]
+}
+
 /** What the page draws from its runtime: all of it from the machine and the server's answers. */
 export interface RuntimeView {
   readonly snapshot: Snapshot
   readonly engine: EngineState
   readonly reads: ReadonlyMap<string, BindingReadState>
   readonly calls: ReadonlyMap<string, BindingCallState>
+  /** Monotonic per-binding L6 masking/withholding seen since last clean reset (survives synchronous `ok -> pending` batching). */
+  readonly readSecurity?: ReadonlyMap<string, ReadSecurity>
   /** Messages waiting for the engine. */
   readonly waiting: number
   /** The last step the engine refused (it fired nothing; the page stayed where it was), until a person's next step. */
@@ -57,8 +69,8 @@ export interface MachineRuntime extends RuntimeView {
   readonly retryEngine: () => void
   /** Record a form's current local draft (and optional pinned baseline record) so `ActionBinding` maps from it. */
   readonly setDraft?: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
-  /** Record a selectable list's selected records (and canonical envelope row ids) so `ActionBinding` (`input.selection`) maps from it. */
-  readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids?: readonly string[]) => void
+  /** Record a selectable list's selected records paired with their canonical envelope row ids so `ActionBinding` (`input.selection`) maps from it. */
+  readonly setSelection?: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids: readonly string[]) => void
   /** Submit a form's declared action binding directly when no machine event owns the form node. */
   readonly submitForm?: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
 }
@@ -93,7 +105,7 @@ export interface PageRuntime {
   readonly send: (msg: Msg) => void
   readonly retryEngine: () => void
   readonly setDraft: (formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
-  readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids?: readonly string[]) => void
+  readonly setSelection: (bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids: readonly string[]) => void
   readonly submitForm: (formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => void
   /** Start the engine loading, as the page does after its first paint. */
   readonly preload: () => void
@@ -122,7 +134,7 @@ const errorOf = (error: unknown): Error => (error instanceof Error ? error : new
 /** The view of a page that has not started: its initial state, nothing read, nothing called. */
 export function initialView(machine: Machine, engine: LazyEngine): RuntimeView {
   const state = engine.state()
-  return { snapshot: init(machine).snapshot, engine: state, reads: new Map(), calls: new Map(), waiting: 0, fault: null }
+  return { snapshot: init(machine).snapshot, engine: state, reads: new Map(), calls: new Map(), readSecurity: new Map(), waiting: 0, fault: null }
 }
 
 /**
@@ -233,9 +245,52 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     selections.set(bindingId, pruned)
   }
 
+  const extractReadSecurity = (document: unknown): ReadSecurity | null => {
+    if (typeof document !== "object" || document === null || Array.isArray(document)) return null
+    const doc = document as Readonly<Record<string, unknown>>
+    const rawMasked = typeof doc.masked === "object" && doc.masked !== null && !Array.isArray(doc.masked)
+      ? (doc.masked as Readonly<Record<string, unknown>>)
+      : {}
+    const masked: Record<string, unknown> = {}
+    for (const key of Object.keys(rawMasked)) {
+      if (Object.hasOwn(rawMasked, key)) masked[key] = rawMasked[key]
+    }
+    const withheldProperties = Array.isArray(doc.withheldProperties)
+      ? doc.withheldProperties.filter((entry): entry is string => typeof entry === "string")
+      : []
+    return {
+      withheld: doc.withheld === true,
+      masked,
+      withheldProperties,
+    }
+  }
+
+  const mergeReadSecurity = (previous: ReadSecurity | undefined, incoming: ReadSecurity): ReadSecurity => {
+    if (previous === undefined) return incoming
+    const masked: Record<string, unknown> = { ...previous.masked }
+    for (const key of Object.keys(incoming.masked)) {
+      if (Object.hasOwn(incoming.masked, key)) masked[key] = incoming.masked[key]
+    }
+    const withheldProperties = [...new Set([...previous.withheldProperties, ...incoming.withheldProperties])]
+    return {
+      withheld: previous.withheld || incoming.withheld,
+      masked,
+      withheldProperties,
+    }
+  }
+
   const setRead = (bindingId: string, state: BindingReadState) => {
     reconcileRuntimeSelection(bindingId, state)
-    change({ reads: new Map(view.reads).set(bindingId, state) })
+    const nextReads = new Map(view.reads).set(bindingId, state)
+    let nextSecurity = view.readSecurity
+    if (state.kind === "ok") {
+      const incoming = extractReadSecurity(state.document)
+      if (incoming !== null) {
+        const merged = mergeReadSecurity(view.readSecurity?.get(bindingId), incoming)
+        nextSecurity = new Map(view.readSecurity).set(bindingId, merged)
+      }
+    }
+    change({ reads: nextReads, ...(nextSecurity === undefined ? {} : { readSecurity: nextSecurity }) })
   }
   const setCall = (bindingId: string, state: BindingCallState) => change({ calls: new Map(view.calls).set(bindingId, state) })
   const stopWaiting = () => {
@@ -498,21 +553,13 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     retryEngine: () => loadEngine(true),
     setDraft,
     setSelection: (bindingId, records, ids) => {
-      selections.set(
-        bindingId,
-        records.map((record, index) => {
-          const explicit = ids?.[index]
-          const id =
-            explicit !== undefined && explicit !== ""
-              ? explicit
-              : typeof record.id === "string" && record.id !== ""
-                ? record.id
-                : typeof record.key === "string" && record.key !== ""
-                  ? record.key
-                  : String(index)
-          return { id, record }
-        }),
-      )
+      const entries: { readonly id: string; readonly record: Readonly<Record<string, unknown>> }[] = []
+      for (let index = 0; index < records.length; index += 1) {
+        const explicit = ids[index]
+        if (typeof explicit !== "string" || explicit === "") continue
+        entries.push({ id: explicit, record: records[index]! })
+      }
+      selections.set(bindingId, entries)
     },
     submitForm,
     preload: () => {
@@ -610,7 +657,7 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
   const send = useCallback((msg: Msg) => runtimeRef.current?.send(msg), [])
   const retryEngine = useCallback(() => runtimeRef.current?.retryEngine(), [])
   const setDraft = useCallback((formId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.setDraft(formId, draft, pinnedRecord), [])
-  const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids?: readonly string[]) => runtimeRef.current?.setSelection(bindingId, records, ids), [])
+  const setSelection = useCallback((bindingId: string, records: readonly Readonly<Record<string, unknown>>[], ids: readonly string[]) => runtimeRef.current?.setSelection(bindingId, records, ids), [])
   const submitForm = useCallback((formId: string, bindingId: string, draft: Readonly<Record<string, unknown>>, pinnedRecord?: PinnedRecord) => runtimeRef.current?.submitForm(formId, bindingId, draft, pinnedRecord), [])
 
   return {

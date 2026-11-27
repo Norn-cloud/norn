@@ -161,45 +161,32 @@ function tokenizeZen(expression: string): ZenToken[] {
 }
 
 /**
- * Whether a Zen expression accesses the unsupported `input.recordVersion` slot, including
- * parenthesized forms (`(input).recordVersion`, `((input))["recordVersion"]`, `input?.recordVersion`)
+ * Whether a Zen expression accesses the unsupported `input.recordVersion` slot — covering direct,
+ * parenthesized, optional-chained, and conditional forms (`input.recordVersion`, `(input).recordVersion`,
+ * `(true ? input : input).recordVersion`, `input?.recordVersion`, `((input))["recordVersion"]`)
  * while ignoring string literals like `"input.recordVersion"`.
  */
 export function referencesRecordVersion(expression: string): boolean {
   const tokens = tokenizeZen(expression)
+  let hasInputIdent = false
+  let hasRecordVersionAccess = false
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!
-    if (token.kind !== "ident" || token.value !== "input") continue
     const prev = i > 0 ? tokens[i - 1] : undefined
-    if (prev !== undefined && prev.kind === "punct" && (prev.value === "." || prev.value === "?.")) continue
-    // Allow balanced grouping parentheses wrapping `input`: `(input).recordVersion`, `((input))["recordVersion"]`.
-    let left = i - 1
-    let right = i + 1
-    while (
-      left >= 0 &&
-      right < tokens.length &&
-      tokens[left]!.kind === "punct" &&
-      tokens[left]!.value === "(" &&
-      tokens[right]!.kind === "punct" &&
-      tokens[right]!.value === ")"
-    ) {
-      const beforeParen = left > 0 ? tokens[left - 1] : undefined
-      if (beforeParen !== undefined && beforeParen.kind === "ident") break
-      left -= 1
-      right += 1
+    if (token.kind === "ident" && token.value === "input" && !(prev?.kind === "punct" && (prev.value === "." || prev.value === "?."))) {
+      hasInputIdent = true
     }
-    const next = tokens[right]
-    if (next === undefined || next.kind !== "punct") continue
-    if (next.value === "." || next.value === "?.") {
-      const member = tokens[right + 1]
-      if (member?.kind === "ident" && member.value === "recordVersion") return true
-    } else if (next.value === "[") {
-      const key = tokens[right + 1]
-      const close = tokens[right + 2]
+    if (token.kind === "punct" && (token.value === "." || token.value === "?.")) {
+      const member = tokens[i + 1]
+      if (member?.kind === "ident" && member.value === "recordVersion") hasRecordVersionAccess = true
+    } else if (token.kind === "punct" && token.value === "[") {
+      const key = tokens[i + 1]
+      const close = tokens[i + 2]
       if (key?.kind === "string" && key.value === "recordVersion" && close?.kind === "punct" && close.value === "]") {
-        return true
+        hasRecordVersionAccess = true
       }
     }
+    if (hasInputIdent && hasRecordVersionAccess) return true
   }
   return false
 }

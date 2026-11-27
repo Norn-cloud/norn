@@ -1338,21 +1338,38 @@ function fieldReadSettledOk(scope: PageScope, form: WidgetForm, field: FieldPres
   return scope.runtime.reads.get(ref.bindingId)?.kind === "ok"
 }
 
+function runtimeSecurityForField(scope: PageScope, form: WidgetForm, field: FieldPresentation): PrefillInfo | undefined {
+  const ref = prefillRefOf(form, field)
+  if (ref === undefined) return undefined
+  const security = scope.runtime.readSecurity?.get(ref.bindingId)
+  if (security === undefined) return undefined
+  const masked = own(asDoc(security.masked), ref.propertyId) as MaskedProperty | undefined
+  const withheld =
+    security.withheld ||
+    masked?.mode === "refuse" ||
+    security.withheldProperties.includes(ref.propertyId)
+  if (!withheld && masked === undefined) return undefined
+  return { value: undefined, masked, withheld }
+}
+
 /**
  * Resolve one field's effective L6 security metadata across refreshes:
  * - On a clean form whose backing read just settled `ok`, trust the fresh read (so a field restored
  *   by the server un-hides immediately without remounting).
  * - While dirty or while a backing read is non-`ok` (pending/refused/unavailable), never drop
- *   stricter `masked` or `withheld` metadata from either the pinned baseline or the live read.
+ *   stricter `masked` or `withheld` metadata from the pinned baseline, live read, or the runtime's
+ *   synchronous `readSecurity` ratchet (which survives React-batched `ok -> pending` transitions).
  */
 export function resolveFieldPrefillSecurity(
   live: PrefillInfo,
   pinned: PrefillInfo | undefined,
   dirty: boolean,
   readSettledOk: boolean,
+  runtimeSecurity?: PrefillInfo,
 ): PrefillInfo {
   if (!dirty && readSettledOk) return live
-  return mergePrefillSecurity(live, pinned)
+  const withPinned = mergePrefillSecurity(live, pinned)
+  return mergePrefillSecurity(withPinned, runtimeSecurity)
 }
 
 function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly node: WidgetNode; readonly formId: string }) {
@@ -1502,6 +1519,7 @@ function FormNode({ scope, node, formId }: { readonly scope: PageScope; readonly
       pinnedPrefills[field.fieldId],
       dirty,
       fieldReadSettledOk(scope, form, field),
+      runtimeSecurityForField(scope, form, field),
     )
     const agentMark = valueMark(prefill.masked, prefill.withheld)
     const value = prefill.withheld ? "" : (Object.hasOwn(draft, key) ? draft[key] : defaultFieldValue(field, undefined))
@@ -1804,7 +1822,7 @@ function ListNode({
   // Clear runtime selection whenever a selectable list's read leaves `ok` so stale rows never linger.
   useEffect(() => {
     if (component.selection !== "none" && !isOk) {
-      scope.runtime.setSelection?.(component.dataBindingId, [])
+      scope.runtime.setSelection?.(component.dataBindingId, [], [])
     }
   }, [component.selection, component.dataBindingId, isOk, scope.runtime])
 
