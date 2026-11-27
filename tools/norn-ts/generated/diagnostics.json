@@ -145,6 +145,14 @@
       "no_fix": null
     },
     {
+      "code": "artifact_set.action.compensation_cycle",
+      "tier": "T3",
+      "severity": "error",
+      "message": "action compensation forms a cycle: {cycle}",
+      "fix": "Break the compensation cycle so each action compensates through an acyclic compensating action.",
+      "no_fix": null
+    },
+    {
       "code": "artifact_set.action.create_link",
       "tier": "T3",
       "severity": "error",
@@ -182,6 +190,14 @@
       "severity": "error",
       "message": "an action aggregate input names an unknown type or property, or a property the fold cannot read",
       "fix": "Name a declared type and a property the aggregate fold can read.",
+      "no_fix": null
+    },
+    {
+      "code": "artifact_set.action.invalid_compensation",
+      "tier": "T3",
+      "severity": "error",
+      "message": "compensating action {actionId} is invalid: {detail}",
+      "fix": "Ensure the compensating action is unique, ledgered, active, covered by the forward action's required scope dimensions, and reachable on the target lifecycle.",
       "no_fix": null
     },
     {
@@ -246,6 +262,14 @@
       "severity": "error",
       "message": "the write set names {entityKind}, which is not an object type of the artifact set or the installed base",
       "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set.",
+      "no_fix": null
+    },
+    {
+      "code": "artifact_set.action.unresolved_compensation",
+      "tier": "T3",
+      "severity": "error",
+      "message": "compensation names action {actionId}, which is not an action of the artifact set or the installed base",
+      "fix": "Include the compensating action in the artifact set or installed base, or update compensation.actionId to name an admitted action.",
       "no_fix": null
     },
     {

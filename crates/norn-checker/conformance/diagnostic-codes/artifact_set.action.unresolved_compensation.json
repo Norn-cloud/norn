@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.action.unresolved_compensation",
+  "message": "compensation names action {actionId}, which is not an action of the artifact set or the installed base",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T3"
+}

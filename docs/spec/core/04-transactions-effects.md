@@ -671,3 +671,14 @@ The current protected-property profile applies to object properties. Link values
 `ObjectTypeDef.immutable` defaults to false. An immutable declaration is inherited through every supertype and cannot be weakened by a subtype. New objects may reach their final state within their first decision; an instance that existed before the decision cannot be set, transitioned or deleted. The final commit rechecks the stored concrete type, including direct host writes. A refused write leaves facts, ledger, commands and timers unchanged.
 
 Named scenarios: `immutable_objects_use_pre_decision_existence_for_change_sequences` (new/existing decisions); `inherited_immutable_objects_refuse_raw_overwrite_and_delete_atomically` (subtype creation and raw mutation refusal); `immutable_ancestry_controls_every_existing_instance_write` (generated values and inherited flags). Raw commits use `commit.immutable_object`; decision preparation uses the existing `decision.invalid_output` with an immutable reason. This implements the append-only part of TXN-HISTORY-1, without claiming event-sourcing or historical-query completeness.
+
+### ACTION-COMPENSATION-1: checked `ActionRoot.compensation`
+
+An action declaring `compensation: { actionId }` binds its reversal contract at Ring-0 artifact-set admission (`check_action_set`):
+
+- `compensation.actionId` must resolve uniquely to an admitted action in the candidate set or installed base (`artifact_set.action.unresolved_compensation` when absent; `artifact_set.action.invalid_compensation` when ambiguous).
+- The forward action's envelope scope must be able to see the compensating action's scope (`artifact_set.scope.incompatible_reference`).
+- Compensation references must be acyclic, refusing self-compensation and multi-action compensation cycles across candidate and base actions (`artifact_set.action.compensation_cycle`).
+- The compensating action must not be `rejected` or `superseded`, must be `ledgered: true` so reversal appends auditable history, must require only scope dimensions already present in the forward action's `scopeRequired`, and—when both actions fire transitions on the same effective lifecycle—must have at least one source state reachable from the forward transition's destination state (`artifact_set.action.invalid_compensation`).
+
+Named scenarios (`crates/norn-checker/tests/action_compensation.rs`): `admits_direct_multi_hop_cross_entity_and_base_compensations`, `refuses_unresolved_compensation`, `refuses_self_and_mutual_compensation_cycles`, `refuses_incompatible_scope_visibility_on_compensation`, `refuses_unledgered_and_narrower_scope_compensations`, and `refuses_unreachable_transition_and_rejected_compensations`. Evidence is structural Ring-0 admission; runtime execution of compensation still requires separate authorization under Core 07.

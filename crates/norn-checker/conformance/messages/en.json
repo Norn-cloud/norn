@@ -56,6 +56,9 @@
     "agent.validation.unknown_model": {
       "message": "model {$model} is not in the model allowlist"
     },
+    "artifact_set.action.compensation_cycle": {
+      "message": "action compensation forms a cycle: {$cycle}"
+    },
     "artifact_set.action.create_link": {
       "message": "the action's create-only link effect or its authorized target slice is invalid"
     },
@@ -70,6 +73,9 @@
     },
     "artifact_set.action.invalid_aggregate": {
       "message": "an action aggregate input names an unknown type or property, or a property the fold cannot read"
+    },
+    "artifact_set.action.invalid_compensation": {
+      "message": "compensating action {$actionId} is invalid: {$detail}"
     },
     "artifact_set.action.invalid_slice": {
       "message": "an action slice reads an unknown key property or link"
@@ -94,6 +100,9 @@
     },
     "artifact_set.action.unknown_write_kind": {
       "message": "the write set names {$entityKind}, which is not an object type of the artifact set or the installed base"
+    },
+    "artifact_set.action.unresolved_compensation": {
+      "message": "compensation names action {$actionId}, which is not an action of the artifact set or the installed base"
     },
     "artifact_set.action.unresolved_effect_entity": {
       "message": "the effect pins entity artifact {$artifactId} version {$version}, which is not an entity artifact of the artifact set or the installed base"

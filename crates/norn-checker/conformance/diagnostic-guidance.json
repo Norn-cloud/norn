@@ -72,6 +72,10 @@
     "fix": "Choose a model from the configured model allowlist."
   },
   {
+    "code": "artifact_set.action.compensation_cycle",
+    "fix": "Break the compensation cycle so each action compensates through an acyclic compensating action."
+  },
+  {
     "code": "artifact_set.action.create_link",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
@@ -90,6 +94,10 @@
   {
     "code": "artifact_set.action.invalid_aggregate",
     "fix": "Name a declared type and a property the aggregate fold can read."
+  },
+  {
+    "code": "artifact_set.action.invalid_compensation",
+    "fix": "Ensure the compensating action is unique, ledgered, active, covered by the forward action's required scope dimensions, and reachable on the target lifecycle."
   },
   {
     "code": "artifact_set.action.invalid_slice",
@@ -122,6 +130,10 @@
   {
     "code": "artifact_set.action.unknown_write_kind",
     "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.action.unresolved_compensation",
+    "fix": "Include the compensating action in the artifact set or installed base, or update compensation.actionId to name an admitted action."
   },
   {
     "code": "artifact_set.action.unresolved_effect_entity",
