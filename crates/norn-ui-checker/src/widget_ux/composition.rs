@@ -8,9 +8,12 @@ use norn_ir::{
 };
 
 use norn_checker::Diagnostic;
-use norn_checker::entity_scopes::ScopedView;
+use norn_checker::entity_scopes::{ScopedView, scope_visible};
 
-use super::{ActionSurface, Usage, UxChecker};
+use super::{
+    ActionSurface, MAX_COMPOSITION_EXPANSIONS, MAX_WIDGET_NODE_DEPTH, Usage, UxChecker,
+    dependency_matches, exceeds_widget_node_depth,
+};
 
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_overrides(&mut self) {
@@ -113,6 +116,31 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
+    fn decode_composed_ux(&self, artifact: &ArtifactEnvelope, path: &str) -> Option<WidgetUx> {
+        let ArtifactPayload::Widget(payload) = &artifact.payload else {
+            return None;
+        };
+        let Some(raw_ux) = payload.ux.as_value() else {
+            self.error(path, "composed widget has no typed UX contract");
+            return None;
+        };
+        let Ok(ux) = serde_json::to_value(raw_ux).and_then(serde_json::from_value::<WidgetUx>)
+        else {
+            self.error(path, "composed widget root cannot be decoded");
+            return None;
+        };
+        if exceeds_widget_node_depth(&ux).is_some() {
+            self.error(
+                path,
+                format!(
+                    "composed widget component tree exceeds maximum nesting depth of {MAX_WIDGET_NODE_DEPTH}"
+                ),
+            );
+            return None;
+        }
+        Some(ux)
+    }
+
     pub(super) fn check_composition(
         &mut self,
         widget: &norn_ir::widget_ux::ArtifactRef,
@@ -137,16 +165,17 @@ impl UxChecker<'_, '_, '_> {
             self.error(path, "widget composition contains a recursive page cycle");
             return;
         }
-        let ArtifactPayload::Widget(payload) = &artifact.payload else {
+        if self.composition_expansions >= MAX_COMPOSITION_EXPANSIONS {
+            self.error(
+                path,
+                format!(
+                    "widget composition exceeds maximum expansion limit of {MAX_COMPOSITION_EXPANSIONS}"
+                ),
+            );
             return;
-        };
-        let Some(raw_ux) = payload.ux.as_value() else {
-            self.error(path, "composed widget has no typed UX contract");
-            return;
-        };
-        let Ok(ux) = serde_json::to_value(raw_ux).and_then(serde_json::from_value::<WidgetUx>)
-        else {
-            self.error(path, "composed widget root cannot be decoded");
+        }
+        self.composition_expansions = self.composition_expansions.saturating_add(1);
+        let Some(ux) = self.decode_composed_ux(artifact, path) else {
             return;
         };
         let Some(selected_page) = ux.pages.iter().find(|page| page.page_id == page_id) else {
@@ -168,12 +197,14 @@ impl UxChecker<'_, '_, '_> {
         }
         let mut selected_ids = BTreeSet::new();
         let mut selected_stack = BTreeSet::new();
+        let mut semantic_expansions = 0usize;
         collect_composed_page_semantic_ids(
             self.all,
             artifact,
             &ux,
             page_id,
             &mut selected_stack,
+            &mut semantic_expansions,
             &mut selected_ids,
         );
         let nested_view = ScopedView::of(artifact, &[], self.all, self.registry);
@@ -189,7 +220,9 @@ impl UxChecker<'_, '_, '_> {
         nested.enforce_effect_root = false;
         nested.composition_stack.clone_from(&self.composition_stack);
         nested.composition_stack.insert(identity);
+        nested.composition_expansions = self.composition_expansions;
         nested.check();
+        self.composition_expansions = nested.composition_expansions;
         self.import_rendered_lists(&nested, page_id, host_page_id, path);
         self.import_composed_semantics(&nested, &selected_ids, host_page_id, path);
         drop(nested);
@@ -315,8 +348,12 @@ fn collect_composed_page_semantic_ids(
     ux: &WidgetUx,
     page_id: &str,
     stack: &mut BTreeSet<(String, String, String)>,
+    expansions: &mut usize,
     out: &mut BTreeSet<String>,
 ) {
+    if *expansions >= MAX_COMPOSITION_EXPANSIONS {
+        return;
+    }
     let identity = (
         artifact.artifact_id.clone(),
         artifact.version.clone(),
@@ -325,17 +362,20 @@ fn collect_composed_page_semantic_ids(
     if !stack.insert(identity.clone()) {
         return;
     }
+    *expansions = expansions.saturating_add(1);
     if let Some(page) = ux.pages.iter().find(|page| page.page_id == page_id) {
-        collect_tree_semantic_ids(all, ux, &page.root, stack, out);
+        collect_tree_semantic_ids(all, artifact, ux, &page.root, stack, expansions, out);
     }
     stack.remove(&identity);
 }
 
 fn collect_tree_semantic_ids(
     all: &[ArtifactEnvelope],
+    owner: &ArtifactEnvelope,
     ux: &WidgetUx,
     node: &WidgetNode,
     stack: &mut BTreeSet<(String, String, String)>,
+    expansions: &mut usize,
     out: &mut BTreeSet<String>,
 ) {
     if let Some(id) = &node.semantic_id {
@@ -371,14 +411,26 @@ fn collect_tree_semantic_ids(
             out.insert(field_id.clone());
         }
         WidgetComponent::Composition { widget, page_id } => {
-            if let Some(composed) = all.iter().find(|candidate| {
-                candidate.kind() == ArtifactKind::Widget
-                    && candidate.artifact_id == widget.id
-                    && candidate.version == widget.version
-            }) && let ArtifactPayload::Widget(payload) = &composed.payload
+            let pinned = owner.dependencies.iter().any(|dependency| {
+                dependency_matches(
+                    dependency,
+                    &widget.id,
+                    &widget.version,
+                    &ArtifactKind::Widget,
+                )
+            });
+            if pinned
+                && let Some(composed) = all.iter().rev().find(|candidate| {
+                    candidate.kind() == ArtifactKind::Widget
+                        && candidate.artifact_id == widget.id
+                        && candidate.version == widget.version
+                        && scope_visible(&owner.scope, &candidate.scope)
+                })
+                && let ArtifactPayload::Widget(payload) = &composed.payload
                 && let Some(raw_ux) = payload.ux.as_value()
                 && let Ok(composed_ux) =
                     serde_json::to_value(raw_ux).and_then(serde_json::from_value::<WidgetUx>)
+                && exceeds_widget_node_depth(&composed_ux).is_none()
             {
                 collect_composed_page_semantic_ids(
                     all,
@@ -386,6 +438,7 @@ fn collect_tree_semantic_ids(
                     &composed_ux,
                     page_id,
                     stack,
+                    expansions,
                     out,
                 );
             }
@@ -399,7 +452,7 @@ fn collect_tree_semantic_ids(
         | WidgetComponent::Dialog { .. } => {}
     }
     for child in &node.children {
-        collect_tree_semantic_ids(all, ux, child, stack, out);
+        collect_tree_semantic_ids(all, owner, ux, child, stack, expansions, out);
     }
 }
 

@@ -288,13 +288,21 @@ fn text<'a>(object: &'a JsonObject, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("{TOOL_EXTENSION}.{key} must be a non-empty string"))
 }
 
+/// Maximum nesting depth when validating or binding `DOMAIN_KEY` placeholders.
+const MAX_SCHEMA_DEPTH: usize = 64;
+
 /// The `{name}` segments of a path template, read as a call fills them: a
-/// `{` left open, or a segment with no name, is refused here rather than at
-/// the call.
+/// `{` left open, a stray `}`, or a segment with no name, is refused here
+/// rather than at the call.
 fn template_segments(path: &str) -> Result<BTreeSet<&str>, String> {
     let mut segments = BTreeSet::new();
     let mut rest = path;
-    while let Some((_, tail)) = rest.split_once('{') {
+    while let Some((before, tail)) = rest.split_once('{') {
+        if before.contains('}') {
+            return Err(format!(
+                "the path template has an unmatched closing brace: {path}"
+            ));
+        }
         let (name, after) = tail
             .split_once('}')
             .filter(|(name, _)| !name.is_empty() && !name.contains('{'))
@@ -303,6 +311,11 @@ fn template_segments(path: &str) -> Result<BTreeSet<&str>, String> {
             })?;
         segments.insert(name);
         rest = after;
+    }
+    if rest.contains('}') {
+        return Err(format!(
+            "the path template has an unmatched closing brace: {path}"
+        ));
     }
     Ok(segments)
 }
@@ -340,13 +353,13 @@ fn route(
         .get("operationId")
         .and_then(JsonValue::as_string)
         .ok_or("the operation has no operationId")?;
-    let input_schema = declared
+    let input_schema_ref = declared
         .get("inputSchema")
         .and_then(JsonValue::as_object)
         .filter(|schema| schema.get("type").and_then(JsonValue::as_string) == Some("object"))
-        .ok_or("inputSchema must be an object schema (type: \"object\")")?
-        .clone();
-    check_domains(&JsonValue::Object(input_schema.clone()))?;
+        .ok_or("inputSchema must be an object schema (type: \"object\")")?;
+    check_domains_object(input_schema_ref, 0)?;
+    let input_schema = input_schema_ref.clone();
     let annotations: McpToolAnnotations = declared
         .get("annotations")
         .ok_or("annotations are required")?
@@ -387,19 +400,38 @@ fn route(
 }
 
 /// Every [`DOMAIN_KEY`] placeholder names a [`Domain`] and holds nothing else.
-fn check_domains(schema: &JsonValue) -> Result<(), String> {
-    if let Some(object) = schema.as_object() {
-        if let Some(domain) = object.get(DOMAIN_KEY) {
-            let known = domain.as_string().and_then(Domain::parse).is_some();
-            if !known || object.len() != 1 {
-                return Err(format!(
-                    "{DOMAIN_KEY} must be the placeholder's only key and name objectType or question"
-                ));
-            }
+fn check_domains_object(object: &JsonObject, depth: usize) -> Result<(), String> {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return Err(format!(
+            "inputSchema exceeds maximum nesting depth ({MAX_SCHEMA_DEPTH})"
+        ));
+    }
+    if let Some(domain) = object.get(DOMAIN_KEY) {
+        let known = domain.as_string().and_then(Domain::parse).is_some();
+        if !known || object.len() != 1 {
+            return Err(format!(
+                "{DOMAIN_KEY} must be the placeholder's only key and name objectType or question"
+            ));
         }
-        object.values().try_for_each(check_domains)?;
+    }
+    for value in object.values() {
+        check_domains(value, depth.saturating_add(1))?;
+    }
+    Ok(())
+}
+
+fn check_domains(schema: &JsonValue, depth: usize) -> Result<(), String> {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return Err(format!(
+            "inputSchema exceeds maximum nesting depth ({MAX_SCHEMA_DEPTH})"
+        ));
+    }
+    if let Some(object) = schema.as_object() {
+        check_domains_object(object, depth)?;
     } else if let Some(items) = schema.as_array() {
-        items.iter().try_for_each(check_domains)?;
+        for item in items {
+            check_domains(item, depth.saturating_add(1))?;
+        }
     }
     Ok(())
 }
@@ -506,13 +538,23 @@ fn arguments(
         .get("properties")
         .and_then(JsonValue::as_object)
         .map_or_default(|properties| properties.keys().map(String::as_str).collect());
-    let required: BTreeSet<&str> = input_schema
-        .get("required")
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(JsonValue::as_string)
-        .collect();
+    let mut required: BTreeSet<&str> = BTreeSet::new();
+    if let Some(required_value) = input_schema.get("required") {
+        let items = required_value
+            .as_array()
+            .ok_or("inputSchema.required must be an array of property names")?;
+        for item in items {
+            let name = item
+                .as_string()
+                .ok_or("inputSchema.required entries must be strings")?;
+            if !properties.contains(name) {
+                return Err(format!(
+                    "inputSchema.required field {name} is not declared in inputSchema.properties"
+                ));
+            }
+            required.insert(name);
+        }
+    }
     let mut arguments: Vec<ToolArgument> = Vec::new();
     for declared in declared
         .get("arguments")
@@ -551,7 +593,10 @@ fn arguments(
 }
 
 /// Replace each [`DOMAIN_KEY`] placeholder with its domain's schema.
-fn bind_domains(schema: &mut JsonValue, domains: &Domains<'_>) {
+fn bind_domains(schema: &mut JsonValue, domains: &Domains<'_>, depth: usize) {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return;
+    }
     if let JsonValue::Object(object) = schema {
         if let Some(domain) = object
             .get(DOMAIN_KEY)
@@ -565,11 +610,11 @@ fn bind_domains(schema: &mut JsonValue, domains: &Domains<'_>) {
             return;
         }
         for value in object.values_mut() {
-            bind_domains(value, domains);
+            bind_domains(value, domains, depth.saturating_add(1));
         }
     } else if let JsonValue::Array(items) = schema {
         for item in items {
-            bind_domains(item, domains);
+            bind_domains(item, domains, depth.saturating_add(1));
         }
     }
 }
@@ -580,7 +625,7 @@ fn bind_domains(schema: &mut JsonValue, domains: &Domains<'_>) {
 #[must_use]
 pub fn route_tool(tool: &RouteTool, domains: &Domains<'_>) -> McpTool {
     let mut input_schema = JsonValue::Object(tool.input_schema.clone());
-    bind_domains(&mut input_schema, domains);
+    bind_domains(&mut input_schema, domains, 0);
     let input_schema = match input_schema {
         JsonValue::Object(schema) => schema,
         JsonValue::Null

@@ -5,14 +5,18 @@
 //! SKUs, labels and arrival order never establish identity, and a row outside
 //! the crosswalk carries no reference, so mapping holds it back as a finding.
 //! `SRC-LIVE-1`: a refused read fails the pull. There is no recorded fallback.
-use super::cell::Endpoint;
+use super::cell::{Endpoint, encode, read_bounded_response, read_regular_file_bounded};
 use clap::{Args, Subcommand};
-const MAX_PAGES: usize = 1000;
 use norn_ir::connector::{ConnectorKeysetProfile, ConnectorResource, ConnectorRoot};
 use norn_ir::{RuntimeObject, RuntimeValue};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+const MAX_PAGES: usize = 1000;
+const MAX_PAGE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TOTAL_ROWS: usize = 100_000;
+const MAX_CONNECTOR_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Args)]
 pub(super) struct SourceArgs {
@@ -142,27 +146,49 @@ fn agent(base: &str) -> ureq::Agent {
         .into()
 }
 
+fn object_text<'a>(value: &'a RuntimeValue, field: &str) -> Result<&'a str, String> {
+    value
+        .as_object()
+        .and_then(|object| object.get(field))
+        .and_then(RuntimeValue::as_str)
+        .ok_or_else(|| format!("source response lacks text field {field}"))
+}
+
 /// Read a body, refusing any status but 200 without disclosing source error bodies.
 fn accepted(
     response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<RuntimeValue, String> {
-    let mut response = response.map_err(|e| format!("source request failed: {e}"))?;
+    let mut response = response.map_err(|_error| "source request failed".to_owned())?;
     let status = response.status();
     if status != 200 {
         return Err(format!("source refused the read: HTTP {status}"));
     }
-    let body = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("source response unreadable: {e}"))?;
+    let body = read_bounded_response(
+        response.body_mut().as_reader(),
+        MAX_PAGE_BYTES,
+        "source response",
+    )?;
     RuntimeValue::from_json_text(&body).map_err(|e| e.to_string())
+}
+
+fn validate_doctype_segment(doctype: &str) -> Result<String, String> {
+    if doctype.is_empty()
+        || doctype == "."
+        || doctype == ".."
+        || doctype
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '/' | '\\' | '?' | '#' | '%'))
+    {
+        return Err("connector doctype must be a single safe path segment".into());
+    }
+    Ok(encode(doctype))
 }
 
 fn keyset_read<'a>(
     connector: &'a ConnectorRoot,
     resource: &str,
 ) -> Result<(String, &'a ConnectorKeysetProfile, String), String> {
-    connector
+    let (endpoint, doctype, keyset, items_path) = connector
         .resources
         .iter()
         .find_map(|candidate| {
@@ -182,12 +208,19 @@ fn keyset_read<'a>(
             }
             let doctype = additional.get("doctype")?.as_string()?;
             Some((
-                endpoint.replace("{doctype}", doctype),
+                endpoint.as_str(),
+                doctype,
                 keyset.as_ref(),
                 items_path.clone(),
             ))
         })
-        .ok_or_else(|| format!("connector declares no keyset resource {resource}"))
+        .ok_or_else(|| format!("connector declares no keyset resource {resource}"))?;
+    let encoded_doctype = validate_doctype_segment(doctype)?;
+    Ok((
+        endpoint.replace("{doctype}", &encoded_doctype),
+        keyset,
+        items_path,
+    ))
 }
 
 fn pull_frappe(
@@ -211,6 +244,7 @@ fn pull_frappe(
         return Err("source page size must be positive".into());
     }
     let mut cursor: Option<(String, String)> = None;
+    let mut seen_cursors: BTreeSet<(String, String)> = BTreeSet::new();
     for _ in 0..MAX_PAGES {
         let mut request = agent
             .get(&url)
@@ -234,14 +268,17 @@ fn pull_frappe(
             return Ok(rows);
         };
         let next = (
-            text(last, &format!("/{}", keyset.watermark_field))?.to_owned(),
-            text(last, &format!("/{}", keyset.tie_breaker_field))?.to_owned(),
+            object_text(last, &keyset.watermark_field)?.to_owned(),
+            object_text(last, &keyset.tie_breaker_field)?.to_owned(),
         );
-        if cursor.as_ref().is_some_and(|old| next == *old) {
+        if cursor.as_ref().is_some_and(|old| next.0 < old.0) || !seen_cursors.insert(next.clone()) {
             return Err("source keyset cursor did not advance".into());
         }
         cursor = Some(next);
         for item in items {
+            if rows.len() >= MAX_TOTAL_ROWS {
+                return Err("source exceeded the total row bound".into());
+            }
             rows.push(erpnext_row(item, crosswalk)?);
         }
         if items.len() < page_size {
@@ -265,14 +302,14 @@ fn checked_url(base: &str, path: &str) -> Result<String, String> {
     if endpoint.has_query() {
         return Err("source URL must not contain a query".into());
     }
-    if endpoint.is_https() || endpoint.is_http_to("127.0.0.1") {
+    if endpoint.is_https() || endpoint.is_loopback_http() {
         return Ok(url);
     }
     Err("source URL must be HTTPS or loopback".into())
 }
 
 fn read_connector(path: &Path) -> Result<ConnectorRoot, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let text = read_regular_file_bounded(path, MAX_CONNECTOR_BYTES, "8 MiB connector limit")?;
     let artifact: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let payload = artifact.get("payload").ok_or("connector has no payload")?;
     serde_json::from_value(payload.clone()).map_err(|e| e.to_string())
@@ -424,6 +461,31 @@ mod tests {
         assert!(checked_url("http://127.0.0.1:8000@example.test", "/api/resource/Item").is_err());
         assert!(checked_url("https://user:password@example.test", "/api/resource/Item").is_err());
         assert!(checked_url("http://127.0.0.1:8000", "/api/resource/Item").is_ok());
+        assert!(checked_url("http://localhost:8000", "/api/resource/Item").is_ok());
+        assert!(checked_url("http://[::1]:8000", "/api/resource/Item").is_ok());
         assert!(checked_url("https://example.test", "/api/resource/Item").is_ok());
+    }
+
+    #[test]
+    fn doctype_traversal_and_object_field_lookup_are_safe() {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../Secret",
+            "Item/x",
+            "Item?a=1",
+            "Item#f",
+            "Item%2f",
+        ] {
+            assert!(validate_doctype_segment(bad).is_err(), "{bad}");
+        }
+        assert_eq!(validate_doctype_segment("Item"), Ok("Item".to_owned()));
+        assert_eq!(
+            validate_doctype_segment("Sales Order"),
+            Ok("Sales%20Order".to_owned())
+        );
+        let obj = RuntimeValue::from_json_text(r#"{"a/b~c":"value"}"#).expect("obj");
+        assert_eq!(object_text(&obj, "a/b~c"), Ok("value"));
     }
 }

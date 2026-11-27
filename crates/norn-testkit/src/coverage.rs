@@ -34,8 +34,11 @@ pub const KERNEL_OUTCOMES: &[&str] = &[
 pub(crate) fn hit(label: &str) {
     COUNTS.with(|counts| {
         let mut counts = counts.borrow_mut();
-        let slot = counts.entry(label.to_owned()).or_insert(0);
-        *slot = slot.saturating_add(1);
+        if let Some(slot) = counts.get_mut(label) {
+            *slot = slot.saturating_add(1);
+        } else {
+            counts.insert(label.to_owned(), 1);
+        }
     });
 }
 

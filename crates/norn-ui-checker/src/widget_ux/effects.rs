@@ -11,7 +11,10 @@ use norn_ir::{
 
 use norn_checker::entity_instance::EffectiveObjectType;
 
-use super::{UxChecker, dependency_matches};
+use super::{
+    MAX_COMPOSITION_EXPANSIONS, UxChecker, action_cache_key, dependency_matches,
+    exceeds_widget_node_depth,
+};
 
 /// Why a transition's canonical UI enabled condition could not be generated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,27 +130,38 @@ struct EffectScope<'a> {
     record: Option<&'a WidgetDataBinding>,
 }
 
+struct EffectWalk {
+    stack: BTreeSet<(String, String, String)>,
+    expansions: usize,
+}
+
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_effect_laws(&self) {
         if !self.enforce_effect_root {
             return;
         }
         if let Some(shell) = &self.ux.shell_handlers {
-            self.check_effect_handlers(&shell.handlers, "/payload/ux/shellHandlers/handlers", true);
+            self.check_effect_handlers_at(
+                &shell.handlers,
+                "/payload/ux/shellHandlers/handlers",
+                true,
+                None,
+            );
         }
         for (index, page) in self.ux.pages.iter().enumerate() {
             let path = format!("/payload/ux/pages/{index}/root");
             let site = EffectRenderSite {
-                page_id: page.page_id.clone(),
                 pointer: path.clone(),
                 path,
             };
-            let mut stack = BTreeSet::new();
-            stack.insert((
-                self.owner.artifact_id.clone(),
-                self.owner.version.clone(),
-                page.page_id.clone(),
-            ));
+            let mut walk = EffectWalk {
+                stack: BTreeSet::from([(
+                    self.owner.artifact_id.clone(),
+                    self.owner.version.clone(),
+                    page.page_id.clone(),
+                )]),
+                expansions: 0,
+            };
             let mut invocations = self.effect_tree(
                 &EffectScope {
                     owner: self.owner,
@@ -157,7 +171,7 @@ impl UxChecker<'_, '_, '_> {
                     record: None,
                 },
                 &page.root,
-                &mut stack,
+                &mut walk,
             );
             if let Some(shell) = &self.ux.shell_handlers {
                 for invocation in &mut invocations {
@@ -185,7 +199,7 @@ impl UxChecker<'_, '_, '_> {
         &self,
         scope: &EffectScope<'_>,
         node: &WidgetNode,
-        stack: &mut BTreeSet<(String, String, String)>,
+        walk: &mut EffectWalk,
     ) -> Vec<EffectInvocation> {
         let &EffectScope {
             owner,
@@ -219,7 +233,7 @@ impl UxChecker<'_, '_, '_> {
                 }
             }
             WidgetComponent::Composition { widget, page_id } => {
-                invocations.extend(self.effect_tree_composition(&scoped, widget, page_id, stack));
+                invocations.extend(self.effect_tree_composition(&scoped, widget, page_id, walk));
             }
             WidgetComponent::Section { .. }
             | WidgetComponent::List { .. }
@@ -239,7 +253,7 @@ impl UxChecker<'_, '_, '_> {
                     ..scoped
                 },
                 child,
-                stack,
+                walk,
             ));
         }
         self.check_effect_handlers_at(
@@ -311,7 +325,7 @@ impl UxChecker<'_, '_, '_> {
         scope: &EffectScope<'_>,
         widget: &norn_ir::WidgetArtifactRef,
         page_id: &str,
-        stack: &mut BTreeSet<(String, String, String)>,
+        walk: &mut EffectWalk,
     ) -> Vec<EffectInvocation> {
         let &EffectScope {
             owner,
@@ -320,17 +334,36 @@ impl UxChecker<'_, '_, '_> {
             overrides,
             record,
         } = scope;
-        let Some(artifact) = self.find_exact(&widget.id, &widget.version, &ArtifactKind::Widget)
+        if walk.expansions >= MAX_COMPOSITION_EXPANSIONS {
+            self.error(
+                &site.pointer,
+                format!("widget composition exceeds maximum expansion limit of {MAX_COMPOSITION_EXPANSIONS}"),
+            );
+            return Vec::new();
+        }
+        let Some(artifact) = owner
+            .dependencies
+            .iter()
+            .any(|dep| dependency_matches(dep, &widget.id, &widget.version, &ArtifactKind::Widget))
+            .then(|| {
+                self.find_visible_exact(owner, &widget.id, &widget.version, &ArtifactKind::Widget)
+            })
+            .flatten()
         else {
             return Vec::new();
         };
         let ArtifactPayload::Widget(payload) = &artifact.payload else {
             return Vec::new();
         };
-        let Some(raw) = payload.ux.as_value() else {
-            return Vec::new();
-        };
-        let Ok(composed) = serde_json::to_value(raw).and_then(serde_json::from_value::<WidgetUx>)
+        let Some(composed) = payload
+            .ux
+            .as_value()
+            .and_then(|raw| {
+                serde_json::to_value(raw)
+                    .and_then(serde_json::from_value::<WidgetUx>)
+                    .ok()
+            })
+            .filter(|ux| exceeds_widget_node_depth(ux).is_none())
         else {
             return Vec::new();
         };
@@ -342,9 +375,10 @@ impl UxChecker<'_, '_, '_> {
             artifact.version.clone(),
             page_id.to_owned(),
         );
-        if !stack.insert(identity.clone()) {
+        if !walk.stack.insert(identity.clone()) {
             return Vec::new();
         }
+        walk.expansions = walk.expansions.saturating_add(1);
         let mut scopes = overrides.to_vec();
         scopes.push((owner, ux));
         let composed_site = site.composed(page_id);
@@ -357,9 +391,9 @@ impl UxChecker<'_, '_, '_> {
                 record,
             },
             &page.root,
-            stack,
+            walk,
         );
-        stack.remove(&identity);
+        walk.stack.remove(&identity);
         invocations
     }
 
@@ -391,24 +425,16 @@ impl UxChecker<'_, '_, '_> {
             })
         });
         let (placement_owner, placement_ux, id) = replacement.unwrap_or((owner, ux, placement_id));
-        let placement = placement_ux
+        let (index, placement) = placement_ux
             .action_placements
             .iter()
-            .find(|placement| placement.placement_id == id)?;
-        let handler_path = placement_ux
-            .action_placements
-            .iter()
-            .position(|candidate| candidate.placement_id == id)
-            .map(|index| format!("/payload/ux/actionPlacements/{index}/handlers"));
+            .enumerate()
+            .find(|(_, candidate)| candidate.placement_id == id)?;
+        let handler_path = format!("/payload/ux/actionPlacements/{index}/handlers");
         let anchor = (placement_owner.artifact_id != self.owner.artifact_id
             || placement_owner.version != self.owner.version)
             .then_some(site.pointer.as_str());
-        self.check_effect_handlers_at(
-            &placement.handlers,
-            handler_path.as_deref().unwrap_or(&site.pointer),
-            false,
-            anchor,
-        );
+        self.check_effect_handlers_at(&placement.handlers, &handler_path, false, anchor);
         let root = self.effect_action(
             placement_owner,
             placement_ux,
@@ -467,21 +493,16 @@ impl UxChecker<'_, '_, '_> {
         site: &EffectRenderSite,
         record: Option<&WidgetDataBinding>,
     ) -> Option<EffectInvocation> {
-        let form = ux.forms.iter().find(|form| form.form_id == form_id)?;
-        let handler_path = ux
+        let (index, form) = ux
             .forms
             .iter()
-            .position(|candidate| candidate.form_id == form_id)
-            .map(|index| format!("/payload/ux/forms/{index}/submit/handlers"));
+            .enumerate()
+            .find(|(_, candidate)| candidate.form_id == form_id)?;
+        let handler_path = format!("/payload/ux/forms/{index}/submit/handlers");
         let anchor = (owner.artifact_id != self.owner.artifact_id
             || owner.version != self.owner.version)
             .then_some(site.pointer.as_str());
-        self.check_effect_handlers_at(
-            &form.submit.handlers,
-            handler_path.as_deref().unwrap_or(&site.pointer),
-            false,
-            anchor,
-        );
+        self.check_effect_handlers_at(&form.submit.handlers, &handler_path, false, anchor);
         let root = self.effect_action(owner, ux, &form.submit_binding_id, &site.pointer)?;
         self.check_transition_condition(&root, ux, &form.submit_binding_id, None, record, site);
         let mut invocation =
@@ -580,7 +601,8 @@ impl UxChecker<'_, '_, '_> {
             );
             return None;
         }
-        let artifact = self.find_exact(
+        let artifact = self.find_visible_exact(
+            owner,
             &binding.action.id,
             &binding.action.version,
             &ArtifactKind::Action,
@@ -588,15 +610,28 @@ impl UxChecker<'_, '_, '_> {
         let ArtifactPayload::Action(payload) = &artifact.payload else {
             return None;
         };
-        let root = serde_json::to_value(payload.to_json_value())
-            .and_then(serde_json::from_value::<ActionRoot>);
-        match root {
-            Ok(root) if crate::validate_artifact(artifact).is_ok() => Some(root),
-            _ => {
-                self.error(path, format!("UI law: referenced ActionIR {:?} is malformed; effect admission fails closed", binding.action.id));
-                None
-            }
+        let key = action_cache_key(artifact);
+        let cached = self
+            .validated_actions
+            .borrow_mut()
+            .entry(key)
+            .or_insert_with(|| {
+                serde_json::to_value(payload.to_json_value())
+                    .and_then(serde_json::from_value::<ActionRoot>)
+                    .ok()
+                    .filter(|_| crate::validate_artifact(artifact).is_ok())
+            })
+            .clone();
+        if cached.is_none() {
+            self.error(
+                path,
+                format!(
+                    "UI law: referenced ActionIR {:?} is malformed; effect admission fails closed",
+                    binding.action.id
+                ),
+            );
         }
+        cached
     }
 
     fn effect_invocation(
@@ -644,22 +679,20 @@ impl UxChecker<'_, '_, '_> {
         record: Option<&WidgetDataBinding>,
         site: &EffectRenderSite,
     ) {
-        if !matches!(
-            root.effect_program,
-            Some(ActionEffectProgram::FireTransition { .. })
-        ) {
+        let Some(ActionEffectProgram::FireTransition {
+            object_id_field, ..
+        }) = root.effect_program.as_ref()
+        else {
             return;
-        }
-        let record_binding = ux
+        };
+        let action_binding = ux
             .action_bindings
             .iter()
-            .find(|binding| binding.binding_id == binding_id)
-            .and_then(|binding| binding.inputs.record_binding_id.as_deref());
-        let Some(binding) = record_binding.and_then(|id| {
-            ux.data_bindings
-                .iter()
-                .find(|binding| binding.binding_id == id)
-        }) else {
+            .find(|binding| binding.binding_id == binding_id);
+        let Some(binding) = action_binding
+            .and_then(|binding| binding.inputs.record_binding_id.as_deref())
+            .and_then(|id| ux.data_bindings.iter().find(|b| b.binding_id == id))
+        else {
             self.error(&site.pointer, "UI law: lifecycle transition requires an explicit record binding at its invocation");
             return;
         };
@@ -692,16 +725,7 @@ impl UxChecker<'_, '_, '_> {
             ),
             Ok(None) => {}
         }
-        let Some(ActionEffectProgram::FireTransition {
-            object_id_field, ..
-        }) = root.effect_program.as_ref()
-        else {
-            return;
-        };
-        let mapping = ux
-            .action_bindings
-            .iter()
-            .find(|candidate| candidate.binding_id == binding_id)
+        let mapping = action_binding
             .and_then(|binding| binding.input_mapping.get(object_id_field))
             .map(|expression| expression.as_str().trim());
         match mapping {
@@ -748,10 +772,6 @@ impl UxChecker<'_, '_, '_> {
             ),
             Ok(None) => {}
         }
-    }
-
-    fn check_effect_handlers(&self, handlers: &[WidgetEffectHandler], path: &str, shell: bool) {
-        self.check_effect_handlers_at(handlers, path, shell, None);
     }
 
     fn check_effect_handlers_at(
@@ -949,7 +969,6 @@ fn effect_label(effect: &ActionUiEffect) -> String {
 }
 
 struct EffectRenderSite {
-    page_id: String,
     path: String,
     pointer: String,
 }
@@ -957,7 +976,6 @@ struct EffectRenderSite {
 impl EffectRenderSite {
     fn child(&self, index: usize) -> Self {
         Self {
-            page_id: self.page_id.clone(),
             path: format!("{}/children/{index}", self.path),
             pointer: self.member(&format!("children/{index}")),
         }
@@ -965,7 +983,6 @@ impl EffectRenderSite {
 
     fn composed(&self, page: &str) -> Self {
         Self {
-            page_id: self.page_id.clone(),
             path: format!("{}/composed/{page}/root", self.path),
             pointer: self.pointer.clone(),
         }

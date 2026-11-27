@@ -89,8 +89,8 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Proposed, Provenance, Timer,
-    TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
+    Performed, PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadMember, Proposed,
+    Provenance, Timer, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
 };
 use proptest::prelude::*;
 use proptest::strategy::Union;
@@ -337,49 +337,73 @@ impl<E, C, I> MemoryCell<E, C, I> {
 }
 
 impl<E, C, I> MemoryCell<E, C, I> {
+    fn catalog(&self) -> TypeCatalog<'_> {
+        TypeCatalog::new(&self.types)
+            .with_governing_laws(&self.law_artifacts)
+            .with_interfaces(&self.interfaces)
+            .with_property_types(&self.property_types)
+    }
+
+    fn load_with_concrete(&self, key: &FactKey) -> (FactState, Option<ObjectTypeName>) {
+        let catalog = self.catalog();
+        let model = CommitModel::new(&catalog);
+        let canonical = model.canonical(key);
+        let mut state = self.facts.get(&canonical).cloned().unwrap_or_default();
+        let concrete = self
+            .concrete
+            .get(&canonical)
+            .filter(|concrete| model.is_a(concrete, &key.object_type))
+            .cloned();
+        if concrete.is_none() {
+            state.values = None;
+        }
+        (state, concrete)
+    }
+
     /// The live objects of the queried object type (or a subtype) matching
-    /// `predicate`, in key order, at most `limit`. Every object is in
-    /// memory, so the enumeration is complete; an interface predicate is
-    /// unsupported (`None`), as on every host.
+    /// `predicate`, in key order, at most `limit` and within `max_bytes`.
+    /// An interface predicate is unsupported (`None`), as on every host.
     fn predicate_objects(
         &self,
         predicate: &PredicateQuery,
         limit: usize,
+        max_bytes: u64,
     ) -> Option<Vec<PredicateObject>> {
-        let catalog = TypeCatalog::new(&self.types)
-            .with_governing_laws(&self.law_artifacts)
-            .with_interfaces(&self.interfaces)
-            .with_property_types(&self.property_types);
+        let catalog = self.catalog();
         if !catalog.contains(&predicate.object_type) {
             return None;
         }
         let model = CommitModel::new(&catalog);
-        let candidates: Vec<(FactKey, FactVersion, &JsonObject)> = self
-            .facts
-            .iter()
-            .filter_map(|(key, state)| {
-                let values = state.values.as_ref()?;
-                let concrete = self.concrete.get(key)?;
-                model.is_a(concrete, &predicate.object_type).then(|| {
-                    (
-                        FactKey {
-                            object_type: concrete.clone(),
-                            key: key.key.clone(),
-                        },
-                        state.version,
-                        values,
-                    )
-                })
-            })
-            .collect();
+        let mut bytes = 0_u64;
+        let mut candidates = Vec::new();
+        for (key, state) in &self.facts {
+            let (Some(values), Some(concrete)) = (state.values.as_ref(), self.concrete.get(key))
+            else {
+                continue;
+            };
+            if !model.is_a(concrete, &predicate.object_type) {
+                continue;
+            }
+            if max_bytes < u64::MAX {
+                bytes = bytes.saturating_add(canonical_json_bytes(values));
+                if bytes > max_bytes {
+                    return None;
+                }
+            }
+            let fk = FactKey::new(concrete.as_str(), &key.key);
+            candidates.push((fk, state.version, values));
+        }
+        let rows = candidates.iter().map(|(k, v, vals)| (k, *v, *vals));
         Some(norn_kernel::predicate_read::select_members(
-            predicate,
-            candidates
-                .iter()
-                .map(|(key, version, values)| (key, *version, *values)),
-            limit,
+            predicate, rows, limit,
         ))
     }
+}
+
+fn canonical_json_bytes(values: &JsonObject) -> u64 {
+    JsonValue::Object(values.clone())
+        .canonical_json()
+        .map_or(u64::MAX, |v| u64::try_from(v.len()).unwrap_or(u64::MAX))
 }
 
 /// What a [`MemoryCell`] has committed, as [`norn_kernel::check_commit`] reads it.
@@ -465,7 +489,7 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
     ) -> Result<Option<Vec<PredicateReadMember>>, Infallible> {
         Ok(self
             .0
-            .predicate_objects(predicate, limit)
+            .predicate_objects(predicate, limit, u64::MAX)
             .map(|objects| objects.iter().map(PredicateObject::member).collect()))
     }
 
@@ -520,10 +544,7 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I
         owned_rows: Option<OwnedRowsCommitProof>,
     ) -> Result<CommitReceipt, CommitError<Infallible>> {
         let (CommitVersions { written, linked }, fact_keys, link_keys) = {
-            let catalog = TypeCatalog::new(&self.types)
-                .with_governing_laws(&self.law_artifacts)
-                .with_interfaces(&self.interfaces)
-                .with_property_types(&self.property_types);
+            let catalog = self.catalog();
             for write in &mut commit.writes {
                 if let FactMutation::Put { values } = &mut write.mutation {
                     *values = catalog
@@ -639,22 +660,7 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
     type Error = Infallible;
 
     fn load(&self, key: &FactKey) -> Result<FactState, Infallible> {
-        let catalog = TypeCatalog::new(&self.types)
-            .with_governing_laws(&self.law_artifacts)
-            .with_interfaces(&self.interfaces)
-            .with_property_types(&self.property_types);
-        let model = CommitModel::new(&catalog);
-        let canonical = model.canonical(key);
-        let mut state = self.facts.get(&canonical).cloned().unwrap_or_default();
-        // One object, one concrete type: through another type it reads absent.
-        if !self
-            .concrete
-            .get(&canonical)
-            .is_some_and(|concrete| model.is_a(concrete, &key.object_type))
-        {
-            state.values = None;
-        }
-        Ok(state)
+        Ok(self.load_with_concrete(key).0)
     }
 
     fn load_bounded(
@@ -662,25 +668,11 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
         key: &FactKey,
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, Infallible> {
-        let state = CellHost::load(self, key)?;
-        let bytes = state
-            .values
-            .as_ref()
-            .and_then(|values| JsonValue::Object(values.clone()).canonical_json().ok())
-            .map_or(0, |value| u64::try_from(value.len()).unwrap_or(u64::MAX));
-        if bytes > max_bytes {
+        let (state, concrete) = self.load_with_concrete(key);
+        if state.values.as_ref().map_or(0, canonical_json_bytes) > max_bytes {
             return Ok(None);
         }
-        let catalog = TypeCatalog::new(&self.types)
-            .with_governing_laws(&self.law_artifacts)
-            .with_interfaces(&self.interfaces)
-            .with_property_types(&self.property_types);
-        let concrete_type = if state.exists() {
-            let canonical = CommitModel::new(&catalog).canonical(key);
-            self.concrete.get(&canonical).cloned()
-        } else {
-            None
-        };
+        let concrete_type = state.exists().then_some(concrete).flatten();
         Ok(Some(BoundedFact {
             concrete_type,
             state,
@@ -688,10 +680,7 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, Infallible> {
-        let catalog = TypeCatalog::new(&self.types)
-            .with_governing_laws(&self.law_artifacts)
-            .with_interfaces(&self.interfaces)
-            .with_property_types(&self.property_types);
+        let catalog = self.catalog();
         let canonical = CommitModel::new(&catalog).canonical_link(key);
         Ok(self.links.get(&canonical).cloned().unwrap_or_default())
     }
@@ -700,9 +689,26 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
         &self,
         predicate: &PredicateQuery,
         max_members: usize,
-        _max_bytes: u64,
+        max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, Infallible> {
-        Ok(self.predicate_objects(predicate, max_members.saturating_add(1)))
+        Ok(self.predicate_objects(predicate, max_members.saturating_add(1), max_bytes))
+    }
+
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        _max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<PredicateActionRead, Infallible> {
+        let Some(mut objects) = self
+            .predicate_objects(predicate, usize::MAX, u64::MAX)
+            .filter(|rows| rows.iter().all(&mut *authorize))
+        else {
+            return Ok(PredicateActionRead::Concealed);
+        };
+        objects.truncate(max_members.saturating_add(1));
+        Ok(PredicateActionRead::Admitted(objects))
     }
 
     fn read_link_targets(
@@ -712,40 +718,32 @@ impl<E: 'static, C, I: Clone + norn_kernel::serde::Serialize> CellHost for Memor
         max_targets: usize,
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, Infallible> {
-        let catalog = TypeCatalog::new(&self.types)
-            .with_governing_laws(&self.law_artifacts)
-            .with_interfaces(&self.interfaces)
-            .with_property_types(&self.property_types);
+        let catalog = self.catalog();
         let model = CommitModel::new(&catalog);
-        let requested_source = (*source).clone();
         let canonical_source = model.canonical(source);
-        let targets: Vec<_> = self
-            .links
-            .iter()
-            .filter(|(key, state)| {
-                key.source == canonical_source && key.link == link && state.exists()
-            })
-            .map(|(key, state)| {
-                let mut key = key.clone();
-                key.source = requested_source.clone();
-                let canonical_target = model.canonical(&key.target);
-                key.target.object_type = self
-                    .concrete
-                    .get(&canonical_target)
-                    .cloned()
-                    .unwrap_or(canonical_target.object_type);
-                LinkReadTarget {
-                    key,
-                    version: state.version,
-                }
-            })
-            .collect();
-        let key_bytes: u64 = targets
-            .iter()
-            .map(|target| u64::try_from(target.key.target.key.len()).unwrap_or(u64::MAX))
-            .fold(0, u64::saturating_add);
-        if targets.len() > max_targets || key_bytes > max_key_bytes {
-            return Ok(None);
+        let mut targets = Vec::new();
+        let mut key_bytes = 0_u64;
+        for (key, state) in &self.links {
+            if key.source != canonical_source || key.link != link || !state.exists() {
+                continue;
+            }
+            let target_len = u64::try_from(key.target.key.len()).unwrap_or(u64::MAX);
+            key_bytes = key_bytes.saturating_add(target_len);
+            if targets.len() == max_targets || key_bytes > max_key_bytes {
+                return Ok(None);
+            }
+            let mut key = key.clone();
+            key.source = source.clone();
+            let canonical_target = model.canonical(&key.target);
+            key.target.object_type = self
+                .concrete
+                .get(&canonical_target)
+                .cloned()
+                .unwrap_or(canonical_target.object_type);
+            targets.push(LinkReadTarget {
+                key,
+                version: state.version,
+            });
         }
         Ok(Some(targets))
     }
@@ -1433,19 +1431,17 @@ impl CellModel {
             .map_or(FactVersion::ABSENT, |state| state.version)
     }
 
-    fn load(&self, key: &FactKey) -> FactState {
-        self.with_model(|model| {
-            let canonical = model.canonical(key);
-            let mut state = self.facts.get(&canonical).cloned().unwrap_or_default();
-            if !self
-                .concrete
-                .get(&canonical)
-                .is_some_and(|concrete| model.is_a(concrete, &key.object_type))
-            {
-                state.values = None;
-            }
-            state
-        })
+    fn load_with(&self, model: CommitModel<'_, '_>, key: &FactKey) -> FactState {
+        let canonical = model.canonical(key);
+        let mut state = self.facts.get(&canonical).cloned().unwrap_or_default();
+        if !self
+            .concrete
+            .get(&canonical)
+            .is_some_and(|concrete| model.is_a(concrete, &key.object_type))
+        {
+            state.values = None;
+        }
+        state
     }
 
     fn pending(&self, consumed: &Consumed) -> bool {
@@ -1754,7 +1750,6 @@ impl CellModel {
         reason = "the reference model keeps admission and atomic application of one commit together"
     )]
     fn commit(&mut self, commit: &LawCommit) -> Result<CommitReceipt, CommitError<Infallible>> {
-        let CommitVersions { written, linked } = self.admit(commit)?;
         let (effective_writes, effective_links, fact_keys, link_keys) = {
             let catalog = TypeCatalog::new(&self.types);
             let model = CommitModel::new(&catalog);
@@ -1803,6 +1798,7 @@ impl CellModel {
                 .collect();
             (effective_writes, effective_links, fact_keys, link_keys)
         };
+        let CommitVersions { written, linked } = self.admit(commit)?;
         let seq = self.seq.checked_add(1).ok_or(CommitError::Overflow)?;
         match &commit.consumes {
             Some(Consumed::Timer { id, .. }) => {
@@ -2354,17 +2350,22 @@ impl CellModel {
     }
 
     fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            facts: law_fact_keys()
+        let (facts, links) = self.with_model(|model| {
+            let facts = law_fact_keys()
                 .iter()
-                .map(|key| Ok(self.load(key)))
-                .collect(),
-            links: (0..LAW_DECLARED_LINKS)
+                .map(|key| Ok(self.load_with(*model, key)))
+                .collect();
+            let links = (0..LAW_DECLARED_LINKS)
                 .map(|n| {
-                    let canonical = self.with_model(|model| model.canonical_link(&law_link_key(n)));
+                    let canonical = model.canonical_link(&law_link_key(n));
                     Ok(self.links.get(&canonical).cloned().unwrap_or_default())
                 })
-                .collect(),
+                .collect();
+            (facts, links)
+        });
+        Snapshot {
+            facts,
+            links,
             clock: Ok(self.next_timer()),
             observe: Ok(self.inbox.first().cloned()),
             outbox: self.outbox.clone(),
@@ -3552,10 +3553,8 @@ where
         .map_err(|e| e.code())
     };
     assert_eq!(apply(cell, &[("s", "t")]), Err("commit.link_target"));
-    assert_eq!(
-        apply(cell, &[("s", "u"), ("s", "v")]),
-        Err("commit.link_cardinality")
-    );
+    let card = apply(cell, &[("s", "u"), ("s", "v")]);
+    assert_eq!(card, Err("commit.link_cardinality"));
     assert_eq!(apply(cell, &[("s", "u")]), Ok(()));
     assert_eq!(apply(cell, &[("b", "t"), ("b", "u")]), Ok(()));
     for (src, dst, present) in [

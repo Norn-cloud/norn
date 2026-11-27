@@ -2094,3 +2094,82 @@ fn a_cell_without_connection_records_restores_no_schedule() {
     let now = 1_794_484_800_000;
     assert_eq!(sources.next_due(now), Some(now));
 }
+
+/// PULL-WATERMARK-1: a mid-page ingest failure must NOT persist the accepted
+/// page's advanced watermark for rows still waiting in the drain queue.
+#[test]
+fn a_mid_page_ingest_failure_does_not_advance_the_durable_watermark() {
+    let good_host = host();
+    // A second host without `odoo.rest.mapping` causes `host.ingest` to fail on
+    // the second drained chunk of the same page while still recording the run.
+    let without_mapping: Vec<_> = artifacts()
+        .into_iter()
+        .filter(|a| a.artifact_id.as_str() != "odoo.rest.mapping")
+        .collect();
+    let failing_host = host_with(&without_mapping);
+    let mut sources = sources();
+    sources
+        .claim("odoo.rest", Trigger::Manual, "user:a", EXTRACTED_AT_MS)
+        .expect("claimed");
+    sources.pace("odoo.rest", 1);
+
+    let Step::Request(first_req) = sources.step(&good_host, "odoo.rest", None, EXTRACTED_AT_MS)
+    else {
+        panic!("expected initial request");
+    };
+    let profile = profile("odoo");
+    let feed = profile
+        .feeds
+        .iter()
+        .find(|f| first_req.url.contains(f.request.path.as_str()))
+        .expect("feed");
+    let (status, body) = recorded("odoo")
+        .remove(&feed.dataset)
+        .expect("recorded multi-row page");
+    // Accept the page and drain only the first row (`pace = 1`).
+    let step = sources.step(
+        &good_host,
+        "odoo.rest",
+        Some((status, body.to_string().as_bytes())),
+        EXTRACTED_AT_MS,
+    );
+    assert!(
+        matches!(step, Step::Continue),
+        "multi-row page with pace=1 must yield Continue after first row"
+    );
+    // Now fail ingest on the second chunk of the same page.
+    let Step::Done(summary) = sources.step(&failing_host, "odoo.rest", None, EXTRACTED_AT_MS + 1)
+    else {
+        panic!("ingest failure must terminate the run");
+    };
+    assert_eq!(summary.outcome, "failed");
+    // The durable `source.Connection` end watermark persisted on `failing_host`
+    // must remain empty (`"{}"`) rather than advancing past uncaptured rows.
+    let recorded_conn = failing_host
+        .host_object("source.Connection", "odoo.rest")
+        .expect("read connection")
+        .expect("end run recorded");
+    assert_eq!(
+        recorded_conn.get("watermark"),
+        Some(&RuntimeValue::String("{}".into())),
+        "persisted end watermark must not advance on mid-page ingest failure: {recorded_conn:?}"
+    );
+
+    // Restarting with fresh `Sources` state against the same `failing_host`
+    // store (which reloads the persisted watermark) must re-request from the
+    // initial cursor, not the unfinished page's advanced cursor.
+    let mut restarted = self::sources();
+    restarted
+        .claim("odoo.rest", Trigger::Manual, "user:a", EXTRACTED_AT_MS + 2)
+        .expect("re-claim");
+    let Step::Request(retry_req) =
+        restarted.step(&failing_host, "odoo.rest", None, EXTRACTED_AT_MS + 2)
+    else {
+        panic!("expected retry request");
+    };
+    assert_eq!(
+        retry_req.url, first_req.url,
+        "failed mid-page drain must not advance the durable cursor past uncaptured rows"
+    );
+    assert_eq!(retry_req.body, first_req.body);
+}

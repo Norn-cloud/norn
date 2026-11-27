@@ -207,7 +207,7 @@ fn inverse_declarations(
     found
 }
 
-fn law_expressions(law: &LawIR) -> impl Iterator<Item = &str> {
+pub(crate) fn law_expressions(law: &LawIR) -> impl Iterator<Item = &str> {
     let response = match &law.response {
         LawResponse::Predicate { expression } => Some(expression.as_str()),
         LawResponse::Invariant { .. }
@@ -488,7 +488,7 @@ pub(crate) fn decode_law(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvalua
     decoded.map_err(|error| LawEvaluationError::Invalid(error.to_string()))
 }
 /// The catalog's decoded declaration of one of its own law artifacts.
-fn decode<'c>(
+pub(crate) fn decode<'c>(
     catalog: &'c TypeCatalog<'_>,
     artifact: &ArtifactEnvelope,
 ) -> Result<&'c LawIR, LawEvaluationError> {
@@ -575,10 +575,9 @@ pub fn law_rule(
         return Err(LawEvaluationError::Unsupported(law.id.clone()));
     }
     if !law.exceptions.is_empty() {
-        return Err(LawEvaluationError::Unsupported(format!(
-            "{}: a law with exceptions has no dataset semantics",
-            law.id
-        )));
+        norn_checker::law_exceptions::check_tree(&law.id, &law.exceptions).map_err(|refusal| {
+            LawEvaluationError::Invalid(format!("{}: {}", law.id, refusal.code()))
+        })?;
     }
     if !law_link_reads(catalog, subject, law)?.is_empty() {
         return Err(LawEvaluationError::Unsupported(format!(

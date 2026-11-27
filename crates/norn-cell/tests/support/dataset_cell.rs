@@ -191,18 +191,26 @@ pub fn cell_with(
     invariants: &[(&str, &str)],
 ) -> (tempfile::TempDir, Cell) {
     let (artifacts, base) = artifacts_with(name, fields, laws, invariants);
+    cell_from_artifacts(&artifacts, &base)
+}
+
+/// Admit and install an explicit `(artifacts, base)` set into a test cell.
+pub fn cell_from_artifacts(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> (tempfile::TempDir, Cell) {
     let wire = |set: &[ArtifactEnvelope]| -> Vec<Value> {
         set.iter()
             .map(|a| Value::from_json(serde_json::to_value(a).expect("wire")).expect("value"))
             .collect()
     };
-    let (sources, base_sources) = (wire(&artifacts), wire(&base));
+    let (sources, base_sources) = (wire(artifacts), wire(base));
     let registry = BTreeSet::new();
     let checked = norn_checker::check_artifact_set_with_receipt(
         &norn_checker::ReceiptSources::new(&sources, &base_sources).expect("receipt sources"),
         &EntityArtifactSetContext {
             registry: &registry,
-            base: &base,
+            base,
             tenant: None,
         },
         &ResourceLimitProfile::norn_limits_v1(),
@@ -214,18 +222,18 @@ pub fn cell_with(
             .expect("receipt canonicalizes"),
     )
     .expect("UTF-8 receipt");
-    let values = serde_json::to_value(&artifacts).expect("definitions");
+    let values = serde_json::to_value(artifacts).expect("definitions");
     let object =
         serde_json::from_value(values[0]["payload"]["objectType"].clone()).expect("object");
     let interface =
         serde_json::from_value(values[1]["payload"]["interface"].clone()).expect("interface");
     let types: Vec<_> = serde_json::from_value(
-        serde_json::to_value(&base).expect("base")[0]["payload"]["propertyTypes"].clone(),
+        serde_json::to_value(base).expect("base")[0]["payload"]["propertyTypes"].clone(),
     )
     .expect("value types");
     let model = Model::from_definitions_with_interfaces(&[object], &types, &[interface])
         .expect("model")
-        .with_governing_laws(&artifacts)
+        .with_governing_laws(artifacts)
         .expect("governing laws");
     let directory = tempfile::tempdir().expect("temporary cell");
     let database = directory.path().join("rows.sqlite");
@@ -236,7 +244,7 @@ pub fn cell_with(
             model.clone(),
             InstalledDefinitionInput {
                 canonical_set: serde_json::to_string(
-                    &artifacts.iter().chain(&base).collect::<Vec<_>>(),
+                    &artifacts.iter().chain(base).collect::<Vec<_>>(),
                 )
                 .expect("canonical set"),
                 registry: Vec::new(),
