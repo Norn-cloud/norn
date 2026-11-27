@@ -3875,13 +3875,18 @@ fn evaluate_single_spec_cut(
     let (transforms, questions) = load_spec_plans(book.pack, spec)?;
     let allow_tf = |_: &norn_checker::transform::TransformPlan| Ok(());
     let allow_all = |_: &norn_cell::ObjectRecord| Ok(RowAccess::Read);
-    let frontier = || Ok((book.source_cursors.clone(), book.watermarks.clone()));
+    let mut ctx = book.query_context();
+    ctx.source_cursors
+        .retain(|feed, _| spec.required_feeds.iter().any(|req| req == feed));
+    ctx.watermarks
+        .retain(|feed, _| spec.required_feeds.iter().any(|req| req == feed));
+    let frontier = || Ok((ctx.source_cursors.clone(), ctx.watermarks.clone()));
     let (anchor_key, authority) = legal_entity_read_authority(book, legal_entity_id);
     let binding = SpecCellBinding {
         store: book.cell()?.store(),
         anchor_key: &anchor_key,
         authority: &authority,
-        context: book.query_context(),
+        context: ctx.clone(),
         handle_key: &TEST_HANDLE_KEY,
         whole_world_values,
         min_disclosed_bucket: 2,
@@ -5186,9 +5191,10 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
 }
 
 fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), String> {
-    // HOST-READ-2 (mixed grants): a caller allowed to read `UnitCostEvidence` (and all
-    // non-POS evidence) but denied `PosSaleEvidence` MUST NOT observe an empty quarantined
-    // POS mapping bundle via `pending_observations`.
+    // HOST-READ-2 (mixed & Count-only grants): a caller allowed to read `UnitCostEvidence`
+    // (and all non-POS evidence) but holding `RowAccess::None` or Population-only
+    // `RowAccess::Count` on `PosSaleEvidence` MUST NOT observe an empty quarantined POS
+    // mapping bundle via `pending_observations`.
     let hide_pos_only = |obj: &norn_cell::ObjectRecord| {
         if obj.object_type == "supply.PosSaleEvidence" {
             Ok(RowAccess::None)
@@ -5198,6 +5204,15 @@ fn verify_scoped_pending_observations_privacy(sole: &EntityBook) -> Result<(), S
     };
     let hidden_pending = evaluate_single_library_cut_with_access(sole, "LE-SOLE", &hide_pos_only)?;
     assert_eq!(hidden_pending.pending_observations, 0);
+    let count_pos_only = |obj: &norn_cell::ObjectRecord| {
+        if obj.object_type == "supply.PosSaleEvidence" {
+            Ok(RowAccess::Count)
+        } else {
+            Ok(RowAccess::Read)
+        }
+    };
+    let count_pending = evaluate_single_library_cut_with_access(sole, "LE-SOLE", &count_pos_only)?;
+    assert_eq!(count_pending.pending_observations, 0);
     // Unrelated admitted mapping (`supply.wms_scan.mapping`) quarantined in the same cell
     // MUST stay invisible to `pending_observations` and must NOT block `complete == true`.
     let mut clean = EntityBook::open(

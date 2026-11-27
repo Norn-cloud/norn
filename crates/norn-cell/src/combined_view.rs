@@ -372,10 +372,7 @@ fn authorized_evidence_types<E: SqlEngine>(
             version: 0,
             values: BTreeMap::new(),
         };
-        if matches!(
-            (input.evidence_access)(&gate)?,
-            RowAccess::Read | RowAccess::Count
-        ) {
+        if matches!((input.evidence_access)(&gate)?, RowAccess::Read) {
             allowed.insert((*ty).to_owned());
         }
     }
