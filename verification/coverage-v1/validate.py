@@ -415,7 +415,7 @@ PR_CONCURRENCY = (
 # `"name": ["verdict", "sha256"],` per line; core.sh's cheap phase requires those two Rust
 # tests to have run and passed.
 PULL_REQUEST_CONCURRENCY_CASES = {
-    "codeql.yml as checked in": ["accept", "b9ff70930617fc3d64a9fc05eda0c13bfe8ce57c530923148c6de6654f5d2d27"],
+    "codeql.yml as checked in": ["accept", "68793bd57d49dd49524051f3cd8b8ba02028f6beb57b00b6d3509cc58431f0f2"],
     "ci-policy.yml as checked in": ["accept", "18a88e447d7fe890a05aeac3e9d37ba2e230382a1b80eaa31f12bf625ff94bb2"],
     "folded multi-line group": ["accept", "60e1b9381e3b3cf8a50068f08697d21476530c5e1d0e1f52a5b53245b361dbb3"],
     "out of scope: pull_request_target without concurrency": ["accept", "3782cd52452ef89a759540b54f49d82f2d0799fed2d7862111c7fdad8e139509"],

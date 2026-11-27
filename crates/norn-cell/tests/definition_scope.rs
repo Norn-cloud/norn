@@ -308,7 +308,22 @@ fn only_the_exact_kernel_record_types_ride_beside_a_definition_set() -> TestResu
     )?);
     // The one other form: a cell that records principal inputs (#1091).
     let recording = norn_cell::kernel_record_types_recording_principal_inputs();
-    for (records, admitted) in [(tampered, false), (exact, true), (recording, true)] {
+    // Optional exact Function command state record for cells accepting Function receipts.
+    let mut with_function_cmd = exact.clone();
+    with_function_cmd.push(norn_cell::function_command_record_type());
+    let mut tampered_function_cmd = exact.clone();
+    let mut bad_fn_cmd = norn_cell::function_command_record_type();
+    bad_fn_cmd.properties.push(serde_json::from_value(
+        json!({ "id": "extra", "type": { "kind": "text" }, "constraints": { "nullable": true } }),
+    )?);
+    tampered_function_cmd.push(bad_fn_cmd);
+    for (records, admitted) in [
+        (tampered, false),
+        (tampered_function_cmd, false),
+        (exact, true),
+        (recording, true),
+        (with_function_cmd, true),
+    ] {
         let mut types = vec![item.clone()];
         types.extend(records);
         let model = Model::from_definitions(&types, &[])?;

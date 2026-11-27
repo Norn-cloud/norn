@@ -1,0 +1,14 @@
+# Hermetic forecast evaluator container (`norn_regression.evaluator_cli`).
+# Zero external dependencies: pure Python 3.11 stdlib over pinned canonical
+# dataset snapshots (`norn.snapshot/v1`) and model artifacts (`norn.linear-model/v1`).
+# Every input copied into this image is pinned in `norn_regression/evaluator_pins.json`.
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+RUN useradd --system --uid 10001 evaluator
+WORKDIR /app
+COPY sdks/python/regression/norn_regression/__init__.py /app/norn_regression/__init__.py
+COPY sdks/python/regression/norn_regression/receipt.py /app/norn_regression/receipt.py
+COPY sdks/python/regression/norn_regression/evaluator_cli.py /app/norn_regression/evaluator_cli.py
+COPY sdks/python/regression/norn_regression/evaluator_pins.json /app/norn_regression/evaluator_pins.json
+ENV PYTHONPATH=/app PYTHONUNBUFFERED=1 PYTHONHASHSEED=0 LC_ALL=C.UTF-8 TZ=UTC
+USER evaluator
+ENTRYPOINT ["python", "-m", "norn_regression.evaluator_cli"]
