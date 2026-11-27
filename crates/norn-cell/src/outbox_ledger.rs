@@ -174,22 +174,6 @@ fn digest_canonical_str(canonical: &str) -> Result<OutboxDigest, CellError> {
         .ok_or_else(|| CellError::Encoding(format!("invalid outbox digest hex: {hex}")))
 }
 
-/// Domain-separated digest representing an unprovable pre-v11 prior-generation
-/// payload whose original enqueue record is absent from the store. Matches no
-/// real [`payload_digest`] so any future same-generation replay fails closed.
-pub(crate) fn legacy_unknown_payload_digest(
-    command_id: &str,
-    generation: u64,
-) -> Result<OutboxDigest, CellError> {
-    let hex = norn_ir::canonical::domain_hash_hex(
-        b"norn.outbox.legacy_unknown_payload.v1\0",
-        &(command_id, generation),
-    )
-    .map_err(CellError::Encoding)?;
-    OutboxDigest::from_hex(&hex)
-        .ok_or_else(|| CellError::Encoding(format!("invalid legacy digest hex: {hex}")))
-}
-
 pub(crate) fn operation_key<E: SqlEngine>(
     conn: &E,
     command_id: &str,
@@ -420,9 +404,10 @@ pub(crate) fn record_enqueue<E: SqlEngine>(
         return Ok(EnqueueAction::Noop);
     }
     // A newer generation after a cleanly consumed prior epoch opens a fresh
-    // epoch while keeping the fixed queue and retaining all prior history.
+    // epoch while keeping the fixed queue on v11+ live writes (legacy pre-v11
+    // retained journals classified each post-consumption row independently).
     if ledger.active().consumed_commit_seq.is_some() && ledger.compensation().is_none() {
-        if queue != ledger.queue() {
+        if queue != ledger.queue() && !legacy_outbox {
             return Err(refused(OutboxLedgerRefusal::QueueChanged.to_string()));
         }
         let next_epoch = last_epoch
@@ -438,28 +423,28 @@ pub(crate) fn record_enqueue<E: SqlEngine>(
             Ok(EnqueueAction::ReplaceInPlace)
         }
         Ok(ApplyStatus::IdempotentDuplicate) => Ok(EnqueueAction::Noop),
-        Err(OutboxLedgerRefusal::AmbiguousDispatchRequiresReconciliation { .. })
-            if legacy_outbox =>
-        {
-            let auth = OutboxRecord {
+        Err(
+            OutboxLedgerRefusal::QueueChanged
+            | OutboxLedgerRefusal::AmbiguousDispatchRequiresReconciliation { .. },
+        ) if legacy_outbox => {
+            let legacy_record = OutboxRecord {
                 operation: op,
-                generation: ledger.active_generation(),
-                kind: OutboxRecordKind::Reconciliation {
-                    decision: ReconciliationDecision::AuthorizeReissue {
-                        next_generation: command.generation,
-                    },
+                generation: command.generation,
+                kind: OutboxRecordKind::Requested {
+                    queue: ledger.queue(),
+                    payload_digest: digest,
+                    dedup_contract: dedup,
                     commit_seq,
                 },
             };
-            ledger
-                .apply(&auth)
-                .map_err(|err| refused(err.to_string()))?;
-            ledger
-                .apply(&record)
-                .map_err(|err| refused(err.to_string()))?;
-            append_record(conn, &command.command_id, *last_epoch, &auth)?;
-            append_record(conn, &command.command_id, *last_epoch, &record)?;
-            Ok(EnqueueAction::ReplaceInPlace)
+            crate::outbox_ledger_migrate::apply_legacy_replacement(
+                conn,
+                &mut ledger,
+                *last_epoch,
+                &command.command_id,
+                &legacy_record,
+                commit_seq,
+            )
         }
         Err(error) => Err(refused(error.to_string())),
     }
@@ -484,7 +469,9 @@ fn check_existing_generation_replays(
         if ledger.generation(generation).is_some() {
             return match ledger.apply(record) {
                 Ok(ApplyStatus::IdempotentDuplicate) => Ok(Some(EnqueueAction::Noop)),
-                Err(OutboxLedgerRefusal::PayloadDiverged) if legacy_outbox => {
+                Err(OutboxLedgerRefusal::PayloadDiverged | OutboxLedgerRefusal::QueueChanged)
+                    if legacy_outbox =>
+                {
                     Ok(Some(EnqueueAction::Noop))
                 }
                 Ok(ApplyStatus::Applied) => Err(refused("unexpected duplicate state".to_owned())),

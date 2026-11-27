@@ -1,12 +1,15 @@
 //! Storage v11 migration: create `_norn_outbox_record` and backfill validated
 //! [`norn_kernel::world::outbox_ledger::OperationLedger`] epochs from legacy
-//! `_norn_outbox`, `_norn_perform_claim`, `_norn_run`, and restore fences.
+//! `_norn_outbox`, `_norn_perform_claim`, `_norn_run`, `_norn_export_journal`,
+//! and restore fences.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::RuntimeValue as Value;
 use norn_kernel::world::outbox::{OperationKey, Queue};
 use norn_kernel::world::outbox_ledger::{
-    DispatchProof, OutboxDigest, OutboxRecord, OutboxRecordKind, OutcomeEvidence,
-    ProviderDedupContract, ReconciliationDecision,
+    ApplyStatus, DispatchProof, OperationLedger, OutboxDigest, OutboxLedgerRefusal, OutboxRecord,
+    OutboxRecordKind, OutcomeEvidence, ProviderDedupContract, ReconciliationDecision,
 };
 
 use crate::engine::{SqlEngine, SqlRow, params};
@@ -14,25 +17,38 @@ use crate::error::CellError;
 use crate::read::{to_i64, to_u64};
 use crate::system::{OUTBOX, OUTBOX_RECORD, PERFORM_CLAIM, RUN};
 
+/// Provable historical enqueue metadata recovered from `_norn_export_journal`.
+#[derive(Debug, Clone, Copy)]
+struct JournalEnqueue {
+    commit_seq: u64,
+    queue: Queue,
+    payload_digest: OutboxDigest,
+    dedup_contract: ProviderDedupContract,
+}
+
+type JournalIndex = BTreeMap<String, BTreeMap<u64, JournalEnqueue>>;
+
 /// Context carried while backfilling prior generations of one legacy outbox row.
 struct PriorBackfillContext<'a> {
     command_id: &'a str,
     op: OperationKey,
-    queue: Queue,
+    head_queue: Queue,
     head_generation: u64,
     head_commit_seq: u64,
+    journal: Option<&'a BTreeMap<u64, JournalEnqueue>>,
 }
 
-/// Outcome of backfilling all `< head_generation` claims for one operation.
+/// Outcome of backfilling all `< head_generation` generations for one operation.
 struct PriorBackfill {
     epoch: u64,
+    epoch_queue: Option<Queue>,
     records: Vec<OutboxRecord>,
     deferred_outcomes: Vec<OutboxRecord>,
 }
 
 /// D1: create `_norn_outbox_record` and backfill validated epochs for every
 /// existing `_norn_outbox` row from `_norn_outbox`, `_norn_perform_claim`,
-/// `_norn_run`, and `restore:perform_fence:*`.
+/// `_norn_run`, `_norn_export_journal`, and `restore:perform_fence:*`.
 pub(crate) fn migrate_v11_outbox_ledger<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
     let has_outbox = engine
         .query_optional(
@@ -61,13 +77,66 @@ pub(crate) fn migrate_v11_outbox_ledger<E: SqlEngine>(engine: &E) -> Result<(), 
         ),
         params![],
     )?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let journal = index_journal_enqueues(engine)?;
     for values in rows {
-        backfill_v11_outbox_row(engine, SqlRow(values))?;
+        backfill_v11_outbox_row(engine, SqlRow(values), &journal)?;
     }
     Ok(())
 }
 
-fn backfill_v11_outbox_row<E: SqlEngine>(engine: &E, row: SqlRow) -> Result<(), CellError> {
+/// Scan `_norn_export_journal` once to recover provable historical queue,
+/// payload digest, and dedup contract for every enqueued `(command_id, gen)`.
+fn index_journal_enqueues<E: SqlEngine>(engine: &E) -> Result<JournalIndex, CellError> {
+    let mut index: JournalIndex = BTreeMap::new();
+    let has_journal = engine
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_journal {
+        return Ok(index);
+    }
+    let seqs = engine.query(
+        "SELECT \"commit_seq\" FROM \"_norn_export_journal\" ORDER BY \"commit_seq\"",
+        params![],
+    )?;
+    for values in seqs {
+        let seq = to_u64(SqlRow(values).get::<i64>(0)?, "commit_seq")?;
+        let Ok(Some(record)) = crate::export_journal::read_record(engine, seq) else {
+            continue;
+        };
+        for effect in &record.batch.effects {
+            let crate::store::EffectRow::Enqueue { command } = effect else {
+                continue;
+            };
+            let entry = index.entry(command.command_id.clone()).or_default();
+            if entry.contains_key(&command.generation) {
+                continue;
+            }
+            entry.insert(
+                command.generation,
+                JournalEnqueue {
+                    commit_seq: seq,
+                    queue: crate::read::classify(&command.command),
+                    payload_digest: crate::outbox_ledger::payload_digest(&command.command)?,
+                    dedup_contract: crate::outbox_ledger::dedup_contract(&command.command)?,
+                },
+            );
+        }
+    }
+    Ok(index)
+}
+
+fn backfill_v11_outbox_row<E: SqlEngine>(
+    engine: &E,
+    row: SqlRow,
+    journal: &JournalIndex,
+) -> Result<(), CellError> {
     let command_id: String = row.get(0)?;
     let generation = to_u64(row.get::<i64>(1)?, "generation")?;
     let commit_seq = to_u64(row.get::<i64>(2)?, "commit_seq")?;
@@ -89,20 +158,27 @@ fn backfill_v11_outbox_row<E: SqlEngine>(engine: &E, row: SqlRow) -> Result<(), 
     let ctx = PriorBackfillContext {
         command_id: &command_id,
         op,
-        queue,
+        head_queue: queue,
         head_generation: generation,
         head_commit_seq: commit_seq,
+        journal: journal.get(&command_id),
     };
     let PriorBackfill {
         epoch,
+        epoch_queue,
         mut records,
         deferred_outcomes,
-    } = backfill_v11_prior_claims(engine, &ctx)?;
+    } = backfill_v11_prior_generations(engine, &ctx)?;
+    let head_record_queue = if records.is_empty() {
+        queue
+    } else {
+        epoch_queue.unwrap_or(queue)
+    };
     records.push(OutboxRecord {
         operation: op,
         generation,
         kind: OutboxRecordKind::Requested {
-            queue,
+            queue: head_record_queue,
             payload_digest: head_digest,
             dedup_contract: head_dedup,
             commit_seq,
@@ -227,37 +303,59 @@ fn backfill_v11_outcome<E: SqlEngine>(
     Ok(Some((decoded, consumed)))
 }
 
-fn backfill_v11_prior_claims<E: SqlEngine>(
+fn backfill_v11_prior_generations<E: SqlEngine>(
     engine: &E,
     ctx: &PriorBackfillContext<'_>,
 ) -> Result<PriorBackfill, CellError> {
-    let prior_rows = engine.query(
+    let head_sql = to_i64(ctx.head_generation, "generation")?;
+    let claim_rows = engine.query(
         &format!(
             "SELECT \"generation\", \"commit_seq\" FROM \"{PERFORM_CLAIM}\" WHERE \"command_id\" = ?1 AND \"generation\" < ?2 ORDER BY \"generation\""
         ),
-        params![ctx.command_id, to_i64(ctx.head_generation, "generation")?],
+        params![ctx.command_id, head_sql],
     )?;
-    let mut claims = Vec::with_capacity(prior_rows.len());
-    for values in prior_rows {
+    let mut claims = BTreeMap::new();
+    let mut gens = BTreeSet::new();
+    for values in claim_rows {
         let row = SqlRow(values);
         let prior_gen = to_u64(row.get::<i64>(0)?, "generation")?;
         let claim_seq = to_u64(row.get::<i64>(1)?, "claim commit_seq")?;
-        claims.push((prior_gen, claim_seq));
+        claims.insert(prior_gen, claim_seq);
+        gens.insert(prior_gen);
     }
+    if let Some(entries) = ctx.journal {
+        for &prior_gen in entries.keys() {
+            if prior_gen < ctx.head_generation {
+                gens.insert(prior_gen);
+            }
+        }
+    }
+    let run_rows = engine.query(
+        &format!(
+            "SELECT DISTINCT \"generation\" FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" < ?2"
+        ),
+        params![ctx.command_id, head_sql],
+    )?;
+    for values in run_rows {
+        gens.insert(to_u64(SqlRow(values).get::<i64>(0)?, "generation")?);
+    }
+    let ordered: Vec<u64> = gens.into_iter().collect();
     let mut state = PriorBackfill {
         epoch: 0,
+        epoch_queue: None,
         records: Vec::new(),
         deferred_outcomes: Vec::new(),
     };
-    for (idx, (prior_gen, claim_seq)) in claims.iter().copied().enumerate() {
-        let next_generation = claims
+    for (idx, prior_gen) in ordered.iter().copied().enumerate() {
+        let next_generation = ordered
             .get(idx.saturating_add(1))
-            .map_or(ctx.head_generation, |(next_gen, _)| *next_gen);
-        backfill_v11_one_prior_claim(
+            .copied()
+            .unwrap_or(ctx.head_generation);
+        backfill_v11_one_prior_gen(
             engine,
             ctx,
             prior_gen,
-            claim_seq,
+            claims.get(&prior_gen).copied(),
             next_generation,
             &mut state,
         )?;
@@ -265,46 +363,97 @@ fn backfill_v11_prior_claims<E: SqlEngine>(
     Ok(state)
 }
 
-fn backfill_v11_one_prior_claim<E: SqlEngine>(
+fn backfill_v11_one_prior_gen<E: SqlEngine>(
     engine: &E,
     ctx: &PriorBackfillContext<'_>,
     prior_gen: u64,
-    claim_seq: u64,
+    claim_seq: Option<u64>,
     next_generation: u64,
     state: &mut PriorBackfill,
 ) -> Result<(), CellError> {
-    let enqueue_seq = engine
+    let origin_seq = engine
         .query_optional(
             "SELECT \"commit_seq\" FROM \"_norn_command_origin\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2",
             params![ctx.command_id, to_i64(prior_gen, "generation")?],
             |row| row.get::<i64>(0),
         )?
         .map(|seq| to_u64(seq, "origin commit_seq"))
-        .transpose()?
-        .unwrap_or(claim_seq);
-    let (digest, dedup) =
-        backfill_v11_prior_command_meta(engine, ctx.command_id, prior_gen, enqueue_seq, claim_seq)?;
+        .transpose()?;
+    let (enqueue_seq, gen_queue, digest, dedup) =
+        if let Some(meta) = ctx.journal.and_then(|entries| entries.get(&prior_gen)) {
+            (
+                origin_seq.unwrap_or(meta.commit_seq),
+                meta.queue,
+                meta.payload_digest,
+                meta.dedup_contract,
+            )
+        } else {
+            let fallback_seq = origin_seq.or(claim_seq).unwrap_or(ctx.head_commit_seq);
+            let fallback_queue = if claim_seq.is_some() {
+                Queue::Fifo
+            } else {
+                ctx.head_queue
+            };
+            (
+                fallback_seq,
+                fallback_queue,
+                legacy_unknown_payload_digest(ctx.command_id, prior_gen)?,
+                ProviderDedupContract::None,
+            )
+        };
+    let queue = *state.epoch_queue.get_or_insert(gen_queue);
     state.records.push(OutboxRecord {
         operation: ctx.op,
         generation: prior_gen,
         kind: OutboxRecordKind::Requested {
-            queue: ctx.queue,
+            queue,
             payload_digest: digest,
             dedup_contract: dedup,
             commit_seq: enqueue_seq,
         },
     });
-    state.records.push(OutboxRecord {
-        operation: ctx.op,
-        generation: prior_gen,
-        kind: OutboxRecordKind::Dispatched {
-            claim_commit_seq: claim_seq,
-        },
-    });
-    match backfill_v11_outcome(engine, ctx.command_id, prior_gen, enqueue_seq, None)? {
-        Some((outcome, Some(consumed_commit_seq))) => {
+    if let Some(claim_commit_seq) = claim_seq {
+        state.records.push(OutboxRecord {
+            operation: ctx.op,
+            generation: prior_gen,
+            kind: OutboxRecordKind::Dispatched { claim_commit_seq },
+        });
+    }
+    let prior_outcome = backfill_v11_outcome(engine, ctx.command_id, prior_gen, enqueue_seq, None)?;
+    finish_prior_gen(
+        engine,
+        ctx,
+        prior_gen,
+        enqueue_seq,
+        claim_seq,
+        next_generation,
+        prior_outcome,
+        state,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "completes one prior generation transition from backfill_v11_one_prior_gen"
+)]
+fn finish_prior_gen<E: SqlEngine>(
+    engine: &E,
+    ctx: &PriorBackfillContext<'_>,
+    prior_gen: u64,
+    enqueue_seq: u64,
+    claim_seq: Option<u64>,
+    next_generation: u64,
+    prior_outcome: Option<(Value, Option<u64>)>,
+    state: &mut PriorBackfill,
+) -> Result<(), CellError> {
+    match (claim_seq, prior_outcome) {
+        (claim, Some((outcome, Some(consumed_commit_seq)))) => {
             state.records.push(prior_outcome_record(
-                ctx.op, prior_gen, claim_seq, &outcome,
+                ctx.op,
+                prior_gen,
+                enqueue_seq,
+                claim,
+                &outcome,
             )?);
             state.records.append(&mut state.deferred_outcomes);
             state.records.push(OutboxRecord {
@@ -316,17 +465,22 @@ fn backfill_v11_one_prior_claim<E: SqlEngine>(
             });
             persist_epoch(engine, ctx.command_id, state.epoch, &state.records)?;
             state.records.clear();
+            state.epoch_queue = None;
             state.epoch = state
                 .epoch
                 .checked_add(1)
                 .ok_or(CellError::OutOfRange("outbox epoch"))?;
         }
-        Some((outcome, None)) if !crate::outbox_ledger::outcome_is_ok(&outcome) => {
+        (claim, Some((outcome, None))) if !crate::outbox_ledger::outcome_is_ok(&outcome) => {
             state.records.push(prior_outcome_record(
-                ctx.op, prior_gen, claim_seq, &outcome,
+                ctx.op,
+                prior_gen,
+                enqueue_seq,
+                claim,
+                &outcome,
             )?);
         }
-        Some((outcome, None)) => {
+        (Some(claim), Some((outcome, None))) => {
             state.records.push(OutboxRecord {
                 operation: ctx.op,
                 generation: prior_gen,
@@ -336,10 +490,14 @@ fn backfill_v11_one_prior_claim<E: SqlEngine>(
                 },
             });
             state.deferred_outcomes.push(prior_outcome_record(
-                ctx.op, prior_gen, claim_seq, &outcome,
+                ctx.op,
+                prior_gen,
+                enqueue_seq,
+                Some(claim),
+                &outcome,
             )?);
         }
-        None => {
+        (Some(_), None) => {
             state.records.push(OutboxRecord {
                 operation: ctx.op,
                 generation: prior_gen,
@@ -349,6 +507,7 @@ fn backfill_v11_one_prior_claim<E: SqlEngine>(
                 },
             });
         }
+        (None, Some((_, None)) | None) => {}
     }
     Ok(())
 }
@@ -356,96 +515,95 @@ fn backfill_v11_one_prior_claim<E: SqlEngine>(
 fn prior_outcome_record(
     op: OperationKey,
     generation: u64,
-    claim_commit_seq: u64,
+    enqueue_seq: u64,
+    claim_seq: Option<u64>,
     outcome: &Value,
 ) -> Result<OutboxRecord, CellError> {
-    Ok(OutboxRecord {
-        operation: op,
-        generation,
-        kind: OutboxRecordKind::Outcome {
-            evidence: OutcomeEvidence::DispatchProof {
+    let (evidence, commit_seq) = if let Some(claim_commit_seq) = claim_seq {
+        (
+            OutcomeEvidence::DispatchProof {
                 proof: DispatchProof {
                     operation: op,
                     generation,
                     claim_commit_seq,
                 },
             },
+            claim_commit_seq,
+        )
+    } else {
+        (OutcomeEvidence::Resolved, enqueue_seq)
+    };
+    Ok(OutboxRecord {
+        operation: op,
+        generation,
+        kind: OutboxRecordKind::Outcome {
+            evidence,
             ok: crate::outbox_ledger::outcome_is_ok(outcome),
             outcome_digest: crate::outbox_ledger::outcome_digest(outcome)?,
-            commit_seq: claim_commit_seq,
+            commit_seq,
         },
     })
 }
 
-fn backfill_v11_prior_command_meta<E: SqlEngine>(
-    engine: &E,
+/// Domain-separated digest representing an unprovable pre-v11 prior-generation
+/// payload whose original enqueue record is absent from the store. Matches no
+/// real [`crate::outbox_ledger::payload_digest`] so any future same-generation
+/// replay fails closed.
+fn legacy_unknown_payload_digest(
     command_id: &str,
     generation: u64,
-    enqueue_seq: u64,
-    claim_seq: u64,
-) -> Result<(OutboxDigest, ProviderDedupContract), CellError> {
-    if let Some(meta) = find_enqueued_meta_at(engine, command_id, generation, enqueue_seq)? {
-        return Ok(meta);
-    }
-    let has_journal = engine
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_export_journal'",
-            params![],
-            |row| row.get::<i64>(0),
-        )?
-        .is_some();
-    if has_journal {
-        let seqs = engine.query(
-            "SELECT \"commit_seq\" FROM \"_norn_export_journal\" WHERE \"commit_seq\" <= ?1 ORDER BY \"commit_seq\" DESC",
-            params![to_i64(claim_seq, "claim commit_seq")?],
-        )?;
-        for values in seqs {
-            let seq = to_u64(SqlRow(values).get::<i64>(0)?, "commit_seq")?;
-            if seq == enqueue_seq {
-                continue;
-            }
-            if let Some(meta) = find_enqueued_meta_at(engine, command_id, generation, seq)? {
-                return Ok(meta);
-            }
-        }
-    }
-    // No provable prior payload exists in the legacy store: bind a
-    // domain-separated sentinel digest and fail-closed `ProviderDedupContract::None`
-    // rather than fabricating the head generation's payload identity.
-    Ok((
-        crate::outbox_ledger::legacy_unknown_payload_digest(command_id, generation)?,
-        ProviderDedupContract::None,
-    ))
+) -> Result<OutboxDigest, CellError> {
+    let hex = norn_ir::canonical::domain_hash_hex(
+        b"norn.outbox.legacy_unknown_payload.v1\0",
+        &(command_id, generation),
+    )
+    .map_err(CellError::Encoding)?;
+    OutboxDigest::from_hex(&hex)
+        .ok_or_else(|| CellError::Encoding(format!("invalid legacy digest hex: {hex}")))
 }
 
-fn find_enqueued_meta_at<E: SqlEngine>(
-    engine: &E,
+/// Apply a retained pre-v11 in-place outbox replacement that changed queue or
+/// superseded an ambiguous dispatch before v11 reconciliation existed.
+pub(crate) fn apply_legacy_replacement<E: SqlEngine>(
+    conn: &E,
+    ledger: &mut OperationLedger,
+    epoch: u64,
     command_id: &str,
-    generation: u64,
+    record: &OutboxRecord,
     commit_seq: u64,
-) -> Result<Option<(OutboxDigest, ProviderDedupContract)>, CellError> {
-    let Ok(Some(record)) = crate::export_journal::read_record(engine, commit_seq) else {
-        return Ok(None);
+) -> Result<crate::outbox_ledger::EnqueueAction, CellError> {
+    let refused = |reason: String| CellError::OutboxReissueRefused {
+        command_id: command_id.to_owned(),
+        generation: record.generation,
+        reason,
     };
-    let found = record.batch.effects.iter().find_map(|effect| match effect {
-        crate::store::EffectRow::Enqueue { command }
-            if command.command_id == command_id && command.generation == generation =>
-        {
-            Some(&command.command)
+    match ledger.apply(record) {
+        Ok(ApplyStatus::Applied) => {
+            crate::outbox_ledger::append_record(conn, command_id, epoch, record)?;
+            Ok(crate::outbox_ledger::EnqueueAction::ReplaceInPlace)
         }
-        crate::store::EffectRow::Enqueue { .. }
-        | crate::store::EffectRow::ClaimPerform { .. }
-        | crate::store::EffectRow::ReconcileOutbox { .. }
-        | crate::store::EffectRow::RecordCompensation { .. }
-        | crate::store::EffectRow::RecordLateOutcome { .. }
-        | crate::store::EffectRow::Schedule { .. }
-        | crate::store::EffectRow::CancelTimer { .. } => None,
-    });
-    match found {
-        Some(command) => Ok(Some((
-            crate::outbox_ledger::payload_digest(command)?,
-            crate::outbox_ledger::dedup_contract(command)?,
-        ))),
-        None => Ok(None),
+        Ok(ApplyStatus::IdempotentDuplicate) => Ok(crate::outbox_ledger::EnqueueAction::Noop),
+        Err(OutboxLedgerRefusal::AmbiguousDispatchRequiresReconciliation { .. }) => {
+            let auth = OutboxRecord {
+                operation: ledger.operation(),
+                generation: ledger.active_generation(),
+                kind: OutboxRecordKind::Reconciliation {
+                    decision: ReconciliationDecision::AuthorizeReissue {
+                        next_generation: record.generation,
+                    },
+                    commit_seq,
+                },
+            };
+            ledger
+                .apply(&auth)
+                .map_err(|err| refused(err.to_string()))?;
+            ledger
+                .apply(record)
+                .map_err(|err| refused(err.to_string()))?;
+            crate::outbox_ledger::append_record(conn, command_id, epoch, &auth)?;
+            crate::outbox_ledger::append_record(conn, command_id, epoch, record)?;
+            Ok(crate::outbox_ledger::EnqueueAction::ReplaceInPlace)
+        }
+        Err(error) => Err(refused(error.to_string())),
     }
 }

@@ -4,13 +4,18 @@
 
 use std::collections::BTreeMap;
 
+use norn_cell::engine::{NativeEngine, SqlEngine};
+use norn_cell::engine_release::{STAMP_FORMAT, STAMP_KEY};
 use norn_cell::export::Exporter;
 use norn_cell::outbox_ledger::outcome_digest;
 use norn_cell::{CellError, CellStore, ClaimOutcome, JournalMode, StoreOptions};
 use norn_kernel::cell_host::JsonObject;
-use norn_kernel::world::outbox::OutboxState;
+use norn_kernel::world::outbox::{OutboxState, Queue};
 use norn_kernel::world::outbox_ledger::{OutboxLedgerRefusal, ReconciliationDecision};
-use norn_kernel::{CellCommit, CellHost as _, Command, CommitError, Consumed, Generation};
+use norn_kernel::{
+    CellCommit, CellHost as _, Command, CommandId, CommitError, Consumed, FreshnessPolicy,
+    Generation, IdempotencyKey,
+};
 use serde_json::json;
 
 use super::outbox_generations::{
@@ -394,5 +399,166 @@ async fn export_restore_preserves_mixed_and_unconsumed_late_outcomes() -> TestRe
             .prior_confirmed_successes(),
         vec![0]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn v10_in_place_upgrade_matches_export_restore_for_unclaimed_prior_enqueue() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let src_path = dir.path().join("unclaimed-src.sqlite");
+    let mut src = open_cell(&src_path)?;
+    let g0 = make_command("unclaimed-1", 0, 10, None)?;
+    let g1 = make_command("unclaimed-1", 1, 20, None)?;
+    enqueue_cmd(&mut src, g0.clone())?;
+    // Replace gen 0 BEFORE any claim/dispatch so `_norn_perform_claim` has no gen-0 row.
+    enqueue_cmd(&mut src, g1)?;
+    let (mut exp, bindings) = export_cell(&src, &dir.path().join("unclaimed-exp")).await?;
+    drop(src);
+
+    // Path A: export -> restore into a fresh v11 store.
+    let restored_path = dir.path().join("unclaimed-restored.sqlite");
+    CellStore::restore_from(
+        &mut exp,
+        &restored_path,
+        test_model()?,
+        SCOPE,
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await?;
+    let mut restored = open_cell(&restored_path)?;
+
+    // Path B: downgrade source store to v10 and upgrade in place to v11.
+    let raw = NativeEngine::open(&src_path, StoreOptions::default())?;
+    raw.execute_batch("DROP TABLE \"_norn_outbox_record\";")?;
+    raw.execute(
+        "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+        &[
+            norn_cell::engine::SqlValue::Text(format!(
+                r#"{{"format":"{STAMP_FORMAT}","storage":10,"writer":"v10-fixture"}}"#
+            )),
+            norn_cell::engine::SqlValue::Text(STAMP_KEY.to_owned()),
+        ],
+    )?;
+    drop(raw);
+    let mut upgraded = open_cell(&src_path)?;
+
+    let restored_ledger = restored
+        .store()
+        .read()
+        .outbox_ledger("unclaimed-1")?
+        .ok_or("restored ledger")?;
+    let upgraded_ledger = upgraded
+        .store()
+        .read()
+        .outbox_ledger("unclaimed-1")?
+        .ok_or("upgraded ledger")?;
+    assert_eq!(
+        upgraded_ledger.generation(0).map(|r| r.payload_digest),
+        restored_ledger.generation(0).map(|r| r.payload_digest)
+    );
+    assert!(upgraded_ledger.generation(0).is_some());
+
+    // Both upgraded and restored stores reject a divergent gen-0 replay.
+    let diverged = make_command("unclaimed-1", 0, 999, None)?;
+    assert!(matches!(
+        enqueue_cmd(&mut upgraded, diverged.clone()),
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 0,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        enqueue_cmd(&mut restored, diverged),
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 0,
+            ..
+        }))
+    ));
+    // Identical gen-0 replay remains an idempotent no-op on both.
+    enqueue_cmd(&mut upgraded, g0.clone())?;
+    enqueue_cmd(&mut restored, g0)?;
+    Ok(())
+}
+
+#[test]
+fn v11_refuses_queue_change_and_v10_upgrade_preserves_prior_epoch_queue() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("queue-flip.sqlite");
+    let mut cell = open_cell(&path)?;
+    let fifo_g0 = make_command("qflip-1", 0, 10, None)?;
+    enqueue_cmd(&mut cell, fifo_g0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(fifo_g0.clone()));
+    assert!(
+        cell.complete_perform(&fifo_g0, rv(json!({ "ok": true }))?)?
+            .is_some()
+    );
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: fifo_g0.id,
+        generation: Generation(0),
+    }))?;
+
+    // Live v11 write refuses changing queue from Fifo to Parked on the same command_id.
+    let parked_payload = serde_json::from_value(json!({
+        "kind": "perform",
+        "function": "norn.decision",
+        "functionVersion": "1",
+        "step": "approve",
+    }))?;
+    let parked_g1 = Command {
+        id: CommandId("qflip-1".to_owned()),
+        generation: Generation(1),
+        idempotency_key: IdempotencyKey("qflip-1/1".to_owned()),
+        freshness: FreshnessPolicy::AppendOnly,
+        deadline: None,
+        payload: parked_payload,
+    };
+    assert!(matches!(
+        enqueue_cmd(&mut cell, parked_g1.clone()),
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 1,
+            ..
+        }))
+    ));
+    drop(cell);
+
+    // Simulate a legacy v10 store where Fifo gen 0 was consumed and Parked gen 1
+    // replaced the row in `_norn_outbox`, then upgrade to v11.
+    let raw = NativeEngine::open(&path, StoreOptions::default())?;
+    raw.execute_batch("DROP TABLE \"_norn_outbox_record\";")?;
+    let parked_cmd_json = serde_json::to_string(&parked_g1)?;
+    raw.execute(
+        "UPDATE \"_norn_outbox\" SET \"generation\" = 1, \"idempotency_key\" = 'qflip-1/1', \"command\" = ?1, \"result\" = NULL, \"consumed_commit_seq\" = NULL, \"queue\" = 'parked' WHERE \"command_id\" = 'qflip-1'",
+        &[norn_cell::engine::SqlValue::Text(parked_cmd_json)],
+    )?;
+    raw.execute(
+        "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+        &[
+            norn_cell::engine::SqlValue::Text(format!(
+                r#"{{"format":"{STAMP_FORMAT}","storage":10,"writer":"v10-fixture"}}"#
+            )),
+            norn_cell::engine::SqlValue::Text(STAMP_KEY.to_owned()),
+        ],
+    )?;
+    drop(raw);
+
+    let upgraded = open_cell(&path)?;
+    let records = upgraded.store().read().outbox_records("qflip-1")?;
+    // Epoch 0 preserved Fifo from the export journal; Epoch 1 has Parked.
+    assert!(records.iter().any(|r| r.generation == 0
+        && matches!(
+            r.kind,
+            norn_kernel::world::outbox_ledger::OutboxRecordKind::Requested {
+                queue: Queue::Fifo,
+                ..
+            }
+        )));
+    let ledger = upgraded
+        .store()
+        .read()
+        .outbox_ledger("qflip-1")?
+        .ok_or("missing upgraded qflip-1")?;
+    assert_eq!(ledger.active_generation(), 1);
+    assert_eq!(ledger.queue(), Queue::Parked);
     Ok(())
 }
