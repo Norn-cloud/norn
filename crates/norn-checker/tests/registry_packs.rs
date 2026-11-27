@@ -225,9 +225,9 @@ fn odoo_moves_give_rise_to_transactions_and_draft_reset_is_non_conforming() {
 fn supply_lab_link_accounts_for_every_term() {
     let coverage = coverage("norn.link.supply-lab.canon");
     assert_eq!(coverage.active_terms, 20);
-    assert_eq!(coverage.mapped.len(), 7);
+    assert_eq!(coverage.mapped.len(), 4);
     assert_eq!(coverage.residual.len(), 2);
-    assert_eq!(coverage.canon_gaps.len(), 11);
+    assert_eq!(coverage.canon_gaps.len(), 14);
     assert!(coverage.non_conforming.is_empty());
     let targets = |term: &str| -> Vec<String> {
         coverage.mapped[term]
@@ -240,16 +240,14 @@ fn supply_lab_link_accounts_for_every_term() {
         targets("norn.supply.purchase.order"),
         ["norn.core.commitment"]
     );
-    assert_eq!(
-        targets("norn.supply.shipment.receipt"),
-        ["norn.core.event.transfer"]
-    );
+    assert_eq!(targets("norn.supply.order.line"), ["norn.core.commitment"]);
     assert!(
         coverage
             .canon_gaps
             .contains("norn.supply.inventory.snapshot")
     );
     assert!(coverage.canon_gaps.contains("norn.supply.stock.movement"));
+    assert!(coverage.canon_gaps.contains("norn.supply.shipment.receipt"));
     assert!(
         coverage
             .canon_gaps

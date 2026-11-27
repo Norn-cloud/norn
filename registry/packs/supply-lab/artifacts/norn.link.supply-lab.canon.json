@@ -45,57 +45,12 @@
           "source.supply-lab"
         ],
         "fromTermId": "norn.supply.order.line",
-        "justification": "Each order line is a SKU-level delivery commitment within a purchase order.",
+        "justification": "Each order line is a strictly positive SKU-level delivery commitment (`ordered_qty > 0`) within a purchase order.",
         "relation": "subsumed_by",
         "reviewedAt": "2026-11-27T00:00:00Z",
         "reviewedBy": "lane-a5 (agent, proposed)",
         "toTermIds": [
           "norn.core.commitment"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 8500,
-        "correspondenceId": "corr.supply.shipment.receipt",
-        "evidenceRefs": [
-          "source.supply-lab"
-        ],
-        "fromTermId": "norn.supply.shipment.receipt",
-        "justification": "A shipment receipt records physical transfer of goods into a warehouse.",
-        "relation": "subsumed_by",
-        "reviewedAt": "2026-11-27T00:00:00Z",
-        "reviewedBy": "lane-a5 (agent, proposed)",
-        "toTermIds": [
-          "norn.core.event.transfer"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 8500,
-        "correspondenceId": "corr.supply.shipment.receipt.received.qty",
-        "evidenceRefs": [
-          "source.supply-lab"
-        ],
-        "fromTermId": "norn.supply.shipment.receipt.received.qty",
-        "justification": "The additive quantity received on a delivery transfer event.",
-        "relation": "subsumed_by",
-        "reviewedAt": "2026-11-27T00:00:00Z",
-        "reviewedBy": "lane-a5 (agent, proposed)",
-        "toTermIds": [
-          "norn.core.resource.quantity"
-        ]
-      },
-      {
-        "confidenceBasisPoints": 9000,
-        "correspondenceId": "corr.supply.shipment.receipt.order.line",
-        "evidenceRefs": [
-          "source.supply-lab"
-        ],
-        "fromTermId": "norn.supply.shipment.receipt.order.line",
-        "justification": "Links a shipment receipt to the purchase order line commitment it fulfils.",
-        "relation": "subsumed_by",
-        "reviewedAt": "2026-11-27T00:00:00Z",
-        "reviewedBy": "lane-a5 (agent, proposed)",
-        "toTermIds": [
-          "norn.core.event.fulfils"
         ]
       },
       {
@@ -151,6 +106,21 @@
         "note": "Canon `norn.commerce.order.party` models sales customers; purchase-commitment counterparty is not yet in the canon pack.",
         "reason": "canon_gap",
         "termId": "norn.supply.purchase.order.supplier"
+      },
+      {
+        "note": "Supply Lab `ReceiptEvidence` permits zero-quantity receipts (`received_qty >= 0 && damaged_qty >= 0`), whereas canon `core.EconomicEvent` / `norn.core.event.transfer` requires strictly positive `quantity > 0`.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.shipment.receipt"
+      },
+      {
+        "note": "Non-negative received quantity on `ShipmentReceipt`; not strictly subsumed by `norn.core.resource.quantity` because zero-quantity receipts are admitted.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.shipment.receipt.received.qty"
+      },
+      {
+        "note": "Optional order-line reference on `ShipmentReceipt`; not strictly subsumed by `norn.core.event.fulfils` because `ShipmentReceipt` admits zero-quantity receipt records.",
+        "reason": "canon_gap",
+        "termId": "norn.supply.shipment.receipt.order.line"
       },
       {
         "note": "The canon ontology pack has no quality-inspection evidence class yet.",
