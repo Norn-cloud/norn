@@ -355,9 +355,9 @@ function accessIndex(receiver: TaintValue, key: TaintValue): TaintValue {
   if (receiver.kind === "object") {
     const keys = stringLiteralsOf(key)
     if (keys === null) {
-      // Unknown/non-literal key: fail closed by unioning all known fields and any dynamic-key values.
-      const values = [...Object.values(receiver.fields), ...(receiver.dynamicValues === undefined ? [] : [receiver.dynamicValues])]
-      return values.length === 0 ? OTHER : values.reduce((acc, val) => unionTaint(acc, val))
+      // Unknown/non-literal key: fail closed by unioning all known fields, dynamic values, and OTHER (key miss).
+      const values = [...Object.values(receiver.fields), ...(receiver.dynamicValues === undefined ? [] : [receiver.dynamicValues]), OTHER]
+      return values.reduce((acc, val) => unionTaint(acc, val))
     }
     let acc: TaintValue | undefined = receiver.dynamicValues
     for (const prop of keys) {
@@ -602,11 +602,12 @@ export function referencesRecordVersion(expression: string): boolean {
               eat()
               const fieldVal = parseExpr()
               const keys = stringLiteralsOf(computedKey)
-              if (keys !== null) {
+              if (keys !== null && keys.length > 0) {
+                // Single definite key performs a strong update; multi-candidate union keys perform a weak update.
+                const weak = keys.length > 1
                 for (const keyName of keys) {
-                  if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
-                    fields[keyName] = fieldVal
-                  }
+                  if (keyName === "__proto__" || keyName === "constructor" || keyName === "prototype") continue
+                  fields[keyName] = weak && Object.hasOwn(fields, keyName) ? unionTaint(fields[keyName]!, fieldVal) : fieldVal
                 }
               } else {
                 dynamicValues = dynamicValues === undefined ? fieldVal : unionTaint(dynamicValues, fieldVal)
