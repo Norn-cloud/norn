@@ -26,12 +26,11 @@
     clippy::large_futures
 )]
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::marker::PhantomData;
-
 use schemars::{JsonSchema, Schema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use std::collections::{BTreeMap, BTreeSet};
+use std::marker::PhantomData;
 
 pub mod access;
 pub mod action;
@@ -60,9 +59,11 @@ pub mod entity;
 pub mod entity_v2;
 pub mod exact_sum;
 pub use exact_sum::{Amount, ExactSum};
+pub use feed::{FeedMode, FieldPatch, SourceVersion, VersionKind};
 pub mod explain;
 pub mod fact_change;
 pub mod facts;
+pub mod feed;
 pub mod flow_source_map;
 pub mod function;
 pub mod i18n;
@@ -161,7 +162,9 @@ pub use entity_v2::invariant::{ConstraintClass, Invariant, InvariantId};
 pub use entity_v2::lifecycle::{
     FiringRefusal, Lifecycle, LifecycleEnding, LifecycleEvent, LifecycleIgnore, LifecycleOutcome,
     LifecyclePathProperty, Transition, TransitionId, TransitionMode, TransitionTrigger,
-    codes as lifecycle_codes, declared_lifecycle_properties, effective_lifecycles,
+    codes as lifecycle_codes, declared_lifecycle_properties,
+    declared_lifecycle_properties_with_interfaces, effective_lifecycles,
+    effective_lifecycles_with_interfaces,
 };
 pub use entity_v2::link::{InterfaceLink, Link, LinkCardinality, LinkId, Multiplicity};
 pub use entity_v2::naming_series::{

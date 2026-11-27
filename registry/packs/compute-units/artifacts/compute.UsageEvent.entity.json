@@ -1,0 +1,211 @@
+{
+  "artifactId": "compute.UsageEvent.entity",
+  "dependencies": [
+    {
+      "artifactId": "units.compute.UnitDefinition.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Compute usage event",
+  "namespace": "compute",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Posted consumption of compute, storage, or AI tokens ({token}, {GPU}.s, GiBy, etc.), implementing core.EconomicEvent with exact VAL-RATE pricing (Rate<USD, {token}> × Quantity<{token}> → Money<USD>).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Compute provider delivering capacity.",
+          "id": "provider",
+          "target": "compute.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Customer or workload consuming compute.",
+          "id": "receiver",
+          "target": "compute.Agent"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Compute resource or token pool consumed.",
+          "id": "resource",
+          "target": "compute.TokenPool"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional capacity commitment fulfilled by this usage.",
+          "id": "fulfils",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "Prior posted usage event reversed by this correction.",
+          "id": "reverses",
+          "target": "core.EconomicEvent"
+        }
+      ],
+      "name": "compute.UsageEvent",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "transfer_ownership"
+              },
+              {
+                "value": "transfer_custody"
+              },
+              {
+                "value": "consume"
+              },
+              {
+                "value": "produce"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "ref",
+            "name": "core.quantity",
+            "unitSource": [
+              "unit",
+              "currency"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "billing_currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "USD"
+              }
+            ]
+          }
+        },
+        {
+          "id": "token_quantity",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 0,
+            "unit": {
+              "code": "{token}",
+              "system": "ucum"
+            }
+          }
+        },
+        {
+          "id": "rate_per_token",
+          "type": {
+            "currencySource": {
+              "links": [],
+              "property": "billing_currency"
+            },
+            "kind": "decimal",
+            "perUnit": {
+              "code": "{token}",
+              "system": "ucum"
+            },
+            "scale": 6
+          }
+        },
+        {
+          "id": "billed_amount",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "currencySource": {
+              "links": [],
+              "property": "billing_currency"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/compute-units/artifacts/compute.UsageEvent.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

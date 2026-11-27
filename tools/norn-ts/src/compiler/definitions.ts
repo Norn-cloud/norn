@@ -956,21 +956,24 @@ class DefinitionCompiler {
 
   private interfaceType(call: ts.CallExpression): E.InterfaceDef {
     const members = this.meta(call, [
-      "name", "title", "version", "description", "role", "extends", "properties", "links", "invariants", "markings", "propertyMarkings", "dependencies",
+      "name", "title", "version", "description", "role", "extends", "disjointWith", "properties", "links", "invariants", "lifecycles", "markings", "propertyMarkings", "dependencies",
       ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS,
     ])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
     const invariantsNode = members.get("invariants")
     const linksNode = members.get("links")
+    const lifecyclesNode = members.get("lifecycles")
     return E.interfaceType({
       ...rest,
       ...this.localized(members),
       ...this.memberLabels(members, projected.map((p) => p.id)),
       extends: members.has("extends") ? this.list(members.get("extends")!).map((parent) => this.typeName(parent, INTERFACES)) : [],
+      disjointWith: members.has("disjointWith") ? this.list(members.get("disjointWith")!).map((target) => this.typeName(target, INTERFACES)) : [],
       properties: projected.map((p) => ({ id: p.id, ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}), type: p.projection.type, ...(p.projection.nullable ? { nullable: true } : {}), at: this.at(p.node) })),
       links: linksNode ? this.list(linksNode).map((x) => this.interfaceLink(x)) : [],
       invariants: invariantsNode ? this.list(invariantsNode).map((x) => this.invariant(x)) : [],
+      ...(lifecyclesNode ? { lifecycles: this.list(lifecyclesNode).map((x) => this.lifecycle(x)) } : {}),
       at: this.at(call),
     })
   }
@@ -2622,11 +2625,25 @@ class DefinitionCompiler {
       const token = m.get("token")
       if (token) this.closedRecord(token, ["header", "prefix"], ["header"])
       for (const feed of this.list(m.get("feeds")!)) {
-        const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
+        const f = this.closedRecord(feed, ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial", "mode", "versionKind"], ["dataset", "request", "itemsPath", "paging", "idPath", "versionPath", "fields", "initial"])
+        const mode = f.get("mode")
+        if (mode) {
+          const v = this.string(mode)
+          if (v !== "full_snapshot" && v !== "patch") throw new CompileError("NORN-FLOW-LITERAL", `unknown pull feed mode ${v}`, mode)
+        }
+        const versionKind = f.get("versionKind")
+        if (versionKind) {
+          const v = this.string(versionKind)
+          if (v !== "lexicographical" && v !== "int64" && v !== "uint64" && v !== "rfc3339") throw new CompileError("NORN-FLOW-LITERAL", `unknown pull feed versionKind ${v}`, versionKind)
+        }
         this.closedRecord(f.get("request")!, ["method", "path", "query", "headers", "body"], ["method", "path"])
         const paging = this.closedRecord(f.get("paging")!, ["kind", "size", "nextCursorPath", "hasNextPath"], ["kind", "size"])
         if (this.string(paging.get("kind")!) === "keyset") this.closedRecord(f.get("paging")!, ["kind", "size"], ["kind", "size"])
-        this.closedRecord(f.get("initial")!, ["version", "id"], ["version", "id"])
+        const initialNode = f.get("initial")!
+        const initial = this.closedRecord(initialNode, ["version", "id", "idDecimal"], ["version"])
+        const hasId = initial.has("id"), hasIdDecimal = initial.has("idDecimal")
+        if (hasId === hasIdDecimal) throw new CompileError("NORN-FLOW-LITERAL", "pull feed initial must declare exactly one of id or idDecimal", initialNode)
+        if (hasIdDecimal) this.string(initial.get("idDecimal")!)
       }
     }
     if (cursor) this.closedRecord(cursor, ["cursorId", "resourceId", "storageKey"], ["cursorId", "resourceId", "storageKey"])

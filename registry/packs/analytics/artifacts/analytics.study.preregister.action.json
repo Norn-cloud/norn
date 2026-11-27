@@ -1,0 +1,108 @@
+{
+  "artifactId": "analytics.study.preregister.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Preregister an analytical study",
+  "namespace": "analytics",
+  "payload": {
+    "actionId": "analytics.study.preregister",
+    "createLinks": [
+      {
+        "link": "owner",
+        "targetIdField": "owner_id",
+        "targetType": "analytics.Analyst"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "analytics.Study.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "analytics.Study",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "holdout_start_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "method_digest": {
+          "type": "string"
+        },
+        "owner_id": {
+          "type": "string"
+        },
+        "population_digest": {
+          "type": "string"
+        },
+        "study_code": {
+          "type": "string"
+        },
+        "train_cutoff_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "study_code",
+        "population_digest",
+        "method_digest",
+        "train_cutoff_at",
+        "holdout_start_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "owner_id"
+          }
+        },
+        "name": "owner",
+        "objectType": "analytics.Analyst"
+      }
+    ],
+    "title": "Preregister an analytical study",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "analytics.Study"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.study.preregister.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

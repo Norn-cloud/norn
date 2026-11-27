@@ -449,7 +449,14 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       const P extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
     >(
-      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P; readonly links?: ReadonlyArray<InterfaceLinkSpec> },
+      meta: InterfaceMeta<S> & InterfaceInvariantMeta & {
+        readonly extends?: P
+        /** INTERFACE-DISJOINT-1: interfaces mutually exclusive with this one (`A ⊓ B = ∅`). */
+        readonly disjointWith?: ReadonlyArray<InterfaceDefinition<unknown> | string>
+        readonly links?: ReadonlyArray<InterfaceLinkSpec>
+        /** INTERFACE-LIFECYCLE-1: lifecycles every implementing type and child interface inherits with non-weakening narrowing. */
+        readonly lifecycles?: ReadonlyArray<LifecycleSpec<EffectiveProperties<undefined, P, S["Type"]>>>
+      },
     ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
 
     /** Opaque action definition; the syntax compiler lowers the call. */
@@ -1253,7 +1260,11 @@ declare module "@norn/authoring" {
           readonly idPath: string
           readonly versionPath: string
           readonly fields: Readonly<Record<string, string>>
-          readonly initial: { readonly version: string; readonly id: string | number }
+          readonly initial:
+            | { readonly version: string; readonly id: string | number | null }
+            | { readonly version: string; readonly idDecimal: string }
+          readonly mode?: "full_snapshot" | "patch"
+          readonly versionKind?: "lexicographical" | "int64" | "uint64" | "rfc3339"
         }>
         /** Where an oauth2 (client credentials) access token is sent. */
         readonly token?: { readonly header: string; readonly prefix?: string }

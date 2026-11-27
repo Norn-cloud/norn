@@ -1,0 +1,50 @@
+{
+  "artifactId": "analytics.Study.publish_requires_diagnostics.law",
+  "dependencies": [
+    {
+      "artifactId": "analytics.Study.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "DATA-PUBLISH-GUARD: an analytical study may enter the published state only when all preregistered diagnostics have passed.",
+  "namespace": "analytics",
+  "payload": {
+    "id": "analytics.Study.publish_requires_diagnostics",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "analytics",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/analytics/analytics.ts"
+    },
+    "rationale": "DATA-PUBLISH-GUARD: an analytical study may enter the published state only when all preregistered diagnostics have passed.",
+    "response": {
+      "expression": "(self.publication_status != 'published') or (self.diagnostics_passed == true)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "analytics.Study"
+      ],
+      "root": {
+        "id": "analytics.Study",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "analytics.Study"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/analytics/artifacts/analytics.Study.publish_requires_diagnostics.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
