@@ -343,7 +343,7 @@ fn lemma_l6_refuses_fork_evidence_as_main_at_depths_one_and_two() -> TestResult 
         Err(CellError::ForkInvalidWorld)
     ));
 
-    let manifest = ExportManifest::default().advance(&seeded.main_export)?;
+    let manifest = seeded.main_export.advance(&ExportManifest::default())?;
     for evidence in [&seeded.d1_ev, &seeded.s1_ev] {
         assert!(matches!(
             verify_main_receipt(&evidence.record.receipt),
