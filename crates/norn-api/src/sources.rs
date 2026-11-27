@@ -228,6 +228,7 @@ struct Run {
     mapped: usize,
     pull: Option<Pull>,
     drain_only: bool,
+    mapping_binding: Option<String>,
     auth: Vec<(String, String)>,
     /// The first data request, held while an access token is fetched.
     held: Option<Request>,
@@ -391,6 +392,7 @@ impl Sources {
             mapped: 0,
             pull: None,
             drain_only: false,
+            mapping_binding: None,
             auth: Vec::new(),
             held: None,
             pending_captures: std::collections::VecDeque::new(),
@@ -606,13 +608,7 @@ impl Sources {
                 "no sync is running",
             ));
         };
-        let superseded = capture::is_lease_superseded(
-            host,
-            &config.id,
-            run.lease.as_ref(),
-            error.as_ref(),
-            now_ms,
-        );
+        let superseded = capture::is_lease_superseded(host, config, &run, error.as_ref(), now_ms);
         let outcome = if error.is_some() {
             "failed"
         } else if run.quarantined > 0 {
@@ -678,7 +674,7 @@ fn begin<E: SqlEngine>(
     known: Option<BTreeMap<String, Watermark>>,
     now_ms: u64,
 ) -> Result<Next, Failure> {
-    let (profile, payload) = capture::load_connector_profile(host, config)?;
+    let (profile, payload, expected_binding) = capture::load_connector_profile(host, config)?;
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
         run.auth = auth_headers(&payload, secrets, config)?;
@@ -695,11 +691,13 @@ fn begin<E: SqlEngine>(
         host,
         config,
         &lease,
+        &expected_binding,
         known,
         !pending.is_empty(),
         now_ms,
     )?;
     run.drain_only = drain_only;
+    run.mapping_binding = (!drain_only).then_some(expected_binding);
     run.watermark_from = watermark_text(&watermarks);
     run.committed_watermarks = watermarks.clone();
     run.committed_cursor_json = raw_cursors;
@@ -803,6 +801,7 @@ fn advance<E: SqlEngine>(
         accepted,
         &mut capture::CaptureTurn {
             lease,
+            mapping_binding: run.mapping_binding.as_deref(),
             committed_cursor_json: &mut run.committed_cursor_json,
             step_rows: run.step_rows,
             now_ms,
@@ -1063,6 +1062,7 @@ pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
         mapped: 0,
         pull: None,
         drain_only: false,
+        mapping_binding: None,
         auth: Vec::new(),
         held: None,
         pending_captures: std::collections::VecDeque::new(),
@@ -1193,7 +1193,11 @@ fn report<E: SqlEngine>(
             now,
         )
     });
-    let _reported = host.ingest_source_report_checked(&batch, lease_check);
+    let expected_binding = run
+        .mapping_binding
+        .as_deref()
+        .map(|binding| (config.mapping.as_str(), binding));
+    let _reported = host.ingest_source_report_checked(&batch, lease_check, expected_binding);
 }
 
 fn connect_profile() -> PullProfile {

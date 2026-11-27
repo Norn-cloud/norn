@@ -36,7 +36,7 @@ pub(super) enum ActiveCapture {
 pub(super) fn load_connector_profile<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
-) -> Result<(PullProfile, serde_json::Value), Failure> {
+) -> Result<(PullProfile, serde_json::Value, String), Failure> {
     #[derive(serde::Deserialize)]
     struct RawArtifact<'a> {
         #[serde(rename = "artifactId")]
@@ -74,11 +74,20 @@ pub(super) fn load_connector_profile<E: SqlEngine>(
                 format!("{} declares no norn.pull/1 profile", config.connector),
             )
         })?;
-    if let Ok(Some(mapping)) = host.installed_artifact(&config.mapping) {
-        let mapping_payload = mapping.get("payload").cloned().unwrap_or_default();
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = serde_json::from_str(&active.canonical_set)
+        .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
+    let expected_binding = if let Some(mapping) = artifacts.iter().find(|artifact| {
+        artifact.kind() == norn_ir::ArtifactKind::Mapping && artifact.artifact_id == config.mapping
+    }) {
+        let mapping_payload = serde_json::to_value(mapping.payload.to_json_value())
+            .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
         crate::pull_feed::bind_mapping_feed_declaration(&mut profile, &mapping_payload)
             .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
-    }
+        norn_cell::compute::freshness::mapping_binding_key(mapping)
+            .map_err(|e| fail("source.profile_invalid", e.to_string()))?
+    } else {
+        config.mapping.clone()
+    };
     // SYNC-PAGE-1: the host's page size, when it sets one.
     if let Some(rows) = config.page_size {
         for feed in &mut profile.feeds {
@@ -91,7 +100,7 @@ pub(super) fn load_connector_profile<E: SqlEngine>(
     }
     let payload: serde_json::Value = serde_json::from_str(raw_payload)
         .map_err(|e| fail("source.profile_invalid", e.to_string()))?;
-    Ok((profile, payload))
+    Ok((profile, payload, expected_binding))
 }
 
 pub(super) fn running_summary(run_id: &str) -> super::RunSummary {
@@ -173,15 +182,12 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     host: &DevHost<E>,
     config: &ConnectionConfig,
     lease: &SourceLease,
+    expected_binding: &str,
     known: Option<BTreeMap<String, Watermark>>,
     has_pending: bool,
     now_ms: u64,
 ) -> Result<LoadedWatermarks, Failure> {
     let connection_id = config.id.as_str();
-    let expected_binding = host
-        .active_mapping_binding(&config.mapping)
-        .map_err(|r| fail("source.ingest", r.message))?
-        .unwrap_or_else(|| config.mapping.clone());
     let bound_mapping = host
         .source_mapping_binding(connection_id)
         .map_err(|r| fail("source.ingest", r.message))?;
@@ -192,7 +198,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     let legacy_revision_matches = bound_mapping.is_none()
         && stored_mapping.as_deref() == Some(config.mapping.as_str())
         && host
-            .connection_matches_mapping_binding(connection_id, &config.mapping, &expected_binding)
+            .connection_matches_mapping_binding(connection_id, &config.mapping, expected_binding)
             .unwrap_or(false);
     let proven_match = match bound_mapping.as_deref() {
         Some(bound) => bound == expected_binding,
@@ -207,7 +213,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         }
         host.reset_source_cursors(
             connection_id,
-            &expected_binding,
+            expected_binding,
             &lease.lease_id,
             lease.generation,
             now_ms,
@@ -221,7 +227,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
 
     if !cursors.is_empty() {
         if bound_mapping.is_none() {
-            bind_mapping(host, connection_id, &expected_binding, lease, now_ms)?;
+            bind_mapping(host, connection_id, expected_binding, lease, now_ms)?;
         }
         let (parsed, raw_cursors) = decode_cursors(cursors);
         return Ok((parsed, raw_cursors, false));
@@ -237,7 +243,7 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
     } else {
         known.unwrap_or_default()
     };
-    bind_mapping(host, connection_id, &expected_binding, lease, now_ms)?;
+    bind_mapping(host, connection_id, expected_binding, lease, now_ms)?;
     let mut encoded = BTreeMap::new();
     if !legacy.is_empty() {
         for (dataset, watermark) in &legacy {
@@ -366,22 +372,33 @@ pub(super) fn cursor_advance_spec(
 }
 
 /// Check (without releasing the lease yet) whether this run was fenced,
-/// expired, unreadable, or superseded by another run's lease so `finish`
-/// writes `source.Connection` only while still holding active ownership.
+/// expired, unreadable, superseded by another run's lease, or invalidated by a
+/// concurrent mapping revision change so `finish` writes `source.Connection`
+/// only while still holding active ownership for the same mapping revision.
 pub(super) fn is_lease_superseded<E: SqlEngine>(
     host: &DevHost<E>,
-    connection_id: &str,
-    lease: Option<&SourceLease>,
+    config: &ConnectionConfig,
+    run: &super::Run,
     error: Option<&(String, String)>,
     now_ms: u64,
 ) -> bool {
     if error.is_some_and(|(code, _)| code == "source.lease_fenced") {
         return true;
     }
-    let Some(held) = lease else {
+    if let Some(expected) = run.mapping_binding.as_deref() {
+        let current = host
+            .active_mapping_binding(&config.mapping)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| config.mapping.clone());
+        if current != expected {
+            return true;
+        }
+    }
+    let Some(held) = run.lease.as_ref() else {
         return false;
     };
-    match host.source_lease(connection_id) {
+    match host.source_lease(&config.id) {
         Err(_) => true,
         Ok(Some(current)) => {
             current.lease_id != held.lease_id
@@ -415,6 +432,7 @@ pub(super) fn load_pending_captures<E: SqlEngine>(
 /// Per-page capture context passed from `sources::reply` into [`capture_accepted_page`].
 pub(super) struct CaptureTurn<'a> {
     pub(super) lease: &'a SourceLease,
+    pub(super) mapping_binding: Option<&'a str>,
     pub(super) committed_cursor_json: &'a mut BTreeMap<String, String>,
     pub(super) step_rows: usize,
     pub(super) now_ms: u64,
@@ -458,11 +476,15 @@ pub(super) fn capture_accepted_page<E: SqlEngine>(
         turn.committed_cursor_json,
         turn.now_ms,
     )?;
+    let expected_binding = turn
+        .mapping_binding
+        .map(|binding| (config.mapping.as_str(), binding));
     let plan = host
-        .capture_source_page_planned(
+        .capture_source_page_planned_bound(
             &batch,
             &spec,
             turn.step_rows.clamp(1, crate::host::PAGE_ROWS),
+            expected_binding,
         )
         .map_err(|error| {
             let (code, message) = error.code_and_message();

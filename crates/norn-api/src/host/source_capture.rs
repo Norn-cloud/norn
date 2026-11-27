@@ -314,12 +314,44 @@ impl<E: SqlEngine> DevHost<E> {
         self.observing(|cell| cell.complete_source_pending(connection_id, dataset, page_digest))
     }
 
+    fn verify_active_mapping_binding(
+        cell: &norn_cell::host::SqliteCell<
+            norn_cell::ObservationEvent,
+            norn_ir::RuntimeObject,
+            norn_ir::RuntimeObject,
+            E,
+        >,
+        expected_binding: Option<(&str, &str)>,
+        lease: Option<(&str, &str, u64)>,
+    ) -> Result<(), CellError> {
+        let Some((mapping_id, expected)) = expected_binding else {
+            return Ok(());
+        };
+        let current = cell
+            .store()
+            .read()
+            .active_mapping_binding(mapping_id)?
+            .unwrap_or_else(|| mapping_id.to_owned());
+        if current != expected {
+            let (connection_id, lease_id, generation) = lease.map_or_else(
+                || (String::new(), String::new(), 0),
+                |(c, l, g)| (c.to_owned(), l.to_owned(), g),
+            );
+            return Err(CellError::SourceLeaseFenced {
+                connection_id,
+                lease_id,
+                generation,
+            });
+        }
+        Ok(())
+    }
+
     /// SOURCE-CAPTURE-1: capture and promote sync report observations
     /// (`source.Connection` / `source.SyncRun`) inside one exclusive cell lock,
     /// checking inside SQLite that any existing durable lease for
     /// `connection_id` still belongs to `(lease_id, generation)` and has not
-    /// expired at `now_ms`, so no takeover can interleave between capture and
-    /// promotion.
+    /// expired at `now_ms`, and that the active mapping revision still matches
+    /// `expected_binding`.
     ///
     /// # Errors
     /// [`SourceCaptureError::LeaseFenced`] or store failure.
@@ -327,9 +359,15 @@ impl<E: SqlEngine> DevHost<E> {
         &self,
         rows: &[(Observed<RuntimeValue>, MappingInput)],
         lease: Option<(&str, &str, u64, u64)>,
+        expected_binding: Option<(&str, &str)>,
     ) -> Result<(), SourceCaptureError> {
         let _epoch = self.definition_read()?;
         self.observing_raw(|cell| {
+            Self::verify_active_mapping_binding(
+                cell,
+                expected_binding,
+                lease.map(|(c, l, g, _)| (c, l, g)),
+            )?;
             for (raw, input) in rows {
                 let captured =
                     cell.capture_source_report_checked(std::slice::from_ref(raw), input, lease)?;
@@ -359,10 +397,34 @@ impl<E: SqlEngine> DevHost<E> {
         advance: &CursorAdvanceSpec,
         max_run_rows: usize,
     ) -> Result<SourceCapturePlan, SourceCaptureError> {
+        self.capture_source_page_planned_bound(rows, advance, max_run_rows, None)
+    }
+
+    /// Like [`Self::capture_source_page_planned`], additionally verifying
+    /// atomically under the definition read lock and cell lock that the active
+    /// mapping revision still matches `expected_binding` (`(mapping_id, pin)`).
+    ///
+    /// # Errors
+    /// Lease fencing, mapping revision drift, cursor conflict, framing refusals, or store failures.
+    pub fn capture_source_page_planned_bound(
+        &self,
+        rows: &[(Observed<RuntimeValue>, MappingInput)],
+        advance: &CursorAdvanceSpec,
+        max_run_rows: usize,
+        expected_binding: Option<(&str, &str)>,
+    ) -> Result<SourceCapturePlan, SourceCaptureError> {
         let _epoch = self.definition_read()?;
+        let lease_tag = Some((
+            advance.connection_id.as_str(),
+            advance.lease_id.as_str(),
+            advance.generation,
+        ));
         let Some((_, input)) = rows.first() else {
             let captured = self
-                .observing_raw(|cell| cell.capture_source_page(&[], None, advance, max_run_rows))?
+                .observing_raw(|cell| {
+                    Self::verify_active_mapping_binding(cell, expected_binding, lease_tag)?;
+                    cell.capture_source_page(&[], None, advance, max_run_rows)
+                })?
                 .map_err(SourceCaptureError::from_cell)?;
             return Ok(SourceCapturePlan::Captured(PendingSourceCapture {
                 connection_id: advance.connection_id.clone(),
@@ -381,6 +443,7 @@ impl<E: SqlEngine> DevHost<E> {
         let delivered: Vec<Observed<RuntimeValue>> =
             rows.iter().map(|(raw, _)| raw.clone()).collect();
         match self.observing_raw(|cell| {
+            Self::verify_active_mapping_binding(cell, expected_binding, lease_tag)?;
             cell.capture_source_page(&delivered, Some(input), advance, max_run_rows)
         })? {
             Ok(captured) => Ok(SourceCapturePlan::Captured(PendingSourceCapture {

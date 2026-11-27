@@ -88,10 +88,11 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
     }
 
     /// Distinct subject IDs of `kind` committed on or before the cutoff
-    /// frontier. First uses a bounded covering-index scan on `root_frontier`
-    /// (`commit_seq <= head`) so post-cutoff IDs never consume probe budget;
-    /// if pre-cutoff versions exceed 4,096 rows, falls back to a primary-key
-    /// skip-scan (one B-tree seek per distinct subject ID).
+    /// frontier, read strictly from `version = 1` entries in the covering index
+    /// `_norn_fact_values/root_frontier` (`commit_seq <= head`). Every subject
+    /// in `_norn_fact_values` starts at `version = 1`, so each pre-cutoff ID
+    /// appears at most once with zero post-cutoff rows scanned, zero temporary
+    /// B-tree, and zero bound exhaustion from repeated report versions.
     pub(crate) fn distinct_ids(
         &self,
         world: &str,
@@ -108,59 +109,24 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         }
         let head = i64::try_from(self.cutoff.frontier)
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
-        let fast_limit: usize = 4_096;
-        let sql_limit = i64::try_from(fast_limit.saturating_add(1))
+        let limit = i64::try_from(cap.saturating_add(1))
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
         let rows = self.reader.conn.query(
             "SELECT id FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" \
-             WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 \
-             ORDER BY commit_seq, id, version LIMIT ?4",
-            params![world, root, head, sql_limit],
+             WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 AND version=1 \
+             ORDER BY commit_seq, id LIMIT ?4",
+            params![world, root, head, limit],
         )?;
-        if rows.len() <= fast_limit {
-            let mut seen = BTreeSet::new();
-            for row in rows {
-                let id: String = SqlRow(row).get(0)?;
-                seen.insert(id);
-                if seen.len() > cap {
-                    return Ok((Vec::new(), false));
-                }
-            }
-            return charge_distinct_ids(seen.into_iter().collect(), budget);
+        if rows.len() > cap {
+            return Ok((Vec::new(), false));
         }
-        let max_probes = cap.saturating_mul(16).max(4_096);
-        let mut ids = Vec::new();
-        let mut after: Option<String> = None;
-        for _ in 0..max_probes {
-            let next: Option<(String, i64)> = match after.as_deref() {
-                None => self.reader.conn.query_optional(
-                    "SELECT id, commit_seq FROM _norn_fact_values \
-                     WHERE world=?1 AND root_type=?2 \
-                     ORDER BY id, version LIMIT 1",
-                    params![world, root],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?,
-                Some(prev) => self.reader.conn.query_optional(
-                    "SELECT id, commit_seq FROM _norn_fact_values \
-                     WHERE world=?1 AND root_type=?2 AND id>?3 \
-                     ORDER BY id, version LIMIT 1",
-                    params![world, root, prev],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?,
-            };
-            let Some((id, first_commit_seq)) = next else {
-                return charge_distinct_ids(ids, budget);
-            };
-            after = Some(id.clone());
-            if first_commit_seq > head {
-                continue;
-            }
-            if ids.len() >= cap {
-                return Ok((Vec::new(), false));
-            }
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = SqlRow(row).get(0)?;
             ids.push(id);
         }
-        Ok((Vec::new(), false))
+        ids.sort();
+        charge_distinct_ids(ids, budget)
     }
 
     /// Subjects deleted under another model by the cutoff frontier.
