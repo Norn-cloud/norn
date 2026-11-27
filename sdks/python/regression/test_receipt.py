@@ -620,7 +620,43 @@ class ForecastReceiptTests(unittest.TestCase):
         self.assertTrue(huge_receipt["outcome"]["success"]["summary"]["contracts_passed"])
         self.assertEqual(len(huge_checks), 2)
 
-    def test_dockerfile_verifier_rejects_stage_alias_and_tab_copy(self):
+        # Contract diagnostic formatting must never abort a valid score even when prediction
+        # width exceeds Python's 4,300-digit limit or MAX_CANONICAL_NUMBER_BYTES.
+        from fractions import Fraction
+        from norn_regression.receipt import _format_fraction_brief
+
+        huge_brief = _format_fraction_brief(Fraction(1 << (MAX_CANONICAL_NUMBER_BYTES * 4), 1))
+        self.assertIn("<exact-fraction num_bits=", huge_brief)
+
+        wide_val = Decimal("1e5000")
+        wide_model = encode_model_artifact(
+            model_id="supply.demand_forecast",
+            target="y",
+            features=["x1"],
+            intercept="0",
+            coefficients={"x1": "10"},
+            contracts={"minPrediction": "0", "maxWape": "9"},
+        )
+        _, wide_receipt, wide_checks, _ = evaluate_forecast_receipt(
+            [{"id": "w1", "y": wide_val, "x1": wide_val}],
+            wide_model,
+            "y",
+            ["x1"],
+            tenant="org_demo/dev",
+            authority_id="svc:evaluator",
+            command_id="cmd-wide-pred",
+            version_id="v-wide",
+            model_id="supply.demand_forecast",
+            evaluation_run="run-eval",
+            dataset_revision="c10",
+            metric_name="wape",
+        )
+        wide_summary = wide_receipt["outcome"]["success"]["summary"]
+        self.assertEqual(wide_summary["metric_value"], Decimal(9))
+        self.assertTrue(wide_summary["contracts_passed"])
+        self.assertIn("<exact-fraction", wide_checks[0].detail)
+
+    def test_dockerfile_verifier_rejects_recipe_drift(self):
         src_root = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory() as tmp:
             tmp_root = Path(tmp)
@@ -630,17 +666,16 @@ class ForecastReceiptTests(unittest.TestCase):
                 (pkg / name).write_bytes((src_root / "norn_regression" / name).read_bytes())
             orig_df = (src_root / "Dockerfile.evaluator").read_text(encoding="utf-8")
 
-            # Reject FROM ... AS stage even if everything else matches.
-            staged_df = orig_df.replace("535\n", "535 AS stage\n", 1)
-            (tmp_root / "Dockerfile.evaluator").write_text(staged_df, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "must declare exactly one"):
-                verify_evaluator_artifact_pins(tmp_root)
-
-            # Reject tab-separated extra COPY instruction.
-            tab_df = orig_df + "COPY\t/etc/passwd\t/app/leak\n"
-            (tmp_root / "Dockerfile.evaluator").write_text(tab_df, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "COPY set mismatch"):
-                verify_evaluator_artifact_pins(tmp_root)
+            for drifted in (
+                orig_df.replace("535\n", "535 AS stage\n", 1),
+                orig_df + "COPY\t/etc/passwd\t/app/leak\n",
+                orig_df.replace("USER evaluator", "USER root", 1),
+                orig_df.replace("WORKDIR /app", "WORKDIR /tmp", 1),
+                orig_df.replace("TZ=UTC", "TZ=America/New_York", 1),
+            ):
+                (tmp_root / "Dockerfile.evaluator").write_text(drifted, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "recipe mismatch"):
+                    verify_evaluator_artifact_pins(tmp_root)
 
 
 if __name__ == "__main__":

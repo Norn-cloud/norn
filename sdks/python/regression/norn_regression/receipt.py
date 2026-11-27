@@ -387,50 +387,31 @@ EVALUATION_ERROR_SCHEMA: dict[str, Any] = {
 
 
 def verify_evaluator_artifact_pins(regression_dir: Path | None = None) -> None:
-    """Verify every pinned digest in `evaluator_pins.json` and the exact `Dockerfile.evaluator` recipe."""
+    """Verify every pinned digest in `evaluator_pins.json` and the exact ordered `Dockerfile.evaluator` recipe."""
     root = Path(__file__).resolve().parents[1] if regression_dir is None else Path(regression_dir)
     pins = _load_evaluator_pins()
     dockerfile_text = (root / "Dockerfile.evaluator").read_text(encoding="utf-8")
 
-    expected_from = f"python:3.11-slim@{pins['baseImage']}"
-    from_parts: list[list[str]] = []
-    actual_copies: set[tuple[str, str]] = set()
-    entrypoint_lines: list[str] = []
-    for line in dockerfile_text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        parts = stripped.split()
-        instr = parts[0].upper()
-        if instr == "FROM":
-            from_parts.append(parts)
-        elif instr == "COPY":
-            if len(parts) != 3 or parts[1].startswith("--"):
-                raise ValueError(f"Dockerfile.evaluator COPY must be exact `COPY <src> <dst>`: {stripped!r}")
-            pair = (parts[1], parts[2])
-            if pair in actual_copies:
-                raise ValueError(f"Dockerfile.evaluator duplicate COPY instruction: {stripped!r}")
-            actual_copies.add(pair)
-        elif instr == "ADD":
-            raise ValueError(f"Dockerfile.evaluator must not use ADD: {stripped!r}")
-        elif instr == "ENTRYPOINT":
-            entrypoint_lines.append(stripped)
-
-    if len(from_parts) != 1 or from_parts[0] != ["FROM", expected_from]:
-        raise ValueError(f"Dockerfile.evaluator must declare exactly one `FROM {expected_from}`")
-    if entrypoint_lines != ['ENTRYPOINT ["python", "-m", "norn_regression.evaluator_cli"]']:
+    expected_recipe = [
+        f"FROM python:3.11-slim@{pins['baseImage']}",
+        "RUN useradd --system --uid 10001 evaluator",
+        "WORKDIR /app",
+        "COPY sdks/python/regression/norn_regression/__init__.py /app/norn_regression/__init__.py",
+        "COPY sdks/python/regression/norn_regression/receipt.py /app/norn_regression/receipt.py",
+        "COPY sdks/python/regression/norn_regression/evaluator_cli.py /app/norn_regression/evaluator_cli.py",
+        "COPY sdks/python/regression/norn_regression/evaluator_pins.json /app/norn_regression/evaluator_pins.json",
+        "ENV PYTHONPATH=/app PYTHONUNBUFFERED=1 PYTHONHASHSEED=0 LC_ALL=C.UTF-8 TZ=UTC",
+        "USER evaluator",
+        'ENTRYPOINT ["python", "-m", "norn_regression.evaluator_cli"]',
+    ]
+    actual_recipe = [
+        line.strip()
+        for line in dockerfile_text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if actual_recipe != expected_recipe:
         raise ValueError(
-            "Dockerfile.evaluator must declare exactly ENTRYPOINT [\"python\", \"-m\", \"norn_regression.evaluator_cli\"]"
-        )
-    expected_copies = {
-        ("sdks/python/regression/norn_regression/__init__.py", "/app/norn_regression/__init__.py"),
-        ("sdks/python/regression/norn_regression/receipt.py", "/app/norn_regression/receipt.py"),
-        ("sdks/python/regression/norn_regression/evaluator_cli.py", "/app/norn_regression/evaluator_cli.py"),
-        ("sdks/python/regression/norn_regression/evaluator_pins.json", "/app/norn_regression/evaluator_pins.json"),
-    }
-    if actual_copies != expected_copies:
-        raise ValueError(
-            f"Dockerfile.evaluator COPY set mismatch: expected {sorted(expected_copies)}, got {sorted(actual_copies)}"
+            f"Dockerfile.evaluator recipe mismatch: expected {expected_recipe!r}, got {actual_recipe!r}"
         )
 
     for _, _, key, rel_path in _PINNED_ARTIFACT_SPECS:
@@ -922,10 +903,13 @@ def _decimal_to_exact_fraction(value: Decimal) -> Fraction:
 
 
 def _format_fraction_brief(value: Fraction) -> str:
-    """Format a `Fraction` safely without hitting Python's 4,300-digit `str(int)` conversion limit."""
+    """Format a `Fraction` as O(1) bounded diagnostic text that never raises on huge values."""
     if value.numerator.bit_length() <= 256 and value.denominator.bit_length() <= 256:
         return str(value)
-    return f"~{_format_decimal(_fraction_to_decimal_scale9(value), [0])}"
+    sign = "-" if value < 0 else ""
+    num_bits = abs(value.numerator).bit_length()
+    den_bits = value.denominator.bit_length()
+    return f"{sign}<exact-fraction num_bits={num_bits} den_bits={den_bits}>"
 
 
 def _fraction_to_decimal_scale9(value: Fraction) -> Decimal:

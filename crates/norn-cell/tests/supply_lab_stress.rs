@@ -210,7 +210,7 @@ enum Outcome {
 const FORECAST_EVALUATOR_EXECUTOR: &str = "pool.ml-evaluator";
 const FORECAST_EVALUATOR_AUTHORITY: &str = "svc:ml-evaluator";
 const FORECAST_EVALUATOR_MANIFEST_DIGEST: &str =
-    "sha256:727d22e10828fff4346a4c231533eda37216d4b74ae5d1264fb4d9b6fcf3fef0";
+    "sha256:c4511d5b6567f086be974e6465e93ff37ea1f3c39124f2c21a8c00c8d1ec7ec0";
 const FORECAST_EVALUATOR_PROFILE_DIGEST: &str =
     "sha256:a780163924782b48cc7ef188073bbc22d903bdd5a55825b7077c9e9eb9c7656e";
 
@@ -1808,7 +1808,7 @@ fn forecast_evaluator_manifest_json() -> Value {
         "cache": "none",
         "capabilities": [],
         "dependencyClosure": {
-            "digest": "sha256:7de35b8e20e7846ea24f9c06cf34311dcc32ec8302d1ae12ee28996167aacf6d",
+            "digest": "sha256:d75475e52178e7c408fa54fae3cbb288d7957487c4a7237d03ec9d81c4ddc217",
             "entries": [
                 {
                     "digest": "sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535",
@@ -1831,7 +1831,7 @@ fn forecast_evaluator_manifest_json() -> Value {
                     "name": "norn-evaluator-init"
                 },
                 {
-                    "digest": "sha256:0c791aae2c792800bf7fa950377c07f31be6db0c0d96457bdf5d22d36e608683",
+                    "digest": "sha256:7670ca858268a25edf444a9e496641ee97a8f8883bfd143bd0c3b30d2626f114",
                     "kind": "library",
                     "name": "norn-evaluator-receipt"
                 }
@@ -1855,7 +1855,7 @@ fn forecast_evaluator_manifest_json() -> Value {
         },
         "functionId": "ml.forecast.evaluate",
         "implementation": {
-            "digest": "sha256:949a59f1deae17acca5d42546b1543639d0dcde535f347af1a111110d7b125db",
+            "digest": "sha256:b33796edc8b7fde2b8b5b74547315c4585a3082fda96d20a007825d43fa8cbb6",
             "entryPoint": "python -m norn_regression.evaluator_cli",
             "format": "oci_image",
             "locator": null
