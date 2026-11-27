@@ -134,6 +134,9 @@ impl IncrementalQuestion {
         context: QueryContext,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<&QueryResult, CellError> {
+        if store.fork_pin().is_some() {
+            return Err(CellError::ForkInvalidWorld);
+        }
         if self.knowledge.is_some() {
             return Err(refused("core.world.invalid_restatement"));
         }
@@ -157,6 +160,9 @@ impl IncrementalQuestion {
         cutoff: crate::KnowledgeCutoff,
         mut visible: impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<&QueryResult, CellError> {
+        if store.fork_pin().is_some() {
+            return Err(CellError::ForkInvalidWorld);
+        }
         let prior = self
             .knowledge
             .ok_or_else(|| refused("core.world.invalid_restatement"))?;

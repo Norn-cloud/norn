@@ -1,4 +1,7 @@
 //! HOST-READ-1 / QUERY-ENGINE-1: admitted questions through the shared read authority.
+mod fork;
+pub use fork::get_fork_answer;
+
 use crate::{
     authz::{
         ReadCapability::{self, Population, Sources, Values},
@@ -15,7 +18,7 @@ use crate::{
 use norn_cell::{
     CellError, CellStore, KnowledgeCutoff, ObjectRecord,
     compute::{
-        HistoricalQuestionResult, QueryContext, QueryResult,
+        ForkQuestionResult, HistoricalQuestionResult, QueryContext, QueryResult,
         lineage::{LineageDisclosure, keyed_receipt_handle, lineage_handle_matches},
     },
     engine::SqlEngine,
@@ -148,6 +151,19 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
         store.evaluate_question_known_at(plan, context, cutoff, visible)
     }
+    /// Core 08 (`WORLD-ISOLATE-1`, `FORK-PIN-1`): evaluate an admitted plan
+    /// inside a forked store under its durable [`norn_cell::ForkPin`].
+    /// # Errors
+    /// A typed world/compute refusal, or a host engine failure.
+    fn evaluate_in_fork(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<ForkQuestionResult, CellError> {
+        store.evaluate_question_in_fork(plan, context, visible)
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -262,6 +278,9 @@ fn answer_plan<E: SqlEngine>(
     key: &[u8],
 ) -> Result<DisclosedAnswer, Refusal> {
     let cell = host.cell()?;
+    if cell.store().fork_pin().is_some() {
+        return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
+    }
     let checked_version = crate::object_routes::version_of(&cell.store().read())?;
     let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
@@ -366,47 +385,6 @@ pub(crate) fn world_values<E: SqlEngine>(
                         })
                 })
         })
-}
-
-/// DATA-SOURCES-1: whether `actor` holds the independent `Sources` capability
-/// over an unmarked cell for every object type `plan` touches (its grain,
-/// linked time targets, and `source.Connection` when present in the model).
-/// Applied identically by both answer and trace projections.
-pub(crate) fn plan_sources<E: SqlEngine>(
-    host: &DevHost<E>,
-    runtime: &dyn QuestionRuntime<E>,
-    store: &CellStore<E>,
-    actor: &str,
-    plan: &QuestionPlan,
-) -> bool {
-    let unmarked = host
-        .marking_catalog(&store.read())
-        .is_ok_and(|c| c.is_empty());
-    if !unmarked {
-        return false;
-    }
-    let mut types = BTreeSet::from([plan.grain().as_str()]);
-    for sum in plan.sums() {
-        if let Some(link) = &sum.time_link {
-            types.insert(link.target_type.as_str());
-        }
-    }
-    if store.model().has_type("source.Connection") {
-        types.insert("source.Connection");
-    }
-    types.into_iter().all(|name| {
-        runtime
-            .collection_access(host.scope(), actor, Sources, name)
-            .is_ok_and(|access| {
-                access.principal().subject_id == actor
-                    && access.resource().object_type == name
-                    && access.resource().id == name
-                    && host.read_permitted(&ReadRequest {
-                        capability: Sources,
-                        access: &access,
-                    })
-            })
-    })
 }
 
 /// Population decides membership; a member without Values is recorded so its

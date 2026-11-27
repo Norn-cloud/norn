@@ -16,10 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 use norn_cell::compute::lineage::{
-    NumericTrace, keyed_cursor_handle, keyed_finding_handle, keyed_lineage_handle,
-    keyed_receipt_handle, keyed_revision_handle,
+    NumericTrace, keyed_finding_handle, keyed_lineage_handle, keyed_receipt_handle,
+    keyed_revision_handle,
 };
-use norn_cell::compute::{HistoricalQuestionResult, QueryResult};
+use norn_cell::compute::{
+    ForkQuestionResult, HistoricalQuestionResult, QueryResult, fork_query_pin, fork_result_pin,
+};
 use norn_cell::reactive::DecodeBudget;
 use norn_cell::source_provenance::InstanceSourceProvenance;
 use norn_cell::system::GENESIS_HASH;
@@ -232,6 +234,40 @@ impl AsRef<QuestionAnswer> for DisclosedAnswer {
 
 impl sealed::Sealed for DisclosedAnswer {}
 impl DisclosedDocument for DisclosedAnswer {}
+
+/// One projected simulated fork question answer (`WORLD-ISOLATE-1`,
+/// `FORK-PIN-1`, D53) with bucket suppression, keyed handles, and fork-pin
+/// redaction enforced.
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+pub struct DisclosedForkAnswer {
+    inner: ForkQuestionResult,
+}
+
+impl DisclosedForkAnswer {
+    /// Read-only access to the already-projected simulated fork answer.
+    #[must_use]
+    pub const fn as_inner(&self) -> &ForkQuestionResult {
+        &self.inner
+    }
+}
+
+impl Deref for DisclosedForkAnswer {
+    type Target = ForkQuestionResult;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AsRef<ForkQuestionResult> for DisclosedForkAnswer {
+    fn as_ref(&self) -> &ForkQuestionResult {
+        &self.inner
+    }
+}
+
+impl sealed::Sealed for DisclosedForkAnswer {}
+impl DisclosedDocument for DisclosedForkAnswer {}
 
 /// One projected numeric trace with marked contribution redaction, `fact_digest`
 /// withholding, `source = Restricted`, keyed receipt handles, and D53 bucket
@@ -512,24 +548,6 @@ fn withhold_cutoff_receipt(
     Ok(())
 }
 
-/// DATA-SOURCES-1: key raw cursors whenever the caller lacks `Sources`.
-fn withhold_source_cursors(result: &mut QueryResult, key: &[u8], sources_granted: bool) {
-    if sources_granted {
-        return;
-    }
-    let scope = result.context.scope.clone();
-    for partitions in result.context.source_cursors.values_mut() {
-        for cursor in partitions.values_mut() {
-            *cursor = keyed_cursor_handle(key, &scope, cursor);
-        }
-    }
-    for partitions in result.context.watermarks.values_mut() {
-        for watermark in partitions.values_mut() {
-            watermark.observed = keyed_cursor_handle(key, &scope, &watermark.observed);
-        }
-    }
-}
-
 /// Project one [`QuestionAnswer`] under D53 and `Sources`-gated cursor keying.
 pub(crate) fn project_answer<E: SqlEngine>(
     (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
@@ -549,7 +567,7 @@ pub(crate) fn project_answer<E: SqlEngine>(
             (&mut historical.result, Some(at))
         }
     };
-    let sources_granted = super::result_sources_granted(
+    let sources_granted = super::source_grants::result_sources_granted(
         host,
         runtime,
         store,
@@ -558,10 +576,61 @@ pub(crate) fn project_answer<E: SqlEngine>(
     )?;
     withhold_ledger_head(result, key, world);
     withhold_exclusions(result, key, world);
-    withhold_source_cursors(result, key, sources_granted);
+    super::source_grants::withhold_source_cursors(result, key, sources_granted);
     withhold_values(result, withheld, runtime.min_disclosed_bucket());
     result.lineage_ref = keyed_lineage_handle(key, &result.lineage_ref);
     Ok(DisclosedAnswer { inner: answer })
+}
+
+/// Core 08 (#1944, DATA-VALUES-1, DATA-SOURCES-1, D53): project one simulated
+/// [`ForkQuestionResult`] under D53 bucket suppression, `Sources`-gated cursor
+/// keying, keyed revision/pin handles, and recomputed fork result pin so
+/// unredacted row hashes, raw cursors, and raw ledger heads never leave the
+/// host while disclosed answers remain self-consistent for host comparisons.
+pub(crate) fn project_fork_answer<E: SqlEngine>(
+    (host, runtime, store): (&DevHost<E>, &dyn QuestionRuntime<E>, &CellStore<E>),
+    (actor, question, key, plan): (&str, &str, &[u8], &QuestionPlan),
+    withheld: &BTreeSet<String>,
+    mut fork: ForkQuestionResult,
+) -> Result<DisclosedForkAnswer, Refusal> {
+    let valid_world = matches!(
+        &fork.world,
+        norn_kernel::World::Fork { id } if id.0 == fork.pin.world
+    );
+    if !fork.simulated
+        || !valid_world
+        || fork.result.context.world != fork.pin.world
+        || fork.result.query_pin != fork.fork_query_pin
+    {
+        return Err(Refusal::from_compute(CellError::ForkInvalidWorld));
+    }
+    let world = withheld.is_empty() && world_values(host, runtime, store, actor);
+    let sources_granted = super::source_grants::result_sources_granted(
+        host,
+        runtime,
+        store,
+        (actor, question, plan),
+        (&fork.result, None),
+    )?;
+    let base_genesis = fork.pin.base.seq == 0 && fork.pin.base.hash == GENESIS_HASH;
+    if !(world || base_genesis) {
+        fork.pin.base.hash = keyed_revision_handle(key, &fork.pin.base.hash);
+        fork.fork_query_pin =
+            fork_query_pin(&fork.base_query_pin, &fork.pin).map_err(Refusal::from_compute)?;
+        fork.fork_query_pin.clone_into(&mut fork.result.query_pin);
+    }
+    withhold_ledger_head(&mut fork.result, key, world);
+    withhold_exclusions(&mut fork.result, key, world);
+    super::source_grants::withhold_source_cursors(&mut fork.result, key, sources_granted);
+    withhold_values(&mut fork.result, withheld, runtime.min_disclosed_bucket());
+    fork.result.lineage_ref = keyed_lineage_handle(key, &fork.result.lineage_ref);
+    fork.result_pin = fork_result_pin(
+        &fork.fork_query_pin,
+        &fork.result.lineage_ref,
+        &fork.result.revision,
+    )
+    .map_err(Refusal::from_compute)?;
+    Ok(DisclosedForkAnswer { inner: fork })
 }
 
 /// Project one [`NumericTrace`] under PRIVACY-1 redaction and cursor keying.
@@ -582,7 +651,7 @@ pub(crate) fn project_trace<E: SqlEngine>(
     let head = store.read().head_commit_seq().map_err(Refusal::host)?;
     let historical = (head != trace.result.known_as_of)
         .then_some((trace.result.known_as_of, trace.result.context.now_ms));
-    let sources_granted = super::result_sources_granted(
+    let sources_granted = super::source_grants::result_sources_granted(
         host,
         runtime,
         store,
@@ -591,7 +660,7 @@ pub(crate) fn project_trace<E: SqlEngine>(
     )?;
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
-    withhold_source_cursors(&mut trace.result, key, sources_granted);
+    super::source_grants::withhold_source_cursors(&mut trace.result, key, sources_granted);
     if !world {
         for receipt in trace
             .contributions
@@ -928,40 +997,4 @@ pub(crate) fn project_transform_lineage<E: SqlEngine>(
             members: input.members,
         },
     }
-}
-
-/// DATA-SOURCES-1: row-level `Sources` check for the linked time target of one
-/// evaluated grain member (`METRIC-GRAIN-LINK-1`). Fails closed on historical
-/// linked targets or unreadable/ambiguous links.
-pub(crate) fn linked_time_target_sources_granted<E: SqlEngine>(
-    reader: &norn_cell::StoreReader<'_, E>,
-    world: &str,
-    plan: &norn_checker::metric::compute::QuestionPlan,
-    member_id: &str,
-    historical: bool,
-    check: &dyn Fn(&norn_cell::ObjectRecord) -> Result<bool, Refusal>,
-) -> Result<bool, Refusal> {
-    let Some(link) = plan.time_link() else {
-        return Ok(true);
-    };
-    if historical {
-        return Ok(false);
-    }
-    let Ok(Some(targets)) = reader.link_targets(
-        world,
-        plan.grain().as_str(),
-        link.link.as_str(),
-        member_id,
-        2,
-        65_536,
-    ) else {
-        return Ok(false);
-    };
-    let [target_id] = targets.as_slice() else {
-        return Ok(false);
-    };
-    let Ok(Some(target_rec)) = reader.object(world, link.target_type.as_str(), target_id) else {
-        return Ok(false);
-    };
-    check(&target_rec)
 }
