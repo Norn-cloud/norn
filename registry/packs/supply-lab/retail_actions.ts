@@ -598,6 +598,26 @@ const StoreCommercialRollupInput = Schema.Struct({
   currency: Currency,
   cost_status: CostStatus,
   count_status: CountStatus,
+  on_hand_count_id: Schema.String,
+  costed_ref: Schema.String,
+  period_end: Norn.timestamp("utc"),
+  on_hand_qty: Norn.decimal(6),
+  avg_weekly_sales_qty: Norn.decimal(6),
+  weeks_of_supply: Norn.decimal(6),
+  period_gross_margin: Norn.decimal(6),
+  opening_stock_value: Norn.decimal(6),
+  closing_stock_value: Norn.decimal(6),
+  average_inventory_value: Norn.decimal(6, { rounding: "half_even" }),
+  gmroi: Norn.decimal(6),
+})
+const WithheldStoreCommercialRollupInput = Schema.Struct({
+  rollup_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  unit: Unit,
+  currency: Currency,
+  cost_status: CostStatus,
+  count_status: CountStatus,
   period_end: Norn.timestamp("utc"),
   on_hand_qty: Norn.decimal(6),
   avg_weekly_sales_qty: Norn.decimal(6),
@@ -611,19 +631,20 @@ const StoreCommercialRollupInput = Schema.Struct({
 const StoreCommercialRollupRef = Schema.Struct({ rollup_id: Schema.String })
 
 /**
- * Record a governed period commercial KPI rollup for a `(store, sku, period_end)`,
- * deriving `average_inventory_value = (opening_stock_value + closing_stock_value) * 0.5`
- * in the kernel so declared `weeks_of_supply` and `gmroi` ratio questions evaluate
- * across both Cell and DuckDB while withholding unverified or missing-cost buckets.
+ * Record a verified and costed store commercial KPI rollup bound to an actual
+ * governed `on_hand` `StoreCount` and `UnitCost` record, unique at `(store_id,
+ * sku_id, period_end)` grain, deriving `average_inventory_value = (opening + closing) * 0.5`.
  */
 export const RecordStoreCommercialRollup = Norn.action({
-  id: "supply.store_kpi.record", title: "Record store commercial KPI rollup", version: "0.1.0",
+  id: "supply.store_kpi.record", title: "Record verified store commercial KPI rollup", version: "0.1.0",
   label: { en: "Record store KPI rollup", ar: "تسجيل ملخص مؤشرات المتجر" },
   input: StoreCommercialRollupInput, output: StoreCommercialRollupRef,
   scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
   slice: [
     { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
     { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+    { name: "on_hand_count", type: StoreCount, key: { property: { from: "input", property: "on_hand_count_id" } } },
+    { name: "cost", type: UnitCost, key: { property: { from: "input", property: "sku_id" } } },
   ],
   derive: [
     { field: "weeks_of_supply", inputRequired: false, expression: Norn.expression(StoreCommercialRollupInput, () => 0) },
@@ -639,9 +660,73 @@ export const RecordStoreCommercialRollup = Norn.action({
       slice: Schema.Struct({
         store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
         sku: Schema.Struct({ unit_of_measure: Schema.String }),
+        on_hand_count: Schema.Struct({
+          store_id: Schema.String, sku_id: Schema.String,
+          unit: Schema.String, quantity_basis: Schema.String,
+          on_hand_qty: Norn.decimal(6),
+        }),
+        cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String }),
       }),
     }),
     (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.count_status === "verified"
+      && ctx.input.cost_status === "costed"
+      && ctx.input.unit === ctx.slice.sku.unit_of_measure
+      && ctx.input.currency === ctx.slice.store.currency
+      && ctx.input.store_id === ctx.slice.on_hand_count.store_id
+      && ctx.input.sku_id === ctx.slice.on_hand_count.sku_id
+      && ctx.input.unit === ctx.slice.on_hand_count.unit
+      && ctx.slice.on_hand_count.quantity_basis === "on_hand"
+      && ctx.input.on_hand_qty === ctx.slice.on_hand_count.on_hand_qty
+      && ctx.input.currency === ctx.slice.cost.currency
+      && ctx.input.costed_ref === ctx.slice.cost.cost_ref,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "store", targetType: Store, targetIdField: "store_id" },
+    { link: "sku", targetType: Sku, targetIdField: "sku_id" },
+    { link: "on_hand_count", targetType: StoreCount, targetIdField: "on_hand_count_id" },
+    { link: "cost_record", targetType: UnitCost, targetIdField: "sku_id" },
+  ],
+  writes: [{ type: StoreCommercialRollup, change: "created" }],
+  effect: { kind: "upsert_input_object", type: StoreCommercialRollup, objectIdField: "rollup_id", writeMode: { kind: "create_only" } },
+})
+
+/**
+ * Record an explicitly withheld store commercial KPI rollup (`unverified` and
+ * `missing_cost`): derives zero numerators and denominators so declared WOS and
+ * GMROI questions evaluate directly to `null` (withheld) on the read path.
+ */
+export const RecordWithheldStoreCommercialRollup = Norn.action({
+  id: "supply.store_kpi.record_withheld", title: "Record withheld store commercial KPI rollup", version: "0.1.0",
+  label: { en: "Record withheld KPI rollup", ar: "تسجيل ملخص مؤشرات محجوب" },
+  input: WithheldStoreCommercialRollupInput, output: StoreCommercialRollupRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
+  slice: [
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+  ],
+  derive: [
+    { field: "on_hand_qty", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "avg_weekly_sales_qty", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "weeks_of_supply", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "period_gross_margin", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "closing_stock_value", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "average_inventory_value", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+    { field: "gmroi", inputRequired: false, expression: Norn.expression(WithheldStoreCommercialRollupInput, () => 0) },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: WithheldStoreCommercialRollupInput,
+      slice: Schema.Struct({
+        store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+        sku: Schema.Struct({ unit_of_measure: Schema.String }),
+      }),
+    }),
+    (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.count_status === "unverified"
+      && ctx.input.cost_status === "missing_cost"
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency,
     { root: "context" },
@@ -668,6 +753,6 @@ export const RetailAccess = Norn.access({
     { ruleId: "stock_lot", actions: [RecordStockLot, RecordUncostedStockLot, UpdateStockLotBalance], resourceType: StockLot, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "store_count", actions: [RecordStoreCount, RecountStore], resourceType: StoreCount, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "pos_sale", actions: [RecordPosSale, RecordUncostedPosSale, PromotePosSaleFromEvidence], resourceType: PosSale, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
-    { ruleId: "store_kpi", actions: [RecordStoreCommercialRollup], resourceType: StoreCommercialRollup, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
+    { ruleId: "store_kpi", actions: [RecordStoreCommercialRollup, RecordWithheldStoreCommercialRollup], resourceType: StoreCommercialRollup, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
   ],
 })

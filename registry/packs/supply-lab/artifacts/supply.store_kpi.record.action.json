@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "action",
   "lifecycle": "active",
-  "name": "Record store commercial KPI rollup",
+  "name": "Record verified store commercial KPI rollup",
   "namespace": "supply",
   "payload": {
     "access": {
@@ -22,6 +22,16 @@
         "link": "sku",
         "targetIdField": "sku_id",
         "targetType": "supply.Sku"
+      },
+      {
+        "link": "on_hand_count",
+        "targetIdField": "on_hand_count_id",
+        "targetType": "supply.StoreCount"
+      },
+      {
+        "link": "cost_record",
+        "targetIdField": "sku_id",
+        "targetType": "supply.UnitCost"
       }
     ],
     "derive": [
@@ -84,6 +94,9 @@
           ],
           "type": "string"
         },
+        "costed_ref": {
+          "type": "string"
+        },
         "count_status": {
           "enum": [
             "verified",
@@ -105,6 +118,9 @@
             "scale": 6
           },
           "type": "number"
+        },
+        "on_hand_count_id": {
+          "type": "string"
         },
         "on_hand_qty": {
           "nornType": {
@@ -163,6 +179,8 @@
         "currency",
         "cost_status",
         "count_status",
+        "on_hand_count_id",
+        "costed_ref",
         "period_end",
         "on_hand_qty",
         "avg_weekly_sales_qty",
@@ -189,7 +207,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.store.status == 'active') and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)"
+      "(((((((((((slice.store.status == 'active') and (input.count_status == 'verified')) and (input.cost_status == 'costed')) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.store_id == slice.on_hand_count.store_id)) and (input.sku_id == slice.on_hand_count.sku_id)) and (input.unit == slice.on_hand_count.unit)) and (slice.on_hand_count.quantity_basis == 'on_hand')) and (input.on_hand_qty == slice.on_hand_count.on_hand_qty)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)"
     ],
     "scopeRequired": [
       "orgId",
@@ -215,9 +233,29 @@
         },
         "name": "sku",
         "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "on_hand_count_id"
+          }
+        },
+        "name": "on_hand_count",
+        "objectType": "supply.StoreCount"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "cost",
+        "objectType": "supply.UnitCost"
       }
     ],
-    "title": "Record store commercial KPI rollup",
+    "title": "Record verified store commercial KPI rollup",
     "writes": [
       {
         "change": "created",

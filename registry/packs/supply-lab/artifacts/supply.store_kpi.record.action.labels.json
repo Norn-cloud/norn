@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "labels",
   "lifecycle": "active",
-  "name": "Record store commercial KPI rollup labels",
+  "name": "Record verified store commercial KPI rollup labels",
   "namespace": "supply",
   "payload": {
     "entries": [

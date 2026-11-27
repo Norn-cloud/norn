@@ -15,6 +15,14 @@
           "properties": [
             "rollup_id"
           ]
+        },
+        {
+          "name": "period_grain",
+          "properties": [
+            "store_id",
+            "sku_id",
+            "period_end"
+          ]
         }
       ],
       "links": [
@@ -35,6 +43,22 @@
           },
           "id": "sku",
           "target": "supply.Sku"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "on_hand_count",
+          "target": "supply.StoreCount"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "cost_record",
+          "target": "supply.UnitCost"
         }
       ],
       "name": "supply.StoreCommercialRollup",
@@ -117,6 +141,24 @@
                 "value": "unverified"
               }
             ]
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "on_hand_count_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "costed_ref",
+          "type": {
+            "kind": "text"
           }
         },
         {

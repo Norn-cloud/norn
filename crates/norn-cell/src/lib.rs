@@ -36,6 +36,7 @@ pub mod catalog;
 pub mod cell_identity;
 pub mod classification;
 mod codec;
+pub mod combined_view;
 pub mod compute;
 pub mod coverage_observer;
 pub mod dataset_laws;

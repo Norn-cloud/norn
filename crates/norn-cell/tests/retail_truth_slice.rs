@@ -39,6 +39,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use norn_cell::combined_view::{
+    CellViewInput, CombinedViewKind, CombinedViewReport, evaluate_combined_management_view,
+};
 use norn_cell::compute::lineage::{ContributionSource, LineageDisclosure};
 use norn_cell::compute::transform::{RowAccess, TransformResult};
 use norn_cell::compute::{Freshness, Frontier, QueryContext, QueryResult, Watermark};
@@ -504,7 +507,10 @@ impl EntityBook {
     fn ok(&mut self, action: &str, actor: &str, input: Value) -> Result<(), String> {
         match self.act(action, actor, input)? {
             Outcome::Committed => Ok(()),
-            other => Err(format!("{action} expected Committed, got {other:?}")),
+            Outcome::Replayed => Err(format!("{action} expected Committed, got Replayed")),
+            Outcome::Refused(code, msg) => Err(format!(
+                "{action} expected Committed, got Refused({code}, {msg})"
+            )),
         }
     }
 
@@ -516,7 +522,8 @@ impl EntityBook {
     ) -> Result<(String, String), String> {
         match self.act(action, actor, input)? {
             Outcome::Refused(code, msg) => Ok((code, msg)),
-            other => Err(format!("{action} expected Refused, got {other:?}")),
+            Outcome::Committed => Err(format!("{action} expected Refused, got Committed")),
+            Outcome::Replayed => Err(format!("{action} expected Refused, got Replayed")),
         }
     }
 
@@ -568,15 +575,17 @@ fn scalar(value: &RuntimeValue) -> String {
         RuntimeValue::Number(d) => d.canonical(),
         RuntimeValue::Bool(b) => b.to_string(),
         RuntimeValue::Null => "null".to_owned(),
-        other => format!("{other:?}"),
+        RuntimeValue::Array(items) => format!("{items:?}"),
+        RuntimeValue::Object(obj) => format!("{obj:?}"),
     }
 }
 
 /// Extract exact structured grouping tuple from `QueryRow.bucket` (never substring-matched).
 fn bucket_parts(bucket: &RuntimeValue) -> Vec<String> {
-    match bucket {
-        RuntimeValue::Array(items) => items.iter().map(scalar).collect(),
-        other => vec![scalar(other)],
+    if let RuntimeValue::Array(items) = bucket {
+        items.iter().map(scalar).collect()
+    } else {
+        vec![scalar(bucket)]
     }
 }
 
@@ -1535,7 +1544,7 @@ fn verify_pos_lineage(
             ContributionSource::Resolved { provenance } => {
                 Some(provenance.source_record_ref.record.clone())
             }
-            _ => None,
+            ContributionSource::Restricted | ContributionSource::Unavailable => None,
         })
         .collect();
     assert!(
@@ -1825,9 +1834,10 @@ fn collect_latest_counts(
             });
             continue;
         }
-        let counted = match count.values.get("on_hand_qty") {
-            Some(RuntimeValue::Number(d)) => *d,
-            _ => Decimal::from(0_i64),
+        let counted = if let Some(RuntimeValue::Number(d)) = count.values.get("on_hand_qty") {
+            *d
+        } else {
+            Decimal::from(0_i64)
         };
         let bkey = (store_id, sku_id, basis);
         if latest
@@ -2075,6 +2085,77 @@ fn resolve_verified_wos_bucket(
     bucket_decimal_exact(result, &[unit, store_id, "verified", week])
 }
 
+fn verify_store_kpi_rollup_refusals(
+    sole: &mut EntityBook,
+    (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val): (Decimal, Decimal, Decimal, Decimal),
+) -> Result<(), String> {
+    // Forged on_hand_qty disagreeing with governed StoreCount refuses at write boundary.
+    let (code, msg) = sole.refused(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-1-FORGED", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "costed_ref": "COST-DRESS-1",
+            "period_end": "2026-09-12T18:00:00Z",
+            "on_hand_qty": "99", "avg_weekly_sales_qty": "10",
+            "weeks_of_supply": "0", "period_gross_margin": "5000",
+            "opening_stock_value": "10000", "closing_stock_value": "6000",
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    assert_eq!(code, "core.action.precondition", "{msg}");
+    // Duplicate rollup at the same `(store_id, sku_id, period_end)` grain under a new rollup_id refuses.
+    sole.refused(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-1-W9-DUP", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "costed_ref": "COST-DRESS-1",
+            "period_end": "2026-09-05T18:00:00Z",
+            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
+            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "opening_stock_value": s1_opening_val.canonical(),
+            "closing_stock_value": s1_closing_val.canonical(),
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    Ok(())
+}
+
+fn seed_partner_commercial_rollup(partner: &mut EntityBook) -> Result<(), String> {
+    let p1_opening_val = resolve_costed_window_bucket(
+        &partner.answer("supply.retail.store_opening_stock_value_weekly")?,
+        "USD",
+        "ST-PART-CFC-1",
+    )
+    .ok_or("missing ST-PART-CFC-1 opening_stock_value")?;
+    let p1_closing_val = resolve_costed_bucket(
+        &partner.answer("supply.retail.store_stock_value_weekly")?,
+        "USD",
+        "ST-PART-CFC-1",
+        "2026-08-31",
+    )
+    .ok_or("missing ST-PART-CFC-1 closing stock_value")?;
+    partner.ok(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
+            "sku_id": "SKU-RING-18K", "unit": "each", "currency": "USD",
+            "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-PART-CFC-1/SKU-RING-18K/on_hand", "costed_ref": "COST-RING-1",
+            "period_end": "2026-09-05T18:00:00Z",
+            "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
+            "period_gross_margin": "1200",
+            "opening_stock_value": p1_opening_val.canonical(),
+            "closing_stock_value": p1_closing_val.canonical(),
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )
+}
+
 /// Seed governed `StoreCommercialRollup` rows derived strictly from each cell's
 /// own evaluated questions (`on_hand`, `sold/weeks`, `margin`, immutable lot-level
 /// `opening_stock_value`, closing `stock_value`) and count-coverage report.
@@ -2107,9 +2188,12 @@ fn seed_store_commercial_rollups(
         .rows
         .iter()
         .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-1"))
-        .and_then(|r| match r.values.get("effective_gross_margin") {
-            Some(RuntimeValue::Number(d)) => Some(*d),
-            _ => None,
+        .and_then(|r| {
+            if let Some(RuntimeValue::Number(d)) = r.values.get("effective_gross_margin") {
+                Some(*d)
+            } else {
+                None
+            }
         })
         .ok_or("missing ST-SOLE-CFC-1 effective_gross_margin")?;
     sole.ok(
@@ -2118,6 +2202,7 @@ fn seed_store_commercial_rollups(
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-1-W9", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
+            "on_hand_count_id": "ST-SOLE-CFC-1/SKU-DRESS/on_hand", "costed_ref": "COST-DRESS-1",
             "period_end": "2026-09-05T18:00:00Z",
             "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
             "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
@@ -2126,46 +2211,23 @@ fn seed_store_commercial_rollups(
             "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
+    verify_store_kpi_rollup_refusals(
+        sole,
+        (s1_on_hand, s1_margin, s1_opening_val, s1_closing_val),
+    )?;
     sole.ok(
-        "supply.store_kpi.record",
+        "supply.store_kpi.record_withheld",
         "planner:omar",
         json!({
             "rollup_id": "KPI-ST-SOLE-CFC-2-W9", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "unit": "each", "currency": "EGP", "cost_status": "missing_cost",
             "count_status": "unverified", "period_end": "2026-09-05T18:00:00Z",
-            "on_hand_qty": "25", "avg_weekly_sales_qty": "5", "weeks_of_supply": "0",
+            "on_hand_qty": "0", "avg_weekly_sales_qty": "0", "weeks_of_supply": "0",
             "period_gross_margin": "0", "opening_stock_value": "0",
             "closing_stock_value": "0", "average_inventory_value": "0", "gmroi": "0"
         }),
     )?;
-    let p1_opening_val = resolve_costed_window_bucket(
-        &partner.answer("supply.retail.store_opening_stock_value_weekly")?,
-        "USD",
-        "ST-PART-CFC-1",
-    )
-    .ok_or("missing ST-PART-CFC-1 opening_stock_value")?;
-    let p1_closing_val = resolve_costed_bucket(
-        &partner.answer("supply.retail.store_stock_value_weekly")?,
-        "USD",
-        "ST-PART-CFC-1",
-        "2026-08-31",
-    )
-    .ok_or("missing ST-PART-CFC-1 closing stock_value")?;
-    partner.ok(
-        "supply.store_kpi.record",
-        "planner:omar",
-        json!({
-            "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
-            "sku_id": "SKU-RING-18K", "unit": "each", "currency": "USD",
-            "cost_status": "costed", "count_status": "verified",
-            "period_end": "2026-09-05T18:00:00Z",
-            "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
-            "period_gross_margin": "1200",
-            "opening_stock_value": p1_opening_val.canonical(),
-            "closing_stock_value": p1_closing_val.canonical(),
-            "average_inventory_value": "0", "gmroi": "0"
-        }),
-    )
+    seed_partner_commercial_rollup(partner)
 }
 
 fn verify_declared_kpi_ratio_questions(sole: &EntityBook) -> Result<(), String> {
@@ -2185,24 +2247,44 @@ fn verify_declared_kpi_ratio_questions(sole: &EntityBook) -> Result<(), String> 
         Some("0.4")
     );
 
-    // Declared weeks-of-supply and GMROI questions (fail closed on unverified / missing_cost).
+    // Declared WOS & GMROI questions withhold (`value: None`) directly on the read path
+    // for unverified / missing_cost buckets — no test-helper masking required.
     let wos_q = sole.answer("supply.retail.store_weeks_of_supply_weekly")?;
     assert_eq!(
-        resolve_verified_wos_bucket(&wos_q, "each", "ST-SOLE-CFC-1", "2026-08-31")
+        bucket_decimal_exact(&wos_q, &["each", "ST-SOLE-CFC-1", "verified", "2026-08-31"])
             .map(|d| d.canonical())
             .as_deref(),
         Some("6")
+    );
+    let s2_wos_row = wos_q
+        .rows
+        .values()
+        .find(|r| bucket_parts(&r.bucket) == ["each", "ST-SOLE-CFC-2", "unverified", "2026-08-31"])
+        .ok_or("missing ST-SOLE-CFC-2 unverified WOS bucket")?;
+    assert_eq!(
+        s2_wos_row.value, None,
+        "unverified WOS bucket must withhold (None) directly on the declared read path"
     );
     assert_eq!(
         resolve_verified_wos_bucket(&wos_q, "each", "ST-SOLE-CFC-2", "2026-08-31"),
         None
     );
+
     let gmroi_q = sole.answer("supply.retail.store_gmroi_weekly")?;
     assert_eq!(
-        resolve_costed_bucket(&gmroi_q, "EGP", "ST-SOLE-CFC-1", "2026-08-31")
+        bucket_decimal_exact(&gmroi_q, &["EGP", "ST-SOLE-CFC-1", "costed", "2026-08-31"])
             .map(|d| d.canonical())
             .as_deref(),
         Some("0.625")
+    );
+    let s2_gmroi_row = gmroi_q
+        .rows
+        .values()
+        .find(|r| bucket_parts(&r.bucket) == ["EGP", "ST-SOLE-CFC-2", "missing_cost", "2026-08-31"])
+        .ok_or("missing ST-SOLE-CFC-2 missing_cost GMROI bucket")?;
+    assert_eq!(
+        s2_gmroi_row.value, None,
+        "missing_cost GMROI bucket must withhold (None) directly on the declared read path"
     );
     assert_eq!(
         resolve_costed_bucket(&gmroi_q, "EGP", "ST-SOLE-CFC-2", "2026-08-31"),
@@ -2384,10 +2466,15 @@ fn verify_retail_transforms_and_kpis(
         s1_sales.values.get("cost_complete"),
         Some(&RuntimeValue::Bool(true))
     );
-    let s1_margin = match s1_sales.values.get("effective_gross_margin") {
-        Some(RuntimeValue::Number(d)) => *d,
-        other => return Err(format!("expected numeric margin, got {other:?}")),
-    };
+    let s1_margin =
+        if let Some(RuntimeValue::Number(d)) = s1_sales.values.get("effective_gross_margin") {
+            *d
+        } else {
+            return Err(format!(
+                "expected numeric margin, got {:?}",
+                s1_sales.values.get("effective_gross_margin")
+            ));
+        };
     assert_eq!(s1_margin.canonical(), "5000");
 
     // Active lot aging (`remaining_qty > 0`): depleted W2 lot (`2026-07-15`, ISO week `2026-07-13`)
@@ -3132,7 +3219,6 @@ fn project_entity_frontier(
     })
 }
 
-#[cfg(all(feature = "duckdb", feature = "native"))]
 const COMBINED_VIEW_QUESTIONS: [&str; 7] = [
     "supply.retail.store_revenue_weekly",
     "supply.retail.store_gross_margin_weekly",
@@ -3142,6 +3228,81 @@ const COMBINED_VIEW_QUESTIONS: [&str; 7] = [
     "supply.retail.store_gmroi_weekly",
     "supply.retail.pos_feed_revenue_weekly",
 ];
+
+fn evaluate_two_cell_report(
+    sole: &EntityBook,
+    partner: &EntityBook,
+    mut eval_fn: impl FnMut(usize, &str, &QuestionPlan, QueryContext) -> Result<QueryResult, CellError>,
+) -> Result<CombinedViewReport, String> {
+    let mut plans = Vec::with_capacity(COMBINED_VIEW_QUESTIONS.len());
+    for q_name in COMBINED_VIEW_QUESTIONS {
+        plans.push((q_name, sole.pack.retail_question(q_name)?));
+    }
+    let q_refs: Vec<(&str, &QuestionPlan)> = plans.iter().map(|(n, p)| (*n, p)).collect();
+    let inputs = [
+        CellViewInput {
+            store: sole.cell()?.store(),
+            context: sole.query_context(),
+            required_feeds: &REQUIRED_FEEDS,
+            min_fresh_ms: sole.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+            evidence_types: &EVIDENCE_TYPES,
+            questions: &q_refs,
+        },
+        CellViewInput {
+            store: partner.cell()?.store(),
+            context: partner.query_context(),
+            required_feeds: &REQUIRED_FEEDS,
+            min_fresh_ms: partner.now().as_millis().saturating_sub(FEED_MAX_AGE_MS),
+            evidence_types: &EVIDENCE_TYPES,
+            questions: &q_refs,
+        },
+    ];
+    evaluate_combined_management_view(&inputs, |idx, name, plan, ctx| {
+        eval_fn(idx, name, plan, ctx)
+    })
+    .map_err(|e| format!("combined_management_view: {e}"))
+}
+
+fn verify_library_combined_view_report(
+    sole: &EntityBook,
+    partner: &EntityBook,
+) -> Result<CombinedViewReport, String> {
+    let report = evaluate_two_cell_report(sole, partner, |idx, _, plan, ctx| {
+        let store = if idx == 0 {
+            sole.cell().map_err(|e| CellError::Engine(e))?.store()
+        } else {
+            partner.cell().map_err(|e| CellError::Engine(e))?.store()
+        };
+        store.evaluate_question(plan, ctx, |_| Ok(true))
+    })?;
+    assert_eq!(report.view_kind, CombinedViewKind::CombinedManagementView);
+    assert!(!report.is_consolidated_financial_statement);
+    assert!(report.read_only);
+    assert_eq!(report.cells.len(), 2);
+    let c0 = report.cells.first().ok_or("missing cell 0")?;
+    let c1 = report.cells.get(1).ok_or("missing cell 1")?;
+    assert_eq!(c0.cell_id.as_str(), SOLE_CELL_ID);
+    assert_eq!(c1.cell_id.as_str(), PARTNER_CELL_ID);
+    assert_eq!(c0.definition_pin, sole.pack.receipt_sha256);
+    assert_eq!(c1.definition_pin, partner.pack.receipt_sha256);
+    assert!(c0.complete);
+    assert!(c1.complete);
+    assert_eq!(c0.answers.len(), COMBINED_VIEW_QUESTIONS.len());
+    assert_eq!(c1.answers.len(), COMBINED_VIEW_QUESTIONS.len());
+
+    // Duplicate cell identity must refuse fail-closed.
+    let dup = evaluate_two_cell_report(sole, sole, |_, _, plan, ctx| {
+        sole.cell()
+            .map_err(|e| CellError::Engine(e))?
+            .store()
+            .evaluate_question(plan, ctx, |_| Ok(true))
+    });
+    assert!(
+        dup.is_err(),
+        "duplicate cell_id in combined view must refuse"
+    );
+    Ok(report)
+}
 
 #[cfg(all(feature = "duckdb", feature = "native"))]
 fn assert_query_result_parity(
@@ -3258,14 +3419,35 @@ fn verify_duckdb_combined_view_parity(
                 .map_err(|e| format!("answer {q_name}: {e}"))
         };
 
-    for q_name in COMBINED_VIEW_QUESTIONS {
-        let sole_cell_q = sole.answer(q_name)?;
-        let sole_duck_q = duck_eval(sole, &sole_tenant, q_name)?;
-        assert_query_result_parity(&format!("sole/{q_name}"), &sole_cell_q, &sole_duck_q)?;
-
-        let part_cell_q = partner.answer(q_name)?;
-        let part_duck_q = duck_eval(partner, &partner_tenant, q_name)?;
-        assert_query_result_parity(&format!("partner/{q_name}"), &part_cell_q, &part_duck_q)?;
+    let cell_report = verify_library_combined_view_report(sole, partner)?;
+    let duck_report = evaluate_two_cell_report(sole, partner, |idx, q_name, _, _| {
+        let (book, tenant) = if idx == 0 {
+            (sole, &sole_tenant)
+        } else {
+            (partner, &partner_tenant)
+        };
+        duck_eval(book, tenant, q_name).map_err(CellError::Engine)
+    })?;
+    assert_eq!(duck_report.view_kind, cell_report.view_kind);
+    assert_eq!(
+        duck_report.is_consolidated_financial_statement,
+        cell_report.is_consolidated_financial_statement
+    );
+    assert_eq!(duck_report.read_only, cell_report.read_only);
+    for (cell_c, duck_c) in cell_report.cells.iter().zip(&duck_report.cells) {
+        assert_eq!(duck_c.cell_id, cell_c.cell_id);
+        assert_eq!(duck_c.revision, cell_c.revision);
+        assert_eq!(duck_c.ledger_seq, cell_c.ledger_seq);
+        assert_eq!(duck_c.ledger_hash, cell_c.ledger_hash);
+        assert_eq!(duck_c.definition_pin, cell_c.definition_pin);
+        assert_eq!(duck_c.source_cursors, cell_c.source_cursors);
+        assert_eq!(duck_c.watermarks, cell_c.watermarks);
+        assert_eq!(duck_c.complete, cell_c.complete);
+        for q_name in COMBINED_VIEW_QUESTIONS {
+            let cq = cell_c.answers.get(q_name).ok_or("missing cell answer")?;
+            let dq = duck_c.answers.get(q_name).ok_or("missing duck answer")?;
+            assert_query_result_parity(&format!("{}/{q_name}", cell_c.scope), cq, dq)?;
+        }
     }
 
     let duck_view = CombinedManagementView {
@@ -3488,6 +3670,9 @@ fn s1_read_only_combined_management_view_across_two_cells() -> Result<(), String
     seed_retail_operations(&mut sole, &mut partner)?;
     seed_store_commercial_rollups(&mut sole, &mut partner)?;
     ingest_baseline_entity_feeds(&mut sole, &mut partner)?;
+
+    // Exercise the shipped domain-agnostic `norn_cell::combined_view` library read path directly.
+    let _lib_report = verify_library_combined_view_report(&sole, &partner)?;
 
     let cell_view = CombinedManagementView {
         view_kind: "combined_management_view",

@@ -1,0 +1,51 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_matches_cost.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A costed commercial KPI rollup must match its linked UnitCost's SKU, currency, and cost reference.",
+  "namespace": "supply",
+  "payload": {
+    "condition": "self.cost_record != null",
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_matches_cost",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A costed commercial KPI rollup must match its linked UnitCost's SKU, currency, and cost reference.",
+    "response": {
+      "expression": "((self.sku_id == self.cost_record.sku_id) and (self.currency == self.cost_record.currency)) and ((self.costed_ref ?? '') == self.cost_record.cost_ref)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_matches_cost.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
