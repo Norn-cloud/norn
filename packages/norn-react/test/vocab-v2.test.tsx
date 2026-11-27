@@ -1538,6 +1538,8 @@ describe("Capabilities parity and zero-Radix invariant", () => {
     expect(referencesRecordVersion('({ 10.: input })["10."].recordVersion')).toBe(true)
     expect(referencesRecordVersion('({ "v1.00": input })[`v${1.00}`].recordVersion')).toBe(true)
     expect(referencesRecordVersion('({ "v2.00": input, v2: input.record })[`v${1.00 + 1}`].recordVersion')).toBe(true)
+    expect(referencesRecordVersion('({ "v700000000000000.2": input, "v700000000000000.3": input.record })[`v${0.1 * 7000000000000002}`].recordVersion')).toBe(true)
+    expect(referencesRecordVersion('({ "v2.0000000000000": input, v2: input.record })[`v${1.0000000000000 + 1}`].recordVersion')).toBe(true)
     expect(referencesRecordVersion('({ v512: input, v64: input.record })[`v${2 ** 3 ** 2}`].recordVersion')).toBe(true)
     expect(referencesRecordVersion("(null ?? !false ? input : input).recordVersion")).toBe(true)
     expect(referencesRecordVersion("`${input.recordVersion}`")).toBe(true)

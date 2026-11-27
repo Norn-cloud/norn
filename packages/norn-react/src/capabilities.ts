@@ -238,10 +238,12 @@ function tokenizeZen(expression: string): ZenToken[] {
   return tokens
 }
 
+type ExactDecimal = { readonly unscaled: bigint; readonly scale: number }
+
 type TaintValue =
   | { readonly kind: "root_input" }
   | { readonly kind: "string"; readonly value: string }
-  | { readonly kind: "number"; readonly raw: string; readonly num: number }
+  | { readonly kind: "number"; readonly raw: string; readonly dec: ExactDecimal | null }
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, TaintValue>> }
   | { readonly kind: "array"; readonly elements: readonly TaintValue[] }
   | { readonly kind: "union"; readonly members: readonly TaintValue[] }
@@ -249,6 +251,31 @@ type TaintValue =
 
 const OTHER: TaintValue = { kind: "other" }
 const ROOT_INPUT: TaintValue = { kind: "root_input" }
+const MAX_DECIMAL_SCALE = 28
+
+function parseExactDecimalLiteral(raw: string): ExactDecimal | null {
+  const cleaned = raw.replace(/_/g, "")
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(cleaned)) return null
+  const neg = cleaned.startsWith("-")
+  const unsigned = neg || cleaned.startsWith("+") ? cleaned.slice(1) : cleaned
+  const dot = unsigned.indexOf(".")
+  const intPart = dot < 0 ? unsigned : unsigned.slice(0, dot)
+  const fracPart = dot < 0 ? "" : unsigned.slice(dot + 1)
+  if (fracPart.length > MAX_DECIMAL_SCALE) return null
+  const digits = (intPart + fracPart).replace(/^0+(?=\d)/, "") || "0"
+  const mag = BigInt(digits)
+  return { unscaled: neg && mag !== 0n ? -mag : mag, scale: fracPart.length }
+}
+
+function formatExactDecimal(dec: ExactDecimal): string {
+  const neg = dec.unscaled < 0n
+  const digits = (neg ? -dec.unscaled : dec.unscaled).toString()
+  if (dec.scale === 0) return neg ? `-${digits}` : digits
+  const padded = digits.padStart(dec.scale + 1, "0")
+  const split = padded.length - dec.scale
+  const body = `${padded.slice(0, split)}.${padded.slice(split)}`
+  return neg ? `-${body}` : body
+}
 
 function unionTaint(left: TaintValue, right: TaintValue): TaintValue {
   if (left.kind === "other" && right.kind === "other") return OTHER
@@ -262,18 +289,26 @@ function mayBeRootInput(value: TaintValue): boolean {
   return false
 }
 
-function stringLiteralsOf(value: TaintValue): readonly string[] {
+function stringLiteralsOf(value: TaintValue): readonly string[] | null {
   if (value.kind === "string") return [value.value]
   if (value.kind === "number") return [value.raw]
-  if (value.kind === "union") return value.members.flatMap(stringLiteralsOf)
-  return []
+  if (value.kind === "union") {
+    const out: string[] = []
+    for (const member of value.members) {
+      const part = stringLiteralsOf(member)
+      if (part === null) return null
+      out.push(...part)
+    }
+    return out
+  }
+  return null
 }
 
 function templateStringsOf(value: TaintValue): readonly string[] | null {
   if (value.kind === "string") return [value.value]
   if (value.kind === "number") {
-    const cleaned = value.raw.replace(/_/g, "")
-    return [cleaned.endsWith(".") ? cleaned.slice(0, -1) : cleaned]
+    if (value.dec !== null) return [formatExactDecimal(value.dec)]
+    return null
   }
   if (value.kind === "union") {
     const out: string[] = []
@@ -317,7 +352,11 @@ function accessIndex(receiver: TaintValue, key: TaintValue): TaintValue {
   }
   if (receiver.kind === "object") {
     const keys = stringLiteralsOf(key)
-    if (keys.length === 0) return OTHER
+    if (keys === null) {
+      // Unknown/non-literal key: fail closed by unioning all fields of the object literal.
+      const values = Object.values(receiver.fields)
+      return values.length === 0 ? OTHER : values.reduce((acc, val) => unionTaint(acc, val))
+    }
     let acc: TaintValue | undefined
     for (const prop of keys) {
       if (!Object.hasOwn(receiver.fields, prop)) continue
@@ -353,23 +392,14 @@ export function referencesRecordVersion(expression: string): boolean {
     const isPunct = (token: ZenToken | undefined, value: string): boolean => token?.kind === "punct" && token.value === value
     const isIdent = (token: ZenToken | undefined, value: string): boolean => token?.kind === "ident" && token.value === value
 
-    const decimalScale = (raw: string): number => {
-      const cleaned = raw.replace(/_/g, "")
-      if (cleaned.includes("e") || cleaned.includes("E")) return -1
-      const dot = cleaned.indexOf(".")
-      return dot < 0 ? 0 : cleaned.length - dot - 1
-    }
-
-    const formatNumberResult = (n: number, scale: number): TaintValue => {
-      if (!Number.isFinite(n)) return OTHER
-      if (scale >= 0 && scale <= 12 && Number.isSafeInteger(Math.round(n * 10 ** scale))) {
-        return { kind: "number", raw: scale === 0 ? String(Math.round(n)) : n.toFixed(scale), num: n }
-      }
-      return { kind: "number", raw: String(n), num: n }
+    const makeExactNumber = (dec: ExactDecimal): TaintValue => {
+      if (dec.scale > MAX_DECIMAL_SCALE) return OTHER
+      const raw = formatExactDecimal(dec)
+      return { kind: "number", raw, dec }
     }
 
     // Exact port of vendor/zen/core/expression/src/parser/{standard.rs,constants.rs}:
-    // 10 or/||, 15 and/&&, 20 comparisons/in/not in, 25 .. range, 30 +/-, 60 */ / %, 70 ** (right), 80 ??.
+    // 10 or/||, 15 and/&&, 20 comparisons/in/not in, 30 +/-, 60 * / %, 70 ** (right), 80 ??.
     type BinOp = { readonly kind: string; readonly prec: number; readonly assoc: "left" | "right"; readonly consume: number }
 
     const peekBinaryOp = (): BinOp | null => {
@@ -388,7 +418,6 @@ export function referencesRecordVersion(expression: string): boolean {
       }
       if (isPunct(t0, "<") || isPunct(t0, ">") || isIdent(t0, "in")) return { kind: "cmp", prec: 20, assoc: "left", consume: 1 }
       if (isIdent(t0, "not") && isIdent(t1, "in")) return { kind: "cmp", prec: 20, assoc: "left", consume: 2 }
-      if (isPunct(t0, "..")) return { kind: "range", prec: 25, assoc: "left", consume: 1 }
       if (isPunct(t0, "+")) return { kind: "+", prec: 30, assoc: "left", consume: 1 }
       if (isPunct(t0, "-")) return { kind: "-", prec: 30, assoc: "left", consume: 1 }
       if (isPunct(t0, "*")) return { kind: "*", prec: 60, assoc: "left", consume: 1 }
@@ -404,24 +433,21 @@ export function referencesRecordVersion(expression: string): boolean {
       if (op === "+" && left.kind === "string" && right.kind === "string") {
         return { kind: "string", value: left.value + right.value }
       }
-      if (left.kind === "number" && right.kind === "number") {
+      if (left.kind === "number" && right.kind === "number" && left.dec !== null && right.dec !== null) {
+        const a = left.dec
+        const b = right.dec
         if (op === "+" || op === "-") {
-          const n = op === "+" ? left.num + right.num : left.num - right.num
-          const s1 = decimalScale(left.raw)
-          const s2 = decimalScale(right.raw)
-          return formatNumberResult(n, s1 >= 0 && s2 >= 0 ? Math.max(s1, s2) : -1)
+          const scale = Math.max(a.scale, b.scale)
+          const au = a.unscaled * 10n ** BigInt(scale - a.scale)
+          const bu = b.unscaled * 10n ** BigInt(scale - b.scale)
+          return makeExactNumber({ unscaled: op === "+" ? au + bu : au - bu, scale })
         }
         if (op === "*") {
-          const s1 = decimalScale(left.raw)
-          const s2 = decimalScale(right.raw)
-          return formatNumberResult(left.num * right.num, s1 >= 0 && s2 >= 0 ? s1 + s2 : -1)
+          return makeExactNumber({ unscaled: a.unscaled * b.unscaled, scale: a.scale + b.scale })
         }
-        if (op === "/") return formatNumberResult(left.num / right.num, -1)
-        if (op === "%") return formatNumberResult(left.num % right.num, -1)
-        if (op === "**") {
-          const s1 = decimalScale(left.raw)
-          const scale = s1 === 0 && Number.isInteger(right.num) && right.num >= 0 ? 0 : -1
-          return formatNumberResult(left.num ** right.num, scale)
+        if (op === "**" && b.scale === 0 && b.unscaled >= 0n && b.unscaled <= 64n) {
+          const exp = Number(b.unscaled)
+          return makeExactNumber({ unscaled: a.unscaled ** b.unscaled, scale: a.scale * exp })
         }
       }
       return OTHER
@@ -462,10 +488,9 @@ export function referencesRecordVersion(expression: string): boolean {
         const op = eat()!
         const opChar = op.kind === "punct" ? op.value : ""
         const operand = parseBinary(200)
-        if (operand.kind === "number") {
-          const n = opChar === "-" ? -operand.num : operand.num
-          const raw = opChar === "-" ? (operand.raw.startsWith("-") ? operand.raw.slice(1) : `-${operand.raw}`) : operand.raw
-          return Number.isFinite(n) ? { kind: "number", raw, num: n } : OTHER
+        if (operand.kind === "number" && operand.dec !== null) {
+          const unscaled = opChar === "-" ? -operand.dec.unscaled : operand.dec.unscaled
+          return makeExactNumber({ unscaled, scale: operand.dec.scale })
         }
         return OTHER
       }
@@ -482,7 +507,8 @@ export function referencesRecordVersion(expression: string): boolean {
             eat()
             const key = parseExpr()
             if (isPunct(peek(), "]")) eat()
-            if (mayBeRootInput(value) && stringLiteralsOf(key).includes("recordVersion")) found = true
+            const keyLiterals = stringLiteralsOf(key)
+            if (mayBeRootInput(value) && (keyLiterals === null || keyLiterals.includes("recordVersion"))) found = true
             value = accessIndex(value, key)
             continue
           }
@@ -500,7 +526,8 @@ export function referencesRecordVersion(expression: string): boolean {
           eat()
           const key = parseExpr()
           if (isPunct(peek(), "]")) eat()
-          if (mayBeRootInput(value) && stringLiteralsOf(key).includes("recordVersion")) found = true
+          const keyLiterals = stringLiteralsOf(key)
+          if (mayBeRootInput(value) && (keyLiterals === null || keyLiterals.includes("recordVersion"))) found = true
           value = accessIndex(value, key)
           continue
         }
@@ -525,33 +552,37 @@ export function referencesRecordVersion(expression: string): boolean {
       if (t0 === undefined) return OTHER
       if (isPunct(t0, "(")) {
         eat()
-        const startPos = pos
         const inner = parseExpr()
-        const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
-        if (isPunct(peek(), ")")) {
+        if (isPunct(peek(), "..")) {
+          // Zen interval `(a..b]` or `(a..b)` (vendor/zen parser.rs:888).
           eat()
-        } else if (sawRange && isPunct(peek(), "]")) {
-          eat()
+          parseExpr()
+          if (isPunct(peek(), "]") || isPunct(peek(), ")")) eat()
           return OTHER
         }
+        if (isPunct(peek(), ")")) eat()
         return inner
       }
       if (isPunct(t0, "[")) {
         eat()
         const elements: TaintValue[] = []
-        const startPos = pos
-        while (pos < tokens.length && !isPunct(peek(), "]") && !isPunct(peek(), ")")) {
-          elements.push(parseExpr())
-          if (isPunct(peek(), ",")) eat()
-          else break
+        if (!isPunct(peek(), "]")) {
+          const first = parseExpr()
+          if (isPunct(peek(), "..")) {
+            // Zen interval `[a..b]` or `[a..b)` (vendor/zen parser.rs:888).
+            eat()
+            parseExpr()
+            if (isPunct(peek(), "]") || isPunct(peek(), ")")) eat()
+            return OTHER
+          }
+          elements.push(first)
+          while (isPunct(peek(), ",")) {
+            eat()
+            if (isPunct(peek(), "]")) break
+            elements.push(parseExpr())
+          }
         }
-        const sawRange = tokens.slice(startPos, pos).some((tok) => tok.kind === "punct" && tok.value === "..")
-        if (isPunct(peek(), "]")) {
-          eat()
-        } else if (sawRange && isPunct(peek(), ")")) {
-          eat()
-          return OTHER
-        }
+        if (isPunct(peek(), "]")) eat()
         return { kind: "array", elements }
       }
       if (isPunct(t0, "{")) {
@@ -567,9 +598,12 @@ export function referencesRecordVersion(expression: string): boolean {
             if (isPunct(peek(), ":")) {
               eat()
               const fieldVal = parseExpr()
-              for (const keyName of stringLiteralsOf(computedKey)) {
-                if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
-                  fields[keyName] = fieldVal
+              const keys = stringLiteralsOf(computedKey)
+              if (keys !== null) {
+                for (const keyName of keys) {
+                  if (keyName !== "__proto__" && keyName !== "constructor" && keyName !== "prototype") {
+                    fields[keyName] = fieldVal
+                  }
                 }
               }
             }
@@ -627,8 +661,7 @@ export function referencesRecordVersion(expression: string): boolean {
       }
       if (t0.kind === "number") {
         eat()
-        const num = Number(t0.value.replace(/_/g, ""))
-        return { kind: "number", raw: t0.value, num }
+        return { kind: "number", raw: t0.value, dec: parseExactDecimalLiteral(t0.value) }
       }
       if (t0.kind === "ident") {
         eat()
