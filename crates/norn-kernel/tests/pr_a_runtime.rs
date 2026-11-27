@@ -421,7 +421,7 @@ fn approved_release_refuses_clock_deriving_action_while_prepare_exposes_writes()
     let norn_kernel::Prepared::Commit(intent) = prepared else {
         panic!("expected Prepared::Commit, got: {prepared:?}");
     };
-    assert!(!intent.writes.is_empty());
+    assert_ne!(intent.writes, [] as [norn_kernel::FactWrite; 0]);
 
     // Committing under an approved intent at a later clock refuses fail-closed.
     let mut approved_call = call(

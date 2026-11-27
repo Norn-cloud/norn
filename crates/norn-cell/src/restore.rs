@@ -212,6 +212,12 @@ impl CellStore<NativeEngine> {
                     command.command.generation.to_string()
                 ],
             )?;
+            crate::outbox_ledger::record_restore_fence(
+                &store.conn,
+                &command.command.command_id,
+                command.command.generation,
+                ledger_head.commits,
+            )?;
         }
         // Close checkpoints any WAL before moving the database; staging owns
         // every sidecar and removes them on all failure paths.
