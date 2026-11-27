@@ -133,7 +133,7 @@ export function DecisionsPage() {
   return (
     <div className="grid max-w-4xl gap-6">
       <PageHeader title="Inbox" description="Decisions your flows wait on you to make, soonest deadline first."
-        meta={page && <span className="tabular-nums" aria-live="polite">{page.total === 0 ? "None waiting" : `${badgeText(page)} waiting on you`}</span>}
+        meta={page && typeof page.total === "number" && <span className="tabular-nums" aria-live="polite">{page.total === 0 ? "None waiting" : `${badgeText(page)} waiting on you`}</span>}
         actions={<>
           <Button asChild variant="outline" size="sm">
             <Link to="/rules" search={{ view: "held" } as never}>

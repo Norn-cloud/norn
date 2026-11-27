@@ -5,6 +5,7 @@ import { Database } from "lucide-react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { avatarIndex, Initials, initialsOf, ListRow, RowList, TypeDisc } from "../src/components/system/list-row"
 import { Panel, Well } from "../src/components/system/panel"
+import { PropRow, Props } from "../src/components/system/props"
 import { SourceTag } from "../src/components/system/source-tag"
 import { Dot, StatusDot } from "../src/components/system/status-dot"
 import { TableCard } from "../src/components/system/table-card"
@@ -138,6 +139,34 @@ test("the rules summary reads only the server: a rule the inbox lists is holding
   expect(rulesSummary(laws, [], { count: 0, approximate: true }).clear).toBe(false)
   const unread = rulesSummary(laws, undefined, undefined)
   expect(unread).toEqual({ rules: unread.rules, holding: 0, partial: false, clear: false })
+})
+
+test("Props renders a quiet key/value well at weight 400 with logical alignment, isolated mono values, and no frame inside a Well", () => {
+  const standalone = renderToStaticMarkup(
+    <Props aria-label="Account details" items={[
+      { label: "Provider", value: "Demo" },
+      { label: "Account id", value: "acc_123", mono: true },
+      { label: "Version", value: 4, tabular: true },
+    ]} />,
+  )
+  expect(standalone).toMatch(/^<dl[^>]*data-slot="props"/)
+  expect(standalone).toContain('aria-label="Account details"')
+  expect(standalone).toContain('data-slot="props-row"')
+  expect(standalone).toContain('data-slot="props-key"')
+  expect(standalone).toContain('data-slot="props-value"')
+  expect(standalone).toContain("sm:w-32")
+  expect(standalone).toContain("min-h-10")
+  expect(standalone).toContain("px-2.5 py-2.5")
+  expect(standalone).toContain('<bdi dir="ltr" class="font-mono text-meta tracking-[-0.01em]">acc_123</bdi>')
+  expect(standalone).toContain("tabular-nums")
+  expect(standalone).not.toMatch(/font-(medium|semibold|bold)/)
+  expect(standalone).not.toMatch(/\b(text-left|text-right|ml-|mr-|pl-|pr-)/)
+
+  const inWell = renderToStaticMarkup(
+    <Panel label="Facts"><Well><Props><PropRow label="Status">Active</PropRow></Props></Well></Panel>,
+  )
+  expect(inWell).toContain("[[data-slot=well]_&amp;]:border-0")
+  expect(inWell).toContain("[[data-slot=well]_&amp;]:bg-transparent")
 })
 
 test("every avatar pair reads at 4.5:1 or more in both schemes (DESIGN.md 4.4, 16.2)", () => {
