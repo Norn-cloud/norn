@@ -938,7 +938,7 @@ mod tests {
         let item_type: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
             "name": "test.Item",
             "properties": [
-                { "id": "name", "type": { "kind": "string" } }
+                { "id": "name", "type": { "kind": "text" } }
             ]
         }))?;
         let model = Model::new(&SqliteDdlInput {
