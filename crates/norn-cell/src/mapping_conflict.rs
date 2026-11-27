@@ -49,6 +49,12 @@ fn content(bundle: &MappingBundle) -> Result<String, CellError> {
     let version_kind = bundle.raw.get("version_kind").filter(|v| {
         !v.is_null() && v.as_str() != Some(norn_ir::VersionKind::Lexicographical.as_str())
     });
+    let canonical_version = version_kind
+        .and_then(RuntimeValue::as_str)
+        .and_then(norn_ir::VersionKind::parse_wire)
+        .and_then(|vk| norn_ir::SourceVersion::parse(vk, source_version).ok())
+        .map(|sv| sv.canonical_id());
+    let source_version = canonical_version.as_deref().unwrap_or(source_version);
     if feed_mode.is_none() && version_kind.is_none() {
         return Ok(norn_ir::canonical::domain_hash_hex(
             b"norn.source.content.v1\0",

@@ -83,6 +83,7 @@ test("Norn.connector compiles pull mode, versionKind, idDecimal, and null initia
   try {
     const file = join(dir, "pull.source.ts")
     writeFileSync(file, `
+      import { Norn } from "@norn/authoring"
       export const conn = Norn.connector({
         id: "private.erp", title: "ERP", version: "0.1.0",
         auth: { kind: "none" }, resources: [], mappings: [],

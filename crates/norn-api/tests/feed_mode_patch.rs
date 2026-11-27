@@ -1109,6 +1109,15 @@ mod tests {
             ingest_patch_row(&host, &uint_profile, &row_99, T0.saturating_add(3)),
             MappingOutcome::Landed
         );
+        // Replaying the identical payload with equivalent spelling `"099"` is
+        // idempotent and must NOT quarantine.
+        let mut row_099_same = row_99.clone();
+        row_099_same["seq"] = json!("099");
+        assert_eq!(
+            ingest_patch_row(&host, &uint_profile, &row_099_same, T0.saturating_add(4)),
+            MappingOutcome::Landed,
+            "equivalent Uint64 spelling 099 with identical payload must replay idempotently"
+        );
         let row_099_diff = json!({
             "name": "WLB-CANON-1", "seq": "099",
             "modified": "2026-11-12 21:00:00.000000",
@@ -1118,7 +1127,7 @@ mod tests {
             "custodian_ref": "demo/party/custodian", "stock_cost": 100.0,
             "cost_currency": "USD", "valuation_method": "moving_average"
         });
-        let clash = ingest_patch_row(&host, &uint_profile, &row_099_diff, T0.saturating_add(4));
+        let clash = ingest_patch_row(&host, &uint_profile, &row_099_diff, T0.saturating_add(5));
         assert!(
             matches!(clash, MappingOutcome::Quarantined(_)),
             "equivalent Uint64 spellings 99 vs 099 with differing payloads must conflict: {clash:?}"
