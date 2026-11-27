@@ -656,7 +656,8 @@ with open(durations, encoding="utf-8") as table_file:
     table = json.load(table_file)
 weights = table["task_seconds"]
 # Shared compile costs amortized once per bundle containing any task in the group:
-# - Test: workspace test binaries (test/* and phase/test-shards).
+# - Test: workspace test binaries (test/*, phase/test-shards, and phase/guards whose drop-scenario
+#   check builds --workspace --all-targets).
 # - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package (charged only for
 #   actual WASM consumers). integration-clients shares the WasmPkg coalescing/pruning group
 #   so it co-locates with integration-authoring and reuses target/debug/{norn,norn-dev-host},
@@ -666,7 +667,7 @@ wasm_compile_seconds = table["wasm_pkg_seconds"]
 wasm_compile_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
 wasm_group_tasks = wasm_compile_tasks | {"phase/integration-clients"}
 def compiles_tests(task):
-    return task.startswith("test/") or task == "phase/test-shards"
+    return task.startswith("test/") or task in {"phase/test-shards", "phase/guards"}
 def in_wasm_group(task):
     return task in wasm_group_tasks
 def compiles_wasm_pkg(task):
@@ -846,10 +847,12 @@ browser = ["browser"] if "norn-checker-wasm" in reached else []
 duckdb = ["duckdb"] if "norn-cell" in reached else []
 # The Rivet host's own workspace builds these root crates by path; its own files plan in full.
 rivet = ["rivet"] if reached & {"norn-api", "norn-cell", "norn-cell-do"} else []
+# Rustdoc catches broken intra-doc links before the merge queue whenever any Rust crate is reached.
+doc = ["doc"] if reached else []
 # A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
 # would not narrow a shard, and the guard's own suite runs in the guards phase (#1270).
 rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
-done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb + rivet,
+done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + doc + browser + duckdb + rivet,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})
 PY
 )

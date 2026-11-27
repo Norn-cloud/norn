@@ -151,7 +151,9 @@ struct Task {
 
 impl Task {
     fn build_group(self, all_packages: bool) -> BuildGroup {
-        if self.name.starts_with("test/") || (all_packages && self.name == "phase/test-shards") {
+        if self.name.starts_with("test/")
+            || (all_packages && matches!(self.name, "phase/test-shards" | "phase/guards"))
+        {
             BuildGroup::Test
         } else if matches!(
             self.name,
@@ -645,15 +647,15 @@ mod tests {
     // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-1", "test/heavy-5", "phase/clippy"]}, {"id": "b2", "tasks": ["phase/browser", "phase/rivet", "phase/doc"]}, {"id": "b3", "tasks": ["phase/duckdb", "phase/features", "phase/integration-clients"]}, {"id": "b4", "tasks": ["phase/integration-wasm", "phase/guards", "phase/doctest"]}, {"id": "b5", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-6", "test/heavy-4", "phase/test-shards", "phase/wasm"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["phase/integration-authoring", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-3", "test/heavy-1", "phase/test-shards", "phase/doctest"]}, {"id": "b2", "tasks": ["phase/browser", "phase/rivet", "phase/integration-clients"]}, {"id": "b3", "tasks": ["phase/duckdb", "phase/features", "phase/wasm"]}, {"id": "b4", "tasks": ["phase/integration-wasm", "test/rest-1", "test/heavy-4", "phase/clippy"]}, {"id": "b5", "tasks": ["phase/guards", "test/rest-3", "test/heavy-6", "test/heavy-5", "phase/doc"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["test/rest-1", "phase/clippy", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/guards", "phase/rivet"]}]}"#,
+            r#"{"mode": "affected", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy", "doc", "rivet"], "packages": "norn-api norn-cell-do norn-cli", "rest_shards": 1, "reason": "changed: norn-api", "bundle": [{"id": "b0", "tasks": ["phase/guards", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-1", "phase/doc"]}, {"id": "b2", "tasks": ["phase/rivet", "phase/clippy"]}]}"#,
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/duckdb", "phase/clippy"]}, {"id": "b2", "tasks": ["test/rest-3", "test/heavy-3", "test/heavy-4"]}, {"id": "b3", "tasks": ["test/rest-1", "test/heavy-2", "test/heavy-6", "test/heavy-5"]}, {"id": "b4", "tasks": ["phase/guards", "phase/rivet"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "doc", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "phase/provenance"]}, {"id": "b1", "tasks": ["phase/duckdb", "phase/doc"]}, {"id": "b2", "tasks": ["phase/guards", "phase/clippy"]}, {"id": "b3", "tasks": ["test/rest-3", "test/heavy-4"]}, {"id": "b4", "tasks": ["test/rest-1", "test/heavy-3", "test/heavy-6", "test/heavy-5"]}, {"id": "b5", "tasks": ["test/heavy-2", "phase/rivet"]}]}"#,
             "\n"
         ),
     ];
@@ -842,6 +844,7 @@ mod tests {
                 "phase/browser",
                 "test/rest-2",
                 "phase/test-shards",
+                "phase/guards",
                 "phase/integration-wasm",
                 "test/rest-1",
                 "phase/doc",
@@ -858,6 +861,7 @@ mod tests {
                 [
                     ("test/rest-2", false),
                     ("phase/test-shards", false),
+                    ("phase/guards", false),
                     ("test/rest-1", false),
                     ("phase/browser", true),
                     ("phase/integration-wasm", false),
@@ -878,6 +882,7 @@ mod tests {
                     ("phase/integration-clients", false),
                     ("phase/clippy", true),
                     ("phase/test-shards", true),
+                    ("phase/guards", true),
                     ("phase/doc", true),
                 ],
             ),
