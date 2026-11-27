@@ -3,12 +3,6 @@
 //! - ACTION-SLICE-DERIVE-1 (post-slice `derive` on upsert and transition)
 //! - TRANSITION-PATCH-1 (`fire_transition` `setFields` atomic update)
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "integration test fixture helpers"
-)]
-
 use std::collections::BTreeMap;
 
 use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
@@ -43,6 +37,7 @@ impl norn_kernel::ActionAuthorizer for Allow {
     }
 }
 
+#[allow(clippy::unwrap_used, reason = "integration test fixture helper")]
 fn payout_types() -> Vec<ObjectTypeDef> {
     let mut types: Vec<ObjectTypeDef> = serde_json::from_value(json!([{
         "name": "test.Payout",
@@ -99,6 +94,7 @@ fn call<'a>(
     }
 }
 
+#[allow(clippy::unwrap_used, reason = "integration test fixture helper")]
 fn create_payout_action() -> ActionRoot {
     serde_json::from_value(json!({
         "actionId": "test.payout.create",
@@ -136,6 +132,7 @@ fn create_payout_action() -> ActionRoot {
     .unwrap()
 }
 
+#[allow(clippy::unwrap_used, reason = "integration test fixture helper")]
 fn fail_payout_action() -> ActionRoot {
     serde_json::from_value(json!({
         "actionId": "test.payout.fail",
@@ -163,6 +160,7 @@ fn fail_payout_action() -> ActionRoot {
     .unwrap()
 }
 
+#[allow(clippy::unwrap_used, reason = "integration test fixture helper")]
 fn retry_payout_action() -> ActionRoot {
     serde_json::from_value(json!({
         "actionId": "test.payout.retry",
@@ -203,6 +201,7 @@ fn retry_payout_action() -> ActionRoot {
     .unwrap()
 }
 
+#[allow(clippy::unwrap_used, reason = "integration test fixture helper")]
 fn tamper_payslip_action() -> ActionRoot {
     serde_json::from_value(json!({
         "actionId": "test.payout.tamper_payslip",
@@ -232,6 +231,7 @@ fn tamper_payslip_action() -> ActionRoot {
     .unwrap()
 }
 
+#[allow(clippy::unwrap_used, reason = "integration test fixture helper")]
 fn seed_payout(cell: &mut Cell, catalog: &TypeCatalog<'_>, create_action: &ActionRoot) {
     let raw_create: JsonObject =
         serde_json::from_value(json!({ "id": "po_1", "payslip_id": "ps_1" })).unwrap();

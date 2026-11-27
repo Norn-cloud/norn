@@ -4,14 +4,13 @@
 //! - TRANSITION-PATCH-1 (`fire_transition` `setFields`)
 //! - ORIGIN-DATAFLOW-1 (`origin` and `immutableAfterCreate`, including subtype tightening)
 
-#![allow(clippy::expect_used, reason = "integration test fixture helpers")]
-
 use std::collections::BTreeSet;
 
 use norn_checker::{EntityArtifactSetContext, check_artifact_set};
 use norn_ir::{ArtifactEnvelope, PropertyTypeName};
 use serde_json::{Value, json};
 
+#[allow(clippy::expect_used, reason = "integration test fixture helper")]
 fn envelope(kind: &str, artifact_id: &str, name: &str, payload: &Value) -> ArtifactEnvelope {
     serde_json::from_value(json!({
         "irVersion": "0.1",

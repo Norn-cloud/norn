@@ -825,10 +825,8 @@ pub fn first_slice_derivation_index(action: &norn_ir::ActionRoot) -> Option<usiz
     )
 }
 
-/// ORIGIN-DATAFLOW-1: input fields whose final value is derived exclusively
-/// from server-trusted roots (`actor`, `clock`, `slice`, `aggregates`,
-/// literals, or earlier trusted server-derived fields) with `inputRequired: false`,
-/// never reading any caller-controlled input field (including self-passthrough).
+/// ORIGIN-DATAFLOW-1: input fields derived solely from server roots (`actor`,
+/// `clock`, `slice`, `aggregates`, literals) with `inputRequired: false`.
 #[must_use]
 pub fn trusted_server_derived_fields(action: &norn_ir::ActionRoot) -> BTreeSet<String> {
     let all_input_fields: BTreeSet<&str> = action
@@ -840,7 +838,11 @@ pub fn trusted_server_derived_fields(action: &norn_ir::ActionRoot) -> BTreeSet<S
     let has_aggregates = !action.aggregates.is_empty();
     let mut trusted = BTreeSet::new();
     for step in &action.derive {
-        if step.input_required {
+        if action
+            .derive
+            .iter()
+            .any(|other| other.field == step.field && other.input_required)
+        {
             trusted.remove(&step.field);
             continue;
         }
