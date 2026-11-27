@@ -701,6 +701,55 @@ fn plan_create_projected_slice<H: CellHost + ?Sized>(
     Some(per_entry)
 }
 
+/// Exact non-computed `self.<prop>` operands read by retained governing laws on
+/// `target` for a closed `Upsert` patch. Fails closed (`None`) on forward or
+/// inverse link laws targeting `target`, link reads on `target`, whole-root
+/// reads, element paths, or computed fields.
+pub(super) fn collect_patch_law_property_reads(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    target: &FactKey,
+    properties: &mut BTreeSet<String>,
+) -> Option<()> {
+    let index = crate::governing_laws::link_law_index(catalog).ok()?;
+    if index.forward.iter().any(|(_, _, declared)| {
+        crate::governing_laws::reaches(catalog, &target.object_type, declared)
+    }) || index
+        .inverse
+        .iter()
+        .any(|(_, source, _)| crate::governing_laws::reaches(catalog, &target.object_type, source))
+    {
+        return None;
+    }
+    for artifact in catalog.governing_laws(&target.object_type).ok()? {
+        let law = crate::governing_laws::decode(catalog, artifact).ok()?;
+        if !crate::governing_laws::law_link_reads(catalog, &target.object_type, law)
+            .ok()?
+            .is_empty()
+        {
+            return None;
+        }
+        for text in crate::governing_laws::law_expressions(law) {
+            if norn_expr::expression_reads(text, "self").ok()?.whole_root
+                || !norn_expr::expression_element_paths(text, "self")
+                    .ok()?
+                    .is_empty()
+            {
+                return None;
+            }
+            for path in norn_expr::expression_read_paths(text, "self").ok()? {
+                let [property] = path.as_slice() else {
+                    return None;
+                };
+                if !non_computed_property(catalog, &target.object_type, property) {
+                    return None;
+                }
+                properties.insert(property.clone());
+            }
+        }
+    }
+    Some(())
+}
+
 /// Bind each proved `CreateOnly` slice alias's read properties onto its exact
 /// canonical `FactExpectation` in `references`, merging duplicate aliases and
 /// refusing if any reference is unaccounted for.

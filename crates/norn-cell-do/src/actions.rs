@@ -35,7 +35,7 @@ use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AttrValue, AuthzSchema, Binding, CapabilityGrant, Pdp,
     PdpActionAuthorizer, PdpDecision, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
-use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
+use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial, ActionPolicyReadFootprint};
 use norn_projections::{CedarAttribute, CedarPrincipalAttribute};
 
 use crate::policy::{Caller, scope_key};
@@ -58,8 +58,10 @@ pub struct ActionPolicy {
     /// The projected scalar attributes of each resource type
     /// (ACTION-RESOURCE-1): the target values the PDP sees.
     resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
-    /// Whether the rules read the principal's `id`.
-    principal_id: bool,
+    /// The principal attributes the compiled rules read, by name and Cedar type.
+    principal_attributes: BTreeMap<String, CedarPrincipalAttribute>,
+    /// Exact stored-resource read footprint per callable action.
+    read_footprints: BTreeMap<String, ActionPolicyReadFootprint>,
     /// PRINCIPAL-INPUT-1 (#1091): this revision's principal input resolver.
     principal: crate::principal_inputs::PrincipalResolver,
     /// ADMIT-CACHE-1 (#1533): each caller's PDP (the base rules plus that
@@ -207,12 +209,81 @@ fn narrowed(
     Ok(rules)
 }
 
+/// Compute the exact target-resource read footprint for each callable action
+/// from the narrowed access rules; any non-role, non-resource condition fails
+/// closed to [`ActionPolicyReadFootprint::Conservative`].
+fn compute_read_footprints(
+    callable: &BTreeSet<String>,
+    rules: &[AccessRule],
+) -> BTreeMap<String, ActionPolicyReadFootprint> {
+    let mut footprints: BTreeMap<String, Option<BTreeSet<String>>> = callable
+        .iter()
+        .map(|action_id| (action_id.clone(), Some(BTreeSet::new())))
+        .collect();
+    for rule in rules {
+        let mut rule_attrs: Option<BTreeSet<String>> = Some(BTreeSet::new());
+        for condition in &rule.all_of {
+            match condition {
+                AccessCondition::Role(_) => {}
+                AccessCondition::Resource(resource) => {
+                    if let Some(attrs) = rule_attrs.as_mut() {
+                        attrs.insert(resource.name.clone());
+                    }
+                }
+                AccessCondition::Rel(_)
+                | AccessCondition::Context(_)
+                | AccessCondition::Marking(_)
+                | AccessCondition::Entitlement(_) => {
+                    rule_attrs = None;
+                    break;
+                }
+            }
+        }
+        for action_id in &rule.actions {
+            let Some(slot) = footprints.get_mut(action_id) else {
+                continue;
+            };
+            match (slot.as_mut(), &rule_attrs) {
+                (Some(existing), Some(added)) => existing.extend(added.iter().cloned()),
+                _ => *slot = None,
+            }
+        }
+    }
+    footprints
+        .into_iter()
+        .map(|(action_id, attrs)| {
+            let footprint = match attrs {
+                Some(target_attributes) => ActionPolicyReadFootprint::Exact { target_attributes },
+                None => ActionPolicyReadFootprint::Conservative,
+            };
+            (action_id, footprint)
+        })
+        .collect()
+}
+
+fn attr_matches_kind(value: &AttrValue, kind: CedarPrincipalAttribute) -> bool {
+    match (kind, value) {
+        (CedarPrincipalAttribute::Bool, AttrValue::Bool(_))
+        | (CedarPrincipalAttribute::Long, AttrValue::Long(_))
+        | (CedarPrincipalAttribute::String, AttrValue::String(_)) => true,
+        (CedarPrincipalAttribute::BoolSet, AttrValue::Set(items)) => {
+            items.iter().all(|item| matches!(item, AttrValue::Bool(_)))
+        }
+        (CedarPrincipalAttribute::LongSet, AttrValue::Set(items)) => {
+            items.iter().all(|item| matches!(item, AttrValue::Long(_)))
+        }
+        (CedarPrincipalAttribute::StringSet, AttrValue::Set(items)) => items
+            .iter()
+            .all(|item| matches!(item, AttrValue::String(_))),
+        _ => false,
+    }
+}
+
 /// The tenant's rules compiled against the projected schema
 /// (ACTION-RESOURCE-1).
 struct Compiled {
     base: Pdp,
     resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
-    principal_id: bool,
     /// The principal attributes the rules read, as inferred.
     principal_attributes: BTreeMap<String, CedarPrincipalAttribute>,
 }
@@ -236,11 +307,12 @@ fn compiled(
     let plain = norn_projections::project_cedar_schema(types, interfaces, roots);
     let principal = authz::infer_principal_attributes(std::slice::from_ref(&policy), &plain)
         .map_err(|error| SeedError(format!("action policy: {error}")))?;
-    if let Some((name, _)) = principal.iter().find(|(name, kind)| {
-        name.as_str() != PRINCIPAL_ID_ATTRIBUTE || !matches!(kind, CedarPrincipalAttribute::String)
-    }) {
+    if principal
+        .get(PRINCIPAL_ID_ATTRIBUTE)
+        .is_some_and(|kind| !matches!(kind, CedarPrincipalAttribute::String))
+    {
         return Err(SeedError(format!(
-            "action policy: principal attribute {name:?} is not one this host verifies; only `{PRINCIPAL_ID_ATTRIBUTE}` (the caller's subject id, a string) is"
+            "action policy: principal attribute `{PRINCIPAL_ID_ATTRIBUTE}` must be a string"
         )));
     }
     let projection = norn_projections::project_cedar_schema_with_principal_attributes(
@@ -272,9 +344,40 @@ fn compiled(
     Ok(Compiled {
         base,
         resource_attributes,
-        principal_id: principal.contains_key(PRINCIPAL_ID_ATTRIBUTE),
         principal_attributes: principal,
     })
+}
+
+fn governed_actions<'a>(
+    actions: &'a [(&'a ArtifactEnvelope, ActionRoot)],
+    policies: &BTreeMap<&'a str, (&'a str, AccessIr)>,
+) -> BTreeMap<&'a str, BTreeSet<&'a str>> {
+    let mut governs: BTreeMap<&'a str, BTreeSet<&'a str>> = BTreeMap::new();
+    for (envelope, action) in actions {
+        let Some(reference) = &action.access else {
+            continue;
+        };
+        let Some((version, _)) = policies.get(reference.artifact_id.as_str()) else {
+            continue;
+        };
+        let pinned = reference.version.as_deref().or_else(|| {
+            envelope
+                .dependencies
+                .iter()
+                .find(|dependency| {
+                    dependency.artifact_id == reference.artifact_id && dependency.required
+                })
+                .and_then(|dependency| dependency.version.as_deref())
+        });
+        if pinned.is_some_and(|pinned| pinned != *version) {
+            continue;
+        }
+        governs
+            .entry(reference.artifact_id.as_str())
+            .or_default()
+            .insert(action.action_id.as_str());
+    }
+    governs
 }
 
 impl ActionPolicy {
@@ -320,40 +423,14 @@ impl ActionPolicy {
                 | ArtifactKind::Model => {}
             }
         }
-        // Which policy governs each action: the one its `access` ref names, at
-        // the version the ref pins or, failing that, the version its required
-        // dependency on that policy pins (as the checker resolves it).
-        let mut governs: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        for (envelope, action) in &actions {
-            let Some(reference) = &action.access else {
-                continue;
-            };
-            let Some((version, _)) = policies.get(reference.artifact_id.as_str()) else {
-                continue;
-            };
-            let pinned = reference.version.as_deref().or_else(|| {
-                envelope
-                    .dependencies
-                    .iter()
-                    .find(|dependency| {
-                        dependency.artifact_id == reference.artifact_id && dependency.required
-                    })
-                    .and_then(|dependency| dependency.version.as_deref())
-            });
-            if pinned.is_some_and(|pinned| pinned != *version) {
-                continue;
-            }
-            governs
-                .entry(reference.artifact_id.as_str())
-                .or_default()
-                .insert(action.action_id.as_str());
-        }
+        let governs = governed_actions(&actions, &policies);
         let rules = narrowed(&governs, &policies)?;
         let callable: BTreeSet<String> = rules
             .iter()
             .flat_map(|rule| rule.actions.iter().cloned())
             .collect();
         let conditional = conditional_rules(&rules);
+        let read_footprints = compute_read_footprints(&callable, &rules);
         let targets = callable_targets(actions.iter().map(|(_, action)| action), &callable);
         if callable.is_empty() {
             return Ok(None);
@@ -364,7 +441,6 @@ impl ActionPolicy {
         let Compiled {
             base,
             resource_attributes,
-            principal_id,
             principal_attributes,
         } = compiled(&types, &interfaces, &roots, rules)?;
         let key = scope_key(scope);
@@ -378,7 +454,8 @@ impl ActionPolicy {
             callable,
             key,
             resource_attributes,
-            principal_id,
+            principal_attributes,
+            read_footprints,
             principal,
             callers: std::sync::Mutex::new(BTreeMap::new()),
             targets,
@@ -502,6 +579,34 @@ impl ActionPolicy {
         self.callable.contains(action_id)
     }
 
+    /// Stored-resource read footprint for `action_id`; uncallable actions stay
+    /// conservative.
+    #[must_use]
+    pub fn read_footprint(&self, action_id: &str) -> ActionPolicyReadFootprint {
+        self.read_footprints
+            .get(action_id)
+            .cloned()
+            .unwrap_or(ActionPolicyReadFootprint::Conservative)
+    }
+
+    /// Materialize per-request verified principal attributes for Cedar outside
+    /// the cached per-caller PDP. `id` always comes from `caller.subject_id`;
+    /// other inferred attributes come only from `caller.attributes` when their
+    /// runtime variant matches the inferred Cedar type.
+    fn materialize_principal_attributes(&self, caller: &Caller) -> BTreeMap<String, AttrValue> {
+        let mut attrs = BTreeMap::new();
+        for (name, kind) in &self.principal_attributes {
+            if name == PRINCIPAL_ID_ATTRIBUTE && matches!(kind, CedarPrincipalAttribute::String) {
+                attrs.insert(name.clone(), AttrValue::String(caller.subject_id.clone()));
+            } else if let Some(value) = caller.attributes.get(name)
+                && attr_matches_kind(value, *kind)
+            {
+                attrs.insert(name.clone(), value.clone());
+            }
+        }
+        attrs
+    }
+
     /// Core 05 `AUTH-ATTENUATE-1`: verify through this revision's scoped Cedar
     /// PDP that the verified principal `caller` holds an explicit grant to
     /// invoke `action_id` on every concrete type in `matched_types` (the
@@ -535,14 +640,7 @@ impl ActionPolicy {
         let pdp = self
             .caller_pdp(&caller.subject_id, caller.actor_kind, actor_kind)
             .ok()?;
-        let principal_attributes = if self.principal_id {
-            BTreeMap::from([(
-                PRINCIPAL_ID_ATTRIBUTE.to_owned(),
-                AttrValue::String(caller.subject_id.clone()),
-            )])
-        } else {
-            BTreeMap::new()
-        };
+        let principal_attributes = self.materialize_principal_attributes(caller);
         let mut parent_grant_ids = BTreeSet::new();
         for resource_type in matched_types {
             let principal = VerifiedPrincipal::new(
@@ -638,14 +736,7 @@ impl ActionPolicy {
         let pdp = self.caller_pdp(&caller.subject_id, caller.actor_kind, actor_kind)?;
         let key = self.key.clone();
         let roles = caller.roles.clone();
-        let principal_attributes = if self.principal_id {
-            BTreeMap::from([(
-                PRINCIPAL_ID_ATTRIBUTE.to_owned(),
-                AttrValue::String(caller.subject_id.clone()),
-            )])
-        } else {
-            BTreeMap::new()
-        };
+        let principal_attributes = self.materialize_principal_attributes(caller);
         PdpActionAuthorizer::new(pdp, move |call: &ActionAuthzRequest<'_>| {
             let principal = VerifiedPrincipal::new(
                 call.actor,

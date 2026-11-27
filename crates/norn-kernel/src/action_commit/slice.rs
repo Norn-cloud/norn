@@ -17,22 +17,22 @@ use super::host_failure;
 use super::input::action_expression_context;
 use super::receipt::SliceReadMode;
 use super::types::{
-    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPreconditionOutcome,
-    ActionPreconditionOutcomeRef, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
-    ActionReferenceReads, ActionRefusal,
+    ActionAuthorizer, ActionCall, ActionParameterPin, ActionPolicyReadFootprint,
+    ActionPreconditionOutcome, ActionPreconditionOutcomeRef, ActionReadAuthzRequest,
+    ActionReadTypeAuthzRequest, ActionReferenceReads, ActionRefusal,
 };
 
 fn reference_action(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
-    authorizer: &dyn ActionAuthorizer,
+    policy_footprint: &ActionPolicyReadFootprint,
     target: &FactKey,
 ) -> bool {
     // Closed creates use reference lineage plus exact proved property reads for
     // preconditions and `LAW-LINK-1` governing laws. Patches preserve their
-    // complete target while attributing exact expression operands. Unknown
-    // selectors, optional references, commands, aggregates and policy
-    // dependencies stay conservative.
+    // complete target while attributing exact expression and policy operands.
+    // Unknown selectors, optional references, commands, aggregates and opaque
+    // policy dependencies stay conservative.
     let Some(ActionEffectProgram::UpsertInputObject {
         object_kind,
         object_id_field,
@@ -42,9 +42,11 @@ fn reference_action(
     else {
         return false;
     };
+    let ActionPolicyReadFootprint::Exact { target_attributes } = policy_footprint else {
+        return false;
+    };
     let patch = matches!(write_mode, UpsertWriteMode::Upsert);
-    if !authorizer.supports_action_reference_lineage(action)
-        || !matches!(write_mode, UpsertWriteMode::CreateOnly | UpsertWriteMode::Upsert)
+    if !matches!(write_mode, UpsertWriteMode::CreateOnly | UpsertWriteMode::Upsert)
         || !action.commands.is_empty()
         // CREATE-WRITER-1: a writer reads complete slice values.
         || action.synchronous_rule.is_some()
@@ -58,7 +60,7 @@ fn reference_action(
                 || action.quantity_effect.is_some()
                 || !catalog.lifecycles(&target.object_type).is_empty()
                 || catalog.ancestry(&target.object_type).iter().any(|ty| ty.accounting_leg.is_some())
-                || patch_read_properties(catalog, action, target).is_none()))
+                || patch_read_properties(catalog, action, target, target_attributes).is_none()))
         || (!patch
             && super::receipt::create_slice_property_reads(catalog, action, target).is_none())
         || action.slice.iter().any(|entry| {
@@ -78,12 +80,29 @@ fn patch_read_properties(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
     target: &FactKey,
+    policy_target_attributes: &BTreeSet<String>,
 ) -> Option<Vec<String>> {
     let effective = catalog.effective_type(&target.object_type)?;
     let mut properties = BTreeSet::new();
+    for attr in policy_target_attributes {
+        let prop = effective.property(attr)?;
+        if prop.computed {
+            return None;
+        }
+        properties.insert(attr.clone());
+    }
     // Derivations run before the slice is loaded and consume only caller
     // input and earlier derived values. No stored values enter that phase.
     for expression in &action.preconditions {
+        if norn_expr::expression_reads(&expression.0, "slice")
+            .ok()?
+            .whole_root
+            || !norn_expr::expression_element_paths(&expression.0, "slice")
+                .ok()?
+                .is_empty()
+        {
+            return None;
+        }
         for path in norn_expr::expression_read_paths(&expression.0, "slice").ok()? {
             let [alias, property] = path.as_slice() else {
                 return None;
@@ -91,25 +110,37 @@ fn patch_read_properties(
             if !action.slice.iter().any(|entry| entry.name == *alias) {
                 return None;
             }
-            effective.property(property)?;
+            let prop = effective.property(property)?;
+            if prop.computed {
+                return None;
+            }
             properties.insert(property.clone());
         }
     }
-    // Admission also evaluates effective invariants against the final object.
-    // Their operands remain classified even when they are unrelated to an
-    // action's explicit preconditions or supplied by the caller this time.
+    // Admission evaluates effective invariants and retained governing laws
+    // against the post-state; their operands remain classified even when
+    // unrelated to explicit preconditions or caller inputs.
     for invariant in catalog.invariants(&target.object_type).ok()? {
-        for path in
-            norn_expr::expression_read_paths(invariant.invariant.expression.as_str(), "self")
+        let text = invariant.invariant.expression.as_str();
+        if norn_expr::expression_reads(text, "self").ok()?.whole_root
+            || !norn_expr::expression_element_paths(text, "self")
                 .ok()?
+                .is_empty()
         {
+            return None;
+        }
+        for path in norn_expr::expression_read_paths(text, "self").ok()? {
             let [property] = path.as_slice() else {
                 return None;
             };
-            effective.property(property)?;
+            let prop = effective.property(property)?;
+            if prop.computed {
+                return None;
+            }
             properties.insert(property.clone());
         }
     }
+    super::receipt::collect_patch_law_property_reads(catalog, target, &mut properties)?;
     for property in &effective.properties {
         if !property.computed
             && matches!(
@@ -128,12 +159,12 @@ fn patch_read_properties(
 pub(super) fn reference_read_proof<E, C, I>(
     catalog: &TypeCatalog<'_>,
     action: &ActionRoot,
-    authorizer: &dyn ActionAuthorizer,
+    policy_footprint: &ActionPolicyReadFootprint,
     commit: &CellCommit<E, C, I>,
     target: &FactKey,
     effective_input: &JsonObject,
 ) -> Option<ActionReferenceReads> {
-    if !reference_action(catalog, action, authorizer, target)
+    if !reference_action(catalog, action, policy_footprint, target)
         || !commit.effects.is_empty()
         || commit.consumes.is_some()
         || !commit.link_reads.is_empty()
@@ -169,7 +200,11 @@ pub(super) fn reference_read_proof<E, C, I>(
         })
     ) {
         let reference = references.iter().find(|read| read.key == *target)?.clone();
-        vec![(reference, patch_read_properties(catalog, action, target)?)]
+        let policy_attrs = policy_footprint.target_attributes()?;
+        vec![(
+            reference,
+            patch_read_properties(catalog, action, target, policy_attrs)?,
+        )]
     } else {
         super::receipt::create_reference_property_reads(
             catalog,
@@ -197,6 +232,7 @@ pub(super) fn reference_read_proof<E, C, I>(
 pub(super) struct LoadedActionSlice {
     pub(super) facts: FactSlice,
     pub(super) reference_only: bool,
+    pub(super) policy_footprint: ActionPolicyReadFootprint,
     pub(super) values: JsonObject,
     pub(super) link_reads: Vec<LinkReadExpectation>,
     pub(super) precondition_keys: BTreeSet<FactKey>,
@@ -652,8 +688,9 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     let call = context.call;
     let limits = ResourceLimitProfile::norn_limits_v1().slice;
     let reserved_bytes = meter.bytes();
+    let policy_footprint = context.authorizer.action_policy_read_footprint(call.action);
     let mut reference_only = context.host.supports_reference_reads()
-        && reference_action(catalog, call.action, context.authorizer, action_target);
+        && reference_action(catalog, call.action, &policy_footprint, action_target);
     let read_plan = super::receipt::prepare_create_slice_plan(
         context.host,
         catalog,
@@ -737,6 +774,7 @@ pub(super) fn load_action_slice<H: CellHost + ?Sized>(
     Ok(LoadedActionSlice {
         facts,
         reference_only,
+        policy_footprint,
         values,
         link_reads,
         precondition_keys,
@@ -845,7 +883,11 @@ fn load_action_fact<H: CellHost + ?Sized>(
     read_types: &mut BTreeSet<ObjectTypeName>,
     read_mode: SliceReadMode<'_>,
 ) -> Result<FactState, ActionRefusal<H::Error>> {
-    if !read_mode.is_full() && !authorizer.supports_action_reference_lineage(call.action) {
+    if !read_mode.is_full()
+        && !authorizer
+            .action_policy_read_footprint(call.action)
+            .is_exact()
+    {
         return Err(ActionRefusal::TargetNotFound);
     }
     if relation_depth > limits.max_relation_depth {

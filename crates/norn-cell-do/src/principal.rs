@@ -13,7 +13,7 @@
 //! [`CallerSlot`], where the declared grant table turns its roles into
 //! grants. [`FixturePrincipals`] is for tests and local smoke builds only.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -368,6 +368,7 @@ impl TokenPrincipals {
             actor_kind: principal.actor_kind.as_str(),
             role_table: principal.role_table,
             accountable_person: principal.accountable_person,
+            attributes: principal.attributes,
         })
     }
 }
@@ -455,6 +456,7 @@ impl PrincipalResolver for FixturePrincipals {
                 actor_kind: "user",
                 role_table: self.role_table,
                 accountable_person: Some((*name).to_owned()),
+                attributes: BTreeMap::new(),
             });
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);

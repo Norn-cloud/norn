@@ -126,15 +126,17 @@ impl PrincipalResolver {
         ) else {
             return Err(unresolved(request));
         };
+        let mut attributes = caller.attributes.clone();
+        attributes.insert(
+            PRINCIPAL_ID_ATTRIBUTE.to_owned(),
+            AttrValue::String(caller.subject_id.clone()),
+        );
         let principal = PrincipalInput {
             subject_id: caller.subject_id.clone(),
             actor_kind,
             agent_session_id: None,
             roles: caller.roles.clone(),
-            attributes: BTreeMap::from([(
-                PRINCIPAL_ID_ATTRIBUTE.to_owned(),
-                AttrValue::String(caller.subject_id.clone()),
-            )]),
+            attributes,
         };
         let pdp = self
             .holds

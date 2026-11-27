@@ -129,6 +129,7 @@ fn caller(subject: &str, kind: &'static str, person: Option<&str>) -> Caller {
         actor_kind: kind,
         role_table: FIXTURE_ROLES,
         accountable_person: person.map(str::to_owned),
+        attributes: std::collections::BTreeMap::new(),
     }
 }
 

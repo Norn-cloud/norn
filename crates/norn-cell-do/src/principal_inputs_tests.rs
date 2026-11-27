@@ -116,6 +116,7 @@ fn caller(subject: &str, role: &str, actor_kind: &'static str) -> Caller {
         actor_kind,
         role_table: "studio-roles/1",
         accountable_person: Some(subject.to_owned()),
+        attributes: std::collections::BTreeMap::new(),
     }
 }
 

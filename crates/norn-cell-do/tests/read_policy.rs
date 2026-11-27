@@ -57,6 +57,7 @@ fn caller(subject: &str) -> Option<Caller> {
             actor_kind: "user",
             role_table: "fixtures/1",
             accountable_person: Some((*name).to_owned()),
+            attributes: std::collections::BTreeMap::new(),
         })
 }
 
@@ -231,6 +232,7 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
             actor_kind: "user",
             role_table: "fixtures/1",
             accountable_person: Some("user:u1".into()),
+            attributes: std::collections::BTreeMap::new(),
         }));
         let request = ReadRequest {
             capability,
@@ -391,6 +393,7 @@ fn a_kept_grant_is_never_another_caller_s() {
             actor_kind: "user",
             role_table: "fixtures/1",
             accountable_person: Some("admin@demo".into()),
+            attributes: std::collections::BTreeMap::new(),
         }));
         let request = ReadRequest {
             capability: values,

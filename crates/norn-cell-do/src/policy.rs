@@ -902,6 +902,15 @@ impl Authorizer for ReadPolicy {
         let _kept = self.base.recompile(object_types);
     }
 
+    fn action_policy_read_footprint(
+        &self,
+        action: &norn_ir::ActionRoot,
+    ) -> norn_kernel::ActionPolicyReadFootprint {
+        self.action_policy().map_or(
+            norn_kernel::ActionPolicyReadFootprint::Conservative,
+            |policy| policy.read_footprint(&action.action_id),
+        )
+    }
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         let denied = || ActionDenial::Forbidden {
             reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
@@ -912,7 +921,6 @@ impl Authorizer for ReadPolicy {
         };
         policy.decide(&caller, request)
     }
-
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
         if self.action_reads(
             request.actor,
@@ -924,7 +932,6 @@ impl Authorizer for ReadPolicy {
             Err(ActionDenial::Invisible)
         }
     }
-
     fn action_read_type(
         &self,
         request: &ActionReadTypeAuthzRequest<'_>,
@@ -936,7 +943,6 @@ impl Authorizer for ReadPolicy {
             Err(ActionDenial::Invisible)
         }
     }
-
     fn principal_inputs(
         &self,
         request: &norn_kernel::PrincipalInputsRequest<'_>,
@@ -1152,6 +1158,7 @@ mod caller_slot_tests {
             actor_kind: "user",
             role_table: "test",
             accountable_person: Some(subject.to_owned()),
+            attributes: std::collections::BTreeMap::new(),
         }
     }
 

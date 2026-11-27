@@ -54,15 +54,18 @@ fn jwks() -> String {
     .to_string()
 }
 
-fn token(kind: &str, org: &str, role: &str) -> String {
+fn token_with_attrs(kind: &str, org: &str, role: &str, attributes: Value) -> String {
     let amr = if kind == "service" {
         "api_key"
     } else {
         "password"
     };
+    let mut norn = json!({ "kind": kind, "org": org, "role": role, "amr": amr });
+    if attributes.as_object().is_some_and(|map| !map.is_empty()) {
+        norn["attributes"] = attributes;
+    }
     let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": format!("{kind}-{role}-of-{org}"),
-            "iat": NOW - 10, "exp": NOW + 290,
-            "norn": { "kind": kind, "org": org, "role": role, "amr": amr } });
+            "iat": NOW - 10, "exp": NOW + 290, "norn": norn });
     let head = URL_SAFE_NO_PAD.encode(json!({ "alg": "EdDSA", "kid": "k1" }).to_string());
     let body = URL_SAFE_NO_PAD.encode(claims.to_string());
     let signature = key().sign(format!("{head}.{body}").as_bytes());
@@ -70,6 +73,10 @@ fn token(kind: &str, org: &str, role: &str) -> String {
         "Bearer {head}.{body}.{}",
         URL_SAFE_NO_PAD.encode(signature.to_bytes())
     )
+}
+
+fn token(kind: &str, org: &str, role: &str) -> String {
+    token_with_attrs(kind, org, role, json!({}))
 }
 
 fn user(role: &str) -> String {
@@ -852,9 +859,10 @@ fn a_resource_condition_decides_on_the_target_values() {
     assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
 }
 
-/// ACTION-RESOURCE-1: a principal attribute other than the verified `id` is
-/// one this host cannot vouch for, so a policy that reads one serves no
-/// action, and the operator is told why.
+/// ACTION-RESOURCE-1 / Lane A2: a declared principal attribute compiles cleanly
+/// into the hosted Cedar PDP, denies whenever the verified token omits or
+/// mismatches it, and permits only when the signed token carries the matching
+/// verified attribute (never from request input).
 #[test]
 fn an_unverified_principal_attribute_never_permits() {
     let directory = tempfile::tempdir().unwrap();
@@ -867,10 +875,499 @@ fn an_unverified_principal_attribute_never_permits() {
     artifacts.push(gated);
     let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
     assert_eq!(provisioned.status, 200, "{}", provisioned.body);
+    assert_eq!(cell.tenant.action_policy_error(), None);
     let denied = denial(&mut cell);
+    // Missing `team` claim in token denies.
     assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "m"), denied);
-    let reason = cell.tenant.action_policy_error().unwrap_or_default();
-    assert!(reason.contains("principal attribute \"team\""), "{reason}");
+    // Wrong `team` claim in token denies.
+    let wrong_team = token_with_attrs("user", "org_a", "admin", json!({ "team": "other" }));
+    assert_eq!(cell.melt(MELT_ACTION, Some(&wrong_team), "m"), denied);
+    // Matching signed `team` claim permits.
+    let matching_team = token_with_attrs("user", "org_a", "admin", json!({ "team": "m" }));
+    let ok = cell.melt(MELT_ACTION, Some(&matching_team), "m");
+    assert_eq!(ok.status, 200, "{}", ok.body);
+}
+
+fn hr_abac_entities() -> (Value, Value, Value) {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    let markings_entity = json!({
+        "irVersion": "0.1", "artifactId": "hr.markings.entity", "kind": "entity",
+        "namespace": "hr", "name": "Markings", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "entityVersion": "2.0",
+            "markings": [{
+                "category": "pii.contact",
+                "id": "pii.contact",
+                "label": "Contact",
+                "mask": { "kind": "pseudonym", "subject": "Contact" },
+                "severity": "high"
+            }]
+        }
+    });
+    let emp_entity = json!({
+        "irVersion": "0.1", "artifactId": "hr.Employee.entity", "kind": "entity",
+        "namespace": "hr", "name": "Employee", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": { "entityVersion": "2.0", "objectType": {
+            "name": "hr.Employee",
+            "identity": [{ "name": "primary", "properties": ["id"] }],
+            "properties": [
+                { "id": "id", "type": { "kind": "text" } },
+                { "id": "status", "type": { "kind": "text" } },
+                { "id": "branch_id", "type": { "kind": "text" } },
+                { "id": "national_id", "type": { "kind": "text" }, "markings": ["pii.contact"] }
+            ]
+        }}
+    });
+    let leave_entity = json!({
+        "irVersion": "0.1", "artifactId": "hr.LeaveRequest.entity", "kind": "entity",
+        "namespace": "hr", "name": "LeaveRequest", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": { "entityVersion": "2.0", "objectType": {
+            "name": "hr.LeaveRequest",
+            "identity": [{ "name": "primary", "properties": ["id"] }],
+            "properties": [
+                { "id": "id", "type": { "kind": "text" } },
+                { "id": "employee_id", "type": { "kind": "text" } },
+                { "id": "branch_id", "type": { "kind": "text" } },
+                { "id": "created_by", "type": { "kind": "text" }, "protected": true }
+            ],
+            "links": [{
+                "id": "employee", "target": "hr.Employee",
+                "cardinality": { "to": "one", "from": "many" }
+            }]
+        }}
+    });
+    (markings_entity, emp_entity, leave_entity)
+}
+
+fn hr_leave_action(id: &str, precond: &str) -> Value {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    json!({
+        "irVersion": "0.1", "artifactId": format!("{id}.action"), "kind": "action",
+        "namespace": "hr", "name": id, "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "actionId": id, "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "id": { "type": "string" }, "employee_id": { "type": "string" },
+                    "branch_id": { "type": "string" }, "created_by": { "type": "string" }
+                },
+                "required": ["id", "employee_id", "branch_id", "created_by"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "derive": [{ "field": "created_by", "expression": "actor.subjectId", "inputRequired": false }],
+            "slice": [{
+                "name": "emp", "objectType": "hr.Employee",
+                "key": { "property": { "from": "input", "property": "employee_id" } }
+            }],
+            "preconditions": [precond],
+            "createLinks": [{ "link": "employee", "targetType": "hr.Employee", "targetIdField": "employee_id" }],
+            "writes": [{ "entityKind": "hr.LeaveRequest", "change": "created" }],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectIdField": "id",
+                "objectKind": "hr.LeaveRequest", "entityArtifactId": "hr.LeaveRequest.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "create_only" }
+            }
+        }
+    })
+}
+
+fn hr_patch_action(id: &str) -> Value {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    json!({
+        "irVersion": "0.1", "artifactId": format!("{id}.action"), "kind": "action",
+        "namespace": "hr", "name": id, "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "actionId": id, "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": { "id": { "type": "string" }, "status": { "type": "string" } },
+                "required": ["id", "status"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "slice": [{
+                "name": "emp", "objectType": "hr.Employee",
+                "key": { "property": { "from": "input", "property": "id" } }
+            }],
+            "preconditions": ["slice.emp.status != 'terminated'"],
+            "writes": [
+                { "entityKind": "hr.Employee", "change": "created" },
+                { "entityKind": "hr.Employee", "change": "modified" }
+            ],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectIdField": "id",
+                "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
+            }
+        }
+    })
+}
+
+fn hr_seed_employee_action() -> Value {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    json!({
+        "irVersion": "0.1", "artifactId": "hr.seed_employee.action", "kind": "action",
+        "namespace": "hr", "name": "seed_employee", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "actionId": "hr.seed_employee", "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true, "ledgered": true,
+            "access": { "artifactId": "hr.access.policy", "version": "1.0.0" },
+            "inputSchema": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                    "id": { "type": "string" }, "status": { "type": "string" },
+                    "branch_id": { "type": "string" }, "national_id": { "type": "string" }
+                },
+                "required": ["id", "status", "branch_id", "national_id"]
+            },
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
+            "writes": [
+                { "entityKind": "hr.Employee", "change": "created" },
+                { "entityKind": "hr.Employee", "change": "modified" }
+            ],
+            "effectProgram": {
+                "kind": "upsert_input_object", "objectIdField": "id",
+                "objectKind": "hr.Employee", "entityArtifactId": "hr.Employee.entity",
+                "entityArtifactVersion": "1.0.0", "writeMode": { "kind": "upsert" }
+            }
+        }
+    })
+}
+
+fn hr_abac_ifc_artifacts() -> Vec<Value> {
+    let scope_val = json!({ "orgId": "org_a", "environmentId": "prod" });
+    let prov = json!({ "source": "authoring_sdk", "sourcePath": "tests/tenant_actions.rs" });
+    let (markings_entity, emp_entity, leave_entity) = hr_abac_entities();
+    let access_policy = json!({
+        "irVersion": "0.1", "artifactId": "hr.access.policy", "kind": "policy",
+        "namespace": "hr", "name": "access", "version": "1.0.0", "lifecycle": "active",
+        "scope": scope_val, "dependencies": [], "provenance": prov,
+        "payload": {
+            "accessVersion": "0.1", "policyId": "hr.access",
+            "rules": [
+                {
+                    "ruleId": "seed-emp-scoped", "actions": ["hr.seed_employee", "hr.patch_employee_status"],
+                    "resourceType": "hr.Employee", "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["admin"] } },
+                        { "resource": { "name": "branch_id", "op": "in", "value": { "principalAttribute": "managed_branches" } } }
+                    ]
+                },
+                {
+                    "ruleId": "patch-emp-by-nid", "actions": ["hr.patch_employee_by_national_id"],
+                    "resourceType": "hr.Employee", "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["admin"] } },
+                        { "resource": { "name": "national_id", "op": "eq", "value": { "principalAttribute": "employee_nid" } } }
+                    ]
+                },
+                {
+                    "ruleId": "submit-leave-scoped", "actions": ["hr.submit_leave", "hr.submit_leave_pii"],
+                    "resourceType": "hr.LeaveRequest", "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["admin"] } },
+                        { "resource": { "name": "branch_id", "op": "in", "value": { "principalAttribute": "managed_branches" } } }
+                    ]
+                }
+            ]
+        }
+    });
+    vec![
+        markings_entity,
+        emp_entity,
+        leave_entity,
+        hr_seed_employee_action(),
+        hr_patch_action("hr.patch_employee_status"),
+        hr_patch_action("hr.patch_employee_by_national_id"),
+        hr_leave_action("hr.submit_leave", "slice.emp.status == 'active'"),
+        hr_leave_action(
+            "hr.submit_leave_pii",
+            "slice.emp.national_id == '123-45-6789'",
+        ),
+        access_policy,
+    ]
+}
+
+fn post_action(cell: &mut Cell, action: &str, auth: &str, body: &Value) -> norn_cell_do::Response {
+    cell.call(
+        "POST",
+        &format!("/v1/actions/{action}"),
+        Some(auth),
+        &body.to_string(),
+    )
+}
+
+fn read_employee_record(cell: &mut Cell, id: &str) -> Value {
+    let resp = cell.call(
+        "GET",
+        &format!("/v1/objects/hr.Employee/{id}"),
+        Some(&user("member")),
+        "",
+    );
+    assert_eq!(resp.status, 200, "{}", resp.body);
+    serde_json::from_str(&resp.body).unwrap()
+}
+
+fn mcp_tool_name(cell: &mut Cell, auth: &str, action_id: &str) -> String {
+    let list_req = json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"limit":100}});
+    let list = cell.call("POST", "/v1/mcp", Some(auth), &list_req.to_string());
+    assert_eq!(list.status, 200, "{}", list.body);
+    let list_json: Value = serde_json::from_str(&list.body).unwrap();
+    list_json["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["_meta"]["norn/actionId"] == action_id)
+        .unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Lane A2 full-stack hosted DO HTTP ABAC: verified `StringSet` principal
+/// attributes (`managed_branches`) decide current & proposed resource checks,
+/// rejecting missing, wrong-branch, wrong-org, and spoofed-input attributes.
+#[test]
+fn hosted_abac_string_set_decides_current_and_proposed_resource_checks() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("abac.sqlite"),
+        &hr_abac_ifc_artifacts(),
+    );
+    assert_eq!(cell.tenant.action_policy_error(), None);
+
+    let cairo_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["cairo", "giza"] }),
+    );
+    let alex_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["alex"] }),
+    );
+    let foreign_mgr = token_with_attrs(
+        "user",
+        "org_b",
+        "admin",
+        json!({ "managed_branches": ["cairo"] }),
+    );
+    let no_attrs = user("admin");
+    let emp_body = |branch: &str, key: &str| json!({ "input": { "id": "E1", "status": "active", "branch_id": branch, "national_id": "123-45-6789" }, "idempotencyKey": key });
+    for (auth, key) in [(&no_attrs, "k0"), (&alex_mgr, "k1"), (&foreign_mgr, "k2")] {
+        let resp = post_action(&mut cell, "hr.seed_employee", auth, &emp_body("cairo", key));
+        assert_eq!(resp.status, 403, "{key}: {}", resp.body);
+    }
+    let spoofed = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789", "managed_branches": ["cairo"] }, "idempotencyKey": "k3" });
+    assert_ne!(
+        post_action(&mut cell, "hr.seed_employee", &no_attrs, &spoofed).status,
+        200
+    );
+
+    let seeded = post_action(
+        &mut cell,
+        "hr.seed_employee",
+        &cairo_mgr,
+        &emp_body("cairo", "seed-1"),
+    );
+    assert_eq!(seeded.status, 200, "{}", seeded.body);
+    // Current-state check: `alex_mgr` cannot move a `cairo` record to `alex`.
+    assert_eq!(
+        post_action(
+            &mut cell,
+            "hr.seed_employee",
+            &alex_mgr,
+            &emp_body("alex", "steal-deny"),
+        )
+        .status,
+        403
+    );
+    // Proposed-state check: `cairo_mgr` cannot move `cairo` to unmanaged `alex`, but can move to `giza`.
+    assert_eq!(
+        post_action(
+            &mut cell,
+            "hr.seed_employee",
+            &cairo_mgr,
+            &emp_body("alex", "move-deny"),
+        )
+        .status,
+        403
+    );
+    let moved = post_action(
+        &mut cell,
+        "hr.seed_employee",
+        &cairo_mgr,
+        &emp_body("giza", "move-ok"),
+    );
+    assert_eq!(moved.status, 200, "{}", moved.body);
+}
+
+/// Lane A2 hosted DO exact patch policy footprint: patching `status` under an
+/// unmarked policy (`branch_id`) keeps `status` unmarked (proving unread PII
+/// `national_id` did not taint it), while patching under a policy reading
+/// `national_id` propagates `pii.contact` onto `status`.
+#[test]
+fn hosted_exact_patch_policy_footprint_controls_marking_propagation() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("patch-ifc.sqlite"),
+        &hr_abac_ifc_artifacts(),
+    );
+    let cairo_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["cairo"] }),
+    );
+    let alex_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["alex"] }),
+    );
+    let nid_holder = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "employee_nid": "123-45-6789" }),
+    );
+    let seed = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789" }, "idempotencyKey": "seed" });
+    assert_eq!(
+        post_action(&mut cell, "hr.seed_employee", &cairo_mgr, &seed).status,
+        200
+    );
+
+    let patch_unmarked =
+        json!({ "input": { "id": "E1", "status": "on_leave" }, "idempotencyKey": "patch-branch" });
+    assert_eq!(
+        post_action(
+            &mut cell,
+            "hr.patch_employee_status",
+            &alex_mgr,
+            &patch_unmarked
+        )
+        .status,
+        403
+    );
+    let ok = post_action(
+        &mut cell,
+        "hr.patch_employee_status",
+        &cairo_mgr,
+        &patch_unmarked,
+    );
+    assert_eq!(ok.status, 200, "{}", ok.body);
+    let after_unmarked = read_employee_record(&mut cell, "E1");
+    assert_eq!(
+        after_unmarked["values"]["status"],
+        json!("on_leave"),
+        "{after_unmarked}"
+    );
+    assert!(
+        after_unmarked["masked"].get("status").is_none(),
+        "unread PII must not taint status: {after_unmarked}"
+    );
+    assert_eq!(
+        after_unmarked["masked"]["national_id"]["markings"],
+        json!(["pii.contact"]),
+        "{after_unmarked}"
+    );
+
+    let patch_pii_policy =
+        json!({ "input": { "id": "E1", "status": "verified" }, "idempotencyKey": "patch-nid" });
+    let ok_pii = post_action(
+        &mut cell,
+        "hr.patch_employee_by_national_id",
+        &nid_holder,
+        &patch_pii_policy,
+    );
+    assert_eq!(ok_pii.status, 200, "{}", ok_pii.body);
+    let after_pii = read_employee_record(&mut cell, "E1");
+    assert_eq!(
+        after_pii["masked"]["status"]["markings"],
+        json!(["pii.contact"]),
+        "policy operand national_id must propagate pii.contact onto status: {after_pii}"
+    );
+}
+
+/// Lane A2 full-stack hosted DO HTTP + MCP correspondence: `KernelAuthorizer`
+/// + `ReadPolicy` propagate exact policy read footprints so stamped `CreateOnly`
+/// + PII `Employee` slice + `createLinks` commits over real HTTP and MCP while
+/// classified precondition reads refuse over both HTTP and MCP.
+#[test]
+fn hosted_exact_policy_footprint_enables_stamped_create_ifc_over_http_and_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(
+        &directory.path().join("hr-ifc.sqlite"),
+        &hr_abac_ifc_artifacts(),
+    );
+    assert_eq!(cell.tenant.action_policy_error(), None);
+
+    let cairo_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["cairo"] }),
+    );
+    let alex_mgr = token_with_attrs(
+        "user",
+        "org_a",
+        "admin",
+        json!({ "managed_branches": ["alex"] }),
+    );
+    let seed_body = json!({ "input": { "id": "E1", "status": "active", "branch_id": "cairo", "national_id": "123-45-6789" }, "idempotencyKey": "seed-1" });
+    assert_eq!(
+        post_action(&mut cell, "hr.seed_employee", &cairo_mgr, &seed_body).status,
+        200
+    );
+
+    let leave_http = json!({ "input": { "id": "L-HTTP", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-http" });
+    let http_ok = post_action(&mut cell, "hr.submit_leave", &cairo_mgr, &leave_http);
+    assert_eq!(http_ok.status, 200, "{}", http_ok.body);
+
+    let leave_pii = json!({ "input": { "id": "L-PII", "employee_id": "E1", "branch_id": "cairo" }, "idempotencyKey": "leave-pii" });
+    let pii_refused = post_action(&mut cell, "hr.submit_leave_pii", &cairo_mgr, &leave_pii);
+    assert_ne!(pii_refused.status, 200, "{}", pii_refused.body);
+
+    let leave_tool = mcp_tool_name(&mut cell, &cairo_mgr, "hr.submit_leave");
+    let pii_tool = mcp_tool_name(&mut cell, &cairo_mgr, "hr.submit_leave_pii");
+    let mut mcp_call = |tool: &str, auth: &str, id: &str, key: &str| {
+        let req = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+            "name": tool, "arguments": {"id": id, "employee_id": "E1", "branch_id": "cairo"},
+            "_meta": {"norn/idempotencyKey": key}
+        }})
+        .to_string();
+        let resp = cell.call("POST", "/v1/mcp", Some(auth), &req);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        serde_json::from_str::<Value>(&resp.body).unwrap()
+    };
+    assert_eq!(
+        mcp_call(&leave_tool, &alex_mgr, "L-MCP-DENY", "mcp-deny")["result"]["isError"],
+        true
+    );
+    let mcp_ok = mcp_call(&leave_tool, &cairo_mgr, "L-MCP", "mcp-ok");
+    assert_eq!(mcp_ok["result"]["isError"], false, "{mcp_ok}");
+    assert_eq!(
+        mcp_ok["result"]["structuredContent"]["outcome"],
+        "committed"
+    );
+    let mcp_pii = mcp_call(&pii_tool, &cairo_mgr, "L-MCP-PII", "mcp-pii");
+    assert_eq!(mcp_pii["result"]["isError"], true, "{mcp_pii}");
 }
 
 /// A tenant concept that derives metrics: additive amounts at a timestamp.
