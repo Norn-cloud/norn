@@ -79,12 +79,20 @@ fn sum_plan_and_model() -> Result<(Model, QuestionPlan), Box<dyn std::error::Err
         .and_then(|items| items.first())
         .cloned()
         .ok_or("missing entity artifact in metrics fixture")?;
-    artifact["artifactId"] = json!("demo.Conversion.entity.v2");
-    artifact["name"] = json!(query_support::TYPE);
-    artifact["namespace"] = json!("demo");
-    artifact["provenance"] =
-        json!({"source":"import","sourcePath":"synthetic:fork-e2-qualification"});
-    artifact["payload"] = json!({"entityVersion":"2.0","objectType":object});
+    let fields = artifact
+        .as_object_mut()
+        .ok_or("metrics fixture artifact must be an object")?;
+    fields.insert("artifactId".to_owned(), json!("demo.Conversion.entity.v2"));
+    fields.insert("name".to_owned(), json!(query_support::TYPE));
+    fields.insert("namespace".to_owned(), json!("demo"));
+    fields.insert(
+        "provenance".to_owned(),
+        json!({"source":"import","sourcePath":"synthetic:fork-e2-qualification"}),
+    );
+    fields.insert(
+        "payload".to_owned(),
+        json!({"entityVersion":"2.0","objectType":object}),
+    );
     let artifact: ArtifactEnvelope = serde_json::from_value(artifact)?;
     let catalog =
         ScopedView::uniform(&[artifact], &std::collections::BTreeSet::new()).into_catalog();
