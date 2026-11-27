@@ -678,10 +678,15 @@ impl<E: SqlEngine> CellStore<E> {
                 .entry(source_id.clone())
                 .or_default();
             let conn = connections.get(source_id);
-            let mapping_matches = conn
-                .and_then(|c| c.values.get("mapping_id"))
-                .and_then(RuntimeValue::as_str)
-                == Some(expected_mapping.as_str());
+            let bound_mapping = reader.source_mapping_binding(source_id)?;
+            let binding_matches = bound_mapping
+                .as_deref()
+                .is_none_or(|bound| bound == expected_mapping.as_str());
+            let mapping_matches = binding_matches
+                && conn
+                    .and_then(|c| c.values.get("mapping_id"))
+                    .and_then(RuntimeValue::as_str)
+                    == Some(expected_mapping.as_str());
             let conn_healthy = mapping_matches
                 && conn
                     .and_then(|c| c.values.get("status"))
@@ -699,8 +704,7 @@ impl<E: SqlEngine> CellStore<E> {
                     .get(dataset)
                     .and_then(|record| validate_cursor_json(&record.cursor_json))
                     .or_else(|| {
-                        cursors
-                            .is_empty()
+                        (cursors.is_empty() && bound_mapping.is_none())
                             .then(|| conn_cursors.get(dataset).cloned())
                             .flatten()
                     })
@@ -854,7 +858,7 @@ impl<E: SqlEngine> crate::StoreReader<'_, E> {
     }
 }
 
-impl<S: SqlEngine> crate::host::SqliteCell<S> {
+impl<E, C, I, S: SqlEngine> crate::host::SqliteCell<E, C, I, S> {
     /// See [`CellStore::bind_source_mapping`].
     ///
     /// # Errors

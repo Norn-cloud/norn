@@ -189,15 +189,9 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         Some(bound) => bound == config.mapping,
         None => stored_mapping.as_deref() == Some(config.mapping.as_str()),
     };
-
-    if !cursors.is_empty() {
-        if proven_match {
-            if bound_mapping.is_none() {
-                bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
-            }
-            let (parsed, raw_cursors) = decode_cursors(cursors);
-            return Ok((parsed, raw_cursors, false));
-        }
+    let has_prior_state =
+        !cursors.is_empty() || bound_mapping.is_some() || stored_mapping.is_some() || has_pending;
+    if has_prior_state && !proven_match {
         if has_pending {
             let (parsed, raw_cursors) = decode_cursors(cursors);
             return Ok((parsed, raw_cursors, true));
@@ -216,18 +210,23 @@ pub(super) fn load_and_seed_watermarks<E: SqlEngine>(
         return Ok((BTreeMap::new(), BTreeMap::new(), false));
     }
 
-    if has_pending && !proven_match && (bound_mapping.is_some() || stored_mapping.is_some()) {
-        return Ok((BTreeMap::new(), BTreeMap::new(), true));
+    if !cursors.is_empty() {
+        if bound_mapping.is_none() {
+            bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
+        }
+        let (parsed, raw_cursors) = decode_cursors(cursors);
+        return Ok((parsed, raw_cursors, false));
     }
 
+    if bound_mapping.is_some() {
+        return Ok((BTreeMap::new(), BTreeMap::new(), false));
+    }
     let legacy = if stored_mapping.as_deref() == Some(config.mapping.as_str()) {
         legacy_connection_watermarks(host, connection_id)
             .or(known)
             .unwrap_or_default()
-    } else if bound_mapping.is_none() && stored_mapping.is_none() {
-        known.unwrap_or_default()
     } else {
-        BTreeMap::new()
+        known.unwrap_or_default()
     };
     bind_mapping(host, connection_id, &config.mapping, lease, now_ms)?;
     let mut encoded = BTreeMap::new();

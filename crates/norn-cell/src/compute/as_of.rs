@@ -19,10 +19,6 @@ use crate::engine::SqlEngine;
 use crate::reactive::{BudgetedRead, DecodeBudget};
 use crate::{CellError, KnowledgeCutoff, LedgerHead, ObjectRecord, StoreReader};
 
-/// Hard cap on covering-index rows scanned when deduplicating distinct
-/// historical subject IDs.
-const MAX_DISTINCT_SCAN: usize = 65_536;
-
 /// Versioned snapshots of one subject committed on or before a cutoff.
 pub(crate) type HistoricalVersions = Vec<(u64, BTreeMap<String, RuntimeValue>)>;
 
@@ -92,9 +88,10 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
     }
 
     /// Distinct subject IDs of `kind` committed on or before the cutoff
-    /// frontier, deduplicated in SQL so repeated updates to one subject (such
-    /// as routine `source.Connection` sync reports) charge budget only once per
-    /// distinct ID.
+    /// frontier, stepping one primary-key B-tree seek per distinct subject ID
+    /// so repeated updates to one subject (such as routine `source.Connection`
+    /// sync reports) never hit a version-row scan cap and charge budget only
+    /// once per distinct ID.
     pub(crate) fn distinct_ids(
         &self,
         world: &str,
@@ -102,37 +99,45 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
         max: usize,
         budget: &mut DecodeBudget,
     ) -> Result<(Vec<String>, bool), CellError> {
-        use crate::engine::{SqlRow, params};
+        use crate::engine::params;
         self.reader.check_history("historical distinct ids")?;
         let root = self.reader.root_type(kind)?;
         let cap = max.min(budget.remaining_rows());
         if cap == 0 || budget.remaining_bytes() < 64 {
             return Ok((Vec::new(), false));
         }
-        let scan_cap = cap.saturating_mul(64).min(MAX_DISTINCT_SCAN);
-        let limit = i64::try_from(scan_cap.saturating_add(1))
-            .map_err(|_n| refused("core.compute.bound_exceeded"))?;
         let head = i64::try_from(self.cutoff.frontier)
             .map_err(|_n| refused("core.compute.bound_exceeded"))?;
-        let rows = self.reader.conn.query(
-            "SELECT id FROM _norn_fact_values INDEXED BY \"_norn_fact_values/root_frontier\" \
-             WHERE world=?1 AND root_type=?2 AND commit_seq<=?3 \
-             ORDER BY commit_seq, id, version LIMIT ?4",
-            params![world, root, head, limit],
-        )?;
-        if rows.len() > scan_cap {
-            return Ok((Vec::new(), false));
-        }
-        let mut seen = BTreeSet::new();
-        for row in rows {
-            let id: String = SqlRow(row).get(0)?;
-            seen.insert(id);
-            if seen.len() > cap {
+        let max_probes = cap.saturating_mul(16).max(4_096);
+        let mut ids = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..max_probes {
+            let next: Option<(String, i64)> = match after.as_deref() {
+                None => self.reader.conn.query_optional(
+                    "SELECT id, commit_seq FROM _norn_fact_values \
+                     WHERE world=?1 AND root_type=?2 \
+                     ORDER BY id, version LIMIT 1",
+                    params![world, root],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?,
+                Some(prev) => self.reader.conn.query_optional(
+                    "SELECT id, commit_seq FROM _norn_fact_values \
+                     WHERE world=?1 AND root_type=?2 AND id>?3 \
+                     ORDER BY id, version LIMIT 1",
+                    params![world, root, prev],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?,
+            };
+            let Some((id, first_commit_seq)) = next else {
+                return Ok((ids, true));
+            };
+            after = Some(id.clone());
+            if first_commit_seq > head {
+                continue;
+            }
+            if ids.len() >= cap {
                 return Ok((Vec::new(), false));
             }
-        }
-        let mut ids = Vec::with_capacity(seen.len());
-        for id in seen {
             let bytes = u64::try_from(id.len().saturating_add(64))
                 .map_err(|_n| refused("core.compute.bound_exceeded"))?;
             if !budget.charge_rows(1) || !budget.charge(bytes) {
@@ -140,7 +145,7 @@ impl<'r, 'c, E: SqlEngine> AsOfReader<'r, 'c, E> {
             }
             ids.push(id);
         }
-        Ok((ids, true))
+        Ok((Vec::new(), false))
     }
 
     /// Subjects deleted under another model by the cutoff frontier.
