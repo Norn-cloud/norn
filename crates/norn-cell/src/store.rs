@@ -1820,6 +1820,13 @@ impl<X> From<rusqlite::Error> for GuardedError<X> {
 
 type CandidateValidator<E> = fn(&StoreReader<'_, E>, &CommitBatch, bool) -> Result<(), CellError>;
 
+/// In-transaction head and definitions-version fence for `FORK-MERGE-1` replay.
+#[derive(Debug, Clone)]
+pub(crate) struct CommitPrecondition {
+    pub(crate) expected_head: LedgerHead,
+    pub(crate) expected_definitions_version: Option<u64>,
+}
+
 /// The normalized store of one tenant cell over a SQLite-format database.
 #[derive(Debug)]
 pub struct CellStore<E: SqlEngine = DefaultEngine> {
@@ -1828,6 +1835,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     pub(crate) instance_identity: Arc<()>,
     model: Model,
     candidate_validator: Cell<Option<CandidateValidator<E>>>,
+    pub(crate) commit_precondition: RefCell<Option<CommitPrecondition>>,
     #[cfg(feature = "native")]
     pub(crate) export_notify: Arc<Notify>,
     /// The last head this store verified (#2975): verification at open,
@@ -1841,6 +1849,8 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
     /// FORK-PIN-1: the durable pin of a forked store, loaded at open.
     pub(crate) fork: Option<crate::fork::ForkPin>,
+    /// FORK-LIFE-1: cached lifecycle state of a forked store (`None` on `main`).
+    pub(crate) fork_state: Cell<Option<crate::fork::ForkState>>,
     /// HOST-INSTALL-LIVE-1: how many live objects the last definitions
     /// check or install evaluated under the candidate's governing laws.
     law_checked: Cell<u64>,
@@ -2415,6 +2425,7 @@ impl<E: SqlEngine> CellStore<E> {
             instance_identity: Arc::new(()),
             model,
             candidate_validator: Cell::new(None),
+            commit_precondition: RefCell::default(),
             #[cfg(feature = "native")]
             export_notify: Arc::new(Notify::new()),
             verified: RefCell::new(LedgerHead::genesis()),
@@ -2423,6 +2434,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified_receipts: RefCell::default(),
             quantity_boundary: Cell::new(None),
             fork: None,
+            fork_state: Cell::new(None),
             law_checked: Cell::new(0),
             scrub: RefCell::default(),
         }
@@ -2445,6 +2457,7 @@ impl<E: SqlEngine> CellStore<E> {
         // records no checkpoint of its own.
         store.scrub.replace(self.scrub.borrow().for_fork());
         store.fork = Some(pin);
+        store.fork_state.set(Some(crate::fork::ForkState::Open));
         store
     }
 
@@ -2575,6 +2588,9 @@ impl<E: SqlEngine> CellStore<E> {
         store.verified.replace(verified.head);
         store.quantity_boundary.set(verified.boundary);
         store.transparency.replace(verified.transparency);
+        store
+            .fork_state
+            .set(fork.as_ref().map(|_| crate::fork::ForkState::Open));
         store.fork = fork;
         // Only an accepted file takes the requested journal mode (#1504).
         store.conn.admitted()?;
@@ -3130,6 +3146,7 @@ impl<E: SqlEngine> CellStore<E> {
         // A fenced cell commits nothing (#1551 round 4).
         self.persist_pending_fence();
         self.scrub.borrow().refuse_fenced()?;
+        self.refuse_fork_write()?;
         if batch
             .effects
             .iter()
@@ -3196,11 +3213,48 @@ impl<E: SqlEngine> CellStore<E> {
             }
             // S12: sibling handles fail closed on a durable fence.
             crate::open_checkpoint::check_fence(&self.conn)?;
+            // FORK-LIFE-1: closed or promoting forks accept no commits.
+            self.refuse_fork_write()?;
             let retained = match origin {
                 CommitOrigin::Retained(record) => Some(record),
                 CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
             };
             let actual_version = active_definition_version(&self.conn)?;
+            if let Some(pre) = self.commit_precondition.borrow().as_ref() {
+                if actual_version != pre.expected_definitions_version {
+                    return Err(CellError::ForkMergeRefused {
+                        reason: Box::new(
+                            crate::fork_merge::ForkMergeRefusalReason::ReplayRejected {
+                                action_id: String::new(),
+                                idempotency_key: String::new(),
+                                code: "core.world.definition_mismatch".to_owned(),
+                                detail: format!(
+                                    "active definitions version moved from {:?} to {:?} before commit",
+                                    pre.expected_definitions_version, actual_version
+                                ),
+                            },
+                        ),
+                    }
+                    .into());
+                }
+                let tx_head = crate::fork::copied_head(&self.conn, &self.model)?;
+                if tx_head != (pre.expected_head.commits, pre.expected_head.hash.clone()) {
+                    return Err(CellError::ForkMergeRefused {
+                        reason: Box::new(
+                            crate::fork_merge::ForkMergeRefusalReason::ReplayRejected {
+                                action_id: String::new(),
+                                idempotency_key: String::new(),
+                                code: "core.world.main_moved".to_owned(),
+                                detail: format!(
+                                    "main head moved from commit {} to {} before commit",
+                                    pre.expected_head.commits, tx_head.0
+                                ),
+                            },
+                        ),
+                    }
+                    .into());
+                }
+            }
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
                 let preflight = preflight_definition_install(
                     &self.conn,

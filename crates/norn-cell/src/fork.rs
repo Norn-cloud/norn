@@ -39,6 +39,53 @@ const WORLD_KEY: &str = "fork:world";
 const PARENT_KEY: &str = "fork:parent";
 const BASE_KEY: &str = "fork:base";
 const HORIZON_KEY: &str = "fork:main_horizon";
+const STATE_KEY: &str = "fork:state";
+const PROMOTING_KEY: &str = "fork:promoting_head";
+
+/// FORK-LIFE-1: durable lifecycle state of a forked store.
+///
+/// Only [`ForkState::Open`] accepts open, read, and commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkState {
+    /// Active fork accepting reads, commits, and (for direct forks of `main`) promotion.
+    Open,
+    /// Explicitly discarded by the caller; closed permanently.
+    Discarded,
+    /// Closed by lifecycle expiry; closed permanently.
+    Expired,
+    /// Replayed into `main` via `FORK-MERGE-1`; closed permanently.
+    Promoted,
+}
+
+impl ForkState {
+    /// Stable wire/metadata string for this fork state.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Discarded => "discarded",
+            Self::Expired => "expired",
+            Self::Promoted => "promoted",
+        }
+    }
+
+    /// Whether this fork accepts open, read, and commit operations.
+    #[must_use]
+    pub const fn is_open(self) -> bool {
+        matches!(self, Self::Open)
+    }
+
+    fn from_meta(raw: &str) -> Result<Self, CellError> {
+        match raw {
+            "open" => Ok(Self::Open),
+            "discarded" => Ok(Self::Discarded),
+            "expired" => Ok(Self::Expired),
+            "promoted" => Ok(Self::Promoted),
+            _ => Err(CellError::Encoding(format!("invalid fork state `{raw}`"))),
+        }
+    }
+}
 
 /// An engine that can fork: produce an independent engine whose committed
 /// contents equal its own at the moment of the call.
@@ -98,6 +145,59 @@ impl StoreImage {
     }
 }
 
+pub(crate) fn read_state<E: SqlEngine>(conn: &E) -> Result<ForkState, CellError> {
+    let raw = conn.query_optional(
+        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+        params![STATE_KEY],
+        |row| row.get::<String>(0),
+    )?;
+    match raw {
+        None => Ok(ForkState::Open),
+        Some(value) => ForkState::from_meta(&value),
+    }
+}
+
+pub(crate) fn write_state<E: SqlEngine>(conn: &E, state: ForkState) -> Result<(), CellError> {
+    conn.execute(
+        &format!("DELETE FROM \"{META}\" WHERE \"key\" IN (?1, ?2)"),
+        params![STATE_KEY, PROMOTING_KEY],
+    )?;
+    conn.execute(
+        &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
+        params![STATE_KEY, state.as_str()],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn read_promoting_head<E: SqlEngine>(conn: &E) -> Result<Option<String>, CellError> {
+    conn.query_optional(
+        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+        params![PROMOTING_KEY],
+        |row| row.get::<String>(0),
+    )
+}
+
+fn write_promoting_head<E: SqlEngine>(conn: &E, head: &LedgerHead) -> Result<(), CellError> {
+    let token = format!("{}:{}", head.commits, head.hash);
+    conn.execute(
+        &format!("DELETE FROM \"{META}\" WHERE \"key\" = ?1"),
+        params![PROMOTING_KEY],
+    )?;
+    conn.execute(
+        &format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"),
+        params![PROMOTING_KEY, token],
+    )?;
+    Ok(())
+}
+
+fn clear_promoting_head<E: SqlEngine>(conn: &E) -> Result<(), CellError> {
+    conn.execute(
+        &format!("DELETE FROM \"{META}\" WHERE \"key\" = ?1"),
+        params![PROMOTING_KEY],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellError> {
     let meta = |key: &str| {
         conn.query_optional(
@@ -112,11 +212,21 @@ pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellEr
         meta(BASE_KEY)?,
         meta(HORIZON_KEY)?,
     ];
+    let state_raw = meta(STATE_KEY)?;
     if found.iter().all(Option::is_none) {
+        if state_raw.is_some() {
+            return Err(CellError::Encoding(
+                "orphan fork state without fork pin".to_owned(),
+            ));
+        }
         return Ok(None);
     }
     let [Some(world), Some(parent), Some(base), Some(main_horizon)] = found else {
         return Err(CellError::Encoding("incomplete fork pin".to_owned()));
+    };
+    let state = match state_raw {
+        None => ForkState::Open,
+        Some(raw) => ForkState::from_meta(&raw)?,
     };
     let base = serde_json::from_str(&base)
         .map_err(|error| CellError::Encoding(format!("fork base: {error}")))?;
@@ -134,22 +244,30 @@ pub(crate) fn load_pin<E: SqlEngine>(conn: &E) -> Result<Option<ForkPin>, CellEr
             "fork pin: the main horizon is past the base".to_owned(),
         ));
     }
+    if !state.is_open() {
+        return Err(CellError::ForkClosed {
+            world: pin.world,
+            state: state.as_str().to_owned(),
+        });
+    }
     Ok(Some(pin))
 }
 
 pub(crate) fn write_pin<E: SqlEngine>(conn: &E, pin: &ForkPin) -> Result<(), CellError> {
     let base = serde_json::to_string(&pin.base)
         .map_err(|error| CellError::Encoding(format!("fork base: {error}")))?;
-    // A fork of a fork replaces the copied pin: its parent is that fork.
+    // A fork of a fork replaces the copied pin and any parent fork-local
+    // metadata: its parent is that fork and its own command scope bindings start empty.
     conn.execute(
-        &format!("DELETE FROM \"{META}\" WHERE \"key\" IN (?1, ?2, ?3, ?4)"),
-        params![WORLD_KEY, PARENT_KEY, BASE_KEY, HORIZON_KEY],
+        &format!("DELETE FROM \"{META}\" WHERE \"key\" GLOB 'fork:*'"),
+        params![],
     )?;
     let insert = format!("INSERT INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)");
     conn.execute(&insert, params![WORLD_KEY, pin.world.as_str()])?;
     conn.execute(&insert, params![PARENT_KEY, pin.parent.as_str()])?;
     conn.execute(&insert, params![BASE_KEY, base])?;
     conn.execute(&insert, params![HORIZON_KEY, pin.main_horizon.to_string()])?;
+    conn.execute(&insert, params![STATE_KEY, ForkState::Open.as_str()])?;
     Ok(())
 }
 
@@ -180,6 +298,8 @@ impl<E: ForkEngine> CellStore<E> {
         // S13 (#1551): refuse forking while a checkpointed cell's history
         // scrub is incomplete.
         self.scrub.borrow().refuse_fork()?;
+        // FORK-LIFE-1: a closed or promoting fork never spawns new forks.
+        self.refuse_fork_write()?;
         let parent = self
             .fork_pin()
             .map_or(MAIN_WORLD, |pin| pin.world.as_str())
@@ -202,6 +322,17 @@ impl<E: ForkEngine> CellStore<E> {
         crate::engine_release::require_current(&engine)?;
         // S12: refuse copying a cell fenced durably by another handle.
         crate::open_checkpoint::check_fence(&engine)?;
+        // FORK-LIFE-1: refuse if another handle closed this fork before the copy.
+        if let Some(source_pin) = self.fork_pin() {
+            let copied_state = read_state(&engine)?;
+            if !copied_state.is_open() {
+                self.fork_state.set(Some(copied_state));
+                return Err(CellError::ForkClosed {
+                    world: source_pin.world.clone(),
+                    state: copied_state.as_str().to_owned(),
+                });
+            }
+        }
         // Another handle may commit between the head check and the copy: the
         // copy itself must hold exactly `base`, or the fork refuses.
         let copied = copied_head(&engine, self.model())?;
@@ -225,7 +356,10 @@ impl<E: ForkEngine> CellStore<E> {
 /// The newest commit of `engine` and its ledger head hash: one indexed read
 /// of the newest receipt, not a verification pass (the copy's contents are
 /// the parent's, which this store verified).
-fn copied_head<E: SqlEngine>(engine: &E, model: &crate::Model) -> Result<(u64, String), CellError> {
+pub(crate) fn copied_head<E: SqlEngine>(
+    engine: &E,
+    model: &crate::Model,
+) -> Result<(u64, String), CellError> {
     let reader = crate::StoreReader::new(engine, model);
     let commits = reader.next_commit_seq()?.saturating_sub(1);
     if commits == 0 {
@@ -248,6 +382,153 @@ impl<E: SqlEngine> CellStore<E> {
     #[must_use]
     pub const fn fork_pin(&self) -> Option<&ForkPin> {
         self.fork.as_ref()
+    }
+
+    /// FORK-LIFE-1: the durable lifecycle state of a forked store, or `None`
+    /// for `main`.
+    ///
+    /// # Errors
+    /// Store read or fork-state decoding errors.
+    pub fn fork_state(&self) -> Result<Option<ForkState>, CellError> {
+        if self.fork.is_none() {
+            return Ok(None);
+        }
+        if let Some(state) = self.fork_state.get()
+            && !state.is_open()
+        {
+            return Ok(Some(state));
+        }
+        let durable = read_state(&self.conn)?;
+        self.fork_state.set(Some(durable));
+        Ok(Some(durable))
+    }
+
+    /// FORK-LIFE-1: refuse with `core.world.fork_closed` if this store is a
+    /// fork whose lifecycle state is no longer `open`.
+    pub(crate) fn refuse_closed_fork(&self) -> Result<(), CellError> {
+        let Some(pin) = &self.fork else {
+            return Ok(());
+        };
+        if let Some(state) = self.fork_state.get()
+            && !state.is_open()
+        {
+            return Err(CellError::ForkClosed {
+                world: pin.world.clone(),
+                state: state.as_str().to_owned(),
+            });
+        }
+        let durable = read_state(&self.conn)?;
+        if !durable.is_open() {
+            self.fork_state.set(Some(durable));
+            return Err(CellError::ForkClosed {
+                world: pin.world.clone(),
+                state: durable.as_str().to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// FORK-LIFE-1: refuse commits/mutations while a fork is closed or reserved
+    /// for in-progress promotion.
+    pub(crate) fn refuse_fork_write(&self) -> Result<(), CellError> {
+        self.refuse_closed_fork()?;
+        if let Some(pin) = &self.fork
+            && read_promoting_head(&self.conn)?.is_some()
+        {
+            return Err(CellError::ForkClosed {
+                world: pin.world.clone(),
+                state: "promoting".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// FORK-MERGE-1: atomically reserve this open fork at `expected_head`
+    /// before `main` replay starts so no sibling handle can append a command
+    /// during promotion and have it stranded when the fork closes.
+    pub(crate) fn reserve_fork_promotion(
+        &mut self,
+        expected_head: &LedgerHead,
+    ) -> Result<(), CellError> {
+        let Some(pin) = self.fork.clone() else {
+            return Err(CellError::WorldSimulationForbidden);
+        };
+        self.write_tx(|| {
+            if read_promoting_head(&self.conn)?.is_some() {
+                return Err(CellError::ForkClosed {
+                    world: pin.world.clone(),
+                    state: "promoting".to_owned(),
+                });
+            }
+            let actual = copied_head(&self.conn, &self.model)?;
+            if actual != (expected_head.commits, expected_head.hash.clone()) {
+                return Err(CellError::ForkMergeRefused {
+                    reason: Box::new(
+                        crate::fork_merge::ForkMergeRefusalReason::UnauthenticatedForkHistory {
+                            commit_seq: actual.0,
+                            detail: format!(
+                                "decision fork advanced from commit {} to {} before promotion replay",
+                                expected_head.commits, actual.0
+                            ),
+                        },
+                    ),
+                });
+            }
+            write_promoting_head(&self.conn, expected_head)
+        })
+    }
+
+    /// Release an in-progress promotion reservation when `main` replay failed
+    /// with zero commits applied to `main`.
+    pub(crate) fn release_fork_promotion(&mut self) -> Result<(), CellError> {
+        if self.fork.is_none() {
+            return Ok(());
+        }
+        self.write_tx(|| clear_promoting_head(&self.conn))
+    }
+
+    /// FORK-LIFE-1: transition an open fork to `discarded`. Once closed, every
+    /// subsequent open, read, or commit refuses `core.world.fork_closed`.
+    ///
+    /// # Errors
+    /// `core.world.simulation_forbidden` on `main`; `core.world.fork_closed`
+    /// if the fork is already closed; store errors otherwise.
+    pub fn discard_fork(&mut self) -> Result<(), CellError> {
+        self.close_fork(ForkState::Discarded)
+    }
+
+    /// FORK-LIFE-1: transition an open fork to `expired`. Once closed, every
+    /// subsequent open, read, or commit refuses `core.world.fork_closed`.
+    ///
+    /// # Errors
+    /// `core.world.simulation_forbidden` on `main`; `core.world.fork_closed`
+    /// if the fork is already closed; store errors otherwise.
+    pub fn expire_fork(&mut self) -> Result<(), CellError> {
+        self.close_fork(ForkState::Expired)
+    }
+
+    /// FORK-LIFE-1: mark an open fork `promoted` after `FORK-MERGE-1` replay
+    /// into `main` succeeds.
+    pub(crate) fn mark_fork_promoted(&mut self) -> Result<(), CellError> {
+        self.close_fork(ForkState::Promoted)
+    }
+
+    fn close_fork(&mut self, target: ForkState) -> Result<(), CellError> {
+        let Some(pin) = self.fork.clone() else {
+            return Err(CellError::WorldSimulationForbidden);
+        };
+        self.write_tx(|| {
+            if !matches!(target, ForkState::Promoted) && read_promoting_head(&self.conn)?.is_some()
+            {
+                return Err(CellError::ForkClosed {
+                    world: pin.world.clone(),
+                    state: "promoting".to_owned(),
+                });
+            }
+            write_state(&self.conn, target)
+        })?;
+        self.fork_state.set(Some(target));
+        Ok(())
     }
 
     /// The world this store serves, from its pin and never from row labels:
@@ -298,6 +579,7 @@ impl<E: SqlEngine> CellStore<E> {
         if self.fork.is_none() {
             return Err(CellError::WorldSimulationForbidden);
         }
+        self.refuse_fork_write()?;
         self.record_head_result(command_id, generation, outcome)
     }
 
@@ -597,6 +879,99 @@ mod tests {
             opened.export_record(base.commits + 1),
             Err(CellError::ForkEvidenceForbidden)
         ));
+        Ok(())
+    }
+
+    /// FORK-LIFE-1: closing a fork durably persists `discarded`, `expired`, or
+    /// `promoted`, refuses reopen from disk (`CellStore::open` / `open_bound`),
+    /// and closes sibling handles opened on the same SQLite file (including
+    /// historical classification reads).
+    #[test]
+    fn closed_fork_files_refuse_reopen_and_sibling_reads() -> Result<(), CellError> {
+        let item_type: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Item",
+            "properties": [
+                { "id": "name", "type": { "kind": "string" } }
+            ]
+        }))?;
+        let model = Model::new(&SqliteDdlInput {
+            object_types: &[item_type],
+            property_types: &[],
+        })?;
+        let empty = || CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "s".to_owned(),
+            ..CommitBatch::default()
+        };
+        let mut main = CellStore::open_in_memory(model.clone())?;
+        main.commit(&empty())?;
+        let id = main
+            .cell_id()?
+            .ok_or_else(|| CellError::Engine("main is bound".to_owned()))?;
+        let base = main.verified_head()?;
+        let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
+
+        for (name, expected_state, close_fn) in [
+            (
+                "discarded-fork",
+                "discarded",
+                CellStore::discard_fork
+                    as fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
+            ),
+            (
+                "expired-fork",
+                "expired",
+                CellStore::expire_fork as fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
+            ),
+            (
+                "promoted-fork",
+                "promoted",
+                CellStore::mark_fork_promoted
+                    as fn(&mut CellStore<NativeEngine>) -> Result<(), CellError>,
+            ),
+        ] {
+            let fork = main.fork(name, &base)?;
+            let path = dir.path().join(format!("{name}.sqlite"));
+            fork.conn.backup_to_file(&path)?;
+            drop(fork);
+
+            let mut handle_a =
+                CellStore::open_bound(&path, model.clone(), StoreOptions::default(), &id)?;
+            let handle_b =
+                CellStore::open_bound(&path, model.clone(), StoreOptions::default(), &id)?;
+            close_fn(&mut handle_a)?;
+
+            assert!(matches!(
+                handle_b.verified_head(),
+                Err(CellError::ForkClosed { ref world, ref state })
+                    if world == name && state == expected_state
+            ));
+            assert!(matches!(
+                handle_b.read().receipts_after(0, 1),
+                Err(CellError::ForkClosed { ref world, ref state })
+                    if world == name && state == expected_state
+            ));
+            assert!(matches!(
+                handle_b
+                    .read()
+                    .property_history_unclassified(MAIN_WORLD, "test.Item", "name"),
+                Err(CellError::ForkClosed { ref world, ref state })
+                    if world == name && state == expected_state
+            ));
+            drop(handle_a);
+            drop(handle_b);
+
+            assert!(matches!(
+                CellStore::open(&path, model.clone(), StoreOptions::default()),
+                Err(CellError::ForkClosed { ref world, ref state })
+                    if world == name && state == expected_state
+            ));
+            assert!(matches!(
+                CellStore::open_bound(&path, model.clone(), StoreOptions::default(), &id),
+                Err(CellError::ForkClosed { ref world, ref state })
+                    if world == name && state == expected_state
+            ));
+        }
         Ok(())
     }
 }

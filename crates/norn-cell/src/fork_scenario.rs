@@ -117,6 +117,7 @@ impl<E, C, I, S: SqlEngine> ForkScenario<E, C, I, S> {
         let Some(pin) = cell.store().fork_pin().cloned() else {
             return Err(CellError::WorldSimulationForbidden);
         };
+        cell.store().refuse_closed_fork()?;
         let min_recorded = cell
             .store()
             .read()
@@ -176,6 +177,30 @@ impl<E, C, I, S: SqlEngine> ForkScenario<E, C, I, S> {
     #[must_use]
     pub fn into_cell(self) -> SqliteCell<E, C, I, S> {
         self.cell
+    }
+
+    /// FORK-LIFE-1: durable lifecycle state of this scenario's fork.
+    ///
+    /// # Errors
+    /// As [`SqliteCell::fork_state`].
+    pub fn fork_state(&self) -> Result<Option<crate::fork::ForkState>, CellError> {
+        self.cell.fork_state()
+    }
+
+    /// FORK-LIFE-1: close this scenario's fork as `discarded`.
+    ///
+    /// # Errors
+    /// As [`SqliteCell::discard_fork`].
+    pub fn discard_fork(&mut self) -> Result<(), CellError> {
+        self.cell.discard_fork()
+    }
+
+    /// FORK-LIFE-1: close this scenario's fork as `expired`.
+    ///
+    /// # Errors
+    /// As [`SqliteCell::expire_fork`].
+    pub fn expire_fork(&mut self) -> Result<(), CellError> {
+        self.cell.expire_fork()
     }
 
     /// Monotonically advance the virtual effective clock without moving
