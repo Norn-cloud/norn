@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import type { FetchTrace } from "@/answer-view"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -128,8 +128,21 @@ function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readon
 }
 
 function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: ToolHost }) {
-  const [traced, setTraced] = useState<{ readonly bucket: string; readonly read: Read<Trace> } | { readonly bucket: string; readonly refusal: Refusal } | { readonly bucket: string; readonly unavailable: true } | null>(null)
+  const [traced, setTraced] = useState<
+    | { readonly lineageRef: string; readonly bucket: string; readonly read: Read<Trace> }
+    | { readonly lineageRef: string; readonly bucket: string; readonly refusal: Refusal }
+    | { readonly lineageRef: string; readonly bucket: string; readonly unavailable: true }
+    | null
+  >(null)
   const answer = read.document
+  const traceSeq = useRef(0)
+  const mounted = useRef(true)
+  const currentLineageRef = useRef(answer.lineageRef)
+  currentLineageRef.current = answer.lineageRef
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const buckets = answerBuckets(read)
   const latest = buckets.at(-1)
   const freshness = FRESHNESS[answer.freshness]
@@ -138,15 +151,20 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
   const title = typeof question === "string" ? question : typeof (question as { name?: unknown } | undefined)?.name === "string" ? String((question as { name: string }).name) : "Answer"
   const fetchTrace = traceThrough(bridge, input)
   const trace = async (bucket: string) => {
+    const lineageRef = answer.lineageRef
+    const seq = ++traceSeq.current
     try {
-      const result = await fetchTrace(answer.lineageRef, bucket)
-      if (result.kind === "read") setTraced({ bucket, read: result.read })
-      else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
-      else setTraced({ bucket, unavailable: true })
+      const result = await fetchTrace(lineageRef, bucket)
+      if (!mounted.current || traceSeq.current !== seq || currentLineageRef.current !== lineageRef) return
+      if (result.kind === "read") setTraced({ lineageRef, bucket, read: result.read })
+      else if (result.kind === "refused") setTraced({ lineageRef, bucket, refusal: result.refusal })
+      else setTraced({ lineageRef, bucket, unavailable: true })
     } catch {
-      setTraced({ bucket, unavailable: true })
+      if (!mounted.current || traceSeq.current !== seq || currentLineageRef.current !== lineageRef) return
+      setTraced({ lineageRef, bucket, unavailable: true })
     }
   }
+  const visibleTrace = traced !== null && traced.lineageRef === answer.lineageRef ? traced : null
   // One bucket: its members are the breakdown. Several (a series): the buckets are.
   const rows = buckets.length === 1 && latest
     ? latest.members.map((entry, index) => ({ id: `${entry.id}:${index}`, key: latest.key, label: memberLabel(entry.id), value: entry.amounts?.[0] ?? "—" })).sort((a, b) => Number(b.value) - Number(a.value))
@@ -166,9 +184,9 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
       <CardContent>
         {rows.length > 0 ? <BarTable rows={rows} label={buckets.length === 1 ? "Record" : "Bucket"} valueLabel="Value" onSelect={(key) => void trace(key)} /> : <p className="text-body text-muted-foreground">No records in this answer.</p>}
       </CardContent>
-      {traced && "read" in traced && <CardContent><LineageTable read={traced.read} /></CardContent>}
-      {traced && "refusal" in traced && <CardContent><RefusalBody refusal={traced.refusal} /></CardContent>}
-      {traced && "unavailable" in traced && <CardContent><p role="status" className="text-body text-muted-foreground">Lineage trace is unavailable right now.</p></CardContent>}
+      {visibleTrace && "read" in visibleTrace && <CardContent><LineageTable read={visibleTrace.read} /></CardContent>}
+      {visibleTrace && "refusal" in visibleTrace && <CardContent><RefusalBody refusal={visibleTrace.refusal} /></CardContent>}
+      {visibleTrace && "unavailable" in visibleTrace && <CardContent><p role="status" className="text-body text-muted-foreground">Lineage trace is unavailable right now.</p></CardContent>}
       <CardFooter className="text-meta text-muted-foreground">Select a row to trace it to its source records.</CardFooter>
     </Card>
   )
