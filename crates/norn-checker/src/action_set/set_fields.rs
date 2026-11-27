@@ -254,6 +254,7 @@ pub(super) fn fire_transition_set_fields_findings(
                         set_field_type_compatible(&source_ty, source_required, target)
                     })
                 });
+        let entry_path = format!("/payload/effectProgram/setFields/{}", target_prop.as_str());
         if !writable(target_prop) || receipt_overlap || source_schema.is_none() {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
@@ -263,7 +264,7 @@ pub(super) fn fire_transition_set_fields_findings(
                     source_field
                 ),
                 action,
-                "/payload/effectProgram/setFields",
+                &entry_path,
             ));
         } else if !type_compatible {
             findings.push(finding(
@@ -274,7 +275,7 @@ pub(super) fn fire_transition_set_fields_findings(
                     source_field
                 ),
                 action,
-                "/payload/effectProgram/setFields",
+                &entry_path,
             ));
         } else if (guard_reads_all || guarded_fields.contains(target_prop.as_str()))
             && !trusted_sources.contains(source_field)
@@ -288,7 +289,7 @@ pub(super) fn fire_transition_set_fields_findings(
                     transition.as_str()
                 ),
                 action,
-                "/payload/effectProgram/setFields",
+                &entry_path,
             ));
         }
     }
@@ -374,9 +375,8 @@ fn enum_target_properties(
         ActionEffectProgram::UpsertInputObject { .. } if top_level => vec![field.to_owned()],
         ActionEffectProgram::FireTransition { set_fields, .. } if top_level => set_fields
             .iter()
-            .filter_map(|(target_prop, source_field)| {
-                (source_field == field).then(|| target_prop.as_str().to_owned())
-            })
+            .filter(|(_, source_field)| *source_field == field)
+            .map(|(target_prop, _)| target_prop.as_str().to_owned())
             .collect(),
         ActionEffectProgram::UpsertInputObject { .. }
         | ActionEffectProgram::FireTransition { .. }

@@ -2611,7 +2611,7 @@ fn conditional_when_gate_allows_excluded_clock_action_and_refuses_matching() {
         r#"{"input":{"order_id":"ord-large","amount":2000},"idempotencyKey":"k-large"}"#,
     )
     .expect_err("matching call under conditional `when` gate on clock action must refuse");
-    assert_eq!(large_err.status, http::StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(large_err.status, http::StatusCode::BAD_REQUEST);
 }
 
 /// ACTION-CLOCK-1 / APPROVAL-1: a caller-required (`inputRequired: true`)

@@ -298,6 +298,7 @@ fn upsert_origin_findings(
                 && let Some(message) = origin_write_violation(
                     origin,
                     field,
+                    field,
                     kind,
                     &stamped,
                     &clock_stamped,
@@ -317,6 +318,7 @@ fn upsert_origin_findings(
 
 fn origin_write_violation(
     origin: norn_ir::PropertyOrigin,
+    property_name: &str,
     source_field: &str,
     kind: &str,
     stamped: &BTreeSet<String>,
@@ -327,25 +329,25 @@ fn origin_write_violation(
         norn_ir::PropertyOrigin::Caller => None,
         norn_ir::PropertyOrigin::Actor => (!stamped.contains(source_field)).then(|| {
             format!(
-                "property {source_field:?} of {kind:?} has origin `actor` and must be stamped from {:?} with inputRequired false",
+                "property {property_name:?} of {kind:?} has origin `actor` and must be stamped from {:?} with inputRequired false",
                 norn_ir::ACTOR_SUBJECT_STAMP
             )
         }),
         norn_ir::PropertyOrigin::Clock => (!clock_stamped.contains(source_field)).then(|| {
             format!(
-                "property {source_field:?} of {kind:?} has origin `clock` and must be derived from `clock.nowIso` or `clock.nowMillis` with inputRequired false"
+                "property {property_name:?} of {kind:?} has origin `clock` and must be derived from `clock.nowIso` or `clock.nowMillis` with inputRequired false"
             )
         }),
         norn_ir::PropertyOrigin::Derived => (!server_derived.contains(source_field)).then(|| {
             format!(
-                "property {source_field:?} of {kind:?} has origin `derived` and must be written by a server derivation with inputRequired false"
+                "property {property_name:?} of {kind:?} has origin `derived` and must be written by a server derivation with inputRequired false"
             )
         }),
         norn_ir::PropertyOrigin::Receipt => Some(format!(
-            "property {source_field:?} of {kind:?} has origin `receipt` and may only be written by a fire_transition acceptReceipt binding"
+            "property {property_name:?} of {kind:?} has origin `receipt` and may only be written by a fire_transition acceptReceipt binding"
         )),
         norn_ir::PropertyOrigin::Default => Some(format!(
-            "property {source_field:?} of {kind:?} has origin `default` and cannot be written from action input"
+            "property {property_name:?} of {kind:?} has origin `default` and cannot be written from action input"
         )),
     }
 }
@@ -392,6 +394,7 @@ fn transition_origin_findings(
             if let Some(origin) = prop.origin()
                 && let Some(message) = origin_write_violation(
                     origin,
+                    target_prop.as_str(),
                     source_field,
                     kind,
                     &stamped,

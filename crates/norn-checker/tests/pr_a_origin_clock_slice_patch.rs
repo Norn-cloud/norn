@@ -491,6 +491,7 @@ fn refuses_base_action_writing_subtype_tightened_origin() {
                 "lifecycles": [{
                     "property": "state",
                     "initial": ["open"],
+                    "terminal": ["closed"],
                     "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
                 }]
             }
@@ -567,6 +568,7 @@ fn refuses_base_action_writing_subtype_protected_property() {
                 "lifecycles": [{
                     "property": "state",
                     "initial": ["open"],
+                    "terminal": ["closed"],
                     "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
                 }]
             }
