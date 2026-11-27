@@ -34,6 +34,7 @@ pub(crate) const fn is_shape_refusal<E>(error: &CommitError<E>) -> bool {
 pub(crate) struct ProfileView<'a, V: ?Sized> {
     inner: &'a V,
     reads: RefCell<BTreeSet<FactKey>>,
+    predicates: RefCell<Vec<PredicateQuery>>,
 }
 
 impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
@@ -41,6 +42,7 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
         Self {
             inner,
             reads: RefCell::new(BTreeSet::new()),
+            predicates: RefCell::new(Vec::new()),
         }
     }
 
@@ -51,6 +53,13 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
     fn link(&self, key: &LinkKey) {
         self.fact(&key.source);
         self.fact(&key.target);
+    }
+
+    fn predicate(&self, query: &PredicateQuery) {
+        let mut predicates = self.predicates.borrow_mut();
+        if !predicates.contains(query) {
+            predicates.push(query.clone());
+        }
     }
 
     pub(crate) fn validate_consumed(
@@ -77,7 +86,10 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
         model: crate::CommitModel<'_, '_>,
         result: &Result<R, CommitError<V::Error>>,
     ) -> Result<(), CommitError<V::Error>> {
-        if result.as_ref().is_err_and(is_shape_refusal) && self.reads.borrow().is_empty() {
+        if result.as_ref().is_err_and(is_shape_refusal)
+            && self.reads.borrow().is_empty()
+            && self.predicates.borrow().is_empty()
+        {
             return Ok(());
         }
         self.validate(commit, model)
@@ -104,6 +116,7 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
             }
         }
         for read in &commit.predicate_reads {
+            self.predicate(&read.predicate);
             for member in &read.members {
                 self.fact(&member.key);
             }
@@ -115,6 +128,20 @@ impl<'a, V: CommitView + ?Sized> ProfileView<'a, V> {
                 .map_err(CommitError::Host)?;
             if !supports_local(ownership) {
                 return Err(CommitError::AtomicBoundary { key: key.clone() });
+            }
+        }
+        for predicate in self.predicates.borrow().iter() {
+            let canonical_key = model.canonical(&FactKey::new(predicate.object_type.as_str(), ""));
+            let mut canonical_predicate = predicate.clone();
+            canonical_predicate.object_type = canonical_key.object_type;
+            let ownership = self
+                .inner
+                .predicate_ownership(&canonical_predicate)
+                .map_err(CommitError::Host)?;
+            if !supports_local(ownership) {
+                return Err(CommitError::AtomicBoundary {
+                    key: FactKey::new(predicate.object_type.as_str(), ""),
+                });
             }
         }
         Ok(())
@@ -175,6 +202,7 @@ impl<V: CommitView + ?Sized> CommitView for ProfileView<'_, V> {
         predicate: &PredicateQuery,
         limit: usize,
     ) -> Result<Option<Vec<PredicateReadMember>>, Self::Error> {
+        self.predicate(predicate);
         let result = self.inner.predicate_members(predicate, limit)?;
         if let Some(members) = &result {
             for member in members {

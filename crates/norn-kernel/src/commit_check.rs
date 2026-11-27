@@ -213,6 +213,21 @@ pub trait CommitView {
         Ok(crate::execution_profile::AtomicOwnership::Local)
     }
 
+    /// Ownership of the complete predicate-read partition queried by
+    /// `predicate`. Local-only stores own every predicate partition within
+    /// their bound cell. Hosts with external or unresolved partitions must
+    /// override this method (or [`Self::atomic_ownership`], which the default
+    /// delegates to via the canonical object-type partition key).
+    ///
+    /// # Errors
+    /// Ownership cannot be resolved under the commit's read snapshot.
+    fn predicate_ownership(
+        &self,
+        predicate: &crate::cell_host::PredicateQuery,
+    ) -> Result<crate::execution_profile::AtomicOwnership, Self::Error> {
+        self.atomic_ownership(&FactKey::new(predicate.object_type.as_str(), ""))
+    }
+
     /// Whether the consumed delivery is pending.
     ///
     /// # Errors

@@ -22,8 +22,9 @@ use norn_kernel::snapshot_observe::{
     tombstone_key,
 };
 use norn_kernel::{
-    CellHost, CommitError, Consumed, DecisionTurn, FactEvent, FactKey, LogicalTime, ObservationId,
-    Observed, Provenance, TypeCatalog, World, load_slice, prepare_decision,
+    CellHost, CommitError, Consumed, DecisionTurn, FactEvent, FactExpectation, FactKey,
+    LogicalTime, ObservationId, Observed, PredicateQuery, PredicateReadExpectation, Provenance,
+    TypeCatalog, World, load_slice, prepare_decision,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
@@ -1320,6 +1321,96 @@ fn empty_authority_cannot_request_an_unbounded_snapshot_envelope() {
             .is_err()
     );
     assert!(cell.observe().unwrap().is_some());
+}
+
+#[test]
+fn observation_authorization_validates_seals_and_preserves_predicate_reads() {
+    let mut order_type = model(&json!([]));
+    order_type.links = serde_json::from_value(json!([{
+        "id": "customer",
+        "target": "test.Customer",
+        "cardinality": {"from": "many", "to": "one"}
+    }]))
+    .unwrap();
+    let customer_type: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "test.Customer",
+        "properties": [{"id": "name", "type": {"kind": "text"}}]
+    }))
+    .unwrap();
+    let catalog = TypeCatalog::new([&order_type, &customer_type]);
+    let key = FactKey::new("test.SnapshotOrder", "SO-PRED-1");
+    let customer_key = FactKey::new("test.Customer", "CUST-1");
+    let values: JsonObject = serde_json::from_value(json!({"amount": 10})).unwrap();
+    let prov = provenance("predicate_reads");
+    let mut cell = cell().with_types(vec![order_type, customer_type]);
+    let delivery = next_delivery(&mut cell, "pred-1");
+    let slice = load_slice(&cell, [key.clone()]).unwrap();
+    let prepared = prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("pred-1", delivery.consumed()),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &prov,
+        },
+    )
+    .unwrap();
+    let (mut commit, mut auth) = prepared.into_parts();
+    commit.reads.push(FactExpectation {
+        key: customer_key.clone(),
+        expected: FactVersion::ABSENT,
+    });
+    auth.seal_link_intent(&catalog, &key, "customer", Some(&customer_key), &[])
+        .unwrap();
+    auth.seal_link_reference_reads(&commit).unwrap();
+    assert!(auth.validates(&commit));
+    assert_eq!(auth.reference_reads(&commit).len(), 1);
+
+    let predicate_read = PredicateReadExpectation {
+        predicate: PredicateQuery {
+            object_type: key.object_type.clone(),
+            filter: std::collections::BTreeMap::new(),
+            window: None,
+        },
+        members: Vec::new(),
+    };
+    commit.predicate_reads.push(predicate_read.clone());
+    assert!(
+        !auth.validates(&commit),
+        "injected predicate_reads must fail ObservationAuthorization::validates"
+    );
+    assert!(
+        auth.reference_reads(&commit).is_empty(),
+        "mutating predicate_reads after sealing must invalidate reference_reads"
+    );
+
+    let mut prepared_with_pred = prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("pred-2", delivery.consumed()),
+        ObservedSnapshot {
+            key: &key,
+            values: &values,
+            lifecycles: &[],
+            provenance: &prov,
+        },
+    )
+    .unwrap();
+    prepared_with_pred.predicate_reads.push(predicate_read);
+    let mut combined = norn_kernel::CellCommit::<ObservationEvent, JsonObject, JsonObject>::empty()
+        .consuming(delivery.consumed());
+    let mut combined_auth = norn_kernel::ObservationAuthorization::empty();
+    prepared_with_pred
+        .append_to(&mut combined, &mut combined_auth)
+        .unwrap();
+    assert_eq!(
+        combined.predicate_reads.len(),
+        1,
+        "PreparedObservation::append_to must not silently drop predicate_reads"
+    );
+    assert!(!combined_auth.validates(&combined));
 }
 
 norn_testkit::proptest::proptest! {
