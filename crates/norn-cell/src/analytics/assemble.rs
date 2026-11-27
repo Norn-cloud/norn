@@ -106,7 +106,7 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         tenant: &TenantId,
     ) -> Result<Prepared, CellError> {
-        self.prepare_at(plan, context, tenant, None)
+        self.prepare_at(plan, context, tenant, None, true)
     }
 
     /// ASOF-KNOWLEDGE-1 on the engine: prepare `plan` as known at `cutoff`,
@@ -125,7 +125,26 @@ impl<E: SqlEngine> CellStore<E> {
         tenant: &TenantId,
         cutoff: crate::KnowledgeCutoff,
     ) -> Result<Prepared, CellError> {
-        self.prepare_at(plan, context, tenant, Some(cutoff))
+        self.prepare_at(plan, context, tenant, Some(cutoff), true)
+    }
+
+    /// ASOF-KNOWLEDGE-1 answer for a caller denied by the population gate:
+    /// checks scope, cutoff, plan, foreign-model deletions, and historical
+    /// records without evaluating findings on rows outside the caller's
+    /// authorized population, and returns the empty historical answer directly
+    /// so no exclusion-less `Prepared` request can reach an analytics engine.
+    ///
+    /// # Errors
+    /// As [`Self::analytics_prepare_known_at`].
+    pub fn analytics_empty_known_at(
+        &self,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        tenant: &TenantId,
+        cutoff: crate::KnowledgeCutoff,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        let prepared = self.prepare_at(plan, context, tenant, Some(cutoff), false)?;
+        self.analytics_empty_authorized_answer_known_at(prepared)
     }
 
     #[allow(
@@ -138,6 +157,7 @@ impl<E: SqlEngine> CellStore<E> {
         context: QueryContext,
         tenant: &TenantId,
         cutoff: Option<crate::KnowledgeCutoff>,
+        include_findings: bool,
     ) -> Result<Prepared, CellError> {
         // S7 (#1551): gate historical/as-of analytics before population or exclusion selection.
         if cutoff.is_some() || plan.as_of() {
@@ -204,10 +224,17 @@ impl<E: SqlEngine> CellStore<E> {
             } else {
                 let candidates = self.analytics_exclusion_candidates(&context.world, grain)?;
                 let exclusions = match cutoff {
-                    Some(cutoff) => {
-                        self.exclusions_known_at(&context.world, grain, candidates, cutoff)?
+                    Some(cutoff) => self.exclusions_known_at(
+                        &context.world,
+                        grain,
+                        candidates,
+                        cutoff,
+                        include_findings,
+                    )?,
+                    None if include_findings => {
+                        self.analytics_exclusions_of(&context.world, grain, candidates)?
                     }
-                    None => self.analytics_exclusions_of(&context.world, grain, candidates)?,
+                    None => BTreeMap::new(),
                 };
                 (
                     Source::Mirror {
@@ -346,7 +373,7 @@ impl<E: SqlEngine> CellStore<E> {
         let mut exclusions = BTreeMap::new();
         for key in candidates {
             if let Some(record) = reader.object(world, grain, &key)?
-                && let Some(finding) = reader.question_findings(world, &record, None)?.first()
+                && let Some(finding) = reader.question_findings(world, &record)?.first()
             {
                 exclusions.insert(key, finding.id.clone());
             }
