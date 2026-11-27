@@ -410,9 +410,9 @@ fn tracked_object_fixtures() -> [serde_json::Value; 4] {
     [direct_obj, narrowed_enum_obj, diamond_obj, redeclared_sub]
 }
 
-fn assert_conflicting_interface_fails_closed<'a>(
-    mut by_type: BTreeMap<&'a str, &'a ObjectTypeDef>,
-    mut by_iface: BTreeMap<&'a str, &'a InterfaceDef>,
+fn assert_conflicting_interface_fails_closed(
+    by_type: &BTreeMap<&str, &ObjectTypeDef>,
+    by_iface: &BTreeMap<&str, &InterfaceDef>,
 ) {
     // Conflicting interfaces omit the machine from effective_lifecycles_with_interfaces
     // while keeping the property in declared_lifecycle_properties_with_interfaces (fail closed).
@@ -441,10 +441,20 @@ fn assert_conflicting_interface_fails_closed<'a>(
         ]
     }))
     .expect("conflicted obj decodes");
-    by_type.insert(conflicted_obj.name.as_str(), &conflicted_obj);
-    by_iface.insert(conflicting.name.as_str(), &conflicting);
-    let lookup = |name: &str| by_type.get(name).copied();
-    let lookup_iface = |name: &str| by_iface.get(name).copied();
+    let lookup = |name: &str| {
+        if name == conflicted_obj.name.as_str() {
+            Some(&conflicted_obj)
+        } else {
+            by_type.get(name).copied()
+        }
+    };
+    let lookup_iface = |name: &str| {
+        if name == conflicting.name.as_str() {
+            Some(&conflicting)
+        } else {
+            by_iface.get(name).copied()
+        }
+    };
     assert!(
         effective_lifecycles_with_interfaces(&lookup, &lookup_iface, &[], "commerce.Conflicted")
             .is_empty()
@@ -534,5 +544,5 @@ fn interface_effective_lifecycles_equal_checker_machines() {
             "len(self.code) < 50"
         ]
     );
-    assert_conflicting_interface_fails_closed(by_type, by_iface);
+    assert_conflicting_interface_fails_closed(&by_type, &by_iface);
 }
