@@ -225,3 +225,100 @@ fn feed_declaration_defaults_and_roundtrip() {
         Some(VersionKind::Rfc3339)
     );
 }
+
+/// Exhaustive-finite idempotency and multi-step list-fold homomorphism for
+/// `FieldPatch` and `LinkPatchOp`, mirroring `verification/feed-reducer-v1/FeedReducer.lean`.
+#[test]
+fn patch_idempotency_and_list_fold_homomorphism_exhaustive_finite() {
+    let field_states = [
+        None,
+        Some(RuntimeValue::Null),
+        Some(RuntimeValue::from("a")),
+        Some(RuntimeValue::from("b")),
+    ];
+    let field_patches = [
+        FieldPatch::Absent,
+        FieldPatch::ExplicitNull,
+        FieldPatch::Value(RuntimeValue::from("a")),
+        FieldPatch::Value(RuntimeValue::from("b")),
+    ];
+
+    for p in &field_patches {
+        assert_eq!(compose_field_patch(p, p), *p);
+        for s in &field_states {
+            let once = reduce_field(s.as_ref(), p, RuntimeValue::Null);
+            let twice = reduce_field(once.as_ref(), p, RuntimeValue::Null);
+            assert_eq!(twice, once);
+        }
+    }
+
+    for p1 in &field_patches {
+        for p2 in &field_patches {
+            for p3 in &field_patches {
+                let folded = compose_field_patch(p1, &compose_field_patch(p2, p3));
+                for s in &field_states {
+                    let s1 = reduce_field(s.as_ref(), p1, RuntimeValue::Null);
+                    let s2 = reduce_field(s1.as_ref(), p2, RuntimeValue::Null);
+                    let s3 = reduce_field(s2.as_ref(), p3, RuntimeValue::Null);
+                    assert_eq!(s3, reduce_field(s.as_ref(), &folded, RuntimeValue::Null));
+                }
+            }
+        }
+    }
+
+    let link_states = [None, Some("t1"), Some("t2")];
+    let link_ops = [
+        LinkPatchOp::Absent,
+        LinkPatchOp::Clear,
+        LinkPatchOp::Target("t1".into()),
+        LinkPatchOp::Target("t2".into()),
+    ];
+
+    for op in &link_ops {
+        assert_eq!(compose_link_patch(op, op), *op);
+        for s in link_states {
+            let once = reduce_link(s, op);
+            let twice = reduce_link(once.as_deref(), op);
+            assert_eq!(twice, once);
+        }
+    }
+
+    for op1 in &link_ops {
+        for op2 in &link_ops {
+            for op3 in &link_ops {
+                let folded = compose_link_patch(op1, &compose_link_patch(op2, op3));
+                for s in link_states {
+                    let s1 = reduce_link(s, op1);
+                    let s2 = reduce_link(s1.as_deref(), op2);
+                    let s3 = reduce_link(s2.as_deref(), op3);
+                    assert_eq!(s3, reduce_link(s, &folded));
+                }
+            }
+        }
+    }
+}
+
+/// Antisymmetry, transitivity, and nanosecond-boundary strict total order of
+/// RFC 3339 `SourceVersion` comparison (including pre-1970 instants).
+#[test]
+fn rfc3339_source_version_total_order_and_nanosecond_boundaries() {
+    let ordered = [
+        "1969-12-31T23:59:59.000000000Z",
+        "1969-12-31T23:59:59.999999999Z",
+        "1970-01-01T00:00:00Z",
+        "1970-01-01T00:00:00.000000001Z",
+        "2026-11-12T08:00:00Z",
+        "2026-11-12T08:00:00.5Z",
+        "2026-11-12T10:01:00+02:00",
+    ]
+    .map(|raw| SourceVersion::parse(VersionKind::Rfc3339, raw).expect("valid RFC 3339"));
+
+    for (i, a) in ordered.iter().enumerate() {
+        assert_eq!(a.try_cmp(a), Ok(Ordering::Equal));
+        for (j, b) in ordered.iter().enumerate() {
+            let expected = i.cmp(&j);
+            assert_eq!(a.try_cmp(b), Ok(expected));
+            assert_eq!(b.try_cmp(a), Ok(expected.reverse()));
+        }
+    }
+}

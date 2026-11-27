@@ -1,0 +1,573 @@
+//! D1 export/restore regression tests: restore fences, second-restore replay of
+//! reconciled/compensated operations, and export/restore preservation of late
+//! dispatch-proof evidence.
+
+use std::collections::BTreeMap;
+
+use norn_cell::engine::{NativeEngine, SqlEngine};
+use norn_cell::engine_release::{STAMP_FORMAT, STAMP_KEY};
+use norn_cell::export::Exporter;
+use norn_cell::outbox_ledger::outcome_digest;
+use norn_cell::{CellError, CellStore, ClaimOutcome, JournalMode, StoreOptions};
+use norn_kernel::cell_host::JsonObject;
+use norn_kernel::world::outbox::{OutboxState, Queue};
+use norn_kernel::world::outbox_ledger::{OutboxLedgerRefusal, ReconciliationDecision};
+use norn_kernel::{
+    CellCommit, CellHost as _, Command, CommandId, CommitError, Consumed, FreshnessPolicy,
+    Generation, IdempotencyKey,
+};
+use serde_json::json;
+
+use super::outbox_generations::{
+    Cell, SCOPE, TestResult, enqueue_cmd, make_command, open_cell, rv, test_model,
+};
+
+async fn export_cell(
+    cell: &Cell,
+    export_dir: &std::path::Path,
+) -> Result<(Exporter, BTreeMap<String, String>), Box<dyn std::error::Error>> {
+    let cell_id = String::from(
+        cell.store()
+            .cell_id()?
+            .ok_or("source cell missing cell_id")?,
+    );
+    let mut exporter = Exporter::local(export_dir)?;
+    let count = cell.store().export_commit_count()?;
+    for seq in 1..=count {
+        if let Some(record) = cell.store().export_record(seq)? {
+            exporter.append(&record).await?;
+        }
+    }
+    let manifest = exporter.verify().await?;
+    let bindings = BTreeMap::from([
+        ("scope".to_owned(), SCOPE.to_owned()),
+        (
+            "cell_identity_format".to_owned(),
+            norn_cell::cell_identity::FORMAT.to_owned(),
+        ),
+        ("cell_id".to_owned(), cell_id),
+    ]);
+    assert_eq!(manifest.bindings, bindings);
+    Ok((exporter, bindings))
+}
+
+async fn export_claimed_pair(
+    dir: &std::path::Path,
+) -> Result<
+    (
+        Exporter,
+        BTreeMap<String, String>,
+        Command<JsonObject>,
+        Command<JsonObject>,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let src_path = dir.join("src.sqlite");
+    let mut src = open_cell(&src_path)?;
+    let c1 = make_command("fence-1", 0, 100, Some("operationKeyIdempotent"))?;
+    let c2 = make_command("after-1", 0, 200, None)?;
+    enqueue_cmd(&mut src, c1.clone())?;
+    enqueue_cmd(&mut src, c2.clone())?;
+    assert_eq!(src.claim_perform()?, ClaimOutcome::Fresh(c1.clone()));
+    let (exporter, bindings) = export_cell(&src, &dir.join("export")).await?;
+    Ok((exporter, bindings, c1, c2))
+}
+
+#[tokio::test]
+async fn restore_fence_blocks_idempotent_reissue_and_confirmed_outcome_unmasks_head() -> TestResult
+{
+    let dir = tempfile::tempdir()?;
+    let (mut exporter, bindings, c1, _c2) = export_claimed_pair(dir.path()).await?;
+    let target = dir.path().join("restored-confirmed.sqlite");
+
+    let report = CellStore::restore_from(
+        &mut exporter,
+        &target,
+        test_model()?,
+        SCOPE,
+        &bindings,
+        StoreOptions {
+            journal_mode: JournalMode::Delete,
+            ..StoreOptions::default()
+        },
+    )
+    .await?;
+    assert_eq!(report.fenced_commands, 2);
+
+    let mut cell = open_cell(&target)?;
+    assert_eq!(
+        cell.claim_perform()?,
+        ClaimOutcome::HeadFenced {
+            command: c1.id.clone(),
+            fenced_at: Generation(0),
+        }
+    );
+    // Even `OperationKeyIdempotent` cannot auto-reissue while restore-fenced.
+    let blocked = enqueue_cmd(
+        &mut cell,
+        make_command("fence-1", 1, 100, Some("operationKeyIdempotent"))?,
+    );
+    assert!(matches!(
+        blocked,
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 1,
+            ..
+        }))
+    ));
+    let confirmed_val = rv(json!({ "ok": true, "reconciled": "provider-lookup" }))?;
+    let wrong_digest = outcome_digest(&rv(json!({ "ok": true, "reconciled": "other" }))?)?;
+    // Mismatched confirmed_outcome payload vs digest fails closed.
+    let err = cell.reconcile_outbox(
+        &c1.id,
+        Generation(0),
+        ReconciliationDecision::ConfirmedOutcome {
+            ok: true,
+            outcome_digest: wrong_digest,
+        },
+        Some(&confirmed_val),
+    );
+    assert!(matches!(
+        err,
+        Err(CellError::OutboxLedgerRefused {
+            refusal: OutboxLedgerRefusal::OutcomeDiverged,
+            ..
+        })
+    ));
+
+    let good_digest = outcome_digest(&confirmed_val)?;
+    cell.reconcile_outbox(
+        &c1.id,
+        Generation(0),
+        ReconciliationDecision::ConfirmedOutcome {
+            ok: true,
+            outcome_digest: good_digest,
+        },
+        Some(&confirmed_val),
+    )?;
+    assert!(matches!(
+        cell.claim_perform()?,
+        ClaimOutcome::Recorded { ref command, ref performed }
+            if command == &c1 && performed.input == confirmed_val
+    ));
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: c1.id,
+        generation: Generation(0),
+    }))?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn restore_fence_require_compensation_completes_terminal_and_unblocks_fifo() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (mut exporter, bindings, c1, c2) = export_claimed_pair(dir.path()).await?;
+    let target = dir.path().join("restored-compensated.sqlite");
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        test_model()?,
+        SCOPE,
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await?;
+    let mut comp_cell = open_cell(&target)?;
+    comp_cell.reconcile_outbox(
+        &c1.id,
+        Generation(0),
+        ReconciliationDecision::RequireCompensation,
+        None,
+    )?;
+    comp_cell.record_outbox_compensation(&c1.id, Generation(0), false)?;
+    let mid = comp_cell
+        .store()
+        .read()
+        .outbox_ledger("fence-1")?
+        .ok_or("missing mid ledger")?;
+    assert_eq!(
+        mid.head_projection().state,
+        OutboxState::CompensationPending { attempts: 1 }
+    );
+    comp_cell.record_outbox_compensation(&c1.id, Generation(0), true)?;
+    let done = comp_cell
+        .store()
+        .read()
+        .outbox_ledger("fence-1")?
+        .ok_or("missing compensated ledger")?;
+    assert_eq!(done.head_projection().state, OutboxState::Compensated);
+    assert!(done.is_terminal());
+
+    // Compensated operation refuses any subsequent reissue even at gen 1.
+    let err = enqueue_cmd(&mut comp_cell, make_command("fence-1", 1, 100, None)?);
+    assert!(matches!(
+        err,
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 1,
+            ..
+        }))
+    ));
+    // FIFO head advances to `after-1` (still restore-fenced at gen 0).
+    assert_eq!(
+        comp_cell.claim_perform()?,
+        ClaimOutcome::HeadFenced {
+            command: c2.id,
+            fenced_at: Generation(0),
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn second_restore_replays_confirmed_outcome_and_compensation() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (mut exp1, bindings, c1, c2) = export_claimed_pair(dir.path()).await?;
+    let first_path = dir.path().join("r1.sqlite");
+    CellStore::restore_from(
+        &mut exp1,
+        &first_path,
+        test_model()?,
+        SCOPE,
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await?;
+    let mut cell = open_cell(&first_path)?;
+    // ConfirmedOutcome with `None` payload fails closed when SQL result is NULL.
+    let confirmed_val = rv(json!({ "ok": true, "via": "lookup" }))?;
+    let digest = outcome_digest(&confirmed_val)?;
+    assert!(matches!(
+        cell.reconcile_outbox(
+            &c1.id,
+            Generation(0),
+            ReconciliationDecision::ConfirmedOutcome {
+                ok: true,
+                outcome_digest: digest,
+            },
+            None,
+        ),
+        Err(CellError::OutboxLedgerRefused {
+            refusal: OutboxLedgerRefusal::NotPending,
+            ..
+        })
+    ));
+    // Reconcile c1 with ConfirmedOutcome + consume; reconcile c2 with RequireCompensation + complete.
+    cell.reconcile_outbox(
+        &c1.id,
+        Generation(0),
+        ReconciliationDecision::ConfirmedOutcome {
+            ok: true,
+            outcome_digest: digest,
+        },
+        Some(&confirmed_val),
+    )?;
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: c1.id.clone(),
+        generation: Generation(0),
+    }))?;
+    cell.reconcile_outbox(
+        &c2.id,
+        Generation(0),
+        ReconciliationDecision::RequireCompensation,
+        None,
+    )?;
+    cell.record_outbox_compensation(&c2.id, Generation(0), true)?;
+
+    let (mut exp2, bindings2) = export_cell(&cell, &dir.path().join("export2")).await?;
+    let second_path = dir.path().join("r2.sqlite");
+    let report = CellStore::restore_from(
+        &mut exp2,
+        &second_path,
+        test_model()?,
+        SCOPE,
+        &bindings2,
+        StoreOptions::default(),
+    )
+    .await?;
+    assert_eq!(report.fenced_commands, 0);
+    let restored = open_cell(&second_path)?;
+    assert!(
+        restored
+            .store()
+            .read()
+            .outbox_ledger(&c1.id.0)?
+            .ok_or("missing c1")?
+            .is_terminal()
+    );
+    assert_eq!(
+        restored
+            .store()
+            .read()
+            .outbox_ledger(&c2.id.0)?
+            .ok_or("missing c2")?
+            .head_projection()
+            .state,
+        OutboxState::Compensated
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn export_restore_preserves_mixed_and_unconsumed_late_outcomes() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let mut cell = open_cell(&dir.path().join("late-src.sqlite"))?;
+    // 1. Single 3-generation operation mixing both attachment paths in one epoch:
+    // gen 0 via `complete_perform`, gen 1 via `record_late_outcome`, gen 2 consumed.
+    let m0 = make_command("mixed-3", 0, 10, None)?;
+    let m1 = make_command("mixed-3", 1, 10, None)?;
+    let m2 = make_command("mixed-3", 2, 10, None)?;
+    enqueue_cmd(&mut cell, m0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(m0.clone()));
+    cell.reconcile_outbox(
+        &m0.id,
+        Generation(0),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+        None,
+    )?;
+    enqueue_cmd(&mut cell, m1.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(m1.clone()));
+    let proof_m1 = cell
+        .store()
+        .read()
+        .dispatch_proof("mixed-3", 1)?
+        .ok_or("proof_m1")?;
+    cell.reconcile_outbox(
+        &m1.id,
+        Generation(1),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 2 },
+        None,
+    )?;
+    enqueue_cmd(&mut cell, m2.clone())?;
+    assert!(
+        cell.complete_perform(&m0, rv(json!({ "ok": true, "g": 0 }))?)?
+            .is_none()
+    );
+    cell.record_late_outcome(&m1.id, proof_m1, true, &rv(json!({ "ok": true, "g": 1 }))?)?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(m2.clone()));
+    assert!(
+        cell.complete_perform(&m2, rv(json!({ "ok": true, "g": 2 }))?)?
+            .is_some()
+    );
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: m2.id.clone(),
+        generation: Generation(2),
+    }))?;
+
+    // 2. Local `complete_perform` late outcome exported while replacement gen 1 is
+    // still pending (never consumed) must still survive export and restore.
+    let p0 = make_command("pending-late", 0, 20, None)?;
+    let p1 = make_command("pending-late", 1, 20, None)?;
+    enqueue_cmd(&mut cell, p0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(p0.clone()));
+    cell.reconcile_outbox(
+        &p0.id,
+        Generation(0),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+        None,
+    )?;
+    enqueue_cmd(&mut cell, p1)?;
+    assert!(
+        cell.complete_perform(&p0, rv(json!({ "ok": true, "p": 0 }))?)?
+            .is_none()
+    );
+
+    let (mut exp, bindings) = export_cell(&cell, &dir.path().join("late-exp")).await?;
+    let restored_path = dir.path().join("late-restored.sqlite");
+    CellStore::restore_from(
+        &mut exp,
+        &restored_path,
+        test_model()?,
+        SCOPE,
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await?;
+    let restored = open_cell(&restored_path)?;
+    assert_eq!(
+        restored
+            .store()
+            .read()
+            .outbox_ledger("mixed-3")?
+            .ok_or("mixed-3")?
+            .prior_confirmed_successes(),
+        vec![0, 1]
+    );
+    assert_eq!(
+        restored
+            .store()
+            .read()
+            .outbox_ledger("pending-late")?
+            .ok_or("pending-late")?
+            .prior_confirmed_successes(),
+        vec![0]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn v10_in_place_upgrade_matches_export_restore_for_unclaimed_prior_enqueue() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let src_path = dir.path().join("unclaimed-src.sqlite");
+    let mut src = open_cell(&src_path)?;
+    let g0 = make_command("unclaimed-1", 0, 10, None)?;
+    let g2 = make_command("unclaimed-1", 2, 20, None)?;
+    let stale_g1 = make_command("unclaimed-1", 1, 15, None)?;
+    enqueue_cmd(&mut src, g0.clone())?;
+    // Replace gen 0 -> gen 2 BEFORE any claim/dispatch, then journal a skipped
+    // stale gen 1 that v10 outbox admission ignores as a no-op.
+    enqueue_cmd(&mut src, g2)?;
+    enqueue_cmd(&mut src, stale_g1)?;
+    let (mut exp, bindings) = export_cell(&src, &dir.path().join("unclaimed-exp")).await?;
+    drop(src);
+
+    // Path A: export -> restore into a fresh v11 store.
+    let restored_path = dir.path().join("unclaimed-restored.sqlite");
+    CellStore::restore_from(
+        &mut exp,
+        &restored_path,
+        test_model()?,
+        SCOPE,
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await?;
+    let mut restored = open_cell(&restored_path)?;
+
+    // Path B: downgrade source store to v10 and upgrade in place to v11.
+    let raw = NativeEngine::open(&src_path, StoreOptions::default())?;
+    raw.execute_batch("DROP TABLE \"_norn_outbox_record\";")?;
+    raw.execute(
+        "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+        &[
+            norn_cell::engine::SqlValue::Text(format!(
+                r#"{{"format":"{STAMP_FORMAT}","storage":10,"writer":"v10-fixture"}}"#
+            )),
+            norn_cell::engine::SqlValue::Text(STAMP_KEY.to_owned()),
+        ],
+    )?;
+    drop(raw);
+    let mut upgraded = open_cell(&src_path)?;
+
+    let restored_ledger = restored
+        .store()
+        .read()
+        .outbox_ledger("unclaimed-1")?
+        .ok_or("restored ledger")?;
+    let upgraded_ledger = upgraded
+        .store()
+        .read()
+        .outbox_ledger("unclaimed-1")?
+        .ok_or("upgraded ledger")?;
+    assert_eq!(
+        upgraded_ledger.generation(0).map(|r| r.payload_digest),
+        restored_ledger.generation(0).map(|r| r.payload_digest)
+    );
+    assert!(upgraded_ledger.generation(0).is_some());
+    assert!(upgraded_ledger.generation(1).is_none());
+    assert!(restored_ledger.generation(1).is_none());
+
+    // Both upgraded and restored stores reject a divergent gen-0 replay,
+    // and treat a later divergent skipped gen-1 replay identically as a no-op.
+    let diverged = make_command("unclaimed-1", 0, 999, None)?;
+    assert!(matches!(
+        enqueue_cmd(&mut upgraded, diverged.clone()),
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 0,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        enqueue_cmd(&mut restored, diverged),
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 0,
+            ..
+        }))
+    ));
+    let skipped_replay = make_command("unclaimed-1", 1, 888, None)?;
+    enqueue_cmd(&mut upgraded, skipped_replay.clone())?;
+    enqueue_cmd(&mut restored, skipped_replay)?;
+    // Identical gen-0 replay remains an idempotent no-op on both.
+    enqueue_cmd(&mut upgraded, g0.clone())?;
+    enqueue_cmd(&mut restored, g0)?;
+    Ok(())
+}
+
+#[test]
+fn v11_refuses_queue_change_and_v10_upgrade_preserves_prior_epoch_queue() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("queue-flip.sqlite");
+    let mut cell = open_cell(&path)?;
+    let fifo_g0 = make_command("qflip-1", 0, 10, None)?;
+    enqueue_cmd(&mut cell, fifo_g0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(fifo_g0.clone()));
+    assert!(
+        cell.complete_perform(&fifo_g0, rv(json!({ "ok": true }))?)?
+            .is_some()
+    );
+    cell.commit(CellCommit::empty().consuming(Consumed::Result {
+        command: fifo_g0.id,
+        generation: Generation(0),
+    }))?;
+
+    // Live v11 write refuses changing queue from Fifo to Parked on the same command_id.
+    let parked_payload = serde_json::from_value(json!({
+        "kind": "perform",
+        "function": "norn.decision",
+        "functionVersion": "1",
+        "step": "approve",
+    }))?;
+    let parked_g1 = Command {
+        id: CommandId("qflip-1".to_owned()),
+        generation: Generation(1),
+        idempotency_key: IdempotencyKey("qflip-1/1".to_owned()),
+        freshness: FreshnessPolicy::AppendOnly,
+        deadline: None,
+        payload: parked_payload,
+    };
+    assert!(matches!(
+        enqueue_cmd(&mut cell, parked_g1.clone()),
+        Err(CommitError::Host(CellError::OutboxReissueRefused {
+            generation: 1,
+            ..
+        }))
+    ));
+    drop(cell);
+
+    // Simulate a legacy v10 store where Fifo gen 0 was consumed and Parked gen 1
+    // replaced the row in `_norn_outbox`, then upgrade to v11.
+    let raw = NativeEngine::open(&path, StoreOptions::default())?;
+    raw.execute_batch("DROP TABLE \"_norn_outbox_record\";")?;
+    let parked_cmd_json = serde_json::to_string(&parked_g1)?;
+    raw.execute(
+        "UPDATE \"_norn_outbox\" SET \"generation\" = 1, \"idempotency_key\" = 'qflip-1/1', \"command\" = ?1, \"result\" = NULL, \"consumed_commit_seq\" = NULL, \"queue\" = 'parked' WHERE \"command_id\" = 'qflip-1'",
+        &[norn_cell::engine::SqlValue::Text(parked_cmd_json)],
+    )?;
+    raw.execute(
+        "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+        &[
+            norn_cell::engine::SqlValue::Text(format!(
+                r#"{{"format":"{STAMP_FORMAT}","storage":10,"writer":"v10-fixture"}}"#
+            )),
+            norn_cell::engine::SqlValue::Text(STAMP_KEY.to_owned()),
+        ],
+    )?;
+    drop(raw);
+
+    let upgraded = open_cell(&path)?;
+    let records = upgraded.store().read().outbox_records("qflip-1")?;
+    // Epoch 0 preserved Fifo from the export journal; Epoch 1 has Parked.
+    assert!(records.iter().any(|r| r.generation == 0
+        && matches!(
+            r.kind,
+            norn_kernel::world::outbox_ledger::OutboxRecordKind::Requested {
+                queue: Queue::Fifo,
+                ..
+            }
+        )));
+    let ledger = upgraded
+        .store()
+        .read()
+        .outbox_ledger("qflip-1")?
+        .ok_or("missing upgraded qflip-1")?;
+    assert_eq!(ledger.active_generation(), 1);
+    assert_eq!(ledger.queue(), Queue::Parked);
+    Ok(())
+}
