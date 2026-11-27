@@ -39,8 +39,7 @@ use norn_ir::{ArtifactEnvelope, ObjectTypeName, RuntimeValue, TraceContext};
 use norn_kernel::cell_host::{FactKey, JsonObject};
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionCall, ActionCallRecord, ActionDerivedValue,
-    ActionOutcome, ActionRefusal, CellHost as _, DecisionRefusal, DecisionTurn, FactEvent,
-    commit_action,
+    ActionOutcome, ActionRefusal, DecisionRefusal, DecisionTurn, FactEvent, commit_action,
 };
 use serde::{Deserialize, Serialize};
 
