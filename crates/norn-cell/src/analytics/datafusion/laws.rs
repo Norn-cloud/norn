@@ -161,6 +161,62 @@ impl Typed<'_> {
         }
     }
 
+    /// Evaluate `a == b` or `a != b`, matching `DuckDB`'s `widen_decimal_pair`
+    /// coercion on dynamically null mixed-scale equality (`DECIMAL(38, max(s_a, s_b))`).
+    fn eval_equality(
+        &self,
+        equal: bool,
+        a: &RowPredicate,
+        b: &RowPredicate,
+        cells: &[Cell],
+    ) -> Option<Val> {
+        let left = self.eval(a, cells)?;
+        let right = self.eval(b, cells)?;
+        if let (Some(sa), Some(sb)) = (self.scale_of(a), self.scale_of(b))
+            && sa != sb
+        {
+            let to = sa.max(sb);
+            if let Val::Num(value) = left {
+                value.rescale(to).filter(Dec::in_storage)?;
+            }
+            if let Val::Num(value) = right {
+                value.rescale(to).filter(Dec::in_storage)?;
+            }
+        }
+        let same = match (left, right) {
+            (Val::Null, Val::Null) => true,
+            (Val::Null, _) | (_, Val::Null) => false,
+            (Val::Num(left), Val::Num(right)) => Self::compare_numbers(left, right)?.is_eq(),
+            (Val::Text(left), Val::Text(right)) => left == right,
+            (Val::Bool(left), Val::Bool(right)) => left == right,
+            (Val::Date(left), Val::Date(right)) => left == right,
+            (Val::Timestamp(lt, ln), Val::Timestamp(rt, rn)) => (lt, ln) == (rt, rn),
+            _ => return None,
+        };
+        Some(Val::Bool(same == equal))
+    }
+
+    /// Evaluate `a and b` / `a or b` with left-to-right short-circuiting,
+    /// matching ZEN and `DuckDB` when the RHS would overflow decimal widening.
+    fn eval_logical(
+        &self,
+        is_and: bool,
+        a: &RowPredicate,
+        b: &RowPredicate,
+        cells: &[Cell],
+    ) -> Option<Val> {
+        let Val::Bool(left) = self.eval(a, cells)? else {
+            return None;
+        };
+        if (is_and && !left) || (!is_and && left) {
+            return Some(Val::Bool(left));
+        }
+        let Val::Bool(right) = self.eval(b, cells)? else {
+            return None;
+        };
+        Some(Val::Bool(right))
+    }
+
     /// The value of `node` over `cells`; `None` when it does not compute.
     fn eval(&self, node: &RowPredicate, cells: &[Cell]) -> Option<Val> {
         use RowPredicate as P;
@@ -206,53 +262,14 @@ impl Typed<'_> {
                 Val::Num(left.checked_mul(right)?)
             }
             P::Equal(a, b) | P::NotEqual(a, b) => {
-                let equal = matches!(node, P::Equal(..));
-                let left = self.eval(a, cells)?;
-                let right = self.eval(b, cells)?;
-                // Match DuckDB's `widen_decimal_pair` coercion on dynamically
-                // null mixed-scale equality (`DECIMAL(38, max(s_a, s_b))`): an
-                // overflowing non-null decimal enters residue even if its peer
-                // evaluates to `null`.
-                if let (Some(sa), Some(sb)) = (self.scale_of(a), self.scale_of(b))
-                    && sa != sb
-                {
-                    let to = sa.max(sb);
-                    if let Val::Num(value) = left {
-                        value.rescale(to).filter(Dec::in_storage)?;
-                    }
-                    if let Val::Num(value) = right {
-                        value.rescale(to).filter(Dec::in_storage)?;
-                    }
-                }
-                let same = match (left, right) {
-                    (Val::Null, Val::Null) => true,
-                    (Val::Null, _) | (_, Val::Null) => false,
-                    (Val::Num(left), Val::Num(right)) => {
-                        Self::compare_numbers(left, right)?.is_eq()
-                    }
-                    (Val::Text(left), Val::Text(right)) => left == right,
-                    (Val::Bool(left), Val::Bool(right)) => left == right,
-                    (Val::Date(left), Val::Date(right)) => left == right,
-                    (Val::Timestamp(lt, ln), Val::Timestamp(rt, rn)) => (lt, ln) == (rt, rn),
-                    _ => return None,
-                };
-                Val::Bool(same == equal)
+                self.eval_equality(matches!(node, P::Equal(..)), a, b, cells)?
             }
             P::Less(a, b) => Val::Bool(self.order(a, b, cells)?.is_lt()),
             P::LessOrEqual(a, b) => Val::Bool(self.order(a, b, cells)?.is_le()),
             P::Greater(a, b) => Val::Bool(self.order(a, b, cells)?.is_gt()),
             P::GreaterOrEqual(a, b) => Val::Bool(self.order(a, b, cells)?.is_ge()),
             P::And(a, b) | P::Or(a, b) => {
-                let (Val::Bool(left), Val::Bool(right)) =
-                    (self.eval(a, cells)?, self.eval(b, cells)?)
-                else {
-                    return None;
-                };
-                Val::Bool(if matches!(node, P::And(..)) {
-                    left && right
-                } else {
-                    left || right
-                })
+                self.eval_logical(matches!(node, P::And(..)), a, b, cells)?
             }
             P::Coalesce(a, b) => match self.eval(a, cells)? {
                 Val::Null => self.widen(self.eval(b, cells)?, node)?,

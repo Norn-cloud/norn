@@ -1774,7 +1774,7 @@ fn excepted_row_tree_law_handles_over_124k_rows_with_zero_residue() {
 
     let total_rows = 125_000usize;
     let mut csv_bytes = String::with_capacity(total_rows * 64);
-    csv_bytes.push_str(&format!("{}\n", FIELDS.join(",")));
+    writeln!(csv_bytes, "{}", FIELDS.join(",")).expect("csv header");
     for index in 0..total_rows {
         let line = &sample[index % sample.len()];
         writeln!(
@@ -2691,6 +2691,11 @@ fn three_way_differential_per_row_duckdb_and_datafusion_agree() {
                 "nullable_mixed_eq",
                 "error",
                 "self.large != (self.id == 'null-big' ? null : self.small)",
+            ),
+            (
+                "short_circuit_or",
+                "error",
+                "true or (self.large != (self.id == 'null-big' ? null : self.small))",
             ),
         ],
     );
