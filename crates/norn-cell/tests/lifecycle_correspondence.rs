@@ -99,63 +99,68 @@ fn native_for(
     if !accepted {
         let after_dump = cell.store().read().dump().expect("atomic refusal");
         if invariant_refused {
-            // Invariant refusals record a ledger-only attempt journal commit
-            // (`FactEvent::InvariantRefused`); business facts, links, effects,
-            // and timers remain identical to `prior`.
-            for (table, before_rows) in &prior {
-                if matches!(
-                    table.as_str(),
-                    "_norn_clock"
-                        | "_norn_export_context"
-                        | "_norn_export_journal"
-                        | "_norn_export_payload"
-                        | "_norn_ledger"
-                        | "_norn_ledger_payload"
-                        | "_norn_payload"
-                        | "_norn_receipt"
-                ) {
-                    continue;
-                }
-                assert_eq!(
-                    after_dump.get(table),
-                    Some(before_rows),
-                    "invariant refusal must not mutate table {table}"
-                );
-            }
-            assert_eq!(
-                after_dump.len(),
-                prior.len(),
-                "invariant refusal must not add or drop tables"
-            );
-            let before_ledger = prior.get("_norn_ledger").map_or(&[][..], Vec::as_slice);
-            let after_ledger = after_dump
-                .get("_norn_ledger")
-                .map_or(&[][..], Vec::as_slice);
-            assert_eq!(
-                after_ledger.len(),
-                before_ledger.len().saturating_add(1),
-                "invariant refusal appends exactly one attempt-journal ledger event"
-            );
-            assert_eq!(
-                &after_ledger[..before_ledger.len()],
-                before_ledger,
-                "invariant refusal must preserve all prior ledger rows"
-            );
-            let appended: Value =
-                serde_json::from_str(after_ledger.last().expect("appended ledger row"))
-                    .expect("ledger row json");
-            let event_json = appended[3].as_str().expect("ledger event json string");
-            let event: Value = serde_json::from_str(event_json).expect("ledger event json");
-            assert_eq!(
-                event["op"],
-                json!("invariant_refused"),
-                "appended ledger event must be invariant_refused"
-            );
+            assert_invariant_refusal_atomic(&prior, &after_dump);
         } else {
             assert_eq!(prior, after_dump);
         }
     }
     (accepted, cell.load(&key).expect("after").values)
+}
+fn assert_invariant_refusal_atomic(
+    prior: &BTreeMap<String, Vec<String>>,
+    after_dump: &BTreeMap<String, Vec<String>>,
+) {
+    // Invariant refusals record a ledger-only attempt journal commit
+    // (`FactEvent::InvariantRefused`); business facts, links, effects,
+    // and timers remain identical to `prior`.
+    for (table, before_rows) in prior {
+        if matches!(
+            table.as_str(),
+            "_norn_clock"
+                | "_norn_export_context"
+                | "_norn_export_journal"
+                | "_norn_export_payload"
+                | "_norn_ledger"
+                | "_norn_ledger_payload"
+                | "_norn_payload"
+                | "_norn_receipt"
+        ) {
+            continue;
+        }
+        assert_eq!(
+            after_dump.get(table),
+            Some(before_rows),
+            "invariant refusal must not mutate table {table}"
+        );
+    }
+    assert_eq!(
+        after_dump.len(),
+        prior.len(),
+        "invariant refusal must not add or drop tables"
+    );
+    let before_ledger = prior.get("_norn_ledger").map_or(&[][..], Vec::as_slice);
+    let after_ledger = after_dump
+        .get("_norn_ledger")
+        .map_or(&[][..], Vec::as_slice);
+    assert_eq!(
+        after_ledger.len(),
+        before_ledger.len().saturating_add(1),
+        "invariant refusal appends exactly one attempt-journal ledger event"
+    );
+    assert_eq!(
+        &after_ledger[..before_ledger.len()],
+        before_ledger,
+        "invariant refusal must preserve all prior ledger rows"
+    );
+    let appended: Value = serde_json::from_str(after_ledger.last().expect("appended ledger row"))
+        .expect("ledger row json");
+    let event_json = appended[3].as_str().expect("ledger event json string");
+    let event: Value = serde_json::from_str(event_json).expect("ledger event json");
+    assert_eq!(
+        event["op"],
+        json!("invariant_refused"),
+        "appended ledger event must be invariant_refused"
+    );
 }
 fn native(
     model: &Model,
@@ -323,9 +328,8 @@ proptest::proptest! {
     }
 }
 
-#[test]
-fn invariants_nullables_and_exact_decimal_match_native_commit() {
-    let interface = json!({
+fn exact_order_interface() -> Value {
+    json!({
         "artifactId": "test.Measured.interface",
         "dependencies": [],
         "irVersion": "0.1",
@@ -359,8 +363,11 @@ fn invariants_nullables_and_exact_decimal_match_native_commit() {
         "provenance": { "source": "system", "sourcePath": "tests/lifecycle_correspondence" },
         "scope": {},
         "version": "0.1.0"
-    });
-    let object = json!({
+    })
+}
+
+fn exact_order_object() -> Value {
+    json!({
         "artifactId": "test.ExactOrder.entity",
         "dependencies": [
             { "artifactId": "test.Measured.interface", "kind": "entity", "required": true, "version": "0.1.0" }
@@ -420,8 +427,80 @@ fn invariants_nullables_and_exact_decimal_match_native_commit() {
         "provenance": { "source": "system", "sourcePath": "tests/lifecycle_correspondence" },
         "scope": {},
         "version": "0.1.0"
-    });
-    let declarations = json!([interface, object]);
+    })
+}
+
+fn exact_order_declarations() -> [Value; 2] {
+    [exact_order_interface(), exact_order_object()]
+}
+
+fn check_exact_order_bounds(
+    authority: &ApprovedContract,
+    source: &DefinitionSource,
+    model: &Model,
+    catalog: &TypeCatalog<'_>,
+    bounds: &Bounds,
+    expected_initial: usize,
+    expected_edges: usize,
+) {
+    let graph = authority
+        .lifecycle_graph(source, &BTreeSet::new(), bounds)
+        .expect("fresh inputs")
+        .graph
+        .expect("qualified graph");
+    assert_eq!(graph.inputs.invariants.len(), 4);
+    assert_eq!(graph.initial.len(), expected_initial);
+    assert_eq!(graph.edges.len(), expected_edges);
+
+    let mut committed_steps = 0_usize;
+    for (from, row) in graph.inputs.nodes.iter().enumerate() {
+        let (committed, after) = native_for(
+            "test.ExactOrder",
+            model,
+            catalog,
+            None,
+            create_for("test.ExactOrder", row),
+        );
+        assert_eq!(
+            committed,
+            graph.initial.contains(&from),
+            "initial row {from} ({row:?})"
+        );
+        assert_eq!(after.as_ref(), if committed { Some(row) } else { None });
+        for transition in &graph.inputs.machine.lifecycle.transitions {
+            let edge = graph
+                .edges
+                .iter()
+                .find(|edge| edge.from == from && edge.transition == transition.id.as_str());
+            let change = FactChange::Transition {
+                object_type: ObjectTypeName("test.ExactOrder".into()),
+                key: "synthetic".into(),
+                lifecycle: PropertyId("status".into()),
+                transition: TransitionId(transition.id.as_str().into()),
+            };
+            let (committed, after) =
+                native_for("test.ExactOrder", model, catalog, Some(row), change);
+            assert_eq!(
+                committed,
+                edge.is_some(),
+                "pre-state {from} ({row:?}), transition {}",
+                transition.id.as_str()
+            );
+            committed_steps = committed_steps
+                .checked_add(usize::from(committed))
+                .expect("bounded case count");
+            assert_eq!(
+                after.as_ref(),
+                Some(edge.map_or(row, |edge| &graph.inputs.nodes[edge.to]))
+            );
+        }
+    }
+    assert_eq!(graph.edges.len(), committed_steps);
+}
+
+#[test]
+fn invariants_nullables_and_exact_decimal_match_native_commit() {
+    let declarations = json!(exact_order_declarations());
     let source_text = serde_json::to_string(&declarations).expect("source");
     let source = DefinitionSource::parse(&source_text, "[]").expect("exact source");
     let authority = ApprovedContract::approve(
@@ -450,64 +529,12 @@ fn invariants_nullables_and_exact_decimal_match_native_commit() {
         .expect("native model");
     let catalog = TypeCatalog::new(definitions.iter()).with_interfaces(interfaces.iter());
 
-    let check_bounds = |bounds: &Bounds, expected_initial: usize, expected_edges: usize| {
-        let graph = authority
-            .lifecycle_graph(&source, &BTreeSet::new(), bounds)
-            .expect("fresh inputs")
-            .graph
-            .expect("qualified graph");
-        assert_eq!(graph.inputs.invariants.len(), 4);
-        assert_eq!(graph.initial.len(), expected_initial);
-        assert_eq!(graph.edges.len(), expected_edges);
-
-        let mut committed_steps = 0_usize;
-        for (from, row) in graph.inputs.nodes.iter().enumerate() {
-            let (committed, after) = native_for(
-                "test.ExactOrder",
-                &model,
-                &catalog,
-                None,
-                create_for("test.ExactOrder", row),
-            );
-            assert_eq!(
-                committed,
-                graph.initial.contains(&from),
-                "initial row {from} ({row:?})"
-            );
-            assert_eq!(after.as_ref(), if committed { Some(row) } else { None });
-            for transition in &graph.inputs.machine.lifecycle.transitions {
-                let edge = graph
-                    .edges
-                    .iter()
-                    .find(|edge| edge.from == from && edge.transition == transition.id.as_str());
-                let change = FactChange::Transition {
-                    object_type: ObjectTypeName("test.ExactOrder".into()),
-                    key: "synthetic".into(),
-                    lifecycle: PropertyId("status".into()),
-                    transition: TransitionId(transition.id.as_str().into()),
-                };
-                let (committed, after) =
-                    native_for("test.ExactOrder", &model, &catalog, Some(row), change);
-                assert_eq!(
-                    committed,
-                    edge.is_some(),
-                    "pre-state {from} ({row:?}), transition {}",
-                    transition.id.as_str()
-                );
-                committed_steps = committed_steps
-                    .checked_add(usize::from(committed))
-                    .expect("bounded case count");
-                assert_eq!(
-                    after.as_ref(),
-                    Some(edge.map_or(row, |edge| &graph.inputs.nodes[edge.to]))
-                );
-            }
-        }
-        assert_eq!(graph.edges.len(), committed_steps);
-    };
-
     // Case A: normal exact decimals + nullable unit/currency + inherited & lifecycle-blocking invariants.
-    check_bounds(
+    check_exact_order_bounds(
+        &authority,
+        &source,
+        &model,
+        &catalog,
         &Bounds {
             object_type: "test.ExactOrder".into(),
             property: "status".into(),
@@ -526,7 +553,11 @@ fn invariants_nullables_and_exact_decimal_match_native_commit() {
 
     // Case B: exact-arithmetic scale overflow (scale 10 * scale 10 = 20 > 18)
     // must be refused identically by graph.rs (evaluate_prepared) and native commit_check.
-    check_bounds(
+    check_exact_order_bounds(
+        &authority,
+        &source,
+        &model,
+        &catalog,
         &Bounds {
             object_type: "test.ExactOrder".into(),
             property: "status".into(),

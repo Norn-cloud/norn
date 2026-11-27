@@ -789,7 +789,7 @@ fn commitment_interface() -> InterfaceDef {
     .expect("commitment interface decodes")
 }
 
-fn commitment_implementer(name: &str, extra: serde_json::Value) -> ObjectTypeDef {
+fn commitment_implementer(name: &str, extra: &serde_json::Value) -> ObjectTypeDef {
     let mut obj = serde_json::json!({
         "name": name,
         "implements": ["core.Commitment"],
@@ -909,7 +909,7 @@ fn interface_lifecycle_validates_standalone_and_enforces_life_sound() {
 fn implementer_inherits_interface_lifecycle_and_refuses_invalid_property_or_default() {
     let iface = commitment_interface();
     // Clean implementer without redeclaring lifecycle.
-    let clean = commitment_implementer("sales.OrderCommitment", serde_json::json!({}));
+    let clean = commitment_implementer("sales.OrderCommitment", &serde_json::json!({}));
     assert_eq!(
         run_with_interfaces(
             std::slice::from_ref(&iface),
@@ -923,7 +923,7 @@ fn implementer_inherits_interface_lifecycle_and_refuses_invalid_property_or_defa
     // Non-initial default on implementer refuses.
     let bad_default = commitment_implementer(
         "sales.BadDefault",
-        serde_json::json!({
+        &serde_json::json!({
             "properties": [
                 { "id": "code", "type": { "kind": "text" } },
                 {
@@ -951,7 +951,7 @@ fn implementer_inherits_interface_lifecycle_and_refuses_invalid_property_or_defa
     // Computed implementation of an interface lifecycle property refuses.
     let computed = commitment_implementer(
         "sales.ComputedStatus",
-        serde_json::json!({
+        &serde_json::json!({
             "properties": [
                 { "id": "code", "type": { "kind": "text" } },
                 {
@@ -978,7 +978,7 @@ fn implementer_inherits_interface_lifecycle_and_refuses_invalid_property_or_defa
     // Enum narrowing without redeclaring lifecycle that drops initial state refuses.
     let drops_initial = commitment_implementer(
         "sales.NoInitial",
-        serde_json::json!({
+        &serde_json::json!({
             "properties": [
                 { "id": "code", "type": { "kind": "text" } },
                 {
@@ -1002,7 +1002,7 @@ fn implementer_inherits_interface_lifecycle_and_refuses_invalid_property_or_defa
     // Enum narrowing without redeclaring lifecycle that leaves a dead end refuses.
     let dead_end = commitment_implementer(
         "sales.DeadEnd",
-        serde_json::json!({
+        &serde_json::json!({
             "properties": [
                 { "id": "code", "type": { "kind": "text" } },
                 {
@@ -1030,7 +1030,7 @@ fn implementer_and_child_interface_narrowing_rules_match_object_inheritance() {
     // Valid narrowing on implementer: drops `cancel` from `active`, appends guard on `activate`.
     let valid_narrow = commitment_implementer(
         "sales.StrictCommitment",
-        serde_json::json!({
+        &serde_json::json!({
             "lifecycles": [{
                 "property": "status",
                 "initial": ["proposed"],
@@ -1056,7 +1056,7 @@ fn implementer_and_child_interface_narrowing_rules_match_object_inheritance() {
     // Widening initial, adding transition, dropping guard, flipping mode, relabelling ending all refuse.
     let bad_narrow = commitment_implementer(
         "sales.WeakCommitment",
-        serde_json::json!({
+        &serde_json::json!({
             "lifecycles": [{
                 "property": "status",
                 "initial": ["proposed", "active"],

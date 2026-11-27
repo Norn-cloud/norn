@@ -274,8 +274,7 @@ fn interface_envelope(interface: &Value) -> ArtifactEnvelope {
     .expect("interface envelope decodes")
 }
 
-#[test]
-fn interface_effective_lifecycles_equal_checker_machines() {
+fn tracked_interface_fixtures() -> [serde_json::Value; 3] {
     let base_iface = json!({
         "name": "commerce.Tracked",
         "properties": [
@@ -333,10 +332,14 @@ fn interface_effective_lifecycles_equal_checker_machines() {
             "transitions": [
                 { "id": "activate", "from": ["draft"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) < 50"] },
                 { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
-                { "id": "cancel", "from": ["draft"], "to": "cancelled" }
+                { "id": "cancel", "from": ["draft", "active"], "to": "cancelled" }
             ]
         }]
     });
+    [base_iface, left_iface, right_iface]
+}
+
+fn tracked_object_fixtures() -> [serde_json::Value; 4] {
     let direct_obj = json!({
         "name": "commerce.DirectCommitment",
         "implements": ["commerce.Tracked"],
@@ -400,29 +403,77 @@ fn interface_effective_lifecycles_equal_checker_machines() {
             "transitions": [
                 { "id": "activate", "from": ["draft"], "to": "active", "guards": ["self.code != \"\"", "len(self.code) > 3"] },
                 { "id": "fulfill", "from": ["active"], "to": "fulfilled", "mode": "fact" },
-                { "id": "cancel", "from": ["draft"], "to": "cancelled" }
+                { "id": "cancel", "from": ["draft", "active"], "to": "cancelled" }
             ]
         }]
     });
+    [direct_obj, narrowed_enum_obj, diamond_obj, redeclared_sub]
+}
 
-    let ifaces = [&base_iface, &left_iface, &right_iface];
-    let objs = [
-        &direct_obj,
-        &narrowed_enum_obj,
-        &diamond_obj,
-        &redeclared_sub,
-    ];
-    let mut artifacts: Vec<ArtifactEnvelope> =
-        ifaces.iter().map(|i| interface_envelope(i)).collect();
-    artifacts.extend(objs.iter().map(|o| envelope(o)));
+fn assert_conflicting_interface_fails_closed<'a>(
+    mut by_type: BTreeMap<&'a str, &'a ObjectTypeDef>,
+    mut by_iface: BTreeMap<&'a str, &'a InterfaceDef>,
+) {
+    // Conflicting interfaces omit the machine from effective_lifecycles_with_interfaces
+    // while keeping the property in declared_lifecycle_properties_with_interfaces (fail closed).
+    let conflicting: InterfaceDef = serde_json::from_value(json!({
+        "name": "commerce.Conflicting",
+        "properties": [{
+            "id": "status",
+            "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }, { "value": "cancelled" }] }
+        }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["fulfilled", "cancelled"],
+            "transitions": [
+                { "id": "activate", "from": ["draft"], "to": "cancelled" }
+            ]
+        }]
+    }))
+    .expect("conflicting decodes");
+    let conflicted_obj: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "commerce.Conflicted",
+        "implements": ["commerce.Tracked", "commerce.Conflicting"],
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }, { "value": "cancelled" }] } }
+        ]
+    }))
+    .expect("conflicted obj decodes");
+    by_type.insert(conflicted_obj.name.as_str(), &conflicted_obj);
+    by_iface.insert(conflicting.name.as_str(), &conflicting);
+    let lookup = |name: &str| by_type.get(name).copied();
+    let lookup_iface = |name: &str| by_iface.get(name).copied();
+    assert!(
+        effective_lifecycles_with_interfaces(&lookup, &lookup_iface, &[], "commerce.Conflicted")
+            .is_empty()
+    );
+    assert!(
+        declared_lifecycle_properties_with_interfaces(
+            &lookup,
+            &lookup_iface,
+            "commerce.Conflicted"
+        )
+        .iter()
+        .any(|p| p.as_str() == "status")
+    );
+}
+
+#[test]
+fn interface_effective_lifecycles_equal_checker_machines() {
+    let ifaces = tracked_interface_fixtures();
+    let objs = tracked_object_fixtures();
+    let mut artifacts: Vec<ArtifactEnvelope> = ifaces.iter().map(interface_envelope).collect();
+    artifacts.extend(objs.iter().map(envelope));
 
     let iface_defs: Vec<InterfaceDef> = ifaces
         .iter()
-        .map(|v| serde_json::from_value((*v).clone()).expect("iface decodes"))
+        .map(|v| serde_json::from_value(v.clone()).expect("iface decodes"))
         .collect();
     let obj_defs: Vec<ObjectTypeDef> = objs
         .iter()
-        .map(|v| serde_json::from_value((*v).clone()).expect("obj decodes"))
+        .map(|v| serde_json::from_value(v.clone()).expect("obj decodes"))
         .collect();
     let by_type: BTreeMap<&str, &ObjectTypeDef> =
         obj_defs.iter().map(|d| (d.name.as_str(), d)).collect();
@@ -483,50 +534,5 @@ fn interface_effective_lifecycles_equal_checker_machines() {
             "len(self.code) < 50"
         ]
     );
-    // Conflicting interfaces omit the machine from effective_lifecycles_with_interfaces
-    // while keeping the property in declared_lifecycle_properties_with_interfaces (fail closed).
-    let conflicting: InterfaceDef = serde_json::from_value(json!({
-        "name": "commerce.Conflicting",
-        "properties": [{
-            "id": "status",
-            "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }, { "value": "cancelled" }] }
-        }],
-        "lifecycles": [{
-            "property": "status",
-            "initial": ["draft"],
-            "terminal": ["fulfilled", "cancelled"],
-            "transitions": [
-                { "id": "activate", "from": ["draft"], "to": "cancelled" }
-            ]
-        }]
-    }))
-    .expect("conflicting decodes");
-    let conflicted_obj: ObjectTypeDef = serde_json::from_value(json!({
-        "name": "commerce.Conflicted",
-        "implements": ["commerce.Tracked", "commerce.Conflicting"],
-        "properties": [
-            { "id": "code", "type": { "kind": "text" } },
-            { "id": "status", "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "active" }, { "value": "fulfilled" }, { "value": "cancelled" }] } }
-        ]
-    }))
-    .expect("conflicted obj decodes");
-    let mut by_type2 = by_type;
-    by_type2.insert(conflicted_obj.name.as_str(), &conflicted_obj);
-    let mut by_iface2 = by_iface;
-    by_iface2.insert(conflicting.name.as_str(), &conflicting);
-    let lookup2 = |name: &str| by_type2.get(name).copied();
-    let lookup_iface2 = |name: &str| by_iface2.get(name).copied();
-    assert!(
-        effective_lifecycles_with_interfaces(&lookup2, &lookup_iface2, &[], "commerce.Conflicted")
-            .is_empty()
-    );
-    assert!(
-        declared_lifecycle_properties_with_interfaces(
-            &lookup2,
-            &lookup_iface2,
-            "commerce.Conflicted"
-        )
-        .iter()
-        .any(|p| p.as_str() == "status")
-    );
+    assert_conflicting_interface_fails_closed(by_type, by_iface);
 }

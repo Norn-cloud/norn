@@ -443,11 +443,7 @@ fn a_law_refusing_a_fact_is_reported() {
     );
 }
 
-/// PROOF-LIFECYCLE-2/3 + LIFE-SOUND-4 on a real `core.Commitment` implementer
-/// with inherited integrity invariants (`positive_quantity`, `single_measure`)
-/// and nullable `unit`/`currency` fields.
-#[test]
-fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
+fn core_commitment_base() -> Vec<Value> {
     let mut base: Vec<Value> = [
         include_str!("../../../../registry/privacy/artifacts/privacy.markings.entity.json"),
         include_str!("../../../../registry/core/artifacts/core.value_types.entity.json"),
@@ -478,89 +474,97 @@ fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
             ]
         }
     }));
+    base
+}
 
-    let make_source = |extra_invariants: Value| -> DefinitionSource {
-        let party = json!({
-            "irVersion": "0.1", "kind": "entity",
-            "artifactId": "test.Party.entity", "version": "0.1.0",
-            "namespace": "test", "name": "Party", "lifecycle": "active",
-            "scope": {}, "dependencies": [],
-            "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
-            "payload": {
-                "entityVersion": "2.0",
-                "objectType": {
-                    "name": "test.Party",
-                    "role": "thing",
-                    "implements": ["core.Agent"],
-                    "properties": [
-                        { "id": "display_name", "type": { "kind": "ref", "name": "core.display_name" } },
-                        { "id": "kind", "type": { "kind": "enum", "values": [
-                            { "value": "person" }, { "value": "organization" }, { "value": "system" }
-                        ] } }
+fn core_commitment_source(base: &[Value], extra_invariants: Value) -> DefinitionSource {
+    let party = json!({
+        "irVersion": "0.1", "kind": "entity",
+        "artifactId": "test.Party.entity", "version": "0.1.0",
+        "namespace": "test", "name": "Party", "lifecycle": "active",
+        "scope": {}, "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.Party",
+                "role": "thing",
+                "implements": ["core.Agent"],
+                "properties": [
+                    { "id": "display_name", "type": { "kind": "ref", "name": "core.display_name" } },
+                    { "id": "kind", "type": { "kind": "enum", "values": [
+                        { "value": "person" }, { "value": "organization" }, { "value": "system" }
+                    ] } }
+                ]
+            }
+        }
+    });
+    let commitment = json!({
+        "irVersion": "0.1", "kind": "entity",
+        "artifactId": "test.OrderCommitment.entity", "version": "0.1.0",
+        "namespace": "test", "name": "OrderCommitment", "lifecycle": "active",
+        "scope": {}, "dependencies": [],
+        "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
+        "payload": {
+            "entityVersion": "2.0",
+            "objectType": {
+                "name": "test.OrderCommitment",
+                "role": "happening",
+                "implements": ["core.Commitment"],
+                "properties": [
+                    { "id": "status", "type": { "kind": "enum", "values": [
+                        { "value": "requested" }, { "value": "promised" },
+                        { "value": "fulfilled" }, { "value": "cancelled" }, { "value": "breached" }
+                    ] }, "default": "requested" },
+                    { "id": "due_at", "type": { "kind": "ref", "name": "iso8601.timestamp" } },
+                    { "id": "quantity", "type": { "kind": "ref", "name": "core.quantity" } },
+                    { "id": "unit", "type": { "kind": "ref", "name": "ucum.unit_code" }, "constraints": { "nullable": true } },
+                    { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } }
+                ],
+                "links": [
+                    { "id": "provider", "target": "test.Party", "cardinality": { "to": "one", "from": "many", "required": true } },
+                    { "id": "receiver", "target": "test.Party", "cardinality": { "to": "one", "from": "many", "required": true } },
+                    { "id": "resource", "target": "core.Resource", "cardinality": { "to": "one", "from": "many" } }
+                ],
+                "invariants": extra_invariants,
+                "lifecycles": [{
+                    "property": "status",
+                    "initial": ["requested"],
+                    "terminal": ["fulfilled", "cancelled", "breached"],
+                    "immutable": ["fulfilled", "cancelled", "breached"],
+                    "endings": [
+                        { "state": "fulfilled", "outcome": "completed" },
+                        { "state": "cancelled", "outcome": "cancelled" },
+                        { "state": "breached", "outcome": "breached_visible" }
+                    ],
+                    "transitions": [
+                        { "id": "promise", "from": ["requested"], "to": "promised" },
+                        { "id": "fulfil", "from": ["promised"], "to": "fulfilled" },
+                        { "id": "cancel", "from": ["requested", "promised"], "to": "cancelled" },
+                        { "id": "breach_due", "from": ["requested", "promised"], "to": "breached",
+                          "trigger": { "kind": "timer", "millis": "86400000" }, "mode": "fact" }
                     ]
-                }
+                }]
             }
-        });
-        let commitment = json!({
-            "irVersion": "0.1", "kind": "entity",
-            "artifactId": "test.OrderCommitment.entity", "version": "0.1.0",
-            "namespace": "test", "name": "OrderCommitment", "lifecycle": "active",
-            "scope": {}, "dependencies": [],
-            "provenance": { "source": "system", "sourcePath": "tests/core_commitment_life" },
-            "payload": {
-                "entityVersion": "2.0",
-                "objectType": {
-                    "name": "test.OrderCommitment",
-                    "role": "happening",
-                    "implements": ["core.Commitment"],
-                    "properties": [
-                        { "id": "status", "type": { "kind": "enum", "values": [
-                            { "value": "requested" }, { "value": "promised" },
-                            { "value": "fulfilled" }, { "value": "cancelled" }, { "value": "breached" }
-                        ] }, "default": "requested" },
-                        { "id": "due_at", "type": { "kind": "ref", "name": "iso8601.timestamp" } },
-                        { "id": "quantity", "type": { "kind": "ref", "name": "core.quantity" } },
-                        { "id": "unit", "type": { "kind": "ref", "name": "ucum.unit_code" }, "constraints": { "nullable": true } },
-                        { "id": "currency", "type": { "kind": "ref", "name": "core.code" }, "constraints": { "nullable": true } }
-                    ],
-                    "links": [
-                        { "id": "provider", "target": "test.Party", "cardinality": { "to": "one", "from": "many", "required": true } },
-                        { "id": "receiver", "target": "test.Party", "cardinality": { "to": "one", "from": "many", "required": true } },
-                        { "id": "resource", "target": "core.Resource", "cardinality": { "to": "one", "from": "many" } }
-                    ],
-                    "invariants": extra_invariants,
-                    "lifecycles": [{
-                        "property": "status",
-                        "initial": ["requested"],
-                        "terminal": ["fulfilled", "cancelled", "breached"],
-                        "immutable": ["fulfilled", "cancelled", "breached"],
-                        "endings": [
-                            { "state": "fulfilled", "outcome": "completed" },
-                            { "state": "cancelled", "outcome": "cancelled" },
-                            { "state": "breached", "outcome": "breached_visible" }
-                        ],
-                        "transitions": [
-                            { "id": "promise", "from": ["requested"], "to": "promised" },
-                            { "id": "fulfil", "from": ["promised"], "to": "fulfilled" },
-                            { "id": "cancel", "from": ["requested", "promised"], "to": "cancelled" },
-                            { "id": "breach_due", "from": ["requested", "promised"], "to": "breached",
-                              "trigger": { "kind": "timer", "millis": "86400000" }, "mode": "fact" }
-                        ]
-                    }]
-                }
-            }
-        });
-        let artifacts = json!([party, commitment]);
-        DefinitionSource::parse(
-            &String::from_utf8(
-                norn_canonical::canonical_json_exact_of(&artifacts).expect("artifacts"),
-            )
+        }
+    });
+    let artifacts = json!([party, commitment]);
+    DefinitionSource::parse(
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&artifacts).expect("artifacts"))
             .expect("UTF8"),
-            &String::from_utf8(norn_canonical::canonical_json_exact_of(&base).expect("base"))
-                .expect("UTF8"),
-        )
-        .expect("core commitment source")
-    };
+        &String::from_utf8(norn_canonical::canonical_json_exact_of(&base).expect("base"))
+            .expect("UTF8"),
+    )
+    .expect("core commitment source")
+}
+
+/// PROOF-LIFECYCLE-2/3 + LIFE-SOUND-4 on a real `core.Commitment` implementer
+/// with inherited integrity invariants (`positive_quantity`, `single_measure`)
+/// and nullable `unit`/`currency` fields.
+#[test]
+fn core_commitment_with_invariants_and_nullable_measures_runs_life_sound_4() {
+    let base = core_commitment_base();
+    let make_source = |extra_invariants: Value| core_commitment_source(&base, extra_invariants);
 
     let make_bounds = |unit: &str, currency: &str, qty: &str| Bounds {
         object_type: "test.OrderCommitment".into(),
