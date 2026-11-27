@@ -70,14 +70,15 @@ pub struct DisputeFallbackState {
     next_index: usize,
     all_pages: Vec<String>,
     all_records: Vec<String>,
+    cursor_committed: bool,
 }
 
 impl DisputeFallbackState {
     /// Whether every row of the dispute-spanning page has been captured,
     /// promoted, and cursor-committed.
     #[must_use]
-    pub fn is_complete(&self) -> bool {
-        self.rows.is_empty()
+    pub const fn is_complete(&self) -> bool {
+        self.cursor_committed
     }
 }
 
@@ -315,6 +316,7 @@ impl<E: SqlEngine> DevHost<E> {
                         next_index: 0,
                         all_pages: Vec::new(),
                         all_records: Vec::new(),
+                        cursor_committed: false,
                     },
                 )))
             }
@@ -402,7 +404,7 @@ impl<E: SqlEngine> DevHost<E> {
             step_out.extend(row_out);
             state.next_index = state.next_index.saturating_add(1);
         }
-        if state.rows.is_empty() {
+        if state.rows.is_empty() && !state.cursor_committed {
             self.observing_raw(|cell| {
                 cell.commit_source_page_cursor(
                     &state.advance,
@@ -412,6 +414,7 @@ impl<E: SqlEngine> DevHost<E> {
                 )
             })?
             .map_err(SourceCaptureError::from_cell)?;
+            state.cursor_committed = true;
         }
         Ok(step_out)
     }

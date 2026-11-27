@@ -235,7 +235,9 @@ mod tests {
                 EntityRoot::V2(root) => objects.push(root.object_type),
                 EntityRoot::V2Interface(root) => interfaces.push(root.interface),
                 EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-                other => panic!("unexpected entity root: {other:?}"),
+                EntityRoot::V2Extension(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {
+                    panic!("unexpected entity root")
+                }
             }
         }
         let model = Model::from_definitions_with_interfaces(&objects, &properties, &interfaces)
@@ -1286,7 +1288,10 @@ mod tests {
         let terminal_out = host
             .ingest_source_page(&[], &terminal)
             .expect("empty terminal page commits cursor");
-        assert!(terminal_out.is_empty());
+        assert!(
+            terminal_out.is_empty(),
+            "empty terminal page must produce no ingested rows: {terminal_out:?}"
+        );
         assert!(
             host.source_cursors("erpnext.rest")
                 .expect("cursors")
@@ -1341,8 +1346,8 @@ mod tests {
 
     /// Regression 10: lowering `max_rows` to 1 while draining a single captured
     /// `mapping-page:` run whose members are commit-refused (`canon.Holding`
-    /// with `stock_cost` set and `cost_currency = null`, so both pass mapping
-    /// into one `mapping-page:` run and fail `canon.StockValuation::cost_has_currency`
+    /// with negative `quantity`, so both pass source schema and mapping into
+    /// one `mapping-page:` run and fail `core.Resource::non_negative_quantity`
     /// at commit while staying inbox-pending as quarantined) terminates cleanly
     /// in bounded steps without retrying the same member forever.
     #[test]
@@ -1351,7 +1356,7 @@ mod tests {
         let dataset = "Warehouse Lot Balance".to_owned();
         let (two_holdings, next_wm) = seal_holding_rows(|items| {
             for item in items.iter_mut() {
-                item["cost_currency"] = Value::Null;
+                item["quantity"] = json!(-5.0);
             }
         });
         let lease = host
@@ -1402,7 +1407,7 @@ mod tests {
     #[test]
     fn dispute_fallback_retains_row_on_error_and_checks_fresh_lease_clock() {
         let artifacts = rest_artifacts(&[]);
-        let (host, _fail_cursor, fail_ledger) = open_faultable_host(&artifacts, None);
+        let (host, fail_cursor, fail_ledger) = open_faultable_host(&artifacts, None);
         let dataset = "Warehouse Lot Balance".to_owned();
         // A non-NFC `name` on row 1 after valid row 0 emits a new
         // `mapping-identity:` finding and triggers `MappingPageSpansDispute`.
@@ -1429,7 +1434,7 @@ mod tests {
             panic!("expected dispute fallback plan for mid-page identity finding");
         };
 
-        // Transient store fault during row 0 must retain row 0 and not commit cursor.
+        // Transient store fault during row 0 retains row 0 without committing cursor.
         fail_ledger.store(true, Ordering::Release);
         assert!(
             host.step_source_dispute_fallback(&mut fallback, T0.saturating_add(2), 1)
@@ -1439,7 +1444,8 @@ mod tests {
         assert!(
             host.source_cursors("erpnext.rest")
                 .expect("cursors")
-                .is_empty()
+                .is_empty(),
+            "cursor must not advance on row 0 fault"
         );
 
         // Clearing the fault lets row 0 complete without skipping it.
@@ -1450,26 +1456,37 @@ mod tests {
         assert_eq!(first_step.len(), 1);
         assert!(!fallback.is_complete());
 
-        // Advancing the step clock past lease expiry must fence row 1 even with
-        // no competing worker taking over the lease.
+        // Advancing the step clock past lease expiry fences row 1 even without takeover.
         let expired_ms = T0.saturating_add(3).saturating_add(RUN_LEASE_MS);
         assert!(matches!(
             host.step_source_dispute_fallback(&mut fallback, expired_ms, 1),
             Err(SourceCaptureError::LeaseFenced(_))
         ));
         assert!(!fallback.is_complete());
+
+        // Final cursor-write fault after row 1 pops must leave `is_complete() == false`
+        // until a retry commits `_norn_source_cursor`.
+        fail_cursor.store(true, Ordering::Release);
+        assert!(
+            host.step_source_dispute_fallback(&mut fallback, T0.saturating_add(4), 1)
+                .is_err()
+        );
+        assert!(!fallback.is_complete());
         assert!(
             host.source_cursors("erpnext.rest")
                 .expect("cursors")
-                .is_empty()
+                .is_empty(),
+            "cursor must remain uncommitted on final cursor write fault"
         );
 
-        // Stepping row 1 while the lease is still valid completes the page and
-        // commits `_norn_source_cursor`.
-        let second_step = host
-            .step_source_dispute_fallback(&mut fallback, T0.saturating_add(4), 1)
-            .expect("row 1");
-        assert_eq!(second_step.len(), 1);
+        fail_cursor.store(false, Ordering::Release);
+        let retry_commit = host
+            .step_source_dispute_fallback(&mut fallback, T0.saturating_add(5), 1)
+            .expect("retry final cursor commit");
+        assert!(
+            retry_commit.is_empty(),
+            "retry after all rows processed commits cursor without re-ingesting: {retry_commit:?}"
+        );
         assert!(fallback.is_complete());
         assert!(
             host.source_cursors("erpnext.rest")
