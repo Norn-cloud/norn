@@ -45,9 +45,20 @@ test("supply-lab retail truth slice questions lower to their committed QuestionI
     "supply.retail.store_revenue_weekly",
     "supply.retail.store_gross_margin_weekly",
     "supply.retail.store_gross_margin_rate_weekly",
+    "supply.retail.store_opening_stock_value_weekly",
+    "supply.retail.store_sell_through_weekly",
+    "supply.retail.store_weeks_of_supply_weekly",
+    "supply.retail.store_gmroi_weekly",
     "supply.retail.pos_feed_revenue_weekly",
   ])
   golden("retail.questions.json", result.questions)
+})
+
+test("supply-lab retail combined management view dashboard lowers its eleven tiles", () => {
+  const result = compileDashboards(RETAIL_SOURCE)
+  if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
+  expect(result.dashboards).toHaveLength(1)
+  golden("retail.dashboard.json", result.dashboards)
 })
 
 test("supply-lab dashboard lowers its five tiles", () => {

@@ -191,6 +191,29 @@
             "environment"
           ]
         }
+      },
+      {
+        "actions": [
+          "supply.store_kpi.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner",
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.StoreCommercialRollup",
+        "ruleId": "store_kpi",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
       }
     ]
   },

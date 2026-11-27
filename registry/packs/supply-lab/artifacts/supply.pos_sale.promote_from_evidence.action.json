@@ -182,7 +182,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((((((((((slice.store.status == 'active') and (input.cost_status == 'costed')) and (input.store_id == slice.evidence.store_code)) and (input.sku_id == slice.evidence.sku_code)) and (input.unit == slice.evidence.unit)) and (input.currency == slice.evidence.currency)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)) and (input.applied_unit_cost == slice.cost.unit_cost)"
+      "((((((((((((slice.store.status == 'active') and (input.cost_status == 'costed')) and (input.store_id == slice.evidence.store_code)) and (input.sku_id == slice.evidence.sku_code)) and (input.sold_qty == slice.evidence.sold_qty)) and (input.unit == slice.evidence.unit)) and (input.net_revenue == slice.evidence.net_revenue)) and (input.currency == slice.evidence.currency)) and (input.unit == slice.sku.unit_of_measure)) and (input.currency == slice.store.currency)) and (input.currency == slice.cost.currency)) and (input.costed_ref == slice.cost.cost_ref)) and (input.applied_unit_cost == slice.cost.unit_cost)"
     ],
     "scopeRequired": [
       "orgId",

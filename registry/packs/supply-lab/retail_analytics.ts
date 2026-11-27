@@ -109,3 +109,47 @@ export const StoreLotAging = Norn.transform({
   },
   output: "aging",
 })
+
+/**
+ * Read-only per-legal-entity management summary transform (feeds the multi-cell
+ * combined management view, never a write path or statutory consolidation):
+ * joins `PosSale` onto `Store` via its required many-to-one `store` link
+ * (fan-out 1), aggregates per `(entity_id, currency)`, and withholds
+ * `effective_gross_margin` whenever any sale line in the entity lacks cost.
+ */
+export const EntityManagementSummary = Norn.transform({
+  id: "supply.retail.entity_management_summary", title: "Per-entity retail management summary", version: "0.1.0",
+  inputs: { sale: PosSale, store: Store },
+  nodes: {
+    sale: { op: "scan", input: "sale" },
+    store: { op: "scan", input: "store" },
+    sale_with_store: {
+      op: "join", left: "sale", right: "store",
+      on: { key: { left: ["store_id"], right: "primary" } }, kind: "inner", prefix: "st_",
+    },
+    per_entity: {
+      op: "aggregate", input: "sale_with_store",
+      groupBy: [{ column: "st_entity_id" }, { column: "currency" }],
+      measures: [
+        { name: "net_revenue", fn: "sum", column: "net_revenue", label: "Entity net revenue" },
+        { name: "cogs_amount", fn: "sum", column: "cogs_amount", label: "Entity COGS" },
+        { name: "gross_margin", fn: "sum", column: "gross_margin", label: "Entity gross margin" },
+        { name: "sale_lines", fn: "count" },
+        { name: "costed_lines", fn: "count", column: "costed_ref" },
+      ],
+    },
+    summary: {
+      op: "project", input: "per_entity", columns: [
+        { name: "st_entity_id", expression: "input.st_entity_id" },
+        { name: "currency", expression: "input.currency" },
+        { name: "net_revenue", expression: "input.net_revenue" },
+        { name: "sale_lines", expression: "input.sale_lines" },
+        { name: "costed_lines", expression: "input.costed_lines" },
+        { name: "cost_complete", expression: "input.costed_lines == input.sale_lines" },
+        { name: "effective_cogs", expression: "input.costed_lines == input.sale_lines ? input.cogs_amount : null" },
+        { name: "effective_gross_margin", expression: "input.costed_lines == input.sale_lines ? input.gross_margin : null" },
+      ],
+    },
+  },
+  output: "summary",
+})

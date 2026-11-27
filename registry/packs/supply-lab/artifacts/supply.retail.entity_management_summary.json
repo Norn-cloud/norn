@@ -1,0 +1,156 @@
+{
+  "artifactId": "supply.retail.entity_management_summary",
+  "dependencies": [
+    {
+      "artifactId": "supply.PosSale.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.Store.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Per-entity retail management summary",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "per_entity": {
+          "groupBy": [
+            {
+              "column": "st_entity_id"
+            },
+            {
+              "column": "currency"
+            }
+          ],
+          "input": "sale_with_store",
+          "measures": [
+            {
+              "column": "net_revenue",
+              "fn": "sum",
+              "label": "Entity net revenue",
+              "name": "net_revenue"
+            },
+            {
+              "column": "cogs_amount",
+              "fn": "sum",
+              "label": "Entity COGS",
+              "name": "cogs_amount"
+            },
+            {
+              "column": "gross_margin",
+              "fn": "sum",
+              "label": "Entity gross margin",
+              "name": "gross_margin"
+            },
+            {
+              "fn": "count",
+              "name": "sale_lines"
+            },
+            {
+              "column": "costed_ref",
+              "fn": "count",
+              "name": "costed_lines"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "sale": {
+          "input": "sale",
+          "op": "scan"
+        },
+        "sale_with_store": {
+          "kind": "inner",
+          "left": "sale",
+          "on": {
+            "key": {
+              "left": [
+                "store_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "st_",
+          "right": "store"
+        },
+        "store": {
+          "input": "store",
+          "op": "scan"
+        },
+        "summary": {
+          "columns": [
+            {
+              "expression": "input.st_entity_id",
+              "name": "st_entity_id"
+            },
+            {
+              "expression": "input.currency",
+              "name": "currency"
+            },
+            {
+              "expression": "input.net_revenue",
+              "name": "net_revenue"
+            },
+            {
+              "expression": "input.sale_lines",
+              "name": "sale_lines"
+            },
+            {
+              "expression": "input.costed_lines",
+              "name": "costed_lines"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines",
+              "name": "cost_complete"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines ? input.cogs_amount : null",
+              "name": "effective_cogs"
+            },
+            {
+              "expression": "input.costed_lines == input.sale_lines ? input.gross_margin : null",
+              "name": "effective_gross_margin"
+            }
+          ],
+          "input": "per_entity",
+          "op": "project"
+        }
+      },
+      "output": "summary"
+    },
+    "inputs": [
+      {
+        "alias": "sale",
+        "artifactId": "supply.PosSale.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "store",
+        "artifactId": "supply.Store.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.retail.entity_management_summary",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.retail.entity_management_summary.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

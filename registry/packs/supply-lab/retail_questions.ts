@@ -1,5 +1,5 @@
 import { Norn } from "@norn/authoring"
-import { PosSale, PosSaleEvidence, StockLot, StoreCount } from "./retail.ts"
+import { PosSale, PosSaleEvidence, StockLot, StoreCommercialRollup, StoreCount } from "./retail.ts"
 
 // Declared commercial KPI questions for the S1 Retail Truth Slice over the
 // 16-week retail truth window (2026-07-06 .. 2026-10-26). Every question is
@@ -95,6 +95,46 @@ export const StoreGrossMarginRateWeekly = Norn.question({
   asOf: window, population: { kind: "authorized_objects" },
 })
 
+/**
+ * Immutable receipt-time lot opening valuation partitioned by `cost_status` so
+ * GMROI opening denominators use each lot's actual receipt-time cost rather than
+ * current SKU unit cost, while failing closed on any `missing_cost` slice.
+ */
+export const StoreOpeningStockValueWeekly = Norn.question({
+  name: "supply.retail.store_opening_stock_value_weekly", of: StockLot,
+  measure: Norn.metricId({ kind: "sum", of: StockLot, property: "opening_stock_value", time: "as_of" }),
+  where: [],
+  by: [{ property: "currency" }, { property: "store_id" }, { property: "cost_status" }],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
+/** Store sell-through: declared ratio of sums `sum(depleted_qty) / sum(received_qty)` across complete lot cohorts. */
+export const StoreSellThroughWeekly = Norn.question({
+  name: "supply.retail.store_sell_through_weekly", of: StockLot,
+  measure: Norn.metricId({ kind: "ratio", of: StockLot, property: "sell_through_rate", time: "as_of" }),
+  where: [],
+  by: [{ property: "unit" }, { property: "store_id" }],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
+/** Store weeks of supply: declared ratio of sums `sum(on_hand_qty) / sum(avg_weekly_sales_qty)`, partitioned by `count_status`. */
+export const StoreWeeksOfSupplyWeekly = Norn.question({
+  name: "supply.retail.store_weeks_of_supply_weekly", of: StoreCommercialRollup,
+  measure: Norn.metricId({ kind: "ratio", of: StoreCommercialRollup, property: "weeks_of_supply", time: "period_end" }),
+  where: [],
+  by: [{ property: "unit" }, { property: "store_id" }, { property: "count_status" }, { property: "period_end", grain: "week" }],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
+/** Store GMROI: declared ratio of sums `sum(period_gross_margin) / sum(average_inventory_value)`, partitioned by `cost_status`. */
+export const StoreGmroiWeekly = Norn.question({
+  name: "supply.retail.store_gmroi_weekly", of: StoreCommercialRollup,
+  measure: Norn.metricId({ kind: "ratio", of: StoreCommercialRollup, property: "gmroi", time: "period_end" }),
+  where: [],
+  by: [{ property: "currency" }, { property: "store_id" }, { property: "cost_status" }, { property: "period_end", grain: "week" }],
+  asOf: window, population: { kind: "authorized_objects" },
+})
+
 /** Mapped POS feed revenue over `PosSaleEvidence` for end-to-end feed quarantine and `LINEAGE-SUM-1` source drill-through. */
 export const PosFeedRevenueWeekly = Norn.question({
   name: "supply.retail.pos_feed_revenue_weekly", of: PosSaleEvidence,
@@ -102,4 +142,26 @@ export const PosFeedRevenueWeekly = Norn.question({
   where: [],
   by: [{ property: "currency" }, { property: "store_code" }, { property: "sold_at", grain: "week" }],
   asOf: window, population: { kind: "authorized_objects" },
+})
+
+/**
+ * Declared read-only Retail Combined Management View dashboard: projects all
+ * store-level commercial KPIs side-by-side without write authority or statutory
+ * consolidation claims (`READ-LOCAL-1`).
+ */
+export const RetailCombinedManagementView = Norn.dashboard({
+  title: "Retail combined management view (read-only; not consolidated financial statements)",
+  tiles: [
+    { title: "Store availability, weekly", question: StoreAvailabilityWeekly, view: "bar" },
+    { title: "Store on-hand, weekly", question: StoreOnHandWeekly, view: "line" },
+    { title: "Store sell-through, weekly", question: StoreSellThroughWeekly, view: "line" },
+    { title: "Lot receipt aging cohorts, weekly", question: LotReceivedAgingWeekly, view: "bar" },
+    { title: "Store stock valuation, weekly", question: StoreStockValueWeekly, view: "area" },
+    { title: "Store net revenue, weekly", question: StoreRevenueWeekly, view: "bar" },
+    { title: "Store gross margin, weekly", question: StoreGrossMarginWeekly, view: "bar" },
+    { title: "Store gross margin rate, weekly", question: StoreGrossMarginRateWeekly, view: "line" },
+    { title: "Store weeks of supply, weekly", question: StoreWeeksOfSupplyWeekly, view: "line" },
+    { title: "Store GMROI, weekly", question: StoreGmroiWeekly, view: "line" },
+    { title: "POS feed revenue, weekly", question: PosFeedRevenueWeekly, view: "bar" },
+  ],
 })

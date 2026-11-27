@@ -51,12 +51,11 @@
             "additivity": {
               "kind": "additive"
             },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
             "kind": "decimal",
-            "scale": 6
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {

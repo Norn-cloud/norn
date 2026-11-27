@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.StoreCommercialRollup.store_commercial_rollup_valid.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.StoreCommercialRollup.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A commercial KPI rollup must hold non-negative quantities and zero placeholder valuation/margin whenever cost_status is missing_cost so GMROI fails closed.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.StoreCommercialRollup.store_commercial_rollup_valid",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/retail.ts"
+    },
+    "rationale": "A commercial KPI rollup must hold non-negative quantities and zero placeholder valuation/margin whenever cost_status is missing_cost so GMROI fails closed.",
+    "response": {
+      "expression": "((self.on_hand_qty >= 0) and (self.avg_weekly_sales_qty >= 0)) and (((((self.cost_status == 'costed') and (self.opening_stock_value >= 0)) and (self.closing_stock_value >= 0)) and (self.average_inventory_value >= 0)) or (((((self.cost_status == 'missing_cost') and (self.period_gross_margin == 0)) and (self.opening_stock_value == 0)) and (self.closing_stock_value == 0)) and (self.average_inventory_value == 0)))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.StoreCommercialRollup"
+      ],
+      "root": {
+        "id": "supply.StoreCommercialRollup",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.StoreCommercialRollup"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StoreCommercialRollup.store_commercial_rollup_valid.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -97,6 +97,31 @@
           }
         },
         {
+          "id": "depleted_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "sell_through_rate",
+          "type": {
+            "additivity": {
+              "denominator": "received_qty",
+              "kind": "ratio",
+              "numerator": "depleted_qty"
+            },
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
           "id": "unit",
           "type": {
             "kind": "enum",
@@ -150,12 +175,21 @@
             "additivity": {
               "kind": "non_additive"
             },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
             "kind": "decimal",
             "scale": 4
+          }
+        },
+        {
+          "id": "opening_stock_value",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {
@@ -164,12 +198,11 @@
             "additivity": {
               "kind": "semi_additive"
             },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
             "kind": "decimal",
-            "scale": 6
+            "scale": 6,
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {

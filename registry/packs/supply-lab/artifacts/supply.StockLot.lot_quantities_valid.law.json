@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A holding lot receives a positive quantity and its remaining balance stays between zero and received quantity.",
+  "name": "A holding lot receives a positive quantity and conserves exact units (`depleted_qty + remaining_qty == received_qty`).",
   "namespace": "supply",
   "payload": {
     "id": "supply.StockLot.lot_quantities_valid",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A holding lot receives a positive quantity and its remaining balance stays between zero and received quantity.",
+    "rationale": "A holding lot receives a positive quantity and conserves exact units (`depleted_qty + remaining_qty == received_qty`).",
     "response": {
-      "expression": "((self.received_qty > 0) and (self.remaining_qty >= 0)) and (self.remaining_qty <= self.received_qty)",
+      "expression": "((((self.received_qty > 0) and (self.remaining_qty >= 0)) and (self.remaining_qty <= self.received_qty)) and (self.depleted_qty >= 0)) and ((self.depleted_qty + self.remaining_qty) == self.received_qty)",
       "kind": "predicate"
     },
     "scope": {

@@ -128,14 +128,20 @@ const StockLotProps = Schema.Struct({
   custodian_id: Schema.String,
   received_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   remaining_qty: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["unit"] }),
+  // Kernel-derived cumulative depletion (`received_qty - remaining_qty`) for declared ratio-of-sums sell-through.
+  depleted_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
+  // Lot sell-through rate: ratio of sums `sum(depleted_qty) / sum(received_qty)`, never a mean of line rates.
+  sell_through_rate: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "depleted_qty", denominator: "received_qty" } }),
   unit: Unit,
   // Immutable receipt date of the lot (drives aging cohorts and oldest-lot age).
   received_at: Norn.timestamp("utc"),
   // Valid time of the current remaining balance snapshot.
   as_of: Norn.timestamp("utc"),
   cost_status: CostStatus,
-  unit_cost: Schema.NullOr(Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } })),
-  stock_value: Norn.decimal(6, { currency: "currency", additivity: { kind: "semi_additive" } }),
+  unit_cost: Schema.NullOr(Norn.decimal(4, { additivity: { kind: "non_additive" } })),
+  // Immutable receipt-time lot valuation (`received_qty * unit_cost`) so GMROI opening inventory never uses current cost.
+  opening_stock_value: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  stock_value: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["currency"] }),
   currency: Currency,
 })
 
@@ -167,15 +173,21 @@ export const StoreClosedRequiresNoStock = Norn.law("store_closed_requires_no_sto
 
 export const StockLotQuantitiesValid = Norn.law("lot_quantities_valid", {
   on: StockLot,
-  must: (self) => self.received_qty > 0 && self.remaining_qty >= 0 && self.remaining_qty <= self.received_qty,
-  because: "A holding lot receives a positive quantity and its remaining balance stays between zero and received quantity.",
+  must: (self) =>
+    self.received_qty > 0
+    && self.remaining_qty >= 0
+    && self.remaining_qty <= self.received_qty
+    && self.depleted_qty >= 0
+    && (self.depleted_qty + self.remaining_qty) === self.received_qty,
+  because: "A holding lot receives a positive quantity and conserves exact units (`depleted_qty + remaining_qty == received_qty`).",
 })
 export const StockLotValidHolds = Norn.example("a partly sold holding lot holds", {
   of: StockLotQuantitiesValid,
   given: {
     lot_id: "LOT-1", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 40, remaining_qty: 18, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, stock_value: 450, currency: "EGP",
+    received_qty: 40, remaining_qty: 18, depleted_qty: 22, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, stock_value: 450, currency: "EGP",
   },
   expect: "holds",
 })
@@ -183,8 +195,9 @@ export const StockLotNegativeRemainingViolated = Norn.example("a negative lot ba
   of: StockLotQuantitiesValid,
   given: {
     lot_id: "LOT-2", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 40, remaining_qty: -2, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, stock_value: 0, currency: "EGP",
+    received_qty: 40, remaining_qty: -2, depleted_qty: 42, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
 })
@@ -192,8 +205,9 @@ export const StockLotOverRemainingViolated = Norn.example("remaining above recei
   of: StockLotQuantitiesValid,
   given: {
     lot_id: "LOT-3", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 40, remaining_qty: 45, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, stock_value: 1125, currency: "EGP",
+    received_qty: 40, remaining_qty: 45, depleted_qty: 0, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-15T09:00:00Z",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 1000, stock_value: 1125, currency: "EGP",
   },
   expect: "violated",
 })
@@ -201,16 +215,17 @@ export const StockLotOverRemainingViolated = Norn.example("remaining above recei
 export const StockLotCostValid = Norn.law("lot_cost_valid", {
   on: StockLot,
   must: (self) =>
-    (self.cost_status === "costed" && self.unit_cost !== null && self.stock_value >= 0)
-    || (self.cost_status === "missing_cost" && self.unit_cost === null && self.stock_value === 0),
-  because: "A costed holding lot carries a non-null unit cost and non-negative value; an uncosted lot carries null unit cost and zero placeholder value so totals withhold.",
+    (self.cost_status === "costed" && self.unit_cost !== null && self.opening_stock_value >= 0 && self.stock_value >= 0)
+    || (self.cost_status === "missing_cost" && self.unit_cost === null && self.opening_stock_value === 0 && self.stock_value === 0),
+  because: "A costed holding lot carries a non-null unit cost and non-negative opening/closing values; an uncosted lot carries null unit cost and zero placeholder values so totals withhold.",
 })
 export const StockLotMissingCostHolds = Norn.example("an explicitly uncosted lot holds", {
   of: StockLotCostValid,
   given: {
     lot_id: "LOT-4", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 20, remaining_qty: 20, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "missing_cost", unit_cost: null, stock_value: 0, currency: "EGP",
+    received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    cost_status: "missing_cost", unit_cost: null, opening_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "holds",
 })
@@ -218,8 +233,9 @@ export const StockLotCostedWithoutPriceViolated = Norn.example("a costed lot wit
   of: StockLotCostValid,
   given: {
     lot_id: "LOT-5", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 20, remaining_qty: 20, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "costed", unit_cost: null, stock_value: 0, currency: "EGP",
+    received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    cost_status: "costed", unit_cost: null, opening_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
 })
@@ -233,8 +249,9 @@ export const StockLotPositiveCostHolds = Norn.example("a lot with positive unit 
   of: StockLotUnitCostPositive,
   given: {
     lot_id: "LOT-6", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 20, remaining_qty: 20, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "costed", unit_cost: 25, stock_value: 500, currency: "EGP",
+    received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    cost_status: "costed", unit_cost: 25, opening_stock_value: 500, stock_value: 500, currency: "EGP",
   },
   expect: "holds",
 })
@@ -242,8 +259,9 @@ export const StockLotNegativeCostViolated = Norn.example("a lot with negative un
   of: StockLotUnitCostPositive,
   given: {
     lot_id: "LOT-7", store_id: "ST-1", sku_id: "SKU-1", owner_entity_id: "LE-1", custodian_id: "CUST-1",
-    received_qty: 20, remaining_qty: 20, unit: "each", received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
-    cost_status: "costed", unit_cost: -10, stock_value: 0, currency: "EGP",
+    received_qty: 20, remaining_qty: 20, depleted_qty: 0, sell_through_rate: 0, unit: "each",
+    received_at: "2026-08-01T09:00:00Z", as_of: "2026-08-01T09:00:00Z",
+    cost_status: "costed", unit_cost: -10, opening_stock_value: 0, stock_value: 0, currency: "EGP",
   },
   expect: "violated",
 })
@@ -307,7 +325,7 @@ export const StoreCountMatchesSkuUnit = Norn.law("store_count_matches_sku_unit",
 const SaleFacts = Schema.Struct({
   sold_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   unit: Unit,
-  net_revenue: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+  net_revenue: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   currency: Currency,
   sold_at: Norn.timestamp("utc"),
 })
@@ -348,10 +366,10 @@ const PosSaleProps = Schema.Struct({
   sku_id: Schema.String,
   sold_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   unit: Unit,
-  net_revenue: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+  net_revenue: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   applied_unit_cost: Schema.NullOr(Norn.decimal(4, { additivity: { kind: "non_additive" } })),
-  cogs_amount: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
-  gross_margin: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+  cogs_amount: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  gross_margin: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
   // Gross margin rate is a ratio of sums (`sum(gross_margin) / sum(net_revenue)`), never a mean of line rates.
   gross_margin_rate: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "gross_margin", denominator: "net_revenue" } }),
   cost_status: CostStatus,
@@ -436,7 +454,7 @@ export const PosSaleEvidence = Norn.type({
     sku_code: Schema.String,
     sold_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
     unit: Unit,
-    net_revenue: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+    net_revenue: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
     currency: Currency,
     sold_at: Norn.timestamp("utc"),
   }),
@@ -530,9 +548,77 @@ export const PosSaleMatchesSourceEvidence = Norn.law("pos_sale_matches_source_ev
     (self.source_evidence_id ?? "") === self.source_evidence.pos_line_id
     && self.store_id === self.source_evidence.store_code
     && self.sku_id === self.source_evidence.sku_code
+    && self.sold_qty === self.source_evidence.sold_qty
     && self.unit === self.source_evidence.unit
-    && self.currency === self.source_evidence.currency,
-  because: "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, unit, and currency, and link 1-to-1 so no source line can be promoted twice.",
+    && self.net_revenue === self.source_evidence.net_revenue
+    && self.currency === self.source_evidence.currency
+    && self.sold_at === self.source_evidence.sold_at,
+  because: "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, quantity, unit, net revenue, currency, and timestamp, and link 1-to-1 so no source line can be promoted twice.",
+})
+
+// ----------------------------------------- governed store commercial rollups
+
+const CountStatus = Schema.Literals(["verified", "unverified"])
+
+const StoreCommercialRollupProps = Schema.Struct({
+  rollup_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  unit: Unit,
+  currency: Currency,
+  cost_status: CostStatus,
+  count_status: CountStatus,
+  period_end: Norn.timestamp("utc"),
+  on_hand_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
+  avg_weekly_sales_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
+  // Weeks of supply: ratio of sums `sum(on_hand_qty) / sum(avg_weekly_sales_qty)`.
+  weeks_of_supply: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "on_hand_qty", denominator: "avg_weekly_sales_qty" } }),
+  period_gross_margin: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  opening_stock_value: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  closing_stock_value: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  average_inventory_value: Norn.decimal(6, { rounding: "half_even", additivity: { kind: "additive" }, unitSource: ["currency"] }),
+  // GMROI: ratio of sums `sum(period_gross_margin) / sum(average_inventory_value)`.
+  gmroi: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "period_gross_margin", denominator: "average_inventory_value" } }),
+})
+
+/**
+ * Governed period commercial KPI rollup per `(store, sku, period_end)` driving
+ * declared ratio-of-sums `weeks_of_supply` and `gmroi` questions with explicit
+ * `cost_status` and `count_status` partitioning so incomplete stores fail closed.
+ */
+export const StoreCommercialRollup = Norn.type({
+  name: "supply.StoreCommercialRollup", title: "Store commercial KPI rollup", version: "0.1.0",
+  label: { en: "Store KPI rollup", ar: "ملخص مؤشرات المتجر" },
+  properties: StoreCommercialRollupProps,
+  valueLabels: {
+    unit: UnitLabels,
+    cost_status: CostStatusLabels,
+    count_status: { verified: { en: "Verified", ar: "موثق" }, unverified: { en: "Unverified", ar: "غير موثق" } },
+  },
+  needsReview: ["ar"],
+  identity: [{ name: "primary", properties: ["rollup_id"] }],
+  links: [
+    { id: "store", target: Store, cardinality: { to: "one", from: "many", required: true } },
+    { id: "sku", target: Sku, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+
+export const StoreCommercialRollupValid = Norn.law("store_commercial_rollup_valid", {
+  on: StoreCommercialRollup,
+  must: (self) =>
+    self.on_hand_qty >= 0
+    && self.avg_weekly_sales_qty >= 0
+    && (
+      (self.cost_status === "costed" && self.opening_stock_value >= 0 && self.closing_stock_value >= 0 && self.average_inventory_value >= 0)
+      || (self.cost_status === "missing_cost" && self.period_gross_margin === 0 && self.opening_stock_value === 0 && self.closing_stock_value === 0 && self.average_inventory_value === 0)
+    ),
+  because: "A commercial KPI rollup must hold non-negative quantities and zero placeholder valuation/margin whenever cost_status is missing_cost so GMROI fails closed.",
+})
+
+export const StoreCommercialRollupMatchesStoreAndSku = Norn.law("store_commercial_rollup_matches_store_and_sku", {
+  on: StoreCommercialRollup,
+  must: (self) => self.unit === self.sku.unit_of_measure && self.currency === self.store.currency,
+  because: "A store commercial KPI rollup must use its SKU unit of measure and its store's functional currency.",
 })
 
 // ------------------------------------------------- messy feed evidence types

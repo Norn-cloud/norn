@@ -26,6 +26,21 @@
     ],
     "derive": [
       {
+        "expression": "input.received_qty - input.remaining_qty",
+        "field": "depleted_qty",
+        "inputRequired": false
+      },
+      {
+        "expression": "0",
+        "field": "sell_through_rate",
+        "inputRequired": false
+      },
+      {
+        "expression": "input.received_qty * input.unit_cost",
+        "field": "opening_stock_value",
+        "inputRequired": false
+      },
+      {
         "expression": "input.remaining_qty * input.unit_cost",
         "field": "stock_value",
         "inputRequired": false
@@ -66,8 +81,22 @@
         "custodian_id": {
           "type": "string"
         },
+        "depleted_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
         "lot_id": {
           "type": "string"
+        },
+        "opening_stock_value": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
         },
         "owner_entity_id": {
           "type": "string"
@@ -83,6 +112,13 @@
           "type": "number"
         },
         "remaining_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sell_through_rate": {
           "nornType": {
             "kind": "decimal",
             "scale": 6
@@ -126,11 +162,14 @@
         "custodian_id",
         "received_qty",
         "remaining_qty",
+        "depleted_qty",
+        "sell_through_rate",
         "unit",
         "received_at",
         "as_of",
         "cost_status",
         "unit_cost",
+        "opening_stock_value",
         "stock_value",
         "currency"
       ],

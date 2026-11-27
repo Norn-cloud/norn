@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, unit, and currency, and link 1-to-1 so no source line can be promoted twice.",
+  "name": "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, quantity, unit, net revenue, currency, and timestamp, and link 1-to-1 so no source line can be promoted twice.",
   "namespace": "supply",
   "payload": {
     "condition": "self.source_evidence != null",
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/supply-lab/retail.ts"
     },
-    "rationale": "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, unit, and currency, and link 1-to-1 so no source line can be promoted twice.",
+    "rationale": "A POS sale promoted from POS evidence must preserve that evidence's exact line identity, store, SKU, quantity, unit, net revenue, currency, and timestamp, and link 1-to-1 so no source line can be promoted twice.",
     "response": {
-      "expression": "(((((self.source_evidence_id ?? '') == self.source_evidence.pos_line_id) and (self.store_id == self.source_evidence.store_code)) and (self.sku_id == self.source_evidence.sku_code)) and (self.unit == self.source_evidence.unit)) and (self.currency == self.source_evidence.currency)",
+      "expression": "((((((((self.source_evidence_id ?? '') == self.source_evidence.pos_line_id) and (self.store_id == self.source_evidence.store_code)) and (self.sku_id == self.source_evidence.sku_code)) and (self.sold_qty == self.source_evidence.sold_qty)) and (self.unit == self.source_evidence.unit)) and (self.net_revenue == self.source_evidence.net_revenue)) and (self.currency == self.source_evidence.currency)) and (self.sold_at == self.source_evidence.sold_at)",
       "kind": "predicate"
     },
     "scope": {

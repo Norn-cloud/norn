@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { Sku } from "./supply.ts"
-import { LegalEntity, PosSale, PosSaleEvidence, StockLot, Store, StoreCount, UnitCost } from "./retail.ts"
+import { LegalEntity, PosSale, PosSaleEvidence, StockLot, Store, StoreCommercialRollup, StoreCount, UnitCost } from "./retail.ts"
 
 const Scope = ["orgId", "environmentId"] as const
 const Unit = Schema.Literals(["each", "kg", "l"])
@@ -139,11 +139,14 @@ const CostedStockLotInput = Schema.Struct({
   custodian_id: Schema.String,
   received_qty: Norn.decimal(6),
   remaining_qty: Norn.decimal(6),
+  depleted_qty: Norn.decimal(6),
+  sell_through_rate: Norn.decimal(6),
   unit: Unit,
   received_at: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
   cost_status: CostStatus,
   unit_cost: Norn.decimal(4),
+  opening_stock_value: Norn.decimal(6),
   stock_value: Norn.decimal(6),
   currency: Currency,
 })
@@ -155,10 +158,13 @@ const UncostedStockLotInput = Schema.Struct({
   custodian_id: Schema.String,
   received_qty: Norn.decimal(6),
   remaining_qty: Norn.decimal(6),
+  depleted_qty: Norn.decimal(6),
+  sell_through_rate: Norn.decimal(6),
   unit: Unit,
   received_at: Norn.timestamp("utc"),
   as_of: Norn.timestamp("utc"),
   cost_status: CostStatus,
+  opening_stock_value: Norn.decimal(6),
   stock_value: Norn.decimal(6),
   currency: Currency,
 })
@@ -167,7 +173,7 @@ const StockLotRef = Schema.Struct({ lot_id: Schema.String })
 /**
  * Open a costed store holding lot with its receipt date and custody.
  * Enforces that the lot's legal owner matches its store's owning legal entity
- * and derives `stock_value = remaining_qty * unit_cost` in the kernel.
+ * and derives `depleted_qty`, immutable `opening_stock_value`, and `stock_value` in the kernel.
  */
 export const RecordStockLot = Norn.action({
   id: "supply.stock_lot.record", title: "Record a costed store stock lot", version: "0.1.0",
@@ -180,6 +186,9 @@ export const RecordStockLot = Norn.action({
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "store", property: "entity_id" } } },
   ],
   derive: [
+    { field: "depleted_qty", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.received_qty - x.remaining_qty) },
+    { field: "sell_through_rate", inputRequired: false, expression: Norn.expression(CostedStockLotInput, () => 0) },
+    { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.received_qty * x.unit_cost) },
     { field: "stock_value", inputRequired: false, expression: Norn.expression(CostedStockLotInput, (x) => x.remaining_qty * x.unit_cost) },
   ],
   preconditions: [Norn.expression(
@@ -210,7 +219,7 @@ export const RecordStockLot = Norn.action({
 
 /**
  * Open an explicitly uncosted store holding lot (`cost_status: "missing_cost"`,
- * `unit_cost: null`, `stock_value: 0`) so valuation and GMROI fail closed.
+ * `unit_cost: null`, `opening_stock_value: 0`, `stock_value: 0`) so valuation and GMROI fail closed.
  */
 export const RecordUncostedStockLot = Norn.action({
   id: "supply.stock_lot.record_uncosted", title: "Record an uncosted store stock lot", version: "0.1.0",
@@ -223,6 +232,9 @@ export const RecordUncostedStockLot = Norn.action({
     { name: "owner_entity", type: LegalEntity, key: { property: { from: "store", property: "entity_id" } } },
   ],
   derive: [
+    { field: "depleted_qty", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, (x) => x.received_qty - x.remaining_qty) },
+    { field: "sell_through_rate", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
+    { field: "opening_stock_value", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
     { field: "stock_value", inputRequired: false, expression: Norn.expression(UncostedStockLotInput, () => 0) },
   ],
   preconditions: [Norn.expression(
@@ -254,6 +266,7 @@ export const RecordUncostedStockLot = Norn.action({
 const UpdateStockLotBalanceInput = Schema.Struct({
   lot_id: Schema.String,
   remaining_qty: Norn.decimal(6),
+  depleted_qty: Norn.decimal(6),
   as_of: Norn.timestamp("utc"),
   unit_cost: Norn.decimal(4),
   stock_value: Norn.decimal(6),
@@ -261,8 +274,9 @@ const UpdateStockLotBalanceInput = Schema.Struct({
 
 /**
  * Update a costed holding lot's remaining balance and valuation; `received_at`,
- * `received_qty`, `store_id`, `sku_id`, `owner_entity_id`, `unit`, and `currency`
- * are omitted from the update schema so they remain structurally immutable.
+ * `received_qty`, `opening_stock_value`, `store_id`, `sku_id`, `owner_entity_id`,
+ * `unit`, and `currency` are omitted from the update schema so they remain
+ * structurally immutable.
  */
 export const UpdateStockLotBalance = Norn.action({
   id: "supply.stock_lot.update_balance", title: "Update a stock lot balance", version: "0.1.0",
@@ -278,12 +292,15 @@ export const UpdateStockLotBalance = Norn.action({
   ],
   preconditions: [Norn.expression(
     Schema.Struct({
+      input: UpdateStockLotBalanceInput,
       slice: Schema.Struct({
-        lot: Schema.Struct({ cost_status: Schema.String }),
+        lot: Schema.Struct({ cost_status: Schema.String, received_qty: Norn.decimal(6) }),
         store: Schema.Struct({ status: Schema.String }),
       }),
     }),
-    (ctx) => ctx.slice.store.status === "active" && ctx.slice.lot.cost_status === "costed",
+    (ctx) => ctx.slice.store.status === "active"
+      && ctx.slice.lot.cost_status === "costed"
+      && (ctx.input.depleted_qty + ctx.input.remaining_qty) === ctx.slice.lot.received_qty,
     { root: "context" },
   )],
   writes: [{ type: StockLot, change: "modified" }],
@@ -534,7 +551,11 @@ export const PromotePosSaleFromEvidence = Norn.action({
     Schema.Struct({
       input: PromotedPosSaleInput,
       slice: Schema.Struct({
-        evidence: Schema.Struct({ store_code: Schema.String, sku_code: Schema.String, unit: Schema.String, currency: Schema.String }),
+        evidence: Schema.Struct({
+          store_code: Schema.String, sku_code: Schema.String,
+          sold_qty: Norn.decimal(6), unit: Schema.String,
+          net_revenue: Norn.decimal(6), currency: Schema.String,
+        }),
         store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
         sku: Schema.Struct({ unit_of_measure: Schema.String }),
         cost: Schema.Struct({ currency: Schema.String, cost_ref: Schema.String, unit_cost: Norn.decimal(4) }),
@@ -544,7 +565,9 @@ export const PromotePosSaleFromEvidence = Norn.action({
       && ctx.input.cost_status === "costed"
       && ctx.input.store_id === ctx.slice.evidence.store_code
       && ctx.input.sku_id === ctx.slice.evidence.sku_code
+      && ctx.input.sold_qty === ctx.slice.evidence.sold_qty
       && ctx.input.unit === ctx.slice.evidence.unit
+      && ctx.input.net_revenue === ctx.slice.evidence.net_revenue
       && ctx.input.currency === ctx.slice.evidence.currency
       && ctx.input.unit === ctx.slice.sku.unit_of_measure
       && ctx.input.currency === ctx.slice.store.currency
@@ -563,6 +586,74 @@ export const PromotePosSaleFromEvidence = Norn.action({
   effect: { kind: "upsert_input_object", type: PosSale, objectIdField: "sale_id", writeMode: { kind: "create_only" } },
 })
 
+// ----------------------------------------- governed store commercial rollups
+
+const CountStatus = Schema.Literals(["verified", "unverified"])
+
+const StoreCommercialRollupInput = Schema.Struct({
+  rollup_id: Schema.String,
+  store_id: Schema.String,
+  sku_id: Schema.String,
+  unit: Unit,
+  currency: Currency,
+  cost_status: CostStatus,
+  count_status: CountStatus,
+  period_end: Norn.timestamp("utc"),
+  on_hand_qty: Norn.decimal(6),
+  avg_weekly_sales_qty: Norn.decimal(6),
+  weeks_of_supply: Norn.decimal(6),
+  period_gross_margin: Norn.decimal(6),
+  opening_stock_value: Norn.decimal(6),
+  closing_stock_value: Norn.decimal(6),
+  average_inventory_value: Norn.decimal(6, { rounding: "half_even" }),
+  gmroi: Norn.decimal(6),
+})
+const StoreCommercialRollupRef = Schema.Struct({ rollup_id: Schema.String })
+
+/**
+ * Record a governed period commercial KPI rollup for a `(store, sku, period_end)`,
+ * deriving `average_inventory_value = (opening_stock_value + closing_stock_value) * 0.5`
+ * in the kernel so declared `weeks_of_supply` and `gmroi` ratio questions evaluate
+ * across both Cell and DuckDB while withholding unverified or missing-cost buckets.
+ */
+export const RecordStoreCommercialRollup = Norn.action({
+  id: "supply.store_kpi.record", title: "Record store commercial KPI rollup", version: "0.1.0",
+  label: { en: "Record store KPI rollup", ar: "تسجيل ملخص مؤشرات المتجر" },
+  input: StoreCommercialRollupInput, output: StoreCommercialRollupRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: RetailAccessRef,
+  slice: [
+    { name: "store", type: Store, key: { property: { from: "input", property: "store_id" } } },
+    { name: "sku", type: Sku, key: { property: { from: "input", property: "sku_id" } } },
+  ],
+  derive: [
+    { field: "weeks_of_supply", inputRequired: false, expression: Norn.expression(StoreCommercialRollupInput, () => 0) },
+    {
+      field: "average_inventory_value", inputRequired: false,
+      expression: Norn.expression(StoreCommercialRollupInput, (x) => (x.opening_stock_value + x.closing_stock_value) * 0.5),
+    },
+    { field: "gmroi", inputRequired: false, expression: Norn.expression(StoreCommercialRollupInput, () => 0) },
+  ],
+  preconditions: [Norn.expression(
+    Schema.Struct({
+      input: StoreCommercialRollupInput,
+      slice: Schema.Struct({
+        store: Schema.Struct({ status: Schema.String, currency: Schema.String }),
+        sku: Schema.Struct({ unit_of_measure: Schema.String }),
+      }),
+    }),
+    (ctx) => ctx.slice.store.status === "active"
+      && ctx.input.unit === ctx.slice.sku.unit_of_measure
+      && ctx.input.currency === ctx.slice.store.currency,
+    { root: "context" },
+  )],
+  createLinks: [
+    { link: "store", targetType: Store, targetIdField: "store_id" },
+    { link: "sku", targetType: Sku, targetIdField: "sku_id" },
+  ],
+  writes: [{ type: StoreCommercialRollup, change: "created" }],
+  effect: { kind: "upsert_input_object", type: StoreCommercialRollup, objectIdField: "rollup_id", writeMode: { kind: "create_only" } },
+})
+
 // ------------------------------------------------------------------- access
 
 const org = { dimensions: ["org", "environment"] } as const
@@ -577,5 +668,6 @@ export const RetailAccess = Norn.access({
     { ruleId: "stock_lot", actions: [RecordStockLot, RecordUncostedStockLot, UpdateStockLotBalance], resourceType: StockLot, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "store_count", actions: [RecordStoreCount, RecountStore], resourceType: StoreCount, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "pos_sale", actions: [RecordPosSale, RecordUncostedPosSale, PromotePosSaleFromEvidence], resourceType: PosSale, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
+    { ruleId: "store_kpi", actions: [RecordStoreCommercialRollup], resourceType: StoreCommercialRollup, scope: org, allOf: [{ role: { anyOf: ["planner", "warehouse_clerk"] } }] },
   ],
 })

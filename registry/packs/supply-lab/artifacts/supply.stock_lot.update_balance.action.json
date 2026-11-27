@@ -36,6 +36,13 @@
         "as_of": {
           "type": "string"
         },
+        "depleted_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
         "lot_id": {
           "type": "string"
         },
@@ -64,6 +71,7 @@
       "required": [
         "lot_id",
         "remaining_qty",
+        "depleted_qty",
         "as_of",
         "unit_cost",
         "stock_value"
@@ -84,7 +92,7 @@
       "type": "object"
     },
     "preconditions": [
-      "(slice.store.status == 'active') and (slice.lot.cost_status == 'costed')"
+      "((slice.store.status == 'active') and (slice.lot.cost_status == 'costed')) and ((input.depleted_qty + input.remaining_qty) == slice.lot.received_qty)"
     ],
     "scopeRequired": [
       "orgId",

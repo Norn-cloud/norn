@@ -641,7 +641,13 @@ fn decimal_to_scaled_i128(value: Decimal) -> Result<i128, String> {
         .checked_mul(FACTOR)
         .and_then(|w| w.checked_add(frac))
         .ok_or_else(|| format!("scaled overflow: {text}"))?;
-    Ok(if negative { -magnitude } else { magnitude })
+    if negative {
+        magnitude
+            .checked_neg()
+            .ok_or_else(|| format!("negation overflow: {text}"))
+    } else {
+        Ok(magnitude)
+    }
 }
 
 fn check_feed_coverage(
@@ -819,16 +825,17 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S1-W1", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "50", "remaining_qty": "50", "unit": "each",
-            "received_at": "2026-07-08T09:00:00Z", "as_of": "2026-07-08T09:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "50", "remaining_qty": "50", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-07-08T09:00:00Z", "as_of": "2026-07-08T09:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "25",
+            "lot_id": "LOT-S1-W1", "remaining_qty": "25", "depleted_qty": "25",
             "as_of": "2026-09-04T18:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -838,16 +845,17 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S1-DEPLETED", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "unit": "each",
-            "received_at": "2026-07-15T09:00:00Z", "as_of": "2026-07-15T09:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-07-15T09:00:00Z", "as_of": "2026-07-15T09:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-DEPLETED", "remaining_qty": "0",
+            "lot_id": "LOT-S1-DEPLETED", "remaining_qty": "0", "depleted_qty": "10",
             "as_of": "2026-08-20T09:00:00Z", "unit_cost": "100", "stock_value": "0"
         }),
     )?;
@@ -857,9 +865,10 @@ fn seed_sole_cfc1_lots(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S1-W5", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "40", "remaining_qty": "35", "unit": "each",
-            "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-09-04T18:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "40", "remaining_qty": "35", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-05T09:00:00Z", "as_of": "2026-09-04T18:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )
 }
@@ -928,9 +937,10 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S2-COSTED", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "unit": "each",
-            "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -939,9 +949,9 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S2-NOCOST", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "20", "remaining_qty": "15", "unit": "each",
-            "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "missing_cost", "stock_value": "0", "currency": "EGP"
+            "received_qty": "20", "remaining_qty": "15", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-20T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "missing_cost", "opening_stock_value": "0", "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -972,9 +982,10 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-S3-STALE", "store_id": "ST-SOLE-CFC-3", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "30", "remaining_qty": "20", "unit": "each",
-            "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "30", "remaining_qty": "20", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -994,9 +1005,10 @@ fn seed_sole_edge_stores(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-ZAM-1", "store_id": "ST-SOLE-ZAM", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-BRANCH-ZAM",
-            "received_qty": "15", "remaining_qty": "15", "unit": "each",
-            "received_at": "2026-08-18T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "15", "remaining_qty": "15", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-18T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -1018,9 +1030,10 @@ fn seed_partner_operations(partner: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-P1-W3", "store_id": "ST-PART-CFC-1", "sku_id": "SKU-RING-18K",
             "owner_entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "20", "remaining_qty": "12", "unit": "each",
-            "received_at": "2026-07-22T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "costed", "unit_cost": "250", "stock_value": "0", "currency": "USD"
+            "received_qty": "20", "remaining_qty": "12", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-07-22T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "costed", "unit_cost": "250", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "USD"
         }),
     )?;
     partner.ok(
@@ -1148,9 +1161,10 @@ fn assert_store_isolation_and_lifecycle_refusals(sole: &mut EntityBook) -> Resul
         json!({
             "lot_id": "LOT-HOLD", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "unit": "each",
-            "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     let (code, msg) = sole.refused(
@@ -1267,9 +1281,10 @@ fn s1_two_entity_non_commingling_and_custody_separation() -> Result<(), String> 
         json!({
             "lot_id": "LOT-WRONG-OWNER", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-PARTNER", "custodian_id": "CUST-MALL-CFC-OPS",
-            "received_qty": "10", "remaining_qty": "10", "unit": "each",
-            "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-01T09:00:00Z", "as_of": "2026-08-01T09:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
 
@@ -2037,6 +2052,165 @@ fn verify_retail_sales_and_margin_questions(
     Ok((s1_sold, s1_sales_weeks))
 }
 
+fn resolve_costed_window_bucket(
+    result: &QueryResult,
+    currency: &str,
+    store_id: &str,
+) -> Option<Decimal> {
+    if bucket_decimal_exact(result, &[currency, store_id, "missing_cost"]).is_some() {
+        return None;
+    }
+    bucket_decimal_exact(result, &[currency, store_id, "costed"])
+}
+
+fn resolve_verified_wos_bucket(
+    result: &QueryResult,
+    unit: &str,
+    store_id: &str,
+    week: &str,
+) -> Option<Decimal> {
+    if bucket_decimal_exact(result, &[unit, store_id, "unverified", week]).is_some() {
+        return None;
+    }
+    bucket_decimal_exact(result, &[unit, store_id, "verified", week])
+}
+
+/// Seed governed `StoreCommercialRollup` rows derived strictly from each cell's
+/// own evaluated questions (`on_hand`, `sold/weeks`, `margin`, immutable lot-level
+/// `opening_stock_value`, closing `stock_value`) and count-coverage report.
+fn seed_store_commercial_rollups(
+    sole: &mut EntityBook,
+    partner: &mut EntityBook,
+) -> Result<(), String> {
+    let s1_on_hand = bucket_decimal_exact(
+        &sole.answer("supply.retail.store_on_hand_weekly")?,
+        &["each", "ST-SOLE-CFC-1", "2026-08-31"],
+    )
+    .ok_or("missing ST-SOLE-CFC-1 on_hand")?;
+    let s1_opening_val = resolve_costed_window_bucket(
+        &sole.answer("supply.retail.store_opening_stock_value_weekly")?,
+        "EGP",
+        "ST-SOLE-CFC-1",
+    )
+    .ok_or("missing ST-SOLE-CFC-1 opening_stock_value")?;
+    let s1_closing_val = resolve_costed_bucket(
+        &sole.answer("supply.retail.store_stock_value_weekly")?,
+        "EGP",
+        "ST-SOLE-CFC-1",
+        "2026-08-31",
+    )
+    .ok_or("missing ST-SOLE-CFC-1 closing stock_value")?;
+    let sales_tf = sole.evaluate_transform("supply.retail.store_sales_performance", |_| {
+        Ok(RowAccess::Read)
+    })?;
+    let s1_margin = sales_tf
+        .rows
+        .iter()
+        .find(|r| r.values.get("store_id").map(scalar).as_deref() == Some("ST-SOLE-CFC-1"))
+        .and_then(|r| match r.values.get("effective_gross_margin") {
+            Some(RuntimeValue::Number(d)) => Some(*d),
+            _ => None,
+        })
+        .ok_or("missing ST-SOLE-CFC-1 effective_gross_margin")?;
+    sole.ok(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-1-W9", "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+            "unit": "each", "currency": "EGP", "cost_status": "costed", "count_status": "verified",
+            "period_end": "2026-09-05T18:00:00Z",
+            "on_hand_qty": s1_on_hand.canonical(), "avg_weekly_sales_qty": "10",
+            "weeks_of_supply": "0", "period_gross_margin": s1_margin.canonical(),
+            "opening_stock_value": s1_opening_val.canonical(),
+            "closing_stock_value": s1_closing_val.canonical(),
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    sole.ok(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-SOLE-CFC-2-W9", "store_id": "ST-SOLE-CFC-2", "sku_id": "SKU-DRESS",
+            "unit": "each", "currency": "EGP", "cost_status": "missing_cost",
+            "count_status": "unverified", "period_end": "2026-09-05T18:00:00Z",
+            "on_hand_qty": "25", "avg_weekly_sales_qty": "5", "weeks_of_supply": "0",
+            "period_gross_margin": "0", "opening_stock_value": "0",
+            "closing_stock_value": "0", "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )?;
+    let p1_opening_val = resolve_costed_window_bucket(
+        &partner.answer("supply.retail.store_opening_stock_value_weekly")?,
+        "USD",
+        "ST-PART-CFC-1",
+    )
+    .ok_or("missing ST-PART-CFC-1 opening_stock_value")?;
+    let p1_closing_val = resolve_costed_bucket(
+        &partner.answer("supply.retail.store_stock_value_weekly")?,
+        "USD",
+        "ST-PART-CFC-1",
+        "2026-08-31",
+    )
+    .ok_or("missing ST-PART-CFC-1 closing stock_value")?;
+    partner.ok(
+        "supply.store_kpi.record",
+        "planner:omar",
+        json!({
+            "rollup_id": "KPI-ST-PART-CFC-1-W9", "store_id": "ST-PART-CFC-1",
+            "sku_id": "SKU-RING-18K", "unit": "each", "currency": "USD",
+            "cost_status": "costed", "count_status": "verified",
+            "period_end": "2026-09-05T18:00:00Z",
+            "on_hand_qty": "12", "avg_weekly_sales_qty": "8", "weeks_of_supply": "0",
+            "period_gross_margin": "1200",
+            "opening_stock_value": p1_opening_val.canonical(),
+            "closing_stock_value": p1_closing_val.canonical(),
+            "average_inventory_value": "0", "gmroi": "0"
+        }),
+    )
+}
+
+fn verify_declared_kpi_ratio_questions(sole: &EntityBook) -> Result<(), String> {
+    let open_val_q = sole.answer("supply.retail.store_opening_stock_value_weekly")?;
+    let s1_open_val = resolve_costed_window_bucket(&open_val_q, "EGP", "ST-SOLE-CFC-1")
+        .ok_or("missing ST-SOLE-CFC-1 opening_stock_value")?;
+    assert_eq!(s1_open_val.canonical(), "10000");
+    assert_eq!(
+        resolve_costed_window_bucket(&open_val_q, "EGP", "ST-SOLE-CFC-2"),
+        None
+    );
+
+    // Declared sell-through question: ratio of sums `sum(depleted_qty) / sum(received_qty)` = 40/100 = 0.4.
+    let sell_through = sole.answer("supply.retail.store_sell_through_weekly")?;
+    assert_eq!(
+        bucket_total_exact(&sell_through, &["each", "ST-SOLE-CFC-1"]).as_deref(),
+        Some("0.4")
+    );
+
+    // Declared weeks-of-supply and GMROI questions (fail closed on unverified / missing_cost).
+    let wos_q = sole.answer("supply.retail.store_weeks_of_supply_weekly")?;
+    assert_eq!(
+        resolve_verified_wos_bucket(&wos_q, "each", "ST-SOLE-CFC-1", "2026-08-31")
+            .map(|d| d.canonical())
+            .as_deref(),
+        Some("6")
+    );
+    assert_eq!(
+        resolve_verified_wos_bucket(&wos_q, "each", "ST-SOLE-CFC-2", "2026-08-31"),
+        None
+    );
+    let gmroi_q = sole.answer("supply.retail.store_gmroi_weekly")?;
+    assert_eq!(
+        resolve_costed_bucket(&gmroi_q, "EGP", "ST-SOLE-CFC-1", "2026-08-31")
+            .map(|d| d.canonical())
+            .as_deref(),
+        Some("0.625")
+    );
+    assert_eq!(
+        resolve_costed_bucket(&gmroi_q, "EGP", "ST-SOLE-CFC-2", "2026-08-31"),
+        None
+    );
+    Ok(())
+}
+
 fn verify_retail_questions(
     sole: &EntityBook,
 ) -> Result<(Decimal, Decimal, Decimal, Decimal, usize), String> {
@@ -2058,6 +2232,7 @@ fn verify_retail_questions(
         resolve_costed_bucket(&stock_val, "EGP", "ST-SOLE-CFC-2", "2026-08-31"),
         None
     );
+    verify_declared_kpi_ratio_questions(sole)?;
 
     let aging_q = sole.answer("supply.retail.lot_received_aging_weekly")?;
     assert_eq!(
@@ -2164,22 +2339,14 @@ fn verify_retail_kpi_ratios(
         ratio(decimal_to_scaled_i128(s1_on_hand)?, weekly_sales),
         Some(6_000_000)
     );
-    // - Average-inventory GMROI derived from cell's governed UnitCost (opening 100*100=10000,
-    //   closing 6000 -> avg 8000): 5000 / 8000 = 0.625000
-    let dress_cost = sole
-        .cell()?
-        .store()
-        .read()
-        .object("main", "supply.UnitCost", "SKU-DRESS")
-        .map_err(|e| format!("{e}"))?
-        .and_then(|o| match o.values.get("unit_cost") {
-            Some(RuntimeValue::Number(d)) => Some(*d),
-            _ => None,
-        })
-        .ok_or("missing SKU-DRESS UnitCost")?;
-    let opening_val = s1_total_received
-        .checked_mul(dress_cost)
-        .ok_or("opening val overflow")?;
+    // - Average-inventory GMROI using immutable lot-level receipt valuation from
+    //   `store_opening_stock_value_weekly` (opening 10000, closing 6000 -> avg 8000): 5000 / 8000 = 0.625000
+    let opening_val = resolve_costed_window_bucket(
+        &sole.answer("supply.retail.store_opening_stock_value_weekly")?,
+        "EGP",
+        "ST-SOLE-CFC-1",
+    )
+    .ok_or("missing ST-SOLE-CFC-1 opening_stock_value")?;
     let avg_inventory = decimal_to_scaled_i128(opening_val)?
         .checked_add(decimal_to_scaled_i128(s1_stock_val)?)
         .and_then(|s| s.checked_div(2))
@@ -2343,9 +2510,10 @@ fn verify_count_coverage_cases(sole: &mut EntityBook) -> Result<(), String> {
         json!({
             "lot_id": "LOT-NO-AVAIL", "store_id": "ST-SOLE-NO-AVAIL", "sku_id": "SKU-DRESS",
             "owner_entity_id": "LE-SOLE", "custodian_id": "CUST-BRANCH-ZAM",
-            "received_qty": "10", "remaining_qty": "10", "unit": "each",
-            "received_at": "2026-08-25T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
-            "cost_status": "costed", "unit_cost": "100", "stock_value": "0", "currency": "EGP"
+            "received_qty": "10", "remaining_qty": "10", "depleted_qty": "0", "sell_through_rate": "0",
+            "unit": "each", "received_at": "2026-08-25T09:00:00Z", "as_of": "2026-09-05T10:00:00Z",
+            "cost_status": "costed", "unit_cost": "100", "opening_stock_value": "0",
+            "stock_value": "0", "currency": "EGP"
         }),
     )?;
     sole.ok(
@@ -2384,13 +2552,15 @@ fn s1_holding_lot_aging_count_staleness_and_commercial_kpis_withholding() -> Res
     seed_sole_prop(&mut sole)?;
     seed_partnership(&mut partner)?;
     seed_retail_operations(&mut sole, &mut partner)?;
+    seed_store_commercial_rollups(&mut sole, &mut partner)?;
 
     sole.refused(
         "supply.stock_lot.update_balance",
         "clerk:hana",
         json!({
-            "lot_id": "LOT-S1-W1", "remaining_qty": "20", "as_of": "2026-09-06T09:00:00Z",
-            "unit_cost": "100", "stock_value": "0", "received_at": "2026-09-01T09:00:00Z"
+            "lot_id": "LOT-S1-W1", "remaining_qty": "20", "depleted_qty": "30",
+            "as_of": "2026-09-06T09:00:00Z", "unit_cost": "100", "stock_value": "0",
+            "received_at": "2026-09-01T09:00:00Z"
         }),
     )?;
 
@@ -2832,41 +3002,69 @@ fn verify_query_cut(
     Ok(())
 }
 
+fn pending_observation_ids(book: &EntityBook) -> Result<Vec<(u64, String)>, String> {
+    Ok(book
+        .cell()?
+        .store()
+        .read()
+        .pending_observations()
+        .map_err(|e| format!("pending_observations: {e}"))?
+        .into_iter()
+        .map(|p| (p.position, p.observation_id))
+        .collect())
+}
+
+fn verify_entity_cut_stability(
+    book: &EntityBook,
+    legal_entity_id: &str,
+    expected_head: &LedgerHead,
+    pending_before: &[(u64, String)],
+    transforms: [&TransformResult; 2],
+    questions: [&QueryResult; 4],
+) -> Result<(), String> {
+    let expected_def_pin = book.pack.receipt_sha256.as_str();
+    let head_after = book.head()?;
+    let pending_after = pending_observation_ids(book)?;
+    let tf_ok = transforms
+        .iter()
+        .all(|t| t.revision == *expected_head && t.definition_pin == expected_def_pin);
+    if head_after != *expected_head || !tf_ok || pending_after != pending_before {
+        return Err(format!(
+            "frontier, definition cut, or pending inbox moved during projection of {legal_entity_id}"
+        ));
+    }
+    for q in questions {
+        verify_query_cut(book, expected_head, expected_def_pin, q)?;
+    }
+    Ok(())
+}
+
 fn project_entity_frontier(
     book: &EntityBook,
     legal_entity_id: &str,
     eval_question: &mut dyn FnMut(&str) -> Result<QueryResult, String>,
 ) -> Result<EntityFrontierSnapshot, String> {
     let pin = read_entity_pin(book, legal_entity_id)?;
-    let pending_before = book
-        .cell()?
-        .store()
-        .read()
-        .pending_observations()
-        .map_err(|e| format!("pending_before: {e}"))?
-        .len();
-    let expected_def_pin = book.pack.receipt_sha256.as_str();
+    let pending_before = pending_observation_ids(book)?;
     let lots = book.evaluate_transform("supply.retail.store_lot_aging", |_| Ok(RowAccess::Read))?;
+    let entity_tf = book.evaluate_transform("supply.retail.entity_management_summary", |_| {
+        Ok(RowAccess::Read)
+    })?;
     let rev_q = eval_question("supply.retail.store_revenue_weekly")?;
     let gm_q = eval_question("supply.retail.store_gross_margin_weekly")?;
     let gm_rate_q = eval_question("supply.retail.store_gross_margin_rate_weekly")?;
     let pos_feed_q = eval_question("supply.retail.pos_feed_revenue_weekly")?;
     let (open_feed_findings, pending_inbox_quarantined) = count_open_feed_issues(book)?;
     let count_report = evaluate_count_coverage(book, CLOCK_MS, MAX_COUNT_AGE_MS)?;
-    let head_after = book.head()?;
-
-    if head_after != pin.head
-        || lots.revision != pin.head
-        || lots.definition_pin != expected_def_pin
-        || pending_inbox_quarantined != pending_before
-    {
-        return Err(format!(
-            "frontier or definition cut moved during projection of {legal_entity_id}"
-        ));
-    }
-    for q in [&rev_q, &gm_q, &gm_rate_q, &pos_feed_q] {
-        verify_query_cut(book, &pin.head, expected_def_pin, q)?;
-    }
+    verify_entity_cut_stability(
+        book,
+        legal_entity_id,
+        &pin.head,
+        &pending_before,
+        [&lots, &entity_tf],
+        [&rev_q, &gm_q, &gm_rate_q, &pos_feed_q],
+    )?;
+    let expected_def_pin = book.pack.receipt_sha256.as_str();
 
     let missing_feed_coverage = check_feed_coverage(
         &book.source_cursors,
@@ -2883,11 +3081,18 @@ fn project_entity_frontier(
         .iter()
         .all(|q| q.complete && matches!(q.freshness, Freshness::Exact | Freshness::Fresh));
     let feeds_and_rows_complete = lots.complete
+        && entity_tf.complete
         && all_fresh
         && open_feed_findings == 0
         && pending_inbox_quarantined == 0
         && missing_feed_coverage.is_empty();
-    let cost_complete = missing_cost_stores.is_empty() && !has_missing_cost_slice;
+    let entity_tf_cost_complete = entity_tf
+        .rows
+        .iter()
+        .find(|r| r.values.get("st_entity_id").map(scalar).as_deref() == Some(legal_entity_id))
+        .is_some_and(|r| r.values.get("cost_complete") == Some(&RuntimeValue::Bool(true)));
+    let cost_complete =
+        entity_tf_cost_complete && missing_cost_stores.is_empty() && !has_missing_cost_slice;
     let on_hand_ok = feeds_and_rows_complete && count_report.on_hand_issue_stores.is_empty();
     let avail_ok = feeds_and_rows_complete && count_report.availability_issue_stores.is_empty();
     let store_gross_margin_rates = collect_store_gross_margin_rates(
@@ -2928,10 +3133,13 @@ fn project_entity_frontier(
 }
 
 #[cfg(all(feature = "duckdb", feature = "native"))]
-const COMBINED_VIEW_QUESTIONS: [&str; 4] = [
+const COMBINED_VIEW_QUESTIONS: [&str; 7] = [
     "supply.retail.store_revenue_weekly",
     "supply.retail.store_gross_margin_weekly",
     "supply.retail.store_gross_margin_rate_weekly",
+    "supply.retail.store_sell_through_weekly",
+    "supply.retail.store_weeks_of_supply_weekly",
+    "supply.retail.store_gmroi_weekly",
     "supply.retail.pos_feed_revenue_weekly",
 ];
 
@@ -2952,6 +3160,10 @@ fn assert_query_result_parity(
         "{label}: known_as_of"
     );
     assert_eq!(duck_q.grain, cell_q.grain, "{label}: grain");
+    assert_eq!(
+        duck_q.lineage_ref, cell_q.lineage_ref,
+        "{label}: lineage_ref"
+    );
     assert_eq!(duck_q.complete, cell_q.complete, "{label}: complete");
     assert_eq!(duck_q.freshness, cell_q.freshness, "{label}: freshness");
     assert_eq!(duck_q.exclusions, cell_q.exclusions, "{label}: exclusions");
@@ -2969,6 +3181,7 @@ fn assert_query_result_parity(
         assert_eq!(duck_row.bucket, cell_row.bucket, "{label}/{key}: bucket");
         assert_eq!(duck_row.totals, cell_row.totals, "{label}/{key}: totals");
         assert_eq!(duck_row.value, cell_row.value, "{label}/{key}: value");
+        assert_eq!(duck_row.members, cell_row.members, "{label}/{key}: members");
         assert_eq!(
             duck_row.suppressed, cell_row.suppressed,
             "{label}/{key}: suppressed"
@@ -3073,8 +3286,9 @@ fn verify_duckdb_combined_view_parity(
     Ok(())
 }
 
-/// Entrypoint invoked by `suites::analytics_engine` so CI's DuckDB phase always
-/// executes S1's full Cell-vs-DuckDB combined-view & per-question parity proof.
+/// Entrypoint invoked by `dataset_laws::retail_truth_slice_combined_view_duckdb_parity`
+/// so CI's DuckDB phase always executes S1's full Cell-vs-DuckDB combined-view &
+/// per-question (including `lineage_ref` and `members`) parity proof.
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub(crate) fn run_s1_duckdb_combined_view_parity() -> Result<(), String> {
     let mut sole = EntityBook::open(SOLE_CELL_ID, "org_family_sole_prop", "prod", "sole.sqlite")?;
@@ -3087,6 +3301,7 @@ pub(crate) fn run_s1_duckdb_combined_view_parity() -> Result<(), String> {
     seed_sole_prop(&mut sole)?;
     seed_partnership(&mut partner)?;
     seed_retail_operations(&mut sole, &mut partner)?;
+    seed_store_commercial_rollups(&mut sole, &mut partner)?;
     ingest_baseline_entity_feeds(&mut sole, &mut partner)?;
     let cell_view = CombinedManagementView {
         view_kind: "combined_management_view",
@@ -3098,6 +3313,48 @@ pub(crate) fn run_s1_duckdb_combined_view_parity() -> Result<(), String> {
         ],
     };
     verify_duckdb_combined_view_parity(&sole, &partner, &cell_view)
+}
+
+fn verify_mismatched_promotion_refused(sole: &mut EntityBook) -> Result<(), String> {
+    for (sale_id, qty, rev, sold_at, expected_code) in [
+        (
+            "SALE-TAMPER-QTY",
+            "5",
+            "800",
+            "2026-09-02T14:05:00Z",
+            "core.action.precondition",
+        ),
+        (
+            "SALE-TAMPER-REV",
+            "4",
+            "999",
+            "2026-09-02T14:05:00Z",
+            "core.action.precondition",
+        ),
+        (
+            "SALE-TAMPER-TS",
+            "4",
+            "800",
+            "2026-09-03T14:05:00Z",
+            "core.laws.violated",
+        ),
+    ] {
+        let (code, msg) = sole.refused(
+            "supply.pos_sale.promote_from_evidence",
+            "clerk:hana",
+            json!({
+                "sale_id": sale_id, "source_evidence_id": "POS-SOLE-BAD",
+                "store_id": "ST-SOLE-CFC-1", "sku_id": "SKU-DRESS",
+                "sold_qty": qty, "unit": "each", "net_revenue": rev,
+                "applied_unit_cost": "100", "cogs_amount": "0",
+                "gross_margin": "0", "gross_margin_rate": "0",
+                "cost_status": "costed", "costed_ref": "COST-DRESS-1",
+                "currency": "EGP", "sold_at": sold_at
+            }),
+        )?;
+        assert_eq!(code, expected_code, "{sale_id}: {msg}");
+    }
+    Ok(())
 }
 
 fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> Result<(), String> {
@@ -3125,6 +3382,7 @@ fn verify_quarantine_promotion_and_single_book_guard(sole: &mut EntityBook) -> R
         record: "POS-SOLE-BAD",
         payload: r#"{"pos_line_id":"POS-SOLE-BAD","branch_code":"ST-SOLE-CFC-1","barcode_sku":"SKU-DRESS","qty":4,"uom":"PCS","net_amount":800,"ccy":"EGP","sold_at":"2026-09-02T14:05:00Z"}"#,
     })?;
+    verify_mismatched_promotion_refused(sole)?;
     promote_verified_pos_evidence(sole, "POS-SOLE-BAD", "SALE-PROMOTED-POS-SOLE-BAD")?;
     // 1-to-1 `source_evidence` link cardinality structurally blocks promoting the same
     // PosSaleEvidence line a second time under any new sale_id or action key.
@@ -3228,6 +3486,7 @@ fn s1_read_only_combined_management_view_across_two_cells() -> Result<(), String
     seed_sole_prop(&mut sole)?;
     seed_partnership(&mut partner)?;
     seed_retail_operations(&mut sole, &mut partner)?;
+    seed_store_commercial_rollups(&mut sole, &mut partner)?;
     ingest_baseline_entity_feeds(&mut sole, &mut partner)?;
 
     let cell_view = CombinedManagementView {
