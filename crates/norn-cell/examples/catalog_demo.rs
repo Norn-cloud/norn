@@ -270,8 +270,8 @@ fn main() -> DemoResult<()> {
     rehearse(&input)
 }
 
-#[test]
-fn authored_catalog_reads_and_refusals_use_kernel_pdp() -> DemoResult<()> {
+#[cfg(test)]
+fn rehearse_jewelry_demo() -> DemoResult<()> {
     // Re-scope the admission-only App-root law to its single Entity subject so
     // live cell installation admits it under LawSupport (see lifecycle_correspondence.rs).
     let mut declarations: serde_json::Value = serde_json::from_str(include_str!(
@@ -293,4 +293,9 @@ fn authored_catalog_reads_and_refusals_use_kernel_pdp() -> DemoResult<()> {
         }
     }
     rehearse(&serde_json::to_string(&declarations)?)
+}
+
+#[test]
+fn authored_catalog_reads_and_refusals_use_kernel_pdp() -> DemoResult<()> {
+    rehearse_jewelry_demo()
 }
