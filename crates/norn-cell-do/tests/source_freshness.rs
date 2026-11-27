@@ -1669,11 +1669,17 @@ mod tests {
                         ),
                         ("last_trigger".into(), RuntimeValue::from("manual")),
                         ("watermark".into(), RuntimeValue::from(watermark)),
-                        ("rows_read".into(), RuntimeValue::Number(Decimal::from(0))),
-                        ("rows_landed".into(), RuntimeValue::Number(Decimal::from(0))),
+                        (
+                            "rows_read".into(),
+                            RuntimeValue::Number(Decimal::from(0_i64)),
+                        ),
+                        (
+                            "rows_landed".into(),
+                            RuntimeValue::Number(Decimal::from(0_i64)),
+                        ),
                         (
                             "rows_quarantined".into(),
-                            RuntimeValue::Number(Decimal::from(0)),
+                            RuntimeValue::Number(Decimal::from(0_i64)),
                         ),
                         ("quarantine_reasons".into(), RuntimeValue::from("{}")),
                         ("last_error_code".into(), RuntimeValue::Null),
