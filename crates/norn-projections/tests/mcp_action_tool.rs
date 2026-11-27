@@ -5,8 +5,10 @@
     reason = "integration-test crate"
 )]
 
+use std::collections::BTreeSet;
+
 use norn_ir::ActionRoot;
-use norn_projections::mcp::{McpProjectionError, action_tool};
+use norn_projections::mcp::{McpProjectionError, action_tool, action_tool_with_server_filled};
 use serde_json::{Value, json};
 
 fn action_from_fixture(source: &str) -> ActionRoot {
@@ -536,4 +538,253 @@ fn decimal_wire_schema_rewrites_nested_arrays_and_server_filled_ignores_string_a
     // Already-nullable property is not wrapped in nested anyOf.
     assert_eq!(props["already_nullable"]["anyOf"][0]["type"], "string");
     assert_eq!(props["already_nullable"]["anyOf"][1]["type"], "null");
+}
+
+#[test]
+fn nullable_decimal_type_arrays_rewrite_number_to_string() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "price": {"type": ["number", "null"], "nornType": {"kind": "decimal", "scale": 2}},
+            "discount": {"type": ["null", "number"], "nornType": {"kind": "decimal", "scale": 4}},
+            "plain_num": {"type": ["number", "null"]}
+        },
+        "required": ["price"]
+    }))
+    .expect("schema decodes");
+    let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
+    let props = &tool["inputSchema"]["properties"];
+    assert_eq!(props["price"]["type"], json!(["string", "null"]));
+    assert!(
+        props["price"]["description"]
+            .as_str()
+            .is_some_and(|desc| desc.contains("Exact decimal text"))
+    );
+    assert_eq!(props["discount"]["type"], json!(["null", "string"]));
+    assert!(
+        props["discount"]["description"]
+            .as_str()
+            .is_some_and(|desc| desc.contains("Exact decimal text"))
+    );
+    assert_eq!(props["plain_num"]["type"], json!(["number", "null"]));
+}
+
+fn mixed_derivation_fixture_action() -> ActionRoot {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "code": {"type": "string"},
+            "owner": {"type": "string"},
+            "root_actor": {"type": "string"},
+            "root_input": {"type": "string"},
+            "dollar_non_root": {"type": "string"},
+            "closure_field": {"type": "string"},
+            "member_map": {"type": "string"},
+            "greeting": {"type": "string"},
+            "actor_greeting": {"type": "string"},
+            "escaped_template_actor": {"type": "string"},
+            "escaped_quote_actor": {"type": "string"},
+            "extra_secret": {"type": "string"}
+        },
+        "required": [
+            "code",
+            "owner",
+            "root_actor",
+            "root_input",
+            "dollar_non_root",
+            "closure_field",
+            "member_map",
+            "greeting",
+            "actor_greeting",
+            "escaped_template_actor",
+            "escaped_quote_actor",
+            "extra_secret"
+        ]
+    }))
+    .expect("schema decodes");
+    action.derive = serde_json::from_value(json!([
+        {"field": "code", "expression": "trim(input.code)", "inputRequired": true},
+        {"field": "code", "expression": "input.code ?? 'FALLBACK'", "inputRequired": false},
+        {"field": "owner", "expression": "input.owner ?? actor.subjectId", "inputRequired": false},
+        {"field": "root_actor", "expression": "$root.actor.subjectId", "inputRequired": false},
+        {"field": "root_input", "expression": "$root.input.root_input ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "dollar_non_root", "expression": "$.input.dollar_non_root ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "dollar_non_root", "expression": "trim(input.dollar_non_root)", "inputRequired": true},
+        {"field": "closure_field", "expression": "sum(map([1], #))", "inputRequired": false},
+        {"field": "closure_field", "expression": "trim(input.closure_field)", "inputRequired": true},
+        {"field": "member_map", "expression": "input.map ?? 'DEFAULT'", "inputRequired": false},
+        {"field": "member_map", "expression": "trim(input.member_map)", "inputRequired": true},
+        {"field": "greeting", "expression": "`Hello actor $root $5 ${input.greeting}`", "inputRequired": false},
+        {"field": "actor_greeting", "expression": "`Hello ${actor.subjectId}`", "inputRequired": false},
+        {"field": "escaped_template_actor", "expression": "`Hello \\${actor.subjectId}`", "inputRequired": false},
+        {"field": "escaped_quote_actor", "expression": "'x\\' + actor.subjectId", "inputRequired": false}
+    ]))
+    .expect("derivations decode");
+    action
+}
+
+#[test]
+fn mixed_required_and_optional_derivations_keep_field_required_and_actor_derived_omitted() {
+    let action = mixed_derivation_fixture_action();
+
+    let extra = BTreeSet::from(["extra_secret".to_owned()]);
+    let tool =
+        serde_json::to_value(action_tool_with_server_filled(&action, &extra).expect("projects"))
+            .expect("encodes");
+    let schema = &tool["inputSchema"];
+    assert_eq!(
+        schema["required"],
+        json!(["code", "dollar_non_root", "member_map"])
+    );
+    assert_eq!(schema["properties"]["code"], json!({"type": "string"}));
+    assert_eq!(
+        schema["properties"]["dollar_non_root"],
+        json!({"type": "string"})
+    );
+    assert_eq!(
+        schema["properties"]["member_map"],
+        json!({"type": "string"})
+    );
+    assert!(
+        schema["properties"].get("closure_field").is_none(),
+        "closure expressions fail closed as server-filled, matching kernel actor_derived_fields"
+    );
+    assert!(
+        schema["properties"].get("owner").is_none(),
+        "actor-reading optional derivation is server-filled even when also referencing input"
+    );
+    assert!(
+        schema["properties"].get("root_actor").is_none(),
+        "$root.actor optional derivation is server-filled"
+    );
+    assert!(
+        schema["properties"].get("root_input").is_none(),
+        "$root whole-environment root fails closed as server-filled, matching kernel actor_derived_fields"
+    );
+    assert!(
+        schema["properties"]["greeting"]["anyOf"].is_array(),
+        "template interpolation `${{input.greeting}}` must not be misread as whole-environment `$`"
+    );
+    assert!(
+        schema["properties"].get("actor_greeting").is_none(),
+        "template interpolation `${{actor.subjectId}}` is still detected as an actor read"
+    );
+    assert!(
+        schema["properties"].get("escaped_template_actor").is_none(),
+        "ZEN template_string has no backslash escapes, so `\\${{actor.subjectId}}` still reads actor"
+    );
+    assert!(
+        schema["properties"].get("escaped_quote_actor").is_none(),
+        "ZEN string literals have no backslash escapes, so `'x\\' + actor.subjectId` still reads actor"
+    );
+    assert!(
+        schema["properties"].get("extra_secret").is_none(),
+        "extra_server_filled fields leave the caller schema"
+    );
+}
+
+#[test]
+fn assignment_fails_closed_while_comparison_operators_stay_caller_required() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "assigned_field": {"type": "string"},
+            "eq_field": {"type": "string"},
+            "ne_field": {"type": "string"},
+            "le_field": {"type": "string"},
+            "ge_field": {"type": "string"}
+        },
+        "required": [
+            "assigned_field",
+            "eq_field",
+            "ne_field",
+            "le_field",
+            "ge_field"
+        ]
+    }))
+    .expect("schema decodes");
+    action.derive = serde_json::from_value(json!([
+        {"field": "assigned_field", "expression": "out.value = 'ok'; out.value", "inputRequired": false},
+        {"field": "assigned_field", "expression": "trim(input.assigned_field)", "inputRequired": true},
+        {"field": "eq_field", "expression": "input.eq_field == 'a' ? 'a' : 'b'", "inputRequired": false},
+        {"field": "eq_field", "expression": "trim(input.eq_field)", "inputRequired": true},
+        {"field": "ne_field", "expression": "input.ne_field != 'a' ? 'a' : 'b'", "inputRequired": false},
+        {"field": "ne_field", "expression": "trim(input.ne_field)", "inputRequired": true},
+        {"field": "le_field", "expression": "len(input.le_field ?? '') <= 3 ? 's' : 'l'", "inputRequired": false},
+        {"field": "le_field", "expression": "trim(input.le_field)", "inputRequired": true},
+        {"field": "ge_field", "expression": "len(input.ge_field ?? '') >= 3 ? 'l' : 's'", "inputRequired": false},
+        {"field": "ge_field", "expression": "trim(input.ge_field)", "inputRequired": true}
+    ]))
+    .expect("derivations decode");
+
+    let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
+    let schema = &tool["inputSchema"];
+    assert!(
+        schema["properties"].get("assigned_field").is_none(),
+        "property assignment fails closed as server-filled, matching kernel actor_derived_fields"
+    );
+    assert_eq!(
+        schema["required"],
+        json!(["eq_field", "ne_field", "le_field", "ge_field"])
+    );
+    for field in ["eq_field", "ne_field", "le_field", "ge_field"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type": "string"}),
+            "comparison operator in `{field}` must not be misclassified as assignment"
+        );
+    }
+}
+
+#[test]
+fn destructive_hint_covers_deleted_writes_and_writes_alongside_create_only_effect() {
+    let mut parent_delete = fixture_action();
+    parent_delete.writes.clear();
+    parent_delete.effect_program = Some(norn_ir::ActionEffectProgram::MutateParentWithRows {
+        object_id_field: "orderId".to_owned(),
+        object_kind: "commerce.SalesOrder".to_owned(),
+        entity_artifact_id: "commerce.SalesOrder.entity".to_owned(),
+        entity_artifact_version: "0.1.0".to_owned(),
+        parent_values_field: "parent".to_owned(),
+        row_ops_field: "rows".to_owned(),
+        parent_version_field: "version".to_owned(),
+        parent_delete_field: Some("deleteParent".to_owned()),
+        collections: Vec::new(),
+    });
+    let annotations = action_tool(&parent_delete)
+        .expect("projects")
+        .annotations
+        .expect("annotations");
+    assert_eq!(annotations.destructive_hint, Some(true));
+
+    for change in [
+        norn_ir::WriteChange::Modified,
+        norn_ir::WriteChange::Deleted,
+    ] {
+        let mut create_effect_with_destructive_write = fixture_action();
+        create_effect_with_destructive_write.writes[0].change = change;
+        create_effect_with_destructive_write.effect_program =
+            Some(norn_ir::ActionEffectProgram::UpsertInputObject {
+                object_id_field: "requestId".to_owned(),
+                object_kind: "retail.PurchaseRequest".to_owned(),
+                entity_artifact_id: "retail.PurchaseRequest.entity".to_owned(),
+                entity_artifact_version: "0.1.0".to_owned(),
+                write_mode: norn_ir::UpsertWriteMode::CreateOnly,
+            });
+        let annotations = action_tool(&create_effect_with_destructive_write)
+            .expect("projects")
+            .annotations
+            .expect("annotations");
+        assert_eq!(
+            annotations.destructive_hint,
+            Some(true),
+            "CreateOnly effect program must not mask {change:?} in action.writes"
+        );
+    }
 }
