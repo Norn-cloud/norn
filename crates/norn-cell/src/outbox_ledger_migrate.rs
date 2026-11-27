@@ -563,8 +563,7 @@ fn legacy_unknown_payload_digest(
     let hex = norn_ir::canonical::domain_hash_hex(
         b"norn.outbox.legacy_unknown_payload.v1\0",
         &(command_id, generation),
-    )
-    .map_err(CellError::Encoding)?;
+    )?;
     OutboxDigest::from_hex(&hex)
         .ok_or_else(|| CellError::Encoding(format!("invalid legacy digest hex: {hex}")))
 }
