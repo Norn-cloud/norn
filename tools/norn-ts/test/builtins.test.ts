@@ -35,4 +35,10 @@ test("an action step handle restates the norn-builtins contract, with the action
   expect(() => actionFn("ops.refund.approve", input, { pinFields: [] as unknown as ["artifactId"] })).toThrow(
     /at least one pin field/,
   )
+  expect(() => actionFn("ops.refund.approve", input, { pinFields: ["toString"] as unknown as ["artifactId"] })).toThrow(
+    /unknown actionFn pin field/,
+  )
+  expect(() =>
+    actionFn("ops.refund.approve", input, { pinFields: ["__proto__"] as unknown as ["artifactId"] }),
+  ).toThrow(/unknown actionFn pin field/)
 })

@@ -56,12 +56,15 @@ const TRACE_CONTEXT = S.record(
 /** Supported explicit pin fields on `norn.action@1` steps (STEP-PIN-1). */
 export type ActionStepPinField = "artifactId" | "version" | "digest" | "definitionsVersion"
 
-const ACTION_STEP_PIN_FIELDS: Readonly<Record<ActionStepPinField, S.ValueSchema>> = {
-  artifactId: S.text(),
-  version: S.text(),
-  digest: S.text(),
-  definitionsVersion: S.integer,
-}
+const ACTION_STEP_PIN_FIELDS: ReadonlyMap<ActionStepPinField, S.ValueSchema> = new Map<
+  ActionStepPinField,
+  S.ValueSchema
+>([
+  ["artifactId", S.text()],
+  ["version", S.text()],
+  ["digest", S.text()],
+  ["definitionsVersion", S.integer],
+])
 
 function actionStepPinSchema(fields: ReadonlyArray<ActionStepPinField>): S.ObjectSchema {
   if (fields.length === 0) {
@@ -69,7 +72,7 @@ function actionStepPinSchema(fields: ReadonlyArray<ActionStepPinField>): S.Objec
   }
   const properties: Record<string, S.ValueSchema> = {}
   for (const field of fields) {
-    const schema = ACTION_STEP_PIN_FIELDS[field]
+    const schema = ACTION_STEP_PIN_FIELDS.get(field)
     if (schema === undefined) {
       throw new Error(`unknown actionFn pin field: ${String(field)}`)
     }

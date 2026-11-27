@@ -606,12 +606,16 @@ fn stale_pin<E: SqlEngine>(
     principal: Option<&norn_cell::flow_run::RunStarter>,
     attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<Refusal, Refusal> {
-    let stale = Refusal::new(
-        StatusCode::CONFLICT,
-        "defs.stale",
-        "the definitions changed; refresh the action catalog",
-        "the call pins a definitions version that is no longer active",
-    );
+    let stale = if attempt.is_some() {
+        crate::step_pin::pin_mismatch()
+    } else {
+        Refusal::new(
+            StatusCode::CONFLICT,
+            "defs.stale",
+            "the definitions changed; refresh the action catalog",
+            "the call pins a definitions version that is no longer active",
+        )
+    };
     let approval = approved
         .map(|command| crate::decisions::decision_id(command, 1))
         .transpose()?;

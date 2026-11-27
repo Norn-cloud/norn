@@ -408,16 +408,56 @@ fn starter_caller(starter: &norn_cell::flow_run::RunStarter) -> norn_cell_do::po
         "service" => "service",
         _ => "user",
     };
+    let role_table = match starter.role_table.as_str() {
+        "studio-roles/1" => "studio-roles/1",
+        _ => norn_cell_do::principal::FIXTURE_ROLES,
+    };
     norn_cell_do::policy::Caller {
         subject_id: starter.subject.clone(),
         roles: starter.roles.clone(),
         actor_kind,
-        role_table: "studio-roles/1",
+        role_table,
         accountable_person: starter.accountable_person.clone(),
     }
 }
 
-fn decide_ask_review_without_driving(cell: &Cell, decision_id: &str, key: &str) {
+fn install_melt_approval_gate(cell: &Cell) {
+    let mut body = json!({
+        "kind": "approval",
+        "id": "ops.approve_melt_convert",
+        "payload": {
+            "action": step_cell::MELT_ACTION,
+            "decider": { "roles": ["admin"] },
+            "question": "Convert this melt?",
+            "risk": "high"
+        }
+    });
+    let (status, admitted) = call(
+        cell,
+        "POST",
+        "/v1/definitions:admit",
+        OPERATOR,
+        &body.to_string(),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    let (status, installed) = call(
+        cell,
+        "POST",
+        "/v1/definitions:install",
+        OPERATOR,
+        &body.to_string(),
+    );
+    assert_eq!(status, 200, "{installed}");
+}
+
+fn decide_as_approver(
+    cell: &Cell,
+    decision_id: &str,
+    key: &str,
+    now_ms: u64,
+    as_requester: norn_api::flow_driver::AsStarter<'_>,
+) -> norn_api::decisions::Decided {
     let scope = norn_api::scope::ScopeQuery {
         org_id: Some("org_demo".to_owned()),
         environment_id: Some("dev".to_owned()),
@@ -430,33 +470,44 @@ fn decide_ask_review_without_driving(cell: &Cell, decision_id: &str, key: &str) 
         note: None,
         idempotency_key: key.to_owned(),
     };
-    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
-                        _c: &mut dyn FnMut() -> Result<
-        norn_api::actions::ActionAnswer,
-        norn_api::refusal::Refusal,
-    >| None;
     cell.caller.record(Some(norn_cell_do::policy::Caller {
         subject_id: "approver@steps".to_owned(),
         roles: vec!["admin".to_owned()],
         actor_kind: "user",
-        role_table: "studio-roles/1",
+        role_table: norn_cell_do::principal::FIXTURE_ROLES,
         accountable_person: None,
     }));
-    norn_api::decisions::decide(
+    let decided = norn_api::decisions::decide(
         &cell.host,
         &norn_api::decisions::DecideCall {
             scope: &scope,
             actor: Some("approver@steps"),
             id: decision_id,
             body: &body,
-            now: norn_kernel::LogicalTime::from_millis(step_cell::NOW.saturating_mul(1000)),
+            now: norn_kernel::LogicalTime::from_millis(now_ms),
         },
         &reads,
         &cell.handles,
-        &no_requester,
+        as_requester,
     )
-    .expect("ask_review decides");
+    .expect("decision approves");
     cell.caller.record(None);
+    decided
+}
+
+fn decide_ask_review_without_driving(cell: &Cell, decision_id: &str, key: &str) {
+    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
+                        _c: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| None;
+    let _ = decide_as_approver(
+        cell,
+        decision_id,
+        key,
+        step_cell::NOW.saturating_mul(1000),
+        &no_requester,
+    );
 }
 
 /// STEP-PIN-1 retry recovery: when a parked action step commits its action and
@@ -537,4 +588,86 @@ fn retry_after_commit_and_definition_change_recovers_committed_outcome() {
     .expect("retry settles committed step cleanly");
     let (_, final_run) = call(&cell, "GET", "/v1/runs/melt-run-recover", OPERATOR, "");
     assert_eq!(final_run["state"], json!("completed"), "{final_run}");
+}
+
+/// STEP-PIN-1 through approval dispatch: when a parked step with an explicit
+/// `definitionsVersion` pin parks for approval and definitions advance before
+/// the approved call executes, approval dispatch records and settles
+/// `action_step.pin_mismatch` rather than `defs.stale`.
+#[test]
+fn an_approved_step_preserves_pin_mismatch_when_definitions_version_drifts() {
+    let cell = step_cell::cell_on(
+        norn_cell::engine::NativeEngine::open_in_memory().unwrap(),
+        false,
+    );
+    install_melt_approval_gate(&cell);
+    let pinned_version = cell
+        .host
+        .active_definitions_version()
+        .unwrap()
+        .unwrap()
+        .saturating_add(1);
+    install_flow_with_pin(
+        &cell,
+        &format!(
+            "{{artifactId: 'constitution.melt.convert.action', version: '1.0.0', definitionsVersion: {pinned_version}}}"
+        ),
+    );
+    assert_eq!(
+        cell.host.active_definitions_version().unwrap(),
+        Some(pinned_version)
+    );
+    let decided_review = start_and_approve(&cell, OPERATOR, "melt-run-approved-pin");
+    assert_eq!(
+        decided_review["run"]["state"],
+        json!("awaiting_perform_convert"),
+        "{decided_review}"
+    );
+    let pending = format!("{SCOPE}&state=pending");
+    let (_, page) = call_with(&cell, "GET", "/v1/decisions", &pending, APPROVER, "");
+    assert_eq!(page["total"], json!(1), "{page}");
+    let approval_id = page["items"][0]["id"].as_str().unwrap().to_owned();
+
+    // Advance definitions version past `pinned_version` while keeping the action present.
+    revise_action_to_omits_loss(&cell);
+
+    let as_requester = |starter: &norn_cell::flow_run::RunStarter,
+                        dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| {
+        let previous = cell.caller.replace(Some(starter_caller(starter)), false);
+        let out = dispatch();
+        cell.caller.replace(previous.0, previous.1);
+        Some(out)
+    };
+    let now_ms = step_cell::NOW.saturating_mul(1000).saturating_add(2);
+    let decided = decide_as_approver(&cell, &approval_id, "k-approve-pin", now_ms, &as_requester);
+    assert_eq!(
+        decided.call.as_ref().and_then(|c| c.code.as_deref()),
+        Some(norn_api::step_pin::step_pin_codes::PIN_MISMATCH),
+        "{decided:?}"
+    );
+    let no_requester = |_p: &norn_cell::flow_run::RunStarter,
+                        _c: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| None;
+    norn_api::flow_driver::drive_run(
+        &cell.host,
+        "melt-run-approved-pin",
+        &no_requester,
+        &no_requester,
+        &cell.handles,
+        norn_kernel::LogicalTime::from_millis(now_ms.saturating_add(1)),
+    )
+    .expect("drive settles recorded approval refusal");
+    let (_, final_run) = call(&cell, "GET", "/v1/runs/melt-run-approved-pin", OPERATOR, "");
+    assert_eq!(final_run["state"], json!("failed_refused"), "{final_run}");
+    assert_eq!(
+        final_run["steps"][1]["error"]["code"],
+        json!(norn_api::step_pin::step_pin_codes::PIN_MISMATCH),
+        "{final_run}"
+    );
+    assert_eq!(melt(&cell), 404);
 }
