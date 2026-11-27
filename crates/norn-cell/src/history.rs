@@ -2238,13 +2238,13 @@ impl<E: SqlEngine> CellStore<E> {
             for (key, value) in &record.bindings {
                 store.bind(key, value)?;
             }
-            crate::export_journal::restore_late_source_evidence(
-                &store.conn,
-                record.receipt.body.commit_seq,
-                &record.quarantined_observations,
-                &record.source_evidence,
-            )?;
             if let Some(install) = &record.definition_install {
+                crate::export_journal::restore_late_source_evidence(
+                    &store.read(),
+                    record.receipt.body.commit_seq,
+                    &record.pending_observations,
+                    &record.source_evidence,
+                )?;
                 let installed = store.install_retained_definitions(record)?;
                 if installed != install.installed {
                     return Err(refused());
@@ -2257,6 +2257,12 @@ impl<E: SqlEngine> CellStore<E> {
                     return Err(refused());
                 }
                 restore_input(&mut store, record)?;
+                crate::export_journal::restore_late_source_evidence(
+                    &store.read(),
+                    record.receipt.body.commit_seq,
+                    &record.pending_observations,
+                    &record.source_evidence,
+                )?;
                 let outcome = store.commit_retained_batch(record)?;
                 if !matches!(outcome, CommitOutcome::Committed(_))
                     || outcome.receipt() != &record.receipt
@@ -2301,7 +2307,7 @@ pub(crate) fn restore_input<E: SqlEngine>(
             source_evidence,
         } => {
             crate::export_journal::restore_observation_input(
-                &store.conn,
+                &store.read(),
                 record,
                 (position, &observation_id, &observed),
                 &members,

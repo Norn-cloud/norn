@@ -129,16 +129,16 @@ pub struct ExportRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation_inline: Option<crate::automation_outbox::AutomationInlineEvidence>,
     /// Late `_norn_source_evidence` attribution rows recorded between commit
-    /// `commit_seq - 1` and `commit_seq` for already-consumed or quarantined
-    /// observations. Absent when empty, leaving existing export records' bytes
-    /// and hashes unchanged.
+    /// `commit_seq - 1` and `commit_seq` for already-consumed or pending
+    /// evidence observations. Absent when empty, leaving existing export
+    /// records' bytes and hashes unchanged.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_evidence: Vec<SourceEvidenceEntry>,
-    /// Quarantined pending `_norn_inbox` rows first captured between commit
-    /// `commit_seq - 1` and `commit_seq` (`mapping-conflict:`, `mapping-identity:`,
-    /// or `mapping-bundle:` with non-empty diagnostics). Absent when empty.
+    /// Pending mapping evidence `_norn_inbox` rows first attributed between
+    /// commit `commit_seq - 1` and `commit_seq` (`mapping-bundle:`,
+    /// `mapping-conflict:`, or `mapping-identity:`). Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub quarantined_observations: Vec<crate::PendingObservation>,
+    pub pending_observations: Vec<crate::PendingObservation>,
 }
 
 impl ExportRecord {
