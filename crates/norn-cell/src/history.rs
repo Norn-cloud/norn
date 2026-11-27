@@ -2332,52 +2332,18 @@ pub(crate) fn restore_input<E: SqlEngine>(
             command,
             result,
             runs,
+            late_outcomes,
         } => {
-            let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
-            if head.position != position
-                || head.commit_seq != commit_seq
-                || head.command != command
-                || head.result.is_some()
-                || result.is_none()
-            {
-                return Err(mismatch());
-            }
-            // Older generation runs can survive command replacement without
-            // ever having been consumed. Recover the recorded history, without IO.
-            let existing = store.read().runs(&command.command_id)?;
-            if existing.iter().any(|run| !runs.contains(run)) {
-                return Err(mismatch());
-            }
-            restore_run_history(store, record, &command, &runs, &existing)?;
-            let current: Vec<_> = runs
-                .iter()
-                .filter(|run| run.generation == command.generation)
-                .collect();
-            if current.len() != 1
-                || current.first().is_none_or(|run| {
-                    run.attempt != 1
-                        || run.consumed_commit_seq.is_some()
-                        || Some(&run.outcome) != result.as_ref()
-                })
-            {
-                return Err(mismatch());
-            }
-            let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
-            let encoded_result = crate::payload_storage::encode_result(
-                &store.conn,
-                &record.batch.scope,
-                &world,
-                result.as_ref().ok_or_else(mismatch)?,
-            )?;
-            store.conn.execute(
-                "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
-                params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
-            )?;
-            crate::outbox_ledger::restore_consumed_runs(
-                &store.conn,
-                &command.command_id,
-                command.generation,
+            restore_consumed_result(
+                store,
+                record,
+                position,
+                commit_seq,
+                &command,
+                result.as_ref(),
                 &runs,
+                &late_outcomes,
+                &mismatch,
             )?;
         }
     }
@@ -2389,6 +2355,85 @@ pub(crate) fn restore_input<E: SqlEngine>(
     {
         return Err(mismatch());
     }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "replays the decomposed ConsumedInput::Result fields from restore_input"
+)]
+fn restore_consumed_result<E: SqlEngine>(
+    store: &mut CellStore<E>,
+    record: &ExportRecord,
+    position: u64,
+    commit_seq: u64,
+    command: &crate::store::OutboxCommand,
+    result: Option<&Value>,
+    runs: &[crate::RunRecord],
+    late_outcomes: &[norn_kernel::world::outbox_ledger::OutboxRecord],
+    mismatch: &dyn Fn() -> CellError,
+) -> Result<(), CellError> {
+    let head = replayed_result(store, position)?.ok_or_else(mismatch)?;
+    let already_settled = head.result.is_some();
+    if head.position != position
+        || head.commit_seq != commit_seq
+        || head.command != *command
+        || result.is_none()
+        || (already_settled && head.result.as_ref() != result)
+    {
+        return Err(mismatch());
+    }
+    // Older generation runs can survive command replacement without
+    // ever having been consumed. Recover the recorded history, without IO.
+    let existing = store.read().runs(&command.command_id)?;
+    if existing.iter().any(|run| !runs.contains(run)) {
+        return Err(mismatch());
+    }
+    restore_run_history(store, record, command, runs, &existing)?;
+    let current: Vec<_> = runs
+        .iter()
+        .filter(|run| run.generation == command.generation)
+        .collect();
+    let valid_current = if already_settled {
+        current.is_empty()
+            || (current.len() == 1
+                && current.first().is_some_and(|run| {
+                    run.attempt == 1
+                        && run.consumed_commit_seq.is_none()
+                        && Some(&run.outcome) == result
+                }))
+    } else {
+        current.len() == 1
+            && current.first().is_some_and(|run| {
+                run.attempt == 1
+                    && run.consumed_commit_seq.is_none()
+                    && Some(&run.outcome) == result
+            })
+    };
+    if !valid_current {
+        return Err(mismatch());
+    }
+    if !already_settled {
+        let world = crate::payload_storage::receipt_world(&store.conn, head.commit_seq)?;
+        let encoded_result = crate::payload_storage::encode_result(
+            &store.conn,
+            &record.batch.scope,
+            &world,
+            result.ok_or_else(mismatch)?,
+        )?;
+        store.conn.execute(
+            "UPDATE \"_norn_outbox\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3",
+            params![encoded_result, command.command_id, to_i64(command.generation, "generation")?],
+        )?;
+    }
+    crate::outbox_ledger::restore_consumed_runs(
+        &store.conn,
+        &command.command_id,
+        command.generation,
+        runs,
+        !already_settled,
+    )?;
+    crate::outbox_ledger::restore_late_outcomes(&store.conn, &command.command_id, late_outcomes)?;
     Ok(())
 }
 
@@ -2475,12 +2520,17 @@ fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> 
         Some("result") => {
             let row: crate::PendingCommand = norn_ir::runtime::decode(input)?;
             let runs = norn_ir::runtime::decode(input.get("runs").ok_or("missing runs")?)?;
+            let late_outcomes = match input.get("lateOutcomes") {
+                Some(late) => norn_ir::runtime::decode(late)?,
+                None => Vec::new(),
+            };
             Ok(ConsumedInput::Result {
                 position: row.position,
                 commit_seq: row.commit_seq,
                 command: row.command,
                 result: row.result,
                 runs,
+                late_outcomes,
             })
         }
         _ => Err("unknown consumed input kind".to_owned()),

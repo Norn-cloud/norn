@@ -1108,6 +1108,16 @@ pub trait SimulatedCell:
         Ok(())
     }
 
+    /// Whether this host retains per-generation late outcomes on superseded
+    /// dispatches (`D1`), checked in the refinement snapshot.
+    const TRACKS_LATE_OUTCOMES: bool = false;
+
+    /// Sorted `(command_id, prior_confirmed_success_generations)` observed on
+    /// hosts that declare [`Self::TRACKS_LATE_OUTCOMES`].
+    fn sim_prior_outcomes(&self) -> Vec<(CommandId, Vec<u64>)> {
+        Vec::new()
+    }
+
     /// A fresh, empty cell at the epoch whose outside world answers every
     /// command with [`law_responder`].
     fn sim_new() -> Self;
@@ -1355,6 +1365,22 @@ struct ArmedFault {
     firing: Firing,
 }
 
+/// D1 reissue authorization target passed from the model to the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReissueAuth {
+    command: CommandId,
+    from: Generation,
+    next: Generation,
+}
+
+/// Model expectations plus any D1 reissue authorizations for a chained
+/// `Dispatching` or `Exchange` transition.
+struct ChainPlan {
+    chain: Vec<Expect>,
+    auth_prepare: Option<ReissueAuth>,
+    auth_reissue: Option<ReissueAuth>,
+}
+
 /// Everything about a cell the laws compare after each operation.
 #[derive(Debug, Clone, PartialEq)]
 struct Snapshot {
@@ -1366,6 +1392,7 @@ struct Snapshot {
     timers: Vec<DueTimer<LawInput>>,
     ledger: Vec<LedgerEntry<LawEvent>>,
     executions: u64,
+    prior_outcomes: Vec<(CommandId, Vec<u64>)>,
 }
 
 /// The independent reference model of a cell. Model facts (canonical
@@ -1376,6 +1403,7 @@ pub struct CellModel {
     now: u64,
     seq: u64,
     commits_perform_claims: bool,
+    tracks_late_outcomes: bool,
     types: Vec<ObjectTypeDef>,
     facts: BTreeMap<FactKey, FactState>,
     concrete: BTreeMap<FactKey, ObjectTypeName>,
@@ -1389,6 +1417,13 @@ pub struct CellModel {
     /// Canonical payload first enqueued for each `(command_id, generation)` so
     /// generated random commits stay compliant with D1 `PayloadDiverged`.
     enqueued_payloads: BTreeMap<(CommandId, Generation), LawCommand>,
+    /// Generations durably claimed in each command's current outbox epoch.
+    dispatched_in_epoch: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Superseded prior generations in the current epoch with attached late
+    /// outcomes (D1 refinement observable).
+    prior_outcomes: BTreeMap<CommandId, BTreeSet<u64>>,
+    /// Commands whose current epoch was consumed (next enqueue starts a fresh epoch).
+    consumed_in_epoch: BTreeSet<CommandId>,
     timers: BTreeMap<TimerId, DueTimer<LawInput>>,
     inbox: Vec<Observed<LawInput>>,
     seen: BTreeSet<ObservationId>,
@@ -1409,6 +1444,7 @@ impl Default for CellModel {
             now: 0,
             seq: 0,
             commits_perform_claims: false,
+            tracks_late_outcomes: false,
             types: law_object_types(),
             facts: BTreeMap::new(),
             concrete: BTreeMap::new(),
@@ -1418,6 +1454,9 @@ impl Default for CellModel {
             head_unknown: false,
             generations: BTreeMap::new(),
             enqueued_payloads: BTreeMap::new(),
+            dispatched_in_epoch: BTreeMap::new(),
+            prior_outcomes: BTreeMap::new(),
+            consumed_in_epoch: BTreeSet::new(),
             timers: BTreeMap::new(),
             inbox: Vec::new(),
             seen: BTreeSet::new(),
@@ -1823,8 +1862,9 @@ impl CellModel {
             Some(Consumed::Timer { id, .. }) => {
                 self.timers.remove(id);
             }
-            Some(Consumed::Result { .. }) => {
+            Some(Consumed::Result { command, .. }) => {
                 self.head_performed = false;
+                self.consumed_in_epoch.insert(command.clone());
                 if !self.outbox.is_empty() {
                     self.outbox.remove(0);
                 }
@@ -1896,6 +1936,10 @@ impl CellModel {
                     let known = self.generations.get(&command.id).copied();
                     if known.is_some_and(|known| known >= command.generation) {
                         continue;
+                    }
+                    if self.consumed_in_epoch.remove(&command.id) {
+                        self.dispatched_in_epoch.remove(&command.id);
+                        self.prior_outcomes.remove(&command.id);
                     }
                     self.generations
                         .insert(command.id.clone(), command.generation);
@@ -2005,6 +2049,10 @@ impl CellModel {
         if self.commits_perform_claims {
             self.claim();
         }
+        self.dispatched_in_epoch
+            .entry(head.id.clone())
+            .or_default()
+            .insert(head.generation.0);
         self.head_unknown = true;
         let input = law_responder(&head);
         self.in_flight
@@ -2016,22 +2064,23 @@ impl CellModel {
     /// Target `(command, from_gen, next_gen)` if `commit` reissues an
     /// ambiguous (`head_unknown`) outbox head and therefore requires durable
     /// `AuthorizeReissue` reconciliation before committing (`D1`).
-    fn reissue_target(&self, commit: &LawCommit) -> Option<(CommandId, Generation, Generation)> {
+    fn reissue_target(&self, commit: &LawCommit) -> Option<ReissueAuth> {
         let head = self.outbox.first().filter(|_| self.head_unknown)?;
         commit.effects.iter().find_map(|effect| match effect {
             Effect::Perform(command)
                 if command.id == head.id && command.generation > head.generation =>
             {
-                Some((head.id.clone(), head.generation, command.generation))
+                Some(ReissueAuth {
+                    command: head.id.clone(),
+                    from: head.generation,
+                    next: command.generation,
+                })
             }
             Effect::Perform(_) | Effect::Schedule(_) | Effect::CancelTimer(_) => None,
         })
     }
 
-    fn authorize_if_needed(
-        &mut self,
-        commit: &LawCommit,
-    ) -> Option<(CommandId, Generation, Generation)> {
+    fn authorize_if_needed(&mut self, commit: &LawCommit) -> Option<ReissueAuth> {
         let target = self.reissue_target(commit)?;
         if self.commits_perform_claims {
             self.claim();
@@ -2087,14 +2136,7 @@ impl CellModel {
     /// A [`Dispatching`]: the expectations of its preparing commit, its
     /// dispatch, and its re-issue and second dispatch, in order, together with
     /// any D1 reissue authorizations needed before `prepare` or `reissue`.
-    fn dispatching(
-        &mut self,
-        dispatching: &Dispatching,
-    ) -> (
-        Vec<Expect>,
-        Option<(CommandId, Generation, Generation)>,
-        Option<(CommandId, Generation, Generation)>,
-    ) {
+    fn dispatching(&mut self, dispatching: &Dispatching) -> ChainPlan {
         let mut chain = Vec::new();
         let mut auth_prepare = None;
         let mut auth_reissue = None;
@@ -2108,7 +2150,11 @@ impl CellModel {
             chain.push(Expect::Commit(self.commit(commit)));
             chain.push(self.dispatch());
         }
-        (chain, auth_prepare, auth_reissue)
+        ChainPlan {
+            chain,
+            auth_prepare,
+            auth_reissue,
+        }
     }
 
     /// A dispatch prepared to claim a fresh head; with `twice`, re-issued and
@@ -2168,6 +2214,17 @@ impl CellModel {
             .generations
             .get(&delivery.command.id)
             .is_some_and(|known| *known > delivery.command.generation);
+        if stale
+            && self
+                .dispatched_in_epoch
+                .get(&delivery.command.id)
+                .is_some_and(|gens| gens.contains(&delivery.command.generation.0))
+        {
+            self.prior_outcomes
+                .entry(delivery.command.id.clone())
+                .or_default()
+                .insert(delivery.command.generation.0);
+        }
         Expect::Deliver {
             recorded: false,
             stale,
@@ -2293,6 +2350,12 @@ impl CellModel {
                     // The claim is durable and the outside world ran, but no
                     // result was recorded.
                     self.claim();
+                    if let Some(head) = self.outbox.first() {
+                        self.dispatched_in_epoch
+                            .entry(head.id.clone())
+                            .or_default()
+                            .insert(head.generation.0);
+                    }
                     self.head_unknown = true;
                     (Expect::Failed, Firing::Fires)
                 }
@@ -2389,14 +2452,7 @@ impl CellModel {
 
     /// An [`Exchange`] (law 7): the expectations of each of its steps, in
     /// order. Each network step advances the network's clock.
-    fn exchanging(
-        &mut self,
-        exchange: &Exchange,
-    ) -> (
-        Vec<Expect>,
-        Option<(CommandId, Generation, Generation)>,
-        Option<(CommandId, Generation, Generation)>,
-    ) {
+    fn exchanging(&mut self, exchange: &Exchange) -> ChainPlan {
         let mut chain = Vec::new();
         let mut auth_prepare = None;
         if let Some(commit) = &exchange.prepare {
@@ -2424,7 +2480,11 @@ impl CellModel {
             };
             chain.push(expect);
         }
-        (chain, auth_prepare, auth_reissue)
+        ChainPlan {
+            chain,
+            auth_prepare,
+            auth_reissue,
+        }
     }
 
     /// A [`Reinjecting`] with `payload` from this state: its observation is
@@ -2479,6 +2539,15 @@ impl CellModel {
                 .collect();
             (facts, links)
         });
+        let prior_outcomes = if self.tracks_late_outcomes {
+            self.prior_outcomes
+                .iter()
+                .filter(|(_, gens)| !gens.is_empty())
+                .map(|(id, gens)| (id.clone(), gens.iter().copied().collect()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         Snapshot {
             facts,
             links,
@@ -2488,6 +2557,7 @@ impl CellModel {
             timers: self.timers.values().cloned().collect(),
             ledger: self.ledger.clone(),
             executions: self.executions,
+            prior_outcomes,
         }
     }
 
@@ -3046,11 +3116,11 @@ pub struct CellReference {
     /// order.
     chain: Vec<Expect>,
     /// D1 reissue authorization needed before the preparing commit, if any.
-    auth_before_prepared: Option<(CommandId, Generation, Generation)>,
+    auth_before_prepared: Option<ReissueAuth>,
     /// D1 reissue authorization needed before a standalone commit, if any.
-    auth_before_commit: Option<(CommandId, Generation, Generation)>,
+    auth_before_commit: Option<ReissueAuth>,
     /// D1 reissue authorization needed before a `Dispatching`/`Exchange` reissue.
-    auth_before_reissue: Option<(CommandId, Generation, Generation)>,
+    auth_before_reissue: Option<ReissueAuth>,
     /// The case's transition mix; `None` keeps the fixed mix.
     swarm: Option<Swarm>,
 }
@@ -3065,6 +3135,7 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
     fn init_state() -> BoxedStrategy<CellReference> {
         let model = CellModel {
             commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+            tracks_late_outcomes: H::TRACKS_LATE_OUTCOMES,
             ..CellModel::default()
         };
         if H::FAULT_KINDS.is_empty() && !H::NETWORK {
@@ -3124,10 +3195,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
             }
             CellOp::Inject { id, payload } => model.inject(*id, *payload),
             CellOp::Dispatch(dispatching) => {
-                let (chain, auth_prepare, auth_reissue) = model.dispatching(dispatching);
-                state.chain = chain;
-                state.auth_before_prepared = auth_prepare;
-                state.auth_before_reissue = auth_reissue;
+                let plan = model.dispatching(dispatching);
+                state.chain = plan.chain;
+                state.auth_before_prepared = plan.auth_prepare;
+                state.auth_before_reissue = plan.auth_reissue;
                 Expect::Nothing
             }
             CellOp::Reinject(reinjecting) => {
@@ -3135,10 +3206,10 @@ impl<H: SimulatedCell> ReferenceStateMachine for CellHostMachine<H> {
                 Expect::Nothing
             }
             CellOp::Exchange(exchange) => {
-                let (chain, auth_prepare, auth_reissue) = model.exchanging(exchange);
-                state.chain = chain;
-                state.auth_before_prepared = auth_prepare;
-                state.auth_before_reissue = auth_reissue;
+                let plan = model.exchanging(exchange);
+                state.chain = plan.chain;
+                state.auth_before_prepared = plan.auth_prepare;
+                state.auth_before_reissue = plan.auth_reissue;
                 Expect::Nothing
             }
             CellOp::Deliver(delivery) => model.deliver(delivery),
@@ -3184,6 +3255,11 @@ fn snapshot<H: SimulatedCell>(host: &mut H) -> Snapshot {
         timers: host.sim_timers(),
         ledger: host.sim_ledger(),
         executions: host.sim_executions(),
+        prior_outcomes: if H::TRACKS_LATE_OUTCOMES {
+            host.sim_prior_outcomes()
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -3428,16 +3504,16 @@ fn apply_reinjecting<H: SimulatedCell>(host: &mut H, reinjecting: &Reinjecting, 
     apply_inject(host, id, payload, &next());
 }
 
-fn authorize_reissue<H: SimulatedCell>(
-    host: &mut H,
-    target: Option<&(CommandId, Generation, Generation)>,
-) {
-    if let Some((command, from_gen, next_gen)) = target {
-        let authorized = host.sim_authorize_reissue(command, *from_gen, *next_gen);
+fn authorize_reissue<H: SimulatedCell>(host: &mut H, target: Option<&ReissueAuth>) {
+    if let Some(auth) = target {
+        let authorized = host.sim_authorize_reissue(&auth.command, auth.from, auth.next);
         assert_eq!(
             authorized,
             Ok(()),
-            "law violated: durable reissue authorization failed for {command:?} {from_gen:?} -> {next_gen:?}"
+            "law violated: durable reissue authorization failed for {:?} {:?} -> {:?}",
+            auth.command,
+            auth.from,
+            auth.next
         );
     }
 }
@@ -3448,8 +3524,8 @@ fn apply_exchange<H: SimulatedCell>(
     host: &mut H,
     exchange: &Exchange,
     chain: &[Expect],
-    auth_prepare: Option<&(CommandId, Generation, Generation)>,
-    auth_reissue: Option<&(CommandId, Generation, Generation)>,
+    auth_prepare: Option<&ReissueAuth>,
+    auth_reissue: Option<&ReissueAuth>,
 ) {
     let mut expected = chain.iter().cloned();
     let mut next = || expected.next().unwrap_or(Expect::Nothing);
@@ -3475,8 +3551,8 @@ fn apply_dispatching<H: SimulatedCell>(
     host: &mut H,
     dispatching: &Dispatching,
     chain: &[Expect],
-    auth_prepare: Option<&(CommandId, Generation, Generation)>,
-    auth_reissue: Option<&(CommandId, Generation, Generation)>,
+    auth_prepare: Option<&ReissueAuth>,
+    auth_reissue: Option<&ReissueAuth>,
 ) {
     let mut expected = chain.iter().cloned();
     let mut next = || expected.next().unwrap_or(Expect::Nothing);
@@ -3595,6 +3671,7 @@ impl<H: SimulatedCell> CellHostMachine<H> {
         CellReference {
             model: CellModel {
                 commits_perform_claims: H::COMMITS_PERFORM_CLAIMS,
+                tracks_late_outcomes: H::TRACKS_LATE_OUTCOMES,
                 ..CellModel::default()
             },
             ..CellReference::default()

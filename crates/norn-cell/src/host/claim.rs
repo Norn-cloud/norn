@@ -9,7 +9,7 @@
 //! taking whatever is at the head.
 
 use norn_kernel::world::outbox::{OutboxEvent, OutboxRefusal, OutboxState, Queue, step};
-use norn_kernel::world::outbox_ledger::{ApplyStatus, DispatchProof, ReconciliationDecision};
+use norn_kernel::world::outbox_ledger::{DispatchProof, ReconciliationDecision};
 use norn_kernel::{Command, CommandId, Generation, Performed};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -234,8 +234,8 @@ where
         )
     }
 
-    /// Explicitly attach a late or active outcome carrying `proof` to its
-    /// original generation (`D1`).
+    /// Durably attach a late or active outcome carrying `proof` to its
+    /// original generation (`D1`), surviving export and restore.
     ///
     /// # Errors
     ///
@@ -247,9 +247,15 @@ where
         proof: DispatchProof,
         ok: bool,
         input: &I,
-    ) -> Result<ApplyStatus, CellError> {
-        self.store
-            .record_late_outcome(&command.0, proof, ok, &to_runtime(input)?)
+    ) -> Result<CommitOutcome, CellError> {
+        self.store.record_late_outcome(
+            &self.scope,
+            self.now.as_millis(),
+            &command.0,
+            proof,
+            ok,
+            &to_runtime(input)?,
+        )
     }
 }
 

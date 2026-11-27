@@ -72,6 +72,7 @@ mod observation_quality;
 mod open_checkpoint;
 pub use open_checkpoint::CheckpointKey;
 pub mod outbox_ledger;
+mod outbox_ledger_migrate;
 pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;

@@ -128,6 +128,8 @@ pub(crate) enum SystemWrite {
         /// Optional confirmed outcome payload when `decision` is
         /// `ConfirmedOutcome`.
         confirmed_outcome: Option<Value>,
+        /// Optional restore-fence generation active when committed.
+        fenced_at: Option<u64>,
     },
     /// Durably record a compensation attempt outcome for an outbox operation (D1).
     RecordCompensation {
@@ -137,6 +139,19 @@ pub(crate) enum SystemWrite {
         generation: u64,
         /// Whether compensation completed.
         ok: bool,
+        /// Optional restore-fence generation active when committed.
+        fenced_at: Option<u64>,
+    },
+    /// Durably attach an external outcome verified by `proof` (`D1`).
+    RecordLateOutcome {
+        /// The command id.
+        command_id: String,
+        /// Exact immutable claim proof of the generation that produced this outcome.
+        proof: norn_kernel::world::outbox_ledger::DispatchProof,
+        /// Whether the external outcome succeeded.
+        ok: bool,
+        /// The external outcome payload.
+        outcome: Value,
     },
     /// Fixed provisioning rows (the demo canon, recorded K1 conversions).
     Provision {
@@ -214,23 +229,40 @@ impl SystemWrite {
                 generation,
                 decision,
                 confirmed_outcome,
+                fenced_at,
             } => {
                 batch.effects = vec![EffectRow::ReconcileOutbox {
                     command_id,
                     generation,
                     decision,
                     confirmed_outcome,
+                    fenced_at,
                 }];
             }
             Self::RecordCompensation {
                 command_id,
                 generation,
                 ok,
+                fenced_at,
             } => {
                 batch.effects = vec![EffectRow::RecordCompensation {
                     command_id,
                     generation,
                     ok,
+                    fenced_at,
+                }];
+            }
+            Self::RecordLateOutcome {
+                command_id,
+                proof,
+                ok,
+                outcome,
+            } => {
+                batch.effects = vec![EffectRow::RecordLateOutcome {
+                    command_id,
+                    proof,
+                    ok,
+                    outcome,
                 }];
             }
             Self::Provision {

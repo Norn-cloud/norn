@@ -900,6 +900,7 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
     for LawSqlite<REOPEN, S, NETWORK>
 {
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    const TRACKS_LATE_OUTCOMES: bool = true;
     const NETWORK: bool = NETWORK;
     /// Only a file store survives a crash: it reopens from the file. Only a
     /// storage that commits itself can fail its commit.
@@ -1013,6 +1014,17 @@ impl<const REOPEN: bool, S: LawEngine, const NETWORK: bool> SimulatedCell
 
     fn sim_executions(&self) -> u64 {
         self.cell.executions().expect("counts")
+    }
+
+    fn sim_prior_outcomes(&self) -> Vec<(CommandId, Vec<u64>)> {
+        self.cell
+            .store()
+            .read()
+            .outbox_prior_outcomes()
+            .expect("prior outcomes")
+            .into_iter()
+            .map(|(id, gens)| (CommandId(id), gens))
+            .collect()
     }
 
     fn sim_outbox(&self) -> Vec<Command<LawCommand>> {
@@ -1317,6 +1329,7 @@ impl<const BUG: u8> CellHost for ResponderMutant<BUG> {
 
 impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
     const COMMITS_PERFORM_CLAIMS: bool = true;
+    const TRACKS_LATE_OUTCOMES: bool = true;
     const NETWORK: bool = true;
 
     fn sim_new() -> Self {
@@ -1374,6 +1387,10 @@ impl<const BUG: u8> SimulatedCell for ResponderMutant<BUG> {
 
     fn sim_executions(&self) -> u64 {
         self.inner.sim_executions().saturating_add(self.again)
+    }
+
+    fn sim_prior_outcomes(&self) -> Vec<(CommandId, Vec<u64>)> {
+        self.inner.sim_prior_outcomes()
     }
 
     fn sim_outbox(&self) -> Vec<Command<LawCommand>> {

@@ -65,6 +65,9 @@ mod ontology_lending;
 #[cfg(feature = "native")]
 #[path = "outbox_generations.rs"]
 mod outbox_generations;
+#[cfg(feature = "native")]
+#[path = "outbox_generations_restore.rs"]
+mod outbox_generations_restore;
 #[path = "parent_rows.rs"]
 mod parent_rows;
 #[path = "principal_inputs.rs"]

@@ -5,14 +5,13 @@ use std::collections::BTreeMap;
 
 use norn_cell::engine::{NativeEngine, SqlEngine};
 use norn_cell::engine_release::{STAMP_FORMAT, STAMP_KEY};
-use norn_cell::export::Exporter;
 use norn_cell::outbox_ledger::{outcome_digest, payload_digest};
-use norn_cell::{CellError, CellStore, ClaimOutcome, JournalMode, Model, SqliteCell, StoreOptions};
+use norn_cell::{CellError, CellStore, ClaimOutcome, Model, SqliteCell, StoreOptions};
 use norn_ir::{ObjectTypeDef, RuntimeValue};
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::world::outbox::{OutboxState, Queue};
 use norn_kernel::world::outbox_ledger::{
-    ApplyStatus, DispatchProof, OperationLedger, OutboxLedgerRefusal, ProviderDedupContract,
+    DispatchProof, OperationLedger, OutboxLedgerRefusal, ProviderDedupContract,
     ReconciliationDecision,
 };
 use norn_kernel::{
@@ -22,12 +21,12 @@ use norn_kernel::{
 use proptest::prelude::*;
 use serde_json::json;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
-type Cell = SqliteCell<RuntimeValue, JsonObject, RuntimeValue>;
+pub(super) type TestResult = Result<(), Box<dyn std::error::Error>>;
+pub(super) type Cell = SqliteCell<RuntimeValue, JsonObject, RuntimeValue>;
 
-const SCOPE: &str = "org_d1/dev";
+pub(super) const SCOPE: &str = "org_d1/dev";
 
-fn test_model() -> Result<Model, Box<dyn std::error::Error>> {
+pub(super) fn test_model() -> Result<Model, Box<dyn std::error::Error>> {
     let defs: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "d1.Order",
@@ -41,7 +40,7 @@ fn test_model() -> Result<Model, Box<dyn std::error::Error>> {
     Ok(Model::new(defs)?)
 }
 
-fn open_cell(path: &std::path::Path) -> Result<Cell, Box<dyn std::error::Error>> {
+pub(super) fn open_cell(path: &std::path::Path) -> Result<Cell, Box<dyn std::error::Error>> {
     let mut store = CellStore::open(path, test_model()?, StoreOptions::default())?;
     store.bind("scope", SCOPE)?;
     Ok(SqliteCell::new(store, SCOPE, |_cmd| {
@@ -52,7 +51,7 @@ fn open_cell(path: &std::path::Path) -> Result<Cell, Box<dyn std::error::Error>>
     })?)
 }
 
-fn rv(value: serde_json::Value) -> Result<RuntimeValue, Box<dyn std::error::Error>> {
+pub(super) fn rv(value: serde_json::Value) -> Result<RuntimeValue, Box<dyn std::error::Error>> {
     Ok(serde_json::from_value(value)?)
 }
 
@@ -63,7 +62,7 @@ fn json_obj(value: serde_json::Value) -> Result<JsonObject, Box<dyn std::error::
     Ok(map)
 }
 
-fn make_command(
+pub(super) fn make_command(
     id: &str,
     generation: u64,
     amount: i64,
@@ -93,7 +92,7 @@ fn make_command(
     })
 }
 
-fn enqueue_cmd(
+pub(super) fn enqueue_cmd(
     cell: &mut Cell,
     command: Command<JsonObject>,
 ) -> Result<(), CommitError<CellError>> {
@@ -295,10 +294,13 @@ fn late_outcome_attaches_via_dispatch_proof_without_settling_active_head() -> Te
     ));
 
     // Valid DispatchProof attaches immutably to gen 0 without touching gen 1.
-    let status = cell.record_late_outcome(&g0.id, proof0, true, &outcome0)?;
-    assert_eq!(status, ApplyStatus::Applied);
-    let dup = cell.record_late_outcome(&g0.id, proof0, true, &outcome0)?;
-    assert_eq!(dup, ApplyStatus::IdempotentDuplicate);
+    cell.record_late_outcome(&g0.id, proof0, true, &outcome0)?;
+    let count_after_first = cell.store().read().outbox_records("wire-1")?.len();
+    cell.record_late_outcome(&g0.id, proof0, true, &outcome0)?;
+    assert_eq!(
+        cell.store().read().outbox_records("wire-1")?.len(),
+        count_after_first
+    );
 
     // Conflicting outcome for gen 0 fails closed with `OutcomeDiverged`.
     let conflict = rv(json!({ "ok": false, "error": "timeout" }))?;
@@ -342,194 +344,6 @@ fn late_outcome_attaches_via_dispatch_proof_without_settling_active_head() -> Te
     Ok(())
 }
 
-async fn export_claimed_pair(
-    dir: &std::path::Path,
-) -> Result<
-    (
-        Exporter,
-        BTreeMap<String, String>,
-        Command<JsonObject>,
-        Command<JsonObject>,
-    ),
-    Box<dyn std::error::Error>,
-> {
-    let src_path = dir.join("src.sqlite");
-    let export_dir = dir.join("export");
-    let mut src = open_cell(&src_path)?;
-    let cell_id = String::from(
-        src.store()
-            .cell_id()?
-            .ok_or("source cell missing cell_id")?,
-    );
-    let c1 = make_command("fence-1", 0, 100, Some("operationKeyIdempotent"))?;
-    let c2 = make_command("after-1", 0, 200, None)?;
-    enqueue_cmd(&mut src, c1.clone())?;
-    enqueue_cmd(&mut src, c2.clone())?;
-    assert_eq!(src.claim_perform()?, ClaimOutcome::Fresh(c1.clone()));
-
-    let mut exporter = Exporter::local(&export_dir)?;
-    let count = src.store().export_commit_count()?;
-    for seq in 1..=count {
-        if let Some(record) = src.store().export_record(seq)? {
-            exporter.append(&record).await?;
-        }
-    }
-    let manifest = exporter.verify().await?;
-    let bindings = BTreeMap::from([
-        ("scope".to_owned(), SCOPE.to_owned()),
-        (
-            "cell_identity_format".to_owned(),
-            norn_cell::cell_identity::FORMAT.to_owned(),
-        ),
-        ("cell_id".to_owned(), cell_id),
-    ]);
-    assert_eq!(manifest.bindings, bindings);
-    Ok((exporter, bindings, c1, c2))
-}
-
-#[tokio::test]
-async fn restore_fence_blocks_idempotent_reissue_and_confirmed_outcome_unmasks_head() -> TestResult
-{
-    let dir = tempfile::tempdir()?;
-    let (mut exporter, bindings, c1, _c2) = export_claimed_pair(dir.path()).await?;
-    let target = dir.path().join("restored-confirmed.sqlite");
-
-    let report = CellStore::restore_from(
-        &mut exporter,
-        &target,
-        test_model()?,
-        SCOPE,
-        &bindings,
-        StoreOptions {
-            journal_mode: JournalMode::Delete,
-            ..StoreOptions::default()
-        },
-    )
-    .await?;
-    assert_eq!(report.fenced_commands, 2);
-
-    let mut cell = open_cell(&target)?;
-    assert_eq!(
-        cell.claim_perform()?,
-        ClaimOutcome::HeadFenced {
-            command: c1.id.clone(),
-            fenced_at: Generation(0),
-        }
-    );
-    // Even `OperationKeyIdempotent` cannot auto-reissue while restore-fenced.
-    let blocked = enqueue_cmd(
-        &mut cell,
-        make_command("fence-1", 1, 100, Some("operationKeyIdempotent"))?,
-    );
-    assert!(matches!(
-        blocked,
-        Err(CommitError::Host(CellError::OutboxReissueRefused {
-            generation: 1,
-            ..
-        }))
-    ));
-    let confirmed_val = rv(json!({ "ok": true, "reconciled": "provider-lookup" }))?;
-    let wrong_digest = outcome_digest(&rv(json!({ "ok": true, "reconciled": "other" }))?)?;
-    // Mismatched confirmed_outcome payload vs digest fails closed.
-    let err = cell.reconcile_outbox(
-        &c1.id,
-        Generation(0),
-        ReconciliationDecision::ConfirmedOutcome {
-            ok: true,
-            outcome_digest: wrong_digest,
-        },
-        Some(&confirmed_val),
-    );
-    assert!(matches!(
-        err,
-        Err(CellError::OutboxLedgerRefused {
-            refusal: OutboxLedgerRefusal::OutcomeDiverged,
-            ..
-        })
-    ));
-
-    let good_digest = outcome_digest(&confirmed_val)?;
-    cell.reconcile_outbox(
-        &c1.id,
-        Generation(0),
-        ReconciliationDecision::ConfirmedOutcome {
-            ok: true,
-            outcome_digest: good_digest,
-        },
-        Some(&confirmed_val),
-    )?;
-    assert!(matches!(
-        cell.claim_perform()?,
-        ClaimOutcome::Recorded { ref command, ref performed }
-            if command == &c1 && performed.input == confirmed_val
-    ));
-    cell.commit(CellCommit::empty().consuming(Consumed::Result {
-        command: c1.id,
-        generation: Generation(0),
-    }))?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn restore_fence_require_compensation_completes_terminal_and_unblocks_fifo() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let (mut exporter, bindings, c1, c2) = export_claimed_pair(dir.path()).await?;
-    let target = dir.path().join("restored-compensated.sqlite");
-    CellStore::restore_from(
-        &mut exporter,
-        &target,
-        test_model()?,
-        SCOPE,
-        &bindings,
-        StoreOptions::default(),
-    )
-    .await?;
-    let mut comp_cell = open_cell(&target)?;
-    comp_cell.reconcile_outbox(
-        &c1.id,
-        Generation(0),
-        ReconciliationDecision::RequireCompensation,
-        None,
-    )?;
-    comp_cell.record_outbox_compensation(&c1.id, Generation(0), false)?;
-    let mid = comp_cell
-        .store()
-        .read()
-        .outbox_ledger("fence-1")?
-        .ok_or("missing mid ledger")?;
-    assert_eq!(
-        mid.head_projection().state,
-        OutboxState::CompensationPending { attempts: 1 }
-    );
-    comp_cell.record_outbox_compensation(&c1.id, Generation(0), true)?;
-    let done = comp_cell
-        .store()
-        .read()
-        .outbox_ledger("fence-1")?
-        .ok_or("missing compensated ledger")?;
-    assert_eq!(done.head_projection().state, OutboxState::Compensated);
-    assert!(done.is_terminal());
-
-    // Compensated operation refuses any subsequent reissue even at gen 1.
-    let err = enqueue_cmd(&mut comp_cell, make_command("fence-1", 1, 100, None)?);
-    assert!(matches!(
-        err,
-        Err(CommitError::Host(CellError::OutboxReissueRefused {
-            generation: 1,
-            ..
-        }))
-    ));
-    // FIFO head advances to `after-1` (still restore-fenced at gen 0).
-    assert_eq!(
-        comp_cell.claim_perform()?,
-        ClaimOutcome::HeadFenced {
-            command: c2.id,
-            fenced_at: Generation(0),
-        }
-    );
-    Ok(())
-}
-
 #[test]
 fn fork_cannot_reconcile_compensate_or_record_late_outcome() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -562,7 +376,14 @@ fn fork_cannot_reconcile_compensate_or_record_late_outcome() -> TestResult {
         Err(CellError::WorldPerformForbidden)
     ));
     assert!(matches!(
-        fork.record_late_outcome("fork-cmd", proof, true, &rv(json!({ "ok": true }))?),
+        fork.record_late_outcome(
+            SCOPE,
+            12,
+            "fork-cmd",
+            proof,
+            true,
+            &rv(json!({ "ok": true }))?,
+        ),
         Err(CellError::WorldPerformForbidden)
     ));
     Ok(())
@@ -647,6 +468,91 @@ fn v10_store_upgrades_to_v11_with_validated_outbox_ledgers() -> TestResult {
             ..
         }))
     ));
+    Ok(())
+}
+
+#[test]
+fn v10_upgrade_preserves_prior_dispatch_proofs_and_masks_fenced_result() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("upgrade-prior.sqlite");
+    let mut cell = open_cell(&path)?;
+    let g0 = make_command("multi-1", 0, 40, None)?;
+    let g1 = make_command("multi-1", 1, 40, None)?;
+    enqueue_cmd(&mut cell, g0.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(g0.clone()));
+    cell.reconcile_outbox(
+        &g0.id,
+        Generation(0),
+        ReconciliationDecision::AuthorizeReissue { next_generation: 1 },
+        None,
+    )?;
+    enqueue_cmd(&mut cell, g1.clone())?;
+    assert_eq!(cell.claim_perform()?, ClaimOutcome::Fresh(g1.clone()));
+    let saved = rv(json!({ "ok": true, "saved": 1 }))?;
+    assert!(cell.complete_perform(&g1, saved.clone())?.is_some());
+    drop(cell);
+
+    // Downgrade to v10 and install a restore fence over the saved SQL result.
+    let raw = NativeEngine::open(&path, StoreOptions::default())?;
+    raw.execute_batch("DROP TABLE \"_norn_outbox_record\";")?;
+    raw.execute(
+        "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+        &[
+            norn_cell::engine::SqlValue::Text(format!(
+                r#"{{"format":"{STAMP_FORMAT}","storage":10,"writer":"v10-fixture"}}"#
+            )),
+            norn_cell::engine::SqlValue::Text(STAMP_KEY.to_owned()),
+        ],
+    )?;
+    raw.execute(
+        "INSERT INTO \"_norn_meta\" (\"key\", \"value\") VALUES ('restore:perform_fence:multi-1', '1')",
+        &[],
+    )?;
+    drop(raw);
+
+    let mut upgraded = open_cell(&path)?;
+    // Restored fence masks `pending_result` even though SQL still holds the saved result.
+    assert!(
+        upgraded
+            .store()
+            .read()
+            .pending_result("multi-1", 1)?
+            .is_none()
+    );
+    // Prior gen-0 dispatch proof survived upgrade and accepts late evidence.
+    let proof0 = upgraded
+        .store()
+        .read()
+        .dispatch_proof("multi-1", 0)?
+        .ok_or("missing upgraded gen-0 proof")?;
+    upgraded.record_late_outcome(&g0.id, proof0, true, &rv(json!({ "ok": true, "late": 0 }))?)?;
+    assert_eq!(
+        upgraded
+            .store()
+            .read()
+            .outbox_ledger("multi-1")?
+            .ok_or("missing multi-1")?
+            .prior_confirmed_successes(),
+        vec![0]
+    );
+    // Reconciling gen 1 with `ConfirmedOutcome(..., None)` validates against and unmasks saved SQL result.
+    let digest = outcome_digest(&saved)?;
+    upgraded.reconcile_outbox(
+        &g1.id,
+        Generation(1),
+        ReconciliationDecision::ConfirmedOutcome {
+            ok: true,
+            outcome_digest: digest,
+        },
+        None,
+    )?;
+    assert!(
+        upgraded
+            .store()
+            .read()
+            .pending_result("multi-1", 1)?
+            .is_some()
+    );
     Ok(())
 }
 

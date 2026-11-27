@@ -1363,6 +1363,11 @@ pub enum EffectRow {
         /// `ConfirmedOutcome`; its canonical digest must match `outcome_digest`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         confirmed_outcome: Option<Value>,
+        /// Optional restore-fence generation observed when this reconciliation
+        /// was committed, so a subsequent restore replays the prerequisite fence
+        /// before replaying this reconciliation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fenced_at: Option<u64>,
     },
     /// Durably record the result of a compensation attempt for `(command_id, generation)` (`D1`).
     RecordCompensation {
@@ -1372,6 +1377,22 @@ pub enum EffectRow {
         generation: u64,
         /// Whether compensation completed.
         ok: bool,
+        /// Optional restore-fence generation observed when this compensation
+        /// was committed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fenced_at: Option<u64>,
+    },
+    /// Durably attach an external outcome verified by `proof` to its original
+    /// generation (`D1`), surviving export and restore.
+    RecordLateOutcome {
+        /// The command id.
+        command_id: String,
+        /// Exact immutable claim proof of the generation that produced this outcome.
+        proof: norn_kernel::world::outbox_ledger::DispatchProof,
+        /// Whether the external outcome succeeded.
+        ok: bool,
+        /// The external outcome payload.
+        outcome: Value,
     },
     /// Insert or replace a timer by id; its incarnation is this commit.
     Schedule {
@@ -3159,6 +3180,7 @@ impl<E: SqlEngine> CellStore<E> {
                 EffectRow::ClaimPerform { .. }
                     | EffectRow::ReconcileOutbox { .. }
                     | EffectRow::RecordCompensation { .. }
+                    | EffectRow::RecordLateOutcome { .. }
             )
         }) {
             self.refuse_perform_in_fork()?;
@@ -3376,7 +3398,12 @@ impl<E: SqlEngine> CellStore<E> {
             {
                 return Err(CellError::HistoricalValueUnproven("retained replay input differs".to_owned()).into());
             }
-            let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq);
+            let legacy_outbox = matches!(
+                origin,
+                CommitOrigin::Retained(record) if record.storage_version.unwrap_or(1) < 11
+            );
+            let mut writer = Writer::new(&self.conn, commit_model, effective_batch, commit_seq)
+                .with_legacy_outbox(legacy_outbox);
 
             let install_record = if let (Some(install), Some(mut record)) =
                 (installation.as_ref(), install_record)
@@ -3532,6 +3559,7 @@ impl<E: SqlEngine> CellStore<E> {
                         EffectRow::ClaimPerform { .. }
                         | EffectRow::ReconcileOutbox { .. }
                         | EffectRow::RecordCompensation { .. }
+                        | EffectRow::RecordLateOutcome { .. }
                         | EffectRow::Schedule { .. }
                         | EffectRow::CancelTimer { .. } => None,
                     })
@@ -3545,6 +3573,7 @@ impl<E: SqlEngine> CellStore<E> {
                         | EffectRow::ClaimPerform { .. }
                         | EffectRow::ReconcileOutbox { .. }
                         | EffectRow::RecordCompensation { .. }
+                        | EffectRow::RecordLateOutcome { .. }
                         | EffectRow::CancelTimer { .. } => None,
                     })
                     .collect(),
@@ -3633,8 +3662,9 @@ impl<E: SqlEngine> CellStore<E> {
         self.record_head_result(command_id, generation, outcome)
     }
 
-    /// Explicitly attach an external outcome verified by `proof` to its
-    /// original generation (`D1`).
+    /// Durably attach an external outcome verified by `proof` to its original
+    /// generation (`D1`), committing a zero-event [`SystemWrite::RecordLateOutcome`]
+    /// so the evidence survives export and restore.
     ///
     /// Fails closed with [`CellError::OutboxLedgerRefused`] on an invalid
     /// [`norn_kernel::world::outbox_ledger::DispatchProof`] or conflicting
@@ -3647,29 +3677,25 @@ impl<E: SqlEngine> CellStore<E> {
     /// on proof/state refusal; SQL engine or encoding errors.
     pub fn record_late_outcome(
         &mut self,
+        scope: &str,
+        logical_time: u64,
         command_id: &str,
         proof: norn_kernel::world::outbox_ledger::DispatchProof,
         ok: bool,
         outcome: &Value,
-    ) -> Result<norn_kernel::world::outbox_ledger::ApplyStatus, CellError> {
-        self.refuse_perform_in_fork()?;
-        self.write_tx(|| {
-            let (status, is_active) = crate::outbox_ledger::record_outcome_with_proof(
-                &self.conn, command_id, proof, ok, outcome,
-            )?;
-            if status == norn_kernel::world::outbox_ledger::ApplyStatus::Applied && is_active {
-                let pending = StoreReader::new(&self.conn, &self.model)
-                    .with_source_disputes(&self.source_disputes)
-                    .pending_command(command_id)?
-                    .filter(|row| {
-                        row.command.generation == proof.generation && row.result.is_none()
-                    });
-                if let Some(pending) = pending {
-                    self.project_result(&pending, command_id, proof.generation, outcome)?;
-                }
-            }
-            Ok(status)
-        })
+    ) -> Result<CommitOutcome, CellError> {
+        let write = SystemWrite::RecordLateOutcome {
+            command_id: command_id.to_owned(),
+            proof,
+            ok,
+            outcome: outcome.clone(),
+        };
+        let place = At {
+            world: MAIN_WORLD,
+            scope,
+            logical_time,
+        };
+        self.apply_system(&place, write)
     }
 
     /// Durably record an outbox reconciliation decision for `(command_id, generation)` (`D1`).
@@ -3690,11 +3716,27 @@ impl<E: SqlEngine> CellStore<E> {
         decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
         confirmed_outcome: Option<&Value>,
     ) -> Result<CommitOutcome, CellError> {
+        let fenced_at = self.perform_fence_generation(command_id)?;
+        let confirmed_outcome = match confirmed_outcome {
+            Some(outcome) => Some(outcome.clone()),
+            None if matches!(
+                decision,
+                norn_kernel::world::outbox_ledger::ReconciliationDecision::ConfirmedOutcome { .. }
+            ) =>
+            {
+                self.read()
+                    .pending_command(command_id)?
+                    .filter(|row| row.command.generation == generation)
+                    .and_then(|row| row.result)
+            }
+            None => None,
+        };
         let write = SystemWrite::ReconcileOutbox {
             command_id: command_id.to_owned(),
             generation,
             decision,
-            confirmed_outcome: confirmed_outcome.cloned(),
+            confirmed_outcome,
+            fenced_at,
         };
         let place = At {
             world: MAIN_WORLD,
@@ -3718,10 +3760,12 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         ok: bool,
     ) -> Result<CommitOutcome, CellError> {
+        let fenced_at = self.perform_fence_generation(command_id)?;
         let write = SystemWrite::RecordCompensation {
             command_id: command_id.to_owned(),
             generation,
             ok,
+            fenced_at,
         };
         let place = At {
             world: MAIN_WORLD,

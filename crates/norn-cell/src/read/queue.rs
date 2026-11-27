@@ -9,7 +9,7 @@ use super::{StoreReader, to_i64, to_u64};
 use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 use crate::store::{Consumption, OutboxCommand, TimerEntry};
-use crate::system::{INBOX, OUTBOX, PERFORM_CLAIM, RUN, TIMER};
+use crate::system::{INBOX, OUTBOX, OUTBOX_RECORD, PERFORM_CLAIM, RUN, TIMER};
 
 /// A pending outbox row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -207,6 +207,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
+        // D1: an outcome masked by an unreconciled restore fence (or a row
+        // waiting on compensation) is never consumable through SQL alone.
+        if self
+            .outbox_ledger(command_id)?
+            .is_some_and(|ledger| ledger.head_projection().outcome.is_none())
+        {
+            return Ok(None);
+        }
         if row.queue == Queue::Parked {
             return Ok(Some(row));
         }
@@ -327,6 +335,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Option<DispatchProof>, CellError> {
         self.check_live()?;
         crate::outbox_ledger::load_dispatch_proof(self.conn, command_id, generation)
+    }
+
+    /// Prior-generation immutable outcome records attached in the active epoch
+    /// before `active_generation`, for export preimage capture (`D1`).
+    pub(crate) fn outbox_late_outcomes(
+        &self,
+        command_id: &str,
+        active_generation: u64,
+    ) -> Result<Vec<OutboxRecord>, CellError> {
+        self.check_live()?;
+        crate::outbox_ledger::prior_outcome_records(self.conn, command_id, active_generation)
     }
 
     /// The outbox entry `command_id`, consumed or not, with the commit that
@@ -721,6 +740,38 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             |row| row.get(0),
         )?;
         to_u64(count, "executions")
+    }
+
+    /// D1: sorted `(command_id, prior_generation_outcomes)` across every
+    /// operation whose latest epoch retains at least one attached outcome on a
+    /// superseded generation.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or ledger replay errors.
+    pub fn outbox_prior_outcomes(&self) -> Result<Vec<(String, Vec<u64>)>, CellError> {
+        self.check_live()?;
+        let rows = self.conn.query(
+            &format!(
+                "SELECT DISTINCT \"command_id\" FROM \"{OUTBOX_RECORD}\" ORDER BY \"command_id\""
+            ),
+            params![],
+        )?;
+        let mut out = Vec::new();
+        for values in rows {
+            let command_id: String = SqlRow(values).get(0)?;
+            if let Some(ledger) = self.outbox_ledger(&command_id)? {
+                let prior: Vec<u64> = ledger
+                    .prior_generations()
+                    .iter()
+                    .filter_map(|(gen_id, rec)| rec.outcome.is_some().then_some(*gen_id))
+                    .collect();
+                if !prior.is_empty() {
+                    out.push((command_id, prior));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Whether `consumption` names a pending delivery: a timer with that id

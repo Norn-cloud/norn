@@ -349,11 +349,18 @@ pub(crate) fn load_dispatch_proof<E: SqlEngine>(
 }
 
 /// Validate and append an [`OutboxRecordKind::Requested`] record for `command`.
+///
+/// When `legacy_outbox` is `true` (replaying an already-committed pre-v11 export
+/// record), pre-v11 same-generation payload divergence degrades to a no-op and
+/// pre-v11 unreconciled reissues over a claimed or locally-succeeded prior
+/// generation record a replay-time `AuthorizeReissue` transition so the
+/// reconstructed ledger still satisfies every [`OperationLedger`] invariant.
 pub(crate) fn record_enqueue<E: SqlEngine>(
     conn: &E,
     command: &OutboxCommand,
     queue: Queue,
     commit_seq: u64,
+    legacy_outbox: bool,
 ) -> Result<EnqueueAction, CellError> {
     let op = operation_key(conn, &command.command_id)?;
     let digest = payload_digest(&command.command)?;
@@ -379,17 +386,14 @@ pub(crate) fn record_enqueue<E: SqlEngine>(
         append_record(conn, &command.command_id, 0, &record)?;
         return Ok(EnqueueAction::InsertNew);
     }
-    // Check same-generation replays across every epoch (active, superseded, or
-    // consumed) so payload divergence always fails closed.
-    for (_, records) in &epochs {
-        let mut ledger = replay_records(records)?;
-        if ledger.generation(command.generation).is_some() {
-            return match ledger.apply(&record) {
-                Ok(ApplyStatus::IdempotentDuplicate) => Ok(EnqueueAction::Noop),
-                Ok(ApplyStatus::Applied) => Err(refused("unexpected duplicate state".to_owned())),
-                Err(error) => Err(refused(error.to_string())),
-            };
-        }
+    if let Some(action) = check_existing_generation_replays(
+        &epochs,
+        &record,
+        &command.command_id,
+        command.generation,
+        legacy_outbox,
+    )? {
+        return Ok(action);
     }
     let Some((last_epoch, last_records)) = epochs.last() else {
         return Err(refused("missing outbox epoch".to_owned()));
@@ -418,8 +422,61 @@ pub(crate) fn record_enqueue<E: SqlEngine>(
             Ok(EnqueueAction::ReplaceInPlace)
         }
         Ok(ApplyStatus::IdempotentDuplicate) => Ok(EnqueueAction::Noop),
+        Err(OutboxLedgerRefusal::AmbiguousDispatchRequiresReconciliation { .. })
+            if legacy_outbox =>
+        {
+            let auth = OutboxRecord {
+                operation: op,
+                generation: ledger.active_generation(),
+                kind: OutboxRecordKind::Reconciliation {
+                    decision: ReconciliationDecision::AuthorizeReissue {
+                        next_generation: command.generation,
+                    },
+                    commit_seq,
+                },
+            };
+            ledger
+                .apply(&auth)
+                .map_err(|err| refused(err.to_string()))?;
+            ledger
+                .apply(&record)
+                .map_err(|err| refused(err.to_string()))?;
+            append_record(conn, &command.command_id, *last_epoch, &auth)?;
+            append_record(conn, &command.command_id, *last_epoch, &record)?;
+            Ok(EnqueueAction::ReplaceInPlace)
+        }
         Err(error) => Err(refused(error.to_string())),
     }
+}
+
+fn check_existing_generation_replays(
+    epochs: &[(u64, Vec<OutboxRecord>)],
+    record: &OutboxRecord,
+    command_id: &str,
+    generation: u64,
+    legacy_outbox: bool,
+) -> Result<Option<EnqueueAction>, CellError> {
+    let refused = |reason: String| CellError::OutboxReissueRefused {
+        command_id: command_id.to_owned(),
+        generation,
+        reason,
+    };
+    // Check same-generation replays across every epoch (active, superseded, or
+    // consumed) so payload divergence always fails closed on v11+ commits.
+    for (_, records) in epochs {
+        let mut ledger = replay_records(records)?;
+        if ledger.generation(generation).is_some() {
+            return match ledger.apply(record) {
+                Ok(ApplyStatus::IdempotentDuplicate) => Ok(Some(EnqueueAction::Noop)),
+                Err(OutboxLedgerRefusal::PayloadDiverged) if legacy_outbox => {
+                    Ok(Some(EnqueueAction::Noop))
+                }
+                Ok(ApplyStatus::Applied) => Err(refused("unexpected duplicate state".to_owned())),
+                Err(error) => Err(refused(error.to_string())),
+            };
+        }
+    }
+    Ok(None)
 }
 
 /// Validate and append an [`OutboxRecordKind::Dispatched`] claim record.
@@ -714,6 +771,7 @@ pub(crate) fn record_reconciliation<E: SqlEngine>(
     generation: u64,
     decision: ReconciliationDecision,
     commit_seq: u64,
+    recorded_fence: Option<u64>,
 ) -> Result<(ApplyStatus, bool, HeadProjection), CellError> {
     let epochs = load_epochs(conn, command_id)?;
     let Some((last_epoch, _)) = epochs.last() else {
@@ -723,11 +781,11 @@ pub(crate) fn record_reconciliation<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::UnknownGeneration,
         });
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
+    let effective_fence = read_meta_fence(conn, command_id)?.or(recorded_fence);
     for (epoch, records) in epochs.iter().rev() {
         let is_latest = *epoch == *last_epoch;
         let (mut ledger, synthesized_fence) = if is_latest {
-            replay_epoch_with_fence(records, meta_fence)?
+            replay_epoch_with_fence(records, effective_fence)?
         } else {
             (replay_records(records)?, false)
         };
@@ -782,6 +840,7 @@ pub(crate) fn record_compensation<E: SqlEngine>(
     generation: u64,
     ok: bool,
     commit_seq: u64,
+    recorded_fence: Option<u64>,
 ) -> Result<(ApplyStatus, bool), CellError> {
     let epochs = load_epochs(conn, command_id)?;
     let Some((last_epoch, last_records)) = epochs.last() else {
@@ -791,8 +850,8 @@ pub(crate) fn record_compensation<E: SqlEngine>(
             refusal: OutboxLedgerRefusal::UnknownGeneration,
         });
     };
-    let meta_fence = read_meta_fence(conn, command_id)?;
-    let (mut ledger, synthesized_fence) = replay_epoch_with_fence(last_records, meta_fence)?;
+    let effective_fence = read_meta_fence(conn, command_id)?.or(recorded_fence);
+    let (mut ledger, synthesized_fence) = replay_epoch_with_fence(last_records, effective_fence)?;
     let record = OutboxRecord {
         operation: ledger.operation(),
         generation,
@@ -825,6 +884,69 @@ pub(crate) fn record_compensation<E: SqlEngine>(
     Ok((status, compensated))
 }
 
+/// Prior-generation dispatch-proof outcome records in the active epoch of
+/// `command_id` (generations `< active_generation`), captured into the
+/// consuming export preimage so local late completions survive restore.
+pub(crate) fn prior_outcome_records<E: SqlEngine>(
+    conn: &E,
+    command_id: &str,
+    active_generation: u64,
+) -> Result<Vec<OutboxRecord>, CellError> {
+    let epochs = load_epochs(conn, command_id)?;
+    let Some((_, records)) = epochs.last() else {
+        return Ok(Vec::new());
+    };
+    Ok(records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.generation < active_generation
+                && matches!(
+                    record.kind,
+                    OutboxRecordKind::Outcome {
+                        evidence: OutcomeEvidence::DispatchProof { .. },
+                        ..
+                    }
+                )
+        })
+        .collect())
+}
+
+/// Replay exported prior-generation late outcome records into `_norn_outbox_record`
+/// during restore (`history::restore_input`), verifying each `DispatchProof`
+/// through [`OperationLedger`] and ignoring idempotent duplicates.
+pub(crate) fn restore_late_outcomes<E: SqlEngine>(
+    conn: &E,
+    command_id: &str,
+    records: &[OutboxRecord],
+) -> Result<(), CellError> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let epochs = load_epochs(conn, command_id)?;
+    let Some((last_epoch, last_records)) = epochs.last() else {
+        return Err(CellError::OutboxLedgerRefused {
+            command_id: command_id.to_owned(),
+            generation: 0,
+            refusal: OutboxLedgerRefusal::NotInitialized,
+        });
+    };
+    let mut ledger = replay_records(last_records)?;
+    for record in records {
+        let status = ledger
+            .apply(record)
+            .map_err(|refusal| CellError::OutboxLedgerRefused {
+                command_id: command_id.to_owned(),
+                generation: record.generation,
+                refusal,
+            })?;
+        if status == ApplyStatus::Applied {
+            append_record(conn, command_id, *last_epoch, record)?;
+        }
+    }
+    Ok(())
+}
+
 /// Replay consumed run history into `_norn_outbox_record` during export restore
 /// (`history::restore_input`), preserving dispatch proofs for prior generations
 /// and establishing the active generation's outcome before `Consumed`.
@@ -833,6 +955,7 @@ pub(crate) fn restore_consumed_runs<E: SqlEngine>(
     command_id: &str,
     active_generation: u64,
     runs: &[RunRecord],
+    include_active: bool,
 ) -> Result<(), CellError> {
     for run in runs {
         if run.attempt != 1 {
@@ -841,7 +964,7 @@ pub(crate) fn restore_consumed_runs<E: SqlEngine>(
         if run.generation < active_generation {
             let _attached =
                 try_attach_late_outcome(conn, command_id, run.generation, &run.outcome)?;
-        } else if run.generation == active_generation {
+        } else if include_active && run.generation == active_generation {
             let _status = record_active_outcome(conn, command_id, run.generation, &run.outcome)?;
         }
     }

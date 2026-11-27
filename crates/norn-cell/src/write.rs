@@ -226,6 +226,8 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     /// model is derived on first use, so a catalog per write re-derived it.
     catalog: std::cell::OnceCell<TypeCatalog<'a>>,
     link_read_markings: BTreeSet<String>,
+    /// True only when replaying an already-committed pre-v11 export record.
+    legacy_outbox: bool,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -245,7 +247,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             pending_snapshot_digests: BTreeMap::new(),
             catalog: std::cell::OnceCell::new(),
             link_read_markings: BTreeSet::new(),
+            legacy_outbox: false,
         }
+    }
+
+    pub(crate) const fn with_legacy_outbox(mut self, legacy_outbox: bool) -> Self {
+        self.legacy_outbox = legacy_outbox;
+        self
     }
 
     pub(crate) const fn reader(&self) -> StoreReader<'_, E> {
@@ -3270,17 +3278,26 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     generation,
                     decision,
                     confirmed_outcome,
+                    fenced_at,
                 } => self.reconcile_outbox(
                     command_id,
                     *generation,
                     *decision,
                     confirmed_outcome.as_ref(),
+                    *fenced_at,
                 )?,
                 EffectRow::RecordCompensation {
                     command_id,
                     generation,
                     ok,
-                } => self.record_compensation(command_id, *generation, *ok)?,
+                    fenced_at,
+                } => self.record_compensation(command_id, *generation, *ok, *fenced_at)?,
+                EffectRow::RecordLateOutcome {
+                    command_id,
+                    proof,
+                    ok,
+                    outcome,
+                } => self.record_late_outcome(command_id, *proof, *ok, outcome)?,
                 EffectRow::Schedule { timer } => self.schedule(timer)?,
                 EffectRow::CancelTimer { timer_id } => {
                     self.conn.execute(
@@ -3354,18 +3371,48 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         generation: u64,
         decision: norn_kernel::world::outbox_ledger::ReconciliationDecision,
         confirmed_outcome: Option<&Value>,
+        fenced_at: Option<u64>,
     ) -> Result<(), CellError> {
-        use norn_kernel::world::outbox_ledger::ReconciliationDecision;
-        if let ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest } = decision
-            && let Some(outcome) = confirmed_outcome
-            && (crate::outbox_ledger::outcome_digest(outcome)? != outcome_digest
-                || crate::outbox_ledger::outcome_is_ok(outcome) != ok)
-        {
-            return Err(CellError::OutboxLedgerRefused {
-                command_id: command_id.to_owned(),
-                generation,
-                refusal: norn_kernel::world::outbox_ledger::OutboxLedgerRefusal::OutcomeDiverged,
-            });
+        use norn_kernel::world::outbox_ledger::{OutboxLedgerRefusal, ReconciliationDecision};
+        if let ReconciliationDecision::ConfirmedOutcome { ok, outcome_digest } = decision {
+            let pending = StoreReader::new(self.conn, self.model)
+                .pending_command(command_id)?
+                .filter(|row| row.command.generation == generation);
+            if let Some(outcome) = confirmed_outcome {
+                if crate::outbox_ledger::outcome_digest(outcome)? != outcome_digest
+                    || crate::outbox_ledger::outcome_is_ok(outcome) != ok
+                {
+                    return Err(CellError::OutboxLedgerRefused {
+                        command_id: command_id.to_owned(),
+                        generation,
+                        refusal: OutboxLedgerRefusal::OutcomeDiverged,
+                    });
+                }
+            } else if let Some(pending) = &pending {
+                match &pending.result {
+                    Some(existing) => {
+                        if crate::outbox_ledger::outcome_digest(existing)? != outcome_digest
+                            || crate::outbox_ledger::outcome_is_ok(existing) != ok
+                        {
+                            return Err(CellError::OutboxLedgerRefused {
+                                command_id: command_id.to_owned(),
+                                generation,
+                                refusal: OutboxLedgerRefusal::OutcomeDiverged,
+                            });
+                        }
+                    }
+                    // Active head has no stored outcome: `ConfirmedOutcome` must
+                    // carry the payload so `_norn_outbox.result` stays in lockstep
+                    // with `HeadProjection`.
+                    None => {
+                        return Err(CellError::OutboxLedgerRefused {
+                            command_id: command_id.to_owned(),
+                            generation,
+                            refusal: OutboxLedgerRefusal::NotPending,
+                        });
+                    }
+                }
+            }
         }
         let (_status, is_active, _head) = crate::outbox_ledger::record_reconciliation(
             self.conn,
@@ -3373,50 +3420,78 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             generation,
             decision,
             self.commit_seq,
+            fenced_at,
         )?;
         if is_active
             && matches!(decision, ReconciliationDecision::ConfirmedOutcome { .. })
             && let Some(outcome) = confirmed_outcome
         {
-            let pending = StoreReader::new(self.conn, self.model)
-                .pending_command(command_id)?
-                .filter(|row| row.command.generation == generation && row.result.is_none());
-            if let Some(pending) = pending {
-                crate::payload_storage::remember_command(
-                    self.conn,
-                    command_id,
-                    generation,
-                    pending.commit_seq,
-                )?;
-                let encoded = crate::payload_storage::encode_result(
-                    self.conn,
-                    &self.batch.scope,
-                    self.world,
-                    outcome,
-                )?;
-                let generation_sql = to_i64(generation, "generation")?;
-                self.conn.execute(
-                    &format!(
-                        "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
-                    ),
-                    params![encoded, command_id, generation_sql],
-                )?;
-                let attempts: i64 = self.conn.query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
-                    ),
-                    params![command_id, generation_sql],
-                    |row| row.get::<i64>(0),
-                )?;
-                if attempts == 0 {
-                    self.conn.execute(
-                        &format!(
-                            "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, 1, ?3, NULL)"
-                        ),
-                        params![command_id, generation_sql, encoded],
-                    )?;
-                }
-            }
+            self.project_active_outcome(command_id, generation, outcome)?;
+        }
+        Ok(())
+    }
+
+    fn record_late_outcome(
+        &self,
+        command_id: &str,
+        proof: norn_kernel::world::outbox_ledger::DispatchProof,
+        ok: bool,
+        outcome: &Value,
+    ) -> Result<(), CellError> {
+        let (status, is_active) = crate::outbox_ledger::record_outcome_with_proof(
+            self.conn, command_id, proof, ok, outcome,
+        )?;
+        if status == norn_kernel::world::outbox_ledger::ApplyStatus::Applied && is_active {
+            self.project_active_outcome(command_id, proof.generation, outcome)?;
+        }
+        Ok(())
+    }
+
+    fn project_active_outcome(
+        &self,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<(), CellError> {
+        let pending = StoreReader::new(self.conn, self.model)
+            .pending_command(command_id)?
+            .filter(|row| row.command.generation == generation && row.result.is_none());
+        let Some(pending) = pending else {
+            return Ok(());
+        };
+        crate::payload_storage::remember_command(
+            self.conn,
+            command_id,
+            generation,
+            pending.commit_seq,
+        )?;
+        let encoded = crate::payload_storage::encode_result(
+            self.conn,
+            &self.batch.scope,
+            self.world,
+            outcome,
+        )?;
+        let generation_sql = to_i64(generation, "generation")?;
+        self.conn.execute(
+            &format!(
+                "UPDATE \"{OUTBOX}\" SET \"result\" = ?1 WHERE \"command_id\" = ?2 AND \"generation\" = ?3"
+            ),
+            params![encoded, command_id, generation_sql],
+        )?;
+        let attempts: i64 = self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM \"{RUN}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2"
+            ),
+            params![command_id, generation_sql],
+            |row| row.get::<i64>(0),
+        )?;
+        if attempts == 0 {
+            self.conn.execute(
+                &format!(
+                    "INSERT INTO \"{RUN}\" (\"command_id\", \"generation\", \"attempt\", \"outcome\", \"consumed_commit_seq\") VALUES (?1, ?2, 1, ?3, NULL)"
+                ),
+                params![command_id, generation_sql, encoded],
+            )?;
         }
         Ok(())
     }
@@ -3426,6 +3501,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         command_id: &str,
         generation: u64,
         ok: bool,
+        fenced_at: Option<u64>,
     ) -> Result<(), CellError> {
         let (_status, compensated) = crate::outbox_ledger::record_compensation(
             self.conn,
@@ -3433,6 +3509,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             generation,
             ok,
             self.commit_seq,
+            fenced_at,
         )?;
         if compensated {
             self.conn.execute(
@@ -3454,8 +3531,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .transpose()?;
         let serialized = canonical_json(&command.command)?;
         let queue = crate::read::classify(&command.command);
-        let action =
-            crate::outbox_ledger::record_enqueue(self.conn, command, queue, self.commit_seq)?;
+        let action = crate::outbox_ledger::record_enqueue(
+            self.conn,
+            command,
+            queue,
+            self.commit_seq,
+            self.legacy_outbox,
+        )?;
         let position = match action {
             crate::outbox_ledger::EnqueueAction::Noop => return Ok(()),
             crate::outbox_ledger::EnqueueAction::ReplaceInPlace => None,

@@ -249,7 +249,8 @@ fn check_expiry_timer_effects(batch: &CommitBatch) -> Result<(), CellError> {
         crate::EffectRow::Enqueue { .. }
         | crate::EffectRow::ClaimPerform { .. }
         | crate::EffectRow::ReconcileOutbox { .. }
-        | crate::EffectRow::RecordCompensation { .. } => false,
+        | crate::EffectRow::RecordCompensation { .. }
+        | crate::EffectRow::RecordLateOutcome { .. } => false,
     }) {
         return Err(QuantityError::InvalidContract.into());
     }
