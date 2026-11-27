@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use norn_cell::Model;
 use norn_checker::{EntityArtifactSetContext, ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
-use norn_ui_checker::check_artifact_set_with_receipt;
+use norn_ui_checker::{check_artifact_set, check_artifact_set_with_receipt};
 
 /// An admitted kernel set, ready to install.
 #[derive(Debug, Clone)]
@@ -167,6 +167,7 @@ fn admit_with(
     is_base: impl Fn(&ArtifactEnvelope) -> bool,
 ) -> Result<AdmittedSet, KernelRefusal> {
     let mut base = Vec::new();
+    let mut candidates = Vec::new();
     let mut base_values = Vec::new();
     let mut candidate_values = Vec::new();
     let mut all_values = Vec::with_capacity(artifacts.len());
@@ -176,18 +177,28 @@ fn admit_with(
             base.push(artifact.clone());
             base_values.push(rv.clone());
         } else {
+            candidates.push(artifact.clone());
             candidate_values.push(rv.clone());
         }
         all_values.push(rv);
     }
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &base,
+        tenant: None,
+    };
+    // Check the decoded envelopes BEFORE re-serializing to RuntimeValue for receipt signing:
+    // closed payload roots record unknown fields and invalid extensions during deserialization
+    // but omit them when serialized back to JSON.
+    let preflight = check_artifact_set(&candidates, &context);
+    if preflight.iter().any(norn_checker::Diagnostic::is_error) {
+        return Err(KernelRefusal::Refused(preflight));
+    }
     let checked = check_artifact_set_with_receipt(
         &ReceiptSources::new(&candidate_values, &base_values)
             .map_err(|e| invalid("receipt sources")(&e))?,
-        &EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
+        &context,
         &ResourceLimitProfile::norn_limits_v1(),
     )
     .map_err(|e| invalid("admission")(&e))?;

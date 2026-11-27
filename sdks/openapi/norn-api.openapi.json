@@ -8247,6 +8247,9 @@
           },
           {
             "$ref": "#/components/schemas/NornArtifactEnvelopeModel"
+          },
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeTheme"
           }
         ],
         "title": "NornArtifactEnvelope",
@@ -8270,6 +8273,7 @@
             "rule": "#/components/schemas/NornArtifactEnvelopeRule",
             "setting": "#/components/schemas/NornArtifactEnvelopeSetting",
             "source_schema": "#/components/schemas/NornArtifactEnvelopeSourceSchema",
+            "theme": "#/components/schemas/NornArtifactEnvelopeTheme",
             "widget": "#/components/schemas/NornArtifactEnvelopeWidget"
           }
         }
@@ -8737,6 +8741,32 @@
           }
         ],
         "title": "NornArtifactEnvelopeSourceSchema"
+      },
+      "NornArtifactEnvelopeTheme": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/NornArtifactEnvelopeCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "payload"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "theme"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/NornIrThemePayload"
+              }
+            }
+          }
+        ],
+        "title": "NornArtifactEnvelopeTheme"
       },
       "NornArtifactEnvelopeWidget": {
         "allOf": [
@@ -12335,7 +12365,8 @@
               "customization",
               "setting",
               "business_pack",
-              "policy"
+              "policy",
+              "theme"
             ]
           },
           {
@@ -22729,7 +22760,7 @@
       },
       "NornIrModelPayload": {
         "type": "object",
-        "description": "A typed predictive model with opaque internals ([`model`]).",
+        "description": "The payload root of a `model` artifact: [`ModelRoot`] on the wire.",
         "required": [
           "modelId",
           "title",
@@ -29487,6 +29518,133 @@
           "An RFC 5322 address (`addr-spec`).",
           "An RFC 3986 URI.",
           "An RFC 9562 UUID in its hyphenated text form."
+        ]
+      },
+      "NornIrThemeAppearance": {
+        "type": "string",
+        "description": "The colour scheme a theme is limited to; absent means it applies to both.",
+        "enum": [
+          "light",
+          "dark"
+        ]
+      },
+      "NornIrThemePayload": {
+        "type": "object",
+        "description": "The payload root of a `theme` artifact: [`Theme`] on the wire.",
+        "required": [
+          "version",
+          "name"
+        ],
+        "properties": {
+          "accent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shorthand for the action, primary, ring and link tokens, with a contrasting ink."
+          },
+          "appearance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrThemeAppearance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "baseSkin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The built-in Studio skin the theme recolours (`luma` when absent)."
+          },
+          "canvas": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shorthand for the canvas and shell tokens."
+          },
+          "colors": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrThemePayloadPropertyColors"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name, 1 to 64 characters after trimming."
+          },
+          "variants": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrThemeVariants"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/NornIrThemeVersion1"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrThemePayloadPropertyColors": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "NornIrThemeVariants": {
+        "type": "object",
+        "description": "Per-scheme token overrides, applied over [`Theme::colors`].",
+        "properties": {
+          "dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrThemeVariantsPropertyDark"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "light": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornIrThemeVariantsPropertyLight"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrThemeVariantsPropertyDark": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "NornIrThemeVariantsPropertyLight": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "NornIrThemeVersion1": {
+        "enum": [
+          1
         ]
       },
       "NornIrTimeGrain": {

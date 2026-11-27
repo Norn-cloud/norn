@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.contrast",
+  "message": "{scheme} {ink} (on {surface}) contrast is {ratio}:1 (WCAG AA requires >= {floor}:1)",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "Named Colour",
+  "baseSkin": "luma",
+  "colors": {
+    "chart-1": "red"
+  }
+}

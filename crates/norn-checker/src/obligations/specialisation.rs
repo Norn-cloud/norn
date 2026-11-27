@@ -310,7 +310,8 @@ fn collect_raw_extended_targets(artifacts: &[ArtifactEnvelope]) -> Option<BTreeS
             | ArtifactKind::SourceSchema
             | ArtifactKind::DefinedConcept
             | ArtifactKind::Model
-            | ArtifactKind::Widget => return None,
+            | ArtifactKind::Widget
+            | ArtifactKind::Theme => return None,
         }
     }
     Some(raw_extended_targets)

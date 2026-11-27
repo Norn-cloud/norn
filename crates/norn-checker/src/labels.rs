@@ -397,7 +397,8 @@ fn definition_targets(artifact: &ArtifactEnvelope, targets: &mut BTreeSet<LabelT
         | ArtifactKind::Mapping
         | ArtifactKind::DefinedConcept
         | ArtifactKind::Labels
-        | ArtifactKind::Model => {}
+        | ArtifactKind::Model
+        | ArtifactKind::Theme => {}
     }
 }
 

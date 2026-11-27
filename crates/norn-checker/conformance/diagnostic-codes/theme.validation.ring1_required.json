@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.ring1_required",
+  "message": "theme artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

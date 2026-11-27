@@ -32,6 +32,8 @@ pub enum SealableNodeKind {
     Labels,
     /// A typed predictive model with opaque internals.
     Model,
+    /// A Studio colour theme.
+    Theme,
     Field,
     SurfaceSlot,
 }
@@ -55,6 +57,7 @@ impl From<ArtifactKind> for SealableNodeKind {
             ArtifactKind::DefinedConcept => Self::DefinedConcept,
             ArtifactKind::Labels => Self::Labels,
             ArtifactKind::Model => Self::Model,
+            ArtifactKind::Theme => Self::Theme,
         }
     }
 }

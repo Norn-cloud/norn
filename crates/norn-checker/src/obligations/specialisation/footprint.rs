@@ -285,7 +285,8 @@ fn artifact_writer_footprint(
         | ArtifactKind::Law
         | ArtifactKind::DefinedConcept
         | ArtifactKind::Labels
-        | ArtifactKind::Model => WriterFootprint::Opaque,
+        | ArtifactKind::Model
+        | ArtifactKind::Theme => WriterFootprint::Opaque,
     }
 }
 

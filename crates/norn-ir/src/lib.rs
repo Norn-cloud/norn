@@ -46,9 +46,9 @@ pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
 pub mod labels;
 pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
-pub mod model;
 pub use model::{
-    ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelPredictions, ModelRoot,
+    ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelPayload,
+    ModelPredictions, ModelRoot,
 };
 pub mod trust;
 pub use trust::TrustLevel;
@@ -340,6 +340,7 @@ pub enum ArtifactKind {
     /// `ModelIR`: a typed predictive model with opaque internals
     /// ([`model`]).
     Model,
+    Theme,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -383,6 +384,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::DefinedConcept
             | ArtifactKind::Labels
             | ArtifactKind::Model
+            | ArtifactKind::Theme
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -1213,6 +1215,11 @@ macro_rules! define_payload_root {
     };
 }
 
+// After `define_payload_root!`: these modules declare their own payload roots.
+pub mod model;
+pub mod theme;
+pub use theme::ThemePayload;
+
 define_payload_root!(
     // The lenient `entity` wire root declares the members of both EntityIR
     // forms. Its published JSON Schema is the strict typed root `EntityRoot`
@@ -1540,28 +1547,6 @@ define_payload_root!(
     }
 );
 
-define_payload_root!(
-    /// A typed predictive model with opaque internals ([`model`]).
-    #[schemars(with = "ModelRoot")]
-    ModelPayload {
-        required {
-            model_id => "modelId" as String,
-            title => "title" as String,
-            version => "version" as String,
-            input => "input" as ModelInput,
-            features => "features" as Vec<PropertyId>,
-            outputs => "outputs" as Vec<ModelOutput>,
-            trust => "trust" as TrustLevel,
-            method => "method" as ModelMethod
-        }
-        optional {
-            target => "target" as PropertyId,
-            contracts => "contracts" as Vec<ModelContract>,
-            predictions => "predictions" as ModelPredictions
-        }
-    }
-);
-
 define_payload_root!(DerivedPayload {
     required {
         view_version => "viewVersion" as IrVersion01,
@@ -1605,6 +1590,7 @@ pub enum ArtifactPayload {
     DefinedConcept(DefinedConceptPayload),
     Labels(LabelsPayload),
     Model(ModelPayload),
+    Theme(ThemePayload),
 }
 
 impl ArtifactPayload {
@@ -1647,7 +1633,8 @@ impl ArtifactPayload {
                 Self::DefinedConcept(DefinedConceptPayload::from_json_object(object))
             }
             ArtifactKind::Labels => Self::Labels(LabelsPayload::from_json_object(object)),
-            ArtifactKind::Model => Self::Model(ModelPayload::from_json_object(object)),
+            ArtifactKind::Model => Self::Model(ModelPayload::from(object)),
+            ArtifactKind::Theme => Self::Theme(ThemePayload::from(object)),
         }
     }
 
@@ -1672,6 +1659,7 @@ impl ArtifactPayload {
             Self::DefinedConcept(_) => ArtifactKind::DefinedConcept,
             Self::Labels(_) => ArtifactKind::Labels,
             Self::Model(_) => ArtifactKind::Model,
+            Self::Theme(_) => ArtifactKind::Theme,
         }
     }
 
@@ -1696,6 +1684,7 @@ impl ArtifactPayload {
             Self::DefinedConcept(payload) => payload.to_json_value(),
             Self::Labels(payload) => payload.to_json_value(),
             Self::Model(payload) => payload.to_json_value(),
+            Self::Theme(payload) => payload.to_json_value(),
         }
     }
 
@@ -1720,6 +1709,7 @@ impl ArtifactPayload {
             Self::DefinedConcept(payload) => payload.unknown_fields(),
             Self::Labels(payload) => payload.unknown_fields(),
             Self::Model(payload) => payload.unknown_fields(),
+            Self::Theme(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1744,6 +1734,7 @@ impl ArtifactPayload {
             Self::DefinedConcept(payload) => payload.has_invalid_extensions(),
             Self::Labels(payload) => payload.has_invalid_extensions(),
             Self::Model(payload) => payload.has_invalid_extensions(),
+            Self::Theme(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -2243,6 +2234,7 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::DefinedConcept => schema_for!(DefinedConceptPayload),
         ArtifactKind::Labels => schema_for!(LabelsPayload),
         ArtifactKind::Model => schema_for!(ModelPayload),
+        ArtifactKind::Theme => schema_for!(ThemePayload),
     }
 }
 

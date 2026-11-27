@@ -1,11 +1,8 @@
-import { createContext, use, useEffect, useState, useSyncExternalStore, type ReactNode } from "react"
-import {
-  applyCustomTheme,
-  effectiveBaseSkin,
-  persistCustomTheme,
-  storedCustomTheme,
-  type StudioTheme,
-} from "./studio-theme.ts"
+import { createContext, use, useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react"
+import { applyCustomTheme, effectiveBaseSkin, type StudioTheme } from "./studio-theme.ts"
+import type { ServedTheme } from "./workspace-theme.ts"
+
+const useIsomorphicLayoutEffect = typeof globalThis.window === "undefined" ? useEffect : useLayoutEffect
 
 /**
  * Swappable visual skin applied to the document root (`data-skin`).
@@ -46,7 +43,7 @@ export const SHELLS: readonly {
 
 /**
  * The reader's colour scheme: `system` follows the OS (the default); `light` and `dark` pin it. A
- * custom theme that sets its own `appearance` wins over all three while it is applied.
+ * workspace theme that sets its own `appearance` wins over all three while it is applied.
  */
 export type Scheme = "system" | "light" | "dark"
 
@@ -99,7 +96,7 @@ export function storedShellChrome(surfaceDefault: ShellChrome = "sidebar"): Shel
   return surfaceDefault
 }
 
-/** Resolve OS dark-mode preference when no custom theme forces an explicit appearance. */
+/** Resolve OS dark-mode preference when no workspace theme forces an explicit appearance. */
 function systemPrefersDark(): boolean {
   if (typeof globalThis.window === "undefined" || typeof globalThis.window.matchMedia !== "function") return false
   return globalThis.window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -110,7 +107,7 @@ export function schemeIsDark(scheme: Scheme): boolean {
   return scheme === "dark" || (scheme === "system" && systemPrefersDark())
 }
 
-/** Paint the reader's scheme (`.dark`), unless a custom theme pins its own appearance. */
+/** Paint the reader's scheme (`.dark`), unless a workspace theme pins its own appearance. */
 export function applyScheme(scheme: Scheme, root: HTMLElement | undefined = globalThis.document?.documentElement) {
   if (!root) return
   root.dataset.scheme = scheme
@@ -119,7 +116,7 @@ export function applyScheme(scheme: Scheme, root: HTMLElement | undefined = glob
   root.classList?.toggle("dark", schemeIsDark(scheme))
 }
 
-/** Apply `data-skin`, `data-shell`, `.dark` (honoring forced custom theme appearance), and any custom JSON theme tokens. */
+/** Apply `data-skin`, `data-shell`, `.dark` (honoring a workspace theme's pinned appearance), and the workspace theme's tokens. */
 export function applyAppearance(
   skin: Skin,
   shell: ShellChrome,
@@ -155,9 +152,58 @@ interface AppearanceContextValue {
   readonly setSkin: (skin: Skin) => void
   readonly shell: ShellChrome
   readonly setShell: (shell: ShellChrome) => void
+  /** The workspace theme painted now: the served theme when the shared gate admits it, else none (the built-in default). */
   readonly customTheme: StudioTheme | null
-  readonly setCustomTheme: (theme: StudioTheme) => void
-  readonly clearCustomTheme: () => void
+  /** The workspace's served theme as last read: its version (for the next apply), or why it does not paint. */
+  readonly served: ServedTheme
+  /** Paint what the server serves for the shown workspace (the served-theme feed calls this). */
+  readonly setServed: (served: ServedTheme, scopeKey?: string | null) => void
+}
+
+interface ScopedServedSnapshot {
+  readonly scopeKey: string | null
+  readonly served: ServedTheme
+}
+
+const LOADING_SERVED: ServedTheme = { kind: "loading" }
+const EMPTY_SCOPED_SERVED: ScopedServedSnapshot = { scopeKey: null, served: LOADING_SERVED }
+let publishedServed: ScopedServedSnapshot = EMPTY_SCOPED_SERVED
+const servedListeners = new Set<() => void>()
+
+const subscribeServed = (onChange: () => void): (() => void) => {
+  servedListeners.add(onChange)
+  return () => { servedListeners.delete(onChange) }
+}
+const getServedSnapshot = (): ServedTheme => publishedServed.served
+const publishServed = (next: ServedTheme, scopeKey: string | null = null): void => {
+  if (publishedServed.scopeKey === scopeKey && sameServed(publishedServed.served, next)) return
+  const hadTheme = publishedServed.served.kind === "theme"
+  publishedServed = { scopeKey, served: next }
+  if (hadTheme && next.kind !== "theme") {
+    const root = globalThis.document?.documentElement
+    if (root) applyAppearance(storedSkin(), storedShellChrome(), root, null)
+  }
+  for (const listener of servedListeners) listener()
+}
+
+/**
+ * Synchronously clear any painted theme owned by `scopeKey` (or unconditionally when omitted) so
+ * workspace transitions and sign-out never retain the previous workspace's CSS overrides across a
+ * paint frame.
+ */
+export function clearPublishedServedTheme(
+  scopeKey?: string | null,
+  root: HTMLElement | undefined = globalThis.document?.documentElement,
+): void {
+  if (scopeKey !== undefined && publishedServed.scopeKey !== scopeKey) return
+  const changed = publishedServed.scopeKey !== null || publishedServed.served.kind !== "loading"
+  publishedServed = EMPTY_SCOPED_SERVED
+  if (root) {
+    applyAppearance(storedSkin(), storedShellChrome(), root, null)
+  }
+  if (changed) {
+    for (const listener of servedListeners) listener()
+  }
 }
 
 const AppearanceContext = createContext<AppearanceContextValue>({
@@ -168,34 +214,41 @@ const AppearanceContext = createContext<AppearanceContextValue>({
   shell: "sidebar",
   setShell: () => {},
   customTheme: null,
-  setCustomTheme: () => {},
-  clearCustomTheme: () => {},
+  served: LOADING_SERVED,
+  setServed: publishServed,
 })
 
+/**
+ * Skin, shell and scheme are the reader's own (kept in this browser). The theme is the workspace's:
+ * the server serves it (`workspace.theme`), and while one paints it decides the skin and any pinned
+ * appearance; with none, the reader's skin paints (the built-in Luma by default).
+ */
 export function AppearanceProvider({
   children,
   initialSkin,
   initialShell,
-  initialCustomTheme,
+  initialServed,
 }: {
   readonly children: ReactNode
   readonly initialSkin?: Skin
   readonly initialShell?: ShellChrome
-  readonly initialCustomTheme?: StudioTheme | null
+  readonly initialServed?: ServedTheme
 }) {
   // `initialSkin` and `initialShell` are the surface's defaults; the reader's stored choice wins over them.
   const [skin, setSkinState] = useState<Skin>(() => storedSkin(initialSkin))
   const [shell, setShellState] = useState<ShellChrome>(() => storedShellChrome(initialShell))
   const [scheme, setSchemeState] = useState<Scheme>(storedScheme)
-  const [customTheme, setCustomThemeState] = useState<StudioTheme | null>(
-    () => (initialCustomTheme !== undefined ? initialCustomTheme : storedCustomTheme()),
-  )
+  const [localServed, setLocalServed] = useState<ServedTheme>(initialServed ?? LOADING_SERVED)
+  const liveServed = useSyncExternalStore(subscribeServed, getServedSnapshot, () => LOADING_SERVED)
+  const served = initialServed !== undefined ? localServed : liveServed
+  const customTheme = served.kind === "theme" ? served.theme : null
 
-  useEffect(() => {
+  // Synchronous before paint so switching workspaces or signing out never flashes the previous workspace's theme.
+  useIsomorphicLayoutEffect(() => {
     applyAppearance(skin, shell, undefined, customTheme)
   }, [skin, shell, customTheme])
 
-  // Keep custom JSON theme light/dark variants synced when the document root toggles `.dark`.
+  // Keep the workspace theme's light/dark variants synced when the document root toggles `.dark`.
   useEffect(() => {
     const root = globalThis.document?.documentElement
     if (!root || !customTheme || typeof MutationObserver === "undefined") return
@@ -208,9 +261,7 @@ export function AppearanceProvider({
 
   const setSkin = (next: Skin) => {
     setSkinState(next)
-    setCustomThemeState(null)
-    persistCustomTheme(null)
-    applyAppearance(next, shell, undefined, null)
+    applyAppearance(next, shell, undefined, customTheme)
     try { globalThis.localStorage?.setItem(SKIN_KEY, next) } catch { /* not kept */ }
   }
 
@@ -226,27 +277,23 @@ export function AppearanceProvider({
     try { globalThis.localStorage?.setItem(SHELL_KEY, next) } catch { /* not kept */ }
   }
 
-  const setCustomTheme = (theme: StudioTheme) => {
-    const nextSkin = effectiveBaseSkin(theme)
-    setSkinState(nextSkin)
-    setCustomThemeState(theme)
-    persistCustomTheme(theme)
-    applyAppearance(nextSkin, shell, undefined, theme)
-    try { globalThis.localStorage?.setItem(SKIN_KEY, nextSkin) } catch { /* not kept */ }
-  }
-
-  const clearCustomTheme = () => {
-    setCustomThemeState(null)
-    persistCustomTheme(null)
-    applyAppearance(skin, shell, undefined, null)
-  }
+  // A repeat read of the same version keeps the same object, so the page repaints only on a change.
+  const setServed = useCallback((next: ServedTheme, scopeKey: string | null = null) => {
+    if (initialServed !== undefined) {
+      setLocalServed((current) => sameServed(current, next) ? current : next)
+    } else {
+      publishServed(next, scopeKey)
+    }
+  }, [initialServed])
 
   return (
-    <AppearanceContext value={{ scheme, setScheme, skin, setSkin, shell, setShell, customTheme, setCustomTheme, clearCustomTheme }}>
+    <AppearanceContext value={{ scheme, setScheme, skin, setSkin, shell, setShell, customTheme, served, setServed }}>
       {children}
     </AppearanceContext>
   )
 }
+
+const sameServed = (a: ServedTheme, b: ServedTheme): boolean => JSON.stringify(a) === JSON.stringify(b)
 
 export const useAppearance = () => use(AppearanceContext)
 

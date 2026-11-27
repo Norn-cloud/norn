@@ -1,9 +1,6 @@
 import {
-  blend,
   clampRgb,
   converter,
-  formatHex,
-  formatRgb,
   modeHsl,
   modeHwb,
   modeLab,
@@ -14,9 +11,15 @@ import {
   modeRgb,
   parse,
   useMode,
-  wcagContrast,
-  type Rgb,
 } from "culori/fn"
+import { cssColor, type Color } from "../../../../tools/norn-ts/src/builder/theme.ts"
+
+/**
+ * Compositing, contrast and the canonical form are the shared theme core's (one source with the
+ * `defineTheme` builder and the served-theme gate); this module adds the CSS Color 4 parser Studio's
+ * editor and the palette generator read any colour with.
+ */
+export { contrastOn, cssColor, fade, oklchChroma, over, type Color } from "../../../../tools/norn-ts/src/builder/theme.ts"
 
 // culori's tree-shakable entry parses and converts only the modes registered here: the CSS Color 4
 // syntaxes a theme may use (hex, named, rgb, hsl, hwb, lab, lch, oklab, oklch) and linear sRGB for
@@ -24,9 +27,6 @@ import {
 for (const mode of [modeRgb, modeLrgb, modeHsl, modeHwb, modeLab, modeLch, modeOklab, modeOklch]) useMode(mode)
 
 const toRgb = converter("rgb")
-
-/** An sRGB colour, channels 0–1, with alpha 0–1. */
-export type Color = Required<Pick<Rgb, "r" | "g" | "b" | "alpha">> & { readonly mode: "rgb" }
 
 /**
  * A functional colour whose alpha is written `/ none`, e.g. `rgb(0 0 0 / none)`. Lower case only:
@@ -55,35 +55,8 @@ export function parseColor(raw: string): Color | null {
   return { mode: "rgb", r: rgb.r ?? 0, g: rgb.g ?? 0, b: rgb.b ?? 0, alpha }
 }
 
-/** The canonical CSS for a colour: `#rrggbb` when opaque, else `rgba(r, g, b, a)`. */
-export function cssColor(color: Color): string {
-  return color.alpha >= 1 ? formatHex(color) : formatRgb(color)
-}
-
 /** A CSS colour string in canonical form, or null when it doesn't parse. */
 export function canonicalColor(raw: string): string | null {
   const parsed = parseColor(raw)
   return parsed === null ? null : cssColor(parsed)
-}
-
-/** A channel (0–1) rounded to the nearest of the 256 values a browser paints. */
-const to8 = (channel: number) => Math.round(channel * 255) / 255
-
-/**
- * `top` painted over `bottom` (CSS `normal` blending, source-over), with each channel rounded to 8
- * bits, as a browser paints every layer and as DESIGN.md section 4.2 measures composited surfaces.
- */
-export function over(top: Color, bottom: Color): Color {
-  const flat = blend([bottom, top], "normal") as Rgb
-  return { mode: "rgb", r: to8(flat.r), g: to8(flat.g), b: to8(flat.b), alpha: flat.alpha ?? 1 }
-}
-
-/** A colour with its alpha scaled, as `color-mix(in …, c p%, transparent)` and Tailwind's `/p` modifier paint it. */
-export function fade(color: Color, ratio: number): Color {
-  return { ...color, alpha: color.alpha * ratio }
-}
-
-/** WCAG 2.x contrast of `ink` painted over the opaque `surface`. */
-export function contrastOn(ink: Color, surface: Color): number {
-  return wcagContrast(over(ink, surface), surface)
 }

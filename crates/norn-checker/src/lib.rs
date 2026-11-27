@@ -186,7 +186,8 @@ pub use typed_roots::decode_artifact_json;
 /// envelope's wire JSON (see [`Span::from_legacy_path_in`]).
 /// `ArtifactPayload::Widget` fails closed here with
 /// [`codes::WIDGET_RING1_REQUIRED`] because widget validation lives in Ring-1
-/// `norn-ui-checker`.
+/// `norn-ui-checker`, and `ArtifactPayload::Theme` with
+/// [`codes::THEME_RING1_REQUIRED`] for the same reason.
 #[must_use]
 pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write(artifact) {
@@ -224,8 +225,9 @@ pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
 /// findings ([`check_artifact`]) are both returned in the checker
 /// [`Diagnostic`] model, with spans resolved against `value`.
 /// `ArtifactPayload::Widget` fails closed here with
-/// [`codes::WIDGET_RING1_REQUIRED`]; use Ring-1 `norn-ui-checker` to validate
-/// widget envelopes.
+/// [`codes::WIDGET_RING1_REQUIRED`] and `ArtifactPayload::Theme` with
+/// [`codes::THEME_RING1_REQUIRED`]; use Ring-1 `norn-ui-checker` to validate
+/// widget and theme envelopes.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write_json(value) {

@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.multiple",
+  "message": "a workspace has one theme, but {first} and {other} are both themes",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.invalid_color",
+  "message": "invalid color value for {token}; use a CSS color such as #rrggbb, rgb(…), hsl(…) or oklch(…)",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

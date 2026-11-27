@@ -132,7 +132,7 @@ over the default, including an app's dock opt-in: that is only the surface's def
 stored `sidebar` choice still wins there (CURRENT: `storedShellChrome(surfaceDefault)`; lead ruling,
 2026-11-25). A view never branches on the shell.
 
-**StudioTheme JSON (CURRENT, `src/lib/studio-theme.ts`).** Operators and tenants may supply a
+**StudioTheme JSON (CURRENT, `tools/norn-ts/src/builder/theme.ts`, painted by `src/lib/studio-theme.ts`).** A workspace may supply a
 declarative theme (`version: 1`, `baseSkin`, `appearance`, `accent`, `canvas`, `colors`,
 `variants.light` / `variants.dark`) that overrides only the allowlisted semantic tokens
 (`STUDIO_THEME_TOKENS`). Themes carry zero logic: no queries, permission checks or layout forks, and
@@ -147,6 +147,35 @@ allowlist too, and every island pair is validated over the worst-case backdrop (
 since shell v2). A theme that paints its own `canvas` but not the islands gets opaque islands in that
 ground on a backdrop one step darker (`resolveCustomThemeTokens`), so its canvas is what the reader
 sees; the blur, the edge and the shadows are geometry and stay the base skin's.
+
+### 3.1 Themes as data (CURRENT since `ui/themes-ts`)
+
+A workspace's theme is data, not code: the `theme` definition `workspace.theme`, applied through the
+definitions apply path (`POST /v1/definitions:install`, `:retire`) like any definition, so an agent
+or a person changes the look with no redeploy. Whoever may apply definitions may apply a theme; the
+cell decides, and Studio adds no permission logic of its own.
+
+- **One contract, three readers.** The token allowlist, the payload and the gates live once, in the
+  shared theme core (`tools/norn-ts/src/builder/theme.ts`, dependency-free so it runs in the browser):
+  `defineTheme({...})` lowers to the definition (tokens are a typed union, so a typo does not
+  compile), Studio gates what it is served, and the cell's checker admits by the same rules. The
+  golden themes in `fixtures/themes/` and their codes (`theme.validation.<rule>`) hold both sides to
+  the same answers.
+- **The gates.** Schema, known tokens, colours in canonical form (`#rrggbb`, `rgba(r, g, b, a)`;
+  the editor accepts any CSS colour and writes it canonically), a known base skin, every contrast pair
+  above in light and dark, and monochrome chrome (section 19.6: OKLCH chroma at most 0.02 except the
+  data, status, avatar and mascot tokens).
+- **Served, then painted.** Studio reads the workspace's theme for the workspace it shows and
+  re-reads it every few seconds (`THEME_FEED_INTERVAL_MS`), so a theme an agent applies repaints every
+  open page with no reload, and switching workspace switches the theme. With no theme served, the
+  reader's skin paints (Luma by default). A served theme that fails Studio's gate never paints: the
+  default stays, and one line under the top bar says why, in the gate's words.
+- **What stays the reader's.** Light or dark (unless the theme pins `appearance`), the shell chrome
+  and their own skin when the workspace has no theme. The theme no longer lives in the browser.
+- **The editor.** Appearance → Workspace theme… opens the workspace's theme as JSON with the starter
+  presets. "Use for this workspace" installs it on the version it was opened on (a newer one is a
+  conflict, never an overwrite), and a refusal shows the cell's findings in its own words; "Reset to
+  default" retires it.
 
 ---
 
